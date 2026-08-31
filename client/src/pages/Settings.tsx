@@ -66,10 +66,12 @@ interface AiModelsCurrent {
     summarization_prompt?: string;
   };
   weekly_explanation?: {
-    provider: string;
-    model: string;
     prompt_version: string;
     prompt?: string;
+    timeout_seconds: number;
+    temperature: number;
+    max_tokens: number;
+    routing_source: "chatbot";
   };
   ocr: { provider: string; model: string };
 }
@@ -1319,6 +1321,10 @@ function PromptsTab() {
   return (
     <div className="space-y-6">
       <AnimatePresence>{toast && <Toast {...toast} onClose={() => setToast(null)} />}</AnimatePresence>
+
+      <p className="text-xs text-muted-foreground">
+        {t("settings.weekly_explanation_routing_hint")}
+      </p>
 
       {/* One prompt produces both persisted languages in one model call. */}
       <PromptEditorCard

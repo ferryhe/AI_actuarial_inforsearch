@@ -10,8 +10,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-import yaml
 from fastapi import UploadFile
+
+from ai_actuarial.shared_runtime import load_sites_config
 
 ALLOWED_EXTENSIONS = {
     "csv",
@@ -44,11 +45,7 @@ class ImportBatchError(Exception):
 
 
 def _load_config_paths() -> dict[str, Any]:
-    config_path = os.getenv("CONFIG_PATH") or "config/sites.yaml"
-    try:
-        data = yaml.safe_load(Path(config_path).read_text(encoding="utf-8")) or {}
-    except FileNotFoundError:
-        data = {}
+    data = load_sites_config(default={})
     return dict(data.get("paths") or {})
 
 

@@ -11,6 +11,8 @@ This document covers deployment, configuration, and operations for the AI Actuar
 docker compose up
 
 # Production
+export CONFIG_PATH=/var/lib/aiinforsearch/config/sites.yaml
+export RUNTIME_CONFIG_DIR=/var/lib/aiinforsearch/config
 docker compose -f docker-compose.yml -f docker-compose.override.yml up -d
 ```
 
@@ -62,12 +64,13 @@ docker compose exec api sh
 DATA_VOLUME=ai_actuarial_inforsearch_ai-data
 DATA_DIR=$(docker volume inspect "$DATA_VOLUME" --format '{{ .Mountpoint }}')
 BACKUP_ROOT=/mnt/aiinforsearch-backup/aiinforsearch
+CONFIG_PATH=/var/lib/aiinforsearch/config/sites.yaml
 
 # Online SQLite + configuration backup. Output is JSON and the database copy is
 # created with sqlite3's backup API, followed by PRAGMA quick_check.
 sudo python3 scripts/production_recovery.py backup \
   --data-dir "$DATA_DIR" \
-  --config config/sites.yaml \
+  --config "$CONFIG_PATH" \
   --backup-root "$BACKUP_ROOT"
 ```
 
@@ -78,7 +81,7 @@ the current Compose project name. Always resolve the mountpoint with
 
 ## Environment Variables
 
-Use environment variables for deployment secrets and explicit platform overrides. Main non-secret runtime configuration lives in `config/sites.yaml` and can be edited from the Web UI Settings page.
+Use environment variables for deployment secrets and explicit platform overrides. In production, `CONFIG_PATH` names the external writable `sites.yaml` used by every reader and writer. The tracked `config/sites.yaml` is only a development default and bootstrap template. See [Runtime configuration ownership](runtime-config.md).
 
 ### Required Variables
 
@@ -86,6 +89,8 @@ Use environment variables for deployment secrets and explicit platform overrides
 |----------|-------------|---------|
 | `TOKEN_ENCRYPTION_KEY` | Fernet key for encrypting API credentials in DB | `python -c "import base64,secrets; print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())"` |
 | `FASTAPI_SESSION_SECRET` | Secret for FastAPI browser sessions | `python -c "import secrets; print(secrets.token_urlsafe(48))"` |
+| `CONFIG_PATH` | Absolute host path to the external writable runtime configuration | `/var/lib/aiinforsearch/config/sites.yaml` |
+| `RUNTIME_CONFIG_DIR` | Directory mounted into the API container for atomic configuration writes | `/var/lib/aiinforsearch/config` |
 
 ### Provider Credentials
 
@@ -101,11 +106,11 @@ Provider API keys should be created from Settings and stored as encrypted DB cre
 
 ## Configuration Files
 
-### `config/sites.yaml`
+### Runtime `sites.yaml`
 
-Most runtime configuration is in `config/sites.yaml` (AI models, RAG settings, feature flags, server settings). Edit via the Web UI Settings page or directly. `server.fastapi_env` is used as the default FastAPI environment when `FASTAPI_ENV` is not set. Changes to Settings-managed values are applied to the running FastAPI process; a restart is still needed after changing process environment variables such as `TOKEN_ENCRYPTION_KEY`, `FASTAPI_SESSION_SECRET`, or `FASTAPI_ENV`.
+Most runtime configuration is in the file named by `CONFIG_PATH` (AI models, RAG settings, feature flags, server settings). Edit via the Web UI Settings page or directly. Settings writes are flushed and atomically replace this file. Production startup fails if the path is missing, invalid, unreadable, unwritable, or points to the tracked template. `server.fastapi_env` is used as the default FastAPI environment when `FASTAPI_ENV` is not set. Changes to Settings-managed values are applied to the running FastAPI process; a restart is still needed after changing process environment variables such as `TOKEN_ENCRYPTION_KEY`, `FASTAPI_SESSION_SECRET`, or `FASTAPI_ENV`.
 
-### `config/sites.yaml` Structure
+### `sites.yaml` structure
 
 ```yaml
 defaults:
@@ -232,7 +237,10 @@ sudo install -d -m 0750 /etc/aiinforsearch
 # The mount must already exist and be distinct from the production volume.
 findmnt -M /mnt/aiinforsearch-backup
 sudo install -d -m 0700 /mnt/aiinforsearch-backup/aiinforsearch
-echo 'BACKUP_ROOT=/mnt/aiinforsearch-backup/aiinforsearch' | sudo tee /etc/aiinforsearch/backup.conf
+printf '%s\n' \
+  'BACKUP_ROOT=/mnt/aiinforsearch-backup/aiinforsearch' \
+  'CONFIG_PATH=/var/lib/aiinforsearch/config/sites.yaml' \
+  | sudo tee /etc/aiinforsearch/backup.conf
 sudo chmod 0600 /etc/aiinforsearch/backup.conf
 sudo install -m 0644 ops/systemd/aiinforsearch-backup.service /etc/systemd/system/
 sudo install -m 0644 ops/systemd/aiinforsearch-backup.timer /etc/systemd/system/
@@ -250,7 +258,10 @@ alongside the daily job with its own config and full-snapshot root:
 
 ```bash
 sudo install -d -m 0700 /mnt/aiinforsearch-backup/aiinforsearch-full
-echo 'BACKUP_ROOT=/mnt/aiinforsearch-backup/aiinforsearch-full' | sudo tee /etc/aiinforsearch/full-backup.conf
+printf '%s\n' \
+  'BACKUP_ROOT=/mnt/aiinforsearch-backup/aiinforsearch-full' \
+  'CONFIG_PATH=/var/lib/aiinforsearch/config/sites.yaml' \
+  | sudo tee /etc/aiinforsearch/full-backup.conf
 sudo chmod 0600 /etc/aiinforsearch/full-backup.conf
 sudo install -m 0644 ops/systemd/aiinforsearch-full-backup.service /etc/systemd/system/
 sudo install -m 0644 ops/systemd/aiinforsearch-full-backup.timer /etc/systemd/system/
@@ -300,12 +311,13 @@ database; re-crawlable source documents under `files/` are excluded.
 DATA_VOLUME=ai_actuarial_inforsearch_ai-data
 DATA_DIR=$(docker volume inspect "$DATA_VOLUME" --format '{{ .Mountpoint }}')
 BACKUP_ROOT=/mnt/aiinforsearch-backup/aiinforsearch
+CONFIG_PATH=/var/lib/aiinforsearch/config/sites.yaml
 COMPOSE="docker compose -f docker-compose.yml -f docker-compose.override.yml"
 
 $COMPOSE stop api
 sudo python3 scripts/production_recovery.py backup \
   --data-dir "$DATA_DIR" \
-  --config config/sites.yaml \
+  --config "$CONFIG_PATH" \
   --backup-root "$BACKUP_ROOT" \
   --include-data \
   --quiesced \
@@ -346,8 +358,9 @@ docker run --rm -d --name ai-restore-smoke \
   -e FASTAPI_ENV=development \
   -e FASTAPI_SESSION_SECRET=restore-smoke-only \
   -e TOKEN_ENCRYPTION_KEY="$RESTORE_SMOKE_KEY" \
+  -e CONFIG_PATH=/app/runtime-config/sites.yaml \
   -v "$RESTORE_DIR/data:/app/data:rw" \
-  -v "$RESTORE_DIR/config/sites.yaml:/app/config/sites.yaml:ro" \
+  -v "$RESTORE_DIR/config:/app/runtime-config:rw" \
   "$IMAGE"
 docker exec ai-restore-smoke curl -fsS http://127.0.0.1:5000/api/health
 docker exec ai-restore-smoke curl -fsS http://127.0.0.1:5000/api/rag/knowledge-bases
@@ -375,9 +388,10 @@ labels, configuration checksum, and SQLite `PRAGMA user_version`:
 ```bash
 DATA_VOLUME=ai_actuarial_inforsearch_ai-data
 DATA_DIR=$(docker volume inspect "$DATA_VOLUME" --format '{{ .Mountpoint }}')
+CONFIG_PATH=/var/lib/aiinforsearch/config/sites.yaml
 python3 scripts/production_recovery.py release-record \
   --image ai_actuarial_inforsearch-api:latest \
-  --config config/sites.yaml \
+  --config "$CONFIG_PATH" \
   --db "$DATA_DIR/index.db" \
   --output /var/lib/aiinforsearch/releases/"$BUILD_GIT_SHA".json
 ```
@@ -429,6 +443,7 @@ curl http://localhost:5000/api/health/detailed
 # The guarded updater refuses a dirty worktree or root-disk use >=80%, creates a
 # quiesced full snapshot, fast-forwards main, builds with OCI revision labels,
 # restarts the API, and writes a release record.
+export CONFIG_PATH=/var/lib/aiinforsearch/config/sites.yaml
 scripts/deploy_update.sh
 ```
 

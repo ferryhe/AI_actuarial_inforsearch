@@ -397,10 +397,12 @@ def get_ai_models(*, refresh: bool = False, storage: Storage | None = None) -> d
             "summarization_prompt": chatbot_cfg.get("summarization_prompt", ""),
         },
         "weekly_explanation": {
-            "provider": weekly_cfg.get("provider", weekly_defaults["provider"]),
-            "model": weekly_cfg.get("model", weekly_defaults["model"]),
             "prompt_version": weekly_cfg.get("prompt_version", weekly_defaults["prompt_version"]),
             "prompt": weekly_cfg.get("prompt", weekly_defaults["prompt"]),
+            "timeout_seconds": weekly_cfg.get("timeout_seconds", weekly_defaults["timeout_seconds"]),
+            "temperature": weekly_cfg.get("temperature", weekly_defaults["temperature"]),
+            "max_tokens": weekly_cfg.get("max_tokens", weekly_defaults["max_tokens"]),
+            "routing_source": "chatbot",
         },
         "ocr": {
             "provider": ai_config.get("ocr", {}).get("provider", "local"),

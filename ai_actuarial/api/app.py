@@ -12,8 +12,7 @@ from itsdangerous import BadSignature, URLSafeSerializer
 from ai_actuarial.config import settings
 from ai_actuarial.shared_auth import hash_token
 from ai_actuarial.shared_runtime import (
-    get_sites_config_path,
-    load_yaml,
+    load_sites_config,
     resolve_fastapi_env,
     resolve_runtime_features,
 )
@@ -54,7 +53,7 @@ def _native_paths(app: FastAPI) -> list[str]:
 
 
 def _resolve_db_path() -> str:
-    config_data = load_yaml(get_sites_config_path(), default={})
+    config_data = load_sites_config()
     return settings.resolve_db_path(config_data)
 
 
@@ -135,7 +134,7 @@ def _bootstrap_admin_token(db_path: str) -> None:
 
 
 def create_app() -> FastAPI:
-    config_data = load_yaml(get_sites_config_path(), default={})
+    config_data = load_sites_config(require_writable=True)
     runtime_features = resolve_runtime_features(config_data)
     app = FastAPI(
         title="AI Actuarial Info Search API",

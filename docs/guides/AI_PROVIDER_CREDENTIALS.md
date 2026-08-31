@@ -4,9 +4,9 @@ AI provider credentials use a three-part model:
 
 - Provider registry: built-in provider metadata and capability flags.
 - Credential instance: encrypted provider credentials stored in the `api_tokens` table.
-- Function binding: `config/sites.yaml -> ai_config` selects provider, model, and optional credential id.
+- Function binding: `CONFIG_PATH -> ai_config` selects provider, model, and optional credential id. The tracked `config/sites.yaml` is only the development/bootstrap template.
 
-Do not store provider API keys in `sites.yaml`. Keep `.env` for bootstrap/system values such as `TOKEN_ENCRYPTION_KEY`, `FASTAPI_SESSION_SECRET`, and optional temporary provider keys that can be imported into the database. The active SQLite path should come from `config/sites.yaml -> paths.db`; `DB_PATH` is only a fallback when that YAML path is absent.
+Do not store provider API keys in `sites.yaml`. Keep `.env` for bootstrap/system values such as `TOKEN_ENCRYPTION_KEY`, `FASTAPI_SESSION_SECRET`, and optional temporary provider keys that can be imported into the database. The active SQLite path should come from `CONFIG_PATH -> paths.db`; `DB_PATH` is only a fallback when that YAML path is absent.
 
 Search engine status, CLI search, and live model discovery prefer encrypted DB credentials. Environment provider keys remain supported as bootstrap/fallback values, but they should not be the long-term source of runtime secrets.
 
@@ -52,3 +52,30 @@ ai_config:
 ```
 
 If a bound credential id cannot be parsed, does not match the provider/category, cannot be found, or cannot be decrypted, the runtime reports `credential_source=missing` with a non-sensitive `credential_error`.
+
+## Weekly Explanation Routing
+
+Weekly explanations always inherit `provider`, `model`, and `credential_id` from
+`ai_config.chatbot`. Their own section stores only generation policy such as the
+versioned prompt, timeout, temperature, and token limit:
+
+```yaml
+ai_config:
+  chatbot:
+    provider: openai
+    model: gpt-5.4-mini
+    credential_id: openai:llm:instance:default
+  weekly_explanation:
+    prompt_version: weekly-explanation-v1
+    timeout_seconds: 60
+    temperature: 0
+    max_tokens: 1200
+```
+
+Older `weekly_explanation` route fields are ignored at runtime and a warning names
+the deprecated fields without logging their values. Saving weekly explanation
+policy removes those legacy fields. The Settings API rejects new weekly route
+writes and directs operators to update the Chat route instead.
+
+Weekly generation audit data records the effective provider, model, and stable
+credential identifier. It never records the credential value.

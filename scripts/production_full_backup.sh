@@ -9,7 +9,7 @@ umask 077
 
 REPO_DIR="${REPO_DIR:-/opt/ai_actuarial_inforsearch}"
 DATA_VOLUME_NAME="${DATA_VOLUME_NAME:-ai_actuarial_inforsearch_ai-data}"
-CONFIG_PATH="${CONFIG_PATH:-$REPO_DIR/config/sites.yaml}"
+CONFIG_PATH="${CONFIG_PATH:?Set CONFIG_PATH to the external production sites.yaml}"
 BACKUP_ROOT="${BACKUP_ROOT:?Set BACKUP_ROOT to a pre-created approved full-backup filesystem}"
 BACKUP_LOCK_FILE="${BACKUP_LOCK_FILE:-/run/aiinforsearch-backup.lock}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"

@@ -1,11 +1,21 @@
 from __future__ import annotations
 
 import os
+import stat
+import tempfile
 from collections import deque
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+
+TRACKED_SITES_CONFIG_PATH = Path(__file__).resolve().parents[1] / "config" / "sites.yaml"
+PRODUCTION_ENVIRONMENTS = frozenset({"prod", "production"})
+
+
+class SitesConfigError(RuntimeError):
+    """Raised when the authoritative runtime configuration cannot be used safely."""
 
 
 def env_flag(name: str, default: bool = False) -> bool:
@@ -153,14 +163,184 @@ def parse_int_clamped(
 
 
 def get_sites_config_path() -> str:
-    return os.getenv("CONFIG_PATH", "config/sites.yaml")
+    explicit = os.getenv("CONFIG_PATH", "").strip()
+    return explicit or "config/sites.yaml"
 
 
 def get_categories_config_path() -> str:
     return os.getenv("CATEGORIES_CONFIG_PATH", "config/categories.yaml")
 
 
+def _is_production_environment() -> bool:
+    return os.getenv("FASTAPI_ENV", "").strip().lower() in PRODUCTION_ENVIRONMENTS
+
+
+def _paths_match(first: str | Path, second: str | Path) -> bool:
+    try:
+        return Path(first).expanduser().resolve() == Path(second).expanduser().resolve()
+    except (OSError, RuntimeError):
+        return os.path.abspath(os.fspath(first)) == os.path.abspath(os.fspath(second))
+
+
+def _require_writable_config(path: Path) -> None:
+    try:
+        file_mode = stat.S_IMODE(path.stat().st_mode)
+        parent_mode = stat.S_IMODE(path.parent.stat().st_mode)
+    except OSError as exc:
+        raise SitesConfigError(
+            f"Cannot inspect runtime configuration permissions: {path}: {exc}"
+        ) from exc
+    write_bits = stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH
+    if not file_mode & write_bits or not os.access(path, os.W_OK):
+        raise SitesConfigError(f"Runtime configuration is not writable: {path}")
+    if not parent_mode & write_bits or not os.access(path.parent, os.W_OK):
+        raise SitesConfigError(
+            f"Runtime configuration directory is not writable for atomic replacement: {path.parent}"
+        )
+
+
+def load_sites_config(
+    path: str | Path | None = None,
+    *,
+    default: dict[str, Any] | None = None,
+    require_writable: bool = False,
+) -> dict[str, Any]:
+    """Load the single authoritative sites config, failing closed outside development."""
+    explicit = os.getenv("CONFIG_PATH", "").strip()
+    production = _is_production_environment()
+    if production and not explicit:
+        raise SitesConfigError(
+            "CONFIG_PATH is required in production and must point to runtime config outside the Git checkout"
+        )
+
+    config_path = Path(path or get_sites_config_path()).expanduser()
+    if explicit and path is not None and not _paths_match(config_path, explicit):
+        raise SitesConfigError(
+            f"Requested sites config does not match authoritative CONFIG_PATH: {config_path}"
+        )
+    if production and _paths_match(config_path, TRACKED_SITES_CONFIG_PATH):
+        raise SitesConfigError(
+            "Production CONFIG_PATH must not point to the tracked config/sites.yaml template"
+        )
+    strict = bool(explicit) or production
+    fallback = default.copy() if isinstance(default, dict) else {}
+    if not config_path.exists():
+        if strict:
+            raise SitesConfigError(
+                f"Authoritative runtime configuration does not exist: {config_path}"
+            )
+        return fallback
+    if not config_path.is_file():
+        raise SitesConfigError(f"Authoritative runtime configuration is not a file: {config_path}")
+    try:
+        file_mode = stat.S_IMODE(config_path.stat().st_mode)
+    except OSError as exc:
+        raise SitesConfigError(
+            f"Cannot inspect runtime configuration permissions: {config_path}: {exc}"
+        ) from exc
+    read_bits = stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH
+    if not file_mode & read_bits or not os.access(config_path, os.R_OK):
+        raise SitesConfigError(f"Authoritative runtime configuration is not readable: {config_path}")
+
+    try:
+        with config_path.open("r", encoding="utf-8") as handle:
+            data = yaml.safe_load(handle)
+    except (OSError, UnicodeError, yaml.YAMLError) as exc:
+        if strict:
+            raise SitesConfigError(
+                f"Authoritative runtime configuration is not a valid YAML mapping: {config_path}: {exc}"
+            ) from exc
+        return fallback
+    if not isinstance(data, dict):
+        if strict:
+            raise SitesConfigError(
+                f"Authoritative runtime configuration is not a valid YAML mapping: {config_path}"
+            )
+        return fallback
+
+    server = data.get("server") or {}
+    yaml_environment = (
+        str(server.get("fastapi_env") or "").strip().lower()
+        if isinstance(server, dict)
+        else ""
+    )
+    if yaml_environment in PRODUCTION_ENVIRONMENTS and not explicit:
+        raise SitesConfigError(
+            "CONFIG_PATH is required when server.fastapi_env is production; "
+            "the tracked config/sites.yaml is only a development/bootstrap template"
+        )
+    if require_writable or strict:
+        _require_writable_config(config_path)
+    return data
+
+
+def atomic_write_yaml(
+    path: str | Path,
+    data: dict[str, Any],
+    *,
+    overwrite: bool = True,
+) -> Path:
+    """Durably write YAML in the target directory, then publish it atomically."""
+    target = Path(path).expanduser().resolve()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target_stat = target.stat() if overwrite and target.exists() else None
+    fd, temporary_name = tempfile.mkstemp(
+        prefix=f".{target.name}.", suffix=".tmp", dir=target.parent
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+            yaml.safe_dump(data, handle, sort_keys=False, allow_unicode=True)
+            handle.flush()
+            os.fsync(handle.fileno())
+            if target_stat is not None:
+                if hasattr(os, "fchown"):
+                    os.fchown(handle.fileno(), target_stat.st_uid, target_stat.st_gid)
+                if hasattr(os, "fchmod"):
+                    os.fchmod(handle.fileno(), stat.S_IMODE(target_stat.st_mode))
+                handle.flush()
+                os.fsync(handle.fileno())
+        if overwrite:
+            os.replace(temporary, target)
+        else:
+            try:
+                os.link(temporary, target)
+            except FileExistsError as exc:
+                raise FileExistsError(f"Runtime configuration already exists: {target}") from exc
+            temporary.unlink()
+        if hasattr(os, "O_DIRECTORY"):
+            directory_fd = os.open(target.parent, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        return target
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+
+
+def bootstrap_sites_config(source: str | Path, target: str | Path | None = None) -> Path:
+    """Create the external runtime config once from a valid tracked template."""
+    source_path = Path(source).expanduser().resolve()
+    if not source_path.is_file():
+        raise FileNotFoundError(f"Bootstrap source does not exist: {source_path}")
+    try:
+        with source_path.open("r", encoding="utf-8") as handle:
+            data = yaml.safe_load(handle)
+    except (OSError, UnicodeError, yaml.YAMLError) as exc:
+        raise SitesConfigError(f"Bootstrap source is not valid YAML: {source_path}: {exc}") from exc
+    if not isinstance(data, dict):
+        raise SitesConfigError(f"Bootstrap source is not a YAML mapping: {source_path}")
+    target_path = Path(target or get_sites_config_path()).expanduser().resolve()
+    if target_path.exists():
+        raise FileExistsError(f"Runtime configuration already exists: {target_path}")
+    return atomic_write_yaml(target_path, data, overwrite=False)
+
+
 def load_yaml(path: str, default: dict[str, Any] | None = None) -> dict[str, Any]:
+    if _paths_match(path, get_sites_config_path()):
+        return load_sites_config(path, default=default)
     fallback = default.copy() if isinstance(default, dict) else {}
     if not path or not os.path.exists(path):
         return fallback

@@ -13,8 +13,6 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
-import yaml
-
 from .crawler import Crawler, SiteConfig
 from .catalog import (
     CATALOG_VERSION,
@@ -30,7 +28,14 @@ from .search_acquisition import (
     format_acquisition_outcome,
     summarize_acquisition_outcomes,
 )
-from .shared_runtime import coerce_bool
+from .shared_runtime import (
+    SitesConfigError,
+    TRACKED_SITES_CONFIG_PATH,
+    bootstrap_sites_config,
+    coerce_bool,
+    get_sites_config_path,
+    load_sites_config,
+)
 from .ai_runtime import get_search_runtime_credentials
 from .storage import Storage
 from .collectors import CollectionConfig
@@ -76,8 +81,7 @@ def _load_dotenv(path: str) -> None:
 
 
 def _load_config(path: str) -> dict:
-    with open(path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
+    return load_sites_config(path)
 
 
 def _site_configs(cfg: dict) -> list[SiteConfig]:
@@ -919,12 +923,29 @@ def cmd_kb_ready_get(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_config_bootstrap(args: argparse.Namespace) -> int:
+    """Create the authoritative runtime config once from the tracked template."""
+    try:
+        target = bootstrap_sites_config(args.source, args.config)
+    except (FileExistsError, FileNotFoundError, OSError, SitesConfigError, ValueError) as exc:
+        _print_cli_payload(
+            {"success": False, "error": str(exc), "config_path": str(args.config)},
+            as_json=args.json,
+        )
+        return 2
+    _print_cli_payload(
+        {"success": True, "created": True, "config_path": str(target)},
+        as_json=args.json,
+    )
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="ai-actuarial")
     p.add_argument(
         "--config",
-        default="config/sites.yaml",
-        help="Path to config file",
+        default=get_sites_config_path(),
+        help="Authoritative runtime config path (defaults to CONFIG_PATH, then config/sites.yaml for development)",
     )
     p.add_argument(
         "--site",
@@ -944,6 +965,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="Override max crawl depth per site for this run",
     )
     sub = p.add_subparsers(dest="cmd", required=True)
+
+    p_config_bootstrap = sub.add_parser(
+        "config-bootstrap",
+        help="Create CONFIG_PATH once from the tracked development template",
+    )
+    p_config_bootstrap.add_argument(
+        "--source",
+        default=str(TRACKED_SITES_CONFIG_PATH),
+        help="Template or existing config to copy (default: tracked config/sites.yaml)",
+    )
+    p_config_bootstrap.add_argument("--json", action="store_true", help="Emit JSON")
+    p_config_bootstrap.set_defaults(func=cmd_config_bootstrap)
 
     p_update = sub.add_parser("update", help="Crawl and download new files")
     p_update.set_defaults(func=cmd_update)
@@ -1440,7 +1473,11 @@ def main() -> int:
     )
     parser = build_parser()
     args = parser.parse_args()
-    return args.func(args)
+    os.environ["CONFIG_PATH"] = str(args.config)
+    try:
+        return args.func(args)
+    except SitesConfigError as exc:
+        parser.error(str(exc))
 
 
 def _write_markdown(path: Path, rows: list[dict]) -> None:

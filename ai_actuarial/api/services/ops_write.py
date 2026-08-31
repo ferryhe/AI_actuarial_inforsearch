@@ -23,6 +23,7 @@ from ai_actuarial.ai_runtime import (
     OPTIONAL_API_KEY_SENTINEL,
     PROVIDER_STARTUP_ENV_MAP,
     SECTION_TO_FUNCTION_BINDING,
+    WEEKLY_EXPLANATION_ROUTE_FIELDS,
     binding_to_section_name,
     build_embedding_fingerprint,
     build_model_discovery_credentials,
@@ -37,6 +38,7 @@ from ai_actuarial.ai_runtime import (
 )
 from ai_actuarial.shared_runtime import (
     append_task_log,
+    atomic_write_yaml,
     coerce_bool,
     get_categories_config_path,
     get_default_catalog_provider,
@@ -243,9 +245,7 @@ def _load_config_data() -> dict[str, Any]:
 
 
 def _write_config_data(config_data: dict[str, Any]) -> None:
-    config_path = get_sites_config_path()
-    with open(config_path, "w", encoding="utf-8") as f:
-        yaml.dump(config_data, f, sort_keys=False, allow_unicode=True)
+    atomic_write_yaml(get_sites_config_path(), config_data)
 
 
 def _notify_site_config_updated(bridge: BridgeState | None, config_data: dict[str, Any]) -> None:
@@ -1182,6 +1182,14 @@ def update_ai_models_config(data: dict[str, Any], *, db_path: str, bridge: Bridg
             continue
         config_data["ai_config"].setdefault(function, {})
 
+        if function == "weekly_explanation":
+            forbidden_fields = WEEKLY_EXPLANATION_ROUTE_FIELDS.intersection(func_cfg)
+            if forbidden_fields:
+                raise OpsWriteError(
+                    "weekly_explanation routing is inherited from chatbot; update the Chat route instead "
+                    f"(unsupported fields: {', '.join(sorted(forbidden_fields))})"
+                )
+
         if "provider" in func_cfg:
             provider = str(func_cfg.get("provider") or "").strip().lower()
             if provider and provider not in AI_SUPPORTED_PROVIDERS:
@@ -1194,52 +1202,26 @@ def update_ai_models_config(data: dict[str, Any], *, db_path: str, bridge: Bridg
             model = str(func_cfg.get("model") or "").strip()
             if not model:
                 raise OpsWriteError(f"Model for function '{function}' must be a non-empty string.")
-            if function != "weekly_explanation":
-                provider = str(
-                    config_data["ai_config"][function].get("provider") or ""
-                ).strip().lower()
-                provider_models = available_models_map.get(provider, [])
-                compatible_models = [
-                    item
-                    for item in provider_models
-                    if function in (item.get("types") or [])
-                ]
-                valid_model_names = [
-                    str(item.get("name") or "")
-                    for item in compatible_models
-                    if str(item.get("name") or "")
-                ]
-                if valid_model_names and model not in valid_model_names:
-                    raise OpsWriteError(
-                        f"Model '{model}' is not compatible with function '{function}' "
-                        f"for provider '{provider}'. Valid models: {valid_model_names}"
-                    )
-            config_data["ai_config"][function]["model"] = model
-
-        if function == "weekly_explanation" and ({"provider", "model"} & func_cfg.keys()):
-            weekly_defaults = DEFAULT_AI_FUNCTION_CONFIG["weekly_explanation"]
-            weekly_config = config_data["ai_config"][function]
             provider = str(
-                weekly_config.get("provider") or weekly_defaults["provider"]
+                config_data["ai_config"][function].get("provider") or ""
             ).strip().lower()
-            model = str(weekly_config.get("model") or weekly_defaults["model"]).strip()
-            if not is_chat_provider_supported(provider):
-                raise OpsWriteError(
-                    f"Provider '{provider}' is not supported by the weekly explanation chat runtime"
-                )
             provider_models = available_models_map.get(provider, [])
+            compatible_models = [
+                item
+                for item in provider_models
+                if function in (item.get("types") or [])
+            ]
             valid_model_names = [
                 str(item.get("name") or "")
-                for item in provider_models
-                if "chatbot" in (item.get("types") or [])
-                and str(item.get("name") or "")
+                for item in compatible_models
+                if str(item.get("name") or "")
             ]
             if valid_model_names and model not in valid_model_names:
                 raise OpsWriteError(
                     f"Model '{model}' is not compatible with function '{function}' "
                     f"for provider '{provider}'. Valid models: {valid_model_names}"
                 )
-            _validate_ai_routing_model("chat", provider, model)
+            config_data["ai_config"][function]["model"] = model
 
         if function == "catalog" and "system_prompt" in func_cfg:
             system_prompt = func_cfg.get("system_prompt")
@@ -1269,6 +1251,8 @@ def update_ai_models_config(data: dict[str, Any], *, db_path: str, bridge: Bridg
                     config_data["ai_config"][function]["summarization_prompt"] = str(summarization_prompt)
 
         if function == "weekly_explanation":
+            for deprecated_field in WEEKLY_EXPLANATION_ROUTE_FIELDS:
+                config_data["ai_config"][function].pop(deprecated_field, None)
             if "prompt" in func_cfg:
                 prompt = func_cfg.get("prompt")
                 if prompt in (None, ""):
@@ -1280,6 +1264,30 @@ def update_ai_models_config(data: dict[str, Any], *, db_path: str, bridge: Bridg
                 if not prompt_version:
                     raise OpsWriteError("weekly_explanation.prompt_version must be non-empty")
                 config_data["ai_config"][function]["prompt_version"] = prompt_version
+            if "timeout_seconds" in func_cfg:
+                try:
+                    timeout_seconds = float(func_cfg["timeout_seconds"])
+                except (TypeError, ValueError) as exc:
+                    raise OpsWriteError("weekly_explanation.timeout_seconds must be positive") from exc
+                if timeout_seconds <= 0:
+                    raise OpsWriteError("weekly_explanation.timeout_seconds must be positive")
+                config_data["ai_config"][function]["timeout_seconds"] = timeout_seconds
+            if "temperature" in func_cfg:
+                try:
+                    temperature = float(func_cfg["temperature"])
+                except (TypeError, ValueError) as exc:
+                    raise OpsWriteError("weekly_explanation.temperature must be between 0 and 2") from exc
+                if not 0 <= temperature <= 2:
+                    raise OpsWriteError("weekly_explanation.temperature must be between 0 and 2")
+                config_data["ai_config"][function]["temperature"] = temperature
+            if "max_tokens" in func_cfg:
+                try:
+                    max_tokens = int(func_cfg["max_tokens"])
+                except (TypeError, ValueError) as exc:
+                    raise OpsWriteError("weekly_explanation.max_tokens must be positive") from exc
+                if max_tokens <= 0:
+                    raise OpsWriteError("weekly_explanation.max_tokens must be positive")
+                config_data["ai_config"][function]["max_tokens"] = max_tokens
 
     _write_config_data(config_data)
     _notify_site_config_updated(bridge, config_data)
@@ -1323,12 +1331,16 @@ def update_ai_models_config(data: dict[str, Any], *, db_path: str, bridge: Bridg
                 "summarization_prompt": current_chatbot.get("summarization_prompt", ""),
             },
             "weekly_explanation": {
-                "provider": current_weekly.get("provider", weekly_defaults["provider"]),
-                "model": current_weekly.get("model", weekly_defaults["model"]),
                 "prompt_version": current_weekly.get(
                     "prompt_version", weekly_defaults["prompt_version"]
                 ),
                 "prompt": current_weekly.get("prompt", weekly_defaults["prompt"]),
+                "timeout_seconds": current_weekly.get(
+                    "timeout_seconds", weekly_defaults["timeout_seconds"]
+                ),
+                "temperature": current_weekly.get("temperature", weekly_defaults["temperature"]),
+                "max_tokens": current_weekly.get("max_tokens", weekly_defaults["max_tokens"]),
+                "routing_source": "chatbot",
             },
             "ocr": {
                 "provider": current_ocr.get("provider", "local"),

@@ -6,7 +6,7 @@ import time
 from datetime import datetime, timezone
 from typing import Any, Mapping, Protocol
 
-from ai_actuarial.ai_runtime import get_ai_function_section, resolve_ai_function_runtime
+from ai_actuarial.ai_runtime import AIFunctionRuntime, resolve_ai_function_runtime
 from ai_actuarial.chatbot.config import ChatbotConfig
 from ai_actuarial.chatbot.llm import LLMClient
 from ai_actuarial.storage import Storage
@@ -37,8 +37,9 @@ class WeeklyExplanationGenerator(Protocol):
 class ChatRuntimeWeeklyExplanationGenerator:
     """Small adapter over the existing chat runtime and credential resolver."""
 
-    def __init__(self, storage: Storage) -> None:
+    def __init__(self, storage: Storage, *, runtime: AIFunctionRuntime | None = None) -> None:
         self._storage = storage
+        self._runtime = runtime
 
     def generate(
         self,
@@ -46,9 +47,8 @@ class ChatRuntimeWeeklyExplanationGenerator:
         *,
         timeout_seconds: float,
     ) -> str:
-        runtime = resolve_ai_function_runtime(
-            "weekly_explanation",
-            storage=self._storage,
+        runtime = self._runtime or resolve_ai_function_runtime(
+            "weekly_explanation", storage=self._storage
         )
         if not runtime.configured:
             raise RuntimeError(
@@ -125,6 +125,7 @@ def _build_generation_input(
     snapshot: Mapping[str, Any],
     raw_material: list[dict[str, Any]],
     config: Mapping[str, Any],
+    effective_credential_id: str,
 ) -> tuple[list[dict[str, str]], str, dict[str, Any]]:
     normalized_material: list[dict[str, Any]] = []
     material_blocks: list[str] = []
@@ -169,6 +170,7 @@ def _build_generation_input(
         "generation": {
             "provider": str(config.get("provider") or ""),
             "model": str(config.get("model") or ""),
+            "credential_id": effective_credential_id,
             "prompt_version": prompt_version,
             "prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
             "temperature": _float_setting(config.get("temperature"), default=0.0),
@@ -260,7 +262,11 @@ def generate_weekly_explanation(
         )
         if snapshot is None:
             raise WeeklySnapshotNotFoundError(normalized_snapshot_id)
-        config = get_ai_function_section("weekly_explanation")
+        runtime = resolve_ai_function_runtime("weekly_explanation", storage=storage)
+        config = runtime.raw_config
+        effective_credential_id = (
+            runtime.stable_credential_id or runtime.credential_id or ""
+        )
         raw_material = storage.list_weekly_snapshot_explanation_material(
             snapshot_id=normalized_snapshot_id,
             limit=MAX_MATERIAL_FILES,
@@ -269,7 +275,9 @@ def generate_weekly_explanation(
             snapshot=snapshot,
             raw_material=raw_material,
             config=config,
+            effective_credential_id=effective_credential_id,
         )
+        coverage["effective_credential_id"] = effective_credential_id
         generated_at = _utc_now()
         timeout_seconds = max(
             0.1,
@@ -279,8 +287,8 @@ def generate_weekly_explanation(
         attempt = {
             "snapshot_id": normalized_snapshot_id,
             "input_fingerprint": fingerprint,
-            "provider": str(config.get("provider") or ""),
-            "model": str(config.get("model") or ""),
+            "provider": runtime.provider,
+            "model": runtime.model,
             "prompt_version": str(config.get("prompt_version") or ""),
             "generated_at": generated_at,
             "coverage": coverage,
@@ -306,7 +314,9 @@ def generate_weekly_explanation(
             else:
                 raise RuntimeError("Weekly explanation generation is still in progress")
 
-        active_generator = generator or ChatRuntimeWeeklyExplanationGenerator(storage)
+        active_generator = generator or ChatRuntimeWeeklyExplanationGenerator(
+            storage, runtime=runtime
+        )
         try:
             raw_output = active_generator.generate(
                 messages,
