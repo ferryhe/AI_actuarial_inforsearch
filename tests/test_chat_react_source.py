@@ -133,7 +133,9 @@ def test_chat_document_comparison_limits_selection_and_shows_truncation_notice()
 def test_chat_citation_links_use_react_file_routes():
     src = read_chat_sources()
 
-    assert 'import { buildFileDetailPath, buildFilePreviewPath } from "@/lib/navigation";' in src
+    assert "buildFileDetailPath," in src
+    assert "buildFilePreviewPath," in src
+    assert '} from "@/lib/navigation";' in src
     assert "normalizeFileRouteHref" in src
     assert "buildFileDetailPath(fileUrl, \"/chat\")" in src
     assert "buildFilePreviewPath(fileUrl, \"/chat\")" in src
@@ -166,28 +168,28 @@ def test_chat_supports_agentic_rag_mode_and_endpoint_contract():
     assert "message: text" in src
     assert 'rag_mode: "agentic"' in src
     assert "kb_ids: [agenticKb.kb_id]" in src
-    assert "manifest_profile: agenticProfile" in src
-    assert "profile: agenticProfile" in src
-    assert "isAgenticKbReady" in src
+    assert "manifest_profile: agenticProfile" not in src
+    assert "profile: agenticProfile" not in src
+    assert "isChatKnowledgeBaseAvailable" in src
     assert "selectedKbs.length !== 1" in src
-    assert 't("chat.agentic_requires_ready_kb")' in src
+    assert 't("chat.agentic_requires_ready_kb")' not in src
     assert "ragMode === \"agentic\" && documentInputs.length === 0" in src
     assert 'if (ragMode === "agentic")' in src
     assert "prev.includes(id) ? [] : [id]" in src
-    assert "prev.filter((kbId) => isAgenticKbReady" in src
+    assert "prev.filter((kbId) => isChatKnowledgeBaseAvailable" in src
     assert 'data-testid={`rag-mode-option-${nextMode}`}' in src
     assert '<Sparkles className="h-3 w-3" />' in src
     assert '<Search className="h-3 w-3" />' in src
-    assert 't("chat.agentic_status_ready")' in src
-    assert 't("chat.agentic_status").replace("{status}", agenticStatus)' in src
+    assert 't("chat.agentic_status_ready")' not in src
+    assert 't("chat.agentic_status")' not in src
     assert '"Agentic ready"' not in src
     assert "`Agentic ${" not in src
     assert '"chat.rag_mode.standard": "Standard"' in i18n_src
     assert '"chat.rag_mode.agentic": "Agentic RAG"' in i18n_src
     assert '"chat.agentic_requires_kb": "Select a knowledge base before using Agentic RAG."' in i18n_src
-    assert '"chat.agentic_requires_ready_kb": "Select one knowledge base with a ready Agentic manifest."' in i18n_src
-    assert '"chat.agentic_status_ready": "Agentic ready"' in i18n_src
-    assert '"chat.agentic_status": "Agentic {status}"' in i18n_src
+    assert '"chat.agentic_requires_ready_kb"' not in i18n_src
+    assert '"chat.agentic_status_ready"' not in i18n_src
+    assert '"chat.agentic_status"' not in i18n_src
 
 
 def test_chat_agentic_kb_dropdown_labels_ready_data_sections_not_standard_chunks():
@@ -201,7 +203,7 @@ def test_chat_agentic_kb_dropdown_labels_ready_data_sections_not_standard_chunks
     assert '"chat.chunks_label"' in src
     assert "ragMode === \"agentic\"" in src
     assert "const resultCountLabel = getKbResultCountLabel(kb, ragMode, t)" in src
-    assert "const availabilityLabel = getKbAvailabilityLabel(kb, ragMode, t)" in src
+    assert "const availabilityLabel = getKbAvailabilityLabel(kb, t)" in src
     assert 't("chat.kb_status.needs_reindex")' in src
     assert 't("chat.kb_status.building")' in src
     assert 't("chat.kb_status.ready")' in src

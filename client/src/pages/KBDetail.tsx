@@ -22,6 +22,7 @@ import {
   X,
   Search,
   LinkIcon,
+  Sparkles,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -58,6 +59,9 @@ import type {
 import { useTranslation } from "@/components/Layout";
 import { ApiError, apiGet, apiPost, apiPut, apiDelete, formatApiErrorDetail } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
+import { isChatKnowledgeBaseAvailable } from "@/lib/chat-knowledge-bases";
+import { buildAskAiChatPath } from "@/lib/navigation";
+import { fetchKnowledgeBases as fetchChatKnowledgeBases } from "./chat/api";
 
 interface KBMeta {
   kb_id: string;
@@ -315,11 +319,13 @@ export default function KBDetail() {
   const { permissions } = useAuth();
   const canManageKnowledge = permissions.includes("config.write");
   const canRunKnowledgeTasks = permissions.includes("tasks.run");
+  const canAskAi = permissions.includes("chat.view") && permissions.includes("chat.query");
   const [, navigate] = useLocation();
   const [match, params] = useRoute("/knowledge/:kbId");
   const kbId = params?.kbId ? decodeURIComponent(params.kbId) : "";
 
   const [meta, setMeta] = useState<KBMeta | null>(null);
+  const [chatKbAvailable, setChatKbAvailable] = useState(false);
   const canBindFiles = canManageKnowledge && Boolean(meta?.chunk_profile_id);
   const [stats, setStats] = useState<KBStats | null>(null);
   const [files, setFiles] = useState<KBFile[]>([]);
@@ -776,6 +782,23 @@ export default function KBDetail() {
       .then((response) => setChunkProfiles(response.profiles || []))
       .catch(() => setChunkProfiles([]));
   }, [canManageKnowledge]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setChatKbAvailable(false);
+    if (!kbId || !canAskAi) return () => { cancelled = true; };
+    void fetchChatKnowledgeBases()
+      .then((knowledgeBases) => {
+        if (cancelled) return;
+        setChatKbAvailable(isChatKnowledgeBaseAvailable(
+          knowledgeBases.find((kb) => kb.kb_id === kbId),
+        ));
+      })
+      .catch(() => {
+        if (!cancelled) setChatKbAvailable(false);
+      });
+    return () => { cancelled = true; };
+  }, [canAskAi, kbId]);
 
   const effectiveManifest = selectEffectiveReadyDataManifest(
     kbId,
@@ -1321,6 +1344,8 @@ export default function KBDetail() {
     meta.index_embedding_provider || meta.embedding_provider,
     meta.index_embedding_model || meta.embedding_model,
   ].filter(Boolean).join(" / ");
+  const askAiAvailable = canAskAi && chatKbAvailable;
+  const askAiPath = buildAskAiChatPath(kbId);
 
   return (
     <div className="space-y-6">
@@ -1411,17 +1436,31 @@ export default function KBDetail() {
                 </>
               )}
             </div>
-            {canManageKnowledge && hasEdits && (
+            <div className="flex shrink-0 items-center gap-2">
               <button
-                onClick={handleSave}
-                disabled={saving}
-                className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50 shrink-0"
-                data-testid="button-save-kb"
+                type="button"
+                onClick={() => askAiAvailable && navigate(askAiPath)}
+                disabled={!askAiAvailable}
+                aria-label={askAiAvailable ? t("common.ask_ai") : t("common.ask_ai_unavailable")}
+                title={askAiAvailable ? t("common.ask_ai") : t("common.ask_ai_unavailable")}
+                className="flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-sm font-medium text-primary transition-colors hover:bg-primary/5 disabled:cursor-not-allowed disabled:text-muted-foreground disabled:opacity-60"
+                data-testid="button-ask-ai-kb-detail"
               >
-                {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-                {t("kb.save")}
+                <Sparkles className="w-4 h-4" />
+                {t("common.ask_ai")}
               </button>
-            )}
+              {canManageKnowledge && hasEdits && (
+                <button
+                  onClick={handleSave}
+                  disabled={saving}
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
+                  data-testid="button-save-kb"
+                >
+                  {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                  {t("kb.save")}
+                </button>
+              )}
+            </div>
           </div>
 
           <div className="flex flex-wrap items-center gap-3 mt-4 pt-4 border-t border-border text-xs text-muted-foreground">

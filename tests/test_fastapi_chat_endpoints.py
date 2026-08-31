@@ -1307,7 +1307,6 @@ def test_fastapi_chat_query_agentic_mode_persists_conversation_and_trace(tmp_pat
             "kb_ids": ["chat-kb-a"],
             "mode": "expert",
             "rag_mode": "agentic",
-            "manifest_profile": "regulation",
         },
     )
 
@@ -1376,7 +1375,6 @@ def test_fastapi_chat_hard_stale_agentic_request_falls_back_to_same_kb_standard_
             "kb_ids": ["chat-kb-a"],
             "mode": "expert",
             "rag_mode": "agentic",
-            "manifest_profile": "regulation",
         },
     )
 

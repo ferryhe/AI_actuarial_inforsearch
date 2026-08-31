@@ -23,7 +23,11 @@ import { cn } from "@/lib/utils";
 import { useTranslation } from "@/components/Layout";
 import { apiGet, apiPost, apiDelete, formatApiErrorDetail } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
+import { getAvailableChatKnowledgeBaseIds } from "@/lib/chat-knowledge-bases";
+import { buildAskAiChatPath } from "@/lib/navigation";
 import ConfirmDeleteModal from "@/components/ConfirmDeleteModal";
+import { fetchKnowledgeBases as fetchChatKnowledgeBases } from "./chat/api";
+import type { KnowledgeBase as ChatKnowledgeBase } from "./chat/types";
 import {
   isReadyDataAutomationBusy,
   mergeReadyDataKnowledgeList,
@@ -319,8 +323,10 @@ export default function Knowledge() {
   const { permissions } = useAuth();
   const canManageKnowledge = permissions.includes("config.write");
   const canRunKnowledgeTasks = permissions.includes("tasks.run");
+  const canAskAi = permissions.includes("chat.view") && permissions.includes("chat.query");
   const [, navigate] = useLocation();
   const [kbs, setKbs] = useState<KnowledgeBase[]>([]);
+  const [chatKnowledgeBases, setChatKnowledgeBases] = useState<ChatKnowledgeBase[]>([]);
   const [profiles, setProfiles] = useState<ChunkProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreateKB, setShowCreateKB] = useState(false);
@@ -395,8 +401,11 @@ export default function Knowledge() {
       apiGet<Record<string, unknown>>("/api/chunk/profiles").catch(() => null),
       apiGet<Record<string, unknown>>("/api/rag/categories/mapping").catch(() => null),
       apiGet<Record<string, unknown>>("/api/categories?mode=used").catch(() => null),
+      canAskAi
+        ? fetchChatKnowledgeBases().catch(() => [] as ChatKnowledgeBase[])
+        : Promise.resolve([] as ChatKnowledgeBase[]),
     ])
-      .then(([kbResp, profileResp, ragCategoriesResp, usedCategoriesResp]) => {
+      .then(([kbResp, profileResp, ragCategoriesResp, usedCategoriesResp, chatKbList]) => {
         const kbPayload = kbResp as {
           knowledge_bases?: KnowledgeBase[];
           current_embeddings?: CurrentEmbedding;
@@ -445,6 +454,7 @@ export default function Knowledge() {
           const usedCategories = normalizeCategoryNames((usedCategoriesResp as { categories?: unknown[] }).categories);
           setCategoryOptions(Array.from(new Set([...ragCategories, ...usedCategories])).sort((a, b) => a.localeCompare(b)));
         }
+        setChatKnowledgeBases(chatKbList);
       })
       .then(() => undefined);
     loadDataInFlight.current = request.finally(() => {
@@ -452,7 +462,7 @@ export default function Knowledge() {
       loadDataInFlight.current = null;
     });
     return loadDataInFlight.current;
-  }, [applyReadyDataListManifestEpisode]);
+  }, [applyReadyDataListManifestEpisode, canAskAi]);
 
   const readyDataListBusy = kbs.some((kb) => (
     isReadyDataAutomationBusy(kb.agentic_ready_manifest)
@@ -815,6 +825,7 @@ export default function Knowledge() {
   };
 
   const getKbId = (kb: KnowledgeBase) => kb.kb_id || kb.id;
+  const availableChatKnowledgeBaseIds = getAvailableChatKnowledgeBaseIds(chatKnowledgeBases);
 
   return (
     <div className="space-y-8">
@@ -1223,6 +1234,9 @@ export default function Knowledge() {
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {kbs.map((kb, i) => {
             const kbId = getKbId(kb);
+            const askAiAvailable = canAskAi
+              && availableChatKnowledgeBaseIds.has(kbId);
+            const askAiPath = kbId ? buildAskAiChatPath(kbId) : "";
             const needsReembed = kb.needs_reindex || kb.embedding_compatible === false;
             const status = kb.availability || kb.status;
             const manifest = kb.agentic_ready_manifest;
@@ -1406,6 +1420,19 @@ export default function Knowledge() {
                   >
                     <Eye className="w-3.5 h-3.5" />
                     {t("knowledge.view_detail")}
+                  </button>
+                  <div className="w-px bg-border" />
+                  <button
+                    type="button"
+                    onClick={() => askAiAvailable && navigate(askAiPath)}
+                    disabled={!askAiAvailable}
+                    aria-label={askAiAvailable ? t("common.ask_ai") : t("common.ask_ai_unavailable")}
+                    title={askAiAvailable ? t("common.ask_ai") : t("common.ask_ai_unavailable")}
+                    className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-medium text-primary hover:bg-primary/5 transition-colors disabled:cursor-not-allowed disabled:text-muted-foreground disabled:opacity-60"
+                    data-testid={`button-ask-ai-kb-${kbId}`}
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    {t("common.ask_ai")}
                   </button>
                   {canManageKnowledge && <div className="w-px bg-border" />}
                   {canManageKnowledge && (
