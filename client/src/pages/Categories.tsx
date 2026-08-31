@@ -76,7 +76,8 @@ export default function Categories() {
 
     Promise.all([
       apiGet<CategoriesResponse>("/api/categories?mode=used"),
-      apiGet<KnowledgeBasesResponse>("/api/rag/knowledge-bases").catch(() => ({})),
+      apiGet<KnowledgeBasesResponse>("/api/rag/knowledge-bases")
+        .catch((): KnowledgeBasesResponse => ({})),
       canAskAi
         ? fetchChatKnowledgeBases().catch(() => [] as ChatKnowledgeBase[])
         : Promise.resolve([] as ChatKnowledgeBase[]),
