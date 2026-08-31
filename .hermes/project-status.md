@@ -1,71 +1,67 @@
-# Project Status — Issue #274 Implementation
+# Project Status — Issue #285 Implementation
 
-- Updated: 2026-08-30
+- Updated: 2026-08-31 10:43 EDT
 - Repository: `AI_actuarial_inforsearch`
 - Checkout: `C:\Project\AI_actuarial_inforsearch`
-- Branch: `codex/issue-274-ask-ai` from `origin/main` at `1753f9800789`
-- Product commit: `6f0b48e2d65a` (`feat: add Ask AI knowledge deep links`)
-- Pull request: [#302](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/302)
-- State: implementation, local verification, publication, and the required delayed remote audit are complete. PR is open and intentionally unmerged.
+- Branch: `codex/issue-285-markdown-content`
+- Baseline: `origin/main@3a0bce6a195b3e947da97c2a0e9cd4c62b2d9ae7`
+- Issue: [#285](https://github.com/ferryhe/AI_actuarial_inforsearch/issues/285)
+- State: implementation, independent review fixes, verification, commit, push, and PR complete; PR remains open and unmerged
 
-## Startup and boundaries
+## Scope and boundaries
 
-- Read `AGENTS.md`, the prior project status, Issue #274, and the complete applicable `graphify`, `karpathy-guidelines`, and browser skill instructions.
-- Ran the required startup `git status --short --branch`, fetched latest `origin/main`, and created the fresh task branch `codex/issue-274-ask-ai` tracking that baseline.
-- Only this repository was read or written. Sibling repositories remained off-limits.
-- Pre-existing `graphify-out/` remains untracked and will not be committed.
+- Added a shared safe `MarkdownContent` frontend component.
+- Integrated it only into Assistant message bodies in `Chat.tsx` and Markdown view mode in `FileDetail.tsx`.
+- Kept User messages as plain text and left citations, retrieved blocks, and tool trace outside the Markdown pipeline.
+- Did not modify `NativeFileDetail.tsx`, `FilePreview.tsx`, sibling repositories, or unrelated product areas.
 
-## Implemented contract
+## Implementation
 
-- Added one canonical URL builder/parser for `/chat?kb_id=<encoded>&rag_mode=agentic`, rejecting blank, malformed, duplicate, extra, or unsupported parameters.
-- Added Chat initialization that waits for the authorized Chat KB list, accepts only an exact available KB, applies one target once, re-applies a different target, and never sends a message or creates a conversation during initialization.
-- Removed the Chat frontend Agentic Ready/manifest gate and stopped sending internal manifest profile fields. Agentic requests keep exactly one requested KB; the server continues to infer profile and silently fall back to Standard on that same KB.
-- Added bilingual, accessible Ask AI actions to Knowledge cards and KB Detail. They require both `chat.view` and `chat.query` and are enabled only when the exact KB is present and not explicitly unusable in `/api/chat/knowledge-bases`.
-- Added one fixed Ask AI action beside Browse Files on every Category card. It uses explicit `/api/rag/knowledge-bases` categories, ignores shared KBs, and enables only when exactly one dedicated KB exists and is Chat-available.
-- Preserved Issue #272 customer-safe API/RBAC boundaries and added no endpoint, schema, role, quota, or conversation behavior.
-
-## Files in scope
-
-- `.hermes/project-status.md`
-- `client/src/hooks/use-i18n.ts`
-- `client/src/lib/navigation.ts`
-- `client/src/lib/chat-knowledge-bases.ts`
-- `client/src/pages/Categories.tsx`
-- `client/src/pages/Chat.tsx`
-- `client/src/pages/KBDetail.tsx`
-- `client/src/pages/Knowledge.tsx`
-- `client/src/pages/chat/routeTarget.ts`
-- `tests/test_issue_274_ask_ai.py`
-- `tests/test_chat_react_source.py`
-- `tests/test_fastapi_chat_endpoints.py`
+- Added `react-markdown@10.1.0`, `remark-gfm@4.0.1`, and `remark-breaks@4.0.0`.
+- Added stable plugin/component mappings and memoized `MarkdownContent` plus `MessageBubble`.
+- Enabled GFM tables, task lists, strikethrough, autolinks, fenced/inline code, and natural line breaks.
+- Enabled `skipHtml`; Markdown images are disallowed; no `rehype-raw`, `highlight.js`, or uncontrolled prop spreading was added.
+- Links allow validated internal `/path` routes and absolute `http`/`https` URLs only. Invalid, dangerous, scheme-relative, malformed, credential-bearing, and non-link URLs render as text.
+- External links use `target="_blank"` and `rel="noopener noreferrer"`; internal links stay in the current tab.
+- Added bounded width, long-token wrapping, and local horizontal scrolling for tables and code blocks.
+- Removed the 109-line local `MarkdownRenderer` from `FileDetail.tsx`.
 
 ## Verification
 
-- `npm run build`: passed; Vite transformed 2,146 modules. The repository's existing large-chunk advisory remains non-blocking.
-- Focused Issue #274/frontend/RBAC/fallback pytest selection: `70 passed, 4 warnings`.
-- `python -m ruff check tests/test_issue_274_ask_ai.py tests/test_chat_react_source.py`: passed.
-- A broader Ruff invocation that included the full pre-existing `tests/test_fastapi_chat_endpoints.py` reported six unrelated existing E402/E731 findings outside the two payload lines changed for this Issue.
-- `git diff --check`: passed, with only Git line-ending conversion notices.
-- Browser smoke with a localhost mock API passed:
-  - Knowledge showed enabled Ask AI for a Chat-available KB without a manifest and native disabled state for `usable=false`.
-  - KB Detail showed the enabled Ask AI action.
-  - Category Regulation (one dedicated plus one shared KB) enabled; Multiple (two dedicated) and Unavailable disabled.
-  - Category click produced the exact canonical URL, Agentic mode, and exactly one selected KB.
-  - Changing the initialized mode back to Standard remained stable for the same route target.
-  - Captured request log contained zero `/api/chat/query` requests and zero conversation-creation POSTs.
+- TDD red phase: 4 expected failures before the component and wiring existed.
+- Focused/source/component suite: `38 passed` with 3 existing SWIG deprecation warnings.
+- Production build: passed; Vite transformed 2,403 modules.
+- Baseline bundle: CSS 67.56 kB / 11.35 kB gzip; JS 966.14 kB / 253.48 kB gzip.
+- Final bundle after review fixes: CSS 68.20 kB / 11.46 kB gzip; JS 1,125.94 kB / 302.18 kB gzip.
+- Browser smoke at 320/768/1024/1440 px: no page or bubble horizontal overflow; wide tables and long code scroll locally; long URLs/tokens wrap; User Markdown remains literal in the real Chat page.
+- `npm exec -- tsc --noEmit` is still blocked by pre-existing errors in `category-labels.ts`, `Categories.tsx`, `Dashboard.tsx`, `Database.tsx`, `Settings.tsx`, and scheduled-task components. No error referenced an Issue #285 file.
+
+## Review and PR state
+
+- PR: [#305](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/305)
+- Initial commit: `37acf87d64ded6e47651222bf5aa7528da217c85`
+- GitHub CI `python-smoke`: passed in 1m25s.
+- Fifteen-minute delayed review check: 0 Issue comments, 0 inline comments, 0 failed/pending checks.
+- Copilot could not review because its quota was exhausted; it provided no code finding.
+- User-requested independent subagent review found two valid P2 issues: dropped GFM table alignment and dropped ordered/task-list semantics.
+- Both findings were fixed by a strict alignment whitelist, preserving `<ol start>`, and removing bullets only for parser-generated GFM task lists.
+- Regression fixtures now assert right-aligned GFM columns, non-1 ordered-list starts, and task lists without duplicate bullets.
+- Focused tests and production build passed again after both fixes.
+- Follow-up commit: `94cd1af002e41a76fc4f825c6f53b29ea0292e37`; rerun GitHub CI `python-smoke` passed in 1m15s.
+- Final remote check: PR is open, clean, and mergeable, with 0 Issue comments, 0 inline comments, and no failed or pending checks.
 
 ## Working tree notes
 
-- `graphify-out/` is the only unrelated untracked path and remains excluded.
-- A temporary stash created solely to carry the prior project-status research note across branch creation still exists and is redundant after this status update.
+- Product changes are limited to the shared component/tests, Chat/FileDetail wiring, package manifests, and the focused source-test update.
+- Pre-existing untracked `diagrams/` and `graphify-out/` remain outside the product change and must not be staged.
+- `graphify-out/` also contains local graph-query memory generated during implementation.
 
-## Remote audit
+## Blockers or decisions needed
 
-- Reviewed PR checks, reviews, ordinary comments, and inline review comments about 15 minutes after PR creation.
-- Required `python-smoke` completed successfully in 1m14s; GitHub reports the PR as mergeable.
-- No ordinary or inline comments were present and no reviewer supplied a valid Issue #274 finding.
-- Copilot reported only that its review quota was exhausted. This is not a code finding and required no change.
+- No Issue #285 blocker remains.
+- The existing Vite large-chunk advisory remains non-blocking. No syntax-highlighting dependency was added.
+- The repository dependency audit reports 10 items; broad dependency remediation is outside this Issue.
 
 ## Recommended next action
 
-- Keep PR #302 open for user review. Merge only after explicit authorization.
+- Leave PR #305 open and unmerged until the user authorizes merge.

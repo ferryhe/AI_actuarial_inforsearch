@@ -28,11 +28,12 @@ def test_file_detail_ai_explain_passes_loaded_markdown_to_chat():
     assert "disabled={!canExplain}" in src
 
 
-def test_file_detail_renders_markdown_with_local_renderer():
+def test_file_detail_renders_markdown_with_shared_renderer():
     src = FILE_DETAIL_TSX.read_text(encoding="utf-8")
 
-    assert "function MarkdownRenderer" in src
-    assert "<MarkdownRenderer content={markdownContent} />" in src
+    assert 'import { MarkdownContent } from "@/components/MarkdownContent";' in src
+    assert "function MarkdownRenderer" not in src
+    assert "<MarkdownContent content={markdownContent}" in src
     assert '<pre className="whitespace-pre-wrap text-sm font-sans">{markdown?.markdown_content}</pre>' not in src
 
 
