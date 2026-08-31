@@ -33,6 +33,7 @@ import { useTaskOptions } from "@/hooks/use-task-options";
 import { useLatestRequestGuard } from "@/hooks/use-latest-request";
 import { useAuth } from "@/context/AuthContext";
 import ConfirmDeleteModal from "@/components/ConfirmDeleteModal";
+import { MarkdownContent } from "@/components/MarkdownContent";
 
 interface FileData {
   url: string;
@@ -312,117 +313,6 @@ function TaskStatusBadge({ status, t }: { status: TaskStatus; t: (k: string) => 
       {config.icon}{config.text}
     </span>
   );
-}
-
-function MarkdownRenderer({ content }: { content: string }) {
-  const renderInline = (text: string, keyPrefix: string): React.ReactNode[] => {
-    const nodes: React.ReactNode[] = [];
-    const pattern = /(\[([^\]]+)\]\((https?:\/\/[^)\s]+|\/[^)\s]+)\)|`([^`]+)`)/g;
-    let lastIndex = 0;
-    let match: RegExpExecArray | null;
-    while ((match = pattern.exec(text)) !== null) {
-      if (match.index > lastIndex) nodes.push(text.slice(lastIndex, match.index));
-      if (match[2] && match[3]) {
-        nodes.push(
-          <a key={`${keyPrefix}-link-${match.index}`} href={match[3]} target="_blank" rel="noreferrer" className="text-primary hover:underline">
-            {match[2]}
-          </a>
-        );
-      } else if (match[4]) {
-        nodes.push(<code key={`${keyPrefix}-code-${match.index}`} className="rounded bg-muted px-1 py-0.5 font-mono text-[0.9em]">{match[4]}</code>);
-      }
-      lastIndex = pattern.lastIndex;
-    }
-    if (lastIndex < text.length) nodes.push(text.slice(lastIndex));
-    return nodes;
-  };
-
-  const nodes: React.ReactNode[] = [];
-  const lines = content.split(/\r?\n/);
-  let paragraph: string[] = [];
-  let listItems: string[] = [];
-  let codeLines: string[] = [];
-  let inCode = false;
-
-  const flushParagraph = () => {
-    if (paragraph.length === 0) return;
-    const text = paragraph.join(" ");
-    nodes.push(<p key={`p-${nodes.length}`} className="leading-7">{renderInline(text, `p-${nodes.length}`)}</p>);
-    paragraph = [];
-  };
-
-  const flushList = () => {
-    if (listItems.length === 0) return;
-    nodes.push(
-      <ul key={`ul-${nodes.length}`} className="list-disc space-y-1 pl-5">
-        {listItems.map((item, index) => <li key={index}>{renderInline(item, `li-${nodes.length}-${index}`)}</li>)}
-      </ul>
-    );
-    listItems = [];
-  };
-
-  const flushCode = () => {
-    nodes.push(
-      <pre key={`code-${nodes.length}`} className="overflow-x-auto rounded-lg border border-border bg-muted/60 p-3 text-xs leading-relaxed">
-        <code>{codeLines.join("\n")}</code>
-      </pre>
-    );
-    codeLines = [];
-  };
-
-  lines.forEach((line) => {
-    const trimmed = line.trim();
-    if (trimmed.startsWith("```")) {
-      flushParagraph();
-      flushList();
-      if (inCode) {
-        flushCode();
-        inCode = false;
-      } else {
-        inCode = true;
-        codeLines = [];
-      }
-      return;
-    }
-    if (inCode) {
-      codeLines.push(line);
-      return;
-    }
-    if (!trimmed) {
-      flushParagraph();
-      flushList();
-      return;
-    }
-    const heading = /^(#{1,4})\s+(.+)$/.exec(trimmed);
-    if (heading) {
-      flushParagraph();
-      flushList();
-      const level = heading[1].length;
-      const className = level === 1 ? "text-lg font-semibold" : level === 2 ? "text-base font-semibold" : "text-sm font-semibold";
-      nodes.push(<div key={`h-${nodes.length}`} className={cn(className, "mt-3")}>{renderInline(heading[2], `h-${nodes.length}`)}</div>);
-      return;
-    }
-    const list = /^[-*]\s+(.+)$/.exec(trimmed);
-    if (list) {
-      flushParagraph();
-      listItems.push(list[1]);
-      return;
-    }
-    if (trimmed.startsWith(">")) {
-      flushParagraph();
-      flushList();
-      nodes.push(<blockquote key={`bq-${nodes.length}`} className="border-l-2 border-primary/40 pl-3 text-muted-foreground">{renderInline(trimmed.slice(1).trim(), `bq-${nodes.length}`)}</blockquote>);
-      return;
-    }
-    flushList();
-    paragraph.push(trimmed);
-  });
-
-  flushParagraph();
-  flushList();
-  if (inCode) flushCode();
-
-  return <div className="space-y-3 text-sm leading-relaxed">{nodes.length > 0 ? nodes : <p>{content}</p>}</div>;
 }
 
 export default function FileDetail() {
@@ -1122,9 +1012,9 @@ export default function FileDetail() {
             <div className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="w-3.5 h-3.5 animate-spin" />{t("fv.loading")}</div>
           ) : mdTab === "view" ? (
             hasMarkdown ? (
-              <div className={cn("prose prose-sm dark:prose-invert max-w-none overflow-y-auto transition-all", mdExpanded ? "max-h-none" : "max-h-[60vh]")}
+              <div className={cn("min-w-0 max-w-full overflow-y-auto transition-all", mdExpanded ? "max-h-none" : "max-h-[60vh]")}
                 data-testid="text-markdown-content">
-                <MarkdownRenderer content={markdownContent} />
+                <MarkdownContent content={markdownContent} />
               </div>
             ) : (
               <p className="text-xs text-muted-foreground italic">{t("fv.no_md")}</p>

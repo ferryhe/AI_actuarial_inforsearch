@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useCallback } from "react";
+import { memo, useEffect, useState, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useLocation } from "wouter";
 import { useHistoryState } from "wouter/use-browser-location";
@@ -23,6 +23,7 @@ import {
   Check,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { MarkdownContent } from "@/components/MarkdownContent";
 import { useTranslation } from "@/components/Layout";
 import { useAuth } from "@/context/AuthContext";
 import {
@@ -366,7 +367,7 @@ function AgenticTrace({ trace }: { trace: AgenticToolTraceEntry[] }) {
   );
 }
 
-function MessageBubble({ message, index }: { message: Message; index: number }) {
+const MessageBubble = memo(function MessageBubble({ message, index }: { message: Message; index: number }) {
   const isUser = message.role === "user";
   const retrievedBlocks = normalizeRetrievedBlocks(message.metadata?.retrieved_blocks);
   const toolTrace = normalizeAgenticToolTrace(message.metadata?.tool_trace);
@@ -375,7 +376,7 @@ function MessageBubble({ message, index }: { message: Message; index: number }) 
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.3, delay: Math.min(index * 0.05, 0.3) }}
-      className={cn("flex gap-3 max-w-3xl", isUser ? "ml-auto flex-row-reverse" : "")}
+      className={cn("flex min-w-0 max-w-3xl gap-3", isUser ? "ml-auto flex-row-reverse" : "")}
       data-testid={`message-${index}`}
     >
       <div
@@ -388,16 +389,16 @@ function MessageBubble({ message, index }: { message: Message; index: number }) 
       >
         {isUser ? <User className="w-4 h-4" /> : <Bot className="w-4 h-4" />}
       </div>
-      <div className={cn("flex flex-col gap-2", isUser ? "items-end" : "items-start")}>
+      <div className={cn("flex min-w-0 max-w-full flex-col gap-2", isUser ? "items-end" : "items-start")}>
         <div
           className={cn(
-            "rounded-2xl px-4 py-2.5 text-sm leading-relaxed whitespace-pre-wrap",
+            "min-w-0 max-w-full rounded-2xl px-4 py-2.5 text-sm leading-relaxed",
             isUser
-              ? "bg-primary text-primary-foreground rounded-br-md"
+              ? "whitespace-pre-wrap break-words bg-primary text-primary-foreground rounded-br-md [overflow-wrap:anywhere]"
               : "bg-card border border-border rounded-bl-md"
           )}
         >
-          {message.content}
+          {isUser ? message.content : <MarkdownContent content={message.content} />}
         </div>
         {!isUser && message.citations && message.citations.length > 0 && (
           <div className="flex flex-wrap gap-2 mt-1">
@@ -411,7 +412,7 @@ function MessageBubble({ message, index }: { message: Message; index: number }) 
       </div>
     </motion.div>
   );
-}
+});
 
 type SidebarTab = "conversations" | "documents";
 
