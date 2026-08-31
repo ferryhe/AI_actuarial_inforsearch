@@ -1391,6 +1391,35 @@ def test_fastapi_chat_hard_stale_agentic_request_falls_back_to_same_kb_standard_
     assert response.json()["data"]["citations"][0]["kb_id"] == "chat-kb-a"
 
 
+def test_fastapi_chat_agentic_request_without_ready_manifest_falls_back_to_same_kb_standard_rag(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    client, _app, _seed = _build_test_client(tmp_path, monkeypatch)
+    _install_guest_chat_fakes(monkeypatch)
+
+    response = client.post(
+        "/api/chat/query",
+        json={
+            "message": "Summarize this knowledge base.",
+            "kb_ids": ["chat-kb-b"],
+            "mode": "expert",
+            "rag_mode": "agentic",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    metadata = data["metadata"]
+    assert metadata["requested_rag_mode"] == "agentic"
+    assert metadata["effective_rag_mode"] == "standard"
+    assert metadata["rag_mode"] == "standard"
+    assert metadata["fallback_reason"] == "agentic_unavailable"
+    assert metadata["fallback_kb_id"] == "chat-kb-b"
+    assert metadata["fallback_membership_filter_applied"] is False
+    assert data["citations"][0]["kb_id"] == "chat-kb-b"
+
+
 def test_fastapi_chat_hard_fallback_filters_removed_and_unscoped_chunks(
     tmp_path: Path,
     monkeypatch,
