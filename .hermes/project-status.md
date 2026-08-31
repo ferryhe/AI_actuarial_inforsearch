@@ -1,12 +1,12 @@
 # Project Status — Issue #285 Implementation
 
-- Updated: 2026-08-31 10:16 EDT
+- Updated: 2026-08-31 10:39 EDT
 - Repository: `AI_actuarial_inforsearch`
 - Checkout: `C:\Project\AI_actuarial_inforsearch`
 - Branch: `codex/issue-285-markdown-content`
 - Baseline: `origin/main@3a0bce6a195b3e947da97c2a0e9cd4c62b2d9ae7`
 - Issue: [#285](https://github.com/ferryhe/AI_actuarial_inforsearch/issues/285)
-- State: scoped implementation and local verification complete; commit, push, and PR are next
+- State: implementation, independent review fixes, verification, commit, push, and PR complete; PR remains open and unmerged
 
 ## Scope and boundaries
 
@@ -32,9 +32,21 @@
 - Focused/source/component suite: `38 passed` with 3 existing SWIG deprecation warnings.
 - Production build: passed; Vite transformed 2,403 modules.
 - Baseline bundle: CSS 67.56 kB / 11.35 kB gzip; JS 966.14 kB / 253.48 kB gzip.
-- Final bundle: CSS 68.13 kB / 11.44 kB gzip; JS 1,125.54 kB / 302.03 kB gzip.
+- Final bundle after review fixes: CSS 68.20 kB / 11.46 kB gzip; JS 1,125.94 kB / 302.18 kB gzip.
 - Browser smoke at 320/768/1024/1440 px: no page or bubble horizontal overflow; wide tables and long code scroll locally; long URLs/tokens wrap; User Markdown remains literal in the real Chat page.
 - `npm exec -- tsc --noEmit` is still blocked by pre-existing errors in `category-labels.ts`, `Categories.tsx`, `Dashboard.tsx`, `Database.tsx`, `Settings.tsx`, and scheduled-task components. No error referenced an Issue #285 file.
+
+## Review and PR state
+
+- PR: [#305](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/305)
+- Initial commit: `37acf87d64ded6e47651222bf5aa7528da217c85`
+- GitHub CI `python-smoke`: passed in 1m25s.
+- Fifteen-minute delayed review check: 0 Issue comments, 0 inline comments, 0 failed/pending checks.
+- Copilot could not review because its quota was exhausted; it provided no code finding.
+- User-requested independent subagent review found two valid P2 issues: dropped GFM table alignment and dropped ordered/task-list semantics.
+- Both findings were fixed by a strict alignment whitelist, preserving `<ol start>`, and removing bullets only for parser-generated GFM task lists.
+- Regression fixtures now assert right-aligned GFM columns, non-1 ordered-list starts, and task lists without duplicate bullets.
+- Focused tests and production build passed again after both fixes.
 
 ## Working tree notes
 
@@ -50,4 +62,4 @@
 
 ## Recommended next action
 
-- Commit the scoped files, push the branch, create the Issue #285 PR, then check required checks and remote/Copilot review after the project-mandated delay.
+- Commit and push the two confirmed review fixes plus this status update, confirm the rerun CI state, then leave PR #305 open for user merge direction.

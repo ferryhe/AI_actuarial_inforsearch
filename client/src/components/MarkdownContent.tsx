@@ -1,4 +1,4 @@
-import { memo, type ReactNode } from "react";
+import { memo, type CSSProperties, type ReactNode } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
@@ -55,6 +55,17 @@ function MarkdownLink({ href, children }: { href?: string; children?: ReactNode 
   );
 }
 
+function hasGeneratedClass(className: string | undefined, expected: string): boolean {
+  return className?.split(/\s+/u).includes(expected) ?? false;
+}
+
+function getTableAlignmentClass(style: CSSProperties | undefined): string | undefined {
+  if (style?.textAlign === "left") return "text-left";
+  if (style?.textAlign === "center") return "text-center";
+  if (style?.textAlign === "right") return "text-right";
+  return undefined;
+}
+
 const MARKDOWN_COMPONENTS: Components = {
   a: ({ href, children }) => <MarkdownLink href={href}>{children}</MarkdownLink>,
   h1: ({ children }) => <h1 className="mb-2 mt-4 text-xl font-semibold first:mt-0">{children}</h1>,
@@ -64,9 +75,14 @@ const MARKDOWN_COMPONENTS: Components = {
   h5: ({ children }) => <h5 className="mb-2 mt-3 text-sm font-medium first:mt-0">{children}</h5>,
   h6: ({ children }) => <h6 className="mb-2 mt-3 text-xs font-medium uppercase first:mt-0">{children}</h6>,
   p: ({ children }) => <p className="my-2 leading-relaxed first:mt-0 last:mb-0">{children}</p>,
-  ul: ({ children }) => <ul className="my-2 list-disc space-y-1 pl-5">{children}</ul>,
-  ol: ({ children }) => <ol className="my-2 list-decimal space-y-1 pl-5">{children}</ol>,
-  li: ({ children }) => <li className="pl-0.5">{children}</li>,
+  ul: ({ children, className }) => {
+    const isTaskList = hasGeneratedClass(className, "contains-task-list");
+    return <ul className={cn("my-2 space-y-1", isTaskList ? "list-none pl-0" : "list-disc pl-5")}>{children}</ul>;
+  },
+  ol: ({ children, start }) => <ol start={start} className="my-2 list-decimal space-y-1 pl-5">{children}</ol>,
+  li: ({ children, className }) => (
+    <li className={hasGeneratedClass(className, "task-list-item") ? "list-none pl-0" : "pl-0.5"}>{children}</li>
+  ),
   blockquote: ({ children }) => (
     <blockquote className="my-3 border-l-2 border-primary/40 pl-3 text-muted-foreground">{children}</blockquote>
   ),
@@ -90,8 +106,12 @@ const MARKDOWN_COMPONENTS: Components = {
     </div>
   ),
   thead: ({ children }) => <thead className="bg-muted/70">{children}</thead>,
-  th: ({ children }) => <th className="border border-border px-3 py-2 font-semibold">{children}</th>,
-  td: ({ children }) => <td className="border border-border px-3 py-2 align-top">{children}</td>,
+  th: ({ children, style }) => (
+    <th className={cn("border border-border px-3 py-2 font-semibold", getTableAlignmentClass(style))}>{children}</th>
+  ),
+  td: ({ children, style }) => (
+    <td className={cn("border border-border px-3 py-2 align-top", getTableAlignmentClass(style))}>{children}</td>
+  ),
   hr: () => <hr className="my-4 border-border" />,
   input: ({ type, checked }) => type === "checkbox"
     ? <input type="checkbox" checked={Boolean(checked)} disabled className="mr-1.5 align-middle" />

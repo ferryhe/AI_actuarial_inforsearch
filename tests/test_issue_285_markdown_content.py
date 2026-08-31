@@ -22,6 +22,9 @@ def test_shared_markdown_component_has_fixed_safe_contract():
     assert 'import remarkBreaks from "remark-breaks"' in src
     assert "const REMARK_PLUGINS" in src
     assert "const MARKDOWN_COMPONENTS" in src
+    assert "getTableAlignmentClass" in src
+    assert 'start={start}' in src
+    assert 'hasGeneratedClass(className, "contains-task-list")' in src
     assert "skipHtml" in src
     assert "urlTransform={transformMarkdownUrl}" in src
     assert 'disallowedElements={DISALLOWED_ELEMENTS}' in src

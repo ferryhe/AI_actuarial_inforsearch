@@ -56,9 +56,17 @@ assert.match(gfm, /<del>removed<\/del>/);
 assert.match(gfm, /type="checkbox"/);
 assert.match(gfm, /<table/);
 assert.match(gfm, /overflow-x-auto/);
+assert.equal((gfm.match(/text-right/g) || []).length, 2);
 assert.match(gfm, /<code/);
 assert.match(gfm, /&lt;safe&gt;/);
 assert.doesNotMatch(gfm, /language-ts/);
+
+const ordered = render("3. third\n4. fourth");
+assert.match(ordered, /<ol start="3"/);
+
+const taskList = render("- [x] complete");
+assert.match(taskList, /list-none pl-0/);
+assert.doesNotMatch(taskList, /list-disc/);
 
 const links = render("[internal](/file-detail?url=report) [external](https://example.test/report)");
 assert.match(links, /<a href="\/file-detail\?url=report" class="[^"]+">internal<\/a>/);
