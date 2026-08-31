@@ -1,9 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "wouter";
-import { ArrowRight, Search, Tags } from "lucide-react";
+import { Link, useLocation } from "wouter";
+import { ArrowRight, Search, Sparkles, Tags } from "lucide-react";
 import { useTranslation } from "@/components/Layout";
 import { apiGet, formatApiErrorDetail } from "@/lib/api";
 import { categoryDisplayName } from "@/lib/category-labels";
+import { useAuth } from "@/context/AuthContext";
+import { findDedicatedCategoryKnowledgeBaseId } from "@/lib/chat-knowledge-bases";
+import { buildAskAiChatPath } from "@/lib/navigation";
+import { fetchKnowledgeBases as fetchChatKnowledgeBases } from "./chat/api";
+import type { KnowledgeBase as ChatKnowledgeBase } from "./chat/types";
 
 interface CategoryOption {
   name: string;
@@ -14,6 +19,17 @@ interface CategoryOption {
 
 interface CategoriesResponse {
   categories?: Array<string | CategoryOption>;
+}
+
+interface CategorizedKnowledgeBase {
+  id?: string;
+  kb_id?: string;
+  categories?: string[];
+}
+
+interface KnowledgeBasesResponse {
+  knowledge_bases?: CategorizedKnowledgeBase[];
+  data?: { knowledge_bases?: CategorizedKnowledgeBase[] };
 }
 
 function normalizeCategories(items: CategoriesResponse["categories"]): CategoryOption[] {
@@ -43,7 +59,12 @@ function databaseCategoryPath(category: string): string {
 
 export default function Categories() {
   const { t, lang } = useTranslation();
+  const { permissions } = useAuth();
+  const canAskAi = permissions.includes("chat.view") && permissions.includes("chat.query");
+  const [, navigate] = useLocation();
   const [categories, setCategories] = useState<CategoryOption[]>([]);
+  const [categorizedKnowledgeBases, setCategorizedKnowledgeBases] = useState<CategorizedKnowledgeBase[]>([]);
+  const [chatKnowledgeBases, setChatKnowledgeBases] = useState<ChatKnowledgeBase[]>([]);
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -53,10 +74,22 @@ export default function Categories() {
     setLoading(true);
     setError("");
 
-    apiGet<CategoriesResponse>("/api/categories?mode=used")
-      .then((result) => {
+    Promise.all([
+      apiGet<CategoriesResponse>("/api/categories?mode=used"),
+      apiGet<KnowledgeBasesResponse>("/api/rag/knowledge-bases").catch(() => ({})),
+      canAskAi
+        ? fetchChatKnowledgeBases().catch(() => [] as ChatKnowledgeBase[])
+        : Promise.resolve([] as ChatKnowledgeBase[]),
+    ])
+      .then(([result, knowledgeBaseResult, chatKbList]) => {
         if (!cancelled) {
           setCategories(normalizeCategories(result.categories));
+          setCategorizedKnowledgeBases(
+            knowledgeBaseResult.knowledge_bases
+              || knowledgeBaseResult.data?.knowledge_bases
+              || [],
+          );
+          setChatKnowledgeBases(chatKbList);
         }
       })
       .catch((err) => {
@@ -73,7 +106,7 @@ export default function Categories() {
     return () => {
       cancelled = true;
     };
-  }, [t]);
+  }, [canAskAi, t]);
 
   const visibleCategories = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -129,9 +162,17 @@ export default function Categories() {
         </div>
       ) : (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3" data-testid="categories-grid">
-          {visibleCategories.map((category) => (
-            <Link key={category.name} href={databaseCategoryPath(category.name)}>
-              <div className="group h-full cursor-pointer rounded-xl border border-border bg-card p-5 transition-all hover:border-primary/30 hover:shadow-md">
+          {visibleCategories.map((category) => {
+            const dedicatedKbId = canAskAi
+              ? findDedicatedCategoryKnowledgeBaseId(
+                category.name,
+                categorizedKnowledgeBases,
+                chatKnowledgeBases,
+              )
+              : null;
+            const askAiPath = dedicatedKbId ? buildAskAiChatPath(dedicatedKbId) : "";
+            return (
+              <div key={category.name} className="group h-full rounded-xl border border-border bg-card p-5 transition-all hover:border-primary/30 hover:shadow-md">
                 <div className="mb-4 flex items-start justify-between gap-3">
                   <div className="flex min-w-0 items-center gap-3">
                     <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
@@ -150,13 +191,31 @@ export default function Categories() {
                     </span>
                   )}
                 </div>
-                <div className="flex items-center justify-between text-xs font-medium text-primary">
-                  <span>{t("categories.open")}</span>
-                  <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
+                <div className="flex items-center justify-between gap-2 text-xs font-medium">
+                  <Link
+                    href={databaseCategoryPath(category.name)}
+                    className="inline-flex items-center gap-1.5 text-primary hover:underline"
+                    aria-label={t("categories.open")}
+                  >
+                    <span>{t("categories.open")}</span>
+                    <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
+                  </Link>
+                  <button
+                    type="button"
+                    onClick={() => dedicatedKbId && navigate(askAiPath)}
+                    disabled={!dedicatedKbId}
+                    aria-label={dedicatedKbId ? t("common.ask_ai") : t("categories.ask_ai_unavailable")}
+                    title={dedicatedKbId ? t("common.ask_ai") : t("categories.ask_ai_unavailable")}
+                    className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-primary transition-colors hover:bg-primary/5 disabled:cursor-not-allowed disabled:text-muted-foreground disabled:opacity-60"
+                    data-testid={`button-ask-ai-category-${category.name}`}
+                  >
+                    <Sparkles className="h-3.5 w-3.5" />
+                    {t("common.ask_ai")}
+                  </button>
                 </div>
               </div>
-            </Link>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

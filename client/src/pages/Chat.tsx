@@ -25,7 +25,13 @@ import {
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/components/Layout";
 import { useAuth } from "@/context/AuthContext";
-import { buildFileDetailPath, buildFilePreviewPath } from "@/lib/navigation";
+import {
+  buildFileDetailPath,
+  buildFilePreviewPath,
+  parseAskAiChatTarget,
+  useRawSearch,
+} from "@/lib/navigation";
+import { isChatKnowledgeBaseAvailable } from "@/lib/chat-knowledge-bases";
 import {
   fetchAvailableDocuments,
   fetchDocumentCategories,
@@ -36,6 +42,7 @@ import {
 import { useChatSession } from "./chat/useChatSession";
 import { getChatDisplayName, getChatValidName } from "./chat/displayName";
 import { RetrievalIndicators } from "./chat/RetrievalIndicators";
+import { resolveAskAiRouteInitialization } from "./chat/routeTarget";
 import type {
   AgenticToolTraceEntry,
   AvailableDocument,
@@ -198,10 +205,6 @@ function normalizeRetrievedBlocks(value: unknown): RetrievedBlock[] {
   return [];
 }
 
-function isAgenticKbReady(kb: KnowledgeBase | undefined): boolean {
-  return String(kb?.agentic_ready_manifest?.status || "").trim().toLowerCase() === "ready";
-}
-
 type Translate = (key: string) => string;
 
 function formatCountLabel(t: Translate, key: string, count: number): string {
@@ -209,7 +212,7 @@ function formatCountLabel(t: Translate, key: string, count: number): string {
 }
 
 function getKbResultCountLabel(kb: KnowledgeBase, ragMode: RagMode, t: Translate): string {
-  if (ragMode === "agentic" && isAgenticKbReady(kb)) {
+  if (ragMode === "agentic") {
     const sectionCount = kb.agentic_ready_manifest?.section_count;
     if (sectionCount != null) {
       return formatCountLabel(t, "chat.sections_label", sectionCount);
@@ -221,14 +224,7 @@ function getKbResultCountLabel(kb: KnowledgeBase, ragMode: RagMode, t: Translate
   return "";
 }
 
-function getKbAvailabilityLabel(kb: KnowledgeBase, ragMode: RagMode, t: Translate): string {
-  const isAgenticReady = isAgenticKbReady(kb);
-  const agenticStatus = String(kb.agentic_ready_manifest?.status || "missing").trim() || "missing";
-  if (ragMode === "agentic") {
-    return isAgenticReady
-      ? t("chat.agentic_status_ready")
-      : t("chat.agentic_status").replace("{status}", agenticStatus);
-  }
+function getKbAvailabilityLabel(kb: KnowledgeBase, t: Translate): string {
   if (kb.availability === "needs_reindex") return t("chat.kb_status.needs_reindex");
   if (kb.availability === "building") return t("chat.kb_status.building");
   if (kb.availability === "ready") return t("chat.kb_status.ready");
@@ -422,6 +418,7 @@ type SidebarTab = "conversations" | "documents";
 export default function Chat() {
   const { t } = useTranslation();
   const [location, navigate] = useLocation();
+  const rawSearch = useRawSearch();
   const routeState = useHistoryState<ChatRouteState | null>();
   const { user, isLoggedIn, permissions, isLoading: authLoading } = useAuth();
   const canUseConversations = permissions.includes("chat.conversations");
@@ -449,6 +446,7 @@ export default function Chat() {
     getMode,
   });
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([]);
+  const [knowledgeBasesLoaded, setKnowledgeBasesLoaded] = useState(false);
   const [selectedKbs, setSelectedKbs] = useState<string[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
@@ -467,6 +465,7 @@ export default function Chat() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const routeExplainKeyRef = useRef<string | null>(null);
+  const processedAskAiTargetKeyRef = useRef<string | null>(null);
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -489,20 +488,35 @@ export default function Chat() {
   }, [authLoading, canUseConversations, loadConversations, resetSession]);
 
   async function loadKnowledgeBases() {
+    setKnowledgeBasesLoaded(false);
     try {
       const nextKnowledgeBases = await fetchKnowledgeBases();
       setKnowledgeBases(nextKnowledgeBases);
       setSelectedKbs((prev) => {
         const kept = prev.filter((kbId) => nextKnowledgeBases.some((kb) => (
-          kb.kb_id === kbId && (ragMode === "agentic" ? isAgenticKbReady(kb) : kb.usable !== false)
+          kb.kb_id === kbId && isChatKnowledgeBaseAvailable(kb)
         )));
         return ragMode === "agentic" ? kept.slice(0, 1) : kept;
       });
+      setKnowledgeBasesLoaded(true);
     } catch {
       setKnowledgeBases([]);
       setSelectedKbs([]);
     }
   }
+
+  useEffect(() => {
+    const initialization = resolveAskAiRouteInitialization({
+      target: parseAskAiChatTarget(rawSearch),
+      knowledgeBases,
+      knowledgeBasesLoaded,
+      processedTargetKey: processedAskAiTargetKeyRef.current,
+    });
+    processedAskAiTargetKeyRef.current = initialization.processedTargetKey;
+    if (!initialization.selection) return;
+    setRagMode(initialization.selection.ragMode);
+    setSelectedKbs(initialization.selection.selectedKbs);
+  }, [knowledgeBases, knowledgeBasesLoaded, rawSearch]);
 
 
   async function loadDocumentCategories() {
@@ -668,8 +682,8 @@ export default function Chat() {
       return false;
     }
     const selectedAgenticKb = shouldUseAgentic ? knowledgeBases.find((kb) => kb.kb_id === selectedKbs[0]) : undefined;
-    if (shouldUseAgentic && (selectedKbs.length !== 1 || !selectedAgenticKb || !isAgenticKbReady(selectedAgenticKb))) {
-      setErrorMsg(t("chat.agentic_requires_ready_kb"));
+    if (shouldUseAgentic && (selectedKbs.length !== 1 || !isChatKnowledgeBaseAvailable(selectedAgenticKb))) {
+      setErrorMsg(t("chat.agentic_requires_kb"));
       return false;
     }
 
@@ -702,19 +716,12 @@ export default function Chat() {
       if (shouldUseAgentic) {
         const activeMode = options?.modeOverride || mode;
         const agenticKb = selectedAgenticKb as KnowledgeBase;
-        const agenticProfile = agenticKb.agentic_ready_manifest?.profile || agenticKb.manifest_profile || agenticKb.profile;
         const res = await queryChat({
           conversation_id: activeConvId,
           message: text,
           rag_mode: "agentic",
           kb_ids: [agenticKb.kb_id],
           mode: activeMode,
-          ...(agenticProfile
-            ? {
-                manifest_profile: agenticProfile,
-                profile: agenticProfile,
-              }
-            : {}),
           limit: 10,
         });
         const responseText =
@@ -821,15 +828,11 @@ export default function Chat() {
 
   function toggleKb(id: string) {
     const target = knowledgeBases.find((kb) => kb.kb_id === id);
-    if (ragMode === "agentic") {
-      if (!isAgenticKbReady(target)) {
-        setErrorMsg(t("chat.agentic_requires_ready_kb"));
-        return;
-      }
-      setSelectedKbs((prev) => (prev.includes(id) ? [] : [id]));
+    if (!isChatKnowledgeBaseAvailable(target)) {
       return;
     }
-    if (target?.usable === false) {
+    if (ragMode === "agentic") {
+      setSelectedKbs((prev) => (prev.includes(id) ? [] : [id]));
       return;
     }
     setSelectedKbs((prev) =>
@@ -917,11 +920,9 @@ export default function Chat() {
                 ) : (
                   knowledgeBases.map((kb) => {
                     const isSelected = selectedKbs.includes(kb.kb_id);
-                    const isUsable = kb.usable !== false;
-                    const isAgenticReady = isAgenticKbReady(kb);
-                    const isSelectable = ragMode === "agentic" ? isAgenticReady : isUsable;
+                    const isSelectable = isChatKnowledgeBaseAvailable(kb);
                     const resultCountLabel = getKbResultCountLabel(kb, ragMode, t);
-                    const availabilityLabel = getKbAvailabilityLabel(kb, ragMode, t);
+                    const availabilityLabel = getKbAvailabilityLabel(kb, t);
                     return (
                       <button
                         key={kb.kb_id}
@@ -1324,7 +1325,7 @@ export default function Chat() {
                   onClick={() => {
                     setRagMode(nextMode);
                     if (nextMode === "agentic") {
-                      setSelectedKbs((prev) => prev.filter((kbId) => isAgenticKbReady(knowledgeBases.find((kb) => kb.kb_id === kbId))).slice(0, 1));
+                      setSelectedKbs((prev) => prev.filter((kbId) => isChatKnowledgeBaseAvailable(knowledgeBases.find((kb) => kb.kb_id === kbId))).slice(0, 1));
                     }
                     setShowKbDropdown(false);
                     setShowModeDropdown(false);
@@ -1378,11 +1379,9 @@ export default function Chat() {
                     ) : (
                       knowledgeBases.map((kb) => {
                         const isSelected = selectedKbs.includes(kb.kb_id);
-                        const isUsable = kb.usable !== false;
-                        const isAgenticReady = isAgenticKbReady(kb);
-                        const isSelectable = ragMode === "agentic" ? isAgenticReady : isUsable;
+                        const isSelectable = isChatKnowledgeBaseAvailable(kb);
                         const resultCountLabel = getKbResultCountLabel(kb, ragMode, t);
-                        const availabilityLabel = getKbAvailabilityLabel(kb, ragMode, t);
+                        const availabilityLabel = getKbAvailabilityLabel(kb, t);
                         return (
                         <button
                           key={kb.kb_id}
@@ -1418,9 +1417,9 @@ export default function Chat() {
                               {availabilityLabel && (
                                 <span className={cn(
                                   "shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-medium",
-                                  ((ragMode === "agentic" && isAgenticReady) || kb.availability === "ready") && "bg-emerald-500/10 text-emerald-600",
-                                  ((ragMode === "agentic" && !isAgenticReady) || kb.availability === "needs_reindex") && "bg-amber-500/10 text-amber-700",
-                                  kb.availability === "building" && ragMode !== "agentic" && "bg-slate-500/10 text-slate-600"
+                                  kb.availability === "ready" && "bg-emerald-500/10 text-emerald-600",
+                                  kb.availability === "needs_reindex" && "bg-amber-500/10 text-amber-700",
+                                  kb.availability === "building" && "bg-slate-500/10 text-slate-600"
                                 )}>
                                   {availabilityLabel}
                                 </span>
