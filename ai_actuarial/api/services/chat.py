@@ -885,12 +885,12 @@ def _selected_agentic_kb_id(kb_ids: Any) -> str:
     return selected[0]
 
 
-def _agentic_source_fallback(
+def _agentic_source_fallback_reason(
     storage: Storage,
     *,
     kb_id: str,
     requested_profile: str,
-) -> bool:
+) -> str | None:
     profile = requested_profile
     if not profile:
         row = storage._conn.execute(
@@ -899,11 +899,22 @@ def _agentic_source_fallback(
         ).fetchone()
         profile = _normalize_text(row[0] if row else "")
     profile = profile.lower() or "general"
+    publication_state = storage.get_agentic_ready_publication_state(
+        kb_id=kb_id,
+        profile=profile,
+    )
+    manifest = storage.get_agentic_ready_manifest(
+        kb_id=kb_id,
+        profile=profile,
+    )
+    serving_record = publication_state.get("active_publication") or manifest
+    if not serving_record or serving_record.get("status") not in {"ready", "active"}:
+        return "agentic_unavailable"
     source_state = storage.get_agentic_ready_source_state(
         kb_id=kb_id,
         profile=profile,
     )
-    return not bool(source_state["serving_allowed"])
+    return "hard_stale" if not bool(source_state["serving_allowed"]) else None
 
 
 def _filter_agentic_fallback_chunks(
@@ -1234,17 +1245,16 @@ def query_chat(*, db_path: str, request, auth: AuthContext, payload: dict[str, A
             payload.get("manifest_profile") or payload.get("profile")
         )
         if requested_rag_mode == "agentic" and agentic_kb_id:
-            must_fallback = _agentic_source_fallback(
+            fallback_reason = _agentic_source_fallback_reason(
                 storage,
                 kb_id=agentic_kb_id,
                 requested_profile=requested_profile,
             )
-            if must_fallback:
+            if fallback_reason:
                 rag_mode = "standard"
                 kb_ids = [agentic_kb_id]
-                fallback_reason = "hard_stale"
                 fallback_kb_id = agentic_kb_id
-                fallback_membership_filter_applied = True
+                fallback_membership_filter_applied = fallback_reason == "hard_stale"
 
         if conversation_id:
             conversation = conversation_manager.get_conversation(conversation_id)
@@ -1425,7 +1435,7 @@ def query_chat(*, db_path: str, request, auth: AuthContext, payload: dict[str, A
             try:
                 chunks = retriever.retrieve(message, normalized_kb_ids)
                 used_threshold = getattr(retriever, "last_effective_threshold", used_threshold)
-                if fallback_kb_id:
+                if fallback_membership_filter_applied and fallback_kb_id:
                     chunks, fallback_membership_filter_removed_count = (
                         _filter_agentic_fallback_chunks(
                             storage,
