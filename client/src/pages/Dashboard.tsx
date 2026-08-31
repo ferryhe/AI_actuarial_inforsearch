@@ -122,7 +122,7 @@ function QuickAction({
 
 function normalizeCategories(items: CategoriesResponse["categories"]): CategoryOption[] {
   return (items || [])
-    .map((item) => {
+    .map<CategoryOption | null>((item) => {
       if (typeof item === "string") {
         const name = item.trim();
         return name ? { name } : null;

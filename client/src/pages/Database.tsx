@@ -247,7 +247,7 @@ function setCachedMeta(sources: string[], categories: CategoryOption[]): void {
 
 function normalizeCategories(items: Array<string | CategoryOption> | undefined): CategoryOption[] {
   return (items || [])
-    .map((item) => {
+    .map<CategoryOption | null>((item) => {
       if (typeof item === "string") {
         const name = item.trim();
         return name ? { name } : null;

@@ -1,67 +1,56 @@
-# Project Status — Issue #285 Implementation
+# Project Status — Issue #311 Implementation
 
-- Updated: 2026-08-31 10:43 EDT
+- Updated: 2026-08-31 11:20 EDT
 - Repository: `AI_actuarial_inforsearch`
 - Checkout: `C:\Project\AI_actuarial_inforsearch`
-- Branch: `codex/issue-285-markdown-content`
-- Baseline: `origin/main@3a0bce6a195b3e947da97c2a0e9cd4c62b2d9ae7`
-- Issue: [#285](https://github.com/ferryhe/AI_actuarial_inforsearch/issues/285)
-- State: implementation, independent review fixes, verification, commit, push, and PR complete; PR remains open and unmerged
+- Branch: `codex/issue-311-typescript-diagnostics`
+- Baseline: `origin/main@c3c8044`
+- Issue: [#311](https://github.com/ferryhe/AI_actuarial_inforsearch/issues/311)
+- Commit: `33edff0` (`fix: clear frontend TypeScript diagnostics (#311)`)
+- PR: [#314](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/314)
+- State: implementation, local verification, independent review, and delayed remote review are complete; PR is open and mergeable
 
 ## Scope and boundaries
 
-- Added a shared safe `MarkdownContent` frontend component.
-- Integrated it only into Assistant message bodies in `Chat.tsx` and Markdown view mode in `FileDetail.tsx`.
-- Kept User messages as plain text and left citations, retrieved blocks, and tool trace outside the Markdown pipeline.
-- Did not modify `NativeFileDetail.tsx`, `FilePreview.tsx`, sibling repositories, or unrelated product areas.
+- Fixed only the 14 existing TypeScript diagnostics named in Issue #311.
+- Kept the three page-local category normalizers; no shared category refactor was introduced.
+- Did not change `ApiError.detail`, `formatApiErrorDetail`, `tsconfig.json`, existing npm scripts, dependencies, `package-lock.json`, CI, backend contracts, or Issue #285 files.
+- Sibling repositories and the existing untracked `diagrams/`, `graphify-out/`, and `.codex-worktrees/` content remain outside scope.
 
 ## Implementation
 
-- Added `react-markdown@10.1.0`, `remark-gfm@4.0.1`, and `remark-breaks@4.0.0`.
-- Added stable plugin/component mappings and memoized `MarkdownContent` plus `MessageBubble`.
-- Enabled GFM tables, task lists, strikethrough, autolinks, fenced/inline code, and natural line breaks.
-- Enabled `skipHtml`; Markdown images are disallowed; no `rehype-raw`, `highlight.js`, or uncontrolled prop spreading was added.
-- Links allow validated internal `/path` routes and absolute `http`/`https` URLs only. Invalid, dangerous, scheme-relative, malformed, credential-bearing, and non-link URLs render as text.
-- External links use `target="_blank"` and `rel="noopener noreferrer"`; internal links stay in the current tab.
-- Added bounded width, long-token wrapping, and local horizontal scrolling for tables and code blocks.
-- Removed the 109-line local `MarkdownRenderer` from `FileDetail.tsx`.
+- Added an explicit null/undefined guard before reading localized category labels.
+- Added `CategoryOption | null` map result annotations in Categories, Dashboard, and Database without changing runtime behavior.
+- Replaced two ES2021 `replaceAll` calls with ES2020-compatible global regular-expression replacement.
+- Reused the existing string-safe `formatApiErrorDetail` helper in both scheduled-task components while preserving translation fallbacks.
+- Added only `scripts.typecheck` to `package.json`; the lockfile is unchanged.
+- Added a pure category-label test and strengthened Settings/Tasks source regression tests.
 
 ## Verification
 
-- TDD red phase: 4 expected failures before the component and wiring existed.
-- Focused/source/component suite: `38 passed` with 3 existing SWIG deprecation warnings.
-- Production build: passed; Vite transformed 2,403 modules.
-- Baseline bundle: CSS 67.56 kB / 11.35 kB gzip; JS 966.14 kB / 253.48 kB gzip.
-- Final bundle after review fixes: CSS 68.20 kB / 11.46 kB gzip; JS 1,125.94 kB / 302.18 kB gzip.
-- Browser smoke at 320/768/1024/1440 px: no page or bubble horizontal overflow; wide tables and long code scroll locally; long URLs/tokens wrap; User Markdown remains literal in the real Chat page.
-- `npm exec -- tsc --noEmit` is still blocked by pre-existing errors in `category-labels.ts`, `Categories.tsx`, `Dashboard.tsx`, `Database.tsx`, `Settings.tsx`, and scheduled-task components. No error referenced an Issue #285 file.
-
-## Review and PR state
-
-- PR: [#305](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/305)
-- Initial commit: `37acf87d64ded6e47651222bf5aa7528da217c85`
-- GitHub CI `python-smoke`: passed in 1m25s.
-- Fifteen-minute delayed review check: 0 Issue comments, 0 inline comments, 0 failed/pending checks.
-- Copilot could not review because its quota was exhausted; it provided no code finding.
-- User-requested independent subagent review found two valid P2 issues: dropped GFM table alignment and dropped ordered/task-list semantics.
-- Both findings were fixed by a strict alignment whitelist, preserving `<ol start>`, and removing bullets only for parser-generated GFM task lists.
-- Regression fixtures now assert right-aligned GFM columns, non-1 ordered-list starts, and task lists without duplicate bullets.
-- Focused tests and production build passed again after both fixes.
-- Follow-up commit: `94cd1af002e41a76fc4f825c6f53b29ea0292e37`; rerun GitHub CI `python-smoke` passed in 1m15s.
-- Final remote check: PR is open, clean, and mergeable, with 0 Issue comments, 0 inline comments, and no failed or pending checks.
+- Baseline: `npm exec -- tsc --noEmit --pretty false` reproduced 14 diagnostics across 7 source files.
+- TDD red phase: the new category-label test passed; 3 expected source-test failures occurred with 31 related tests already passing.
+- `npm run typecheck`: passed with 0 diagnostics.
+- `npm exec -- tsx client/src/lib/category-labels.test.ts`: passed.
+- Focused frontend source suite: `46 passed` with the existing no-data-collected coverage warning.
+- `npm run build`: passed; Vite transformed 2,403 modules.
+- Final bundle: CSS 68.20 kB / 11.46 kB gzip; JS 1,125.81 kB / 302.15 kB gzip.
+- Independent read-only subagent review: no findings; all Issue #311 acceptance points and scope boundaries confirmed.
+- GitHub `python-smoke`: passed in 1m18s.
+- Delayed remote review: no ordinary comments or inline comments; Copilot could not review because its quota was exhausted and supplied no code finding.
 
 ## Working tree notes
 
-- Product changes are limited to the shared component/tests, Chat/FileDetail wiring, package manifests, and the focused source-test update.
-- Pre-existing untracked `diagrams/` and `graphify-out/` remain outside the product change and must not be staged.
-- `graphify-out/` also contains local graph-query memory generated during implementation.
+- Product/test/package changes are limited to the Issue #311 file boundary.
+- `.hermes/project-status.md` is updated as required by repository policy.
+- Existing untracked `diagrams/` and `graphify-out/` must not be staged.
 
 ## Blockers or decisions needed
 
-- No Issue #285 blocker remains.
-- The existing Vite large-chunk advisory remains non-blocking. No syntax-highlighting dependency was added.
-- The repository dependency audit reports 10 items; broad dependency remediation is outside this Issue.
+- No implementation blocker remains.
+- The existing Vite large-chunk advisory remains non-blocking and is outside Issue #311.
+- Copilot's review-quota message is non-blocking because an independent read-only review completed with no findings.
 
 ## Recommended next action
 
-- Leave PR #305 open and unmerged until the user authorizes merge.
+- Keep PR #314 open for user review or explicit merge authorization; do not merge it as part of the current development request.

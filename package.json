@@ -214,7 +214,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "npm run build"
+    "test": "npm run build",
+    "typecheck": "tsc --noEmit --pretty false"
   },
   "keywords": [],
   "author": "",
