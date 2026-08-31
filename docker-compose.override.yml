@@ -5,6 +5,8 @@
 #   export FASTAPI_SESSION_SECRET=<strong-random-key>
 #   export TOKEN_ENCRYPTION_KEY=<fernet-key>
 #   export CONFIG_WRITE_AUTH_TOKEN=<strong-random-token>
+#   export RUNTIME_CONFIG_DIR=/var/lib/aiinforsearch/config
+#   export CONFIG_FILENAME=sites.yaml  # optional; this is the default
 #   export FASTAPI_CORS_ORIGINS=https://<public-app-host>
 #   export VITE_API_BASE_URL=https://<public-app-host>/api
 #   export CADDY_APP_SITE_HOSTS=<public-app-host>[,www.<public-app-host>]
@@ -29,6 +31,7 @@ services:
       - CONTENT_SECURITY_POLICY
     volumes:
       - ai-data:/app/data:rw
+      - ${RUNTIME_CONFIG_DIR:?RUNTIME_CONFIG_DIR must point to the external production config directory}:/app/runtime-config:rw
       - /etc/localtime:/etc/localtime:ro
       - /etc/timezone:/etc/timezone:ro
     deploy:

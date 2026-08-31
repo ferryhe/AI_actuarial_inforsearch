@@ -1,3 +1,5 @@
+# Development/bootstrap template only. Production must set CONFIG_PATH to an
+# external writable copy created with `ai-actuarial config-bootstrap`.
 defaults:
   user_agent: 'AI-Actuarial-InfoSearch/0.1 (+contact: you@example.com)'
   max_pages: 200

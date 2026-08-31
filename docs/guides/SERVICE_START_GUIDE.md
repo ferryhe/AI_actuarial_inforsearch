@@ -105,6 +105,9 @@ Set production secrets before using the override:
 export FASTAPI_SESSION_SECRET=<strong-random-key>
 export CONFIG_WRITE_AUTH_TOKEN=<strong-random-token>
 export TOKEN_ENCRYPTION_KEY=<fernet-key>
+export CONFIG_PATH=/var/lib/aiinforsearch/config/sites.yaml
+export RUNTIME_CONFIG_DIR=/var/lib/aiinforsearch/config
+export CONFIG_FILENAME=sites.yaml
 export FASTAPI_CORS_ORIGINS=https://<public-app-host>
 export VITE_API_BASE_URL=https://<public-app-host>/api
 export CADDY_APP_SITE_HOSTS=<public-app-host>[,www.<public-app-host>]
@@ -131,12 +134,14 @@ RELOAD_CADDY=true CADDY_CONTAINER=ai-caddy APP_SERVICE_NAME=api bash scripts/dep
 
 - `FASTAPI_SESSION_SECRET`: required for session login.
 - `TOKEN_ENCRYPTION_KEY`: required for decrypting database-stored provider credentials.
+- `CONFIG_PATH`: authoritative external writable `sites.yaml`; required by native production processes, backups, and deployment tooling.
+- `RUNTIME_CONFIG_DIR` / `CONFIG_FILENAME`: mount the same host file into Compose at `/app/runtime-config/<filename>`.
 - `FASTAPI_CORS_ORIGINS`: comma-separated public frontend origins allowed to call the API.
 - `VITE_API_BASE_URL`: public API URL embedded into the frontend build.
 - `CADDY_APP_SITE_HOSTS`: public hostnames Caddy should serve for the main app.
 - `CADDY_CROSS_SITE_HOST` / `CADDY_CROSS_UPSTREAM`: optional secondary host and upstream target.
-- `features.require_auth` in `config/sites.yaml`: set to `true` to require authentication.
-- `FASTAPI_ENV`: optional deployment override. If unset, FastAPI uses `config/sites.yaml -> server.fastapi_env`.
+- `features.require_auth` in `CONFIG_PATH`: set to `true` to require authentication.
+- `FASTAPI_ENV`: optional deployment override. If unset, FastAPI uses `CONFIG_PATH -> server.fastapi_env`.
 - `BOOTSTRAP_ADMIN_TOKEN`: optional local admin bootstrap token.
 - Provider credentials: create them from Settings so they are stored encrypted in the DB.
 

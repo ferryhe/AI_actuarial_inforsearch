@@ -132,7 +132,7 @@ If `http://127.0.0.1:5173/` returns `404`, another Node/Vite process may be list
 
 There are four active configuration sources:
 
-- `config/sites.yaml`: non-secret runtime configuration, including sites, paths, AI routing, RAG, search, schedules, features, and web-listening materialized config.
+- `CONFIG_PATH`: the authoritative non-secret runtime configuration, including sites, paths, AI routing, RAG, search, schedules, features, and web-listening materialized config. The tracked `config/sites.yaml` is a development/bootstrap template; production uses an external writable file. See `docs/runtime-config.md`.
 - `config/markdown_conversion.yaml`: Markdown conversion tool order, format routing, paid-tool enablement, and tuning.
 - Encrypted database credentials: provider API keys and base URLs, managed from Settings.
 - `.env` / process environment: deployment secrets and explicit production overrides only.
@@ -148,9 +148,9 @@ Important variables:
 - `TRUST_PROXY`: set `true` only when direct API access is restricted to trusted reverse proxy traffic.
 - `CONFIG_WRITE_AUTH_TOKEN`: optional compatibility token. Leave unset unless intentionally requiring matching `X-Auth-Token`.
 
-Feature switches such as authentication, global logs, file deletion, rate limiting, CSRF protection, error-detail exposure, and security headers live in `config/sites.yaml -> features` and can be changed from Settings. Matching environment variables are deployment overrides and are shown as locked in Settings.
+Feature switches such as authentication, global logs, file deletion, rate limiting, CSRF protection, error-detail exposure, and security headers live in `CONFIG_PATH -> features` and can be changed from Settings. Matching environment variables are deployment overrides and are shown as locked in Settings.
 
-The canonical SQLite path is `config/sites.yaml -> paths.db`. `DB_PATH` is only a fallback when that YAML path is absent.
+The canonical SQLite path is `CONFIG_PATH -> paths.db`. `DB_PATH` is only a fallback when that YAML path is absent.
 
 ## Authentication and Permissions
 

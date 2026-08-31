@@ -28,6 +28,7 @@ class TestYAMLConfigLoader:
     
     def setup_method(self):
         """Set up test fixtures."""
+        self.original_config_path = os.environ.get("CONFIG_PATH")
         # Create a temporary config file
         self.temp_dir = tempfile.mkdtemp()
         self.config_path = Path(self.temp_dir) / "sites.yaml"
@@ -104,12 +105,18 @@ class TestYAMLConfigLoader:
         # Write sample config
         with open(self.config_path, 'w') as f:
             yaml.dump(self.sample_config, f)
+        os.environ["CONFIG_PATH"] = str(self.config_path)
+        invalidate_config_cache()
     
     def teardown_method(self):
         """Clean up test fixtures."""
         import shutil
         if Path(self.temp_dir).exists():
             shutil.rmtree(self.temp_dir)
+        if self.original_config_path is None:
+            os.environ.pop("CONFIG_PATH", None)
+        else:
+            os.environ["CONFIG_PATH"] = self.original_config_path
         # Invalidate cache after each test
         invalidate_config_cache()
     

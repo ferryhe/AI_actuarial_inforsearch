@@ -38,6 +38,7 @@ from ai_actuarial.ai_runtime import (
 )
 from ai_actuarial.shared_runtime import (
     append_task_log,
+    atomic_write_yaml,
     coerce_bool,
     get_categories_config_path,
     get_default_catalog_provider,
@@ -244,9 +245,7 @@ def _load_config_data() -> dict[str, Any]:
 
 
 def _write_config_data(config_data: dict[str, Any]) -> None:
-    config_path = get_sites_config_path()
-    with open(config_path, "w", encoding="utf-8") as f:
-        yaml.dump(config_data, f, sort_keys=False, allow_unicode=True)
+    atomic_write_yaml(get_sites_config_path(), config_data)
 
 
 def _notify_site_config_updated(bridge: BridgeState | None, config_data: dict[str, Any]) -> None:

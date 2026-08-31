@@ -27,9 +27,14 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from ai_actuarial.rag.defaults import (
+from ai_actuarial.rag.defaults import (  # noqa: E402
     get_embedding_batch_size_default,
     get_similarity_threshold_default,
+)
+from ai_actuarial.shared_runtime import (  # noqa: E402
+    atomic_write_yaml,
+    get_sites_config_path,
+    load_sites_config,
 )
 
 
@@ -242,14 +247,13 @@ def migrate(dry_run: bool = False, create_backup: bool = True) -> None:
     load_dotenv()
     
     # Determine sites.yaml path
-    sites_path = Path("config/sites.yaml")
+    sites_path = Path(get_sites_config_path())
     if not sites_path.exists():
         print(f"❌ Error: {sites_path} not found")
         sys.exit(1)
     
     # Load current sites.yaml
-    with open(sites_path, 'r', encoding='utf-8') as f:
-        config = yaml.safe_load(f) or {}
+    config = load_sites_config(sites_path)
     
     print("🔍 Analyzing current configuration...")
     print(f"   sites.yaml path: {sites_path.absolute()}")
@@ -261,7 +265,7 @@ def migrate(dry_run: bool = False, create_backup: bool = True) -> None:
     has_server = "server" in config
     has_database = "database" in config
     
-    print(f"   Existing sections:")
+    print("   Existing sections:")
     print(f"     - ai_config: {'✓' if has_ai_config else '✗'}")
     print(f"     - rag_config: {'✓' if has_rag_config else '✗'}")
     print(f"     - features: {'✓' if has_features else '✗'}")
@@ -330,15 +334,14 @@ def migrate(dry_run: bool = False, create_backup: bool = True) -> None:
     # Update configuration
     config.update(new_sections)
     
-    # Write back to sites.yaml
-    with open(sites_path, 'w', encoding='utf-8') as f:
-        yaml.dump(config, f, default_flow_style=False, allow_unicode=True, indent=2)
+    # Write back to the authoritative runtime config atomically.
+    atomic_write_yaml(sites_path, config)
     
-    print(f"\n✅ Migration complete!")
+    print("\n✅ Migration complete!")
     print(f"   Added {len(new_sections)} section(s) to {sites_path}")
     print()
     print("📝 Next steps:")
-    print("   1. Review the changes in config/sites.yaml")
+    print(f"   1. Review the changes in {sites_path}")
     print("   2. Update your .env file to remove non-sensitive configuration")
     print("   3. Use the new .env.example as a reference")
     print("   4. Restart the application to use the new configuration")

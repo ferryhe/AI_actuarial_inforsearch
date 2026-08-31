@@ -4,9 +4,9 @@ AI provider credentials use a three-part model:
 
 - Provider registry: built-in provider metadata and capability flags.
 - Credential instance: encrypted provider credentials stored in the `api_tokens` table.
-- Function binding: `config/sites.yaml -> ai_config` selects provider, model, and optional credential id.
+- Function binding: `CONFIG_PATH -> ai_config` selects provider, model, and optional credential id. The tracked `config/sites.yaml` is only the development/bootstrap template.
 
-Do not store provider API keys in `sites.yaml`. Keep `.env` for bootstrap/system values such as `TOKEN_ENCRYPTION_KEY`, `FASTAPI_SESSION_SECRET`, and optional temporary provider keys that can be imported into the database. The active SQLite path should come from `config/sites.yaml -> paths.db`; `DB_PATH` is only a fallback when that YAML path is absent.
+Do not store provider API keys in `sites.yaml`. Keep `.env` for bootstrap/system values such as `TOKEN_ENCRYPTION_KEY`, `FASTAPI_SESSION_SECRET`, and optional temporary provider keys that can be imported into the database. The active SQLite path should come from `CONFIG_PATH -> paths.db`; `DB_PATH` is only a fallback when that YAML path is absent.
 
 Search engine status, CLI search, and live model discovery prefer encrypted DB credentials. Environment provider keys remain supported as bootstrap/fallback values, but they should not be the long-term source of runtime secrets.
 

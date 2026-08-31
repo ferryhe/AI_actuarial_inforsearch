@@ -6,11 +6,12 @@ with backward compatibility for environment variables.
 """
 
 import os
-import yaml
 import logging
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 from functools import lru_cache
+
+from ai_actuarial.shared_runtime import get_sites_config_path, load_sites_config
 
 from ai_actuarial.rag.defaults import (
     get_embedding_batch_size_default,
@@ -68,25 +69,8 @@ def _safe_float(value: str, var_name: str) -> float:
 
 
 def _get_sites_config_path() -> Path:
-    """Get the path to sites.yaml configuration file."""
-    # Try multiple locations
-    explicit = os.getenv("CONFIG_PATH")
-    locations = []
-    if explicit:
-        locations.append(Path(explicit))
-
-    locations.extend([
-        Path("config/sites.yaml"),  # Development
-        Path("/app/config/sites.yaml"),  # Docker
-        Path(__file__).parent / "sites.yaml",  # Relative to this file
-    ])
-    
-    for path in locations:
-        if path.exists():
-            return path
-    
-    # Default to first location
-    return locations[0]
+    """Return the authoritative sites config path without fallback probing."""
+    return Path(get_sites_config_path())
 
 
 @lru_cache(maxsize=8)
@@ -112,18 +96,9 @@ def _load_yaml_config_cached(
         Dict containing the full configuration
     """
     config_path = Path(config_path_str)
-    
-    try:
-        with open(config_path, 'r', encoding='utf-8') as f:
-            config = yaml.safe_load(f)
-            logger.info(f"Loaded configuration from {config_path}")
-            return config or {}
-    except FileNotFoundError:
-        logger.warning(f"Configuration file not found: {config_path}")
-        return {}
-    except yaml.YAMLError as e:
-        logger.error(f"Error parsing YAML configuration: {e}")
-        return {}
+    config = load_sites_config(config_path, default={})
+    logger.info("Loaded configuration from %s", config_path)
+    return config
 
 
 def load_yaml_config() -> Dict[str, Any]:

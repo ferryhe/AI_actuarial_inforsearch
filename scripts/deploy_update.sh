@@ -16,6 +16,19 @@ RELEASE_DIR="${RELEASE_DIR:-/var/lib/aiinforsearch/releases}"
 CAPACITY_THRESHOLD="${CAPACITY_THRESHOLD:-80}"
 API_IMAGE="${API_IMAGE:-ai_actuarial_inforsearch-api:latest}"
 BUILD_SOURCE_URL="${BUILD_SOURCE_URL:-https://github.com/ferryhe/AI_actuarial_inforsearch}"
+CONFIG_PATH="${CONFIG_PATH:?Set CONFIG_PATH to the external production sites.yaml}"
+RUNTIME_CONFIG_DIR="${RUNTIME_CONFIG_DIR:-$(dirname "$CONFIG_PATH")}"
+CONFIG_FILENAME="${CONFIG_FILENAME:-$(basename "$CONFIG_PATH")}"
+
+if [[ ! -f "$CONFIG_PATH" ]]; then
+  echo "Authoritative production config does not exist: $CONFIG_PATH"
+  exit 1
+fi
+if [[ ! -r "$CONFIG_PATH" ]] || [[ ! -w "$CONFIG_PATH" ]]; then
+  echo "Authoritative production config must be readable and writable: $CONFIG_PATH"
+  exit 1
+fi
+export RUNTIME_CONFIG_DIR CONFIG_FILENAME
 
 exec 9>"$BACKUP_LOCK_FILE"
 if ! flock -n 9; then
@@ -82,7 +95,7 @@ trap restart_api_on_exit EXIT
 
 python3 scripts/production_recovery.py backup \
   --data-dir "$DATA_DIR" \
-  --config config/sites.yaml \
+  --config "$CONFIG_PATH" \
   --backup-root "$BACKUP_ROOT" \
   --include-data \
   --quiesced \
@@ -109,7 +122,7 @@ echo "[6/7] Write the release traceability record"
 mkdir -p "$RELEASE_DIR"
 python3 scripts/production_recovery.py release-record \
   --image "$API_IMAGE" \
-  --config config/sites.yaml \
+  --config "$CONFIG_PATH" \
   --db "$DATA_DIR/index.db" \
   --output "$RELEASE_DIR/$BUILD_GIT_SHA.json"
 
