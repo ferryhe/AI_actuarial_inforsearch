@@ -245,6 +245,13 @@ def migrate(dry_run: bool = False, create_backup: bool = True) -> None:
     """
     # Load environment variables
     load_dotenv()
+
+    explicit_config_path = os.getenv("CONFIG_PATH", "").strip()
+    if explicit_config_path and not dry_run:
+        raise RuntimeError(
+            "Refusing to modify an existing external CONFIG_PATH. "
+            "Use `ai-actuarial --config <path> config-bootstrap` to create it once."
+        )
     
     # Determine sites.yaml path
     sites_path = Path(get_sites_config_path())

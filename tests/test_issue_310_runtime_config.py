@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -178,6 +179,23 @@ def test_atomic_yaml_write_preserves_old_file_when_replace_fails(
     assert not list(target.parent.glob(f".{target.name}.*.tmp"))
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX ownership and mode contract")
+def test_atomic_yaml_write_preserves_existing_mode_and_owner(tmp_path: Path) -> None:
+    from ai_actuarial.shared_runtime import atomic_write_yaml
+
+    target = tmp_path / "sites.yaml"
+    _write_yaml(target, {"value": "old"})
+    target.chmod(0o640)
+    before = target.stat()
+
+    atomic_write_yaml(target, {"value": "new"})
+
+    after = target.stat()
+    assert after.st_mode & 0o777 == 0o640
+    assert after.st_uid == before.st_uid
+    assert after.st_gid == before.st_gid
+
+
 def test_bootstrap_is_create_once_and_refuses_to_overwrite(
     tmp_path: Path,
 ) -> None:
@@ -225,6 +243,67 @@ def test_config_bootstrap_cli_reports_creation_and_refuses_overwrite(
     error = json.loads(capsys.readouterr().out)
     assert error["success"] is False
     assert "already exists" in error["error"]
+
+
+def test_production_cli_rejects_implicit_tracked_config(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from ai_actuarial import cli
+
+    monkeypatch.delenv("CONFIG_PATH", raising=False)
+    monkeypatch.setenv("FASTAPI_ENV", "production")
+    monkeypatch.setattr(cli, "_load_dotenv", lambda _path: None)
+    monkeypatch.setattr(sys, "argv", ["ai-actuarial", "update"])
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main()
+
+    assert exc_info.value.code == 2
+    assert "must not point to the tracked" in capsys.readouterr().err
+
+
+def test_schema_status_does_not_require_sites_config(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from ai_actuarial import cli
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("CONFIG_PATH", raising=False)
+    monkeypatch.delenv("FASTAPI_ENV", raising=False)
+    monkeypatch.setattr(cli, "_load_dotenv", lambda _path: None)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["ai-actuarial", "schema", "status", "--db", str(tmp_path / "schema.db"), "--json"],
+    )
+
+    assert cli.main() == 0
+    assert json.loads(capsys.readouterr().out)["state"] == "missing"
+
+
+def test_legacy_env_migration_refuses_existing_external_config(tmp_path: Path) -> None:
+    target = tmp_path / "runtime" / "sites.yaml"
+    _write_yaml(target, {"operator_value": "preserve-me"})
+    before = target.read_bytes()
+    environment = os.environ.copy()
+    environment["CONFIG_PATH"] = str(target)
+    environment.pop("FASTAPI_ENV", None)
+
+    result = subprocess.run(
+        [sys.executable, "scripts/migrate_env_to_yaml.py", "--no-backup"],
+        cwd=Path(__file__).resolve().parents[1],
+        env=environment,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+
+    assert result.returncode == 1
+    assert "Refusing to modify an existing external CONFIG_PATH" in result.stdout
+    assert target.read_bytes() == before
 
 
 def test_external_runtime_config_survives_git_reset_checkout_and_clean(
@@ -356,6 +435,9 @@ def test_cli_and_production_tools_use_the_effective_config_path() -> None:
     assert 'CONFIG_PATH="${CONFIG_PATH:?' in full_backup
     assert 'CONFIG_PATH="${CONFIG_PATH:?' in deploy
     assert deploy.count('--config "$CONFIG_PATH"') == 2
+    assert 'expected_config_dir=$(dirname "$CONFIG_PATH")' in deploy
+    assert "RUNTIME_CONFIG_DIR must be the directory containing CONFIG_PATH" in deploy
+    assert "CONFIG_FILENAME must be the basename of CONFIG_PATH" in deploy
     assert "CONFIG_PATH=/app/runtime-config/${CONFIG_FILENAME:-sites.yaml}" in compose
     assert "${RUNTIME_CONFIG_DIR:-./config}:/app/runtime-config:rw" in compose
     assert "${RUNTIME_CONFIG_DIR:?" in production_compose

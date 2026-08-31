@@ -13,9 +13,11 @@ from typing import Any
 import httpx
 import pytest
 import yaml
+from cryptography.fernet import Fernet
 
 from ai_actuarial import cli
 from ai_actuarial.api.services import weekly_updates
+from ai_actuarial.services.token_encryption import TokenEncryption
 from ai_actuarial.sqlite_schema import (
     CURRENT_SQLITE_SCHEMA_VERSION,
     apply_schema,
@@ -818,6 +820,89 @@ def test_chat_route_change_is_used_by_the_next_weekly_run_and_audited_without_se
     assert first_audit["input_fingerprint"] != second_audit["input_fingerprint"]
     assert "openai-secret-never-persist" not in repr((first_audit, second_audit))
     assert "mistral-secret-never-persist" not in repr((first_audit, second_audit))
+
+
+def test_chat_credential_change_invalidates_weekly_replay(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from config.yaml_config import invalidate_config_cache
+
+    weekly_explanations = _weekly_explanations_module()
+    db_path, config_path, config = _write_config(tmp_path)
+    monkeypatch.setenv("CONFIG_PATH", str(config_path))
+    monkeypatch.setenv("TOKEN_ENCRYPTION_KEY", Fernet.generate_key().decode())
+    TokenEncryption._instance = None
+    storage = Storage(str(db_path))
+    try:
+        encryption = TokenEncryption()
+        storage.upsert_llm_provider(
+            provider="openai",
+            api_key_encrypted=encryption.encrypt("primary-secret"),
+            instance_id="primary",
+            is_default=True,
+        )
+        storage.upsert_llm_provider(
+            provider="openai",
+            api_key_encrypted=encryption.encrypt("backup-secret"),
+            instance_id="backup",
+            is_default=False,
+        )
+    finally:
+        storage.close()
+
+    config["ai_config"]["chatbot"]["credential_id"] = "openai:llm:instance:primary"
+    config_path.write_text(
+        yaml.safe_dump(config, sort_keys=False, allow_unicode=True), encoding="utf-8"
+    )
+    invalidate_config_cache()
+    _seed_files(db_path, count=1)
+    snapshot = _snapshot(db_path)
+    generator = FakeWeeklyExplanationGenerator(
+        [
+            '{"zh":"主凭据","en":"Primary credential"}',
+            '{"zh":"备用凭据","en":"Backup credential"}',
+        ]
+    )
+
+    try:
+        weekly_explanations.generate_weekly_explanation(
+            db_path=str(db_path), snapshot_id=snapshot["id"], generator=generator
+        )
+        storage = Storage(str(db_path))
+        try:
+            first_audit = storage.get_weekly_explanation(snapshot_id=snapshot["id"])
+        finally:
+            storage.close()
+
+        config["ai_config"]["chatbot"]["credential_id"] = (
+            "openai:llm:instance:backup"
+        )
+        config_path.write_text(
+            yaml.safe_dump(config, sort_keys=False, allow_unicode=True), encoding="utf-8"
+        )
+        invalidate_config_cache()
+        weekly_explanations.generate_weekly_explanation(
+            db_path=str(db_path), snapshot_id=snapshot["id"], generator=generator
+        )
+        storage = Storage(str(db_path))
+        try:
+            second_audit = storage.get_weekly_explanation(snapshot_id=snapshot["id"])
+        finally:
+            storage.close()
+    finally:
+        TokenEncryption._instance = None
+
+    assert len(generator.calls) == 2
+    assert first_audit["input_fingerprint"] != second_audit["input_fingerprint"]
+    assert first_audit["coverage"]["effective_credential_id"] == (
+        "openai:llm:instance:primary"
+    )
+    assert second_audit["coverage"]["effective_credential_id"] == (
+        "openai:llm:instance:backup"
+    )
+    assert "primary-secret" not in repr((first_audit, second_audit))
+    assert "backup-secret" not in repr((first_audit, second_audit))
 
 
 def test_typed_explanation_routes_redact_audit_and_gets_never_call_model(

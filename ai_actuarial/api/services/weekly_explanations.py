@@ -125,6 +125,7 @@ def _build_generation_input(
     snapshot: Mapping[str, Any],
     raw_material: list[dict[str, Any]],
     config: Mapping[str, Any],
+    effective_credential_id: str,
 ) -> tuple[list[dict[str, str]], str, dict[str, Any]]:
     normalized_material: list[dict[str, Any]] = []
     material_blocks: list[str] = []
@@ -169,6 +170,7 @@ def _build_generation_input(
         "generation": {
             "provider": str(config.get("provider") or ""),
             "model": str(config.get("model") or ""),
+            "credential_id": effective_credential_id,
             "prompt_version": prompt_version,
             "prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
             "temperature": _float_setting(config.get("temperature"), default=0.0),
@@ -262,6 +264,9 @@ def generate_weekly_explanation(
             raise WeeklySnapshotNotFoundError(normalized_snapshot_id)
         runtime = resolve_ai_function_runtime("weekly_explanation", storage=storage)
         config = runtime.raw_config
+        effective_credential_id = (
+            runtime.stable_credential_id or runtime.credential_id or ""
+        )
         raw_material = storage.list_weekly_snapshot_explanation_material(
             snapshot_id=normalized_snapshot_id,
             limit=MAX_MATERIAL_FILES,
@@ -270,10 +275,9 @@ def generate_weekly_explanation(
             snapshot=snapshot,
             raw_material=raw_material,
             config=config,
+            effective_credential_id=effective_credential_id,
         )
-        coverage["effective_credential_id"] = (
-            runtime.stable_credential_id or runtime.credential_id or ""
-        )
+        coverage["effective_credential_id"] = effective_credential_id
         generated_at = _utc_now()
         timeout_seconds = max(
             0.1,

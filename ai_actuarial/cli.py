@@ -13,8 +13,6 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
-import yaml
-
 from .crawler import Crawler, SiteConfig
 from .catalog import (
     CATALOG_VERSION,
@@ -36,6 +34,7 @@ from .shared_runtime import (
     bootstrap_sites_config,
     coerce_bool,
     get_sites_config_path,
+    load_sites_config,
 )
 from .ai_runtime import get_search_runtime_credentials
 from .storage import Storage
@@ -82,8 +81,7 @@ def _load_dotenv(path: str) -> None:
 
 
 def _load_config(path: str) -> dict:
-    with open(path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
+    return load_sites_config(path)
 
 
 def _site_configs(cfg: dict) -> list[SiteConfig]:
@@ -1476,7 +1474,10 @@ def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
     os.environ["CONFIG_PATH"] = str(args.config)
-    return args.func(args)
+    try:
+        return args.func(args)
+    except SitesConfigError as exc:
+        parser.error(str(exc))
 
 
 def _write_markdown(path: Path, rows: list[dict]) -> None:

@@ -17,6 +17,10 @@ python -m ai_actuarial --config "$CONFIG_PATH" config-bootstrap --json
 The bootstrap command creates the destination once. It fails if the destination
 already exists and never overwrites operator-managed values.
 
+The legacy `scripts/migrate_env_to_yaml.py` writer is development-only. It may
+preview an external file with `--dry-run`, but refuses to modify an explicit
+`CONFIG_PATH`; use the create-once bootstrap command for external state.
+
 ## Production
 
 Choose an absolute path outside the Git checkout, create it once from the
@@ -49,6 +53,11 @@ Inside the API container the same file is available as
 `/app/runtime-config/sites.yaml`. `CONFIG_PATH` is set to that container path by
 Compose. On the host, backup, deployment, and release-record commands use the
 host `CONFIG_PATH` value directly.
+
+The guarded deployment helper derives `RUNTIME_CONFIG_DIR` and
+`CONFIG_FILENAME` from the canonical host `CONFIG_PATH`. If either variable is
+pre-set to a different directory or filename, deployment stops before backup or
+container changes so the backup checksum cannot diverge from the mounted file.
 
 ## Backup and release contract
 

@@ -26,18 +26,29 @@
 - The two Issues are being published together in one PR/release batch, with
   separate commits for review clarity.
 - PR #316 is open: `https://github.com/ferryhe/AI_actuarial_inforsearch/pull/316`.
+- An independent subagent review found six acceptance-relevant gaps across two
+  passes. All six are fixed with regression coverage. The final independent
+  rereview found no remaining blocker and concluded the batch is releasable.
 
 ## Acceptance results
 
-- Combined backend acceptance: 139 tests passed across AI runtime, Weekly
+- Combined backend acceptance after review fixes: 143 tests passed and one
+  Windows-only skip across AI runtime, Weekly
   Explanation generation/scheduling, Settings read/write, FastAPI startup,
   YAML configuration, recovery tooling, diagnostics, external config, and
   scheduled collection.
-- #310 focused matrix: 30 tests passed, including explicit-path authority,
+- #310 focused matrix: 18 passed and one POSIX metadata test skipped on Windows,
+  including explicit-path authority,
   missing/invalid/unreadable/unwritable fail-closed behavior, atomic failure
   recovery, no-overwrite bootstrap, external Settings writes, restart reload,
   Git reset/checkout/clean isolation, and #315 inheritance through an external
   config.
+- The skipped POSIX permission/ownership preservation test passed separately in
+  a Python 3.11 Linux container.
+- Review regressions now cover credential-only Weekly replay invalidation,
+  production CLI template rejection, deployment path-consistency enforcement,
+  legacy migration refusal for external state, atomic mode/owner retention, and
+  config-independent schema diagnostics.
 - Ruff: passed for all touched Python implementation and test files.
 - CLI: root `--help` and `config-bootstrap --help` passed; the test suite also
   exercised JSON success and no-overwrite error output.
@@ -75,5 +86,5 @@
 
 ## Recommended next action
 
-- Wait about 15 minutes and evaluate PR #316 CI and remote review/Copilot
-  feedback before handing off #313.
+- Commit and push the review fixes, then confirm the refreshed PR #316 CI before
+  handing off #313.

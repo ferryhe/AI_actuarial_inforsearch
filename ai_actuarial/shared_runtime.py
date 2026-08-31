@@ -283,6 +283,7 @@ def atomic_write_yaml(
     """Durably write YAML in the target directory, then publish it atomically."""
     target = Path(path).expanduser().resolve()
     target.parent.mkdir(parents=True, exist_ok=True)
+    target_stat = target.stat() if overwrite and target.exists() else None
     fd, temporary_name = tempfile.mkstemp(
         prefix=f".{target.name}.", suffix=".tmp", dir=target.parent
     )
@@ -292,6 +293,13 @@ def atomic_write_yaml(
             yaml.safe_dump(data, handle, sort_keys=False, allow_unicode=True)
             handle.flush()
             os.fsync(handle.fileno())
+            if target_stat is not None:
+                if hasattr(os, "fchown"):
+                    os.fchown(handle.fileno(), target_stat.st_uid, target_stat.st_gid)
+                if hasattr(os, "fchmod"):
+                    os.fchmod(handle.fileno(), stat.S_IMODE(target_stat.st_mode))
+                handle.flush()
+                os.fsync(handle.fileno())
         if overwrite:
             os.replace(temporary, target)
         else:
