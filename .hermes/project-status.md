@@ -1,6 +1,6 @@
 # Project Status — Issue #285 Implementation
 
-- Updated: 2026-08-31 10:39 EDT
+- Updated: 2026-08-31 10:43 EDT
 - Repository: `AI_actuarial_inforsearch`
 - Checkout: `C:\Project\AI_actuarial_inforsearch`
 - Branch: `codex/issue-285-markdown-content`
@@ -47,6 +47,8 @@
 - Both findings were fixed by a strict alignment whitelist, preserving `<ol start>`, and removing bullets only for parser-generated GFM task lists.
 - Regression fixtures now assert right-aligned GFM columns, non-1 ordered-list starts, and task lists without duplicate bullets.
 - Focused tests and production build passed again after both fixes.
+- Follow-up commit: `94cd1af002e41a76fc4f825c6f53b29ea0292e37`; rerun GitHub CI `python-smoke` passed in 1m15s.
+- Final remote check: PR is open, clean, and mergeable, with 0 Issue comments, 0 inline comments, and no failed or pending checks.
 
 ## Working tree notes
 
@@ -62,4 +64,4 @@
 
 ## Recommended next action
 
-- Commit and push the two confirmed review fixes plus this status update, confirm the rerun CI state, then leave PR #305 open for user merge direction.
+- Leave PR #305 open and unmerged until the user authorizes merge.
