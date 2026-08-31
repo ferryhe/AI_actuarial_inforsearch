@@ -13,10 +13,8 @@ from typing import Any
 import httpx
 import pytest
 import yaml
-from fastapi.testclient import TestClient
 
 from ai_actuarial import cli
-from ai_actuarial.api.app import create_app
 from ai_actuarial.api.services import weekly_updates
 from ai_actuarial.sqlite_schema import (
     CURRENT_SQLITE_SCHEMA_VERSION,
@@ -71,9 +69,11 @@ def _write_config(tmp_path: Path, *, db_path: Path | None = None) -> tuple[Path,
         "sites": [],
         "scheduled_tasks": [],
         "ai_config": {
-            "weekly_explanation": {
+            "chatbot": {
                 "provider": "openai",
                 "model": "gpt-4o-mini",
+            },
+            "weekly_explanation": {
                 "prompt_version": "weekly-explanation-v1",
                 "prompt": "Return one strict JSON object with non-empty zh and en explanations.",
                 "timeout_seconds": 5,
@@ -757,6 +757,69 @@ def test_effective_prompt_change_invalidates_the_complete_fingerprint(
     assert first_audit["input_fingerprint"] != second_audit["input_fingerprint"]
 
 
+def test_chat_route_change_is_used_by_the_next_weekly_run_and_audited_without_secret(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from config.yaml_config import invalidate_config_cache
+
+    weekly_explanations = _weekly_explanations_module()
+    db_path, config_path, config = _write_config(tmp_path)
+    monkeypatch.setenv("CONFIG_PATH", str(config_path))
+    monkeypatch.setenv("OPENAI_API_KEY", "openai-secret-never-persist")
+    monkeypatch.setenv("MISTRAL_API_KEY", "mistral-secret-never-persist")
+    config["ai_config"]["chatbot"]["credential_id"] = "openai:llm:env"
+    config_path.write_text(
+        yaml.safe_dump(config, sort_keys=False, allow_unicode=True), encoding="utf-8"
+    )
+    invalidate_config_cache()
+    _seed_files(db_path, count=1)
+    snapshot = _snapshot(db_path)
+    generator = FakeWeeklyExplanationGenerator(
+        [
+            '{"zh":"第一条路由","en":"First route"}',
+            '{"zh":"第二条路由","en":"Second route"}',
+        ]
+    )
+
+    weekly_explanations.generate_weekly_explanation(
+        db_path=str(db_path), snapshot_id=snapshot["id"], generator=generator
+    )
+    storage = Storage(str(db_path))
+    try:
+        first_audit = storage.get_weekly_explanation(snapshot_id=snapshot["id"])
+    finally:
+        storage.close()
+
+    config["ai_config"]["chatbot"] = {
+        "provider": "mistral",
+        "model": "mistral-small-latest",
+        "credential_id": "mistral:llm:env",
+    }
+    config_path.write_text(
+        yaml.safe_dump(config, sort_keys=False, allow_unicode=True), encoding="utf-8"
+    )
+    invalidate_config_cache()
+    weekly_explanations.generate_weekly_explanation(
+        db_path=str(db_path), snapshot_id=snapshot["id"], generator=generator
+    )
+    storage = Storage(str(db_path))
+    try:
+        second_audit = storage.get_weekly_explanation(snapshot_id=snapshot["id"])
+    finally:
+        storage.close()
+
+    assert first_audit["provider"] == "openai"
+    assert first_audit["model"] == "gpt-4o-mini"
+    assert first_audit["coverage"]["effective_credential_id"] == "openai:llm:env"
+    assert second_audit["provider"] == "mistral"
+    assert second_audit["model"] == "mistral-small-latest"
+    assert second_audit["coverage"]["effective_credential_id"] == "mistral:llm:env"
+    assert first_audit["input_fingerprint"] != second_audit["input_fingerprint"]
+    assert "openai-secret-never-persist" not in repr((first_audit, second_audit))
+    assert "mistral-secret-never-persist" not in repr((first_audit, second_audit))
+
+
 def test_typed_explanation_routes_redact_audit_and_gets_never_call_model(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1024,22 +1087,36 @@ def test_failed_explanation_followup_never_fails_or_hides_the_snapshot_task(
     assert explanation["status"] == "failed"
 
 
-def test_ai_config_admin_roundtrip_validates_weekly_model_and_single_prompt(
+def test_ai_config_admin_roundtrip_keeps_weekly_policy_separate_from_chat_route(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _patch_available_models(monkeypatch)
     client, _app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
     headers = {"X-Auth-Token": seed["admin_token"]}
+    config_path = Path(os.environ["CONFIG_PATH"])
+    before = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    before_chatbot = before["ai_config"]["chatbot"]
+    before["ai_config"]["weekly_explanation"] = {
+        "provider": "mistral",
+        "model": "legacy-weekly-model",
+        "credential_id": "mistral:llm:instance:legacy",
+        "prompt_version": "weekly-explanation-v1",
+    }
+    config_path.write_text(
+        yaml.safe_dump(before, sort_keys=False, allow_unicode=True),
+        encoding="utf-8",
+    )
 
     response = client.post(
         "/api/config/ai-models",
         json={
             "weekly_explanation": {
-                "provider": "openai",
-                "model": "gpt-4o-mini",
                 "prompt_version": "weekly-explanation-admin-v2",
                 "prompt": "One bilingual structured prompt override",
+                "timeout_seconds": 45,
+                "temperature": 0.1,
+                "max_tokens": 900,
             }
         },
         headers=headers,
@@ -1047,31 +1124,34 @@ def test_ai_config_admin_roundtrip_validates_weekly_model_and_single_prompt(
     assert response.status_code == 200, response.text
     weekly = response.json()["current"]["weekly_explanation"]
     assert weekly == {
-        "provider": "openai",
-        "model": "gpt-4o-mini",
         "prompt_version": "weekly-explanation-admin-v2",
         "prompt": "One bilingual structured prompt override",
+        "timeout_seconds": 45,
+        "temperature": 0.1,
+        "max_tokens": 900,
+        "routing_source": "chatbot",
     }
     fetched = client.get("/api/config/ai-models", headers=headers)
     assert fetched.status_code == 200
     assert fetched.json()["current"]["weekly_explanation"] == weekly
 
-    written = yaml.safe_load(Path(os.environ["CONFIG_PATH"]).read_text(encoding="utf-8"))
+    written = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    assert written["ai_config"]["chatbot"] == before_chatbot
     assert written["ai_config"]["weekly_explanation"]["prompt"] == weekly["prompt"]
+    assert not {
+        "provider",
+        "model",
+        "credential_id",
+        "provider_credential_id",
+    } & written["ai_config"]["weekly_explanation"].keys()
     assert "prompt_zh" not in written["ai_config"]["weekly_explanation"]
     assert "prompt_en" not in written["ai_config"]["weekly_explanation"]
 
-    invalid = client.post(
-        "/api/config/ai-models",
-        json={"weekly_explanation": {"provider": "openai", "model": "not-a-chat-model"}},
-        headers=headers,
-    )
-    assert invalid.status_code == 400
-
     for invalid_change in (
-        {"provider": "anthropic"},
-        {"model": "claude-sonnet-4-6"},
-        {"provider": "anthropic", "model": "claude-sonnet-4-6"},
+        {"provider": "openai"},
+        {"model": "gpt-4o-mini"},
+        {"credential_id": "openai:llm:instance:default"},
+        {"provider_credential_id": "openai:llm:instance:default"},
     ):
         rejected = client.post(
             "/api/config/ai-models",
@@ -1080,26 +1160,13 @@ def test_ai_config_admin_roundtrip_validates_weekly_model_and_single_prompt(
         )
         assert rejected.status_code == 400, (invalid_change, rejected.text)
 
-    supported = client.post(
-        "/api/config/ai-models",
-        json={
-            "weekly_explanation": {
-                "provider": "mistral",
-                "model": "mistral-small-latest",
-            }
-        },
-        headers=headers,
-    )
-    assert supported.status_code == 200, supported.text
-    supported_weekly = supported.json()["current"]["weekly_explanation"]
-    assert supported_weekly["provider"] == "mistral"
-    assert supported_weekly["model"] == "mistral-small-latest"
-
 
 def test_default_config_runtime_and_settings_expose_one_bilingual_prompt() -> None:
     from ai_actuarial.ai_runtime import DEFAULT_AI_FUNCTION_CONFIG, get_ai_function_section
 
     defaults = DEFAULT_AI_FUNCTION_CONFIG["weekly_explanation"]
+    assert "provider" not in defaults
+    assert "model" not in defaults
     assert defaults["prompt_version"] == "weekly-explanation-v1"
     assert "zh" in defaults["prompt"]
     assert "en" in defaults["prompt"]
@@ -1108,6 +1175,9 @@ def test_default_config_runtime_and_settings_expose_one_bilingual_prompt() -> No
 
     config = yaml.safe_load(Path("config/sites.yaml").read_text(encoding="utf-8"))
     weekly = config["ai_config"]["weekly_explanation"]
+    assert "provider" not in weekly
+    assert "model" not in weekly
+    assert "credential_id" not in weekly
     assert weekly["prompt_version"] == "weekly-explanation-v1"
     assert isinstance(weekly["prompt"], str) and weekly["prompt"].strip()
     assert "prompt_zh" not in weekly and "prompt_en" not in weekly
@@ -1120,6 +1190,8 @@ def test_default_config_runtime_and_settings_expose_one_bilingual_prompt() -> No
     assert 'settings.weekly_explanation_prompt_hint' in translations_source
     assert translations_source.count('"settings.weekly_explanation_prompt_title"') == 2
     assert translations_source.count('"settings.weekly_explanation_prompt_hint"') == 2
+    assert translations_source.count('"settings.weekly_explanation_routing_hint"') == 2
+    assert 't("settings.weekly_explanation_routing_hint")' in settings_source
 
     weekly_stats_source = Path("ai_actuarial/api/services/weekly_updates.py").read_text(
         encoding="utf-8"

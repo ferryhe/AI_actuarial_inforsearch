@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import os
 import threading
 from datetime import datetime, time, timezone
 from pathlib import Path
@@ -513,6 +512,7 @@ def test_fastapi_ai_config_registry_credentials_and_routing_read_endpoints(tmp_p
     assert routing.status_code == 200, routing.text
     bindings = {item["function_name"]: item for item in routing.json()["bindings"]}
     assert bindings["chat"]["config_section"] == "chatbot"
+    assert bindings["chat"]["consumers"] == ["chat", "weekly_explanation"]
     assert bindings["embeddings"]["provider"] == "openai"
     assert bindings["embeddings"]["credential_id"]
     assert bindings["embeddings"]["stable_credential_id"] == "openai:llm:instance:primary"

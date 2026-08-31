@@ -52,3 +52,30 @@ ai_config:
 ```
 
 If a bound credential id cannot be parsed, does not match the provider/category, cannot be found, or cannot be decrypted, the runtime reports `credential_source=missing` with a non-sensitive `credential_error`.
+
+## Weekly Explanation Routing
+
+Weekly explanations always inherit `provider`, `model`, and `credential_id` from
+`ai_config.chatbot`. Their own section stores only generation policy such as the
+versioned prompt, timeout, temperature, and token limit:
+
+```yaml
+ai_config:
+  chatbot:
+    provider: openai
+    model: gpt-5.4-mini
+    credential_id: openai:llm:instance:default
+  weekly_explanation:
+    prompt_version: weekly-explanation-v1
+    timeout_seconds: 60
+    temperature: 0
+    max_tokens: 1200
+```
+
+Older `weekly_explanation` route fields are ignored at runtime and a warning names
+the deprecated fields without logging their values. Saving weekly explanation
+policy removes those legacy fields. The Settings API rejects new weekly route
+writes and directs operators to update the Chat route instead.
+
+Weekly generation audit data records the effective provider, model, and stable
+credential identifier. It never records the credential value.

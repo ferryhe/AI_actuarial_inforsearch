@@ -676,8 +676,6 @@ ai_config:
     max_query_length: 1000
     credential_id: openai:llm:instance:default
   weekly_explanation:
-    provider: openai
-    model: gpt-5.4-mini
     prompt_version: weekly-explanation-v1
     prompt: |-
       You explain one immutable weekly snapshot in Chinese and English.
@@ -691,7 +689,6 @@ ai_config:
     timeout_seconds: 60
     temperature: 0
     max_tokens: 1200
-    credential_id: openai:llm:instance:default
   ocr:
     provider: mistral
     model: mistral-ocr-latest

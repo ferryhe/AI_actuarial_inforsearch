@@ -232,8 +232,6 @@ def _extract_ai_config_from_env() -> Dict[str, Any]:
             "max_query_length": _safe_int(os.getenv("CHATBOT_MAX_QUERY_LENGTH", "1000"), "CHATBOT_MAX_QUERY_LENGTH"),
         },
         "weekly_explanation": {
-            "provider": "openai",
-            "model": os.getenv("OPENAI_DEFAULT_MODEL", "gpt-4o-mini"),
             "prompt_version": DEFAULT_WEEKLY_EXPLANATION_PROMPT_VERSION,
             "prompt": DEFAULT_WEEKLY_EXPLANATION_PROMPT,
             "timeout_seconds": _safe_int(os.getenv("OPENAI_TIMEOUT_SECONDS", "60"), "OPENAI_TIMEOUT_SECONDS"),

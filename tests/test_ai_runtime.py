@@ -59,6 +59,75 @@ class TestAiRuntime(unittest.TestCase):
         self.assertEqual(section["provider"], "deepseek")
         self.assertEqual(section["model"], "deepseek-chat")
 
+    def test_weekly_explanation_inherits_chat_route_and_keeps_own_policy(self):
+        yaml_config = {
+            "ai_config": {
+                "chatbot": {
+                    "provider": "deepseek",
+                    "model": "deepseek-chat",
+                    "credential_id": "deepseek:llm:instance:primary",
+                },
+                "weekly_explanation": {
+                    "provider": "openai",
+                    "model": "legacy-weekly-model",
+                    "credential_id": "openai:llm:instance:legacy",
+                    "prompt": "Weekly-only prompt",
+                    "prompt_version": "weekly-v2",
+                    "timeout_seconds": 17,
+                    "temperature": 0.2,
+                    "max_tokens": 777,
+                },
+            }
+        }
+
+        section = get_ai_function_section("weekly_explanation", yaml_config=yaml_config)
+
+        self.assertEqual(section["provider"], "deepseek")
+        self.assertEqual(section["model"], "deepseek-chat")
+        self.assertEqual(section["credential_id"], "deepseek:llm:instance:primary")
+        self.assertEqual(section["prompt"], "Weekly-only prompt")
+        self.assertEqual(section["prompt_version"], "weekly-v2")
+        self.assertEqual(section["timeout_seconds"], 17)
+        self.assertEqual(section["temperature"], 0.2)
+        self.assertEqual(section["max_tokens"], 777)
+
+    def test_weekly_explanation_runtime_uses_same_chat_credential(self):
+        encrypted = TokenEncryption().encrypt("db-deepseek-key")
+        self.storage.upsert_llm_provider(
+            provider="deepseek",
+            api_key_encrypted=encrypted,
+            base_url="https://custom.deepseek.test/v1",
+            instance_id="primary",
+        )
+        yaml_config = {
+            "ai_config": {
+                "chatbot": {
+                    "provider": "deepseek",
+                    "model": "deepseek-chat",
+                    "credential_id": "deepseek:llm:instance:primary",
+                },
+                "weekly_explanation": {
+                    "provider": "openai",
+                    "model": "legacy-weekly-model",
+                    "credential_id": "openai:llm:instance:legacy",
+                },
+            }
+        }
+
+        chat = resolve_ai_function_runtime(
+            "chatbot", storage=self.storage, yaml_config=yaml_config
+        )
+        weekly = resolve_ai_function_runtime(
+            "weekly_explanation", storage=self.storage, yaml_config=yaml_config
+        )
+
+        self.assertEqual(weekly.provider, chat.provider)
+        self.assertEqual(weekly.model, chat.model)
+        self.assertEqual(weekly.api_key, chat.api_key)
+        self.assertEqual(weekly.base_url, chat.base_url)
+        self.assertEqual(weekly.credential_id, chat.credential_id)
+        self.assertEqual(weekly.stable_credential_id, chat.stable_credential_id)
+
     def test_deepseek_default_base_url_matches_official_openai_compatible_endpoint(self):
         self.assertEqual(get_provider_default_base_url("deepseek"), "https://api.deepseek.com")
 

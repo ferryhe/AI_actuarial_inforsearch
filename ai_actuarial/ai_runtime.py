@@ -8,7 +8,6 @@ from dataclasses import dataclass
 from typing import Any, Mapping
 
 import ai_actuarial.llm_models as llm_models
-from ai_actuarial.shared_runtime import get_sites_config_path, load_yaml
 
 logger = logging.getLogger(__name__)
 
@@ -322,8 +321,6 @@ DEFAULT_AI_FUNCTION_CONFIG = {
     "embeddings": {"provider": "openai", "model": "text-embedding-3-large"},
     "chatbot": {"provider": "openai", "model": "gpt-4-turbo"},
     "weekly_explanation": {
-        "provider": "openai",
-        "model": "gpt-4o-mini",
         "prompt_version": DEFAULT_WEEKLY_EXPLANATION_PROMPT_VERSION,
         "prompt": DEFAULT_WEEKLY_EXPLANATION_PROMPT,
         "timeout_seconds": 60,
@@ -332,6 +329,10 @@ DEFAULT_AI_FUNCTION_CONFIG = {
     },
     "ocr": {"provider": "local", "model": "docling"},
 }
+
+WEEKLY_EXPLANATION_ROUTE_FIELDS = frozenset(
+    {"provider", "llm_provider", "model", "credential_id", "provider_credential_id"}
+)
 
 KNOWN_EMBEDDING_MODEL_DIMENSIONS = {
     "text-embedding-3-large": 3072,
@@ -721,6 +722,8 @@ def get_ai_routing(*, storage: Any | None = None, yaml_config: Mapping[str, Any]
             "api_base_url": runtime.base_url,
             "raw_config": runtime.raw_config,
         }
+        if function_name == "chat":
+            binding["consumers"] = ["chat", "weekly_explanation"]
         if function_name == "embeddings":
             from ai_actuarial.rag.defaults import get_embedding_model_defaults
 
@@ -785,7 +788,23 @@ def get_ai_function_section(
 
     defaults = DEFAULT_AI_FUNCTION_CONFIG.get(function_name, {})
     normalized = dict(defaults)
-    normalized.update(raw_section)
+    if function_name == "weekly_explanation":
+        legacy_route_fields = WEEKLY_EXPLANATION_ROUTE_FIELDS.intersection(raw_section)
+        if legacy_route_fields:
+            logger.warning(
+                "Ignoring deprecated ai_config.weekly_explanation route fields: %s; "
+                "weekly explanations inherit ai_config.chatbot routing",
+                ", ".join(sorted(legacy_route_fields)),
+            )
+        normalized.update(
+            {key: value for key, value in raw_section.items() if key not in WEEKLY_EXPLANATION_ROUTE_FIELDS}
+        )
+        chat_section = get_ai_function_section("chatbot", yaml_config={"ai_config": ai_config})
+        for route_field in WEEKLY_EXPLANATION_ROUTE_FIELDS:
+            if route_field in chat_section:
+                normalized[route_field] = chat_section[route_field]
+    else:
+        normalized.update(raw_section)
 
     provider = normalized.get("provider")
     if function_name == "chatbot" and not provider:
