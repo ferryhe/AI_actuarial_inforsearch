@@ -4,7 +4,9 @@
 - Repository: `AI_actuarial_inforsearch`
 - Checkout: `C:\Project\AI_actuarial_inforsearch`
 - Branch: `codex/issue-274-ask-ai` from `origin/main` at `1753f9800789`
-- State: Issue #274 implementation and local verification complete; commit, push, PR, and delayed remote review audit are pending.
+- Product commit: `6f0b48e2d65a` (`feat: add Ask AI knowledge deep links`)
+- Pull request: [#302](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/302)
+- State: implementation, local verification, publication, and the required delayed remote audit are complete. PR is open and intentionally unmerged.
 
 ## Startup and boundaries
 
@@ -57,6 +59,13 @@
 - `graphify-out/` is the only unrelated untracked path and remains excluded.
 - A temporary stash created solely to carry the prior project-status research note across branch creation still exists and is redundant after this status update.
 
+## Remote audit
+
+- Reviewed PR checks, reviews, ordinary comments, and inline review comments about 15 minutes after PR creation.
+- Required `python-smoke` completed successfully in 1m14s; GitHub reports the PR as mergeable.
+- No ordinary or inline comments were present and no reviewer supplied a valid Issue #274 finding.
+- Copilot reported only that its review quota was exhausted. This is not a code finding and required no change.
+
 ## Recommended next action
 
-- Review the final diff, commit the scoped files, push `codex/issue-274-ask-ai`, create a PR closing #274, then audit required checks and remote review/Copilot comments about 15 minutes later. Do not merge without explicit authorization.
+- Keep PR #302 open for user review. Merge only after explicit authorization.
