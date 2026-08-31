@@ -22,10 +22,10 @@
 ## Implementation state
 
 - #315 implementation is committed as `404c831`.
-- #310 implementation and tests are complete and awaiting the second scoped
-  commit.
+- #310 implementation is committed as `8cdcd0d`.
 - The two Issues are being published together in one PR/release batch, with
   separate commits for review clarity.
+- PR #316 is open: `https://github.com/ferryhe/AI_actuarial_inforsearch/pull/316`.
 
 ## Acceptance results
 
@@ -75,6 +75,5 @@
 
 ## Recommended next action
 
-- Commit #310, push the branch, open one PR closing #315 and #310, then wait
-  about 15 minutes and evaluate CI and remote review/Copilot feedback before
-  handing off #313.
+- Wait about 15 minutes and evaluate PR #316 CI and remote review/Copilot
+  feedback before handing off #313.
