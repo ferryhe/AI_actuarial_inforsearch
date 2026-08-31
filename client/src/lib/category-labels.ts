@@ -38,7 +38,7 @@ export function categoryDisplayName(
 ): string {
   const name = categoryValue(category).trim();
   if (!name) return "-";
-  if (typeof category !== "string") {
+  if (category && typeof category !== "string") {
     const localized = category.labels?.[lang as "en" | "zh"] || category.label;
     if (localized && localized.trim()) return localized.trim();
   }

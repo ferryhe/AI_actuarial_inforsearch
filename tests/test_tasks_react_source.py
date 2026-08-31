@@ -22,7 +22,9 @@ def test_scheduled_tasks_section_uses_native_schedule_status_contract():
 def test_scheduled_tasks_section_surfaces_write_errors_instead_of_silently_ignoring_them():
     src = SCHEDULED_TASKS_TSX.read_text(encoding="utf-8")
 
-    assert "ApiError" in src
+    assert 'return formatApiErrorDetail(error) || t(fallbackKey);' in src
+    assert "import { ApiError" not in src
+    assert "error.detail || error.message" not in src
     assert "errorMsg" in src
     assert 'data-testid="text-scheduled-error"' in src
     assert 'aria-label={t("tasks.schedule.dismiss_error")}' in src
@@ -61,6 +63,9 @@ def test_scheduled_tasks_section_does_not_offer_old_full_pipeline_type():
 def test_add_to_schedule_error_dismiss_button_is_accessible():
     src = SCHEDULE_FROM_TASK_TSX.read_text(encoding="utf-8")
 
+    assert 'return formatApiErrorDetail(error) || t("tasks.sched.save_fail");' in src
+    assert "import { ApiError" not in src
+    assert "error.detail || error.message" not in src
     assert 'data-testid="text-add-schedule-error"' in src
     assert 'aria-label={t("tasks.schedule.dismiss_error")}' in src
 

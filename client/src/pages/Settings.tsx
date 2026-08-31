@@ -2026,7 +2026,7 @@ function SystemTab() {
                       rows={2}
                       className="w-full px-3 py-2 rounded-lg border border-border bg-background text-xs font-mono resize-y focus:outline-none focus:ring-2 focus:ring-primary/30 disabled:opacity-60"
                       placeholder={placeholder}
-                      data-testid={`input-${key.replaceAll("_", "-")}`}
+                      data-testid={`input-${key.replace(/_/g, "-")}`}
                     />
                   ) : (
                     <input
@@ -2035,7 +2035,7 @@ function SystemTab() {
                       disabled={locked}
                       className="w-full px-3 py-2 rounded-lg border border-border bg-background text-xs font-mono focus:outline-none focus:ring-2 focus:ring-primary/30 disabled:opacity-60"
                       placeholder={placeholder}
-                      data-testid={`input-${key.replaceAll("_", "-")}`}
+                      data-testid={`input-${key.replace(/_/g, "-")}`}
                     />
                   )}
                 </label>

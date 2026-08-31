@@ -3,7 +3,7 @@ import { Clock, Loader2, Plus, Pencil, Trash2, Save, Timer, RefreshCw, ToggleLef
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/components/Layout";
 import { useAuth } from "@/context/AuthContext";
-import { ApiError, apiGet, apiPost } from "@/lib/api";
+import { apiGet, apiPost, formatApiErrorDetail } from "@/lib/api";
 import { FormField, InputField, SelectField } from "@/components/FormFields";
 
 interface ScheduledTask {
@@ -178,13 +178,7 @@ export function ScheduledTasksSection() {
   };
 
   const formatError = (error: unknown, fallbackKey: string) => {
-    if (error instanceof ApiError) {
-      return error.detail || error.message;
-    }
-    if (error instanceof Error) {
-      return error.message;
-    }
-    return t(fallbackKey);
+    return formatApiErrorDetail(error) || t(fallbackKey);
   };
 
   const openEditForm = (task: ScheduledTask) => {

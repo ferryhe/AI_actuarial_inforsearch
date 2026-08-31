@@ -52,7 +52,8 @@ def test_settings_system_flags_are_yaml_backed_controls():
     assert "featureSources" in src
     assert "...featureText" in src
     assert "toggle-system-flag-${key}" in src
-    assert "input-${key.replaceAll(\"_\", \"-\")}" in src
+    assert 'input-${key.replace(/_/g, "-")}' in src
+    assert ".replaceAll(" not in src
     assert 'apiPost("/api/config/backend-settings", { features:' in src
 
 

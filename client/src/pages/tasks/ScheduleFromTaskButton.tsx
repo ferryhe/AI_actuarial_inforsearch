@@ -2,7 +2,7 @@ import { useState } from "react";
 import { AlertCircle, CalendarPlus, CheckCircle2, Loader2, X } from "lucide-react";
 import { useTranslation } from "@/components/Layout";
 import { useAuth } from "@/context/AuthContext";
-import { ApiError, apiPost } from "@/lib/api";
+import { apiPost, formatApiErrorDetail } from "@/lib/api";
 import { FormField, InputField } from "@/components/FormFields";
 
 interface ScheduleFromTaskButtonProps {
@@ -28,9 +28,7 @@ export function ScheduleFromTaskButton({ buildTask, disabled = false }: Schedule
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
   const formatError = (error: unknown) => {
-    if (error instanceof ApiError) return error.detail || error.message;
-    if (error instanceof Error) return error.message;
-    return t("tasks.sched.save_fail");
+    return formatApiErrorDetail(error) || t("tasks.sched.save_fail");
   };
 
   const openForm = () => {
