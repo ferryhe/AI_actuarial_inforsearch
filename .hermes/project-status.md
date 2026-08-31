@@ -23,6 +23,8 @@
 
 - #315 implementation is committed as `404c831`.
 - #310 implementation is committed as `8cdcd0d`.
+- Independent review fixes for both Issues are committed as `2e76aea` and
+  pushed to the release branch.
 - The two Issues are being published together in one PR/release batch, with
   separate commits for review clarity.
 - PR #316 is open: `https://github.com/ferryhe/AI_actuarial_inforsearch/pull/316`.
@@ -58,6 +60,8 @@
   Docker emitted only the existing obsolete `version` advisory.
 - Shell wrappers: Git Bash syntax checks passed. `shellcheck` is not installed.
 - `git diff --check`: passed; only Windows line-ending notices were emitted.
+- PR #316 `python-smoke` passed on review-fix head `2e76aea`; merge state is
+  clean, with no remote comments or review threads requiring action.
 
 ## Files changed
 
@@ -86,5 +90,5 @@
 
 ## Recommended next action
 
-- Commit and push the review fixes, then confirm the refreshed PR #316 CI before
-  handing off #313.
+- Merge PR #316 when merge authorization is given, then handle the production
+  rollout separately under #313.
