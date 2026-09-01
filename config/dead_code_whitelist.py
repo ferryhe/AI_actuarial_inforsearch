@@ -325,6 +325,7 @@ api_publish_ready_data_publication  # reason: FastAPI registers this decorated r
 api_rollback_ready_data_publication  # reason: FastAPI registers this decorated route.
 
 from ai_actuarial.api.routers.weekly_updates import (
+    WeeklySnapshotFilesModel,
     api_weekly_explanation_detail,
     api_weekly_explanation_generate,
     api_weekly_explanation_latest,
@@ -343,6 +344,7 @@ api_weekly_explanation_retry  # reason: FastAPI registers this decorated route.
 api_weekly_explanation_detail  # reason: FastAPI registers this decorated route.
 api_weekly_update_files  # reason: FastAPI registers this decorated route.
 api_weekly_update_detail  # reason: FastAPI registers this decorated route.
+WeeklySnapshotFilesModel.truncated  # reason: Pydantic serializes this response field.
 
 from ai_actuarial.web_listening_rule import (
     AcquisitionProfile,

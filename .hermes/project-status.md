@@ -279,6 +279,21 @@
   isort files, and 19 Pylint error identities, with zero new or stale entries.
   The dead-code gate shrank exactly from 9/1 files and 28/82 symbols to 9/1
   files and 28/72 symbols.
+- Remote commit `fdac797` contains the exact `ai_actuarial/rag/` cleanup. CI
+  run 33534463645 passed all five jobs, including the 7m56s Linux quality gate,
+  and no new Review or Copilot comment was added.
+- `ai_actuarial/api/routers/` compiled successfully and all 15 route modules
+  were confirmed as registered FastAPI production modules. The 15 directly
+  related test files completed with 393 passed and 8 platform skips.
+- `WeeklySnapshotFilesModel.truncated` is a live Pydantic response field, not
+  dead code: the service populates it and endpoint tests assert it. An exact
+  whitelist reference now records that framework contract; no source field or
+  test was removed.
+- The complete pytest suite passed after the router cleanup with 1,880 tests
+  and 10 platform skips. The full static gate passed at 146 Black files, 91
+  isort files, and 19 Pylint error identities, with zero new or stale entries.
+  The dead-code gate shrank exactly from 9/1 files and 28/72 symbols to 9/1
+  files and 28/71 symbols.
 
 ## Files changed
 
@@ -333,6 +348,10 @@
   symbols plus four exact or cascading orphans, deleted the single test tied to
   the removed immutable-index helper, and removed the matching dead-code and
   formatter baseline entries.
+- Thirteenth historical directory cleanup: formatted all 15 files under
+  `ai_actuarial/api/routers/`, added the precise Pydantic response-field
+  whitelist for `WeeklySnapshotFilesModel.truncated`, and removed its stale
+  dead-code entry plus the 21 matching formatter baseline entries.
 
 ## Working tree notes
 
@@ -349,8 +368,8 @@
 
 ## Recommended next action
 
-- Push the path-specific `ai_actuarial/rag/` cleanup to PR #318, verify its CI
-  and review feedback, then continue with another independent historical
-  directory. Keep the final root-level orphan
+- Commit and push the path-specific `ai_actuarial/api/routers/` cleanup to PR
+  #318, verify its CI and review feedback, then continue with
+  `ai_actuarial/api/services/`. Keep the final root-level orphan
   `ai_actuarial/pipeline_config.py` for a separately verified cleanup. Merge
   only after explicit authorization.

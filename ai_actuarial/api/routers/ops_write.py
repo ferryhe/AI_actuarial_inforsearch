@@ -10,8 +10,8 @@ from ..services.ops_write import (
     add_scheduled_task,
     add_site,
     browse_folder,
-    create_backup,
     configure_pipeline_baton,
+    create_backup,
     delete_backup,
     delete_provider_credential,
     delete_scheduled_task,
@@ -27,12 +27,12 @@ from ..services.ops_write import (
     list_backups,
     materialize_web_listening_rule,
     reencrypt_provider_credentials,
-    request_task_stop,
     reinitialize_scheduler,
+    request_task_stop,
     restore_backup,
     sample_sites_yaml,
-    start_pipeline_baton,
     start_collection,
+    start_pipeline_baton,
     tick_pipeline_baton,
     update_ai_models_config,
     update_ai_routing,
@@ -356,7 +356,9 @@ def api_config_provider_credentials_delete(
     try:
         category = str(request.query_params.get("category") or "llm").strip().lower() or "llm"
         instance_id = str(request.query_params.get("instance_id") or "").strip() or None
-        return delete_provider_credential(provider_id, db_path=_db_path(request), category=category, instance_id=instance_id)
+        return delete_provider_credential(
+            provider_id, db_path=_db_path(request), category=category, instance_id=instance_id
+        )
     except OpsWriteError as exc:
         return _handle_ops_error(exc)
 
@@ -585,7 +587,9 @@ def api_markdown_conversion_stats(
     _auth: AuthContext = Depends(require_permissions("tasks.view")),
 ):
     try:
-        return get_markdown_conversion_stats(db_path=_db_path(request), category=request.query_params.get("category"))
+        return get_markdown_conversion_stats(
+            db_path=_db_path(request), category=request.query_params.get("category")
+        )
     except OpsWriteError as exc:
         return _handle_ops_error(exc)
 
@@ -596,6 +600,8 @@ def api_chunk_generation_stats(
     _auth: AuthContext = Depends(require_permissions("tasks.view")),
 ):
     try:
-        return get_chunk_generation_stats(db_path=_db_path(request), category=request.query_params.get("category"))
+        return get_chunk_generation_stats(
+            db_path=_db_path(request), category=request.query_params.get("category")
+        )
     except OpsWriteError as exc:
         return _handle_ops_error(exc)

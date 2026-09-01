@@ -13,20 +13,20 @@ from ..services.rag_admin import (
     RagAdminError,
     add_knowledge_base_files,
     bind_chunk_sets,
-    cleanup_chunk_sets,
     build_agentic_ready_manifest,
+    cleanup_chunk_sets,
     create_chunk_profile,
     create_index_task,
     create_knowledge_base,
     delete_chunk_profile,
     delete_knowledge_base,
+    get_agentic_ready_manifest,
     get_categories_mapping,
     get_category_stats,
     get_kb_bindings,
     get_knowledge_base,
     get_knowledge_base_categories,
     get_knowledge_base_stats,
-    get_agentic_ready_manifest,
     get_pending_files,
     get_unmapped_categories,
     list_chunk_profiles,
@@ -120,7 +120,9 @@ def api_create_chunk_profile(
     _auth: AuthContext = Depends(require_permissions("config.write")),
 ):
     try:
-        result = create_chunk_profile(db_path=_db_path(request), payload=payload, headers=dict(request.headers), auth=_auth)
+        result = create_chunk_profile(
+            db_path=_db_path(request), payload=payload, headers=dict(request.headers), auth=_auth
+        )
         return JSONResponse(status_code=201, content=result)
     except RagAdminError as exc:
         return _error_response(exc)
@@ -134,7 +136,13 @@ def api_update_chunk_profile(
     _auth: AuthContext = Depends(require_permissions("config.write")),
 ):
     try:
-        return update_chunk_profile(db_path=_db_path(request), profile_id=profile_id, payload=payload, headers=dict(request.headers), auth=_auth)
+        return update_chunk_profile(
+            db_path=_db_path(request),
+            profile_id=profile_id,
+            payload=payload,
+            headers=dict(request.headers),
+            auth=_auth,
+        )
     except RagAdminError as exc:
         return _error_response(exc)
 
@@ -146,7 +154,12 @@ def api_delete_chunk_profile(
     _auth: AuthContext = Depends(require_permissions("config.write")),
 ):
     try:
-        return delete_chunk_profile(db_path=_db_path(request), profile_id=profile_id, headers=dict(request.headers), auth=_auth)
+        return delete_chunk_profile(
+            db_path=_db_path(request),
+            profile_id=profile_id,
+            headers=dict(request.headers),
+            auth=_auth,
+        )
     except RagAdminError as exc:
         return _error_response(exc)
 
@@ -158,7 +171,9 @@ def api_chunk_sets_cleanup(
     _auth: AuthContext = Depends(require_permissions("config.write")),
 ):
     try:
-        return cleanup_chunk_sets(db_path=_db_path(request), payload=payload, headers=dict(request.headers), auth=_auth)
+        return cleanup_chunk_sets(
+            db_path=_db_path(request), payload=payload, headers=dict(request.headers), auth=_auth
+        )
     except RagAdminError as exc:
         return _error_response(exc)
 
@@ -169,7 +184,9 @@ def api_list_knowledge_bases(
     _auth: AuthContext = Depends(require_permissions("catalog.read")),
 ):
     try:
-        return list_knowledge_bases(db_path=_db_path(request), query=request.query_params, auth=_auth)
+        return list_knowledge_bases(
+            db_path=_db_path(request), query=request.query_params, auth=_auth
+        )
     except RagAdminError as exc:
         return _error_response(exc)
 
@@ -181,7 +198,9 @@ def api_create_knowledge_base(
     _auth: AuthContext = Depends(require_rag_write),
 ):
     try:
-        result = create_knowledge_base(db_path=_db_path(request), payload=payload, headers=dict(request.headers), auth=_auth)
+        result = create_knowledge_base(
+            db_path=_db_path(request), payload=payload, headers=dict(request.headers), auth=_auth
+        )
         return JSONResponse(status_code=201, content=result)
     except RagAdminError as exc:
         return _error_response(exc)
@@ -208,7 +227,13 @@ def api_update_knowledge_base(
     _auth: AuthContext = Depends(require_rag_write),
 ):
     try:
-        return update_knowledge_base(db_path=_db_path(request), kb_id=kb_id, payload=payload, headers=dict(request.headers), auth=_auth)
+        return update_knowledge_base(
+            db_path=_db_path(request),
+            kb_id=kb_id,
+            payload=payload,
+            headers=dict(request.headers),
+            auth=_auth,
+        )
     except RagAdminError as exc:
         return _error_response(exc)
 
@@ -220,7 +245,9 @@ def api_delete_knowledge_base(
     _auth: AuthContext = Depends(require_rag_write),
 ):
     try:
-        return delete_knowledge_base(db_path=_db_path(request), kb_id=kb_id, headers=dict(request.headers), auth=_auth)
+        return delete_knowledge_base(
+            db_path=_db_path(request), kb_id=kb_id, headers=dict(request.headers), auth=_auth
+        )
     except RagAdminError as exc:
         return _error_response(exc)
 
@@ -244,7 +271,9 @@ def api_get_agentic_ready_manifest(
     _auth: AuthContext = Depends(require_permissions("tasks.run")),
 ):
     try:
-        return get_agentic_ready_manifest(db_path=_db_path(request), kb_id=kb_id, query=request.query_params)
+        return get_agentic_ready_manifest(
+            db_path=_db_path(request), kb_id=kb_id, query=request.query_params
+        )
     except RagAdminError as exc:
         return _error_response(exc)
 
@@ -277,7 +306,9 @@ def api_list_knowledge_base_files(
     _auth: AuthContext = Depends(require_permissions("catalog.read")),
 ):
     try:
-        return list_knowledge_base_files(db_path=_db_path(request), kb_id=kb_id, query=request.query_params, auth=_auth)
+        return list_knowledge_base_files(
+            db_path=_db_path(request), kb_id=kb_id, query=request.query_params, auth=_auth
+        )
     except RagAdminError as exc:
         return _error_response(exc)
 
@@ -290,7 +321,13 @@ def api_add_knowledge_base_files(
     _auth: AuthContext = Depends(require_rag_write),
 ):
     try:
-        return add_knowledge_base_files(db_path=_db_path(request), kb_id=kb_id, payload=payload, headers=dict(request.headers), auth=_auth)
+        return add_knowledge_base_files(
+            db_path=_db_path(request),
+            kb_id=kb_id,
+            payload=payload,
+            headers=dict(request.headers),
+            auth=_auth,
+        )
     except RagAdminError as exc:
         return _error_response(exc)
 
@@ -303,7 +340,13 @@ def api_remove_knowledge_base_file(
     _auth: AuthContext = Depends(require_rag_write),
 ):
     try:
-        return remove_knowledge_base_file(db_path=_db_path(request), kb_id=kb_id, file_url=file_url, headers=dict(request.headers), auth=_auth)
+        return remove_knowledge_base_file(
+            db_path=_db_path(request),
+            kb_id=kb_id,
+            file_url=file_url,
+            headers=dict(request.headers),
+            auth=_auth,
+        )
     except RagAdminError as exc:
         return _error_response(exc)
 
@@ -373,7 +416,13 @@ def api_set_kb_categories(
     _auth: AuthContext = Depends(require_rag_write),
 ):
     try:
-        return set_knowledge_base_categories(db_path=_db_path(request), kb_id=kb_id, payload=payload, headers=dict(request.headers), auth=_auth)
+        return set_knowledge_base_categories(
+            db_path=_db_path(request),
+            kb_id=kb_id,
+            payload=payload,
+            headers=dict(request.headers),
+            auth=_auth,
+        )
     except RagAdminError as exc:
         return _error_response(exc)
 
@@ -398,7 +447,13 @@ def api_bind_chunk_sets(
     _auth: AuthContext = Depends(require_rag_write),
 ):
     try:
-        return bind_chunk_sets(db_path=_db_path(request), kb_id=kb_id, payload=payload, headers=dict(request.headers), auth=_auth)
+        return bind_chunk_sets(
+            db_path=_db_path(request),
+            kb_id=kb_id,
+            payload=payload,
+            headers=dict(request.headers),
+            auth=_auth,
+        )
     except RagAdminError as exc:
         return _error_response(exc)
 

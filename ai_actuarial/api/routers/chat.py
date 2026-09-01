@@ -48,7 +48,9 @@ def api_list_conversations(
         403: If the caller lacks the ``chat.conversations`` permission.
     """
     try:
-        payload, session_update = list_conversations(db_path=_db_path(request), request=request, auth=auth)
+        payload, session_update = list_conversations(
+            db_path=_db_path(request), request=request, auth=auth
+        )
         apply_session_update(response, request, session_update)
         return payload
     except ChatApiError as exc:
@@ -63,7 +65,9 @@ def api_create_conversation(
     auth: AuthContext = Depends(require_permissions("chat.conversations")),
 ):
     try:
-        result, session_update = create_conversation(db_path=_db_path(request), request=request, auth=auth, payload=payload)
+        result, session_update = create_conversation(
+            db_path=_db_path(request), request=request, auth=auth, payload=payload
+        )
         apply_session_update(response, request, session_update)
         return result
     except ChatApiError as exc:
@@ -173,7 +177,9 @@ def api_chat_query(
         503: If no LLM provider is configured or reachable.
     """
     try:
-        result, session_update = query_chat(db_path=_db_path(request), request=request, auth=auth, payload=payload)
+        result, session_update = query_chat(
+            db_path=_db_path(request), request=request, auth=auth, payload=payload
+        )
         apply_session_update(response, request, session_update)
         return result
     except ChatApiError as exc:

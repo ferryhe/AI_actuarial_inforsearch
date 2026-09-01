@@ -16,7 +16,6 @@ from ..services.agentic_rag import (
     trace_ready_relations,
 )
 
-
 router = APIRouter()
 
 

@@ -293,14 +293,6 @@
         "reason": "Framework, configuration, or test contract candidate; retain until a narrow symbol reference or safe removal is confirmed."
       },
       {
-        "path": "ai_actuarial/api/routers/weekly_updates.py",
-        "kind": "unused variable",
-        "symbol": "truncated",
-        "confidence": 60,
-        "classification": "remove",
-        "reason": "Vulture 60% cleanup candidate; verify dynamic/public callers and tests before removal."
-      },
-      {
         "path": "ai_actuarial/api/services/ops_write.py",
         "kind": "unused function",
         "symbol": "_split_csv_or_list",

@@ -54,7 +54,7 @@ def _extract_encoded_file_url(request: Request, *, suffix: str) -> str | None:
     if not raw_text.startswith(prefix) or not raw_text.endswith(suffix):
         return None
 
-    return raw_text[len(prefix):-len(suffix)]
+    return raw_text[len(prefix) : -len(suffix)]
 
 
 def _decode_file_url_path(request: Request, file_url: str, *, suffix: str) -> str:

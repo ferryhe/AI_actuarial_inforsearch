@@ -8,7 +8,12 @@ router = APIRouter()
 
 
 def _migration_inventory_enabled() -> bool:
-    return os.getenv("FASTAPI_ENABLE_MIGRATION_INVENTORY", "").strip().lower() in {"1", "true", "yes", "on"}
+    return os.getenv("FASTAPI_ENABLE_MIGRATION_INVENTORY", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
 
 @router.get("/migration/status")
@@ -23,7 +28,9 @@ async def api_migration_status(request: Request) -> dict[str, object]:
         "runtime_mode": "fastapi_only",
         "legacy_runtime_present": False,
         "native_paths": native_paths,
-        "legacy_api_fallback_allowed": bool(getattr(app.state, "legacy_api_fallback_allowed", False)),
+        "legacy_api_fallback_allowed": bool(
+            getattr(app.state, "legacy_api_fallback_allowed", False)
+        ),
         "migration_inventory_enabled": inventory_enabled,
         "notes": [
             "FastAPI is the current product API authority for /api routes.",
@@ -46,7 +53,9 @@ async def api_migration_inventory(request: Request) -> dict[str, object]:
         "api_authority": "fastapi",
         "runtime_mode": "fastapi_only",
         "legacy_runtime_present": False,
-        "legacy_api_fallback_allowed": bool(getattr(app.state, "legacy_api_fallback_allowed", False)),
+        "legacy_api_fallback_allowed": bool(
+            getattr(app.state, "legacy_api_fallback_allowed", False)
+        ),
         "native_paths": native_paths,
         "native_route_count": len(native_paths),
         "native_route_signatures": native_route_signatures,
