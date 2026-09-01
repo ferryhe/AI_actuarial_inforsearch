@@ -58,6 +58,9 @@
   completed directory is `config/`: Black/isort formatting was applied, the
   Pydantic path validator was explicitly marked as a classmethod, and the
   output-format validation was made type-explicit for Pylint.
+- The second completed directory is `scripts/`. Eleven Python scripts received
+  only Black/isort formatting; no behavior, dead-code decision, or script entry
+  point was changed.
 
 ## Acceptance results
 
@@ -99,6 +102,16 @@
   identities.
 - The complete dead-code gate also passed unchanged at 9/5 file findings and
   28/93 symbol findings.
+- Path-specific commit `fc814fa` was pushed to PR #318. CI run 33460353038
+  passed all five jobs: both dead-code layers, frontend, Python smoke, and the
+  complete Linux quality gate. No new review comment was added.
+- `scripts/` focused validation passed: Black, isort, and Pylint reported no
+  findings; 80 tests passed and 1 platform-specific test skipped.
+- The complete unified quality gate passed after the `scripts/` cleanup with
+  1,881 tests passed and 10 skipped. The reviewed baseline shrank only for this
+  directory, from 210/140/20 to 200 Black files, 132 isort files, and 20 Pylint
+  identities. The complete dead-code gate remained exact at 9/5 files and
+  28/93 symbols.
 
 ## Files changed
 
@@ -113,6 +126,8 @@
 - First historical directory cleanup: `config/__init__.py`,
   `config/settings.py`, `config/yaml_config.py`, and the matching removals from
   `quality-gate-baseline.json`.
+- Second historical directory cleanup: eleven formatted Python files under
+  `scripts/` and the matching removals from `quality-gate-baseline.json`.
 
 ## Working tree notes
 
@@ -129,6 +144,6 @@
 
 ## Recommended next action
 
-- Push the path-specific `config/` cleanup commit to PR #318, verify CI and
-  review feedback, then clean `scripts/` as the next independent directory.
-  Merge only after explicit authorization.
+- After the path-specific `scripts/` commit passes CI, continue with
+  `ai_actuarial/agentic_rag/` as the next independent directory. Merge only
+  after explicit authorization.

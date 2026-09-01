@@ -4,7 +4,6 @@ import re
 import secrets
 from pathlib import Path
 
-
 _ASSIGN_RE = re.compile(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$")
 
 
@@ -52,10 +51,12 @@ def _format_value(val: str) -> str:
     if not _needs_quotes(val):
         return val
     escaped = val.replace("\\", "\\\\").replace('"', '\\"')
-    return f"\"{escaped}\""
+    return f'"{escaped}"'
 
 
-def _rewrite_from_template(template_lines: list[str], env_values: dict[str, str]) -> tuple[list[str], set[str]]:
+def _rewrite_from_template(
+    template_lines: list[str], env_values: dict[str, str]
+) -> tuple[list[str], set[str]]:
     used_keys: set[str] = set()
     out: list[str] = []
     for line in template_lines:
@@ -73,10 +74,19 @@ def _rewrite_from_template(template_lines: list[str], env_values: dict[str, str]
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Clean .env using .env.example as a template without printing secrets.")
+    ap = argparse.ArgumentParser(
+        description="Clean .env using .env.example as a template without printing secrets."
+    )
     ap.add_argument("--in", dest="env_path", default=".env", help="Input .env path (default: .env)")
-    ap.add_argument("--template", dest="template_path", default=".env.example", help="Template path (default: .env.example)")
-    ap.add_argument("--backup", action="store_true", help="Create a timestamped backup before rewriting")
+    ap.add_argument(
+        "--template",
+        dest="template_path",
+        default=".env.example",
+        help="Template path (default: .env.example)",
+    )
+    ap.add_argument(
+        "--backup", action="store_true", help="Create a timestamped backup before rewriting"
+    )
     args = ap.parse_args()
 
     env_path = Path(args.env_path)
@@ -132,4 +142,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

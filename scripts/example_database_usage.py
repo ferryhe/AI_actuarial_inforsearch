@@ -6,6 +6,7 @@ This example demonstrates how to use both SQLite and PostgreSQL backends.
 """
 
 import yaml
+
 from ai_actuarial.storage_factory import create_storage_from_config
 
 
@@ -14,15 +15,11 @@ def example_legacy_mode():
     print("=" * 60)
     print("Example 1: Legacy Mode (Backward Compatible)")
     print("=" * 60)
-    
+
     # This is how the application was used before
     # No changes needed to existing code!
-    config = {
-        "paths": {
-            "db": "data/index.db"
-        }
-    }
-    
+    config = {"paths": {"db": "data/index.db"}}
+
     storage = create_storage_from_config(config)
     print(f"✓ Created storage: {type(storage).__name__}")
     print(f"  Using database: {storage.db_path}")
@@ -35,14 +32,9 @@ def example_sqlite_explicit():
     print("=" * 60)
     print("Example 2: Explicit SQLite Configuration")
     print("=" * 60)
-    
-    config = {
-        "database": {
-            "type": "sqlite",
-            "path": "data/my_custom.db"
-        }
-    }
-    
+
+    config = {"database": {"type": "sqlite", "path": "data/my_custom.db"}}
+
     storage = create_storage_from_config(config)
     print(f"✓ Created storage: {type(storage).__name__}")
     print(f"  Database type: SQLite")
@@ -56,7 +48,7 @@ def example_postgresql_config():
     print("=" * 60)
     print("Example 3: PostgreSQL Configuration")
     print("=" * 60)
-    
+
     # This configuration would be in config/sites.yaml
     config = {
         "database": {
@@ -65,10 +57,10 @@ def example_postgresql_config():
             "port": 5432,
             "database": "ai_actuarial",
             "username": "postgres",
-            "password": "secret"  # Use environment variables in production!
+            "password": "secret",  # Use environment variables in production!
         }
     }
-    
+
     print("Configuration:")
     print(f"  Type: PostgreSQL")
     print(f"  Host: {config['database']['host']}")
@@ -88,21 +80,21 @@ def example_from_yaml():
     print("=" * 60)
     print("Example 4: Loading from sites.yaml")
     print("=" * 60)
-    
+
     # Load actual configuration
     with open("config/sites.yaml", "r") as f:
         config = yaml.safe_load(f)
-    
+
     # This automatically detects whether to use SQLite or PostgreSQL
     # based on what's configured in the YAML file
     storage = create_storage_from_config(config)
     print(f"✓ Created storage from config/sites.yaml: {type(storage).__name__}")
-    
+
     # Use storage as normal
     # storage.insert_file(...)
     # storage.file_exists(...)
     # etc.
-    
+
     storage.close()
     print()
 
@@ -112,7 +104,7 @@ def example_environment_variables():
     print("=" * 60)
     print("Example 5: Environment Variables (Production)")
     print("=" * 60)
-    
+
     print("In production, use environment variables for database credentials:")
     print()
     print("  export DB_TYPE=postgresql")
@@ -140,13 +132,13 @@ def main():
     print("DATABASE BACKEND ABSTRACTION EXAMPLES")
     print("=" * 60)
     print()
-    
+
     example_legacy_mode()
     example_sqlite_explicit()
     example_postgresql_config()
     example_from_yaml()
     example_environment_variables()
-    
+
     print("=" * 60)
     print("For more information, see DATABASE_BACKEND_GUIDE.md")
     print("=" * 60)

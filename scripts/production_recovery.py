@@ -22,7 +22,6 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-
 BACKUP_FORMAT_VERSION = 1
 # ``files`` holds re-crawlable source documents (PDF/PPTX/DOCX); it is excluded
 # from full snapshots. Its metadata lives in the ``files`` table and is still
@@ -235,7 +234,9 @@ def create_backup(
         if _is_within(backup_root, data_dir):
             raise ValueError("Backup root must be outside the application data directory")
         if include_data and not quiesced:
-            raise ValueError("Full data snapshots require quiesced=True after stopping application writers")
+            raise ValueError(
+                "Full data snapshots require quiesced=True after stopping application writers"
+            )
         config_path = _require_file(config_path, "configuration file")
         db_path = _require_file(data_dir / "index.db", "SQLite database index.db")
 
@@ -353,7 +354,9 @@ def prune_old_backups(
         if not match:
             continue
         try:
-            created = datetime.strptime(match.group(1), "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc)
+            created = datetime.strptime(match.group(1), "%Y%m%dT%H%M%SZ").replace(
+                tzinfo=timezone.utc
+            )
         except ValueError:
             # A directory with a malformed calendar date (e.g. backup-20260229T000000Z)
             # is skipped so it cannot abort pruning and retention cleanup.
@@ -536,35 +539,56 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    backup = subparsers.add_parser("backup", help="Create an online DB backup or quiesced full snapshot")
+    backup = subparsers.add_parser(
+        "backup", help="Create an online DB backup or quiesced full snapshot"
+    )
     backup.add_argument("--data-dir", type=Path, required=True)
     backup.add_argument("--config", type=Path, required=True)
     backup.add_argument("--backup-root", type=Path, required=True)
     backup.add_argument("--include-data", action="store_true")
     backup.add_argument("--quiesced", action="store_true")
-    backup.add_argument("--retention-days", type=_non_negative_int, default=None, help="Delete backups older than this many days after a successful backup")
+    backup.add_argument(
+        "--retention-days",
+        type=_non_negative_int,
+        default=None,
+        help="Delete backups older than this many days after a successful backup",
+    )
     backup.add_argument("--json", action="store_true", help="Emit the machine-readable JSON result")
 
-    verify = subparsers.add_parser("verify", help="Verify a published backup manifest and artifacts")
+    verify = subparsers.add_parser(
+        "verify", help="Verify a published backup manifest and artifacts"
+    )
     verify.add_argument("backup_dir", type=Path)
     verify.add_argument("--json", action="store_true", help="Emit the machine-readable JSON result")
 
-    restore = subparsers.add_parser("restore-smoke", help="Restore into an isolated directory and validate it")
+    restore = subparsers.add_parser(
+        "restore-smoke", help="Restore into an isolated directory and validate it"
+    )
     restore.add_argument("backup_dir", type=Path)
     restore.add_argument("--restore-dir", type=Path, required=True)
-    restore.add_argument("--json", action="store_true", help="Emit the machine-readable JSON result")
+    restore.add_argument(
+        "--json", action="store_true", help="Emit the machine-readable JSON result"
+    )
 
-    capacity = subparsers.add_parser("capacity-check", help="Block when disk use reaches the threshold")
+    capacity = subparsers.add_parser(
+        "capacity-check", help="Block when disk use reaches the threshold"
+    )
     capacity.add_argument("--path", type=Path, default=Path("/"))
     capacity.add_argument("--threshold", type=float, default=80.0)
-    capacity.add_argument("--json", action="store_true", help="Emit the machine-readable JSON result")
+    capacity.add_argument(
+        "--json", action="store_true", help="Emit the machine-readable JSON result"
+    )
 
-    release = subparsers.add_parser("release-record", help="Record image, config, and schema versions")
+    release = subparsers.add_parser(
+        "release-record", help="Record image, config, and schema versions"
+    )
     release.add_argument("--image", required=True)
     release.add_argument("--config", type=Path, required=True)
     release.add_argument("--db", type=Path, required=True)
     release.add_argument("--output", type=Path, required=True)
-    release.add_argument("--json", action="store_true", help="Emit the machine-readable JSON result")
+    release.add_argument(
+        "--json", action="store_true", help="Emit the machine-readable JSON result"
+    )
     return parser
 
 
@@ -580,7 +604,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         payload: dict[str, Any] = {"status": "success", "backup_dir": str(path)}
         if args.retention_days is not None:
-            payload["pruned"] = prune_old_backups(args.backup_root, args.retention_days, exclude=path)
+            payload["pruned"] = prune_old_backups(
+                args.backup_root, args.retention_days, exclude=path
+            )
     elif args.command == "verify":
         payload = verify_backup(args.backup_dir)
     elif args.command == "restore-smoke":
@@ -607,5 +633,7 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except Exception as exc:  # noqa: BLE001
-        print(json.dumps({"status": "failed", "error": str(exc)}, ensure_ascii=False), file=sys.stderr)
+        print(
+            json.dumps({"status": "failed", "error": str(exc)}, ensure_ascii=False), file=sys.stderr
+        )
         raise SystemExit(1) from exc

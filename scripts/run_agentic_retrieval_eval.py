@@ -17,4 +17,5 @@ if str(_repo_root) not in sys.path:
 
 if __name__ == "__main__":
     from ai_actuarial.agentic_rag.eval import main
+
     main()

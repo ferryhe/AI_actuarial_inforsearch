@@ -43,7 +43,9 @@ def _resolve_db_path(config: dict[str, Any], raw_path: str | None) -> str:
     return str(paths.get("db") or database.get("path") or "data/index.db")
 
 
-def _find_credential_status(credentials: list[dict[str, Any]], credential_id: str | None, stable_id: str | None) -> dict[str, Any]:
+def _find_credential_status(
+    credentials: list[dict[str, Any]], credential_id: str | None, stable_id: str | None
+) -> dict[str, Any]:
     for row in credentials:
         if credential_id and row.get("credential_id") == credential_id:
             return row
@@ -74,9 +76,13 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
     if not token_key_configured:
         suggested_next_steps.append("Set TOKEN_ENCRYPTION_KEY in the API and worker environments.")
     if runtime.credential_source == "missing":
-        suggested_next_steps.append("Create or select a usable provider credential for ai_config.embeddings.")
+        suggested_next_steps.append(
+            "Create or select a usable provider credential for ai_config.embeddings."
+        )
     if credential_status.get("decrypt_ok") is False:
-        suggested_next_steps.append("Check TOKEN_ENCRYPTION_KEY consistency or re-encrypt provider credentials.")
+        suggested_next_steps.append(
+            "Check TOKEN_ENCRYPTION_KEY consistency or re-encrypt provider credentials."
+        )
     if not suggested_next_steps:
         suggested_next_steps.append("Embedding runtime appears configured.")
 
@@ -114,11 +120,19 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Diagnose RAG embedding runtime without printing secrets.")
-    parser.add_argument("--config", help="Path to sites.yaml. Defaults to the configured project path.")
-    parser.add_argument("--db", help="Path to SQLite database. Defaults to config paths.db/database.path.")
+    parser = argparse.ArgumentParser(
+        description="Diagnose RAG embedding runtime without printing secrets."
+    )
+    parser.add_argument(
+        "--config", help="Path to sites.yaml. Defaults to the configured project path."
+    )
+    parser.add_argument(
+        "--db", help="Path to SQLite database. Defaults to config paths.db/database.path."
+    )
     parser.add_argument("--json", action="store_true", help="Print JSON output.")
-    parser.add_argument("--include-env-status", action="store_true", help="Include boolean env/config status only.")
+    parser.add_argument(
+        "--include-env-status", action="store_true", help="Include boolean env/config status only."
+    )
     args = parser.parse_args(argv)
 
     report = build_report(args)

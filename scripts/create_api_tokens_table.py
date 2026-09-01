@@ -8,6 +8,7 @@ application configuration.
 Usage:
     python scripts/create_api_tokens_table.py
 """
+
 import sys
 from pathlib import Path
 
@@ -15,36 +16,37 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import sqlite3
+
 from config.yaml_config import load_database_config
 
 
 def create_api_tokens_table():
     """Create api_tokens table in the database.
-    
+
     Creates the table with all necessary columns and indexes for efficient
     querying. The provider+category combination is enforced as unique.
     """
-    
+
     # Get database configuration
     try:
         db_config = load_database_config()
-        db_path = db_config.get('path', 'data/index.db')
+        db_path = db_config.get("path", "data/index.db")
     except Exception as e:
         print(f"Warning: Could not load database config: {e}")
-        db_path = 'data/index.db'
-    
+        db_path = "data/index.db"
+
     print(f"Creating api_tokens table in {db_path}...")
-    
+
     # Ensure directory exists
     db_dir = Path(db_path).parent
     db_dir.mkdir(parents=True, exist_ok=True)
-    
+
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
-    
+
     try:
         # Create table
-        cursor.execute('''
+        cursor.execute("""
             CREATE TABLE IF NOT EXISTS api_tokens (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 provider VARCHAR(50) NOT NULL,
@@ -62,29 +64,29 @@ def create_api_tokens_table():
                 notes TEXT,
                 UNIQUE(provider, category)
             )
-        ''')
-        
+        """)
+
         # Create indexes for performance
-        cursor.execute('''
+        cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_provider_status 
             ON api_tokens(provider, status)
-        ''')
-        
-        cursor.execute('''
+        """)
+
+        cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_category 
             ON api_tokens(category)
-        ''')
-        
+        """)
+
         conn.commit()
         print("✅ api_tokens table created successfully")
-        
+
         # Verify table structure
         cursor.execute("PRAGMA table_info(api_tokens)")
         columns = cursor.fetchall()
         print(f"\nTable structure ({len(columns)} columns):")
         for col in columns:
             print(f"  - {col[1]} ({col[2]})")
-        
+
     except Exception as e:
         conn.rollback()
         print(f"❌ Error creating table: {e}")
@@ -93,5 +95,5 @@ def create_api_tokens_table():
         conn.close()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     create_api_tokens_table()
