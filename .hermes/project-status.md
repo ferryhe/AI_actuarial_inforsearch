@@ -93,12 +93,19 @@
   collector implementations were formatted. The exported
   `CollectionConfig.auto_download` constructor field was retained because
   Issue #317 forbids deleting a public API solely from static-analysis output.
+- The tenth completed directory is the direct files under `ai_actuarial/api/`
+  (excluding its separately reviewed subdirectories). `app.py`, `deps.py`, and
+  `route_inventory.py` were formatted. The `deps.py` email-session selection
+  now uses an explicit typed branch instead of a conditional expression,
+  preserving behavior while removing its Pylint E1136 false inference. The
+  reported `block_retired_api_fallback` symbol remains because its FastAPI
+  decorator registers the framework route at runtime.
 
 ## Acceptance results
 
 - Unified quality gate: passed. Pytest reported 1,881 passed and 10 skipped;
   Black, isort, and Pylint exactly matched the current reviewed baselines at
-  178 files, 116 files, and 20 error identities respectively.
+  175 files, 114 files, and 19 error identities respectively.
 - Dead-code gate: passed with 9/1 file findings and 28/88 symbol findings,
   exactly matching the classified baseline and with no 100%-confidence
   Vulture finding.
@@ -222,6 +229,16 @@
   116 isort files, and 20 Pylint error identities, with zero new or stale
   entries. The dead-code gate shrank exactly from 9/2 files and 28/89 symbols
   to 9/1 files and 28/88 symbols.
+- Remote commit `915fc4d` contains the exact `collectors/` tree. CI run
+  33511516566 passed all five jobs, including the 7m48s Linux quality gate,
+  and no new Review or Copilot comment was added.
+- The direct `ai_actuarial/api/` files compiled successfully and passed Black,
+  isort, and a zero-error focused Pylint scan. All 407 directly importing tests
+  completed with 400 passed and 7 platform skips.
+- The complete pytest suite passed after the direct `api/` cleanup with 1,881
+  tests and 10 platform skips. The full static gate passed at 175 Black files,
+  114 isort files, and 19 Pylint error identities, with zero new or stale
+  entries. The dead-code gate remained exact at 9/1 files and 28/88 symbols.
 
 ## Files changed
 
@@ -262,6 +279,10 @@
   two dead-code findings, removed two unused imports, formatted the five
   reachable collector implementations, and removed their eleven matching
   formatter paths from `quality-gate-baseline.json`.
+- Tenth historical directory cleanup: formatted `ai_actuarial/api/app.py`,
+  `ai_actuarial/api/deps.py`, and `ai_actuarial/api/route_inventory.py`, made
+  the authentication type narrowing explicit, and removed their six matching
+  Black/isort/Pylint entries from `quality-gate-baseline.json`.
 
 ## Working tree notes
 
@@ -278,7 +299,7 @@
 
 ## Recommended next action
 
-- Commit and push the path-specific `collectors/` cleanup, verify PR #318,
-  then continue with another independent historical directory. Keep the final
-  root-level orphan `ai_actuarial/pipeline_config.py` for a separately verified
-  cleanup. Merge only after explicit authorization.
+- Commit and push the path-specific direct `ai_actuarial/api/` cleanup, verify
+  PR #318, then continue with another independent historical directory. Keep
+  the final root-level orphan `ai_actuarial/pipeline_config.py` for a separately
+  verified cleanup. Merge only after explicit authorization.

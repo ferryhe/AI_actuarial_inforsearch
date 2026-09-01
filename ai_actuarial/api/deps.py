@@ -39,7 +39,9 @@ def _has_presented_auth_material(request: Request) -> bool:
 
 
 def _session_cookie_values(request: Request) -> list[str]:
-    cookie_name = str(getattr(request.app.state, "fastapi_session_cookie_name", "session") or "session")
+    cookie_name = str(
+        getattr(request.app.state, "fastapi_session_cookie_name", "session") or "session"
+    )
     values: list[str] = []
     for header in request.headers.getlist("cookie"):
         for chunk in header.split(";"):
@@ -146,7 +148,9 @@ def _load_auth_context(request: Request) -> AuthContext:
 
         ambiguous_email_identity = len(active_email_users) > 1
         ambiguous_token_identity = len(active_session_tokens) > 1
-        email_user = next(iter(active_email_users.values())) if len(active_email_users) == 1 else None
+        email_user: dict[str, Any] | None = None
+        if len(active_email_users) == 1:
+            email_user = next(iter(active_email_users.values()))
         email_can_write_config = bool(
             email_user and "config.write" in permissions_for_group(str(email_user["role"]))
         )
