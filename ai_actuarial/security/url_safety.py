@@ -68,7 +68,9 @@ def _normalized_host(host: str | None) -> str:
     return unquote(host).strip().rstrip(".").lower()
 
 
-def _resolved_ip_addresses(host: str, *, resolver: Resolver | None = None) -> list[ipaddress.IPv4Address | ipaddress.IPv6Address]:
+def _resolved_ip_addresses(
+    host: str, *, resolver: Resolver | None = None
+) -> list[ipaddress.IPv4Address | ipaddress.IPv6Address]:
     addresses: list[ipaddress.IPv4Address | ipaddress.IPv6Address] = []
     direct_ip = _parse_ip_literal(host)
     if direct_ip is not None:
@@ -85,7 +87,7 @@ def _resolved_ip_addresses(host: str, *, resolver: Resolver | None = None) -> li
             continue
         raw_ip = str(sockaddr[0])
         try:
-            addresses.append(ipaddress.ip_address(raw_ip.split('%', 1)[0]))
+            addresses.append(ipaddress.ip_address(raw_ip.split("%", 1)[0]))
         except ValueError:
             continue
 
