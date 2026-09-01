@@ -3,11 +3,6 @@
   "policy": "exact-shrink-only",
   "tools": {
     "black": [
-      "tests/agentic_rag/test_eval.py",
-      "tests/agentic_rag/test_planner_agentic_loop.py",
-      "tests/agentic_rag/test_ready_data_builder.py",
-      "tests/agentic_rag/test_ready_data_tools.py",
-      "tests/agentic_rag/test_staging_smoke.py",
       "tests/conftest.py",
       "tests/test_ai_runtime.py",
       "tests/test_api_logging.py",
@@ -101,8 +96,6 @@
       "tests/unit/test_safe_pickle.py"
     ],
     "isort": [
-      "tests/agentic_rag/test_eval.py",
-      "tests/agentic_rag/test_ready_data_tools.py",
       "tests/test_ai_runtime.py",
       "tests/test_api_token_model.py",
       "tests/test_auth_react_source.py",

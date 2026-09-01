@@ -7,8 +7,8 @@ from ai_actuarial.agentic_rag.ready_data_tools import (
     search_calculation_terms,
     search_formula_cards,
     search_sections,
-    search_summaries,
     search_structured_tables,
+    search_summaries,
     search_titles,
     trace_relations,
 )
@@ -52,24 +52,26 @@ def _write_ready_data(
     if include_summaries:
         _write_jsonl(
             output_dir / "doc_summaries.jsonl",
-            summary_rows
-            if summary_rows is not None
-            else [
-                {
-                    "doc_id": "doc-capital",
-                    "file_url": "https://example.test/capital.pdf",
-                    "title": "Capital Adequacy Guideline",
-                    "category": "regulation",
-                    "summary": "Capital summary with solvency ratio and required capital.",
-                },
-                {
-                    "doc_id": "doc-reserve",
-                    "file_url": "https://example.test/reserve.pdf",
-                    "title": "Reserve Method Note",
-                    "category": "method",
-                    "summary": "Reserve summary for actuarial liabilities.",
-                },
-            ],
+            (
+                summary_rows
+                if summary_rows is not None
+                else [
+                    {
+                        "doc_id": "doc-capital",
+                        "file_url": "https://example.test/capital.pdf",
+                        "title": "Capital Adequacy Guideline",
+                        "category": "regulation",
+                        "summary": "Capital summary with solvency ratio and required capital.",
+                    },
+                    {
+                        "doc_id": "doc-reserve",
+                        "file_url": "https://example.test/reserve.pdf",
+                        "title": "Reserve Method Note",
+                        "category": "method",
+                        "summary": "Reserve summary for actuarial liabilities.",
+                    },
+                ]
+            ),
         )
     _write_jsonl(
         output_dir / "sections.jsonl",
@@ -95,14 +97,16 @@ def _write_ready_data(
             {
                 "profile": "general",
                 "profile_version": "1",
-                "artifact_files": artifact_files
-                if artifact_files is not None
-                else [
-                    "doc_catalog.jsonl",
-                    "doc_summaries.jsonl",
-                    "sections.jsonl",
-                    "ready_data_manifest.json",
-                ],
+                "artifact_files": (
+                    artifact_files
+                    if artifact_files is not None
+                    else [
+                        "doc_catalog.jsonl",
+                        "doc_summaries.jsonl",
+                        "sections.jsonl",
+                        "ready_data_manifest.json",
+                    ]
+                ),
             },
             ensure_ascii=False,
         ),
@@ -250,7 +254,9 @@ def test_search_titles_prefers_exact_alias_before_fallback_scoring(tmp_path: Pat
     assert results[0]["retrieval_method"] == "titles"
 
 
-def test_search_titles_does_not_match_short_numeric_alias_inside_longer_rule_number(tmp_path: Path) -> None:
+def test_search_titles_does_not_match_short_numeric_alias_inside_longer_rule_number(
+    tmp_path: Path,
+) -> None:
     _write_ready_data(tmp_path)
     _write_jsonl(
         tmp_path / "title_aliases.jsonl",
@@ -282,7 +288,10 @@ def test_search_titles_does_not_match_short_numeric_alias_inside_longer_rule_num
 
     assert results[0]["doc_id"] == "doc-capital"
     assert results[0]["matched_alias"] == "RBC Rule 70"
-    assert all(not (item["doc_id"] == "doc-reserve" and item["source"] == "title_aliases") for item in results)
+    assert all(
+        not (item["doc_id"] == "doc-reserve" and item["source"] == "title_aliases")
+        for item in results
+    )
 
 
 def test_search_sections_returns_stable_section_hits_from_l1_artifact(tmp_path: Path) -> None:
@@ -504,7 +513,9 @@ def test_formula_tools_tolerate_missing_optional_artifacts(tmp_path: Path) -> No
     assert search_calculation_terms("discount", output_dir=str(tmp_path), limit=3) == []
 
 
-def test_formula_tools_do_not_read_manifest_artifacts_outside_ready_data_dir(tmp_path: Path) -> None:
+def test_formula_tools_do_not_read_manifest_artifacts_outside_ready_data_dir(
+    tmp_path: Path,
+) -> None:
     outside = tmp_path / "outside-formula.jsonl"
     _write_jsonl(
         outside,
@@ -534,7 +545,9 @@ def test_formula_tools_do_not_read_manifest_artifacts_outside_ready_data_dir(tmp
     assert all(item["file_url"] != "https://example.test/outside.pdf" for item in results)
 
 
-def test_search_summaries_falls_back_to_catalog_summary_when_doc_summaries_missing(tmp_path: Path) -> None:
+def test_search_summaries_falls_back_to_catalog_summary_when_doc_summaries_missing(
+    tmp_path: Path,
+) -> None:
     _write_ready_data(tmp_path, include_summaries=False)
 
     results = search_summaries("liability assumptions", output_dir=str(tmp_path), limit=5)

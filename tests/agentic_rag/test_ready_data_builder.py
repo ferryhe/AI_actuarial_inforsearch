@@ -22,8 +22,7 @@ def test_db_path(tmp_path):
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
 
-    conn.executescript(
-        """
+    conn.executescript("""
         CREATE TABLE files (
             url TEXT PRIMARY KEY,
             title TEXT,
@@ -60,8 +59,7 @@ def test_db_path(tmp_path):
             embedding_dimension INTEGER,
             updated_at TEXT
         );
-    """
-    )
+    """)
 
     # Insert test data
     conn.execute(
@@ -189,15 +187,13 @@ def test_build_l0_source_version_is_stable_and_tracks_consumed_inputs(test_db_pa
 
 def test_build_l0_kb_scope_requires_persisted_composition(test_db_path, tmp_path):
     conn = sqlite3.connect(test_db_path)
-    conn.execute(
-        """
+    conn.execute("""
         CREATE TABLE rag_kb_files (
             kb_id TEXT NOT NULL,
             file_url TEXT NOT NULL,
             PRIMARY KEY (kb_id, file_url)
         )
-        """
-    )
+        """)
     conn.execute(
         "INSERT INTO rag_kb_files(kb_id,file_url) VALUES(?,?)",
         ("kb-ready", "https://example.com/rule1"),
@@ -292,7 +288,9 @@ def test_build_regulation_profile_emits_l1_alias_and_relation_artifacts(test_db_
 
     sections = [
         json.loads(line)
-        for line in (tmp_path / "sections_structured.jsonl").read_text(encoding="utf-8").splitlines()
+        for line in (tmp_path / "sections_structured.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
         if line.strip()
     ]
     assert sections[0]["heading"] == "第一条"
@@ -644,9 +642,14 @@ def test_validate_rejects_orphan_l2_relation_targets(tmp_path):
     result = builder.validate(str(tmp_path))
 
     assert result["valid"] is False
-    assert any("relation formula targets not in L2 artifacts" in error for error in result["errors"])
+    assert any(
+        "relation formula targets not in L2 artifacts" in error for error in result["errors"]
+    )
     assert any("relation table targets not in L2 artifacts" in error for error in result["errors"])
-    assert any("relation calculation_term targets not in L2 artifacts" in error for error in result["errors"])
+    assert any(
+        "relation calculation_term targets not in L2 artifacts" in error
+        for error in result["errors"]
+    )
 
 
 def test_validate_resolves_dict_mapped_l2_artifact_paths(tmp_path):
@@ -659,7 +662,12 @@ def test_validate_resolves_dict_mapped_l2_artifact_paths(tmp_path):
                 f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
     doc = {"doc_id": "doc-a", "file_url": "doc-a", "title": "Formula Doc", "category": "formula"}
-    section = {"section_id": "doc-a#s1", "doc_id": "doc-a", "heading_path": ["Formula"], "text": "A = B"}
+    section = {
+        "section_id": "doc-a#s1",
+        "doc_id": "doc-a",
+        "heading_path": ["Formula"],
+        "text": "A = B",
+    }
     structured = {**section, "file_url": "doc-a", "title": "Formula Doc", "heading": "Formula"}
     write_jsonl(mapped_dir / "catalog.jsonl", [doc])
     write_jsonl(mapped_dir / "sections.jsonl", [section])
@@ -712,14 +720,15 @@ def test_validate_resolves_dict_mapped_l2_artifact_paths(tmp_path):
 
     assert result["valid"] is False
     assert not any("artifact missing" in error for error in result["errors"])
-    assert any("relation formula targets not in L2 artifacts" in error for error in result["errors"])
+    assert any(
+        "relation formula targets not in L2 artifacts" in error for error in result["errors"]
+    )
 
 
 def test_build_l0_kb_scope_does_not_fallback_to_partial_legacy_tables(test_db_path, tmp_path):
     """KB scoped builds should not leak catalog rows from other KBs."""
     conn = sqlite3.connect(test_db_path)
-    conn.executescript(
-        """
+    conn.executescript("""
         CREATE TABLE rag_kb_files (
             kb_id TEXT NOT NULL,
             file_url TEXT NOT NULL,
@@ -733,8 +742,7 @@ def test_build_l0_kb_scope_does_not_fallback_to_partial_legacy_tables(test_db_pa
             bound_at TEXT NOT NULL,
             binding_mode TEXT DEFAULT 'follow_latest'
         );
-        """
-    )
+        """)
     conn.execute(
         "INSERT INTO files(url,title,source_site,published_time) VALUES(?,?,?,?)",
         ("https://example.com/rule2", "Other Rule", "Other", "2024-02-01"),
@@ -796,8 +804,7 @@ def test_build_l0_kb_scope_does_not_fallback_to_partial_legacy_tables(test_db_pa
 
 def test_build_l0_rejects_historical_orphan_binding_without_exact_kb(test_db_path, tmp_path):
     conn = sqlite3.connect(test_db_path)
-    conn.executescript(
-        """
+    conn.executescript("""
         CREATE TABLE rag_kb_files (
             kb_id TEXT NOT NULL,
             file_url TEXT NOT NULL,
@@ -810,8 +817,7 @@ def test_build_l0_rejects_historical_orphan_binding_without_exact_kb(test_db_pat
             chunk_set_id TEXT NOT NULL,
             bound_at TEXT NOT NULL
         );
-        """
-    )
+        """)
     conn.execute(
         "INSERT INTO rag_kb_files(kb_id,file_url,added_at) VALUES(?,?,?)",
         ("kb_rule_1", "https://example.com/rule1", "2026-08-19T00:00:00+00:00"),
@@ -846,8 +852,7 @@ def test_build_l0_rejects_historical_orphan_binding_without_exact_kb(test_db_pat
 
 def test_build_l0_rejects_non_ready_binding_without_exact_kb(test_db_path, tmp_path):
     conn = sqlite3.connect(test_db_path)
-    conn.executescript(
-        """
+    conn.executescript("""
         CREATE TABLE rag_kb_files (
             kb_id TEXT NOT NULL,
             file_url TEXT NOT NULL,
@@ -860,8 +865,7 @@ def test_build_l0_rejects_non_ready_binding_without_exact_kb(test_db_path, tmp_p
             chunk_set_id TEXT NOT NULL,
             bound_at TEXT NOT NULL
         );
-        """
-    )
+        """)
     invalid_url = "https://example.com/not-ready"
     conn.execute(
         "INSERT INTO files(url,title,source_site,published_time) VALUES(?,?,?,?)",
@@ -913,14 +917,12 @@ def test_build_l0_empty_db(tmp_path):
     """Build with no catalog items should produce empty outputs."""
     db_path = str(tmp_path / "empty.db")
     conn = sqlite3.connect(db_path)
-    conn.executescript(
-        """
+    conn.executescript("""
         CREATE TABLE IF NOT EXISTS files(url TEXT PRIMARY KEY, title TEXT, source_site TEXT, published_time TEXT);
         CREATE TABLE IF NOT EXISTS catalog_items(file_url TEXT PRIMARY KEY, status TEXT, summary TEXT, category TEXT, keywords TEXT, rag_chunk_count INTEGER);
         CREATE TABLE IF NOT EXISTS file_chunk_sets(chunk_set_id TEXT PRIMARY KEY, file_url TEXT, chunk_count INTEGER, status TEXT);
         CREATE TABLE IF NOT EXISTS global_chunks(chunk_id TEXT PRIMARY KEY, chunk_set_id TEXT, chunk_index INTEGER, content TEXT, token_count INTEGER, section_hierarchy TEXT);
-    """
-    )
+    """)
     conn.commit()
     conn.close()
 
@@ -962,7 +964,10 @@ def test_validate(tmp_path):
     with open(tmp_path / "sections.jsonl", "w", encoding="utf-8") as f:
         f.write(json.dumps(section, ensure_ascii=False) + "\n")
     with open(tmp_path / "ready_data_manifest.json", "w", encoding="utf-8") as f:
-        json.dump({"artifact_files": ["doc_catalog.jsonl", "sections.jsonl", "ready_data_manifest.json"]}, f)
+        json.dump(
+            {"artifact_files": ["doc_catalog.jsonl", "sections.jsonl", "ready_data_manifest.json"]},
+            f,
+        )
 
     result = builder.validate(str(tmp_path))
     assert result["valid"] is True
@@ -972,7 +977,10 @@ def test_validate(tmp_path):
 def test_validate_missing_artifact(tmp_path):
     """Validation fails when an artifact is missing."""
     with open(tmp_path / "ready_data_manifest.json", "w", encoding="utf-8") as f:
-        json.dump({"artifact_files": ["doc_catalog.jsonl", "sections.jsonl", "ready_data_manifest.json"]}, f)
+        json.dump(
+            {"artifact_files": ["doc_catalog.jsonl", "sections.jsonl", "ready_data_manifest.json"]},
+            f,
+        )
     # doc_catalog.jsonl and sections.jsonl are missing
 
     result = builder.validate(str(tmp_path))
@@ -1006,7 +1014,10 @@ def test_validate_orphan_sections(tmp_path):
     with open(tmp_path / "sections.jsonl", "w", encoding="utf-8") as f:
         f.write(json.dumps(section, ensure_ascii=False) + "\n")
     with open(tmp_path / "ready_data_manifest.json", "w", encoding="utf-8") as f:
-        json.dump({"artifact_files": ["doc_catalog.jsonl", "sections.jsonl", "ready_data_manifest.json"]}, f)
+        json.dump(
+            {"artifact_files": ["doc_catalog.jsonl", "sections.jsonl", "ready_data_manifest.json"]},
+            f,
+        )
 
     result = builder.validate(str(tmp_path))
     assert result["valid"] is False

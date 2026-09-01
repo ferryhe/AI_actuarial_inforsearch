@@ -12,13 +12,12 @@ from ai_actuarial.agentic_rag.eval import (
     CaseResult,
     EvalCase,
     EvalReport,
-    RetrievedItem,
     RetrievalEvaluator,
+    RetrievedItem,
     SimpleKeywordRetriever,
     load_agentic_cases,
     load_cases,
 )
-
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -54,9 +53,7 @@ def test_eval_case_defaults():
 
 
 def test_evaluate_single_pass():
-    retriever = FakeRetriever(
-        [RetrievedItem(doc_id="doc_a", title="Doc A", category="AI")]
-    )
+    retriever = FakeRetriever([RetrievedItem(doc_id="doc_a", title="Doc A", category="AI")])
     evaluator = RetrievalEvaluator(retriever)
     case = EvalCase(
         case_id="c1",
@@ -65,15 +62,15 @@ def test_evaluate_single_pass():
         expected_categories=["AI"],
     )
     result = evaluator.evaluate_case(case)
+    assert retriever.last_query == case.query
+    assert retriever.last_top_k == case.top_k
     assert result.passed is True
     assert result.hits == 1
     assert result.category_hits == 1
 
 
 def test_evaluate_single_fail():
-    retriever = FakeRetriever(
-        [RetrievedItem(doc_id="doc_b", title="Doc B", category="general")]
-    )
+    retriever = FakeRetriever([RetrievedItem(doc_id="doc_b", title="Doc B", category="general")])
     evaluator = RetrievalEvaluator(retriever)
     case = EvalCase(
         case_id="c2",
@@ -106,9 +103,7 @@ def test_evaluate_min_hits_2():
 
 
 def test_evaluate_min_hits_not_met():
-    retriever = FakeRetriever(
-        [RetrievedItem(doc_id="doc_a", title="A")]
-    )
+    retriever = FakeRetriever([RetrievedItem(doc_id="doc_a", title="A")])
     evaluator = RetrievalEvaluator(retriever)
     case = EvalCase(
         case_id="c4",
@@ -138,9 +133,7 @@ def test_evaluate_empty_results():
 
 def test_evaluate_no_expected_doc_ids():
     """Case with no expected_doc_ids — auto-passes if min_hits=0."""
-    retriever = FakeRetriever(
-        [RetrievedItem(doc_id="doc_a", title="A", category="AI")]
-    )
+    retriever = FakeRetriever([RetrievedItem(doc_id="doc_a", title="A", category="AI")])
     evaluator = RetrievalEvaluator(retriever)
     case = EvalCase(
         case_id="c6",
@@ -155,9 +148,7 @@ def test_evaluate_no_expected_doc_ids():
 
 
 def test_evaluate_category_only_defaults_to_category_hit():
-    retriever = FakeRetriever(
-        [RetrievedItem(doc_id="doc_a", title="A", category="AI")]
-    )
+    retriever = FakeRetriever([RetrievedItem(doc_id="doc_a", title="A", category="AI")])
     evaluator = RetrievalEvaluator(retriever)
     case = EvalCase(
         case_id="c6_default",
@@ -171,9 +162,7 @@ def test_evaluate_category_only_defaults_to_category_hit():
 
 
 def test_evaluate_semicolon_separated_categories():
-    retriever = FakeRetriever(
-        [RetrievedItem(doc_id="doc_a", title="A", category="AI;regulation")]
-    )
+    retriever = FakeRetriever([RetrievedItem(doc_id="doc_a", title="A", category="AI;regulation")])
     evaluator = RetrievalEvaluator(retriever)
     case = EvalCase(
         case_id="c7",
@@ -188,9 +177,7 @@ def test_evaluate_semicolon_separated_categories():
 
 
 def test_evaluate_semicolon_separated_expected_category_denominator():
-    retriever = FakeRetriever(
-        [RetrievedItem(doc_id="doc_a", title="A", category="AI;regulation")]
-    )
+    retriever = FakeRetriever([RetrievedItem(doc_id="doc_a", title="A", category="AI;regulation")])
     evaluator = RetrievalEvaluator(retriever)
     case = EvalCase(
         case_id="c7_expected",
@@ -248,9 +235,7 @@ def test_doc_hit_rate_ignores_category_only_failure():
 
 
 def test_eval_report_aggregation():
-    evaluator = RetrievalEvaluator(
-        FakeRetriever([RetrievedItem(doc_id="doc_a", category="AI")])
-    )
+    evaluator = RetrievalEvaluator(FakeRetriever([RetrievedItem(doc_id="doc_a", category="AI")]))
     cases = [
         EvalCase("t1", "q1", expected_doc_ids=["doc_a"], expected_categories=["AI"]),
         EvalCase("t2", "q2", expected_doc_ids=["doc_x"], expected_categories=["AI"]),
@@ -455,13 +440,11 @@ def _write_retrieval_eval_db(db_path):
     import sqlite3
 
     conn = sqlite3.connect(db_path)
-    conn.executescript(
-        """
+    conn.executescript("""
         CREATE TABLE files(url TEXT PRIMARY KEY, title TEXT, source_site TEXT, published_time TEXT);
         CREATE TABLE catalog_items(file_url TEXT PRIMARY KEY, status TEXT, summary TEXT, category TEXT, keywords TEXT, rag_chunk_count INTEGER);
         CREATE TABLE rag_chunks(chunk_id TEXT PRIMARY KEY, kb_id TEXT, file_url TEXT, chunk_index INTEGER, content TEXT, token_count INTEGER, section_hierarchy TEXT, embedding_hash TEXT, created_at TEXT);
-    """
-    )
+    """)
     conn.execute(
         "INSERT INTO files(url,title,source_site) VALUES(?,?,?)",
         ("https://example.test/retrieval.pdf", "Retrieval Eval Bulletin", "SOA"),
@@ -840,15 +823,13 @@ def test_simple_keyword_retriever_with_test_db(tmp_path):
     db_path = str(tmp_path / "test.db")
     conn = sqlite3.connect(db_path)
 
-    conn.executescript(
-        """
+    conn.executescript("""
         CREATE TABLE files(url TEXT PRIMARY KEY, title TEXT, source_site TEXT, published_time TEXT);
         CREATE TABLE catalog_items(file_url TEXT PRIMARY KEY, status TEXT, summary TEXT, category TEXT, keywords TEXT, rag_chunk_count INTEGER);
         CREATE TABLE file_chunk_sets(chunk_set_id TEXT PRIMARY KEY, file_url TEXT, chunk_count INTEGER, status TEXT);
         CREATE TABLE global_chunks(chunk_id TEXT PRIMARY KEY, chunk_set_id TEXT, chunk_index INTEGER, content TEXT, token_count INTEGER, section_hierarchy TEXT);
         CREATE TABLE rag_chunks(chunk_id TEXT PRIMARY KEY, kb_id TEXT, file_url TEXT, chunk_index INTEGER, content TEXT, token_count INTEGER, section_hierarchy TEXT, embedding_hash TEXT, created_at TEXT);
-    """
-    )
+    """)
 
     conn.execute(
         "INSERT INTO files(url,title,source_site) VALUES(?,?,?)",
@@ -887,13 +868,11 @@ def test_simple_keyword_retriever_no_match(tmp_path):
 
     db_path = str(tmp_path / "empty.db")
     conn = sqlite3.connect(db_path)
-    conn.executescript(
-        """
+    conn.executescript("""
         CREATE TABLE catalog_items(file_url TEXT PRIMARY KEY, status TEXT, summary TEXT, category TEXT, keywords TEXT, rag_chunk_count INTEGER);
         CREATE TABLE files(url TEXT PRIMARY KEY, title TEXT, source_site TEXT, published_time TEXT);
         CREATE TABLE rag_chunks(chunk_id TEXT PRIMARY KEY, kb_id TEXT, file_url TEXT, chunk_index INTEGER, content TEXT, token_count INTEGER, section_hierarchy TEXT, embedding_hash TEXT, created_at TEXT);
-    """
-    )
+    """)
     conn.execute(
         "INSERT INTO catalog_items(file_url,status,summary,category) VALUES(?,?,?,?)",
         ("https://x.com/doc", "ok", "completely unrelated text", "general"),
@@ -914,13 +893,11 @@ def test_simple_keyword_retriever_deduplicates(tmp_path):
 
     db_path = str(tmp_path / "test.db")
     conn = sqlite3.connect(db_path)
-    conn.executescript(
-        """
+    conn.executescript("""
         CREATE TABLE files(url TEXT PRIMARY KEY, title TEXT, source_site TEXT, published_time TEXT);
         CREATE TABLE catalog_items(file_url TEXT PRIMARY KEY, status TEXT, summary TEXT, category TEXT, keywords TEXT, rag_chunk_count INTEGER);
         CREATE TABLE rag_chunks(chunk_id TEXT PRIMARY KEY, kb_id TEXT, file_url TEXT, chunk_index INTEGER, content TEXT, token_count INTEGER, section_hierarchy TEXT, embedding_hash TEXT, created_at TEXT);
-    """
-    )
+    """)
     conn.execute(
         "INSERT INTO files(url,title) VALUES(?,?)",
         ("https://example.com/doc1", "Actuarial Report"),
@@ -955,13 +932,11 @@ def test_simple_keyword_retriever_chunk_score_matches_ranking(tmp_path):
 
     db_path = str(tmp_path / "ranking.db")
     conn = sqlite3.connect(db_path)
-    conn.executescript(
-        """
+    conn.executescript("""
         CREATE TABLE files(url TEXT PRIMARY KEY, title TEXT, source_site TEXT, published_time TEXT);
         CREATE TABLE catalog_items(file_url TEXT PRIMARY KEY, status TEXT, summary TEXT, category TEXT, keywords TEXT, rag_chunk_count INTEGER);
         CREATE TABLE rag_chunks(chunk_id TEXT PRIMARY KEY, kb_id TEXT, file_url TEXT, chunk_index INTEGER, content TEXT, token_count INTEGER, section_hierarchy TEXT, embedding_hash TEXT, created_at TEXT);
-    """
-    )
+    """)
     conn.execute(
         "INSERT INTO files(url,title) VALUES(?,?)",
         ("https://example.com/catalog", "Actuarial Catalog"),
@@ -989,13 +964,11 @@ def test_simple_keyword_retriever_context_manager_closes_connection(tmp_path):
 
     db_path = str(tmp_path / "close.db")
     conn = sqlite3.connect(db_path)
-    conn.executescript(
-        """
+    conn.executescript("""
         CREATE TABLE catalog_items(file_url TEXT PRIMARY KEY, status TEXT, summary TEXT, category TEXT, keywords TEXT, rag_chunk_count INTEGER);
         CREATE TABLE files(url TEXT PRIMARY KEY, title TEXT, source_site TEXT, published_time TEXT);
         CREATE TABLE rag_chunks(chunk_id TEXT PRIMARY KEY, kb_id TEXT, file_url TEXT, chunk_index INTEGER, content TEXT, token_count INTEGER, section_hierarchy TEXT, embedding_hash TEXT, created_at TEXT);
-    """
-    )
+    """)
     conn.commit()
     conn.close()
 
@@ -1011,13 +984,11 @@ def test_simple_keyword_retriever_top_k_zero_returns_empty(tmp_path):
 
     db_path = str(tmp_path / "top_k.db")
     conn = sqlite3.connect(db_path)
-    conn.executescript(
-        """
+    conn.executescript("""
         CREATE TABLE files(url TEXT PRIMARY KEY, title TEXT, source_site TEXT, published_time TEXT);
         CREATE TABLE catalog_items(file_url TEXT PRIMARY KEY, status TEXT, summary TEXT, category TEXT, keywords TEXT, rag_chunk_count INTEGER);
         CREATE TABLE rag_chunks(chunk_id TEXT PRIMARY KEY, kb_id TEXT, file_url TEXT, chunk_index INTEGER, content TEXT, token_count INTEGER, section_hierarchy TEXT, embedding_hash TEXT, created_at TEXT);
-    """
-    )
+    """)
     conn.execute(
         "INSERT INTO files(url,title) VALUES(?,?)",
         ("https://example.com/doc", "Actuarial Bulletin"),
@@ -1044,9 +1015,7 @@ def test_main_help():
     import sys
 
     # Derive repo root from test file location so CI works
-    repo_root = os.path.abspath(
-        os.path.join(os.path.dirname(__file__), "..", "..")
-    )
+    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
     result = subprocess.run(
         [sys.executable, "-m", "ai_actuarial.agentic_rag.eval", "--help"],
         capture_output=True,

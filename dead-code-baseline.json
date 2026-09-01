@@ -8,22 +8,6 @@
     "typescript-symbols": [],
     "python-symbols": [
       {
-        "path": "tests/agentic_rag/test_eval.py",
-        "kind": "unused attribute",
-        "symbol": "last_query",
-        "confidence": 60,
-        "classification": "whitelist",
-        "reason": "Framework, configuration, or test contract candidate; retain until a narrow symbol reference or safe removal is confirmed."
-      },
-      {
-        "path": "tests/agentic_rag/test_eval.py",
-        "kind": "unused attribute",
-        "symbol": "last_top_k",
-        "confidence": 60,
-        "classification": "whitelist",
-        "reason": "Framework, configuration, or test contract candidate; retain until a narrow symbol reference or safe removal is confirmed."
-      },
-      {
         "path": "tests/test_api_token_model.py",
         "kind": "unused variable",
         "symbol": "original_updated_at",

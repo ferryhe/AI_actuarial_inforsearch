@@ -531,7 +531,14 @@
   recorded its exact validated whitelist reference. No production code or
   tests were removed. Focused tests passed 41/41, the full suite passed 1857/10
   plus Black, isort, and Pylint, and the dead-code symbol baseline fell from 9
-  to 8; the quality baseline remains 96/60/9.
+  to 8; the quality baseline remains 96/60/9. All five remote CI jobs passed.
+- Twenty-sixth historical directory cleanup: formatted all six Python files
+  under `tests/agentic_rag/` (five Black and two isort baseline identities) and
+  strengthened `test_evaluate_single_pass` to verify the fake retriever
+  receives the query and `top_k`. No tests were removed. Focused tests passed
+  102/102, the full suite passed 1857/10 plus Black, isort, and Pylint, the
+  dead-code symbol baseline fell from 8 to 6, and the quality baseline fell
+  from 96/60/9 to 91/58/9.
 
 ## Working tree notes
 
@@ -548,7 +555,7 @@
 
 ## Recommended next action
 
-- Commit and push the `ai_actuarial/rag/` compatibility reference to PR #318,
-  verify CI, then process the remaining eight Python symbol findings and
-  formatter/linter debt directory by directory under `tests/`. Merge only
-  after explicit authorization.
+- Commit and push the `tests/agentic_rag/` cleanup to PR #318, verify CI, then
+  format `tests/unit/` as its own batch before cleaning the remaining six
+  Python symbol findings and formatter/linter debt in the root `tests/`
+  directory. Merge only after explicit authorization.
