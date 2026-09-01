@@ -515,7 +515,17 @@
   20/20; after one host-resource-abnormal test run was stopped and isolated,
   the unchanged historical file passed 83/83 and a clean full rerun passed
   1857/10 plus Black, isort, and Pylint. The dead-code symbol baseline fell
-  from 17 to 16; the quality baseline remains 96/60/9.
+  from 17 to 16; the quality baseline remains 96/60/9. The first remote
+  quality-gate attempt hit a concurrent-test race in an unrelated historical
+  schema test; the failed job rerun passed without source changes, and all five
+  remote CI jobs are green.
+- Twenty-fourth historical directory cleanup: retained six public exported
+  `ChatbotConfig` fields loaded from environment/YAML settings plus the
+  explicit `QueryRouter.select_kbs` compatibility alias, recording each as an
+  exact validated whitelist reference. No production code or tests were
+  removed. Focused tests passed 115/115, the full suite passed 1857/10 plus
+  Black, isort, and Pylint, and the dead-code symbol baseline fell from 16 to
+  9; the quality baseline remains 96/60/9.
 
 ## Working tree notes
 
@@ -532,8 +542,7 @@
 
 ## Recommended next action
 
-- Commit and push the `ai_actuarial/api/app.py` compatibility reference to PR
-  #318, verify its CI and review feedback, then process the remaining 16 Python
-  symbol findings directory by directory (`chatbot/`, `rag/`, and test
-  directories) while continuing to shrink the 96/60/9 quality baseline. Merge
-  only after explicit authorization.
+- Commit and push the `ai_actuarial/chatbot/` compatibility references to PR
+  #318, verify CI, then process the remaining nine Python symbol findings
+  directory by directory (`rag/` and test directories) while continuing to
+  shrink the 96/60/9 quality baseline. Merge only after explicit authorization.

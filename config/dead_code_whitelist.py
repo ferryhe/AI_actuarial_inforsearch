@@ -373,6 +373,19 @@ from ai_actuarial.collectors.base import CollectionConfig
 
 CollectionConfig.auto_download  # reason: Public exported dataclass constructor field retained for compatibility.
 
+from ai_actuarial.chatbot.config import ChatbotConfig
+
+ChatbotConfig.min_results  # reason: Public exported chatbot configuration field retained for compatibility.
+ChatbotConfig.summarization_threshold  # reason: Public exported chatbot configuration field retained for compatibility.
+ChatbotConfig.require_citations  # reason: Public exported chatbot configuration field retained for compatibility.
+ChatbotConfig.validate_citations  # reason: Public exported chatbot configuration field retained for compatibility.
+ChatbotConfig.hallucination_check  # reason: Public exported chatbot configuration field retained for compatibility.
+ChatbotConfig.multi_kb_enabled  # reason: Public exported chatbot configuration field retained for compatibility.
+
+from ai_actuarial.chatbot.router import QueryRouter
+
+QueryRouter.select_kbs  # reason: Explicit backward-compatible alias for QueryRouter.select_kb.
+
 from ai_actuarial.config import Settings
 
 Settings.DATA_DIR  # reason: Public exported Settings contract.

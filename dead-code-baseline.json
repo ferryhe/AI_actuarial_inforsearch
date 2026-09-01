@@ -8,62 +8,6 @@
     "typescript-symbols": [],
     "python-symbols": [
       {
-        "path": "ai_actuarial/chatbot/config.py",
-        "kind": "unused variable",
-        "symbol": "hallucination_check",
-        "confidence": 60,
-        "classification": "whitelist",
-        "reason": "Framework, configuration, or test contract candidate; retain until a narrow symbol reference or safe removal is confirmed."
-      },
-      {
-        "path": "ai_actuarial/chatbot/config.py",
-        "kind": "unused variable",
-        "symbol": "min_results",
-        "confidence": 60,
-        "classification": "whitelist",
-        "reason": "Framework, configuration, or test contract candidate; retain until a narrow symbol reference or safe removal is confirmed."
-      },
-      {
-        "path": "ai_actuarial/chatbot/config.py",
-        "kind": "unused variable",
-        "symbol": "multi_kb_enabled",
-        "confidence": 60,
-        "classification": "whitelist",
-        "reason": "Framework, configuration, or test contract candidate; retain until a narrow symbol reference or safe removal is confirmed."
-      },
-      {
-        "path": "ai_actuarial/chatbot/config.py",
-        "kind": "unused variable",
-        "symbol": "require_citations",
-        "confidence": 60,
-        "classification": "whitelist",
-        "reason": "Framework, configuration, or test contract candidate; retain until a narrow symbol reference or safe removal is confirmed."
-      },
-      {
-        "path": "ai_actuarial/chatbot/config.py",
-        "kind": "unused variable",
-        "symbol": "summarization_threshold",
-        "confidence": 60,
-        "classification": "whitelist",
-        "reason": "Framework, configuration, or test contract candidate; retain until a narrow symbol reference or safe removal is confirmed."
-      },
-      {
-        "path": "ai_actuarial/chatbot/config.py",
-        "kind": "unused variable",
-        "symbol": "validate_citations",
-        "confidence": 60,
-        "classification": "whitelist",
-        "reason": "Framework, configuration, or test contract candidate; retain until a narrow symbol reference or safe removal is confirmed."
-      },
-      {
-        "path": "ai_actuarial/chatbot/router.py",
-        "kind": "unused method",
-        "symbol": "select_kbs",
-        "confidence": 60,
-        "classification": "whitelist",
-        "reason": "Explicit backward-compatible alias for QueryRouter.select_kb; retained as a compatibility shim."
-      },
-      {
         "path": "ai_actuarial/rag/config.py",
         "kind": "unused variable",
         "symbol": "chunk_strategy",
