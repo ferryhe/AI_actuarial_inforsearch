@@ -82,8 +82,10 @@
   dead-code gate also remained exact at 9/5 files and 28/93 symbols.
 - After the nested-audit assertion fix, its focused regression passed. Static
   baselines remain exact at 213/142/22 with no new or stale entries, and the
-  dead-code gate remains exact at 9/5 files and 28/93 symbols. A final Linux CI
-  rerun is required because the four original symlink tests skip on Windows.
+  dead-code gate remains exact at 9/5 files and 28/93 symbols. Final Linux CI
+  run 33456929109 passed all five jobs; its unified gate reported 1,891 tests
+  passed, including the four original symlink tests, then passed Black, isort,
+  and Pylint.
 
 ## Files changed
 
@@ -111,5 +113,5 @@
 
 ## Recommended next action
 
-- Evaluate required checks and remote review/Copilot feedback on PR #318's
-  final head. Merge only after explicit authorization.
+- PR #318 is mergeable, all required checks are green, and Copilot's only
+  actionable thread is resolved. Merge only after explicit authorization.
