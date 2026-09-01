@@ -15,7 +15,6 @@ import {
   Lock,
 } from "lucide-react";
 import { buildFileDetailPath, sanitizeReturnPath, useRawSearchParams } from "@/lib/navigation";
-import { cn } from "@/lib/utils";
 import { useTranslation } from "@/components/Layout";
 import { useAuth } from "@/context/AuthContext";
 import { useLatestRequestGuard } from "@/hooks/use-latest-request";
@@ -283,8 +282,7 @@ function ChunksPane({ chunks, chunkSets, activeChunkSetId, onChunkSetChange }: {
 
 export default function FilePreview() {
   const { t } = useTranslation();
-  const { user, isLoggedIn, permissions } = useAuth();
-  const isGuest = !isLoggedIn || user?.role === "guest";
+  const { permissions } = useAuth();
   const canDownload = permissions.includes("files.download");
   const [, navigate] = useLocation();
   const searchParams = useRawSearchParams();

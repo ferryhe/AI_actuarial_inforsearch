@@ -1,0 +1,16 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "entry": [
+    "client/src/main.tsx!",
+    "client/src/**/*.test.{ts,tsx}"
+  ],
+  "project": [
+    "client/src/**/*.{ts,tsx}!",
+    "client/src/**/*.test.{ts,tsx}"
+  ],
+  "ignoreFiles": [
+    "client/public/vendor/pdfjs/**"
+  ],
+  "includeEntryExports": true,
+  "treatConfigHintsAsErrors": true
+}

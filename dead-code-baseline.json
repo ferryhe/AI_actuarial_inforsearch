@@ -1,0 +1,1053 @@
+{
+  "version": 1,
+  "normalization": "path + kind + symbol",
+  "policy": "Every current finding must match exactly; update-baseline may only remove entries.",
+  "gates": {
+    "typescript-files": [
+      {
+        "path": "client/src/components/LoadingSkeleton.tsx",
+        "kind": "unused_file",
+        "symbol": "client/src/components/LoadingSkeleton.tsx",
+        "classification": "remove",
+        "reason": "Production-orphan cleanup candidate; verify behavior before deleting the file."
+      },
+      {
+        "path": "client/src/hooks/use-api-query.ts",
+        "kind": "unused_file",
+        "symbol": "client/src/hooks/use-api-query.ts",
+        "classification": "remove",
+        "reason": "Production-orphan cleanup candidate; verify behavior before deleting the file."
+      },
+      {
+        "path": "client/src/pages/FeatureUnavailable.tsx",
+        "kind": "unused_file",
+        "symbol": "client/src/pages/FeatureUnavailable.tsx",
+        "classification": "remove",
+        "reason": "Production-orphan cleanup candidate; verify behavior before deleting the file."
+      },
+      {
+        "path": "client/src/pages/NativeFileDetail.tsx",
+        "kind": "unused_file",
+        "symbol": "client/src/pages/NativeFileDetail.tsx",
+        "classification": "remove",
+        "reason": "Production-orphan cleanup candidate; verify behavior before deleting the file."
+      },
+      {
+        "path": "client/src/pages/NativeLogs.tsx",
+        "kind": "unused_file",
+        "symbol": "client/src/pages/NativeLogs.tsx",
+        "classification": "remove",
+        "reason": "Production-orphan cleanup candidate; verify behavior before deleting the file."
+      },
+      {
+        "path": "client/src/pages/NativeSettings.tsx",
+        "kind": "unused_file",
+        "symbol": "client/src/pages/NativeSettings.tsx",
+        "classification": "remove",
+        "reason": "Production-orphan cleanup candidate; verify behavior before deleting the file."
+      },
+      {
+        "path": "client/src/pages/NativeTasks.tsx",
+        "kind": "unused_file",
+        "symbol": "client/src/pages/NativeTasks.tsx",
+        "classification": "remove",
+        "reason": "Production-orphan cleanup candidate; verify behavior before deleting the file."
+      },
+      {
+        "path": "client/src/pages/tasks/FolderBrowser.tsx",
+        "kind": "unused_file",
+        "symbol": "client/src/pages/tasks/FolderBrowser.tsx",
+        "classification": "remove",
+        "reason": "Production-orphan cleanup candidate; verify behavior before deleting the file."
+      },
+      {
+        "path": "client/src/pages/tasks/index.ts",
+        "kind": "unused_file",
+        "symbol": "client/src/pages/tasks/index.ts",
+        "classification": "remove",
+        "reason": "Production-orphan cleanup candidate; verify behavior before deleting the file."
+      }
+    ],
+    "python-files": [
+      {
+        "path": "ai_actuarial/collectors/adhoc.py",
+        "kind": "unused_module",
+        "symbol": "ai_actuarial.collectors.adhoc",
+        "classification": "remove",
+        "reason": "Unreachable production module; verify scripts and compatibility callers before deletion."
+      },
+      {
+        "path": "ai_actuarial/pipeline_config.py",
+        "kind": "unused_module",
+        "symbol": "ai_actuarial.pipeline_config",
+        "classification": "remove",
+        "reason": "Unreachable production module; verify scripts and compatibility callers before deletion."
+      },
+      {
+        "path": "ai_actuarial/processors/__init__.py",
+        "kind": "unused_module",
+        "symbol": "ai_actuarial.processors",
+        "classification": "remove",
+        "reason": "Unreachable production module; verify scripts and compatibility callers before deletion."
+      },
+      {
+        "path": "ai_actuarial/processors/categorizer.py",
+        "kind": "unused_module",
+        "symbol": "ai_actuarial.processors.categorizer",
+        "classification": "remove",
+        "reason": "Unreachable production module; verify scripts and compatibility callers before deletion."
+      },
+      {
+        "path": "ai_actuarial/processors/cleaner.py",
+        "kind": "unused_module",
+        "symbol": "ai_actuarial.processors.cleaner",
+        "classification": "remove",
+        "reason": "Unreachable production module; verify scripts and compatibility callers before deletion."
+      }
+    ],
+    "typescript-symbols": [
+      {
+        "path": "client/src/components/MarkdownContent.tsx",
+        "kind": "unused_export",
+        "symbol": "transformMarkdownUrl",
+        "classification": "remove",
+        "reason": "Unused production export/type; remove the export or symbol after focused review."
+      },
+      {
+        "path": "client/src/hooks/use-task-options.ts",
+        "kind": "unused_type",
+        "symbol": "ConversionTool",
+        "classification": "remove",
+        "reason": "Unused production export/type; remove the export or symbol after focused review."
+      },
+      {
+        "path": "client/src/hooks/use-task-options.ts",
+        "kind": "unused_type",
+        "symbol": "MarkdownConversionLimits",
+        "classification": "remove",
+        "reason": "Unused production export/type; remove the export or symbol after focused review."
+      },
+      {
+        "path": "client/src/lib/category-labels.ts",
+        "kind": "unused_export",
+        "symbol": "categoryValue",
+        "classification": "remove",
+        "reason": "Unused production export/type; remove the export or symbol after focused review."
+      },
+      {
+        "path": "client/src/lib/navigation.ts",
+        "kind": "unused_export",
+        "symbol": "getCurrentRelativeLocation",
+        "classification": "remove",
+        "reason": "Unused production export/type; remove the export or symbol after focused review."
+      },
+      {
+        "path": "client/src/lib/navigation.ts",
+        "kind": "unused_export",
+        "symbol": "getRawSearchParams",
+        "classification": "remove",
+        "reason": "Unused production export/type; remove the export or symbol after focused review."
+      },
+      {
+        "path": "client/src/lib/navigation.ts",
+        "kind": "unused_export",
+        "symbol": "getReturnPathFromSearch",
+        "classification": "remove",
+        "reason": "Unused production export/type; remove the export or symbol after focused review."
+      },
+      {
+        "path": "client/src/lib/ready-data-ui-state.ts",
+        "kind": "duplicate_export",
+        "symbol": "runReadyDataRouteMutation = runReadyDataRouteRequest",
+        "classification": "remove",
+        "reason": "Unused production export/type; remove the export or symbol after focused review."
+      },
+      {
+        "path": "client/src/lib/ready-data-ui-state.ts",
+        "kind": "unused_export",
+        "symbol": "canonicalReadyDataProfile",
+        "classification": "remove",
+        "reason": "Unused production export/type; remove the export or symbol after focused review."
+      },
+      {
+        "path": "client/src/lib/ready-data-ui-state.ts",
+        "kind": "unused_export",
+        "symbol": "compareReadyDataManifestMonotonicFreshness",
+        "classification": "remove",
+        "reason": "Unused production export/type; remove the export or symbol after focused review."
+      },
+      {
+        "path": "client/src/lib/ready-data-ui-state.ts",
+        "kind": "unused_export",
+        "symbol": "isReadyDataKnowledgeListManifestAuthoritative",
+        "classification": "remove",
+        "reason": "Unused production export/type; remove the export or symbol after focused review."
+      },
+      {
+        "path": "client/src/lib/ready-data-ui-state.ts",
+        "kind": "unused_export",
+        "symbol": "mergeConfirmedReadyDataAutomation",
+        "classification": "remove",
+        "reason": "Unused production export/type; remove the export or symbol after focused review."
+      },
+      {
+        "path": "client/src/lib/ready-data-ui-state.ts",
+        "kind": "unused_export",
+        "symbol": "readyDataPublicationRevision",
+        "classification": "remove",
+        "reason": "Unused production export/type; remove the export or symbol after focused review."
+      },
+      {
+        "path": "client/src/lib/ready-data-ui-state.ts",
+        "kind": "unused_type",
+        "symbol": "ReadyDataPublication",
+        "classification": "remove",
+        "reason": "Unused production export/type; remove the export or symbol after focused review."
+      },
+      {
+        "path": "client/src/lib/ready-data-ui-state.ts",
+        "kind": "unused_type",
+        "symbol": "ReadyDataPublicationState",
+        "classification": "remove",
+        "reason": "Unused production export/type; remove the export or symbol after focused review."
+      },
+      {
+        "path": "client/src/lib/ready-data-ui-state.ts",
+        "kind": "unused_type",
+        "symbol": "ReadyDataServingStatus",
+        "classification": "remove",
+        "reason": "Unused production export/type; remove the export or symbol after focused review."
+      },
+      {
+        "path": "client/src/lib/weekly-dashboard.ts",
+        "kind": "unused_export",
+        "symbol": "WEEKLY_PREVIEW_LIMIT",
+        "classification": "remove",
+        "reason": "Unused production export/type; remove the export or symbol after focused review."
+      },
+      {
+        "path": "client/src/lib/weekly-dashboard.ts",
+        "kind": "unused_type",
+        "symbol": "WeeklyExplanation",
+        "classification": "remove",
+        "reason": "Unused production export/type; remove the export or symbol after focused review."
+      },
+      {
+        "path": "client/src/lib/weekly-dashboard.ts",
+        "kind": "unused_type",
+        "symbol": "WeeklyExplanationState",
+        "classification": "remove",
+        "reason": "Unused production export/type; remove the export or symbol after focused review."
+      },
+      {
+        "path": "client/src/lib/weekly-dashboard.ts",
+        "kind": "unused_type",
+        "symbol": "WeeklySnapshotDetail",
+        "classification": "remove",
+        "reason": "Unused production export/type; remove the export or symbol after focused review."
+      },
+      {
+        "path": "client/src/lib/weekly-dashboard.ts",
+        "kind": "unused_type",
+        "symbol": "WeeklySnapshotFile",
+        "classification": "remove",
+        "reason": "Unused production export/type; remove the export or symbol after focused review."
+      },
+      {
+        "path": "client/src/pages/chat/routeTarget.ts",
+        "kind": "unused_type",
+        "symbol": "ChatRouteSelection",
+        "classification": "remove",
+        "reason": "Unused production export/type; remove the export or symbol after focused review."
+      },
+      {
+        "path": "client/src/pages/tasks/TaskCard.tsx",
+        "kind": "unused_export",
+        "symbol": "TaskResultSummary",
+        "classification": "remove",
+        "reason": "Unused production export/type; remove the export or symbol after focused review."
+      },
+      {
+        "path": "client/src/pages/tasks/TaskCard.tsx",
+        "kind": "unused_export",
+        "symbol": "statusIcon",
+        "classification": "remove",
+        "reason": "Unused production export/type; remove the export or symbol after focused review."
+      },
+      {
+        "path": "client/src/pages/tasks/TaskMetrics.tsx",
+        "kind": "unused_export",
+        "symbol": "getTaskMetrics",
+        "classification": "remove",
+        "reason": "Unused production export/type; remove the export or symbol after focused review."
+      },
+      {
+        "path": "client/src/pages/tasks/Tasks.types.ts",
+        "kind": "unused_type",
+        "symbol": "ScheduleJob",
+        "classification": "remove",
+        "reason": "Unused production export/type; remove the export or symbol after focused review."
+      },
+      {
+        "path": "client/src/pages/tasks/Tasks.types.ts",
+        "kind": "unused_type",
+        "symbol": "ScheduleStatus",
+        "classification": "remove",
+        "reason": "Unused production export/type; remove the export or symbol after focused review."
+      },
+      {
+        "path": "client/src/pages/tasks/Tasks.types.ts",
+        "kind": "unused_type",
+        "symbol": "ScheduledTask",
+        "classification": "remove",
+        "reason": "Unused production export/type; remove the export or symbol after focused review."
+      }
+    ],
+    "python-symbols": [
+      {
+        "path": "ai_actuarial/ai_runtime.py",
+        "kind": "unused function",
+        "symbol": "apply_runtime_environment",
+        "confidence": 60,
+        "classification": "remove",
+        "reason": "Vulture 60% cleanup candidate; verify dynamic/public callers and tests before removal."
+      },
+      {
+        "path": "ai_actuarial/api/app.py",
+        "kind": "unused function",
+        "symbol": "block_retired_api_fallback",
+        "confidence": 60,
+        "classification": "whitelist",
+        "reason": "Framework, configuration, or test contract candidate; retain until a narrow symbol reference or safe removal is confirmed."
+      },
+      {
+        "path": "ai_actuarial/api/routers/weekly_updates.py",
+        "kind": "unused variable",
+        "symbol": "truncated",
+        "confidence": 60,
+        "classification": "remove",
+        "reason": "Vulture 60% cleanup candidate; verify dynamic/public callers and tests before removal."
+      },
+      {
+        "path": "ai_actuarial/api/services/ops_write.py",
+        "kind": "unused function",
+        "symbol": "_split_csv_or_list",
+        "confidence": 60,
+        "classification": "remove",
+        "reason": "Vulture 60% cleanup candidate; verify dynamic/public callers and tests before removal."
+      },
+      {
+        "path": "ai_actuarial/api/services/rag_admin.py",
+        "kind": "unused function",
+        "symbol": "_category_file_urls_with_existing_chunks",
+        "confidence": 60,
+        "classification": "remove",
+        "reason": "Vulture 60% cleanup candidate; verify dynamic/public callers and tests before removal."
+      },
+      {
+        "path": "ai_actuarial/api/services/rag_admin.py",
+        "kind": "unused function",
+        "symbol": "_ensure_kb_list_schema",
+        "confidence": 60,
+        "classification": "remove",
+        "reason": "Vulture 60% cleanup candidate; verify dynamic/public callers and tests before removal."
+      },
+      {
+        "path": "ai_actuarial/api/services/rag_admin.py",
+        "kind": "unused function",
+        "symbol": "_unique_existing_chunk_file_urls",
+        "confidence": 60,
+        "classification": "remove",
+        "reason": "Vulture 60% cleanup candidate; verify dynamic/public callers and tests before removal."
+      },
+      {
+        "path": "ai_actuarial/api/services/read.py",
+        "kind": "unused function",
+        "symbol": "project_recent_files",
+        "confidence": 60,
+        "classification": "remove",
+        "reason": "Vulture 60% cleanup candidate; verify dynamic/public callers and tests before removal."
+      },
+      {
+        "path": "ai_actuarial/api/services/ready_data_automation.py",
+        "kind": "unused variable",
+        "symbol": "READY_DATA_AUTOMATION_POLL_SECONDS",
+        "confidence": 60,
+        "classification": "remove",
+        "reason": "Vulture 60% cleanup candidate; verify dynamic/public callers and tests before removal."
+      },
+      {
+        "path": "ai_actuarial/api/services/ready_data_publication.py",
+        "kind": "unused function",
+        "symbol": "public_ready_data_state",
+        "confidence": 60,
+        "classification": "remove",
+        "reason": "Vulture 60% cleanup candidate; verify dynamic/public callers and tests before removal."
+      },
+      {
+        "path": "ai_actuarial/catalog.py",
+        "kind": "unused function",
+        "symbol": "_ai_hit",
+        "confidence": 60,
+        "classification": "remove",
+        "reason": "Vulture 60% cleanup candidate; verify dynamic/public callers and tests before removal."
+      },
+      {
+        "path": "ai_actuarial/catalog.py",
+        "kind": "unused function",
+        "symbol": "_fallback_keywords",
+        "confidence": 60,
+        "classification": "remove",
+        "reason": "Vulture 60% cleanup candidate; verify dynamic/public callers and tests before removal."
+      },
+      {
+        "path": "ai_actuarial/catalog.py",
+        "kind": "unused function",
+        "symbol": "build_catalog_batch",
+        "confidence": 60,
+        "classification": "remove",
+        "reason": "Vulture 60% cleanup candidate; verify dynamic/public callers and tests before removal."
+      },
+      {
+        "path": "ai_actuarial/catalog.py",
+        "kind": "unused variable",
+        "symbol": "AI_KEYWORDS",
+        "confidence": 60,
+        "classification": "remove",
+        "reason": "Vulture 60% cleanup candidate; verify dynamic/public callers and tests before removal."
+      },
+      {
+        "path": "ai_actuarial/chatbot/config.py",
+        "kind": "unused variable",
+        "symbol": "default_config",
+        "confidence": 60,
+        "classification": "whitelist",
+        "reason": "Framework, configuration, or test contract candidate; retain until a narrow symbol reference or safe removal is confirmed."
+      },
+      {
+        "path": "ai_actuarial/chatbot/config.py",
+        "kind": "unused variable",
+        "symbol": "hallucination_check",
+        "confidence": 60,
+        "classification": "whitelist",
+        "reason": "Framework, configuration, or test contract candidate; retain until a narrow symbol reference or safe removal is confirmed."
+      },
+      {
+        "path": "ai_actuarial/chatbot/config.py",
+        "kind": "unused variable",
+        "symbol": "min_results",
+        "confidence": 60,
+        "classification": "whitelist",
+        "reason": "Framework, configuration, or test contract candidate; retain until a narrow symbol reference or safe removal is confirmed."
+      },
+      {
+        "path": "ai_actuarial/chatbot/config.py",
+        "kind": "unused variable",
+        "symbol": "multi_kb_enabled",
+        "confidence": 60,
+        "classification": "whitelist",
+        "reason": "Framework, configuration, or test contract candidate; retain until a narrow symbol reference or safe removal is confirmed."
+      },
+      {
+        "path": "ai_actuarial/chatbot/config.py",
+        "kind": "unused variable",
+        "symbol": "require_citations",
+        "confidence": 60,
+        "classification": "whitelist",
+        "reason": "Framework, configuration, or test contract candidate; retain until a narrow symbol reference or safe removal is confirmed."
+      },
+      {
+        "path": "ai_actuarial/chatbot/config.py",
+        "kind": "unused variable",
+        "symbol": "summarization_threshold",
+        "confidence": 60,
+        "classification": "whitelist",
+        "reason": "Framework, configuration, or test contract candidate; retain until a narrow symbol reference or safe removal is confirmed."
+      },
+      {
+        "path": "ai_actuarial/chatbot/config.py",
+        "kind": "unused variable",
+        "symbol": "validate_citations",
+        "confidence": 60,
+        "classification": "whitelist",
+        "reason": "Framework, configuration, or test contract candidate; retain until a narrow symbol reference or safe removal is confirmed."
+      },
+      {
+        "path": "ai_actuarial/chatbot/exceptions.py",
+        "kind": "unused class",
+        "symbol": "CitationValidationException",
+        "confidence": 60,
+        "classification": "remove",
+        "reason": "Vulture 60% cleanup candidate; verify dynamic/public callers and tests before removal."
+      },
+      {
+        "path": "ai_actuarial/chatbot/exceptions.py",
+        "kind": "unused class",
+        "symbol": "InvalidModeException",
+        "confidence": 60,
+        "classification": "remove",
+        "reason": "Vulture 60% cleanup candidate; verify dynamic/public callers and tests before removal."
+      },
+      {
+        "path": "ai_actuarial/chatbot/llm.py",
+        "kind": "unused method",
+        "symbol": "validate_response",
+        "confidence": 60,
+        "classification": "remove",
+        "reason": "Vulture 60% cleanup candidate; verify dynamic/public callers and tests before removal."
+      },
+      {
+        "path": "ai_actuarial/chatbot/retrieval.py",
+        "kind": "unused method",
+        "symbol": "clear_cache",
+        "confidence": 60,
+        "classification": "remove",
+        "reason": "Vulture 60% cleanup candidate; verify dynamic/public callers and tests before removal."
+      },
+      {
+        "path": "ai_actuarial/chatbot/retrieval.py",
+        "kind": "unused method",
+        "symbol": "generate_citations",
+        "confidence": 60,
+        "classification": "remove",
+        "reason": "Vulture 60% cleanup candidate; verify dynamic/public callers and tests before removal."
+      },
+      {
+        "path": "ai_actuarial/chatbot/router.py",
+        "kind": "unused method",
+        "symbol": "select_kbs",
+        "confidence": 60,
+        "classification": "remove",
+        "reason": "Vulture 60% cleanup candidate; verify dynamic/public callers and tests before removal."
+      },
+      {
+        "path": "ai_actuarial/collectors/adhoc.py",
+        "kind": "unused class",
+        "symbol": "AdhocCollector",
+        "confidence": 60,
+        "classification": "remove",
+        "reason": "Vulture 60% cleanup candidate; verify dynamic/public callers and tests before removal."
+      },
+      {
+        "path": "ai_actuarial/collectors/base.py",
+        "kind": "unused variable",
+        "symbol": "auto_download",
+        "confidence": 60,
+        "classification": "remove",
+        "reason": "Vulture 60% cleanup candidate; verify dynamic/public callers and tests before removal."
+      },
+      {
+        "path": "ai_actuarial/config.py",
+        "kind": "unused function",
+        "symbol": "_env_str",
+        "confidence": 60,
+        "classification": "whitelist",
+        "reason": "Framework, configuration, or test contract candidate; retain until a narrow symbol reference or safe removal is confirmed."
+      },
+      {
+        "path": "ai_actuarial/config.py",
+        "kind": "unused method",
+        "symbol": "is_search_engine_configured",
+        "confidence": 60,
+        "classification": "whitelist",
+        "reason": "Framework, configuration, or test contract candidate; retain until a narrow symbol reference or safe removal is confirmed."
+      },
+      {
+        "path": "ai_actuarial/config.py",
+        "kind": "unused variable",
+        "symbol": "DATA_DIR",
+        "confidence": 60,
+        "classification": "whitelist",
+        "reason": "Framework, configuration, or test contract candidate; retain until a narrow symbol reference or safe removal is confirmed."
+      },
+      {
+        "path": "ai_actuarial/config.py",
+        "kind": "unused variable",
+        "symbol": "DEFAULT_CHAT_QUOTA_GUEST_PER_DAY",
+        "confidence": 60,
+        "classification": "whitelist",
+        "reason": "Framework, configuration, or test contract candidate; retain until a narrow symbol reference or safe removal is confirmed."
+      },
+      {
+        "path": "ai_actuarial/config.py",
+        "kind": "unused variable",
+        "symbol": "DEFAULT_CHAT_QUOTA_PER_DAY",
+        "confidence": 60,
+        "classification": "whitelist",
+        "reason": "Framework, configuration, or test contract candidate; retain until a narrow symbol reference or safe removal is confirmed."
+      },
+      {
+        "path": "ai_actuarial/config.py",
+        "kind": "unused variable",
+        "symbol": "DEFAULT_CHAT_QUOTA_PER_WEEK",
+        "confidence": 60,
+        "classification": "whitelist",
+        "reason": "Framework, configuration, or test contract candidate; retain until a narrow symbol reference or safe removal is confirmed."
+      },
+      {
+        "path": "ai_actuarial/config.py",
+        "kind": "unused variable",
+        "symbol": "DOWNLOAD_DIR",
+        "confidence": 60,
+        "classification": "whitelist",
+        "reason": "Framework, configuration, or test contract candidate; retain until a narrow symbol reference or safe removal is confirmed."
+      },
+      {
+        "path": "ai_actuarial/config.py",
+        "kind": "unused variable",
+        "symbol": "ENABLE_FILE_DELETION",
+        "confidence": 60,
+        "classification": "whitelist",
+        "reason": "Framework, configuration, or test contract candidate; retain until a narrow symbol reference or safe removal is confirmed."
+      },
+      {
+        "path": "ai_actuarial/config.py",
+        "kind": "unused variable",
+        "symbol": "FASTAPI_ENABLE_MIGRATION_INVENTORY",
+        "confidence": 60,
+        "classification": "whitelist",
+        "reason": "Framework, configuration, or test contract candidate; retain until a narrow symbol reference or safe removal is confirmed."
+      },
+      {
+        "path": "ai_actuarial/config.py",
+        "kind": "unused variable",
+        "symbol": "RATE_LIMIT_BURST",
+        "confidence": 60,
+        "classification": "whitelist",
+        "reason": "Framework, configuration, or test contract candidate; retain until a narrow symbol reference or safe removal is confirmed."
+      },
+      {
+        "path": "ai_actuarial/config.py",
+        "kind": "unused variable",
+        "symbol": "RATE_LIMIT_ENABLED",
+        "confidence": 60,
+        "classification": "whitelist",
+        "reason": "Framework, configuration, or test contract candidate; retain until a narrow symbol reference or safe removal is confirmed."
+      },
+      {
+        "path": "ai_actuarial/config.py",
+        "kind": "unused variable",
+        "symbol": "RATE_LIMIT_PER_MINUTE",
+        "confidence": 60,
+        "classification": "whitelist",
+        "reason": "Framework, configuration, or test contract candidate; retain until a narrow symbol reference or safe removal is confirmed."
+      },
+      {
+        "path": "ai_actuarial/config.py",
+        "kind": "unused variable",
+        "symbol": "REQUIRE_AUTH",
+        "confidence": 60,
+        "classification": "whitelist",
+        "reason": "Framework, configuration, or test contract candidate; retain until a narrow symbol reference or safe removal is confirmed."
+      },
+      {
+        "path": "ai_actuarial/config.py",
+        "kind": "unused variable",
+        "symbol": "SECRET_KEY",
+        "confidence": 60,
+        "classification": "whitelist",
+        "reason": "Framework, configuration, or test contract candidate; retain until a narrow symbol reference or safe removal is confirmed."
+      },
+      {
+        "path": "ai_actuarial/db_models.py",
+        "kind": "unused class",
+        "symbol": "User",
+        "confidence": 60,
+        "classification": "whitelist",
+        "reason": "Framework, configuration, or test contract candidate; retain until a narrow symbol reference or safe removal is confirmed."
+      },
+      {
+        "path": "ai_actuarial/db_models.py",
+        "kind": "unused class",
+        "symbol": "UserActivityLog",
+        "confidence": 60,
+        "classification": "whitelist",
+        "reason": "Framework, configuration, or test contract candidate; retain until a narrow symbol reference or safe removal is confirmed."
+      },
+      {
+        "path": "ai_actuarial/db_models.py",
+        "kind": "unused class",
+        "symbol": "UserQuota",
+        "confidence": 60,
+        "classification": "whitelist",
+        "reason": "Framework, configuration, or test contract candidate; retain until a narrow symbol reference or safe removal is confirmed."
+      },
+      {
+        "path": "ai_actuarial/db_models.py",
+        "kind": "unused variable",
+        "symbol": "ai_chat_count",
+        "confidence": 60,
+        "classification": "whitelist",
+        "reason": "Framework, configuration, or test contract candidate; retain until a narrow symbol reference or safe removal is confirmed."
+      },
+      {
+        "path": "ai_actuarial/db_models.py",
+        "kind": "unused variable",
+        "symbol": "email_verified",
+        "confidence": 60,
+        "classification": "whitelist",
+        "reason": "Framework, configuration, or test contract candidate; retain until a narrow symbol reference or safe removal is confirmed."
+      },
+      {
+        "path": "ai_actuarial/db_models.py",
+        "kind": "unused variable",
+        "symbol": "email_verified_at",
+        "confidence": 60,
+        "classification": "whitelist",
+        "reason": "Framework, configuration, or test contract candidate; retain until a narrow symbol reference or safe removal is confirmed."
+      },
+      {
+        "path": "ai_actuarial/db_models.py",
+        "kind": "unused variable",
+        "symbol": "last_login_at",
+        "confidence": 60,
+        "classification": "whitelist",
+        "reason": "Framework, configuration, or test contract candidate; retain until a narrow symbol reference or safe removal is confirmed."
+      },
+      {
+        "path": "ai_actuarial/db_models.py",
+        "kind": "unused variable",
+        "symbol": "validated_at",
+        "confidence": 60,
+        "classification": "whitelist",
+        "reason": "Framework, configuration, or test contract candidate; retain until a narrow symbol reference or safe removal is confirmed."
+      },
+      {
+        "path": "ai_actuarial/markdown_conversion_config.py",
+        "kind": "unused function",
+        "symbol": "markdown_conversion_config_file_exists",
+        "confidence": 60,
+        "classification": "remove",
+        "reason": "Vulture 60% cleanup candidate; verify dynamic/public callers and tests before removal."
+      },
+      {
+        "path": "ai_actuarial/markdown_conversion_config.py",
+        "kind": "unused variable",
+        "symbol": "LOCAL_ENGINES",
+        "confidence": 60,
+        "classification": "remove",
+        "reason": "Vulture 60% cleanup candidate; verify dynamic/public callers and tests before removal."
+      },
+      {
+        "path": "ai_actuarial/processors/categorizer.py",
+        "kind": "unused method",
+        "symbol": "categorize_multi",
+        "confidence": 60,
+        "classification": "remove",
+        "reason": "Vulture 60% cleanup candidate; verify dynamic/public callers and tests before removal."
+      },
+      {
+        "path": "ai_actuarial/processors/categorizer.py",
+        "kind": "unused method",
+        "symbol": "filter_by_category",
+        "confidence": 60,
+        "classification": "remove",
+        "reason": "Vulture 60% cleanup candidate; verify dynamic/public callers and tests before removal."
+      },
+      {
+        "path": "ai_actuarial/processors/cleaner.py",
+        "kind": "unused method",
+        "symbol": "clean_text",
+        "confidence": 60,
+        "classification": "remove",
+        "reason": "Vulture 60% cleanup candidate; verify dynamic/public callers and tests before removal."
+      },
+      {
+        "path": "ai_actuarial/processors/cleaner.py",
+        "kind": "unused method",
+        "symbol": "should_keep",
+        "confidence": 60,
+        "classification": "remove",
+        "reason": "Vulture 60% cleanup candidate; verify dynamic/public callers and tests before removal."
+      },
+      {
+        "path": "ai_actuarial/rag/config.py",
+        "kind": "unused variable",
+        "symbol": "chunk_strategy",
+        "confidence": 60,
+        "classification": "remove",
+        "reason": "Vulture 60% cleanup candidate; verify dynamic/public callers and tests before removal."
+      },
+      {
+        "path": "ai_actuarial/rag/embeddings.py",
+        "kind": "unused function",
+        "symbol": "retry_with_exponential_backoff",
+        "confidence": 60,
+        "classification": "remove",
+        "reason": "Vulture 60% cleanup candidate; verify dynamic/public callers and tests before removal."
+      },
+      {
+        "path": "ai_actuarial/rag/knowledge_base.py",
+        "kind": "unused attribute",
+        "symbol": "embedding_runtime_status",
+        "confidence": 60,
+        "classification": "remove",
+        "reason": "Vulture 60% cleanup candidate; verify dynamic/public callers and tests before removal."
+      },
+      {
+        "path": "ai_actuarial/rag/knowledge_base.py",
+        "kind": "unused method",
+        "symbol": "_soft_delete_file_vectors",
+        "confidence": 60,
+        "classification": "remove",
+        "reason": "Vulture 60% cleanup candidate; verify dynamic/public callers and tests before removal."
+      },
+      {
+        "path": "ai_actuarial/rag/knowledge_base.py",
+        "kind": "unused method",
+        "symbol": "create_kb_from_category",
+        "confidence": 60,
+        "classification": "remove",
+        "reason": "Vulture 60% cleanup candidate; verify dynamic/public callers and tests before removal."
+      },
+      {
+        "path": "ai_actuarial/rag/knowledge_base.py",
+        "kind": "unused method",
+        "symbol": "create_manual_kb",
+        "confidence": 60,
+        "classification": "remove",
+        "reason": "Vulture 60% cleanup candidate; verify dynamic/public callers and tests before removal."
+      },
+      {
+        "path": "ai_actuarial/rag/knowledge_base.py",
+        "kind": "unused method",
+        "symbol": "from_dict",
+        "confidence": 60,
+        "classification": "remove",
+        "reason": "Vulture 60% cleanup candidate; verify dynamic/public callers and tests before removal."
+      },
+      {
+        "path": "ai_actuarial/rag/knowledge_base.py",
+        "kind": "unused method",
+        "symbol": "get_rag_task_metadata",
+        "confidence": 60,
+        "classification": "remove",
+        "reason": "Vulture 60% cleanup candidate; verify dynamic/public callers and tests before removal."
+      },
+      {
+        "path": "ai_actuarial/rag/vector_store.py",
+        "kind": "unused function",
+        "symbol": "create_vector_store",
+        "confidence": 60,
+        "classification": "remove",
+        "reason": "Vulture 60% cleanup candidate; verify dynamic/public callers and tests before removal."
+      },
+      {
+        "path": "ai_actuarial/rag/vector_store.py",
+        "kind": "unused method",
+        "symbol": "get_stats",
+        "confidence": 60,
+        "classification": "remove",
+        "reason": "Vulture 60% cleanup candidate; verify dynamic/public callers and tests before removal."
+      },
+      {
+        "path": "ai_actuarial/rag/vector_store.py",
+        "kind": "unused method",
+        "symbol": "rebuild_without_deleted",
+        "confidence": 60,
+        "classification": "remove",
+        "reason": "Vulture 60% cleanup candidate; verify dynamic/public callers and tests before removal."
+      },
+      {
+        "path": "ai_actuarial/shared_auth.py",
+        "kind": "unused variable",
+        "symbol": "PUBLIC_PERMISSIONS_WHEN_AUTH_DISABLED",
+        "confidence": 60,
+        "classification": "remove",
+        "reason": "Vulture 60% cleanup candidate; verify dynamic/public callers and tests before removal."
+      },
+      {
+        "path": "ai_actuarial/shared_runtime.py",
+        "kind": "unused function",
+        "symbol": "env_flag",
+        "confidence": 60,
+        "classification": "remove",
+        "reason": "Vulture 60% cleanup candidate; verify dynamic/public callers and tests before removal."
+      },
+      {
+        "path": "ai_actuarial/storage.py",
+        "kind": "unused method",
+        "symbol": "catalog_item_fresh",
+        "confidence": 60,
+        "classification": "remove",
+        "reason": "Vulture 60% cleanup candidate; verify dynamic/public callers and tests before removal."
+      },
+      {
+        "path": "ai_actuarial/storage.py",
+        "kind": "unused method",
+        "symbol": "get_file_rag_kb_entries",
+        "confidence": 60,
+        "classification": "remove",
+        "reason": "Vulture 60% cleanup candidate; verify dynamic/public callers and tests before removal."
+      },
+      {
+        "path": "ai_actuarial/storage.py",
+        "kind": "unused method",
+        "symbol": "get_pipeline_run_by_correlation",
+        "confidence": 60,
+        "classification": "remove",
+        "reason": "Vulture 60% cleanup candidate; verify dynamic/public callers and tests before removal."
+      },
+      {
+        "path": "ai_actuarial/storage.py",
+        "kind": "unused method",
+        "symbol": "increment_ai_chat_quota",
+        "confidence": 60,
+        "classification": "remove",
+        "reason": "Vulture 60% cleanup candidate; verify dynamic/public callers and tests before removal."
+      },
+      {
+        "path": "ai_actuarial/storage.py",
+        "kind": "unused method",
+        "symbol": "list_agentic_ready_manifests",
+        "confidence": 60,
+        "classification": "remove",
+        "reason": "Vulture 60% cleanup candidate; verify dynamic/public callers and tests before removal."
+      },
+      {
+        "path": "ai_actuarial/storage.py",
+        "kind": "unused method",
+        "symbol": "list_file_index_status",
+        "confidence": 60,
+        "classification": "remove",
+        "reason": "Vulture 60% cleanup candidate; verify dynamic/public callers and tests before removal."
+      },
+      {
+        "path": "ai_actuarial/storage.py",
+        "kind": "unused method",
+        "symbol": "list_pipeline_runs",
+        "confidence": 60,
+        "classification": "remove",
+        "reason": "Vulture 60% cleanup candidate; verify dynamic/public callers and tests before removal."
+      },
+      {
+        "path": "ai_actuarial/storage.py",
+        "kind": "unused method",
+        "symbol": "renew_pipeline_lease",
+        "confidence": 60,
+        "classification": "remove",
+        "reason": "Vulture 60% cleanup candidate; verify dynamic/public callers and tests before removal."
+      },
+      {
+        "path": "ai_actuarial/storage.py",
+        "kind": "unused method",
+        "symbol": "upsert_weekly_update_summary",
+        "confidence": 60,
+        "classification": "remove",
+        "reason": "Vulture 60% cleanup candidate; verify dynamic/public callers and tests before removal."
+      },
+      {
+        "path": "ai_actuarial/storage_factory.py",
+        "kind": "unused function",
+        "symbol": "get_database_config_from_env",
+        "confidence": 60,
+        "classification": "remove",
+        "reason": "Vulture 60% cleanup candidate; verify dynamic/public callers and tests before removal."
+      },
+      {
+        "path": "ai_actuarial/storage_v2.py",
+        "kind": "unused method",
+        "symbol": "catalog_item_fresh",
+        "confidence": 60,
+        "classification": "remove",
+        "reason": "Vulture 60% cleanup candidate; verify dynamic/public callers and tests before removal."
+      },
+      {
+        "path": "ai_actuarial/storage_v2_rag.py",
+        "kind": "unused method",
+        "symbol": "list_file_index_status",
+        "confidence": 60,
+        "classification": "remove",
+        "reason": "Vulture 60% cleanup candidate; verify dynamic/public callers and tests before removal."
+      },
+      {
+        "path": "ai_actuarial/utils.py",
+        "kind": "unused function",
+        "symbol": "sha256_bytes",
+        "confidence": 60,
+        "classification": "remove",
+        "reason": "Vulture 60% cleanup candidate; verify dynamic/public callers and tests before removal."
+      },
+      {
+        "path": "ai_actuarial/utils.py",
+        "kind": "unused function",
+        "symbol": "sleep_with_jitter",
+        "confidence": 60,
+        "classification": "remove",
+        "reason": "Vulture 60% cleanup candidate; verify dynamic/public callers and tests before removal."
+      },
+      {
+        "path": "ai_actuarial/utils.py",
+        "kind": "unused method",
+        "symbol": "handle_data",
+        "confidence": 60,
+        "classification": "remove",
+        "reason": "Vulture 60% cleanup candidate; verify dynamic/public callers and tests before removal."
+      },
+      {
+        "path": "tests/agentic_rag/test_eval.py",
+        "kind": "unused attribute",
+        "symbol": "last_query",
+        "confidence": 60,
+        "classification": "whitelist",
+        "reason": "Framework, configuration, or test contract candidate; retain until a narrow symbol reference or safe removal is confirmed."
+      },
+      {
+        "path": "tests/agentic_rag/test_eval.py",
+        "kind": "unused attribute",
+        "symbol": "last_top_k",
+        "confidence": 60,
+        "classification": "whitelist",
+        "reason": "Framework, configuration, or test contract candidate; retain until a narrow symbol reference or safe removal is confirmed."
+      },
+      {
+        "path": "tests/test_api_token_model.py",
+        "kind": "unused variable",
+        "symbol": "original_updated_at",
+        "confidence": 60,
+        "classification": "whitelist",
+        "reason": "Framework, configuration, or test contract candidate; retain until a narrow symbol reference or safe removal is confirmed."
+      },
+      {
+        "path": "tests/test_chatbot_integration.py",
+        "kind": "unused attribute",
+        "symbol": "mock_embedding_class",
+        "confidence": 60,
+        "classification": "whitelist",
+        "reason": "Framework, configuration, or test contract candidate; retain until a narrow symbol reference or safe removal is confirmed."
+      },
+      {
+        "path": "tests/test_chatbot_integration.py",
+        "kind": "unused attribute",
+        "symbol": "mock_kb_manager_class",
+        "confidence": 60,
+        "classification": "whitelist",
+        "reason": "Framework, configuration, or test contract candidate; retain until a narrow symbol reference or safe removal is confirmed."
+      },
+      {
+        "path": "tests/test_fastapi_rag_admin_endpoints.py",
+        "kind": "unused function",
+        "symbol": "_assert_publication_slots",
+        "confidence": 60,
+        "classification": "whitelist",
+        "reason": "Framework, configuration, or test contract candidate; retain until a narrow symbol reference or safe removal is confirmed."
+      },
+      {
+        "path": "tests/test_issue_267_weekly_explanations.py",
+        "kind": "unused variable",
+        "symbol": "OLDER_END",
+        "confidence": 60,
+        "classification": "whitelist",
+        "reason": "Framework, configuration, or test contract candidate; retain until a narrow symbol reference or safe removal is confirmed."
+      },
+      {
+        "path": "tests/test_issue_267_weekly_explanations.py",
+        "kind": "unused variable",
+        "symbol": "OLDER_START",
+        "confidence": 60,
+        "classification": "whitelist",
+        "reason": "Framework, configuration, or test contract candidate; retain until a narrow symbol reference or safe removal is confirmed."
+      }
+    ]
+  }
+}

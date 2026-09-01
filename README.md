@@ -279,6 +279,8 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 
 ```bash
 npm run build
+npm run dead-code:check
+python scripts/quality_gate.py
 python -m pytest tests/test_fastapi_entrypoint.py tests/test_fastapi_no_flask_runtime.py tests/test_react_fastapi_authority.py tests/test_fastapi_react_cleanup.py -q
 python -m pytest tests/test_fastapi_auth_endpoints.py tests/test_auth_react_source.py tests/test_fastapi_chat_endpoints.py tests/test_tasks_react_source.py -q
 python -m pytest tests/test_markdown_conversion_config.py tests/test_web_listening_rule.py tests/test_weekly_updates.py tests/test_task_runtime_full_pipeline.py -q
@@ -290,6 +292,7 @@ python -m ai_actuarial.agentic_rag.eval --mode agentic --cases eval/agentic_case
 
 - [Documentation Index](docs/README.md)
 - [Architecture](docs/ARCHITECTURE.md)
+- [Dead-code and Quality Gates](docs/dead-code.md)
 - [API Migration Status](docs/API_MIGRATION_STATUS.md)
 - [AI Provider Credentials](docs/guides/AI_PROVIDER_CREDENTIALS.md)
 - [AI Model Catalog](docs/guides/AI_MODEL_CATALOG.md)

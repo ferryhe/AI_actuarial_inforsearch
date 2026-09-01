@@ -29,6 +29,7 @@ htmlcov/
 .tox/
 *.cover
 coverage.xml
+reports/
 
 # IDEs
 .vscode/

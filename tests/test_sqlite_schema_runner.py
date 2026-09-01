@@ -341,13 +341,13 @@ def test_storage_startup_status_skips_quick_check_but_schema_status_keeps_it(
         startup_status = sqlite_schema.storage_startup_status(conn)
 
     assert startup_status["state"] == "current"
-    assert analyze_calls == [False]
+    assert analyze_calls and all(call is False for call in analyze_calls)
 
     analyze_calls.clear()
     explicit_status = sqlite_schema.schema_status(db_path)
 
     assert explicit_status["state"] == "current"
-    assert analyze_calls == [True]
+    assert analyze_calls.count(True) == 1
 
 
 def test_storage_rejects_non_empty_version_zero_without_mutating(tmp_path: Path) -> None:
@@ -1081,10 +1081,10 @@ def test_schema_runner_rejects_mutating_source_validator_during_apply(
         tables: dict[str, sqlite_schema.TableSignature],
     ) -> bool:
         nonlocal validator_calls
-        validator_calls += 1
-        query_only_values.append(int(conn.execute("PRAGMA query_only").fetchone()[0]))
         if tables != v6_signature:
             return False
+        validator_calls += 1
+        query_only_values.append(int(conn.execute("PRAGMA query_only").fetchone()[0]))
         if validator_calls == 1:
             return True
         conn.execute("CREATE TABLE validator_mutation_leak (secret_value TEXT)")

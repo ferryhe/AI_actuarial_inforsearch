@@ -86,7 +86,7 @@ export function useApiQuery<T>(
       setLoading(false);
       setRefreshing(false);
     }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
   const refetch = useCallback(() => {
     fetch(true);
@@ -101,10 +101,7 @@ export function useApiQuery<T>(
 
   // Initial fetch
   useEffect(() => {
-    let cancelled = false;
     fetch(false);
-    return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Watch mode: re-fetch when deps change

@@ -1,5 +1,4 @@
 import { Search } from "lucide-react";
-import { InputField } from "@/components/FormFields";
 
 interface FilterBarProps {
   searchQuery: string;

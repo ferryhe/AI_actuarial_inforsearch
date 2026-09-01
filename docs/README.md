@@ -11,6 +11,7 @@ This directory keeps maintained documentation first. Historical implementation r
 - [API Migration Status](API_MIGRATION_STATUS.md): source of truth for the React/FastAPI boundary and maintained representative native API surfaces.
 - [Deployment Runbook](deployment-runbook.md): deployment operations.
 - [Rate Limiting](rate-limit-config.md): active rate-limit behavior for product endpoints and auth credential submissions.
+- [Dead-code and Quality Gates](dead-code.md): layered file/symbol scans, shrink-only baselines, local hooks, and CI order.
 
 ## Operational Guides
 

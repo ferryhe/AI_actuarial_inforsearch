@@ -3,6 +3,8 @@ Unit tests for permission system in shared_auth.py
 """
 from types import SimpleNamespace
 
+from starlette.datastructures import Headers
+
 from ai_actuarial.shared_auth import (
     GUEST_PERMISSIONS,
     REGISTERED_PERMISSIONS,
@@ -160,7 +162,7 @@ def test_public_permission_fast_path_skips_auth_lookup_for_anonymous_request(mon
 
     monkeypatch.setattr(deps, "Storage", FailingStorage)
     request = SimpleNamespace(
-        headers={},
+        headers=Headers(),
         cookies={},
         app=SimpleNamespace(state=SimpleNamespace(require_auth=True, db_path="unused")),
         state=SimpleNamespace(),

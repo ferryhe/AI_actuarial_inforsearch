@@ -1,94 +1,89 @@
-# Project Status — Issues #315 and #310 release batch
+# Project Status — Issue #317 dead-code and unified quality gates
 
 - Updated: 2026-08-31 EDT
 - Repository: `AI_actuarial_inforsearch`
 - Checkout: `C:\Project\AI_actuarial_inforsearch`
-- Branch: `codex/issues-315-310-config-release`
-- Baseline: `origin/main@ce8d762`
-- Task: implement #315, then #310, and validate them as one release batch
+- Branch: `codex/issue-317-dead-code-detection`
+- Baseline: `origin/main@bd6f47f`
+- Task: implement Issue #317 and the requested unified pytest/Black/isort/Pylint gate
 
 ## Scope and boundaries
 
-- #315 makes Chat the sole provider/model/credential route for both Chat and
-  Weekly Explanation while retaining Weekly-specific prompt and generation
-  policy.
-- #310 makes `CONFIG_PATH` the authoritative mutable `sites.yaml`, moves
-  production ownership outside Git, adds create-once bootstrap and atomic
-  writes, and aligns Compose, backup, deployment, and release tooling.
-- Production migration, deployment, restart, and model/provider changes remain
-  outside scope and belong to #313.
-- Sibling repositories remain off-limits.
+- This repository is the only writable workspace.
+- Sibling repositories are off-limits.
+- The work covers TypeScript and Python file reachability, symbol detection,
+  reviewed exceptions, shrink-only baselines, local hooks, CI, reports, and
+  contributor documentation.
+- CI only reports and blocks; it never deletes or rewrites source files.
 
 ## Implementation state
 
-- #315 implementation is committed as `404c831`.
-- #310 implementation is committed as `8cdcd0d`.
-- Independent review fixes for both Issues are committed as `2e76aea` and
-  pushed to the release branch.
-- The two Issues are being published together in one PR/release batch, with
-  separate commits for review clarity.
-- PR #316 is open: `https://github.com/ferryhe/AI_actuarial_inforsearch/pull/316`.
-- An independent subagent review found six acceptance-relevant gaps across two
-  passes. All six are fixed with regression coverage. The final independent
-  rereview found no remaining blocker and concluded the batch is releasable.
+- Added production-first Knip and AST module-reachability checks, followed by
+  Knip/ESLint and Vulture symbol checks.
+- Production and test entries are separate. Constant dynamic imports require a
+  reasoned allowlist, and stale entries fail the gate.
+- Added a statically validated Vulture whitelist for FastAPI routes, Pydantic
+  validators, middleware hooks, and pytest fixtures.
+- Added normalized `path + kind + symbol` dead-code baselines. New findings,
+  stale findings, and all 100%-confidence Vulture findings fail; maintenance
+  updates can only shrink the baseline.
+- Classified the current baseline: 9 TypeScript files, 5 Python modules, 28
+  TypeScript symbols, and 93 Python symbols.
+- Added the requested unified quality gate: full pytest plus non-mutating
+  Black, isort, and Pylint checks, with an exact shrink-only compatibility
+  baseline for existing formatter/linter debt. Pytest failures cannot be
+  baselined.
+- Added pre-commit/pre-push hooks, ordered CI jobs, text/JSON artifacts,
+  top-level commands, watch mode, and investigation/cleanup documentation.
+- Removed confirmed unused TypeScript locals/imports and corrected narrow test
+  contracts exposed by the new full-suite gate.
 
 ## Acceptance results
 
-- Combined backend acceptance after review fixes: 143 tests passed and one
-  Windows-only skip across AI runtime, Weekly
-  Explanation generation/scheduling, Settings read/write, FastAPI startup,
-  YAML configuration, recovery tooling, diagnostics, external config, and
-  scheduled collection.
-- #310 focused matrix: 18 passed and one POSIX metadata test skipped on Windows,
-  including explicit-path authority,
-  missing/invalid/unreadable/unwritable fail-closed behavior, atomic failure
-  recovery, no-overwrite bootstrap, external Settings writes, restart reload,
-  Git reset/checkout/clean isolation, and #315 inheritance through an external
-  config.
-- The skipped POSIX permission/ownership preservation test passed separately in
-  a Python 3.11 Linux container.
-- Review regressions now cover credential-only Weekly replay invalidation,
-  production CLI template rejection, deployment path-consistency enforcement,
-  legacy migration refusal for external state, atomic mode/owner retention, and
-  config-independent schema diagnostics.
-- Ruff: passed for all touched Python implementation and test files.
-- CLI: root `--help` and `config-bootstrap --help` passed; the test suite also
-  exercised JSON success and no-overwrite error output.
-- Frontend: `npm run typecheck` and `npm run build` passed. Vite emitted only
-  the existing large-chunk advisory.
-- Compose: production render passed with dummy required environment values;
-  Docker emitted only the existing obsolete `version` advisory.
-- Shell wrappers: Git Bash syntax checks passed. `shellcheck` is not installed.
-- `git diff --check`: passed; only Windows line-ending notices were emitted.
-- PR #316 `python-smoke` passed on review-fix head `2e76aea`; merge state is
-  clean, with no remote comments or review threads requiring action.
+- Unified quality gate: passed. Pytest reported 1,880 passed and 10 skipped;
+  Black, isort, and Pylint exactly matched their reviewed baselines.
+- Dead-code gate: passed with 9/5 file findings and 28/93 symbol findings,
+  exactly matching the classified baseline and with no 100%-confidence
+  Vulture finding.
+- Dead-code and quality-gate unit tests: 11 passed as part of the full suite.
+- Flaky schema-validator isolation regression: passed five consecutive focused
+  runs and then passed in the full suite.
+- Frontend ESLint: passed with six existing React dependency warnings and no
+  errors.
+- Frontend TypeScript check: passed.
+- Frontend production build: passed; Vite emitted only the existing large
+  chunk advisory.
+- Clean lockfile install: `npm ci` passed. npm reported nine dependency audit
+  findings (2 low, 1 moderate, 6 high); dependency/security upgrades are
+  outside Issue #317.
+- Pre-commit config validation, CI YAML parsing, CLI `--help`, and
+  `git diff --check`: passed.
 
 ## Files changed
 
-- Runtime and API: `ai_actuarial/ai_runtime.py`, `ai_actuarial/shared_runtime.py`,
-  `ai_actuarial/api/app.py`, and relevant read/write/import/Weekly services.
-- CLI/config: `ai_actuarial/cli.py`, `config/yaml_config.py`,
-  `config/sites.yaml`, and `scripts/migrate_env_to_yaml.py`.
-- Operations: Compose files, production backup/full-backup/deploy wrappers, and
-  `.env.example`.
-- UI/docs: Settings routing help, translations, README, deployment/service/
-  credential guides, and `docs/runtime-config.md`.
-- Tests: AI runtime, Weekly Explanation, Settings/API, YAML loader, and the new
-  #310 runtime-config matrix.
+- Gate implementation/config: `scripts/dead_code_gate.py`,
+  `scripts/quality_gate.py`, `knip.json`, `eslint.config.mjs`, `pyproject.toml`,
+  `package.json`, lockfile, development requirements, and both baselines.
+- Framework review: `config/dead_code_whitelist.py`.
+- Automation: `.pre-commit-config.yaml` and `.github/workflows/ci.yml`.
+- Documentation: `docs/dead-code.md`, docs index, and both root READMEs.
+- Focused cleanup/tests: affected React files, small Python unused-argument
+  cleanups, gate tests, and narrow full-suite contract corrections.
 
 ## Working tree notes
 
-- Existing untracked `diagrams/` and `graphify-out/` remain untouched and will
-  not be committed.
-- No other unrelated tracked changes are present.
+- Existing untracked `diagrams/` and `graphify-out/` remain user-owned,
+  untouched, and excluded from the commit.
+- Generated `reports/`, coverage output, build output, and installed
+  dependencies are ignored.
 
 ## Blockers or decisions needed
 
-- No code or test blocker.
-- #313 still requires separate production-write authorization, an owner, and a
-  maintenance window. This batch does not perform that migration.
+- No implementation or local validation blocker.
+- Merge is not authorized by the current request; publication stops at an open
+  PR unless explicit merge authorization is given.
 
 ## Recommended next action
 
-- Merge PR #316 when merge authorization is given, then handle the production
-  rollout separately under #313.
+- Commit and publish the implementation PR, then evaluate required checks and
+  remote review/Copilot feedback on the final head.

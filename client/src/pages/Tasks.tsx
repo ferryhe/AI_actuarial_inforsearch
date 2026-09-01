@@ -2,10 +2,10 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import { useLocation } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  Play, Square, Clock, CheckCircle2, XCircle, Loader2, RefreshCw,
+  Play, Clock, CheckCircle2, Loader2, RefreshCw,
   Globe, Search, BookOpen, FileText, Layers, Link2, X, ArrowLeft,
-  AlertCircle, Compass, ExternalLink, ChevronDown, ChevronUp, Plus,
-  Pencil, Trash2, ToggleLeft, ToggleRight, Timer, Zap, Save, Download,
+  AlertCircle, Compass, ChevronDown, ChevronUp,
+  Zap,
   FolderOpen, FileUp, History, Network,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -326,7 +326,6 @@ export default function Tasks() {
       if (prev > totalPages) return totalPages;
       return prev;
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [totalPages]);
 
   function renderForm() {

@@ -8,7 +8,6 @@ import {
   Layers,
   Loader2,
   Save,
-  Trash2,
   Plus,
   RefreshCw,
   Link2,

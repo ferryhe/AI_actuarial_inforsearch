@@ -174,7 +174,7 @@ class SimpleKeywordRetriever:
     def __enter__(self) -> "SimpleKeywordRetriever":
         return self
 
-    def __exit__(self, exc_type, exc, tb) -> None:
+    def __exit__(self, _exc_type, _exc, _tb) -> None:
         self.close()
 
     def __call__(self, query: str, top_k: int = 5) -> list[RetrievedItem]:

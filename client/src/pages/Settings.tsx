@@ -1,7 +1,6 @@
 import { useEffect, useState, useCallback, useRef, type Dispatch, type SetStateAction } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  Settings as SettingsIcon,
   Bot,
   Cpu,
   CheckCircle2,
@@ -34,21 +33,6 @@ import { formatSettingsMutationError } from "@/lib/settings-errors";
 import { MarkdownConversionTab } from "./settings/MarkdownConversionTab";
 
 type SettingsTab = "ai" | "search" | "categories" | "tokens" | "system" | "prompts" | "markdown";
-
-interface KnownProvider {
-  display_name: string;
-  api_key_hint: string;
-  default_base_url: string;
-  is_search_provider?: boolean;
-}
-
-interface ConfiguredProvider {
-  name: string;
-  configured: boolean;
-  has_key: boolean;
-  base_url?: string;
-  models?: string[];
-}
 
 interface AiModelsCurrent {
   catalog: { provider: string; model: string; system_prompt?: string };
@@ -137,18 +121,9 @@ interface ApiToken {
   last_used?: string;
 }
 
-const AI_FUNCTIONS = ["catalog", "embeddings", "chatbot", "ocr"] as const;
-type AiFunction = (typeof AI_FUNCTIONS)[number];
 type AiRoutingKey = "chat" | "embeddings" | "catalog" | "ocr";
 type RoutingCapability = "chat" | "embeddings" | "catalog" | "ocr";
 type ModelEdit = { provider: string; model: string; credential_id?: string };
-
-const FUNCTION_LABELS: Record<AiFunction, { en: string; zh: string }> = {
-  catalog: { en: "Cataloging", zh: "编目" },
-  embeddings: { en: "Embeddings", zh: "向量嵌入" },
-  chatbot: { en: "Chatbot", zh: "聊天机器人" },
-  ocr: { en: "OCR / Markdown", zh: "OCR / Markdown" },
-};
 
 function TabButton({
   active,
@@ -213,120 +188,7 @@ function Toast({ message, type, onClose }: { message: string; type: "success" | 
   );
 }
 
-const OCR_ENGINE_DEFS = [
-  { name: "opendataloader", provider: "local", displayName: "OpenDataLoader", isLocal: true },
-  { name: "markitdown", provider: "local", displayName: "MarkItDown", isLocal: true },
-  { name: "mistral", provider: "mistral", displayName: "Mistral OCR", isLocal: false },
-  { name: "docling", provider: "local", displayName: "Docling", isLocal: true },
-  { name: "mathpix", provider: "mathpix", displayName: "Mathpix", isLocal: false },
-  { name: "marker", provider: "local", displayName: "Marker", isLocal: true },
-  { name: "deepseekocr", provider: "siliconflow", displayName: "DeepSeek OCR", isLocal: false },
-];
-
-function OcrEnginesRow({
-  available,
-  configuredNames,
-  known,
-  currentModels,
-  modelEdits,
-  updateModelEdit,
-  lang,
-  t,
-}: {
-  available: Record<string, AvailableModel[]>;
-  configuredNames: Set<string>;
-  known: Record<string, KnownProvider>;
-  currentModels: AiModelsCurrent | null;
-  modelEdits: Record<string, ModelEdit>;
-  updateModelEdit: (fn: AiFunction, field: "provider" | "model", value: string) => void;
-  lang: string;
-  t: (key: string) => string;
-}) {
-  const fnLabel = lang === "zh" ? FUNCTION_LABELS.ocr.zh : FUNCTION_LABELS.ocr.en;
-  const cur = modelEdits["ocr"] || currentModels?.ocr || { provider: "", model: "" };
-
-  const engines = OCR_ENGINE_DEFS.map((eng) => {
-    const isAvailable = eng.isLocal || configuredNames.has(eng.provider);
-    const providerLabel = eng.isLocal
-      ? t("settings.ocr_local")
-      : (known[eng.provider]?.display_name || eng.provider);
-    return { ...eng, isAvailable, providerLabel };
-  });
-
-  const availableApiProviders = Object.keys(available).filter((p) => {
-    if (!configuredNames.has(p)) return false;
-    return (available[p] || []).some((m) => (m.types || []).includes("ocr"));
-  });
-
-  const filteredModels = (available[cur.provider] || []).filter((m) => (m.types || []).includes("ocr"));
-
-  return (
-    <div className="px-5 py-4" data-testid="model-row-ocr">
-      <label className="text-xs font-semibold text-muted-foreground mb-3 block">{fnLabel}</label>
-      <div className="space-y-3">
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-          {engines.map((eng) => (
-            <div
-              key={eng.name}
-              className={cn(
-                "flex items-center gap-2 px-3 py-2 rounded-lg border text-xs",
-                eng.isAvailable
-                  ? "border-emerald-500/30 bg-emerald-500/5"
-                  : "border-border bg-muted/30 opacity-60"
-              )}
-              data-testid={`ocr-engine-${eng.name}`}
-            >
-              {eng.isAvailable ? (
-                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
-              ) : (
-                <XCircle className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-              )}
-              <div className="min-w-0">
-                <span className="font-medium block truncate">{eng.displayName}</span>
-                <span className="text-[10px] text-muted-foreground block truncate">
-                  {eng.isLocal ? t("settings.ocr_no_key") : eng.providerLabel}
-                </span>
-              </div>
-            </div>
-          ))}
-        </div>
-        <p className="text-[11px] text-muted-foreground">{t("settings.ocr_engines_hint")}</p>
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className="text-[11px] text-muted-foreground mb-1 block">{t("settings.ocr_default_provider")}</label>
-            <select
-              value={cur.provider}
-              onChange={(e) => updateModelEdit("ocr", "provider", e.target.value)}
-              className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm"
-              data-testid="select-provider-ocr"
-            >
-              <option value="">—</option>
-              {availableApiProviders.map((p) => (
-                <option key={p} value={p}>{known[p]?.display_name || p}</option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="text-[11px] text-muted-foreground mb-1 block">{t("settings.model")}</label>
-            <select
-              value={cur.model}
-              onChange={(e) => updateModelEdit("ocr", "model", e.target.value)}
-              className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm"
-              data-testid="select-model-ocr"
-            >
-              <option value="">—</option>
-              {filteredModels.map((m) => (
-                <option key={m.name} value={m.name}>{m.display_name || m.name}</option>
-              ))}
-            </select>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function AiConfigTab({ lang }: { lang: string }) {
+function AiConfigTab() {
   const { t } = useTranslation();
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
@@ -1278,7 +1140,6 @@ function PromptEditorCard({
 // ─── PromptsTab ───────────────────────────────────────────────────────────────
 // The four chatbot mode keys (must match backend valid_prompt_keys in app.py)
 const CHATBOT_MODE_KEYS = ["expert", "summary", "tutorial", "comparison"] as const;
-type ChatbotModeKey = (typeof CHATBOT_MODE_KEYS)[number];
 
 function PromptsTab() {
   const { t } = useTranslation();
@@ -2219,7 +2080,7 @@ function ApiTokensTab() {
 }
 
 export default function SettingsPage() {
-  const { t, lang } = useTranslation();
+  const { t } = useTranslation();
   const [activeTab, setActiveTab] = useState<SettingsTab>("ai");
 
   const handleRefresh = () => {
@@ -2266,7 +2127,7 @@ export default function SettingsPage() {
       </div>
 
       <div>
-        {activeTab === "ai" && <AiConfigTab lang={lang} />}
+        {activeTab === "ai" && <AiConfigTab />}
         {activeTab === "prompts" && <PromptsTab />}
         {activeTab === "markdown" && <MarkdownConversionTab />}
         {activeTab === "search" && <SearchCrawlerTab />}

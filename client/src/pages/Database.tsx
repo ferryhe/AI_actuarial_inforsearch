@@ -56,16 +56,6 @@ interface FileItem {
   deleted_at: string | null;
 }
 
-interface ExplainDocumentState {
-  explainDocument: {
-    file_url: string;
-    filename: string;
-    title: string;
-    category: string;
-    keywords: string[];
-  };
-}
-
 interface FilesResponse {
   files: FileItem[];
   total: number;

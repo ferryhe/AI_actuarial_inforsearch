@@ -877,8 +877,8 @@ def test_identity_race_and_commit_failure_preserve_ready_pointer(
 
         @contextmanager
         def failed_transaction(*_args, **_kwargs):
+            yield from ()
             raise RuntimeError("synthetic commit failure")
-            yield
 
         monkeypatch.setattr(storage, "transaction", failed_transaction)
         with pytest.raises(KBIndexContractError) as failed:

@@ -330,10 +330,12 @@ def chat_agentic_rag(*, db_path: str, payload: Mapping[str, Any]) -> dict[str, A
         raise AgenticRagError("query is required", status_code=400)
     limit = parse_int_clamped(_payload_value(payload, "limit", 10), default=10, min_value=1, max_value=100)
     output_dir, kb_id, profile = _resolve_ready_output_dir(db_path=db_path, payload=payload)
-    return run_agentic_rag_loop(
+    response = run_agentic_rag_loop(
         query=query,
         output_dir=output_dir,
         profile=profile,
         kb_id=kb_id or None,
         limit=limit,
     )
+    response.pop("output_dir", None)
+    return response

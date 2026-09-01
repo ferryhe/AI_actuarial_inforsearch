@@ -47,7 +47,7 @@ const baseNavItems = [
 function Sidebar({ collapsed, onClose }: { collapsed: boolean; onClose: () => void }) {
   const [location] = useLocation();
   const { t } = useTranslation();
-  const { user, isLoggedIn, permissions } = useAuth();
+  const { isLoggedIn, permissions } = useAuth();
   const can = (permission: string) => permissions.includes(permission);
   const navItems = [
     ...baseNavItems.filter((item) => can(item.permission)),

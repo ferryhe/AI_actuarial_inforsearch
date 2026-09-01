@@ -206,8 +206,13 @@
     "@vitejs/plugin-react": "^5.1.4",
     "esbuild": "^0.25.12",
     "esbuild-register": "^3.6.0",
+    "eslint": "10.9.1",
+    "eslint-plugin-react-hooks": "7.1.1",
+    "globals": "17.11.0",
+    "knip": "6.33.0",
     "tsx": "^4.21.0",
     "typescript": "^5.6.3",
+    "typescript-eslint": "8.69.0",
     "vite": "^7.3.1"
   },
   "scripts": {
@@ -215,9 +220,20 @@
     "build": "vite build",
     "preview": "vite preview",
     "test": "npm run build",
-    "typecheck": "tsc --noEmit --pretty false"
+    "typecheck": "tsc --noEmit --pretty false",
+    "lint": "eslint client/src",
+    "dead-code:files": "python scripts/dead_code_gate.py files --report-dir reports/dead-code-files",
+    "dead-code:symbols": "python scripts/dead_code_gate.py symbols --report-dir reports/dead-code-symbols",
+    "dead-code:check": "npm run dead-code:files && npm run dead-code:symbols",
+    "dead-code:watch": "knip --watch --production --include files,exports,types,duplicates",
+    "quality:check": "python scripts/quality_gate.py"
   },
   "keywords": [],
   "author": "",
-  "license": "ISC"
+  "license": "ISC",
+  "overrides": {
+    "eslint-plugin-react-hooks": {
+      "zod-validation-error": "4.0.2"
+    }
+  }
 }

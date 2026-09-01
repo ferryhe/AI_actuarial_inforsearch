@@ -26,7 +26,6 @@ from ai_actuarial.chatbot.exceptions import (
     ChatbotException,
     ConversationException,
     InvalidKBException,
-    InvalidModeException,
 )
 from ai_actuarial.chatbot.llm import LLMClient
 from ai_actuarial.chatbot.prompts import (

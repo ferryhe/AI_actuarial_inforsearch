@@ -237,6 +237,7 @@ def run_agentic_rag_loop(
         "metadata": metadata,
         "kb_id": _norm(kb_id) or None,
         "profile": _norm(profile).lower() or "general",
+        "output_dir": output_dir_text,
     }
 
 

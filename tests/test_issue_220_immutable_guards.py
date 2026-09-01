@@ -41,7 +41,7 @@ def _patch_routing_io(monkeypatch: pytest.MonkeyPatch, config_data: dict) -> Non
     monkeypatch.setattr(ops_write, "_write_config_data", lambda data: None)
     monkeypatch.setattr(ops_write, "_notify_site_config_updated", lambda *a, **k: None)
     monkeypatch.setattr(ops_write, "_reload_runtime_caches", lambda: None)
-    monkeypatch.setattr(ops_write, "get_ai_routing", lambda **kw: {})
+    monkeypatch.setattr(ops_write, "get_ai_routing", lambda **_kw: {})
 
 
 def _make_kb_in_use(db_path: str, kb_id: str = "kb-1") -> None:
