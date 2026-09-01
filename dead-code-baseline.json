@@ -8,14 +8,6 @@
     "typescript-symbols": [],
     "python-symbols": [
       {
-        "path": "ai_actuarial/api/app.py",
-        "kind": "unused function",
-        "symbol": "block_retired_api_fallback",
-        "confidence": 60,
-        "classification": "whitelist",
-        "reason": "Framework, configuration, or test contract candidate; retain until a narrow symbol reference or safe removal is confirmed."
-      },
-      {
         "path": "ai_actuarial/chatbot/config.py",
         "kind": "unused variable",
         "symbol": "hallucination_check",

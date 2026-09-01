@@ -313,6 +313,8 @@ def create_app() -> FastAPI:
             ),
         )
 
+    block_retired_api_fallback  # reason: FastAPI registers this nested decorated route.
+
     try:
         app.state.init_scheduler()
     except Exception:  # noqa: BLE001

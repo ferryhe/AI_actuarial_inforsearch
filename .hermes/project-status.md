@@ -509,6 +509,13 @@
   tests passed 132/1, the full suite passed 1857/10, the dead-code gate passed
   at 0 files/17 symbols, and the quality baseline fell from 127/80/16 to
   96/60/9.
+- Twenty-third historical directory cleanup: retained the nested
+  `block_retired_api_fallback` FastAPI 410 route in `ai_actuarial/api/app.py`
+  and added its exact source-level framework reference. Focused tests passed
+  20/20; after one host-resource-abnormal test run was stopped and isolated,
+  the unchanged historical file passed 83/83 and a clean full rerun passed
+  1857/10 plus Black, isort, and Pylint. The dead-code symbol baseline fell
+  from 17 to 16; the quality baseline remains 96/60/9.
 
 ## Working tree notes
 
@@ -525,8 +532,8 @@
 
 ## Recommended next action
 
-- Commit and push the direct `ai_actuarial/` cleanup to PR #318, verify its CI
-  and review feedback, then classify and clear the remaining 17 Python symbol
-  findings directory by directory (`api/app.py`, `chatbot/`, `rag/`, and test
+- Commit and push the `ai_actuarial/api/app.py` compatibility reference to PR
+  #318, verify its CI and review feedback, then process the remaining 16 Python
+  symbol findings directory by directory (`chatbot/`, `rag/`, and test
   directories) while continuing to shrink the 96/60/9 quality baseline. Merge
   only after explicit authorization.
