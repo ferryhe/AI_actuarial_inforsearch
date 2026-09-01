@@ -71,12 +71,19 @@ def _assert_failed_rollback_preserved_publication(
         "latest_operation_at",
         "latest_operation_error",
     }
-    for payload in (scrubbed_before, scrubbed_after):
-        for section_name in ("manifest", "publication_state"):
-            section = payload.get(section_name)
-            if isinstance(section, dict):
-                for field in operation_fields:
-                    section.pop(field, None)
+
+    def scrub_operation_audit(value: object) -> None:
+        if isinstance(value, dict):
+            for field in operation_fields:
+                value.pop(field, None)
+            for nested in value.values():
+                scrub_operation_audit(nested)
+        elif isinstance(value, list):
+            for nested in value:
+                scrub_operation_audit(nested)
+
+    scrub_operation_audit(scrubbed_before)
+    scrub_operation_audit(scrubbed_after)
     assert scrubbed_after == scrubbed_before
     for section_name in ("manifest", "publication_state"):
         section = after[section_name]
@@ -84,6 +91,49 @@ def _assert_failed_rollback_preserved_publication(
         assert section["latest_operation_kind"] == "rollback"
         assert section["latest_operation_state"] == "failed"
         assert section["latest_operation_error"] == "ready_data operation failed"
+
+
+def test_failed_rollback_comparison_ignores_mirrored_operation_audit() -> None:
+    before = {
+        "kb_id": "kb-test",
+        "manifest": {
+            "active_publication_id": "arp-active",
+            "latest_operation_kind": "publish",
+            "latest_operation_state": "succeeded",
+            "latest_operation_at": "before",
+            "latest_operation_error": "",
+            "publication_state": {
+                "active_publication_id": "arp-active",
+                "latest_operation_kind": "publish",
+                "latest_operation_state": "succeeded",
+                "latest_operation_at": "before",
+                "latest_operation_error": "",
+            },
+        },
+        "publication_state": {
+            "active_publication_id": "arp-active",
+            "latest_operation_kind": "publish",
+            "latest_operation_state": "succeeded",
+            "latest_operation_at": "before",
+            "latest_operation_error": "",
+        },
+    }
+    after = json.loads(json.dumps(before))
+    for section in (
+        after["manifest"],
+        after["manifest"]["publication_state"],
+        after["publication_state"],
+    ):
+        section.update(
+            {
+                "latest_operation_kind": "rollback",
+                "latest_operation_state": "failed",
+                "latest_operation_at": "after",
+                "latest_operation_error": "ready_data operation failed",
+            }
+        )
+
+    _assert_failed_rollback_preserved_publication(before, after)
 
 
 def _prepare_committed_kb_index(

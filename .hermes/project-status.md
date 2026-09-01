@@ -48,6 +48,11 @@
 - Copilot's one actionable review finding was confirmed and fixed: the
   synthetic commit-failure context manager now executes the transaction body,
   raises during exit, and delegates rollback to the real transaction manager.
+- The second Linux run passed four jobs but showed that four symlink rollback
+  assertions scrubbed audit fields from the direct publication projections,
+  not from the same fields mirrored in the nested manifest projection. The
+  helper now removes only those four audit keys recursively while comparing
+  every other field, with a platform-independent regression for that shape.
 
 ## Acceptance results
 
@@ -75,6 +80,10 @@
 - After the Copilot fix, its focused regression passed, then the complete
   unified quality gate passed again with 1,880 passed and 10 skipped; the
   dead-code gate also remained exact at 9/5 files and 28/93 symbols.
+- After the nested-audit assertion fix, its focused regression passed. Static
+  baselines remain exact at 213/142/22 with no new or stale entries, and the
+  dead-code gate remains exact at 9/5 files and 28/93 symbols. A final Linux CI
+  rerun is required because the four original symlink tests skip on Windows.
 
 ## Files changed
 
