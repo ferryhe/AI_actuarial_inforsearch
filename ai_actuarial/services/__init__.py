@@ -2,4 +2,4 @@
 
 from ai_actuarial.services.token_encryption import TokenEncryption
 
-__all__ = ['TokenEncryption']
+__all__ = ["TokenEncryption"]

@@ -75,6 +75,10 @@
   files are imported by crawler, listening-rule, and API-service paths and are
   covered by URL-safety and integration tests, so both files received only
   Black/isort formatting and no symbol was removed.
+- The seventh completed directory is `ai_actuarial/services/`. The package
+  export and token-encryption implementation have direct runtime, API, and
+  diagnostic consumers plus dedicated integration tests, so both files
+  received only Black/isort formatting and no symbol was removed.
 
 ## Acceptance results
 
@@ -171,6 +175,16 @@
   tests and 10 platform skips. The full static gate passed at 188 Black files,
   123 isort files, and 20 Pylint identities, with zero new or stale entries.
   The complete dead-code gate remained exact at 9/5 files and 28/93 symbols.
+- Remote commit `0699b47` contains the exact `security/` tree. CI run
+  33473548630 passed all five jobs, including the 11m04s Linux quality gate,
+  and no new Review or Copilot comment was added.
+- `ai_actuarial/services/` focused validation passed: Black, isort, and Pylint
+  reported no gate findings, and all 120 token-encryption and direct-consumer
+  tests passed.
+- The complete pytest suite passed after the `services/` cleanup with 1,881
+  tests and 10 platform skips. The full static gate passed at 186 Black files,
+  122 isort files, and 20 Pylint identities, with zero new or stale entries.
+  The complete dead-code gate remained exact at 9/5 files and 28/93 symbols.
 
 ## Files changed
 
@@ -199,6 +213,9 @@
 - Sixth historical directory cleanup: `ai_actuarial/security/__init__.py`,
   `ai_actuarial/security/url_safety.py`, and the matching removals from
   `quality-gate-baseline.json`.
+- Seventh historical directory cleanup: `ai_actuarial/services/__init__.py`,
+  `ai_actuarial/services/token_encryption.py`, and the matching removals from
+  `quality-gate-baseline.json`.
 
 ## Working tree notes
 
@@ -215,6 +232,6 @@
 
 ## Recommended next action
 
-- Commit and push the path-specific `security/` cleanup, verify PR #318, then
-  continue with `ai_actuarial/services/` as the next small independent
+- Commit and push the path-specific `services/` cleanup, verify PR #318, then
+  continue with `ai_actuarial/processors/` as the next small independent
   directory. Merge only after explicit authorization.
