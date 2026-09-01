@@ -7,7 +7,6 @@
       "ai_actuarial/ai_runtime.py",
       "ai_actuarial/api/app.py",
       "ai_actuarial/api/deps.py",
-      "ai_actuarial/api/middleware/rate_limit.py",
       "ai_actuarial/api/route_inventory.py",
       "ai_actuarial/api/routers/__init__.py",
       "ai_actuarial/api/routers/agentic_rag.py",
@@ -200,7 +199,6 @@
     "isort": [
       "ai_actuarial/__main__.py",
       "ai_actuarial/api/app.py",
-      "ai_actuarial/api/middleware/rate_limit.py",
       "ai_actuarial/api/route_inventory.py",
       "ai_actuarial/api/routers/agentic_rag.py",
       "ai_actuarial/api/routers/files_write.py",

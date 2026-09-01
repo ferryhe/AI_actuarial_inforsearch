@@ -1,6 +1,6 @@
 # Project Status — Issue #317 dead-code and unified quality gates
 
-- Updated: 2026-08-31 EDT
+- Updated: 2026-09-01 EDT
 - Repository: `AI_actuarial_inforsearch`
 - Checkout: `C:\Project\AI_actuarial_inforsearch`
 - Branch: `codex/issue-317-dead-code-detection`
@@ -65,6 +65,9 @@
   confirmed that its primary modules connect to runtime/API consumers and
   dedicated tests, so seven historical files received only Black/isort
   formatting and no file or symbol was removed.
+- The fourth completed directory is `ai_actuarial/api/middleware/`. Its single
+  implementation file is directly exercised by FastAPI auth and ops tests, so
+  it received only Black/isort formatting and no file or symbol was removed.
 
 ## Acceptance results
 
@@ -128,6 +131,20 @@
 - The machine's existing global Black cache caused high-CPU CLI stalls for the
   changed files. Black's API verified them immediately; the official CLI and
   complete gate then passed with an isolated temporary `BLACK_CACHE_DIR`.
+- Remote commit `5356248` contains the exact `agentic_rag/` tree and passed all
+  five PR #318 jobs in CI run 33467686369. GitHub authentication and the branch
+  update used a task-scoped temporary credential because the sandbox cannot
+  replace the invalid user-level GitHub CLI credential.
+- `ai_actuarial/api/middleware/` focused validation passed: Black, isort, and
+  Pylint reported no gate findings, and all 27 direct FastAPI tests passed.
+- The temporary clone initially lacked its ignored root `node_modules`, so 16
+  TypeScript subprocess tests could not start. `npm ci` restored the pinned
+  dependencies, all 16 focused tests passed, and the complete pytest rerun then
+  passed with 1,881 tests and 10 platform skips.
+- The full static gate passed after the `middleware/` cleanup at 192 Black
+  files, 126 isort files, and 20 Pylint identities, with zero new or stale
+  entries. The complete dead-code gate remained exact at 9/5 files and 28/93
+  symbols.
 
 ## Files changed
 
@@ -147,6 +164,9 @@
 - Third historical directory cleanup: seven formatted Python files under
   `ai_actuarial/agentic_rag/` and the matching removals from
   `quality-gate-baseline.json`.
+- Fourth historical directory cleanup:
+  `ai_actuarial/api/middleware/rate_limit.py` and the matching removals from
+  `quality-gate-baseline.json`.
 
 ## Working tree notes
 
@@ -163,6 +183,6 @@
 
 ## Recommended next action
 
-- After the path-specific `agentic_rag/` commit passes CI, continue with
-  `ai_actuarial/api/middleware/` as the next smallest independent directory.
+- Commit and push the path-specific `middleware/` cleanup, verify PR #318, then
+  continue with `ai_actuarial/models/` as the next small independent directory.
   Merge only after explicit authorization.
