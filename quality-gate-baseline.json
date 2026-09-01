@@ -91,9 +91,7 @@
       "tests/test_web_page_collector.py",
       "tests/test_weekly_react_source.py",
       "tests/test_weekly_updates.py",
-      "tests/test_yaml_config.py",
-      "tests/unit/test_permissions.py",
-      "tests/unit/test_safe_pickle.py"
+      "tests/test_yaml_config.py"
     ],
     "isort": [
       "tests/test_ai_runtime.py",
@@ -151,9 +149,7 @@
       "tests/test_web_page_collector.py",
       "tests/test_weekly_react_source.py",
       "tests/test_weekly_updates.py",
-      "tests/test_yaml_config.py",
-      "tests/unit/test_permissions.py",
-      "tests/unit/test_safe_pickle.py"
+      "tests/test_yaml_config.py"
     ],
     "pylint": [
       "tests/test_fastapi_rag_admin_endpoints.py | E1136 | test_fastapi_rag_admin_ready_build_launches_real_async_task | Value 'raw_publication['active_publication']' is unsubscriptable",

@@ -538,7 +538,13 @@
   receives the query and `top_k`. No tests were removed. Focused tests passed
   102/102, the full suite passed 1857/10 plus Black, isort, and Pylint, the
   dead-code symbol baseline fell from 8 to 6, and the quality baseline fell
-  from 96/60/9 to 91/58/9.
+  from 96/60/9 to 91/58/9. All five remote CI jobs passed.
+- Twenty-seventh historical directory cleanup: formatted the two historical
+  Python test files under `tests/unit/`, removing two Black and two isort
+  baseline identities. No code or tests were removed. Focused tests passed
+  40/40, the full suite passed 1857/10 plus Black, isort, and Pylint, the
+  dead-code baseline remains 0 files/6 symbols, and the quality baseline fell
+  from 91/58/9 to 89/56/9.
 
 ## Working tree notes
 
@@ -555,7 +561,6 @@
 
 ## Recommended next action
 
-- Commit and push the `tests/agentic_rag/` cleanup to PR #318, verify CI, then
-  format `tests/unit/` as its own batch before cleaning the remaining six
-  Python symbol findings and formatter/linter debt in the root `tests/`
-  directory. Merge only after explicit authorization.
+- Commit and push the `tests/unit/` formatting cleanup to PR #318, verify CI,
+  then clean the remaining six Python symbol findings and all formatter/linter
+  debt in the root `tests/` directory. Merge only after explicit authorization.

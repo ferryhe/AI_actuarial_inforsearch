@@ -1,9 +1,11 @@
 """
 Unit tests for SafeUnpickler security in vector_store.py
 """
-import pytest
-import pickle
+
 import io
+import pickle
+
+import pytest
 
 
 class TestSafeUnpickler:
@@ -12,6 +14,7 @@ class TestSafeUnpickler:
     def _loads(self, data: bytes):
         """Helper to load bytes using SafeUnpickler."""
         from ai_actuarial.rag.vector_store import SafeUnpickler
+
         return SafeUnpickler(io.BytesIO(data)).load()
 
     def test_safe_dict_loads(self):
@@ -42,6 +45,7 @@ class TestSafeUnpickler:
     def test_safe_ordered_dict(self):
         """OrderedDict should be allowed."""
         from collections import OrderedDict
+
         data = OrderedDict([("a", 1), ("b", 2)])
         result = self._loads(pickle.dumps(data))
         assert result == data
@@ -49,6 +53,7 @@ class TestSafeUnpickler:
     def test_safe_datetime(self):
         """Datetime objects should be allowed."""
         from datetime import datetime, timezone
+
         data = {"timestamp": datetime(2026, 4, 19, 12, 0, 0, tzinfo=timezone.utc)}
         result = self._loads(pickle.dumps(data))
         assert result == data
@@ -56,7 +61,7 @@ class TestSafeUnpickler:
     def test_malicious_os_system_blocked(self):
         """Attempting to execute os.system should raise error."""
         from ai_actuarial.rag.vector_store import SafeUnpickler
-        
+
         class EvilOSSystem:
             def __reduce__(self):
                 import os
@@ -67,7 +72,7 @@ class TestSafeUnpickler:
         # Real REDUCE payload that would execute os.system/posix.system under
         # pickle.loads. SafeUnpickler must reject the global before REDUCE runs.
         malicious = pickle.dumps(EvilOSSystem(), protocol=4)
-        
+
         with pytest.raises(pickle.UnpicklingError):
             SafeUnpickler(io.BytesIO(malicious)).load()
 
@@ -95,7 +100,7 @@ class TestSafeUnpickler:
     def test_malicious_builtins_exec_blocked(self):
         """builtins.exec should be rejected."""
         from ai_actuarial.rag.vector_store import SafeUnpickler
-        
+
         # Pickle that would try to use builtins.exec
         malicious = (
             b"\x80\x04"
@@ -107,14 +112,14 @@ class TestSafeUnpickler:
             b"R"
             b"."
         )
-        
+
         with pytest.raises(pickle.UnpicklingError):
             SafeUnpickler(io.BytesIO(malicious)).load()
 
     def test_malicious_builtins_import_blocked(self):
         """builtins.__import__ should be rejected."""
         from ai_actuarial.rag.vector_store import SafeUnpickler
-        
+
         # Pickle that would try to use builtins.__import__
         malicious = (
             b"\x80\x04"
@@ -126,17 +131,17 @@ class TestSafeUnpickler:
             b"R"
             b"."
         )
-        
+
         with pytest.raises(pickle.UnpicklingError):
             SafeUnpickler(io.BytesIO(malicious)).load()
 
     def test_malicious_function_blocked(self):
         """Attempting to pickle a lambda/function should raise error."""
         from ai_actuarial.rag.vector_store import SafeUnpickler
-        
+
         # Try to pickle a lambda/function
         try:
-            malicious = pickle.dumps(lambda: __import__('os').system('malicious'))
+            malicious = pickle.dumps(lambda: __import__("os").system("malicious"))
             with pytest.raises(pickle.UnpicklingError):
                 SafeUnpickler(io.BytesIO(malicious)).load()
         except (pickle.PicklingError, AttributeError, TypeError, pickle.UnpicklingError):
@@ -147,7 +152,7 @@ class TestSafeUnpickler:
     def test_malicious_pickle_loads_bypassed(self):
         """pickle.loads should not be in whitelist to prevent bypass."""
         from ai_actuarial.rag.vector_store import SafeUnpickler
-        
+
         class EvilPickleLoads:
             def __reduce__(self):
                 return (pickle.loads, (pickle.dumps({"hack": "data"}),))
