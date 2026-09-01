@@ -8,8 +8,8 @@ drift. It uses pydantic-settings to read values directly from the project's
 
 from __future__ import annotations
 
-from functools import lru_cache
 import os
+from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
@@ -44,8 +44,12 @@ class Settings(BaseSettings):
     # Engine defaults
     default_engine: EngineName = Field(default="local", alias="DEFAULT_ENGINE")
     mistral_default_model: str = Field(default="mistral-ocr-latest", alias="MISTRAL_DEFAULT_MODEL")
-    siliconflow_default_model: str = Field(default="deepseek-ai/DeepSeek-OCR", alias="SILICONFLOW_DEFAULT_MODEL")
-    siliconflow_base_url: str = Field(default="https://api.siliconflow.cn/v1", alias="SILICONFLOW_BASE_URL")
+    siliconflow_default_model: str = Field(
+        default="deepseek-ai/DeepSeek-OCR", alias="SILICONFLOW_DEFAULT_MODEL"
+    )
+    siliconflow_base_url: str = Field(
+        default="https://api.siliconflow.cn/v1", alias="SILICONFLOW_BASE_URL"
+    )
     openai_base_url: str = Field(default="https://api.openai.com/v1", alias="OPENAI_BASE_URL")
     openai_default_model: str = Field(default="gpt-4o-mini", alias="OPENAI_DEFAULT_MODEL")
     openai_timeout_seconds: float = Field(default=60.0, alias="OPENAI_TIMEOUT_SECONDS")
@@ -70,7 +74,9 @@ class Settings(BaseSettings):
     siliconflow_timeout_seconds: float = Field(default=60.0, alias="SILICONFLOW_TIMEOUT_SECONDS")
     siliconflow_retry_attempts: int = Field(default=3, alias="SILICONFLOW_RETRY_ATTEMPTS")
     siliconflow_max_input_tokens: int = Field(default=3500, alias="SILICONFLOW_MAX_INPUT_TOKENS")
-    siliconflow_chunk_overlap_tokens: int = Field(default=200, alias="SILICONFLOW_CHUNK_OVERLAP_TOKENS")
+    siliconflow_chunk_overlap_tokens: int = Field(
+        default=200, alias="SILICONFLOW_CHUNK_OVERLAP_TOKENS"
+    )
 
     # Mathpix tuning
     mathpix_timeout_seconds: float = Field(default=120.0, alias="MATHPIX_TIMEOUT_SECONDS")
@@ -81,11 +87,15 @@ class Settings(BaseSettings):
 
     # MarkItDown tuning
     markitdown_enable_plugins: bool | None = Field(default=True, alias="MARKITDOWN_ENABLE_PLUGINS")
-    markitdown_enable_builtins: bool | None = Field(default=True, alias="MARKITDOWN_ENABLE_BUILTINS")
+    markitdown_enable_builtins: bool | None = Field(
+        default=True, alias="MARKITDOWN_ENABLE_BUILTINS"
+    )
 
     # OpenDataLoader tuning
     opendataloader_hybrid: str | None = Field(default=None, alias="OPENDATALOADER_HYBRID")
-    opendataloader_use_struct_tree: bool = Field(default=False, alias="OPENDATALOADER_USE_STRUCT_TREE")
+    opendataloader_use_struct_tree: bool = Field(
+        default=False, alias="OPENDATALOADER_USE_STRUCT_TREE"
+    )
 
     # Docling tuning
     docling_max_pages: int | None = Field(default=None, alias="DOCLING_MAX_PAGES")
@@ -110,6 +120,7 @@ class Settings(BaseSettings):
     )
 
     @field_validator("input_dir", "output_dir", mode="before")
+    @classmethod
     def _coerce_path(cls, value: str | Path) -> Path:  # noqa: D401
         """Ensure directories are stored as Path objects."""
         return Path(value)
@@ -120,9 +131,15 @@ class Settings(BaseSettings):
             directory.mkdir(parents=True, exist_ok=True)
 
         if self.siliconflow_chunk_overlap_tokens >= self.siliconflow_max_input_tokens:
-            raise ValueError("SILICONFLOW_CHUNK_OVERLAP_TOKENS must be smaller than SILICONFLOW_MAX_INPUT_TOKENS")
+            raise ValueError(
+                "SILICONFLOW_CHUNK_OVERLAP_TOKENS must be smaller than SILICONFLOW_MAX_INPUT_TOKENS"
+            )
 
-        for field_name in ("mistral_retry_attempts", "siliconflow_retry_attempts", "mathpix_retry_attempts"):
+        for field_name in (
+            "mistral_retry_attempts",
+            "siliconflow_retry_attempts",
+            "mathpix_retry_attempts",
+        ):
             value = getattr(self, field_name)
             if value < 1:
                 raise ValueError(f"{field_name.upper()} must be at least 1")
@@ -133,7 +150,7 @@ class Settings(BaseSettings):
         if self.mathpix_poll_interval_seconds <= 0:
             raise ValueError("MATHPIX_POLL_INTERVAL_SECONDS must be greater than 0")
 
-        if self.mathpix_output_format.lower() not in {"md", "mmd"}:
+        if str(self.mathpix_output_format).lower() not in {"md", "mmd"}:
             raise ValueError("MATHPIX_OUTPUT_FORMAT must be either 'md' or 'mmd'")
 
         if self.docling_max_pages is not None and self.docling_max_pages < 1:
@@ -142,20 +159,26 @@ class Settings(BaseSettings):
         # Validate chatbot settings
         if not 0.0 <= self.chatbot_temperature <= 2.0:
             raise ValueError("CHATBOT_TEMPERATURE must be between 0.0 and 2.0")
-        
+
         if self.chatbot_max_tokens < 1:
             raise ValueError("CHATBOT_MAX_TOKENS must be at least 1")
-        
+
         if self.chatbot_max_context_messages < 1:
             raise ValueError("CHATBOT_MAX_CONTEXT_MESSAGES must be at least 1")
-        
+
         valid_chatbot_modes = ["expert", "summary", "tutorial", "comparison"]
         if self.chatbot_default_mode not in valid_chatbot_modes:
             raise ValueError(f"CHATBOT_DEFAULT_MODE must be one of {valid_chatbot_modes}")
 
         return self
 
-    @field_validator("docling_max_pages", "mathpix_app_id", "mathpix_app_key", "opendataloader_hybrid", mode="before")
+    @field_validator(
+        "docling_max_pages",
+        "mathpix_app_id",
+        "mathpix_app_key",
+        "opendataloader_hybrid",
+        mode="before",
+    )
     @classmethod
     def _blank_to_none(cls, value: object) -> object:
         if isinstance(value, str) and not value.strip():
@@ -173,10 +196,12 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     """Return a cached Settings instance so imports stay cheap."""
-    ignore_dotenv = (
-        str(os.getenv("AI_ACTUARIAL_IGNORE_DOTENV", "")).strip().lower()
-        in {"1", "true", "yes", "on"}
-    )
+    ignore_dotenv = str(os.getenv("AI_ACTUARIAL_IGNORE_DOTENV", "")).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
     if ignore_dotenv or os.getenv("PYTEST_CURRENT_TEST"):
         return Settings(_env_file=None)
     return Settings()

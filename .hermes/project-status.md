@@ -53,6 +53,11 @@
   not from the same fields mirrored in the nested manifest projection. The
   helper now removes only those four audit keys recursively while comparing
   every other field, with a platform-independent regression for that shape.
+- Historical cleanup now proceeds one directory at a time, with focused tests,
+  the complete gate, and one path-specific commit per directory. The first
+  completed directory is `config/`: Black/isort formatting was applied, the
+  Pydantic path validator was explicitly marked as a classmethod, and the
+  output-format validation was made type-explicit for Pylint.
 
 ## Acceptance results
 
@@ -86,6 +91,14 @@
   run 33456929109 passed all five jobs; its unified gate reported 1,891 tests
   passed, including the four original symlink tests, then passed Black, isort,
   and Pylint.
+- `config/` focused validation passed: Black, isort, and Pylint reported no
+  findings; 36 tests passed and 1 platform-specific test skipped.
+- The complete unified quality gate passed after the `config/` cleanup with
+  1,881 tests passed and 10 skipped. Its reviewed baseline shrank only for this
+  directory, from 213/142/22 to 210 Black files, 140 isort files, and 20 Pylint
+  identities.
+- The complete dead-code gate also passed unchanged at 9/5 file findings and
+  28/93 symbol findings.
 
 ## Files changed
 
@@ -97,6 +110,9 @@
 - Documentation: `docs/dead-code.md`, docs index, and both root READMEs.
 - Focused cleanup/tests: affected React files, small Python unused-argument
   cleanups, gate tests, and narrow full-suite contract corrections.
+- First historical directory cleanup: `config/__init__.py`,
+  `config/settings.py`, `config/yaml_config.py`, and the matching removals from
+  `quality-gate-baseline.json`.
 
 ## Working tree notes
 
@@ -113,5 +129,6 @@
 
 ## Recommended next action
 
-- PR #318 is mergeable, all required checks are green, and Copilot's only
-  actionable thread is resolved. Merge only after explicit authorization.
+- Push the path-specific `config/` cleanup commit to PR #318, verify CI and
+  review feedback, then clean `scripts/` as the next independent directory.
+  Merge only after explicit authorization.

@@ -5,18 +5,17 @@ This module provides centralized configuration loading from sites.yaml,
 with backward compatibility for environment variables.
 """
 
-import os
 import logging
-from pathlib import Path
-from typing import Dict, Any
+import os
 from functools import lru_cache
-
-from ai_actuarial.shared_runtime import get_sites_config_path, load_sites_config
+from pathlib import Path
+from typing import Any, Dict
 
 from ai_actuarial.rag.defaults import (
     get_embedding_batch_size_default,
     get_similarity_threshold_default,
 )
+from ai_actuarial.shared_runtime import get_sites_config_path, load_sites_config
 
 logger = logging.getLogger(__name__)
 
@@ -27,45 +26,41 @@ _cache_version = 0
 def _safe_int(value: str, var_name: str) -> int:
     """
     Safely convert env var to int with clear error message.
-    
+
     Args:
         value: The value to convert
         var_name: Variable name for error messages
-        
+
     Returns:
         Integer value
-        
+
     Raises:
         ValueError: If value cannot be converted to int
     """
     try:
         return int(value)
     except (ValueError, TypeError) as e:
-        raise ValueError(
-            f"Invalid value for {var_name}: {value!r}. Expected integer."
-        ) from e
+        raise ValueError(f"Invalid value for {var_name}: {value!r}. Expected integer.") from e
 
 
 def _safe_float(value: str, var_name: str) -> float:
     """
     Safely convert env var to float with clear error message.
-    
+
     Args:
         value: The value to convert
         var_name: Variable name for error messages
-        
+
     Returns:
         Float value
-        
+
     Raises:
         ValueError: If value cannot be converted to float
     """
     try:
         return float(value)
     except (ValueError, TypeError) as e:
-        raise ValueError(
-            f"Invalid value for {var_name}: {value!r}. Expected float."
-        ) from e
+        raise ValueError(f"Invalid value for {var_name}: {value!r}. Expected float.") from e
 
 
 def _get_sites_config_path() -> Path:
@@ -81,7 +76,7 @@ def _load_yaml_config_cached(
 ) -> Dict[str, Any]:
     """
     Load sites.yaml configuration with caching.
-    
+
     Args:
         config_path_str: Absolute path to the YAML configuration file as a string.
             Included in the cache key so that different config paths are cached
@@ -91,7 +86,7 @@ def _load_yaml_config_cached(
         file_signature: Current file metadata `(mtime_ns, size)` so in-process edits
             to the same path invalidate the cache without requiring explicit callers
             to know about `invalidate_config_cache()`.
-        
+
     Returns:
         Dict containing the full configuration
     """
@@ -104,7 +99,7 @@ def _load_yaml_config_cached(
 def load_yaml_config() -> Dict[str, Any]:
     """
     Load the full sites.yaml configuration.
-    
+
     Returns:
         Dict containing the full configuration
     """
@@ -129,12 +124,12 @@ def invalidate_config_cache():
 def load_ai_config() -> Dict[str, Any]:
     """
     Load AI configuration from sites.yaml with .env fallback.
-    
+
     Returns:
         Dict containing ai_config section with catalog, embeddings, chatbot, ocr
     """
     yaml_config = load_yaml_config()
-    
+
     if "ai_config" in yaml_config:
         logger.debug("Using ai_config from sites.yaml")
         return yaml_config["ai_config"]
@@ -149,10 +144,10 @@ def load_ai_config() -> Dict[str, Any]:
 def _extract_ai_config_from_env() -> Dict[str, Any]:
     """
     Extract AI configuration from environment variables (fallback).
-    
+
     Returns:
         Dict in ai_config format extracted from environment
-        
+
     Raises:
         ValueError: If environment variables contain invalid numeric values
     """
@@ -164,14 +159,23 @@ def _extract_ai_config_from_env() -> Dict[str, Any]:
         "marker": ("local", "marker"),
         "local": ("local", "docling"),
         "mistral": ("mistral", os.getenv("MISTRAL_DEFAULT_MODEL", "mistral-ocr-latest")),
-        "deepseekocr": ("siliconflow", os.getenv("SILICONFLOW_DEFAULT_MODEL", "deepseek-ai/DeepSeek-OCR")),
+        "deepseekocr": (
+            "siliconflow",
+            os.getenv("SILICONFLOW_DEFAULT_MODEL", "deepseek-ai/DeepSeek-OCR"),
+        ),
         "mathpix": ("mathpix", "mathpix"),
     }
-    ocr_provider, ocr_model = engine_provider_model.get(default_engine, ("local", default_engine or "docling"))
+    ocr_provider, ocr_model = engine_provider_model.get(
+        default_engine, ("local", default_engine or "docling")
+    )
     embedding_provider = os.getenv("RAG_EMBEDDING_PROVIDER", "openai")
     embedding_model = os.getenv("RAG_EMBEDDING_MODEL", "text-embedding-3-large")
-    embedding_batch_size_default = get_embedding_batch_size_default(embedding_provider, embedding_model)
-    similarity_threshold_default = get_similarity_threshold_default(embedding_provider, embedding_model)
+    embedding_batch_size_default = get_embedding_batch_size_default(
+        embedding_provider, embedding_model
+    )
+    similarity_threshold_default = get_similarity_threshold_default(
+        embedding_provider, embedding_model
+    )
 
     from ai_actuarial.ai_runtime import (
         DEFAULT_WEEKLY_EXPLANATION_PROMPT,
@@ -182,8 +186,12 @@ def _extract_ai_config_from_env() -> Dict[str, Any]:
         "catalog": {
             "provider": "openai",
             "model": os.getenv("OPENAI_DEFAULT_MODEL", "gpt-4o-mini"),
-            "temperature": _safe_float(os.getenv("CATALOG_TEMPERATURE", "0.7"), "CATALOG_TEMPERATURE"),
-            "timeout_seconds": _safe_int(os.getenv("OPENAI_TIMEOUT_SECONDS", "60"), "OPENAI_TIMEOUT_SECONDS"),
+            "temperature": _safe_float(
+                os.getenv("CATALOG_TEMPERATURE", "0.7"), "CATALOG_TEMPERATURE"
+            ),
+            "timeout_seconds": _safe_int(
+                os.getenv("OPENAI_TIMEOUT_SECONDS", "60"), "OPENAI_TIMEOUT_SECONDS"
+            ),
         },
         "embeddings": {
             "provider": embedding_provider,
@@ -194,22 +202,39 @@ def _extract_ai_config_from_env() -> Dict[str, Any]:
         "chatbot": {
             "provider": os.getenv("CHATBOT_LLM_PROVIDER", "openai"),
             "model": os.getenv("CHATBOT_MODEL", "gpt-4-turbo"),
-            "temperature": _safe_float(os.getenv("CHATBOT_TEMPERATURE", "0.7"), "CHATBOT_TEMPERATURE"),
+            "temperature": _safe_float(
+                os.getenv("CHATBOT_TEMPERATURE", "0.7"), "CHATBOT_TEMPERATURE"
+            ),
             "max_tokens": _safe_int(os.getenv("CHATBOT_MAX_TOKENS", "1000"), "CHATBOT_MAX_TOKENS"),
             "streaming_enabled": os.getenv("CHATBOT_STREAMING_ENABLED", "true").lower() == "true",
-            "max_context_messages": _safe_int(os.getenv("CHATBOT_MAX_CONTEXT_MESSAGES", "10"), "CHATBOT_MAX_CONTEXT_MESSAGES"),
+            "max_context_messages": _safe_int(
+                os.getenv("CHATBOT_MAX_CONTEXT_MESSAGES", "10"), "CHATBOT_MAX_CONTEXT_MESSAGES"
+            ),
             "default_mode": os.getenv("CHATBOT_DEFAULT_MODE", "expert"),
             "enable_citation": os.getenv("CHATBOT_ENABLE_CITATION", "true").lower() == "true",
-            "min_citation_score": _safe_float(os.getenv("CHATBOT_MIN_CITATION_SCORE", "0.4"), "CHATBOT_MIN_CITATION_SCORE"),
-            "max_citations_per_response": _safe_int(os.getenv("CHATBOT_MAX_CITATIONS_PER_RESPONSE", "5"), "CHATBOT_MAX_CITATIONS_PER_RESPONSE"),
-            "enable_query_validation": os.getenv("CHATBOT_ENABLE_QUERY_VALIDATION", "true").lower() == "true",
-            "enable_response_validation": os.getenv("CHATBOT_ENABLE_RESPONSE_VALIDATION", "true").lower() == "true",
-            "max_query_length": _safe_int(os.getenv("CHATBOT_MAX_QUERY_LENGTH", "1000"), "CHATBOT_MAX_QUERY_LENGTH"),
+            "min_citation_score": _safe_float(
+                os.getenv("CHATBOT_MIN_CITATION_SCORE", "0.4"), "CHATBOT_MIN_CITATION_SCORE"
+            ),
+            "max_citations_per_response": _safe_int(
+                os.getenv("CHATBOT_MAX_CITATIONS_PER_RESPONSE", "5"),
+                "CHATBOT_MAX_CITATIONS_PER_RESPONSE",
+            ),
+            "enable_query_validation": os.getenv("CHATBOT_ENABLE_QUERY_VALIDATION", "true").lower()
+            == "true",
+            "enable_response_validation": os.getenv(
+                "CHATBOT_ENABLE_RESPONSE_VALIDATION", "true"
+            ).lower()
+            == "true",
+            "max_query_length": _safe_int(
+                os.getenv("CHATBOT_MAX_QUERY_LENGTH", "1000"), "CHATBOT_MAX_QUERY_LENGTH"
+            ),
         },
         "weekly_explanation": {
             "prompt_version": DEFAULT_WEEKLY_EXPLANATION_PROMPT_VERSION,
             "prompt": DEFAULT_WEEKLY_EXPLANATION_PROMPT,
-            "timeout_seconds": _safe_int(os.getenv("OPENAI_TIMEOUT_SECONDS", "60"), "OPENAI_TIMEOUT_SECONDS"),
+            "timeout_seconds": _safe_int(
+                os.getenv("OPENAI_TIMEOUT_SECONDS", "60"), "OPENAI_TIMEOUT_SECONDS"
+            ),
             "temperature": 0,
             "max_tokens": 1200,
         },
@@ -217,23 +242,47 @@ def _extract_ai_config_from_env() -> Dict[str, Any]:
             "provider": ocr_provider,
             "model": ocr_model,
             "mistral": {
-                "max_pdf_tokens": _safe_int(os.getenv("MISTRAL_MAX_PDF_TOKENS", "9000"), "MISTRAL_MAX_PDF_TOKENS"),
-                "max_pages_per_chunk": _safe_int(os.getenv("MISTRAL_MAX_PAGES_PER_CHUNK", "10"), "MISTRAL_MAX_PAGES_PER_CHUNK"),
-                "timeout_seconds": _safe_int(os.getenv("MISTRAL_TIMEOUT_SECONDS", "60"), "MISTRAL_TIMEOUT_SECONDS"),
-                "retry_attempts": _safe_int(os.getenv("MISTRAL_RETRY_ATTEMPTS", "3"), "MISTRAL_RETRY_ATTEMPTS"),
+                "max_pdf_tokens": _safe_int(
+                    os.getenv("MISTRAL_MAX_PDF_TOKENS", "9000"), "MISTRAL_MAX_PDF_TOKENS"
+                ),
+                "max_pages_per_chunk": _safe_int(
+                    os.getenv("MISTRAL_MAX_PAGES_PER_CHUNK", "10"), "MISTRAL_MAX_PAGES_PER_CHUNK"
+                ),
+                "timeout_seconds": _safe_int(
+                    os.getenv("MISTRAL_TIMEOUT_SECONDS", "60"), "MISTRAL_TIMEOUT_SECONDS"
+                ),
+                "retry_attempts": _safe_int(
+                    os.getenv("MISTRAL_RETRY_ATTEMPTS", "3"), "MISTRAL_RETRY_ATTEMPTS"
+                ),
                 "extract_header": os.getenv("MISTRAL_EXTRACT_HEADER", "true").lower() == "true",
                 "extract_footer": os.getenv("MISTRAL_EXTRACT_FOOTER", "true").lower() == "true",
             },
             "siliconflow": {
-                "max_input_tokens": _safe_int(os.getenv("SILICONFLOW_MAX_INPUT_TOKENS", "3500"), "SILICONFLOW_MAX_INPUT_TOKENS"),
-                "chunk_overlap_tokens": _safe_int(os.getenv("SILICONFLOW_CHUNK_OVERLAP_TOKENS", "200"), "SILICONFLOW_CHUNK_OVERLAP_TOKENS"),
-                "timeout_seconds": _safe_int(os.getenv("SILICONFLOW_TIMEOUT_SECONDS", "60"), "SILICONFLOW_TIMEOUT_SECONDS"),
-                "retry_attempts": _safe_int(os.getenv("SILICONFLOW_RETRY_ATTEMPTS", "3"), "SILICONFLOW_RETRY_ATTEMPTS"),
+                "max_input_tokens": _safe_int(
+                    os.getenv("SILICONFLOW_MAX_INPUT_TOKENS", "3500"),
+                    "SILICONFLOW_MAX_INPUT_TOKENS",
+                ),
+                "chunk_overlap_tokens": _safe_int(
+                    os.getenv("SILICONFLOW_CHUNK_OVERLAP_TOKENS", "200"),
+                    "SILICONFLOW_CHUNK_OVERLAP_TOKENS",
+                ),
+                "timeout_seconds": _safe_int(
+                    os.getenv("SILICONFLOW_TIMEOUT_SECONDS", "60"), "SILICONFLOW_TIMEOUT_SECONDS"
+                ),
+                "retry_attempts": _safe_int(
+                    os.getenv("SILICONFLOW_RETRY_ATTEMPTS", "3"), "SILICONFLOW_RETRY_ATTEMPTS"
+                ),
             },
             "mathpix": {
-                "timeout_seconds": _safe_int(os.getenv("MATHPIX_TIMEOUT_SECONDS", "120"), "MATHPIX_TIMEOUT_SECONDS"),
-                "retry_attempts": _safe_int(os.getenv("MATHPIX_RETRY_ATTEMPTS", "3"), "MATHPIX_RETRY_ATTEMPTS"),
-                "poll_interval_seconds": _safe_float(os.getenv("MATHPIX_POLL_INTERVAL_SECONDS", "5"), "MATHPIX_POLL_INTERVAL_SECONDS"),
+                "timeout_seconds": _safe_int(
+                    os.getenv("MATHPIX_TIMEOUT_SECONDS", "120"), "MATHPIX_TIMEOUT_SECONDS"
+                ),
+                "retry_attempts": _safe_int(
+                    os.getenv("MATHPIX_RETRY_ATTEMPTS", "3"), "MATHPIX_RETRY_ATTEMPTS"
+                ),
+                "poll_interval_seconds": _safe_float(
+                    os.getenv("MATHPIX_POLL_INTERVAL_SECONDS", "5"), "MATHPIX_POLL_INTERVAL_SECONDS"
+                ),
                 "output_format": os.getenv("MATHPIX_OUTPUT_FORMAT", "md"),
                 "base_url": os.getenv("MATHPIX_BASE_URL", "https://api.mathpix.com/v3"),
             },
@@ -244,12 +293,12 @@ def _extract_ai_config_from_env() -> Dict[str, Any]:
 def load_rag_config() -> Dict[str, Any]:
     """
     Load RAG configuration from sites.yaml with .env fallback.
-    
+
     Returns:
         Dict containing rag_config section
     """
     yaml_config = load_yaml_config()
-    
+
     if "rag_config" in yaml_config:
         logger.debug("Using rag_config from sites.yaml")
         return yaml_config["rag_config"]
@@ -264,17 +313,21 @@ def load_rag_config() -> Dict[str, Any]:
 def _extract_rag_config_from_env() -> Dict[str, Any]:
     """
     Extract RAG configuration from environment variables (fallback).
-    
+
     Returns:
         Dict in rag_config format extracted from environment
-        
+
     Raises:
         ValueError: If environment variables contain invalid numeric values
     """
     return {
         "chunk_strategy": os.getenv("RAG_CHUNK_STRATEGY", "semantic_structure"),
-        "max_chunk_tokens": _safe_int(os.getenv("RAG_MAX_CHUNK_TOKENS", "800"), "RAG_MAX_CHUNK_TOKENS"),
-        "min_chunk_tokens": _safe_int(os.getenv("RAG_MIN_CHUNK_TOKENS", "100"), "RAG_MIN_CHUNK_TOKENS"),
+        "max_chunk_tokens": _safe_int(
+            os.getenv("RAG_MAX_CHUNK_TOKENS", "800"), "RAG_MAX_CHUNK_TOKENS"
+        ),
+        "min_chunk_tokens": _safe_int(
+            os.getenv("RAG_MIN_CHUNK_TOKENS", "100"), "RAG_MIN_CHUNK_TOKENS"
+        ),
         "preserve_headers": True,  # Not in .env, default
         "preserve_citations": True,  # Not in .env, default
         "include_hierarchy": True,  # Not in .env, default
@@ -285,12 +338,12 @@ def _extract_rag_config_from_env() -> Dict[str, Any]:
 def load_features() -> Dict[str, Any]:
     """
     Load feature flags from sites.yaml with .env fallback.
-    
+
     Returns:
         Dict containing feature flags
     """
     yaml_config = load_yaml_config()
-    
+
     if "features" in yaml_config:
         logger.debug("Using features from sites.yaml")
         return yaml_config["features"]
@@ -305,7 +358,7 @@ def load_features() -> Dict[str, Any]:
 def _extract_features_from_env() -> Dict[str, Any]:
     """
     Extract feature flags from environment variables (fallback).
-    
+
     Returns:
         Dict with feature flags extracted from environment
     """
@@ -326,12 +379,12 @@ def _extract_features_from_env() -> Dict[str, Any]:
 def load_server_config() -> Dict[str, Any]:
     """
     Load server configuration from sites.yaml with .env fallback.
-    
+
     Returns:
         Dict containing server configuration
     """
     yaml_config = load_yaml_config()
-    
+
     if "server" in yaml_config:
         logger.debug("Using server config from sites.yaml")
         return yaml_config["server"]
@@ -345,17 +398,19 @@ def load_server_config() -> Dict[str, Any]:
 def _extract_server_config_from_env() -> Dict[str, Any]:
     """
     Extract server configuration from environment variables (fallback).
-    
+
     Returns:
         Dict with server config extracted from environment
-        
+
     Raises:
         ValueError: If environment variables contain invalid numeric values
     """
     return {
         "host": os.getenv("FASTAPI_HOST", "0.0.0.0"),
         "port": _safe_int(os.getenv("FASTAPI_PORT", "5000"), "FASTAPI_PORT"),
-        "max_content_length": _safe_int(os.getenv("MAX_CONTENT_LENGTH", "52428800"), "MAX_CONTENT_LENGTH"),
+        "max_content_length": _safe_int(
+            os.getenv("MAX_CONTENT_LENGTH", "52428800"), "MAX_CONTENT_LENGTH"
+        ),
         "fastapi_env": os.getenv("FASTAPI_ENV", "production"),
         "fastapi_debug": os.getenv("FASTAPI_DEBUG", "false").lower() == "true",
     }
@@ -364,13 +419,15 @@ def _extract_server_config_from_env() -> Dict[str, Any]:
 def load_database_config() -> Dict[str, Any]:
     """
     Load database configuration from the canonical sites.yaml paths.db value.
-    
+
     Returns:
         Dict containing database configuration
     """
     yaml_config = load_yaml_config()
     paths_cfg = yaml_config.get("paths") if isinstance(yaml_config.get("paths"), dict) else {}
-    database_cfg = yaml_config.get("database") if isinstance(yaml_config.get("database"), dict) else {}
+    database_cfg = (
+        yaml_config.get("database") if isinstance(yaml_config.get("database"), dict) else {}
+    )
 
     paths_db = str((paths_cfg or {}).get("db") or "").strip()
     if paths_db:
@@ -399,19 +456,19 @@ def load_database_config() -> Dict[str, Any]:
 def _extract_database_config_from_env() -> Dict[str, Any]:
     """
     Extract database configuration from environment variables (fallback).
-    
+
     Returns:
         Dict with database config extracted from environment
-        
+
     Raises:
         ValueError: If environment variables contain invalid numeric values
     """
     db_type = os.getenv("DB_TYPE", "sqlite")
-    
+
     config = {
         "type": db_type,
     }
-    
+
     if db_type == "sqlite":
         config["path"] = os.getenv("DB_PATH", "data/index.db")
     elif db_type == "postgresql":
@@ -420,5 +477,5 @@ def _extract_database_config_from_env() -> Dict[str, Any]:
         config["database"] = os.getenv("DB_NAME", "ai_actuarial")
         config["username"] = os.getenv("DB_USER", "postgres")
         # Password should still come from .env
-    
+
     return config
