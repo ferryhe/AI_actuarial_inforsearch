@@ -20,12 +20,6 @@ For regular, periodic crawling of configured sites.
 - Follows site configurations from `config/sites.yaml`
 - Automatic database duplicate detection
 
-#### AdhocCollector
-For one-time, manual collection operations.
-- Lower page limits for quick checks
-- Can target specific sites
-- Automatic database duplicate detection
-
 #### URLCollector
 For collecting files from specific URLs.
 - Single URL or list of URLs

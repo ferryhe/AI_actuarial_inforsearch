@@ -5,9 +5,9 @@ from __future__ import annotations
 import logging
 import re
 
-from .base import BaseCollector, CollectionConfig, CollectionResult
-from ..crawler import Crawler, SiteConfig
+from ..crawler import Crawler
 from ..storage import Storage
+from .base import BaseCollector, CollectionConfig, CollectionResult
 
 logger = logging.getLogger(__name__)
 
@@ -65,45 +65,45 @@ def _site_outcome_failed(reason: str) -> bool:
 
 class ScheduledCollector(BaseCollector):
     """Collector for scheduled/periodic site crawling."""
-    
+
     def __init__(self, storage: Storage, crawler: Crawler):
         """Initialize scheduled collector.
-        
+
         Args:
             storage: Storage instance for database operations
             crawler: Crawler instance for web scraping
         """
         self.storage = storage
         self.crawler = crawler
-    
+
     def collect(self, config: CollectionConfig, progress_callback=None) -> CollectionResult:
         """Execute scheduled collection from configured sites.
-        
+
         Args:
             config: Collection configuration
             progress_callback: Optional callback for progress updates
-            
+
         Returns:
             CollectionResult with statistics
         """
         logger.info("Starting scheduled collection: %s", config.name)
-        
+
         errors = []
         items_found = 0
         items_downloaded = 0
         items_skipped = 0
         site_results = []
-        
+
         try:
             # Get site configuration from metadata
             site_configs = config.metadata.get("site_configs", [])
             total_sites = len(site_configs)
-            
+
             if progress_callback:
                 progress_callback(0, total_sites, "Starting scheduled collection")
-            
+
             for i, site_config in enumerate(site_configs):
-                
+
                 # Wrapper for site-level progress to include site info
                 def site_progress(c, t, m):
                     if progress_callback:
@@ -113,7 +113,7 @@ class ScheduledCollector(BaseCollector):
                         # The UI might fluctuate but at least it moves.
                         prefix = f"[{i+1}/{total_sites}] {site_config.name}"
                         progress_callback(c, t, f"{prefix}: {m}")
-                
+
                 tools = {
                     str(tool).strip().lower()
                     for tool in (site_config.acquisition_tools or [])
@@ -138,12 +138,14 @@ class ScheduledCollector(BaseCollector):
                     )
                     continue
                 try:
-                    new_items = self.crawler.crawl_site(site_config, progress_callback=site_progress)
+                    new_items = self.crawler.crawl_site(
+                        site_config, progress_callback=site_progress
+                    )
                     site_items_found = len(new_items)
                     site_items_downloaded = 0
                     site_items_skipped = 0
                     items_found += site_items_found
-                    
+
                     # Count downloaded vs skipped
                     for item in new_items:
                         if item.get("local_path"):
@@ -153,8 +155,14 @@ class ScheduledCollector(BaseCollector):
                             site_items_skipped += 1
                             items_skipped += 1
 
-                    diagnostic_error_text = _crawler_diagnostic_error_text(self.crawler) if site_items_found <= 0 else ""
-                    reason, blocked = _classify_site_outcome(diagnostic_error_text, items_found=site_items_found)
+                    diagnostic_error_text = (
+                        _crawler_diagnostic_error_text(self.crawler)
+                        if site_items_found <= 0
+                        else ""
+                    )
+                    reason, blocked = _classify_site_outcome(
+                        diagnostic_error_text, items_found=site_items_found
+                    )
                     failed = _site_outcome_failed(reason)
                     if failed and diagnostic_error_text:
                         errors.append(f"Error crawling {site_config.name}: {diagnostic_error_text}")
@@ -195,12 +203,12 @@ class ScheduledCollector(BaseCollector):
                             "fallback_reason": reason,
                         }
                     )
-            
+
             if progress_callback:
                 progress_callback(total_sites, total_sites, "Completed")
-            
+
             success = len(errors) == 0
-            
+
             return CollectionResult(
                 success=success,
                 items_found=items_found,
@@ -211,9 +219,9 @@ class ScheduledCollector(BaseCollector):
                     "source_type": config.source_type,
                     "sites_processed": len(site_configs),
                     "site_results": site_results,
-                }
+                },
             )
-            
+
         except Exception as e:
             logger.exception("Scheduled collection failed")
             return CollectionResult(
@@ -226,11 +234,11 @@ class ScheduledCollector(BaseCollector):
 
     def should_download(self, url: str, sha256: str | None = None) -> bool:
         """Check if file should be downloaded.
-        
+
         Args:
             url: URL of the file
             sha256: Optional SHA256 hash
-            
+
         Returns:
             True if file should be downloaded
         """
@@ -239,12 +247,12 @@ class ScheduledCollector(BaseCollector):
         if existing:
             logger.debug("File already exists in database: %s", url)
             return False
-        
+
         # If SHA256 provided, check for duplicate content
         if sha256:
             existing_by_hash = self.storage.get_file_by_sha256(sha256)
             if existing_by_hash:
                 logger.debug("File with same SHA256 exists: %s", sha256)
                 return False
-        
+
         return True

@@ -28,8 +28,9 @@
 - Added normalized `path + kind + symbol` dead-code baselines. New findings,
   stale findings, and all 100%-confidence Vulture findings fail; maintenance
   updates can only shrink the baseline.
-- Classified the current baseline: 9 TypeScript files, 5 Python modules, 28
-  TypeScript symbols, and 93 Python symbols.
+- Classified the initial baseline: 9 TypeScript files, 5 Python modules, 28
+  TypeScript symbols, and 93 Python symbols. Reviewed cleanups have since
+  reduced the Python side to 1 module and 88 symbols.
 - Added the requested unified quality gate: full pytest plus non-mutating
   Black, isort, and Pylint checks, with an exact shrink-only compatibility
   baseline for existing formatter/linter debt. Pytest failures cannot be
@@ -84,12 +85,21 @@
   had no code or test callers, and were already classified `remove` in the
   reviewed dead-code baseline. The three modules and their inaccurate README
   were deleted rather than reformatted.
+- The ninth completed directory is `ai_actuarial/collectors/`. Current source
+  and exact repository search confirmed that `AdhocCollector` had no runtime,
+  test, export, or dynamic caller; its stale Graphify edge pointed to an import
+  no longer present in the current CLI. The orphan module and its README claim
+  were deleted, two unused imports were removed, and the five reachable
+  collector implementations were formatted. The exported
+  `CollectionConfig.auto_download` constructor field was retained because
+  Issue #317 forbids deleting a public API solely from static-analysis output.
 
 ## Acceptance results
 
-- Unified quality gate: passed. Pytest reported 1,880 passed and 10 skipped;
-  Black, isort, and Pylint exactly matched their reviewed baselines.
-- Dead-code gate: passed with 9/5 file findings and 28/93 symbol findings,
+- Unified quality gate: passed. Pytest reported 1,881 passed and 10 skipped;
+  Black, isort, and Pylint exactly matched the current reviewed baselines at
+  178 files, 116 files, and 20 error identities respectively.
+- Dead-code gate: passed with 9/1 file findings and 28/88 symbol findings,
   exactly matching the classified baseline and with no 100%-confidence
   Vulture finding.
 - Dead-code and quality-gate unit tests: 11 passed as part of the full suite.
@@ -201,6 +211,17 @@
   121 isort files, and 20 Pylint identities, with zero new or stale entries.
   The dead-code gate shrank exactly from 9/5 files and 28/93 symbols to 9/2
   files and 28/89 symbols.
+- Remote commit `a7c502e` contains the exact `processors/` tree. CI run
+  33476666119 passed all five jobs, including the 7m51s Linux quality gate,
+  and no new Review or Copilot comment was added.
+- `ai_actuarial/collectors/` compiled successfully, had no remaining
+  `AdhocCollector` reference, passed Black and isort, and passed all 253 tests
+  in the ten directly importing collector modules or their runtime consumers.
+- The complete pytest suite passed after the `collectors/` cleanup with 1,881
+  tests and 10 platform skips. The full static gate passed at 178 Black files,
+  116 isort files, and 20 Pylint error identities, with zero new or stale
+  entries. The dead-code gate shrank exactly from 9/2 files and 28/89 symbols
+  to 9/1 files and 28/88 symbols.
 
 ## Files changed
 
@@ -236,6 +257,11 @@
   `ai_actuarial/processors/` package and its inaccurate README, then removed
   exactly three module and four method findings from `dead-code-baseline.json`
   plus the three matching formatter paths from `quality-gate-baseline.json`.
+- Ninth historical directory cleanup: deleted
+  `ai_actuarial/collectors/adhoc.py`, removed its inaccurate README section and
+  two dead-code findings, removed two unused imports, formatted the five
+  reachable collector implementations, and removed their eleven matching
+  formatter paths from `quality-gate-baseline.json`.
 
 ## Working tree notes
 
@@ -252,6 +278,7 @@
 
 ## Recommended next action
 
-- Commit and push the path-specific `processors/` cleanup, verify PR #318,
-  then continue with `ai_actuarial/collectors/` as the next independent
-  directory. Merge only after explicit authorization.
+- Commit and push the path-specific `collectors/` cleanup, verify PR #318,
+  then continue with another independent historical directory. Keep the final
+  root-level orphan `ai_actuarial/pipeline_config.py` for a separately verified
+  cleanup. Merge only after explicit authorization.

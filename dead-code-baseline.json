@@ -70,13 +70,6 @@
     ],
     "python-files": [
       {
-        "path": "ai_actuarial/collectors/adhoc.py",
-        "kind": "unused_module",
-        "symbol": "ai_actuarial.collectors.adhoc",
-        "classification": "remove",
-        "reason": "Unreachable production module; verify scripts and compatibility callers before deletion."
-      },
-      {
         "path": "ai_actuarial/pipeline_config.py",
         "kind": "unused_module",
         "symbol": "ai_actuarial.pipeline_config",
@@ -495,14 +488,6 @@
         "path": "ai_actuarial/chatbot/router.py",
         "kind": "unused method",
         "symbol": "select_kbs",
-        "confidence": 60,
-        "classification": "remove",
-        "reason": "Vulture 60% cleanup candidate; verify dynamic/public callers and tests before removal."
-      },
-      {
-        "path": "ai_actuarial/collectors/adhoc.py",
-        "kind": "unused class",
-        "symbol": "AdhocCollector",
         "confidence": 60,
         "classification": "remove",
         "reason": "Vulture 60% cleanup candidate; verify dynamic/public callers and tests before removal."
