@@ -367,6 +367,10 @@ from ai_actuarial.api.middleware.rate_limit import RateLimitMiddleware
 
 RateLimitMiddleware.dispatch  # reason: Starlette invokes the middleware protocol hook.
 
+from ai_actuarial.collectors.base import CollectionConfig
+
+CollectionConfig.auto_download  # reason: Public exported dataclass constructor field retained for compatibility.
+
 from tests.agentic_rag.test_ready_data_builder import test_db_path
 from tests.conftest import admin_token, guest_token, sample_task, sample_user
 from tests.test_api_logging import restore_logging_state

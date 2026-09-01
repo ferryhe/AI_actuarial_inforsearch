@@ -382,6 +382,17 @@
   and the unified quality gate passed at 129/81/16. The dead-code gate shrank
   exactly from 2/1 files and 6/64 symbols to 0/1 files and 0/64 symbols, so the
   TypeScript historical dead-code baseline is now empty.
+- Remote commit `0bbda30` contains the exact `client/src/pages/tasks/`
+  cleanup. CI run 33547151953 passed all five jobs, including the complete
+  Linux quality gate, and no new review comment was added.
+- The exported `CollectionConfig.auto_download` dataclass field was retained as
+  a public constructor contract and added to the statically validated exact
+  whitelist. No source or test was deleted. All 112 directly related collector
+  tests passed, and Black, isort, and Pylint passed for the touched whitelist
+  and collector base files.
+- The complete pytest suite passed with 1,881 tests and 10 platform skips, and
+  the unified quality gate passed at 129/81/16. The dead-code gate shrank
+  exactly from 0/1 files and 0/64 symbols to 0/1 files and 0/63 symbols.
 
 ## Files changed
 
@@ -466,6 +477,10 @@
   three unused exports and three unused duplicate schedule types, corrected
   one source-contract test to inspect the real shared metrics component, and
   removed the final eight TypeScript dead-code baseline entries.
+- Twentieth historical directory cleanup: retained the public exported
+  `CollectionConfig.auto_download` constructor field, recorded its exact
+  compatibility reference in the validated whitelist, and removed its stale
+  Python dead-code baseline entry without changing source or tests.
 
 ## Working tree notes
 
@@ -482,8 +497,7 @@
 
 ## Recommended next action
 
-- Commit and push the path-specific `client/src/pages/tasks/` cleanup to PR
-  #318, verify its CI and review feedback, then classify the retained public
-  `CollectionConfig.auto_download` field in a separate collectors follow-up.
-  Keep the final root-level orphan `ai_actuarial/pipeline_config.py` for a
-  separately verified cleanup. Merge only after explicit authorization.
+- Commit and push the collectors public-contract classification to PR #318,
+  verify its CI and review feedback, then delete the final unreachable module
+  `ai_actuarial/pipeline_config.py` together with its 24 module-only tests in a
+  separate verified commit. Merge only after explicit authorization.

@@ -120,14 +120,6 @@
         "reason": "Explicit backward-compatible alias for QueryRouter.select_kb; retained as a compatibility shim."
       },
       {
-        "path": "ai_actuarial/collectors/base.py",
-        "kind": "unused variable",
-        "symbol": "auto_download",
-        "confidence": 60,
-        "classification": "remove",
-        "reason": "Vulture 60% cleanup candidate; verify dynamic/public callers and tests before removal."
-      },
-      {
         "path": "ai_actuarial/config.py",
         "kind": "unused function",
         "symbol": "_env_str",
