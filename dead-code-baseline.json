@@ -5,14 +5,6 @@
   "gates": {
     "typescript-files": [
       {
-        "path": "client/src/hooks/use-api-query.ts",
-        "kind": "unused_file",
-        "symbol": "client/src/hooks/use-api-query.ts",
-        "classification": "remove",
-        "reason": "Production-orphan cleanup candidate; verify behavior before deleting the file.",
-        "confidence": 0
-      },
-      {
         "path": "client/src/pages/FeatureUnavailable.tsx",
         "kind": "unused_file",
         "symbol": "client/src/pages/FeatureUnavailable.tsx",
@@ -79,22 +71,6 @@
       }
     ],
     "typescript-symbols": [
-      {
-        "path": "client/src/hooks/use-task-options.ts",
-        "kind": "unused_type",
-        "symbol": "ConversionTool",
-        "classification": "remove",
-        "reason": "Unused production export/type; remove the export or symbol after focused review.",
-        "confidence": 0
-      },
-      {
-        "path": "client/src/hooks/use-task-options.ts",
-        "kind": "unused_type",
-        "symbol": "MarkdownConversionLimits",
-        "classification": "remove",
-        "reason": "Unused production export/type; remove the export or symbol after focused review.",
-        "confidence": 0
-      },
       {
         "path": "client/src/lib/category-labels.ts",
         "kind": "unused_export",

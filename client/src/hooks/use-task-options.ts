@@ -7,13 +7,13 @@ interface SearchEngine {
   available: boolean;
 }
 
-export interface ConversionTool {
+interface ConversionTool {
   name: string;
   provider: string;
   displayName: string;
 }
 
-export interface MarkdownConversionLimits {
+interface MarkdownConversionLimits {
   defaultScanCount: number;
   maxScanCount: number;
 }

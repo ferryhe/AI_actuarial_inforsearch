@@ -325,6 +325,18 @@
   platform skips, and the full unified quality gate passed at 129 Black files,
   81 isort files, and 16 Pylint error identities. The dead-code gate shrank
   exactly from 9/1 files and 28/64 symbols to 8/1 files and 27/64 symbols.
+- Remote commit `182d0c0` contains the exact `client/src/components/` cleanup.
+  CI run 33540711906 passed all five jobs, including the 13m42s Linux quality
+  gate, and no new Review or Copilot comment was added.
+- `client/src/hooks/` no longer contains the completely unreferenced
+  `use-api-query.ts`. The two live task-option result shapes remain in use but
+  are now private implementation types instead of unused public exports.
+- The hooks directory passed ESLint, the 27 task React source tests, frontend
+  type-check, and the production build. The complete pytest suite passed with
+  1,881 tests and 10 platform skips, and the full unified quality gate passed
+  at 129 Black files, 81 isort files, and 16 Pylint error identities. The
+  dead-code gate shrank exactly from 8/1 files and 27/64 symbols to 7/1 files
+  and 25/64 symbols.
 
 ## Files changed
 
@@ -392,6 +404,9 @@
   `client/src/components/LoadingSkeleton.tsx`, made the live Markdown URL
   transformer private, removed only its direct test-only import and assertions,
   and removed the matching two TypeScript dead-code baseline entries.
+- Sixteenth historical directory cleanup: deleted the unreachable
+  `client/src/hooks/use-api-query.ts`, made two live task-option interfaces
+  private, and removed the matching three TypeScript dead-code baseline entries.
 
 ## Working tree notes
 
@@ -408,8 +423,8 @@
 
 ## Recommended next action
 
-- Commit and push the path-specific `client/src/components/` cleanup to PR
-  #318, verify its CI and review feedback, then continue with
-  `client/src/hooks/`. Keep the final root-level orphan
+- Commit and push the path-specific `client/src/hooks/` cleanup to PR #318,
+  verify its CI and review feedback, then continue with `client/src/lib/`.
+  Keep the final root-level orphan
   `ai_actuarial/pipeline_config.py` for a separately verified cleanup. Merge
   only after explicit authorization.
