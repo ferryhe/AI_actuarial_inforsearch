@@ -100,13 +100,21 @@
   preserving behavior while removing its Pylint E1136 false inference. The
   reported `block_retired_api_fallback` symbol remains because its FastAPI
   decorator registers the framework route at runtime.
+- The eleventh completed directory is `ai_actuarial/chatbot/`. Seven reachable
+  implementation files and the package exports were formatted. Six confirmed
+  unused public symbols plus the private `_extract_citations` helper used only
+  by a removed method were deleted. No test imported or exercised those
+  symbols, so no test was deleted; all tests covering retained chatbot behavior
+  remain. `QueryRouter.select_kbs` remains because its source explicitly marks
+  it as a backward-compatible alias, and the public configuration fields remain
+  part of the configuration contract.
 
 ## Acceptance results
 
 - Unified quality gate: passed. Pytest reported 1,881 passed and 10 skipped;
   Black, isort, and Pylint exactly matched the current reviewed baselines at
-  175 files, 114 files, and 19 error identities respectively.
-- Dead-code gate: passed with 9/1 file findings and 28/88 symbol findings,
+  168 files, 107 files, and 19 error identities respectively.
+- Dead-code gate: passed with 9/1 file findings and 28/82 symbol findings,
   exactly matching the classified baseline and with no 100%-confidence
   Vulture finding.
 - Dead-code and quality-gate unit tests: 11 passed as part of the full suite.
@@ -239,6 +247,18 @@
   tests and 10 platform skips. The full static gate passed at 175 Black files,
   114 isort files, and 19 Pylint error identities, with zero new or stale
   entries. The dead-code gate remained exact at 9/1 files and 28/88 symbols.
+- Remote commit `bf2d2a0` contains the exact direct `ai_actuarial/api/` cleanup.
+  CI run 33513870640 passed all five jobs, including the 7m35s Linux quality
+  gate, and no new Review or Copilot comment was added.
+- `ai_actuarial/chatbot/` compiled successfully and passed Black, isort, and a
+  zero-error focused Pylint scan. All 176 chatbot and direct-consumer tests
+  passed. No dedicated test existed for any removed symbol, so no corresponding
+  test removal was required.
+- The complete pytest suite passed after the `chatbot/` cleanup with 1,881
+  tests and 10 platform skips. The full static gate passed at 168 Black files,
+  107 isort files, and 19 Pylint error identities, with zero new or stale
+  entries. The dead-code gate shrank exactly from 9/1 files and 28/88 symbols
+  to 9/1 files and 28/82 symbols.
 
 ## Files changed
 
@@ -283,6 +303,11 @@
   `ai_actuarial/api/deps.py`, and `ai_actuarial/api/route_inventory.py`, made
   the authentication type narrowing explicit, and removed their six matching
   Black/isort/Pylint entries from `quality-gate-baseline.json`.
+- Eleventh historical directory cleanup: formatted all eight Python files under
+  `ai_actuarial/chatbot/`, removed six confirmed unused public symbols and one
+  private helper, reclassified the explicit `select_kbs` compatibility alias,
+  and removed the matching dead-code and formatter baseline entries. No test
+  file or test case was removed because none corresponded to the deleted code.
 
 ## Working tree notes
 
@@ -299,7 +324,8 @@
 
 ## Recommended next action
 
-- Commit and push the path-specific direct `ai_actuarial/api/` cleanup, verify
-  PR #318, then continue with another independent historical directory. Keep
-  the final root-level orphan `ai_actuarial/pipeline_config.py` for a separately
-  verified cleanup. Merge only after explicit authorization.
+- Push the path-specific `ai_actuarial/chatbot/` cleanup to PR #318, verify its
+  CI and review feedback, then continue with another independent historical
+  directory. Keep the final root-level orphan
+  `ai_actuarial/pipeline_config.py` for a separately verified cleanup. Merge
+  only after explicit authorization.

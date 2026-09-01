@@ -391,14 +391,6 @@
       {
         "path": "ai_actuarial/chatbot/config.py",
         "kind": "unused variable",
-        "symbol": "default_config",
-        "confidence": 60,
-        "classification": "whitelist",
-        "reason": "Framework, configuration, or test contract candidate; retain until a narrow symbol reference or safe removal is confirmed."
-      },
-      {
-        "path": "ai_actuarial/chatbot/config.py",
-        "kind": "unused variable",
         "symbol": "hallucination_check",
         "confidence": 60,
         "classification": "whitelist",
@@ -445,52 +437,12 @@
         "reason": "Framework, configuration, or test contract candidate; retain until a narrow symbol reference or safe removal is confirmed."
       },
       {
-        "path": "ai_actuarial/chatbot/exceptions.py",
-        "kind": "unused class",
-        "symbol": "CitationValidationException",
-        "confidence": 60,
-        "classification": "remove",
-        "reason": "Vulture 60% cleanup candidate; verify dynamic/public callers and tests before removal."
-      },
-      {
-        "path": "ai_actuarial/chatbot/exceptions.py",
-        "kind": "unused class",
-        "symbol": "InvalidModeException",
-        "confidence": 60,
-        "classification": "remove",
-        "reason": "Vulture 60% cleanup candidate; verify dynamic/public callers and tests before removal."
-      },
-      {
-        "path": "ai_actuarial/chatbot/llm.py",
-        "kind": "unused method",
-        "symbol": "validate_response",
-        "confidence": 60,
-        "classification": "remove",
-        "reason": "Vulture 60% cleanup candidate; verify dynamic/public callers and tests before removal."
-      },
-      {
-        "path": "ai_actuarial/chatbot/retrieval.py",
-        "kind": "unused method",
-        "symbol": "clear_cache",
-        "confidence": 60,
-        "classification": "remove",
-        "reason": "Vulture 60% cleanup candidate; verify dynamic/public callers and tests before removal."
-      },
-      {
-        "path": "ai_actuarial/chatbot/retrieval.py",
-        "kind": "unused method",
-        "symbol": "generate_citations",
-        "confidence": 60,
-        "classification": "remove",
-        "reason": "Vulture 60% cleanup candidate; verify dynamic/public callers and tests before removal."
-      },
-      {
         "path": "ai_actuarial/chatbot/router.py",
         "kind": "unused method",
         "symbol": "select_kbs",
         "confidence": 60,
-        "classification": "remove",
-        "reason": "Vulture 60% cleanup candidate; verify dynamic/public callers and tests before removal."
+        "classification": "whitelist",
+        "reason": "Explicit backward-compatible alias for QueryRouter.select_kb; retained as a compatibility shim."
       },
       {
         "path": "ai_actuarial/collectors/base.py",

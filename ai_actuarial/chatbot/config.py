@@ -16,8 +16,10 @@ from ai_actuarial.ai_runtime import (
     is_chat_provider_supported,
     resolve_ai_function_runtime,
 )
-from ai_actuarial.rag.defaults import DEFAULT_RAG_SIMILARITY_THRESHOLD, get_similarity_threshold_default
-
+from ai_actuarial.rag.defaults import (
+    DEFAULT_RAG_SIMILARITY_THRESHOLD,
+    get_similarity_threshold_default,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -73,9 +75,9 @@ class ChatbotConfig:
 
     # Mode Settings
     default_mode: str = "expert"
-    available_modes: List[str] = field(default_factory=lambda: [
-        "expert", "summary", "tutorial", "comparison"
-    ])
+    available_modes: List[str] = field(
+        default_factory=lambda: ["expert", "summary", "tutorial", "comparison"]
+    )
 
     # Retry & Rate Limiting
     max_retries: int = 3
@@ -101,28 +103,22 @@ class ChatbotConfig:
         if not self._apply_env_defaults:
             return
 
-        provider_from_env = str(
-            os.getenv("CHATBOT_LLM_PROVIDER")
-            or os.getenv("CHATBOT_PROVIDER")
-            or ""
-        ).strip().lower()
+        provider_from_env = (
+            str(os.getenv("CHATBOT_LLM_PROVIDER") or os.getenv("CHATBOT_PROVIDER") or "")
+            .strip()
+            .lower()
+        )
         if provider_from_env:
             self.llm_provider = provider_from_env
 
         if not self.api_key:
             env_var = get_provider_api_key_env_var(self.llm_provider)
-            self.api_key = (
-                str(os.getenv(env_var) or "").strip() or None
-                if env_var
-                else None
-            )
+            self.api_key = str(os.getenv(env_var) or "").strip() or None if env_var else None
 
         if not self.base_url:
             base_url_env = get_provider_base_url_env_var(self.llm_provider)
             self.base_url = (
-                str(os.getenv(base_url_env) or "").strip() or None
-                if base_url_env
-                else None
+                str(os.getenv(base_url_env) or "").strip() or None if base_url_env else None
             )
             if not self.base_url:
                 self.base_url = get_provider_default_base_url(self.llm_provider)
@@ -149,11 +145,11 @@ class ChatbotConfig:
     @classmethod
     def from_env(cls) -> "ChatbotConfig":
         """Create configuration from environment variables."""
-        provider = str(
-            os.getenv("CHATBOT_LLM_PROVIDER")
-            or os.getenv("CHATBOT_PROVIDER")
-            or "openai"
-        ).strip().lower()
+        provider = (
+            str(os.getenv("CHATBOT_LLM_PROVIDER") or os.getenv("CHATBOT_PROVIDER") or "openai")
+            .strip()
+            .lower()
+        )
         api_key_env = get_provider_api_key_env_var(provider)
         base_url_env = get_provider_base_url_env_var(provider)
         recovery_effort_env = os.getenv("CHATBOT_LENGTH_RECOVERY_REASONING_EFFORT")
@@ -163,16 +159,9 @@ class ChatbotConfig:
             model=os.getenv("CHATBOT_MODEL", "gpt-4"),
             temperature=_safe_float(os.getenv("CHATBOT_TEMPERATURE"), "CHATBOT_TEMPERATURE", 0.7),
             max_tokens=_safe_int(os.getenv("CHATBOT_MAX_TOKENS"), "CHATBOT_MAX_TOKENS", 1000),
-            api_key=(
-                str(os.getenv(api_key_env) or "").strip() or None
-                if api_key_env
-                else None
-            ),
-            base_url=(
-                str(os.getenv(base_url_env) or "").strip() or None
-                if base_url_env
-                else None
-            ) or get_provider_default_base_url(provider),
+            api_key=(str(os.getenv(api_key_env) or "").strip() or None if api_key_env else None),
+            base_url=(str(os.getenv(base_url_env) or "").strip() or None if base_url_env else None)
+            or get_provider_default_base_url(provider),
             _apply_env_defaults=False,
             top_k=_safe_int(os.getenv("CHATBOT_TOP_K"), "CHATBOT_TOP_K", 5),
             similarity_threshold=DEFAULT_RAG_SIMILARITY_THRESHOLD,
@@ -192,7 +181,9 @@ class ChatbotConfig:
             max_retries=_safe_int(os.getenv("CHATBOT_MAX_RETRIES"), "CHATBOT_MAX_RETRIES", 3),
             retry_delay=_safe_float(os.getenv("CHATBOT_RETRY_DELAY"), "CHATBOT_RETRY_DELAY", 1.0),
             exponential_backoff=os.getenv("CHATBOT_EXPONENTIAL_BACKOFF", "true").lower() == "true",
-            rate_limit_rpm=_safe_int(os.getenv("CHATBOT_RATE_LIMIT_RPM"), "CHATBOT_RATE_LIMIT_RPM", 60),
+            rate_limit_rpm=_safe_int(
+                os.getenv("CHATBOT_RATE_LIMIT_RPM"), "CHATBOT_RATE_LIMIT_RPM", 60
+            ),
             length_recovery_enabled=_as_bool(
                 os.getenv("CHATBOT_LENGTH_RECOVERY_ENABLED"),
                 True,
@@ -233,7 +224,9 @@ class ChatbotConfig:
         """Create configuration from sites.yaml ai_config.chatbot."""
         section = get_ai_function_section("chatbot", yaml_config=yaml_config)
         embeddings_section = get_ai_function_section("embeddings", yaml_config=yaml_config)
-        embedding_runtime = resolve_ai_function_runtime("embeddings", storage=storage, yaml_config=yaml_config)
+        embedding_runtime = resolve_ai_function_runtime(
+            "embeddings", storage=storage, yaml_config=yaml_config
+        )
         embeddings_threshold = _safe_float(
             embeddings_section.get("similarity_threshold"),
             "embeddings.similarity_threshold",
@@ -276,7 +269,9 @@ class ChatbotConfig:
                 max_retries=_safe_int(section.get("max_retries"), "chatbot.max_retries", 3),
                 retry_delay=_safe_float(section.get("retry_delay"), "chatbot.retry_delay", 1.0),
                 exponential_backoff=bool(section.get("exponential_backoff", True)),
-                rate_limit_rpm=_safe_int(section.get("rate_limit_rpm"), "chatbot.rate_limit_rpm", 60),
+                rate_limit_rpm=_safe_int(
+                    section.get("rate_limit_rpm"), "chatbot.rate_limit_rpm", 60
+                ),
                 length_recovery_enabled=_as_bool(
                     section.get("length_recovery_enabled"),
                     True,
@@ -287,7 +282,9 @@ class ChatbotConfig:
                     4000,
                 ),
                 length_recovery_reasoning_effort=(
-                    str(section.get("length_recovery_reasoning_effort", "low") or "").strip().lower()
+                    str(section.get("length_recovery_reasoning_effort", "low") or "")
+                    .strip()
+                    .lower()
                     or None
                 ),
                 require_citations=bool(section.get("require_citations", True)),
@@ -308,9 +305,7 @@ class ChatbotConfig:
         except ValueError:
             raise
         except Exception as exc:
-            raise ValueError(
-                f"Error loading chatbot configuration from sites.yaml: {exc}"
-            ) from exc
+            raise ValueError(f"Error loading chatbot configuration from sites.yaml: {exc}") from exc
 
     @classmethod
     def from_config(
@@ -369,10 +364,7 @@ class ChatbotConfig:
                 "length_recovery_max_tokens must be positive, "
                 f"got {self.length_recovery_max_tokens}"
             )
-        elif (
-            self.length_recovery_enabled
-            and self.length_recovery_max_tokens <= self.max_tokens
-        ):
+        elif self.length_recovery_enabled and self.length_recovery_max_tokens <= self.max_tokens:
             errors.append(
                 "length_recovery_max_tokens must be greater than max_tokens "
                 "when length recovery is enabled, "
@@ -408,6 +400,3 @@ class ChatbotConfig:
             raise ValueError(f"Invalid chatbot configuration: {'; '.join(errors)}")
 
         return True
-
-
-default_config = ChatbotConfig()
