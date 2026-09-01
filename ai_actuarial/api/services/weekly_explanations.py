@@ -16,7 +16,6 @@ from .weekly_updates import (
     validate_weekly_snapshot_period,
 )
 
-
 MAX_MATERIAL_FILES = 60
 MAX_FILE_MATERIAL_CHARS = 2_000
 MAX_MATERIAL_INPUT_CHARS = 24_000
@@ -112,7 +111,9 @@ def _normalize_material_item(item: Mapping[str, Any]) -> dict[str, Any]:
     encoded = json.dumps(normalized, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     overflow = len(encoded) - MAX_FILE_MATERIAL_CHARS
     if overflow > 0:
-        normalized["summary"] = normalized["summary"][: max(0, len(normalized["summary"]) - overflow)]
+        normalized["summary"] = normalized["summary"][
+            : max(0, len(normalized["summary"]) - overflow)
+        ]
         encoded = json.dumps(normalized, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     while len(encoded) > MAX_FILE_MATERIAL_CHARS and normalized["keywords"]:
         normalized["keywords"].pop()
@@ -193,10 +194,14 @@ def _build_generation_input(
     )
     if len(user_content) > MAX_PROMPT_INPUT_CHARS:  # defensive invariant
         raise RuntimeError("Weekly explanation prompt input exceeded its configured bound")
-    return [
-        {"role": "system", "content": prompt},
-        {"role": "user", "content": user_content},
-    ], fingerprint, coverage
+    return (
+        [
+            {"role": "system", "content": prompt},
+            {"role": "user", "content": user_content},
+        ],
+        fingerprint,
+        coverage,
+    )
 
 
 def _parse_bilingual_output(raw_output: str) -> tuple[str, str]:
@@ -264,9 +269,7 @@ def generate_weekly_explanation(
             raise WeeklySnapshotNotFoundError(normalized_snapshot_id)
         runtime = resolve_ai_function_runtime("weekly_explanation", storage=storage)
         config = runtime.raw_config
-        effective_credential_id = (
-            runtime.stable_credential_id or runtime.credential_id or ""
-        )
+        effective_credential_id = runtime.stable_credential_id or runtime.credential_id or ""
         raw_material = storage.list_weekly_snapshot_explanation_material(
             snapshot_id=normalized_snapshot_id,
             limit=MAX_MATERIAL_FILES,

@@ -19,7 +19,6 @@ from ai_actuarial.shared_runtime import (
 )
 from ai_actuarial.storage import Storage
 
-
 # ---------------------------------------------------------------------------
 # Task query helpers (from ops_read.py)
 # ---------------------------------------------------------------------------
@@ -48,19 +47,25 @@ def _build_task_display_summary(task_data: dict[str, Any]) -> dict[str, Any]:
     error_count = _task_error_count(task_data)
 
     if task_type == "catalog":
-        primary = _task_metric("tasks.metric_cataloged", "Cataloged", task_data.get("catalog_ok", items_processed))
+        primary = _task_metric(
+            "tasks.metric_cataloged", "Cataloged", task_data.get("catalog_ok", items_processed)
+        )
         secondary = [
             _task_metric("tasks.metric_errors", "Errors", error_count),
             _task_metric("tasks.metric_skipped", "Skipped", items_skipped),
         ]
     elif task_type in {"markdown", "markdown_conversion"}:
-        primary = _task_metric("tasks.metric_converted", "Converted", items_downloaded or items_processed)
+        primary = _task_metric(
+            "tasks.metric_converted", "Converted", items_downloaded or items_processed
+        )
         secondary = [
             _task_metric("tasks.metric_errors", "Errors", error_count),
             _task_metric("tasks.metric_skipped", "Skipped", items_skipped),
         ]
     elif task_type in {"chunk", "chunk_generation"}:
-        primary = _task_metric("tasks.metric_chunked", "Chunked", items_downloaded or items_processed)
+        primary = _task_metric(
+            "tasks.metric_chunked", "Chunked", items_downloaded or items_processed
+        )
         secondary = [
             _task_metric("tasks.metric_errors", "Errors", error_count),
             _task_metric("tasks.metric_skipped", "Skipped", items_skipped),
@@ -89,7 +94,9 @@ def _serialize_task_for_api(task_data: dict[str, Any]) -> dict[str, Any]:
     return row
 
 
-def list_active_tasks(active_tasks_ref: dict[str, dict[str, Any]], task_lock: Any) -> dict[str, list[dict[str, Any]]]:
+def list_active_tasks(
+    active_tasks_ref: dict[str, dict[str, Any]], task_lock: Any
+) -> dict[str, list[dict[str, Any]]]:
     if task_lock is None:
         tasks = [_serialize_task_for_api(task) for task in active_tasks_ref.values()]
     else:
@@ -98,10 +105,14 @@ def list_active_tasks(active_tasks_ref: dict[str, dict[str, Any]], task_lock: An
     return {"tasks": tasks}
 
 
-def list_task_history(task_history_ref: list[dict[str, Any]], limit: int) -> dict[str, list[dict[str, Any]]]:
+def list_task_history(
+    task_history_ref: list[dict[str, Any]], limit: int
+) -> dict[str, list[dict[str, Any]]]:
     tasks = [
         _serialize_task_for_api(task)
-        for task in sorted(task_history_ref, key=lambda x: x.get("started_at", ""), reverse=True)[:limit]
+        for task in sorted(task_history_ref, key=lambda x: x.get("started_at", ""), reverse=True)[
+            :limit
+        ]
     ]
     return {"tasks": tasks}
 
@@ -178,7 +189,9 @@ def get_catalog_stats_summary(
     try:
         filters, params = _build_catalog_stats_filters(provider, input_source, category)
         where_clause = f"WHERE {filters}" if filters else ""
-        total = storage._conn.execute(f"SELECT COUNT(*) FROM catalog_items c {where_clause}", params).fetchone()[0]
+        total = storage._conn.execute(
+            f"SELECT COUNT(*) FROM catalog_items c {where_clause}", params
+        ).fetchone()[0]
         total_ok = storage._conn.execute(
             f"SELECT COUNT(*) FROM catalog_items c WHERE c.status = 'ok' AND {filters}",
             params,
@@ -208,7 +221,12 @@ def get_catalog_stats_summary(
             for row in cursor.fetchall()
         ]
 
-        return {"total": total, "ok": total_ok, "errors": total - total_ok, "by_category": by_category}
+        return {
+            "total": total,
+            "ok": total_ok,
+            "errors": total - total_ok,
+            "by_category": by_category,
+        }
     finally:
         storage.close()
 
@@ -224,7 +242,9 @@ def _build_catalog_stats_filters(
         filters.append("c.category LIKE ?")
         params.append(f"%{provider}%")
     if input_source:
-        filters.append("EXISTS (SELECT 1 FROM files f WHERE f.url = c.file_url AND f.source_site LIKE ?)")
+        filters.append(
+            "EXISTS (SELECT 1 FROM files f WHERE f.url = c.file_url AND f.source_site LIKE ?)"
+        )
         params.append(f"%{input_source}%")
     if category:
         filters.append("c.category = ?")

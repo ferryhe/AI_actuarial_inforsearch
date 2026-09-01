@@ -78,9 +78,7 @@ class FileListQuery:
 def _parse_first_seen_boundary(value: str, *, field: str) -> tuple[str, datetime]:
     text = str(value or "").strip()
     if not _RFC3339_RE.fullmatch(text):
-        raise FileListValidationError(
-            f"{field} must be a timezone-aware RFC3339 timestamp"
-        )
+        raise FileListValidationError(f"{field} must be a timezone-aware RFC3339 timestamp")
     try:
         parsed = datetime.fromisoformat(
             text.replace("t", "T").replace("z", "+00:00").replace("Z", "+00:00")
@@ -90,9 +88,7 @@ def _parse_first_seen_boundary(value: str, *, field: str) -> tuple[str, datetime
             f"{field} must be a timezone-aware RFC3339 timestamp"
         ) from exc
     if parsed.tzinfo is None or parsed.utcoffset() is None:
-        raise FileListValidationError(
-            f"{field} must be a timezone-aware RFC3339 timestamp"
-        )
+        raise FileListValidationError(f"{field} must be a timezone-aware RFC3339 timestamp")
     normalized = parsed.astimezone(timezone.utc)
     return normalized.isoformat(), normalized
 
@@ -107,9 +103,7 @@ def parse_file_list_query(raw_query: Mapping[str, str | None]) -> FileListQuery:
 
     first_seen_from_raw = str(raw_query.get("first_seen_from", "") or "").strip()
     first_seen_before_raw = str(raw_query.get("first_seen_before", "") or "").strip()
-    has_period_boundary = (
-        "first_seen_from" in raw_query or "first_seen_before" in raw_query
-    )
+    has_period_boundary = "first_seen_from" in raw_query or "first_seen_before" in raw_query
     first_seen_from = None
     first_seen_before = None
     parsed_from = None
@@ -130,13 +124,15 @@ def parse_file_list_query(raw_query: Mapping[str, str | None]) -> FileListQuery:
         )
     if parsed_from is not None and parsed_before is not None:
         if parsed_from >= parsed_before:
-            raise FileListValidationError(
-                "first_seen_from must be before first_seen_before"
-            )
+            raise FileListValidationError("first_seen_from must be before first_seen_before")
 
     return FileListQuery(
-        limit=parse_int_clamped(raw_query.get("limit", 20), default=20, min_value=1, max_value=1000),
-        offset=parse_int_clamped(raw_query.get("offset", 0), default=0, min_value=0, max_value=1_000_000),
+        limit=parse_int_clamped(
+            raw_query.get("limit", 20), default=20, min_value=1, max_value=1000
+        ),
+        offset=parse_int_clamped(
+            raw_query.get("offset", 0), default=0, min_value=0, max_value=1_000_000
+        ),
         order_by=order_by,
         order_dir=order_dir,
         query=str(raw_query.get("query", "") or ""),
@@ -148,17 +144,16 @@ def parse_file_list_query(raw_query: Mapping[str, str | None]) -> FileListQuery:
     )
 
 
-def _project_file_row(file_row: dict[str, Any], *, include_sensitive: bool = False) -> dict[str, Any]:
+def _project_file_row(
+    file_row: dict[str, Any], *, include_sensitive: bool = False
+) -> dict[str, Any]:
     fields = FILE_LIST_FIELDS if include_sensitive else PUBLIC_FILE_LIST_FIELDS
     return {field: file_row.get(field) for field in fields}
 
 
-def project_recent_files(files: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    fields = ("url", "title", "original_filename", "source_site", "content_type", "last_seen")
-    return [{field: item.get(field) for field in fields} for item in files]
-
-
-def project_database_files(files: list[dict[str, Any]], *, include_sensitive: bool = False) -> list[dict[str, Any]]:
+def project_database_files(
+    files: list[dict[str, Any]], *, include_sensitive: bool = False
+) -> list[dict[str, Any]]:
     return [_project_file_row(item, include_sensitive=include_sensitive) for item in files]
 
 
@@ -209,7 +204,9 @@ def list_sources(*, db_path: str) -> dict[str, list[str]]:
     return {"sources": sources}
 
 
-def get_file_detail(*, db_path: str, url: str, include_sensitive: bool = False) -> dict[str, Any] | None:
+def get_file_detail(
+    *, db_path: str, url: str, include_sensitive: bool = False
+) -> dict[str, Any] | None:
     storage = Storage(db_path)
     try:
         file_data = storage.get_file_with_catalog(url)
@@ -241,7 +238,9 @@ def get_file_markdown(*, db_path: str, url: str) -> dict[str, Any]:
     }
 
 
-def list_files(*, db_path: str, query: FileListQuery, include_sensitive: bool = False) -> dict[str, Any]:
+def list_files(
+    *, db_path: str, query: FileListQuery, include_sensitive: bool = False
+) -> dict[str, Any]:
     storage = Storage(db_path)
     try:
         files, total = storage.query_files_with_catalog(

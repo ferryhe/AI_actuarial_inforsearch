@@ -50,33 +50,52 @@ def browse_folder(path: str | None = None) -> dict[str, Any]:
     except ValueError:
         root_within_root = False
     if not root_within_root:
-        return {"path": str(root), "parent": None, "items": [], "error": "Access denied: path outside allowed directory"}
+        return {
+            "path": str(root),
+            "parent": None,
+            "items": [],
+            "error": "Access denied: path outside allowed directory",
+        }
 
     if not root.exists():
         return {"path": str(root), "parent": None, "items": [], "error": "Path does not exist"}
     if not root.is_dir():
-        return {"path": str(root), "parent": str(root.parent), "items": [], "error": "Not a directory"}
+        return {
+            "path": str(root),
+            "parent": str(root.parent),
+            "items": [],
+            "error": "Not a directory",
+        }
 
     try:
         entries = sorted(os.scandir(root), key=lambda e: (not e.is_dir(), e.name.lower()))
     except PermissionError:
-        return {"path": str(root), "parent": str(root.parent), "items": [], "error": "Permission denied"}
+        return {
+            "path": str(root),
+            "parent": str(root.parent),
+            "items": [],
+            "error": "Permission denied",
+        }
 
     items = []
     for entry in entries:
         try:
             stat = entry.stat()
-            items.append({
-                "name": entry.name,
-                "is_dir": entry.is_dir(),
-                "size": stat.st_size if entry.is_file() else 0,
-            })
+            items.append(
+                {
+                    "name": entry.name,
+                    "is_dir": entry.is_dir(),
+                    "size": stat.st_size if entry.is_file() else 0,
+                }
+            )
         except OSError:
             items.append({"name": entry.name, "is_dir": entry.is_dir(), "size": 0})
 
     parent = root.parent
     try:
-        parent_within_root = os.path.commonpath([str(allowed_root), str(parent)]) == str(allowed_root)
+        parent_within_root = os.path.commonpath([str(allowed_root), str(parent)]) == str(
+            allowed_root
+        )
     except ValueError:
         parent_within_root = False
     has_parent = parent != root and parent_within_root
@@ -104,7 +123,11 @@ def start_collection(data: dict[str, Any], *, bridge: Any) -> dict[str, Any]:
 
     try:
         task_info = start_fn(collection_type, payload, task_name=task_name)
-        return {"success": True, "task_id": task_info.get("task_id") or task_name, "task": task_info}
+        return {
+            "success": True,
+            "task_id": task_info.get("task_id") or task_name,
+            "task": task_info,
+        }
     except Exception as exc:
         logger.exception("Failed to start collection task: %s", exc)
         return {"success": False, "error": str(exc)}
@@ -112,4 +135,5 @@ def start_collection(data: dict[str, Any], *, bridge: Any) -> dict[str, Any]:
 
 def _timestamp_now() -> str:
     from datetime import datetime, timezone
+
     return datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")

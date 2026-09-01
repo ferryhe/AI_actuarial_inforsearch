@@ -18,10 +18,8 @@ from .rag_admin import (
     _validate_recorded_ready_publication,
 )
 
-
 logger = logging.getLogger(__name__)
 
-READY_DATA_AUTOMATION_POLL_SECONDS = 60
 READY_DATA_AUTOMATION_LEASE_SECONDS = 300
 READY_DATA_AUTOMATION_HEARTBEAT_SECONDS = 30
 
@@ -49,9 +47,7 @@ def _default_build_candidate(
         payload={
             "profile": profile,
             "index_version_id": index_version_id,
-            "expected_source_snapshot_fingerprint": (
-                expected_source_snapshot_fingerprint
-            ),
+            "expected_source_snapshot_fingerprint": (expected_source_snapshot_fingerprint),
         },
         publish=False,
         record_manual_candidate=False,
@@ -330,18 +326,12 @@ def run_ready_data_automation_once(
                         profile=str(claim["profile"]),
                     )
                 )
-                fingerprint_kind = str(
-                    fingerprint.get("source_version_kind") or ""
-                ).strip().lower()
+                fingerprint_kind = str(fingerprint.get("source_version_kind") or "").strip().lower()
                 fingerprint_id = str(fingerprint.get("source_version_id") or "").strip()
                 fingerprint_index_version_id = str(
                     fingerprint.get("index_version_id") or ""
                 ).strip()
-                if (
-                    not fingerprint_kind
-                    or not fingerprint_id
-                    or not fingerprint_index_version_id
-                ):
+                if not fingerprint_kind or not fingerprint_id or not fingerprint_index_version_id:
                     raise ValueError(
                         "ready_data source fingerprint must include source_version_kind, "
                         "source_version_id, and index_version_id"
@@ -371,8 +361,7 @@ def run_ready_data_automation_once(
             active_matches = bool(
                 active
                 and str(active.get("status") or "").strip().lower() == "active"
-                and str(active.get("source_version_kind") or "").strip().lower()
-                == fingerprint_kind
+                and str(active.get("source_version_kind") or "").strip().lower() == fingerprint_kind
                 and str(active.get("source_version_id") or "").strip() == fingerprint_id
             )
             allowed_output_root = str(
@@ -395,9 +384,7 @@ def run_ready_data_automation_once(
                         profile=str(claim["profile"]),
                         generation=int(claim["generation"]),
                         claim_token=str(claim["claim_token"]),
-                        expected_active_publication_id=str(
-                            claim["expected_active_publication_id"]
-                        ),
+                        expected_active_publication_id=str(claim["expected_active_publication_id"]),
                         expected_automatic_build_enabled=bool(
                             claim["expected_automatic_build_enabled"]
                         ),
@@ -579,11 +566,10 @@ def run_ready_data_automation_once(
                     "candidate_publication": candidate,
                     "error": error,
                 }
-            if (
-                str(candidate.get("index_version_id") or "")
-                != str(current_fingerprint.get("index_version_id") or "")
-                or str(candidate.get("source_version_id") or "")
-                != str(current_fingerprint.get("source_version_id") or "")
+            if str(candidate.get("index_version_id") or "") != str(
+                current_fingerprint.get("index_version_id") or ""
+            ) or str(candidate.get("source_version_id") or "") != str(
+                current_fingerprint.get("source_version_id") or ""
             ):
                 error = "stale_snapshot: Ready Data source changed before publication"
                 finished = _finish_claim(
@@ -654,10 +640,14 @@ def run_ready_data_automation_once(
                 else None
             )
             corrupt_active = bool(active_validation and not active_validation["valid"])
-            corrupt_error = _error_text(
-                active_validation or {},
-                "active ready_data failed publication validation",
-            ) if corrupt_active else ""
+            corrupt_error = (
+                _error_text(
+                    active_validation or {},
+                    "active ready_data failed publication validation",
+                )
+                if corrupt_active
+                else ""
+            )
             latest_fingerprint = dict(
                 source_fingerprint(
                     db_path=db_path,
@@ -665,11 +655,10 @@ def run_ready_data_automation_once(
                     profile=str(claim["profile"]),
                 )
             )
-            if (
-                str(candidate.get("index_version_id") or "")
-                != str(latest_fingerprint.get("index_version_id") or "")
-                or str(candidate.get("source_version_id") or "")
-                != str(latest_fingerprint.get("source_version_id") or "")
+            if str(candidate.get("index_version_id") or "") != str(
+                latest_fingerprint.get("index_version_id") or ""
+            ) or str(candidate.get("source_version_id") or "") != str(
+                latest_fingerprint.get("source_version_id") or ""
             ):
                 error = "stale_snapshot: Ready Data source changed before publication"
                 finished = _finish_claim(

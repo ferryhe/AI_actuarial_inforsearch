@@ -95,8 +95,7 @@ def _enforce_registered_ready_source_gate(*, db_path: str, output_dir: str) -> N
 
     storage = Storage(db_path)
     try:
-        rows = storage._conn.execute(
-            """
+        rows = storage._conn.execute("""
             SELECT kb_id, profile, output_dir, 'manifest'
             FROM agentic_ready_manifests
             WHERE output_dir IS NOT NULL AND output_dir != ''
@@ -110,8 +109,7 @@ def _enforce_registered_ready_source_gate(*, db_path: str, output_dir: str) -> N
             JOIN agentic_ready_publications p
               ON p.publication_id = g.publication_id
             WHERE g.quarantine_dir IS NOT NULL AND g.quarantine_dir != ''
-            """
-        ).fetchall()
+            """).fetchall()
         identities: set[tuple[str, str]] = set()
         registered_gc_quarantine = False
         for row in rows:
@@ -122,8 +120,7 @@ def _enforce_registered_ready_source_gate(*, db_path: str, output_dir: str) -> N
                 identities.add((str(row[0]), str(row[1] or "general")))
         if registered_gc_quarantine:
             raise AgenticRagError(
-                "registered output_dir is not the current serving ready_data for "
-                "kb_id/profile",
+                "registered output_dir is not the current serving ready_data for " "kb_id/profile",
                 status_code=409,
             )
         for registered_kb_id, registered_profile in sorted(identities):
@@ -131,14 +128,14 @@ def _enforce_registered_ready_source_gate(*, db_path: str, output_dir: str) -> N
                 kb_id=registered_kb_id,
                 profile=registered_profile,
             )
-            active = publication_state["active_publication"]
+            active = publication_state.get("active_publication")
             manifest = storage.get_agentic_ready_manifest(
                 kb_id=registered_kb_id,
                 profile=registered_profile,
             )
             current_output = None
-            if active and active["status"] == "active":
-                current_output = _registered_path(active["output_dir"])
+            if isinstance(active, Mapping) and active.get("status") == "active":
+                current_output = _registered_path(active.get("output_dir"))
             elif manifest and manifest["status"] == "ready":
                 current_output = _registered_path(manifest["output_dir"])
             if current_output is None or candidate != current_output:
@@ -174,7 +171,10 @@ def _manifest_profile_from_output_dir(output_dir: str) -> str:
 
 def _is_missing_profile_schema_error(exc: sqlite3.OperationalError) -> bool:
     message = str(exc).lower()
-    return "no such table: rag_knowledge_bases" in message or "no such column: manifest_profile" in message
+    return (
+        "no such table: rag_knowledge_bases" in message
+        or "no such column: manifest_profile" in message
+    )
 
 
 def _resolve_ready_output_dir(
@@ -188,7 +188,9 @@ def _resolve_ready_output_dir(
     profile = requested_profile or "general"
     if explicit_output_dir:
         if kb_id:
-            raise AgenticRagError("output_dir cannot be combined with kb_id/profile registry lookup", status_code=400)
+            raise AgenticRagError(
+                "output_dir cannot be combined with kb_id/profile registry lookup", status_code=400
+            )
         resolved_output_dir = _resolve_agentic_ready_output_path(
             db_path=db_path,
             output_dir=explicit_output_dir,
@@ -236,7 +238,11 @@ def _resolve_ready_output_dir(
     output_dir = _norm(manifest.get("output_dir"))
     if status != "ready" or not output_dir:
         raise AgenticRagError("ready_data manifest is not ready for kb_id/profile", status_code=409)
-    return _validate_agentic_ready_output_dir(db_path=db_path, output_dir=output_dir), kb_id, profile
+    return (
+        _validate_agentic_ready_output_dir(db_path=db_path, output_dir=output_dir),
+        kb_id,
+        profile,
+    )
 
 
 def _search_response(
@@ -247,7 +253,9 @@ def _search_response(
     search_type: str,
 ) -> dict[str, Any]:
     query = _norm(_payload_value(payload, "query", ""))
-    limit = parse_int_clamped(_payload_value(payload, "limit", 10), default=10, min_value=1, max_value=100)
+    limit = parse_int_clamped(
+        _payload_value(payload, "limit", 10), default=10, min_value=1, max_value=100
+    )
     output_dir, kb_id, profile = _resolve_ready_output_dir(db_path=db_path, payload=payload)
     results = search_fn(query, output_dir=output_dir, limit=limit) if query else []
     return {
@@ -328,7 +336,9 @@ def chat_agentic_rag(*, db_path: str, payload: Mapping[str, Any]) -> dict[str, A
     query = _norm(_payload_value(payload, "query", ""))
     if not query:
         raise AgenticRagError("query is required", status_code=400)
-    limit = parse_int_clamped(_payload_value(payload, "limit", 10), default=10, min_value=1, max_value=100)
+    limit = parse_int_clamped(
+        _payload_value(payload, "limit", 10), default=10, min_value=1, max_value=100
+    )
     output_dir, kb_id, profile = _resolve_ready_output_dir(db_path=db_path, payload=payload)
     response = run_agentic_rag_loop(
         query=query,

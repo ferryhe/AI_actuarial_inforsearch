@@ -294,6 +294,23 @@
   isort files, and 19 Pylint error identities, with zero new or stale entries.
   The dead-code gate shrank exactly from 9/1 files and 28/72 symbols to 9/1
   files and 28/71 symbols.
+- Remote commit `a71e984` contains the exact `ai_actuarial/api/routers/`
+  cleanup. CI run 33537947899 passed all five jobs, including the 6m53s Linux
+  quality gate, and no new Review or Copilot comment was added.
+- `ai_actuarial/api/services/` compiled successfully. Seven confirmed dead
+  baseline symbols and two resulting private orphans were removed; no test was
+  dedicated to those deleted definitions, so no test removal was required.
+- The provider-credential write and environment-import paths now pass
+  `status_code=503` correctly when token encryption is unavailable instead of
+  raising `TypeError`. A regression covers both HTTP entry points. The ready
+  source gate also uses an explicit mapping check, removing a Pylint inference
+  false positive without changing its behavior.
+- The 12 directly related service test files completed with 462 passed and 9
+  platform skips. The complete pytest suite passed with 1,881 tests and 10
+  platform skips. The full static gate passed at 129 Black files, 81 isort
+  files, and 16 Pylint error identities, with zero new or stale entries. The
+  dead-code gate shrank exactly from 9/1 files and 28/71 symbols to 9/1 files
+  and 28/64 symbols.
 
 ## Files changed
 
@@ -352,6 +369,11 @@
   `ai_actuarial/api/routers/`, added the precise Pydantic response-field
   whitelist for `WeeklySnapshotFilesModel.truncated`, and removed its stale
   dead-code entry plus the 21 matching formatter baseline entries.
+- Fourteenth historical directory cleanup: formatted all 17 files under
+  `ai_actuarial/api/services/`, removed seven reviewed dead-code baseline
+  symbols plus two cascading private orphans, fixed three Pylint identities,
+  added the two-entry-point encryption failure regression, and removed the
+  matching dead-code and 27 formatter/linter baseline entries.
 
 ## Working tree notes
 
@@ -368,8 +390,8 @@
 
 ## Recommended next action
 
-- Commit and push the path-specific `ai_actuarial/api/routers/` cleanup to PR
+- Commit and push the path-specific `ai_actuarial/api/services/` cleanup to PR
   #318, verify its CI and review feedback, then continue with
-  `ai_actuarial/api/services/`. Keep the final root-level orphan
+  `client/src/components/`. Keep the final root-level orphan
   `ai_actuarial/pipeline_config.py` for a separately verified cleanup. Merge
   only after explicit authorization.

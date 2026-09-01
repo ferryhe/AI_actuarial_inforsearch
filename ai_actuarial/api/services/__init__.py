@@ -9,19 +9,6 @@ Services are organized by domain:
 
 from __future__ import annotations
 
-from ai_actuarial.api.services.task_service import (
-    get_catalog_stats_summary,
-    get_chunk_stats_summary,
-    get_file_catalog_stats,
-    get_markdown_stats_summary,
-    get_schedule_status,
-    get_scheduled_tasks,
-    get_task_log,
-    list_active_tasks,
-    list_task_history,
-    parse_task_history_limit,
-    parse_task_log_tail,
-)
 from ai_actuarial.api.services.chat_service import (
     add_message,
     delete_conversation,
@@ -34,6 +21,19 @@ from ai_actuarial.api.services.chat_service import (
 from ai_actuarial.api.services.collection_service import (
     browse_folder,
     start_collection,
+)
+from ai_actuarial.api.services.task_service import (
+    get_catalog_stats_summary,
+    get_chunk_stats_summary,
+    get_file_catalog_stats,
+    get_markdown_stats_summary,
+    get_schedule_status,
+    get_scheduled_tasks,
+    get_task_log,
+    list_active_tasks,
+    list_task_history,
+    parse_task_history_limit,
+    parse_task_log_tail,
 )
 
 __all__ = [

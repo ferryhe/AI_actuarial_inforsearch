@@ -8,9 +8,14 @@ import os
 from pathlib import Path
 from typing import Any, Mapping
 
-from ai_actuarial.rag.exceptions import ChunkingException
 from ai_actuarial.embedding_service import validate_chunk_generation_payload
-from ai_actuarial.shared_runtime import get_sites_config_path, load_yaml, parse_int_clamped, resolve_runtime_features
+from ai_actuarial.rag.exceptions import ChunkingException
+from ai_actuarial.shared_runtime import (
+    get_sites_config_path,
+    load_yaml,
+    parse_int_clamped,
+    resolve_runtime_features,
+)
 from ai_actuarial.storage import Storage
 
 from .read import SENSITIVE_FILE_FIELDS
@@ -23,10 +28,8 @@ class FileWriteError(Exception):
         self.status_code = status_code
 
 
-
 def _config_data() -> dict[str, Any]:
     return load_yaml(get_sites_config_path(), default={})
-
 
 
 def _download_dir() -> Path:
@@ -34,7 +37,6 @@ def _download_dir() -> Path:
     raw = str((config.get("paths") or {}).get("download_dir", "data/files"))
     path = Path(raw)
     return path.resolve() if path.is_absolute() else path.resolve()
-
 
 
 def _resolve_local_path(local_path: str | None) -> Path | None:
@@ -52,17 +54,14 @@ def _resolve_local_path(local_path: str | None) -> Path | None:
     return fallback
 
 
-
 def _query_files_for_export(storage: Storage) -> list[dict[str, Any]]:
     rows, _total = storage.query_files_with_catalog(limit=100000, offset=0, include_deleted=True)
     return rows
 
 
-
 def _is_file_deletion_enabled() -> bool:
     config = _config_data()
     return bool(resolve_runtime_features(config).get("enable_file_deletion"))
-
 
 
 def update_file_record(*, db_path: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -109,8 +108,9 @@ def update_file_record(*, db_path: str, payload: dict[str, Any]) -> dict[str, An
         storage.close()
 
 
-
-def update_file_markdown_content(*, db_path: str, url: str, payload: dict[str, Any]) -> dict[str, Any]:
+def update_file_markdown_content(
+    *, db_path: str, url: str, payload: dict[str, Any]
+) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise FileWriteError("Invalid or missing JSON body")
     markdown_content = payload.get("markdown_content")
@@ -120,7 +120,9 @@ def update_file_markdown_content(*, db_path: str, url: str, payload: dict[str, A
 
     storage = Storage(db_path)
     try:
-        success, reason = storage.update_file_markdown(url=url, markdown_content=str(markdown_content), markdown_source=markdown_source)
+        success, reason = storage.update_file_markdown(
+            url=url, markdown_content=str(markdown_content), markdown_source=markdown_source
+        )
         if not success and reason == "file_not_found":
             raise FileWriteError("File not found", status_code=404)
         if not success:
@@ -129,7 +131,6 @@ def update_file_markdown_content(*, db_path: str, url: str, payload: dict[str, A
         return {"success": True, "markdown": markdown}
     finally:
         storage.close()
-
 
 
 def get_downloadable_file(*, db_path: str, url: str) -> tuple[Path, str]:
@@ -159,7 +160,6 @@ def get_downloadable_file(*, db_path: str, url: str) -> tuple[Path, str]:
     return resolved, filename
 
 
-
 def export_catalog(*, db_path: str, format_type: str) -> tuple[bytes, str, str]:
     storage = Storage(db_path)
     try:
@@ -173,7 +173,11 @@ def export_catalog(*, db_path: str, format_type: str) -> tuple[bytes, str, str]:
 
     normalized = (format_type or "csv").strip().lower()
     if normalized == "json":
-        return json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8"), "application/json", "catalog_export.json"
+        return (
+            json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8"),
+            "application/json",
+            "catalog_export.json",
+        )
 
     si = io.StringIO()
     fieldnames = list(data[0].keys()) if data else []
@@ -182,7 +186,6 @@ def export_catalog(*, db_path: str, format_type: str) -> tuple[bytes, str, str]:
         writer.writeheader()
         writer.writerows(data)
     return si.getvalue().encode("utf-8-sig"), "text/csv", "catalog_export.csv"
-
 
 
 def delete_file_record(
@@ -205,7 +208,9 @@ def delete_file_record(
     if not url:
         raise FileWriteError("No URL provided")
     if payload.get("confirm") != "DELETE":
-        raise FileWriteError('Explicit confirmation required. Include {"confirm": "DELETE"} in the request body.')
+        raise FileWriteError(
+            'Explicit confirmation required. Include {"confirm": "DELETE"} in the request body.'
+        )
 
     storage = Storage(db_path)
     details = {
@@ -245,13 +250,17 @@ def delete_file_record(
                 except ValueError:
                     is_within = False
                 if not is_within:
-                    details["errors"].append(f"Security: File outside allowed directory: {candidate}")
+                    details["errors"].append(
+                        f"Security: File outside allowed directory: {candidate}"
+                    )
                 elif candidate.exists():
                     os.remove(candidate)
                     details["physical_file_deleted"] = True
                     storage.clear_local_path(url)
                 else:
-                    details["errors"].append(f"Physical file not found (already deleted?): {candidate}")
+                    details["errors"].append(
+                        f"Physical file not found (already deleted?): {candidate}"
+                    )
                     storage.clear_local_path(url)
         else:
             details["errors"].append("No local_path found in database for this file")
@@ -270,9 +279,7 @@ def delete_file_record(
                     or 0
                 )
                 if member_count == 0:
-                    details["reindex_skipped"].append(
-                        {"kb_id": kb_id, "reason": "empty_kb"}
-                    )
+                    details["reindex_skipped"].append({"kb_id": kb_id, "reason": "empty_kb"})
                     continue
                 try:
                     launched, _status_code = create_index_task(
@@ -284,17 +291,12 @@ def delete_file_record(
                         auth=auth,
                     )
                 except RagAdminError as exc:
-                    details["reindex_skipped"].append(
-                        {"kb_id": kb_id, "reason": exc.message}
-                    )
+                    details["reindex_skipped"].append({"kb_id": kb_id, "reason": exc.message})
                     continue
-                details["reindex_jobs"].append(
-                    {"kb_id": kb_id, "job_id": launched["job_id"]}
-                )
+                details["reindex_jobs"].append({"kb_id": kb_id, "job_id": launched["job_id"]})
         return {"success": True, "details": details}
     finally:
         storage.close()
-
 
 
 def get_file_chunk_sets(*, db_path: str, file_url: str) -> dict[str, Any]:
@@ -309,7 +311,6 @@ def get_file_chunk_sets(*, db_path: str, file_url: str) -> dict[str, Any]:
         storage.close()
 
 
-
 def generate_file_chunk_sets(
     *,
     db_path: str,
@@ -321,8 +322,12 @@ def generate_file_chunk_sets(
         raise FileWriteError("Invalid JSON body")
     warnings = validate_chunk_generation_payload(payload)
     profile_id = str(payload.get("profile_id") or "").strip()
-    chunk_size = parse_int_clamped(payload.get("chunk_size") or 800, default=800, min_value=1, max_value=10000)
-    chunk_overlap = parse_int_clamped(payload.get("chunk_overlap") or 100, default=100, min_value=0, max_value=10000)
+    chunk_size = parse_int_clamped(
+        payload.get("chunk_size") or 800, default=800, min_value=1, max_value=10000
+    )
+    chunk_overlap = parse_int_clamped(
+        payload.get("chunk_overlap") or 100, default=100, min_value=0, max_value=10000
+    )
     if chunk_overlap >= chunk_size:
         chunk_overlap = max(0, chunk_size - 1)
     splitter = str(payload.get("splitter") or "semantic").strip()
@@ -344,9 +349,7 @@ def generate_file_chunk_sets(
         markdown_hash = hashlib.sha256(markdown_content.encode("utf-8")).hexdigest()
         expected_hash = str(expected_markdown_hash or "").strip()
         if expected_hash and markdown_hash != expected_hash:
-            raise FileWriteError(
-                f"Markdown changed for {file_url}; rerun Markdown conversion"
-            )
+            raise FileWriteError(f"Markdown changed for {file_url}; rerun Markdown conversion")
 
         if profile_id:
             profile = storage.get_chunk_profile(profile_id)
@@ -373,9 +376,7 @@ def generate_file_chunk_sets(
         )
         if not chunk_set.get("created") and str(chunk_set.get("status") or "") == "ready":
             if int(chunk_set.get("chunk_count") or 0) <= 0:
-                raise FileWriteError(
-                    "ready chunk set has no persisted chunks and is immutable"
-                )
+                raise FileWriteError("ready chunk set has no persisted chunks and is immutable")
             return {
                 "contract_version": 1,
                 "file_url": file_url,
@@ -436,7 +437,6 @@ def generate_file_chunk_sets(
         raise FileWriteError(str(exc)) from exc
     finally:
         storage.close()
-
 
 
 def get_rag_file_preview(

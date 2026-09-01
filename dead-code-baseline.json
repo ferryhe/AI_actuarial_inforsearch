@@ -293,62 +293,6 @@
         "reason": "Framework, configuration, or test contract candidate; retain until a narrow symbol reference or safe removal is confirmed."
       },
       {
-        "path": "ai_actuarial/api/services/ops_write.py",
-        "kind": "unused function",
-        "symbol": "_split_csv_or_list",
-        "confidence": 60,
-        "classification": "remove",
-        "reason": "Vulture 60% cleanup candidate; verify dynamic/public callers and tests before removal."
-      },
-      {
-        "path": "ai_actuarial/api/services/rag_admin.py",
-        "kind": "unused function",
-        "symbol": "_category_file_urls_with_existing_chunks",
-        "confidence": 60,
-        "classification": "remove",
-        "reason": "Vulture 60% cleanup candidate; verify dynamic/public callers and tests before removal."
-      },
-      {
-        "path": "ai_actuarial/api/services/rag_admin.py",
-        "kind": "unused function",
-        "symbol": "_ensure_kb_list_schema",
-        "confidence": 60,
-        "classification": "remove",
-        "reason": "Vulture 60% cleanup candidate; verify dynamic/public callers and tests before removal."
-      },
-      {
-        "path": "ai_actuarial/api/services/rag_admin.py",
-        "kind": "unused function",
-        "symbol": "_unique_existing_chunk_file_urls",
-        "confidence": 60,
-        "classification": "remove",
-        "reason": "Vulture 60% cleanup candidate; verify dynamic/public callers and tests before removal."
-      },
-      {
-        "path": "ai_actuarial/api/services/read.py",
-        "kind": "unused function",
-        "symbol": "project_recent_files",
-        "confidence": 60,
-        "classification": "remove",
-        "reason": "Vulture 60% cleanup candidate; verify dynamic/public callers and tests before removal."
-      },
-      {
-        "path": "ai_actuarial/api/services/ready_data_automation.py",
-        "kind": "unused variable",
-        "symbol": "READY_DATA_AUTOMATION_POLL_SECONDS",
-        "confidence": 60,
-        "classification": "remove",
-        "reason": "Vulture 60% cleanup candidate; verify dynamic/public callers and tests before removal."
-      },
-      {
-        "path": "ai_actuarial/api/services/ready_data_publication.py",
-        "kind": "unused function",
-        "symbol": "public_ready_data_state",
-        "confidence": 60,
-        "classification": "remove",
-        "reason": "Vulture 60% cleanup candidate; verify dynamic/public callers and tests before removal."
-      },
-      {
         "path": "ai_actuarial/catalog.py",
         "kind": "unused function",
         "symbol": "_ai_hit",

@@ -36,6 +36,26 @@ from ai_actuarial.ai_runtime import (
     parse_provider_credential_id,
     resolve_provider_credentials,
 )
+from ai_actuarial.api.services.import_batches import ImportBatchError, load_import_batch
+from ai_actuarial.api.services.ops_read import get_config_sites, get_scheduled_tasks
+from ai_actuarial.api.services.weekly_updates import (
+    WeeklySnapshotValidationError,
+    validate_weekly_snapshot_period,
+)
+from ai_actuarial.config import settings
+from ai_actuarial.crawler import DEFAULT_FILE_EXTS, Crawler
+from ai_actuarial.embedding_service import (
+    UnsupportedOptionsError,
+    resolve_server_embedding_identity,
+    validate_chunk_generation_payload,
+    validate_embedding_generation_payload,
+)
+from ai_actuarial.markdown_conversion_config import (
+    list_conversion_tools,
+    write_markdown_conversion_config,
+)
+from ai_actuarial.rag.defaults import get_embedding_model_defaults
+from ai_actuarial.security import UnsafeUrlError, ensure_safe_http_url
 from ai_actuarial.shared_runtime import (
     append_task_log,
     atomic_write_yaml,
@@ -47,24 +67,8 @@ from ai_actuarial.shared_runtime import (
     resolve_runtime_features,
     serialize_backend_settings,
 )
-from ai_actuarial.config import settings
-from ai_actuarial.api.services.ops_read import get_config_sites, get_scheduled_tasks
-from ai_actuarial.markdown_conversion_config import list_conversion_tools, write_markdown_conversion_config
-from ai_actuarial.rag.defaults import get_embedding_model_defaults
-from ai_actuarial.api.services.import_batches import ImportBatchError, load_import_batch
-from ai_actuarial.crawler import DEFAULT_FILE_EXTS, Crawler
-from ai_actuarial.embedding_service import (
-    UnsupportedOptionsError,
-    resolve_server_embedding_identity,
-    validate_chunk_generation_payload,
-    validate_embedding_generation_payload,
-)
-from ai_actuarial.security import UnsafeUrlError, ensure_safe_http_url
 from ai_actuarial.storage import Storage
-from ai_actuarial.api.services.weekly_updates import (
-    WeeklySnapshotValidationError,
-    validate_weekly_snapshot_period,
-)
+from ai_actuarial.utils import extract_metadata, html_to_text
 from ai_actuarial.web_listening_rule import (
     WebListeningRuleError,
     generate_draft_rule,
@@ -72,7 +76,6 @@ from ai_actuarial.web_listening_rule import (
     rule_to_yaml,
     validate_rule,
 )
-from ai_actuarial.utils import extract_metadata, html_to_text
 
 logger = logging.getLogger(__name__)
 
@@ -156,6 +159,7 @@ def _validate_ai_routing_model(binding_name: str, provider: str, model: str) -> 
             f"Model '{model}' for provider '{provider}' does not support "
             f"{binding_name} binding (model types: {display_types})"
         )
+
 
 _SAMPLE_SITES_YAML = """# AI Actuarial Info Search - Site Configuration Sample
 # Import this file to add sites for Agentic Site Monitoring.
@@ -256,7 +260,9 @@ def _notify_site_config_updated(bridge: BridgeState | None, config_data: dict[st
         setter(config_data)
 
 
-def _notify_runtime_features_updated(bridge: BridgeState | None, config_data: dict[str, Any]) -> None:
+def _notify_runtime_features_updated(
+    bridge: BridgeState | None, config_data: dict[str, Any]
+) -> None:
     if bridge is None or bridge.app_state is None:
         return
     features = resolve_runtime_features(config_data)
@@ -267,7 +273,9 @@ def _notify_runtime_features_updated(bridge: BridgeState | None, config_data: di
     bridge.app_state.enable_security_headers = bool(features.get("enable_security_headers"))
     bridge.app_state.expose_error_details = bool(features.get("expose_error_details"))
     bridge.app_state.rate_limit_defaults = str(features.get("rate_limit_defaults") or "")
-    bridge.app_state.rate_limit_storage_uri = str(features.get("rate_limit_storage_uri") or "memory://")
+    bridge.app_state.rate_limit_storage_uri = str(
+        features.get("rate_limit_storage_uri") or "memory://"
+    )
     bridge.app_state.content_security_policy = str(features.get("content_security_policy") or "")
 
 
@@ -284,16 +292,6 @@ def _reload_runtime_caches() -> None:
         invalidate_config_cache()
     except Exception:
         logger.exception("Failed to invalidate YAML config cache after config update")
-
-
-def _split_csv_or_list(value: Any) -> list[str]:
-    if value is None:
-        return []
-    if isinstance(value, list):
-        return [str(item).strip() for item in value if str(item).strip()]
-    if isinstance(value, str):
-        return [part.strip() for part in value.split(",") if part.strip()]
-    return []
 
 
 def _normalize_list(value: Any, *, field_name: str) -> list[str]:
@@ -345,7 +343,9 @@ def _validate_site_acquisition_strategy(site: dict[str, Any]) -> None:
     collect_linked_files = coerce_bool(site.get("collect_linked_files"), default=True)
     collect_page_content = coerce_bool(site.get("collect_page_content"), default=False)
     if not collect_linked_files and not collect_page_content:
-        raise OpsWriteError("At least one of collect_linked_files or collect_page_content must be enabled")
+        raise OpsWriteError(
+            "At least one of collect_linked_files or collect_page_content must be enabled"
+        )
 
 
 def _coerce_bool_setting(value: Any, *, field_name: str) -> bool:
@@ -384,7 +384,9 @@ def _ensure_backup_dir() -> Path:
 
 def _should_auto_backup() -> bool:
     backups_dir = _ensure_backup_dir()
-    backups = sorted(backups_dir.glob("sites_*.yaml"), key=lambda p: p.stat().st_mtime, reverse=True)
+    backups = sorted(
+        backups_dir.glob("sites_*.yaml"), key=lambda p: p.stat().st_mtime, reverse=True
+    )
     if not backups:
         return True
     return (time.time() - backups[0].stat().st_mtime) > 300
@@ -436,7 +438,13 @@ def add_site(data: dict[str, Any], *, bridge: BridgeState | None = None) -> dict
         new_site["max_pages"] = max_pages
     if max_depth is not None:
         new_site["max_depth"] = max_depth
-    for field_name in ("keywords", "exclude_keywords", "exclude_prefixes", "allow_url_patterns", "queries"):
+    for field_name in (
+        "keywords",
+        "exclude_keywords",
+        "exclude_prefixes",
+        "allow_url_patterns",
+        "queries",
+    ):
         values = _normalize_list(data.get(field_name), field_name=field_name)
         if values:
             new_site[field_name] = values
@@ -513,7 +521,10 @@ def update_site(data: dict[str, Any], *, bridge: BridgeState | None = None) -> d
                 site.pop("file_exts", None)
         if "acquisition_tools" in data:
             site["acquisition_tools"] = _normalize_acquisition_tools(data.get("acquisition_tools"))
-        for field_name, default in (("collect_linked_files", True), ("collect_page_content", False)):
+        for field_name, default in (
+            ("collect_linked_files", True),
+            ("collect_page_content", False),
+        ):
             if field_name in data:
                 site[field_name] = coerce_bool(data.get(field_name), default=default)
         for field_name in ("schedule_interval", "content_selector"):
@@ -590,7 +601,11 @@ def import_sites(data: dict[str, Any], *, bridge: BridgeState | None = None) -> 
                 continue
             if _site_url_is_safe(str(site.get("url") or "")):
                 valid.append(site)
-        return {"success": True, "count": len(valid), "names": [str(site.get("name") or "") for site in valid]}
+        return {
+            "success": True,
+            "count": len(valid),
+            "names": [str(site.get("name") or "") for site in valid],
+        }
 
     _backup_config("before_import")
     config_data = _load_config_data()
@@ -607,7 +622,9 @@ def import_sites(data: dict[str, Any], *, bridge: BridgeState | None = None) -> 
             if not isinstance(site, dict) or not site.get("name") or not site.get("url"):
                 errors.append(f"Invalid site entry: {site}")
                 continue
-            if not _site_url_is_safe(str(site.get("url") or ""), errors=errors, site_name=str(site.get("name") or "")):
+            if not _site_url_is_safe(
+                str(site.get("url") or ""), errors=errors, site_name=str(site.get("name") or "")
+            ):
                 continue
             valid_sites.append(site)
         config_data["sites"] = valid_sites
@@ -618,7 +635,9 @@ def import_sites(data: dict[str, Any], *, bridge: BridgeState | None = None) -> 
             if not isinstance(site, dict) or not site.get("name") or not site.get("url"):
                 errors.append(f"Invalid site entry: {site}")
                 continue
-            if not _site_url_is_safe(str(site.get("url") or ""), errors=errors, site_name=str(site.get("name") or "")):
+            if not _site_url_is_safe(
+                str(site.get("url") or ""), errors=errors, site_name=str(site.get("name") or "")
+            ):
                 continue
             site_name = str(site["name"])
             if site_name in existing_names:
@@ -671,7 +690,9 @@ def explore_web_listening_site(data: dict[str, Any]) -> dict[str, Any]:
     config_data = load_yaml(get_sites_config_path(), default={})
     defaults = config_data.get("defaults") if isinstance(config_data.get("defaults"), dict) else {}
     user_agent = str((defaults or {}).get("user_agent") or "AI-Actuarial-InfoSearch/0.1")
-    unused_download_dir = Path(os.getenv("TEMP") or os.getenv("TMP") or ".") / "_ai_actuarial_site_explore"
+    unused_download_dir = (
+        Path(os.getenv("TEMP") or os.getenv("TMP") or ".") / "_ai_actuarial_site_explore"
+    )
     crawler = Crawler(storage=None, download_dir=str(unused_download_dir), user_agent=user_agent)  # type: ignore[arg-type]
 
     parsed_input = urlparse(website_url)
@@ -763,7 +784,9 @@ def explore_web_listening_site(data: dict[str, Any]) -> dict[str, Any]:
     observations["file_link_count"] = len(file_links)
 
     content_types: list[str] = []
-    if file_links or any(urlparse(final_url).path.lower().endswith(ext) for ext in DEFAULT_FILE_EXTS):
+    if file_links or any(
+        urlparse(final_url).path.lower().endswith(ext) for ext in DEFAULT_FILE_EXTS
+    ):
         content_types.append("file")
     if "html" in content_type or len(text.strip()) >= 200:
         content_types.append("webpage")
@@ -781,7 +804,9 @@ def explore_web_listening_site(data: dict[str, Any]) -> dict[str, Any]:
     if content_types == ["file"]:
         query += " filetype:pdf"
     if not allow_patterns:
-        warnings.append("No path-specific scope was discovered; review before using a domain-wide crawl.")
+        warnings.append(
+            "No path-specific scope was discovered; review before using a domain-wide crawl."
+        )
 
     return {
         "success": True,
@@ -833,7 +858,9 @@ def draft_web_listening_rule(data: dict[str, Any]) -> dict[str, Any]:
         "success": True,
         "rule": rule.model_dump(mode="json"),
         "yaml": rule_to_yaml(rule),
-        "warnings": ["Review the inferred path scope and acquisition strategy before materializing."],
+        "warnings": [
+            "Review the inferred path scope and acquisition strategy before materializing."
+        ],
     }
 
 
@@ -861,7 +888,9 @@ def validate_web_listening_rule(data: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-def materialize_web_listening_rule(data: dict[str, Any], *, bridge: BridgeState | None = None) -> dict[str, Any]:
+def materialize_web_listening_rule(
+    data: dict[str, Any], *, bridge: BridgeState | None = None
+) -> dict[str, Any]:
     payload = _coerce_required_dict(data)
     raw_rule = payload.get("rule_yaml") or payload.get("yaml") or payload.get("rule")
     if raw_rule is None:
@@ -950,7 +979,9 @@ def sample_sites_yaml() -> tuple[str, str]:
 def list_backups() -> dict[str, list[dict[str, Any]]]:
     backups_dir = _ensure_backup_dir()
     backups = []
-    for path in sorted(backups_dir.glob("sites_*.yaml"), key=lambda item: item.stat().st_mtime, reverse=True):
+    for path in sorted(
+        backups_dir.glob("sites_*.yaml"), key=lambda item: item.stat().st_mtime, reverse=True
+    ):
         stat = path.stat()
         backups.append(
             {
@@ -966,7 +997,8 @@ def list_backups() -> dict[str, list[dict[str, Any]]]:
 def create_backup(label: str = "manual") -> dict[str, Any]:
     # Sanitize label to prevent path traversal
     import re
-    safe_label = re.sub(r'[^a-zA-Z0-9_-]', '_', label)[:50]
+
+    safe_label = re.sub(r"[^a-zA-Z0-9_-]", "_", label)[:50]
     if not safe_label:
         safe_label = "manual"
     backup_name = _backup_config(safe_label)
@@ -1009,7 +1041,9 @@ def delete_backup(filename: str) -> dict[str, Any]:
     return {"success": True}
 
 
-def update_backend_settings(data: dict[str, Any], *, bridge: BridgeState | None = None) -> dict[str, Any]:
+def update_backend_settings(
+    data: dict[str, Any], *, bridge: BridgeState | None = None
+) -> dict[str, Any]:
     payload = _coerce_required_dict(data)
     config_data = _load_config_data()
     config_data.setdefault("defaults", {})
@@ -1027,9 +1061,13 @@ def update_backend_settings(data: dict[str, Any], *, bridge: BridgeState | None 
         if "delay_seconds" in defaults_in:
             defaults["delay_seconds"] = float(defaults_in.get("delay_seconds") or 0)
         if "file_exts" in defaults_in:
-            defaults["file_exts"] = _normalize_list(defaults_in.get("file_exts"), field_name="defaults.file_exts")
+            defaults["file_exts"] = _normalize_list(
+                defaults_in.get("file_exts"), field_name="defaults.file_exts"
+            )
         if "keywords" in defaults_in:
-            defaults["keywords"] = _normalize_list(defaults_in.get("keywords"), field_name="defaults.keywords")
+            defaults["keywords"] = _normalize_list(
+                defaults_in.get("keywords"), field_name="defaults.keywords"
+            )
         if "exclude_keywords" in defaults_in:
             defaults["exclude_keywords"] = _normalize_list(
                 defaults_in.get("exclude_keywords"), field_name="defaults.exclude_keywords"
@@ -1058,7 +1096,9 @@ def update_backend_settings(data: dict[str, Any], *, bridge: BridgeState | None 
         if "delay_seconds" in search_in:
             search["delay_seconds"] = float(search_in.get("delay_seconds") or 0)
         if "languages" in search_in:
-            search["languages"] = _normalize_list(search_in.get("languages"), field_name="search.languages")
+            search["languages"] = _normalize_list(
+                search_in.get("languages"), field_name="search.languages"
+            )
         if "country" in search_in:
             search["country"] = str(search_in.get("country", "")).strip()
         if "exclude_keywords" in search_in:
@@ -1066,7 +1106,9 @@ def update_backend_settings(data: dict[str, Any], *, bridge: BridgeState | None 
                 search_in.get("exclude_keywords"), field_name="search.exclude_keywords"
             )
         if "queries" in search_in:
-            search["queries"] = _normalize_list(search_in.get("queries"), field_name="search.queries")
+            search["queries"] = _normalize_list(
+                search_in.get("queries"), field_name="search.queries"
+            )
 
     features_in = payload.get("features")
     if isinstance(features_in, dict):
@@ -1081,10 +1123,13 @@ def update_backend_settings(data: dict[str, Any], *, bridge: BridgeState | None 
             "expose_error_details",
         ]:
             if key in features_in:
-                features_cfg[key] = _coerce_bool_setting(features_in.get(key), field_name=f"features.{key}")
+                features_cfg[key] = _coerce_bool_setting(
+                    features_in.get(key), field_name=f"features.{key}"
+                )
         if "file_deletion_enabled" in features_in:
             features_cfg["enable_file_deletion"] = _coerce_bool_setting(
-                features_in.get("file_deletion_enabled"), field_name="features.file_deletion_enabled"
+                features_in.get("file_deletion_enabled"),
+                field_name="features.file_deletion_enabled",
             )
         for key in ["rate_limit_defaults", "rate_limit_storage_uri", "content_security_policy"]:
             if key in features_in:
@@ -1164,7 +1209,9 @@ def update_markdown_conversion_config(data: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def update_ai_models_config(data: dict[str, Any], *, db_path: str, bridge: BridgeState | None = None) -> dict[str, Any]:
+def update_ai_models_config(
+    data: dict[str, Any], *, db_path: str, bridge: BridgeState | None = None
+) -> dict[str, Any]:
     payload = _coerce_required_dict(data)
     config_data = _load_config_data()
     config_data.setdefault("ai_config", {})
@@ -1174,7 +1221,9 @@ def update_ai_models_config(data: dict[str, Any], *, db_path: str, bridge: Bridg
         provider_credentials = build_model_discovery_credentials(storage=storage)
     finally:
         storage.close()
-    available_models_map = llm_models.get_available_models(provider_credentials=provider_credentials)
+    available_models_map = llm_models.get_available_models(
+        provider_credentials=provider_credentials
+    )
 
     for function in ["catalog", "embeddings", "chatbot", "weekly_explanation", "ocr"]:
         func_cfg = payload.get(function)
@@ -1202,14 +1251,10 @@ def update_ai_models_config(data: dict[str, Any], *, db_path: str, bridge: Bridg
             model = str(func_cfg.get("model") or "").strip()
             if not model:
                 raise OpsWriteError(f"Model for function '{function}' must be a non-empty string.")
-            provider = str(
-                config_data["ai_config"][function].get("provider") or ""
-            ).strip().lower()
+            provider = str(config_data["ai_config"][function].get("provider") or "").strip().lower()
             provider_models = available_models_map.get(provider, [])
             compatible_models = [
-                item
-                for item in provider_models
-                if function in (item.get("types") or [])
+                item for item in provider_models if function in (item.get("types") or [])
             ]
             valid_model_names = [
                 str(item.get("name") or "")
@@ -1248,7 +1293,9 @@ def update_ai_models_config(data: dict[str, Any], *, db_path: str, bridge: Bridg
                 if summarization_prompt in (None, ""):
                     config_data["ai_config"][function].pop("summarization_prompt", None)
                 else:
-                    config_data["ai_config"][function]["summarization_prompt"] = str(summarization_prompt)
+                    config_data["ai_config"][function]["summarization_prompt"] = str(
+                        summarization_prompt
+                    )
 
         if function == "weekly_explanation":
             for deprecated_field in WEEKLY_EXPLANATION_ROUTE_FIELDS:
@@ -1268,7 +1315,9 @@ def update_ai_models_config(data: dict[str, Any], *, db_path: str, bridge: Bridg
                 try:
                     timeout_seconds = float(func_cfg["timeout_seconds"])
                 except (TypeError, ValueError) as exc:
-                    raise OpsWriteError("weekly_explanation.timeout_seconds must be positive") from exc
+                    raise OpsWriteError(
+                        "weekly_explanation.timeout_seconds must be positive"
+                    ) from exc
                 if timeout_seconds <= 0:
                     raise OpsWriteError("weekly_explanation.timeout_seconds must be positive")
                 config_data["ai_config"][function]["timeout_seconds"] = timeout_seconds
@@ -1276,7 +1325,9 @@ def update_ai_models_config(data: dict[str, Any], *, db_path: str, bridge: Bridg
                 try:
                     temperature = float(func_cfg["temperature"])
                 except (TypeError, ValueError) as exc:
-                    raise OpsWriteError("weekly_explanation.temperature must be between 0 and 2") from exc
+                    raise OpsWriteError(
+                        "weekly_explanation.temperature must be between 0 and 2"
+                    ) from exc
                 if not 0 <= temperature <= 2:
                     raise OpsWriteError("weekly_explanation.temperature must be between 0 and 2")
                 config_data["ai_config"][function]["temperature"] = temperature
@@ -1353,17 +1404,17 @@ def update_ai_models_config(data: dict[str, Any], *, db_path: str, bridge: Bridg
         affected_kb_ids: list[str] = []
         storage = Storage(db_path)
         try:
-            rows = storage._conn.execute(
-                """
+            rows = storage._conn.execute("""
                 SELECT DISTINCT kb_id
                 FROM rag_knowledge_bases
                 WHERE COALESCE(file_count, 0) > 0
                    OR COALESCE(chunk_count, 0) > 0
-                """
-            ).fetchall()
+                """).fetchall()
             affected_kb_ids = [str(row[0]) for row in rows if row and row[0]]
         except Exception:
-            logger.warning("Failed to enumerate KBs affected by embeddings config change", exc_info=True)
+            logger.warning(
+                "Failed to enumerate KBs affected by embeddings config change", exc_info=True
+            )
         finally:
             storage.close()
         response_payload.update(
@@ -1387,6 +1438,7 @@ def _apply_default_provider_env(provider: str, default_row: dict[str, Any] | Non
         return
     try:
         from ai_actuarial.services.token_encryption import TokenEncryption
+
         api_key = TokenEncryption().decrypt(str(default_row.get("api_key_encrypted") or ""))
     except Exception:
         return
@@ -1402,17 +1454,17 @@ def _set_runtime_token_encryption_key(key: str) -> None:
         return
     os.environ["TOKEN_ENCRYPTION_KEY"] = normalized
     from ai_actuarial.services.token_encryption import TokenEncryption
+
     TokenEncryption._instance = None
 
 
-
-def import_provider_credentials_from_env(data: dict[str, Any] | None, *, db_path: str) -> dict[str, Any]:
+def import_provider_credentials_from_env(
+    data: dict[str, Any] | None, *, db_path: str
+) -> dict[str, Any]:
     payload = _coerce_required_dict(data or {})
     overwrite = bool(payload.get("overwrite", False))
     providers_filter = {
-        str(item).strip().lower()
-        for item in (payload.get("providers") or [])
-        if str(item).strip()
+        str(item).strip().lower() for item in (payload.get("providers") or []) if str(item).strip()
     }
 
     from ai_actuarial.services.token_encryption import TokenEncryption
@@ -1427,17 +1479,27 @@ def import_provider_credentials_from_env(data: dict[str, Any] | None, *, db_path
             api_key = str(os.getenv(key_env) or "").strip()
             if not api_key:
                 continue
-            category = "search" if bool(KNOWN_LLM_PROVIDERS.get(provider, {}).get("is_search_provider")) else "llm"
+            category = (
+                "search"
+                if bool(KNOWN_LLM_PROVIDERS.get(provider, {}).get("is_search_provider"))
+                else "llm"
+            )
             existing = storage.get_llm_provider(provider, category=category, instance_id="default")
             if existing and not overwrite:
-                skipped.append({"provider_id": provider, "category": category, "reason": "default_instance_exists"})
+                skipped.append(
+                    {
+                        "provider_id": provider,
+                        "category": category,
+                        "reason": "default_instance_exists",
+                    }
+                )
                 continue
             try:
                 encrypted_key = TokenEncryption().encrypt(api_key)
             except ValueError as exc:
                 raise OpsWriteError(
                     "Provider credential import is unavailable because token encryption is not configured correctly.",
-                    status=503,
+                    status_code=503,
                 ) from exc
             token_id = storage.upsert_llm_provider(
                 provider=provider,
@@ -1449,14 +1511,18 @@ def import_provider_credentials_from_env(data: dict[str, Any] | None, *, db_path
                 label=f"{provider} ({category})",
                 is_default=True,
             )
-            default_row = storage.get_llm_provider(provider, category=category, instance_id="default")
+            default_row = storage.get_llm_provider(
+                provider, category=category, instance_id="default"
+            )
             _apply_default_provider_env(provider, default_row)
             imported.append(
                 {
                     "provider_id": provider,
                     "category": category,
                     "credential_id": f"{provider}:{category}:db:{token_id}",
-                    "stable_credential_id": build_stable_credential_id(provider, category, "default"),
+                    "stable_credential_id": build_stable_credential_id(
+                        provider, category, "default"
+                    ),
                     "api_base_url": (default_row or {}).get("api_base_url"),
                 }
             )
@@ -1473,16 +1539,13 @@ def import_provider_credentials_from_env(data: dict[str, Any] | None, *, db_path
     }
 
 
-
 def reencrypt_provider_credentials(data: dict[str, Any] | None, *, db_path: str) -> dict[str, Any]:
     payload = _coerce_required_dict(data or {})
     old_key = str(payload.get("old_key") or "").strip()
     new_key = str(payload.get("new_key") or "").strip() or settings.TOKEN_ENCRYPTION_KEY.strip()
     category_filter = str(payload.get("category") or "").strip().lower() or None
     providers_filter = {
-        str(item).strip().lower()
-        for item in (payload.get("providers") or [])
-        if str(item).strip()
+        str(item).strip().lower() for item in (payload.get("providers") or []) if str(item).strip()
     }
     if not old_key:
         raise OpsWriteError("old_key is required")
@@ -1518,7 +1581,8 @@ def reencrypt_provider_credentials(data: dict[str, Any] | None, *, db_path: str)
                         {
                             "provider_id": provider_id,
                             "category": category,
-                            "instance_id": str(entry.get("instance_id") or "default").strip() or "default",
+                            "instance_id": str(entry.get("instance_id") or "default").strip()
+                            or "default",
                         }
                     )
                     continue
@@ -1536,11 +1600,14 @@ def reencrypt_provider_credentials(data: dict[str, Any] | None, *, db_path: str)
                     {
                         "provider_id": str(entry.get("provider") or "").strip().lower(),
                         "category": category,
-                        "instance_id": str(entry.get("instance_id") or "default").strip() or "default",
+                        "instance_id": str(entry.get("instance_id") or "default").strip()
+                        or "default",
                     }
                 )
         for provider in {item["provider_id"] for item in rotated}:
-            default_row = storage.get_llm_provider(provider, category="llm") or storage.get_llm_provider(provider, category="search")
+            default_row = storage.get_llm_provider(
+                provider, category="llm"
+            ) or storage.get_llm_provider(provider, category="search")
             _apply_default_provider_env(provider, default_row)
     finally:
         storage.close()
@@ -1553,7 +1620,6 @@ def reencrypt_provider_credentials(data: dict[str, Any] | None, *, db_path: str)
         "rotated": rotated,
         "failed": failed,
     }
-
 
 
 def upsert_provider_credential(data: dict[str, Any], *, db_path: str) -> dict[str, Any]:
@@ -1570,7 +1636,10 @@ def upsert_provider_credential(data: dict[str, Any], *, db_path: str) -> dict[st
         raise OpsWriteError("provider_id is required")
     if provider not in PROVIDER_STARTUP_ENV_MAP:
         raise OpsWriteError(f"Unsupported provider: {provider}")
-    api_key_optional = str(KNOWN_LLM_PROVIDERS.get(provider, {}).get("api_key_hint") or "").strip().lower() == "optional"
+    api_key_optional = (
+        str(KNOWN_LLM_PROVIDERS.get(provider, {}).get("api_key_hint") or "").strip().lower()
+        == "optional"
+    )
     if not api_key and not api_key_optional:
         raise OpsWriteError("api_key is required")
 
@@ -1581,7 +1650,7 @@ def upsert_provider_credential(data: dict[str, Any], *, db_path: str) -> dict[st
     except ValueError as exc:
         raise OpsWriteError(
             "Provider credential writes are unavailable because token encryption is not configured correctly.",
-            status=503,
+            status_code=503,
         ) from exc
     storage = Storage(db_path)
     try:
@@ -1611,7 +1680,9 @@ def upsert_provider_credential(data: dict[str, Any], *, db_path: str) -> dict[st
     }
 
 
-def delete_provider_credential(provider_id: str, *, db_path: str, category: str = "llm", instance_id: str | None = None) -> dict[str, Any]:
+def delete_provider_credential(
+    provider_id: str, *, db_path: str, category: str = "llm", instance_id: str | None = None
+) -> dict[str, Any]:
     provider = str(provider_id or "").strip().lower()
     if not provider:
         raise OpsWriteError("provider_id is required")
@@ -1644,29 +1715,33 @@ def _has_indexed_knowledge_bases(db_path: str) -> bool:
     """
     kb_storage = Storage(db_path)
     try:
-        row = kb_storage._conn.execute(
-            """
+        row = kb_storage._conn.execute("""
             SELECT 1
             FROM rag_knowledge_bases
             WHERE COALESCE(file_count, 0) > 0
                OR COALESCE(chunk_count, 0) > 0
             LIMIT 1
-            """
-        ).fetchone()
+            """).fetchone()
         return row is not None
     except sqlite3.OperationalError as exc:
         if "no such table" in str(exc):
             return False
-        logger.warning("Failed to check for indexed KBs before embeddings config change", exc_info=True)
+        logger.warning(
+            "Failed to check for indexed KBs before embeddings config change", exc_info=True
+        )
         return True
     except Exception:
-        logger.warning("Failed to check for indexed KBs before embeddings config change", exc_info=True)
+        logger.warning(
+            "Failed to check for indexed KBs before embeddings config change", exc_info=True
+        )
         return True
     finally:
         kb_storage.close()
 
 
-def update_ai_routing(data: dict[str, Any], *, db_path: str, bridge: BridgeState | None = None) -> dict[str, Any]:
+def update_ai_routing(
+    data: dict[str, Any], *, db_path: str, bridge: BridgeState | None = None
+) -> dict[str, Any]:
     payload = _coerce_required_dict(data)
     config_data = _load_config_data()
     config_data.setdefault("ai_config", {})
@@ -1708,13 +1783,29 @@ def update_ai_routing(data: dict[str, Any], *, db_path: str, bridge: BridgeState
         if provider is not None:
             provider_norm = str(provider).strip().lower()
             if provider_norm and provider_norm not in AI_SUPPORTED_PROVIDERS:
-                raise OpsWriteError(f"Unsupported provider '{provider_norm}' for binding '{binding_name}'")
-            if binding_name == "chat" and provider_norm and not is_chat_provider_supported(provider_norm):
+                raise OpsWriteError(
+                    f"Unsupported provider '{provider_norm}' for binding '{binding_name}'"
+                )
+            if (
+                binding_name == "chat"
+                and provider_norm
+                and not is_chat_provider_supported(provider_norm)
+            ):
                 raise OpsWriteError(f"Provider '{provider_norm}' does not support chat binding")
-            if binding_name == "catalog" and provider_norm and not is_catalog_provider_supported(provider_norm):
+            if (
+                binding_name == "catalog"
+                and provider_norm
+                and not is_catalog_provider_supported(provider_norm)
+            ):
                 raise OpsWriteError(f"Provider '{provider_norm}' does not support catalog binding")
-            if binding_name == "embeddings" and provider_norm and not is_embedding_provider_supported(provider_norm):
-                raise OpsWriteError(f"Provider '{provider_norm}' does not support embeddings binding")
+            if (
+                binding_name == "embeddings"
+                and provider_norm
+                and not is_embedding_provider_supported(provider_norm)
+            ):
+                raise OpsWriteError(
+                    f"Provider '{provider_norm}' does not support embeddings binding"
+                )
             provider_changed = provider_norm != old_provider
             section["provider"] = provider_norm
             if provider_changed:
@@ -1725,7 +1816,9 @@ def update_ai_routing(data: dict[str, Any], *, db_path: str, bridge: BridgeState
             credential_id = str(item.get("credential_id") or "").strip()
             if credential_id:
                 if not provider_norm:
-                    raise OpsWriteError(f"Provider is required when credential_id is set for binding '{binding_name}'")
+                    raise OpsWriteError(
+                        f"Provider is required when credential_id is set for binding '{binding_name}'"
+                    )
                 try:
                     parsed_credential = parse_provider_credential_id(credential_id)
                 except ValueError as exc:
@@ -1733,7 +1826,9 @@ def update_ai_routing(data: dict[str, Any], *, db_path: str, bridge: BridgeState
                 if not parsed_credential:
                     raise OpsWriteError(f"Credential id is required for binding '{binding_name}'")
                 if parsed_credential.provider != provider_norm:
-                    raise OpsWriteError(f"Credential '{credential_id}' does not belong to provider '{provider_norm}'")
+                    raise OpsWriteError(
+                        f"Credential '{credential_id}' does not belong to provider '{provider_norm}'"
+                    )
                 if parsed_credential.category != "llm":
                     raise OpsWriteError(
                         f"Credential '{credential_id}' has category '{parsed_credential.category}', expected 'llm'"
@@ -1773,7 +1868,9 @@ def update_ai_routing(data: dict[str, Any], *, db_path: str, bridge: BridgeState
             # only when there are already-indexed KBs that would be invalidated;
             # a first-time / empty-KB write is allowed. full_reindex (the change
             # + full rebuild) is treated as one atomic action and bypasses it.
-            if not coerce_bool(payload.get("full_reindex")) and _has_indexed_knowledge_bases(db_path):
+            if not coerce_bool(payload.get("full_reindex")) and _has_indexed_knowledge_bases(
+                db_path
+            ):
                 raise OpsWriteError(
                     "Embeddings provider/model change is an immutable config change: "
                     "existing knowledge-base indexes would become incompatible. "
@@ -1800,25 +1897,28 @@ def update_ai_routing(data: dict[str, Any], *, db_path: str, bridge: BridgeState
 
     response_storage = Storage(db_path)
     try:
-        response_payload: dict[str, Any] = {"success": True, **get_ai_routing(storage=response_storage)}
+        response_payload: dict[str, Any] = {
+            "success": True,
+            **get_ai_routing(storage=response_storage),
+        }
     finally:
         response_storage.close()
     if embeddings_changed:
         affected_kb_ids: list[str] = []
         kb_storage = Storage(db_path)
         try:
-            rows = kb_storage._conn.execute(
-                """
+            rows = kb_storage._conn.execute("""
                 SELECT DISTINCT kb_id
                 FROM rag_knowledge_bases
                 WHERE COALESCE(file_count, 0) > 0
                    OR COALESCE(chunk_count, 0) > 0
                 ORDER BY kb_id
-                """
-            ).fetchall()
+                """).fetchall()
             affected_kb_ids = [str(row[0]) for row in rows if row and row[0]]
         except Exception:
-            logger.warning("Failed to enumerate KBs affected by embeddings config change", exc_info=True)
+            logger.warning(
+                "Failed to enumerate KBs affected by embeddings config change", exc_info=True
+            )
         finally:
             kb_storage.close()
         response_payload["rebuild_required"] = True
@@ -1831,7 +1931,9 @@ def update_ai_routing(data: dict[str, Any], *, db_path: str, bridge: BridgeState
     return response_payload
 
 
-def add_scheduled_task(data: dict[str, Any], *, bridge: BridgeState | None = None) -> dict[str, Any]:
+def add_scheduled_task(
+    data: dict[str, Any], *, bridge: BridgeState | None = None
+) -> dict[str, Any]:
     name = str(data.get("name") or "").strip()
     task_type = str(data.get("type") or "").strip()
     interval = str(data.get("interval") or "").strip()
@@ -1842,7 +1944,9 @@ def add_scheduled_task(data: dict[str, Any], *, bridge: BridgeState | None = Non
     if not interval:
         raise OpsWriteError("Schedule interval is required")
     if not _is_valid_schedule_interval(interval):
-        raise OpsWriteError(f"Invalid schedule interval: {interval}. Valid values: {', '.join(_VALID_INTERVALS)}")
+        raise OpsWriteError(
+            f"Invalid schedule interval: {interval}. Valid values: {', '.join(_VALID_INTERVALS)}"
+        )
 
     config_data = _load_config_data()
     tasks = list(config_data.get("scheduled_tasks") or [])
@@ -1878,7 +1982,9 @@ def add_scheduled_task(data: dict[str, Any], *, bridge: BridgeState | None = Non
     return {"success": True}
 
 
-def update_scheduled_task(data: dict[str, Any], *, bridge: BridgeState | None = None) -> dict[str, Any]:
+def update_scheduled_task(
+    data: dict[str, Any], *, bridge: BridgeState | None = None
+) -> dict[str, Any]:
     original_name = str(data.get("original_name") or "").strip()
     name = str(data.get("name") or "").strip()
     if not original_name or not name:
@@ -1904,7 +2010,9 @@ def update_scheduled_task(data: dict[str, Any], *, bridge: BridgeState | None = 
         if "interval" in data:
             new_interval = str(data.get("interval") or "").strip()
             if not _is_valid_schedule_interval(new_interval):
-                raise OpsWriteError(f"Invalid schedule interval: {new_interval}. Valid values: {', '.join(_VALID_INTERVALS)}")
+                raise OpsWriteError(
+                    f"Invalid schedule interval: {new_interval}. Valid values: {', '.join(_VALID_INTERVALS)}"
+                )
             task["interval"] = new_interval
         if "enabled" in data:
             task["enabled"] = bool(data.get("enabled"))
@@ -2009,7 +2117,9 @@ def _append_history_to_disk(task_data: dict[str, Any]) -> None:
         f.write(json.dumps(task_data, ensure_ascii=False) + "\n")
 
 
-def _record_rejected_task(reason: str, *, collection_type: str, data: dict[str, Any], bridge: BridgeState) -> None:
+def _record_rejected_task(
+    reason: str, *, collection_type: str, data: dict[str, Any], bridge: BridgeState
+) -> None:
     task_id = f"rejected_{int(datetime.now().timestamp())}"
     task_name = str(data.get("name") or f"{collection_type} (rejected)")
     stamp = datetime.now().isoformat()
@@ -2037,22 +2147,38 @@ def _record_rejected_task(reason: str, *, collection_type: str, data: dict[str, 
     _append_history_to_disk(task_data)
 
 
-def _reject_request(reason: str, *, collection_type: str, data: dict[str, Any], bridge: BridgeState) -> None:
+def _reject_request(
+    reason: str, *, collection_type: str, data: dict[str, Any], bridge: BridgeState
+) -> None:
     _record_rejected_task(reason, collection_type=collection_type, data=data, bridge=bridge)
     raise OpsWriteError(reason)
 
 
-def start_collection(data: dict[str, Any], *, bridge: BridgeState, auth_token: dict[str, Any] | None = None) -> dict[str, Any]:
+def start_collection(
+    data: dict[str, Any], *, bridge: BridgeState, auth_token: dict[str, Any] | None = None
+) -> dict[str, Any]:
     collection_type = str(data.get("type") or "").strip()
     if not collection_type or collection_type not in _VALID_COLLECTION_TYPES:
-        _reject_request("Invalid collection type", collection_type=collection_type or "unknown", data=data, bridge=bridge)
+        _reject_request(
+            "Invalid collection type",
+            collection_type=collection_type or "unknown",
+            data=data,
+            bridge=bridge,
+        )
 
     if collection_type == "url" and not data.get("urls"):
-        _reject_request("No URLs provided", collection_type=collection_type, data=data, bridge=bridge)
+        _reject_request(
+            "No URLs provided", collection_type=collection_type, data=data, bridge=bridge
+        )
     if collection_type == "file":
         upload_batch_id = str(data.get("upload_batch_id") or "").strip()
         if not upload_batch_id:
-            _reject_request("File imports must use an upload batch", collection_type=collection_type, data=data, bridge=bridge)
+            _reject_request(
+                "File imports must use an upload batch",
+                collection_type=collection_type,
+                data=data,
+                bridge=bridge,
+            )
         try:
             load_import_batch(upload_batch_id, auth_token=auth_token)
         except ImportBatchError as exc:
@@ -2062,7 +2188,12 @@ def start_collection(data: dict[str, Any], *, bridge: BridgeState, auth_token: d
     if collection_type == "catalog":
         scope_mode = str(data.get("scope_mode") or "index").strip().lower()
         if scope_mode == "category" and not str(data.get("category") or "").strip():
-            _reject_request("Category is required for category-scoped cataloging", collection_type=collection_type, data=data, bridge=bridge)
+            _reject_request(
+                "Category is required for category-scoped cataloging",
+                collection_type=collection_type,
+                data=data,
+                bridge=bridge,
+            )
     if collection_type == "weekly_summary":
         try:
             period = validate_weekly_snapshot_period(
@@ -2097,11 +2228,21 @@ def start_collection(data: dict[str, Any], *, bridge: BridgeState, auth_token: d
     if collection_type == "markdown_conversion":
         scope_mode = str(data.get("scope_mode") or "index").strip().lower()
         if scope_mode == "category" and not str(data.get("category") or "").strip():
-            _reject_request("Category is required for category-scoped markdown conversion", collection_type=collection_type, data=data, bridge=bridge)
+            _reject_request(
+                "Category is required for category-scoped markdown conversion",
+                collection_type=collection_type,
+                data=data,
+                bridge=bridge,
+            )
         has_urls = bool(data.get("file_urls"))
         has_scan = data.get("scan_count") not in (None, "", "null")
         if not has_urls and not has_scan:
-            _reject_request("No files selected for markdown conversion", collection_type=collection_type, data=data, bridge=bridge)
+            _reject_request(
+                "No files selected for markdown conversion",
+                collection_type=collection_type,
+                data=data,
+                bridge=bridge,
+            )
     if collection_type == "chunk_generation":
         try:
             validate_chunk_generation_payload(data)
@@ -2116,11 +2257,21 @@ def start_collection(data: dict[str, Any], *, bridge: BridgeState, auth_token: d
             ) from exc
         scope_mode = str(data.get("scope_mode") or "index").strip().lower()
         if scope_mode == "category" and not str(data.get("category") or "").strip():
-            _reject_request("Category is required for category-scoped chunk generation", collection_type=collection_type, data=data, bridge=bridge)
+            _reject_request(
+                "Category is required for category-scoped chunk generation",
+                collection_type=collection_type,
+                data=data,
+                bridge=bridge,
+            )
         has_urls = bool(data.get("file_urls")) or bool(data.get("files"))
         has_scan = data.get("scan_count") not in (None, "", "null")
         if not has_urls and not has_scan:
-            _reject_request("No files selected for chunk generation", collection_type=collection_type, data=data, bridge=bridge)
+            _reject_request(
+                "No files selected for chunk generation",
+                collection_type=collection_type,
+                data=data,
+                bridge=bridge,
+            )
     if collection_type == "embedding_generation":
         try:
             validate_embedding_generation_payload(data)
@@ -2159,9 +2310,8 @@ def start_collection(data: dict[str, Any], *, bridge: BridgeState, auth_token: d
         ]
         if int(data.get("contract_version") or 0) != 1 or missing:
             required = (
-                (["contract_version=1"] if int(data.get("contract_version") or 0) != 1 else [])
-                + missing
-            )
+                ["contract_version=1"] if int(data.get("contract_version") or 0) != 1 else []
+            ) + missing
             _reject_request(
                 f"{collection_type} requires: {', '.join(required)}",
                 collection_type=collection_type,
@@ -2180,9 +2330,8 @@ def start_collection(data: dict[str, Any], *, bridge: BridgeState, auth_token: d
         ]
         if int(data.get("contract_version") or 0) != 1 or missing:
             required = (
-                (["contract_version=1"] if int(data.get("contract_version") or 0) != 1 else [])
-                + missing
-            )
+                ["contract_version=1"] if int(data.get("contract_version") or 0) != 1 else []
+            ) + missing
             _reject_request(
                 f"ready_data_build requires: {', '.join(required)}",
                 collection_type=collection_type,
@@ -2267,19 +2416,25 @@ def _catalog_candidate_predicate(*, file_alias: str = "f", catalog_alias: str = 
     return "(" + " OR ".join(conditions) + ")"
 
 
-def get_catalog_stats(*, db_path: str, provider: str | None = None, input_source: str | None = None, category: str | None = None) -> dict[str, Any]:
+def get_catalog_stats(
+    *,
+    db_path: str,
+    provider: str | None = None,
+    input_source: str | None = None,
+    category: str | None = None,
+) -> dict[str, Any]:
     storage = Storage(db_path)
     try:
         conn = storage._conn
-        total_local = conn.execute(
-            """
+        total_local = conn.execute("""
             SELECT COUNT(*)
             FROM files f
             WHERE f.local_path IS NOT NULL AND f.local_path != ''
               AND f.deleted_at IS NULL
-            """
+            """).fetchone()[0]
+        total_ok = conn.execute(
+            "SELECT COUNT(*) FROM catalog_items c WHERE c.status = 'ok'"
         ).fetchone()[0]
-        total_ok = conn.execute("SELECT COUNT(*) FROM catalog_items c WHERE c.status = 'ok'").fetchone()[0]
 
         from ai_actuarial.catalog import CATALOG_VERSION as base_catalog_version
 
@@ -2514,10 +2669,14 @@ def get_chunk_generation_stats(*, db_path: str, category: str | None = None) -> 
             tuple(params),
         ).fetchall()
         identity = resolve_server_embedding_identity(storage)
-        embedding_stats = storage.embedding_coverage(
-            chunk_set_ids=[str(row[0]) for row in chunk_set_rows],
-            identity=identity.as_dict(),
-        ) if chunk_set_rows else {"expected_count": 0, "ready_count": 0, "missing": 0, "invalid": 0}
+        embedding_stats = (
+            storage.embedding_coverage(
+                chunk_set_ids=[str(row[0]) for row in chunk_set_rows],
+                identity=identity.as_dict(),
+            )
+            if chunk_set_rows
+            else {"expected_count": 0, "ready_count": 0, "missing": 0, "invalid": 0}
+        )
 
         return {
             "success": True,
