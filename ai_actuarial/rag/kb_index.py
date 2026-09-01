@@ -18,7 +18,6 @@ from ai_actuarial.rag.config import RAGConfig
 from ai_actuarial.rag.vector_store import VectorStore
 from ai_actuarial.storage import Storage
 
-
 FAILURE_CATEGORIES = frozenset(
     {
         "invalid_selector",
@@ -45,9 +44,7 @@ class KBIndexStopped(KBIndexContractError):
 
 
 def _dedupe(values: Iterable[Any]) -> list[str]:
-    return list(
-        dict.fromkeys(str(value).strip() for value in values if str(value).strip())
-    )
+    return list(dict.fromkeys(str(value).strip() for value in values if str(value).strip()))
 
 
 def _binding_snapshot(
@@ -70,9 +67,7 @@ def _binding_snapshot(
     }
     existing_tables = {
         str(row[0])
-        for row in conn.execute(
-            "SELECT name FROM sqlite_schema WHERE type = 'table'"
-        ).fetchall()
+        for row in conn.execute("SELECT name FROM sqlite_schema WHERE type = 'table'").fetchall()
     }
     if not required_tables <= existing_tables:
         raise KBIndexContractError(
@@ -91,9 +86,7 @@ def _binding_snapshot(
             (kid,),
         ).fetchone()
         if not kb_row:
-            raise KBIndexContractError(
-                "invalid_selector", f"knowledge base '{kid}' was not found"
-            )
+            raise KBIndexContractError("invalid_selector", f"knowledge base '{kid}' was not found")
         selected_profile_id = str(kb_row[0] or "").strip()
         member_rows = conn.execute(
             """
@@ -107,9 +100,7 @@ def _binding_snapshot(
         ).fetchall()
         members = [str(row[0]) for row in member_rows]
         if not members:
-            raise KBIndexContractError(
-                "invalid_selector", "knowledge base has no file membership"
-            )
+            raise KBIndexContractError("invalid_selector", "knowledge base has no file membership")
         requested = sorted(_dedupe(file_urls or ()))
         if file_urls is not None and requested != members:
             raise KBIndexContractError(
@@ -187,14 +178,15 @@ def _binding_snapshot(
                 content = chunk_row[2]
                 if not chunk_id or not isinstance(content, str) or not content:
                     raise KBIndexContractError(
-                        "missing_chunk", f"bound chunk set contains an invalid chunk: {chunk_set_id}"
+                        "missing_chunk",
+                        f"bound chunk set contains an invalid chunk: {chunk_set_id}",
                     )
                 if chunk_id in seen_chunk_ids:
                     continue
                 seen_chunk_ids.add(chunk_id)
-                content_hash = str(chunk_row[3] or "") or hashlib.sha256(
-                    content.encode("utf-8")
-                ).hexdigest()
+                content_hash = (
+                    str(chunk_row[3] or "") or hashlib.sha256(content.encode("utf-8")).hexdigest()
+                )
                 file_chunk_ids.append(chunk_id)
                 file_content_hashes.append(content_hash)
                 chunks.append(
@@ -239,14 +231,17 @@ def _binding_snapshot(
                 for item in files
             ],
         }
-        fingerprint = "bind_" + hashlib.sha256(
-            json.dumps(
-                fingerprint_payload,
-                ensure_ascii=False,
-                sort_keys=True,
-                separators=(",", ":"),
-            ).encode("utf-8")
-        ).hexdigest()
+        fingerprint = (
+            "bind_"
+            + hashlib.sha256(
+                json.dumps(
+                    fingerprint_payload,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ).hexdigest()
+        )
         return {
             "contract_version": 1,
             "kb_id": kid,
@@ -406,16 +401,10 @@ def build_kb_index(
         index_type=str(kb_row[4] or "Flat"),
     )
     index_path = (
-        Path(effective_config.data_dir)
-        / kid
-        / "versions"
-        / index_version_id
-        / "index.faiss"
+        Path(effective_config.data_dir) / kid / "versions" / index_version_id / "index.faiss"
     )
     try:
-        vectors = np.asarray(
-            [valid[str(chunk["chunk_id"])] for chunk in chunks], dtype="float32"
-        )
+        vectors = np.asarray([valid[str(chunk["chunk_id"])] for chunk in chunks], dtype="float32")
         if vectors.shape != (len(chunks), identity.dimension) or not np.isfinite(vectors).all():
             raise ValueError("candidate vector matrix is invalid")
         metadata = [
@@ -438,7 +427,9 @@ def build_kb_index(
             index_path=str(index_path),
         )
         vector_store.add_vectors(vectors, metadata)
-        if int(vector_store.index.ntotal) != len(chunks) or len(vector_store.metadata) != len(chunks):
+        if int(vector_store.index.ntotal) != len(chunks) or len(vector_store.metadata) != len(
+            chunks
+        ):
             raise ValueError("candidate FAISS or metadata count mismatch")
         if [row["vector_ordinal"] for row in vector_store.metadata] != list(range(len(chunks))):
             raise ValueError("candidate vector ordinal mapping is invalid")
@@ -458,7 +449,10 @@ def build_kb_index(
                 "SELECT embedding_identity_key FROM rag_knowledge_bases WHERE kb_id = ?",
                 (kid,),
             ).fetchone()
-            if not current_identity_row or str(current_identity_row[0] or "") != requested_identity_key:
+            if (
+                not current_identity_row
+                or str(current_identity_row[0] or "") != requested_identity_key
+            ):
                 raise KBIndexContractError(
                     "stale_snapshot", "embedding identity changed before commit"
                 )
@@ -570,9 +564,7 @@ def build_kb_index(
                 """,
                 (now, index_version_id, kid),
             )
-            storage.mark_agentic_ready_source_event_for_kb(
-                kb_id=kid, reason="index_committed"
-            )
+            storage.mark_agentic_ready_source_event_for_kb(kb_id=kid, reason="index_committed")
     except KBIndexContractError:
         raise
     except Exception as exc:

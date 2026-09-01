@@ -239,13 +239,11 @@ def test_membership_remove_marks_hard_stale_once(tmp_path: Path) -> None:
         assert state["pending_severity"] == "hard_stale"
         assert state["pending_reasons"] == ["membership_removed"]
         assert state["serving_allowed"] is False
-        remaining_bindings = storage._conn.execute(
-            """
+        remaining_bindings = storage._conn.execute("""
             SELECT kb_id, file_url
             FROM kb_chunk_bindings
             ORDER BY kb_id, file_url
-            """
-        ).fetchall()
+            """).fetchall()
         assert [tuple(row) for row in remaining_bindings] == [
             ("kb-membership", file_urls[2]),
             ("kb-other", file_urls[0]),
@@ -292,69 +290,34 @@ def test_missing_remove_does_not_advance_generation(tmp_path: Path) -> None:
         assert removed == 0
         assert after["event_generation"] == before["event_generation"]
         assert after["pending_reasons"] == before["pending_reasons"]
-        assert tuple(
-            storage._conn.execute(
-                """
+        assert (
+            tuple(
+                storage._conn.execute(
+                    """
                 SELECT file_count, chunk_count, updated_at
                 FROM rag_knowledge_bases
                 WHERE kb_id = ?
                 """,
-                ("kb-membership",),
-            ).fetchone()
-        ) == stats_before
-        assert storage._conn.execute(
-            """
-            SELECT COUNT(*)
-            FROM kb_chunk_bindings
-            WHERE kb_id = ? AND file_url = ? AND chunk_set_id = ?
-            """,
-            (
-                "kb-membership",
-                file_urls[1],
-                orphan_binding["chunk_set_id"],
-            ),
-        ).fetchone()[0] == 1
-    finally:
-        storage.close()
-
-
-def test_mixed_remove_stales_composition_without_mutating_immutable_index(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    storage, manager, file_urls = _manager_with_files(tmp_path)
-    try:
-        manager.add_files_to_kb("kb-membership", [file_urls[0]])
-        _bind_file(storage, kb_id="kb-membership", file_url=file_urls[0])
-        orphan_binding = _bind_file(
-            storage,
-            kb_id="kb-membership",
-            file_url=file_urls[1],
+                    ("kb-membership",),
+                ).fetchone()
+            )
+            == stats_before
         )
-        soft_deleted_urls: list[str] = []
-
-        def capture_soft_delete(_kb, removed_urls: list[str]) -> dict[str, int]:
-            soft_deleted_urls.extend(removed_urls)
-            return {"removed_vectors": 0}
-
-        monkeypatch.setattr(manager, "_soft_delete_file_vectors", capture_soft_delete)
-
-        removed = manager.remove_files_from_kb("kb-membership", file_urls)
-
-        assert removed == 1
-        assert soft_deleted_urls == []
-        assert storage._conn.execute(
-            """
+        assert (
+            storage._conn.execute(
+                """
             SELECT COUNT(*)
             FROM kb_chunk_bindings
             WHERE kb_id = ? AND file_url = ? AND chunk_set_id = ?
             """,
-            (
-                "kb-membership",
-                file_urls[1],
-                orphan_binding["chunk_set_id"],
-            ),
-        ).fetchone()[0] == 1
+                (
+                    "kb-membership",
+                    file_urls[1],
+                    orphan_binding["chunk_set_id"],
+                ),
+            ).fetchone()[0]
+            == 1
+        )
     finally:
         storage.close()
 
@@ -513,7 +476,9 @@ def test_source_mark_failure_rolls_back_removal_count_and_generation(
         storage.close()
 
 
-def test_membership_events_preserve_publication_pointers_and_serving_manifest(tmp_path: Path) -> None:
+def test_membership_events_preserve_publication_pointers_and_serving_manifest(
+    tmp_path: Path,
+) -> None:
     storage, manager, file_urls = _manager_with_files(tmp_path)
     try:
         previous = storage.record_agentic_ready_publication(
@@ -578,10 +543,13 @@ def test_membership_events_preserve_publication_pointers_and_serving_manifest(tm
         )
         assert after["active_publication_id"] == before["active_publication_id"]
         assert after["previous_publication_id"] == before["previous_publication_id"]
-        assert storage.get_agentic_ready_manifest(
-            kb_id="kb-membership",
-            profile="general",
-        ) == manifest_before
+        assert (
+            storage.get_agentic_ready_manifest(
+                kb_id="kb-membership",
+                profile="general",
+            )
+            == manifest_before
+        )
 
         manager.remove_files_from_kb("kb-membership", [file_urls[0]])
 
@@ -591,9 +559,12 @@ def test_membership_events_preserve_publication_pointers_and_serving_manifest(tm
         )
         assert after_removal["active_publication_id"] == before["active_publication_id"]
         assert after_removal["previous_publication_id"] == before["previous_publication_id"]
-        assert storage.get_agentic_ready_manifest(
-            kb_id="kb-membership",
-            profile="general",
-        ) == manifest_before
+        assert (
+            storage.get_agentic_ready_manifest(
+                kb_id="kb-membership",
+                profile="general",
+            )
+            == manifest_before
+        )
     finally:
         storage.close()

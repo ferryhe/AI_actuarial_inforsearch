@@ -30,7 +30,7 @@
   updates can only shrink the baseline.
 - Classified the initial baseline: 9 TypeScript files, 5 Python modules, 28
   TypeScript symbols, and 93 Python symbols. Reviewed cleanups have since
-  reduced the Python side to 1 module and 88 symbols.
+  reduced the Python side to 1 module and 72 symbols.
 - Added the requested unified quality gate: full pytest plus non-mutating
   Black, isort, and Pylint checks, with an exact shrink-only compatibility
   baseline for existing formatter/linter debt. Pytest failures cannot be
@@ -108,13 +108,22 @@
   remain. `QueryRouter.select_kbs` remains because its source explicitly marks
   it as a backward-compatible alias, and the public configuration fields remain
   part of the configuration contract.
+- The twelfth completed directory is `ai_actuarial/rag/`. All ten modules have
+  production or test consumers, so no module was deleted. Ten confirmed unused
+  baseline symbols were removed, along with four additional helpers or
+  attributes that exact caller analysis and the cleanup itself showed were
+  unreachable. `RAGConfig.chunk_strategy` remains because YAML, environment,
+  migration, documentation, and tests establish it as a public configuration
+  contract. The one test dedicated to proving the removed
+  `_soft_delete_file_vectors` helper was not called was deleted with that
+  helper; all retained RAG behavior remains covered.
 
 ## Acceptance results
 
-- Unified quality gate: passed. Pytest reported 1,881 passed and 10 skipped;
+- Unified quality gate: passed. Pytest reported 1,880 passed and 10 skipped;
   Black, isort, and Pylint exactly matched the current reviewed baselines at
-  168 files, 107 files, and 19 error identities respectively.
-- Dead-code gate: passed with 9/1 file findings and 28/82 symbol findings,
+  159 files, 99 files, and 19 error identities respectively.
+- Dead-code gate: passed with 9/1 file findings and 28/72 symbol findings,
   exactly matching the classified baseline and with no 100%-confidence
   Vulture finding.
 - Dead-code and quality-gate unit tests: 11 passed as part of the full suite.
@@ -259,6 +268,17 @@
   107 isort files, and 19 Pylint error identities, with zero new or stale
   entries. The dead-code gate shrank exactly from 9/1 files and 28/88 symbols
   to 9/1 files and 28/82 symbols.
+- Remote commit `675c2b5` contains the exact `ai_actuarial/chatbot/` cleanup.
+  CI run 33530581036 passed all five jobs, including the 8m02s Linux quality
+  gate, and no new Review or Copilot comment was added.
+- `ai_actuarial/rag/` compiled successfully and passed Black, isort, and a
+  zero-error focused Pylint scan. The 24 directly importing test files completed
+  with 646 passed and 8 platform skips after the one obsolete test was removed.
+- The complete pytest suite passed after the `rag/` cleanup with 1,880 tests
+  and 10 platform skips. The full static gate passed at 159 Black files, 99
+  isort files, and 19 Pylint error identities, with zero new or stale entries.
+  The dead-code gate shrank exactly from 9/1 files and 28/82 symbols to 9/1
+  files and 28/72 symbols.
 
 ## Files changed
 
@@ -308,6 +328,11 @@
   private helper, reclassified the explicit `select_kbs` compatibility alias,
   and removed the matching dead-code and formatter baseline entries. No test
   file or test case was removed because none corresponded to the deleted code.
+- Twelfth historical directory cleanup: formatted the nine historical Python
+  files under `ai_actuarial/rag/`, removed ten reviewed dead-code baseline
+  symbols plus four exact or cascading orphans, deleted the single test tied to
+  the removed immutable-index helper, and removed the matching dead-code and
+  formatter baseline entries.
 
 ## Working tree notes
 
@@ -324,8 +349,8 @@
 
 ## Recommended next action
 
-- Push the path-specific `ai_actuarial/chatbot/` cleanup to PR #318, verify its
-  CI and review feedback, then continue with another independent historical
+- Push the path-specific `ai_actuarial/rag/` cleanup to PR #318, verify its CI
+  and review feedback, then continue with another independent historical
   directory. Keep the final root-level orphan
   `ai_actuarial/pipeline_config.py` for a separately verified cleanup. Merge
   only after explicit authorization.

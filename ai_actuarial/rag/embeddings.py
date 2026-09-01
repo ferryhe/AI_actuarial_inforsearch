@@ -12,13 +12,13 @@ Features:
 - Embedding caching
 """
 
-import time
 import hashlib
 import json
+import time
 from pathlib import Path
 from typing import List, Optional
 
-from openai import OpenAI, APITimeoutError, RateLimitError, APIError
+from openai import APIError, APITimeoutError, OpenAI, RateLimitError
 
 from ai_actuarial.ai_runtime import infer_embedding_dimension, is_embedding_provider_supported
 from ai_actuarial.rag.config import RAGConfig
@@ -27,46 +27,46 @@ from ai_actuarial.rag.exceptions import EmbeddingException
 
 class EmbeddingCache:
     """Simple file-based cache for embeddings."""
-    
+
     def __init__(self, cache_dir: str):
         """
         Initialize embedding cache.
-        
+
         Args:
             cache_dir: Directory to store cached embeddings
         """
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
-    
+
     def _get_cache_key(self, text: str, model: str) -> str:
         """Generate cache key for text and model."""
         content = f"{model}:{text}"
         return hashlib.sha256(content.encode()).hexdigest()
-    
+
     def get(self, text: str, model: str) -> Optional[List[float]]:
         """Retrieve cached embedding."""
         cache_key = self._get_cache_key(text, model)
         cache_file = self.cache_dir / f"{cache_key}.json"
-        
+
         if cache_file.exists():
             try:
-                with open(cache_file, 'r') as f:
+                with open(cache_file, "r") as f:
                     data = json.load(f)
-                    return data['embedding']
+                    return data["embedding"]
             except (json.JSONDecodeError, KeyError, IOError):
                 # Cache corrupted, ignore
                 return None
-        
+
         return None
-    
+
     def set(self, text: str, model: str, embedding: List[float]) -> None:
         """Store embedding in cache."""
         cache_key = self._get_cache_key(text, model)
         cache_file = self.cache_dir / f"{cache_key}.json"
-        
+
         try:
-            with open(cache_file, 'w') as f:
-                json.dump({'embedding': embedding}, f)
+            with open(cache_file, "w") as f:
+                json.dump({"embedding": embedding}, f)
         except IOError:
             # Failed to cache, not critical
             pass
@@ -75,10 +75,10 @@ class EmbeddingCache:
 class EmbeddingGenerator:
     """
     Generate embeddings for text chunks.
-    
+
     Supports multiple providers with automatic fallback and caching.
     """
-    
+
     def __init__(
         self,
         config: Optional[RAGConfig] = None,
@@ -87,12 +87,16 @@ class EmbeddingGenerator:
     ):
         """
         Initialize embedding generator.
-        
+
         Args:
             config: RAG configuration (defaults to config-based config)
         """
         self.config = config or RAGConfig.from_config(storage=storage)
-        self.cache = EmbeddingCache(f"{self.config.data_dir}/embeddings_cache") if self.config.embedding_cache_enabled else None
+        self.cache = (
+            EmbeddingCache(f"{self.config.data_dir}/embeddings_cache")
+            if self.config.embedding_cache_enabled
+            else None
+        )
 
         self.provider = str(self.config.embedding_provider or "").strip().lower()
         if not is_embedding_provider_supported(self.provider):
@@ -102,7 +106,11 @@ class EmbeddingGenerator:
         if self.provider != "local":
             api_key = self.config.api_key or self.config.openai_api_key
             if not api_key:
-                credential_id = self.config.stable_credential_id or self.config.credential_id or "(default credential)"
+                credential_id = (
+                    self.config.stable_credential_id
+                    or self.config.credential_id
+                    or "(default credential)"
+                )
                 reason = self.config.credential_error or "missing_api_key"
                 raise EmbeddingException(
                     "API key required for embedding provider "
@@ -124,32 +132,32 @@ class EmbeddingGenerator:
             self.openai_client = OpenAI(**client_kwargs)
         else:
             self.openai_client = None
-        
+
         # Lazy-load local model if needed
         self._local_model = None
-    
+
     def generate_embeddings(self, texts: List[str]) -> List[List[float]]:
         """
         Generate embeddings for a list of texts.
-        
+
         Args:
             texts: List of text strings to embed
-            
+
         Returns:
             List of embedding vectors
-            
+
         Raises:
             EmbeddingException: If embedding generation fails
         """
         if not texts:
             return []
-        
+
         # Check cache first
         if self.cache:
             cached_embeddings = []
             uncached_indices = []
             uncached_texts = []
-            
+
             for i, text in enumerate(texts):
                 cached = self.cache.get(text, self.config.embedding_model)
                 if cached:
@@ -157,27 +165,27 @@ class EmbeddingGenerator:
                 else:
                     uncached_indices.append(i)
                     uncached_texts.append(text)
-            
+
             # Generate embeddings for uncached texts
             if uncached_texts:
                 if self.provider != "local":
                     new_embeddings = self._generate_openai_embeddings(uncached_texts)
                 else:
                     new_embeddings = self._generate_local_embeddings(uncached_texts)
-                
+
                 # Cache new embeddings
                 for text, embedding in zip(uncached_texts, new_embeddings):
                     self.cache.set(text, self.config.embedding_model, embedding)
             else:
                 new_embeddings = []
-            
+
             # Combine cached and new embeddings in original order
             all_embeddings = [None] * len(texts)
             for i, emb in cached_embeddings:
                 all_embeddings[i] = emb
             for i, emb in zip(uncached_indices, new_embeddings):
                 all_embeddings[i] = emb
-            
+
             return all_embeddings
         else:
             # No caching
@@ -206,48 +214,47 @@ class EmbeddingGenerator:
         if not embeddings:
             raise EmbeddingException("Failed to generate embedding for input text")
         return embeddings[0]
-    
+
     def _generate_openai_embeddings(self, texts: List[str]) -> List[List[float]]:
         """
         Generate embeddings using OpenAI API with batching and retries.
-        
+
         Args:
             texts: List of texts to embed
-            
+
         Returns:
             List of embedding vectors
         """
         all_embeddings = []
         batch_size = self.config.embedding_batch_size
-        
+
         # Process in batches
         for i in range(0, len(texts), batch_size):
-            batch = texts[i:i + batch_size]
+            batch = texts[i : i + batch_size]
             batch_embeddings = self._generate_openai_batch_with_retry(batch)
             all_embeddings.extend(batch_embeddings)
-        
+
         return all_embeddings
-    
+
     def _generate_openai_batch_with_retry(self, texts: List[str]) -> List[List[float]]:
         """
         Generate embeddings for a batch with retry logic.
-        
+
         Args:
             texts: Batch of texts to embed
-            
+
         Returns:
             List of embedding vectors
         """
         max_retries = self.config.openai_max_retries
         base_delay = 1.0
-        
+
         for attempt in range(max_retries):
             try:
                 response = self.openai_client.embeddings.create(
-                    model=self.config.embedding_model,
-                    input=texts
+                    model=self.config.embedding_model, input=texts
                 )
-                
+
                 items = list(response.data)
                 if len(items) != len(texts):
                     raise EmbeddingException("provider_count_mismatch")
@@ -258,47 +265,50 @@ class EmbeddingGenerator:
                         raise EmbeddingException("provider_item_order_mismatch")
                     embeddings.append(item.embedding)
                 return embeddings
-                
+
             except RateLimitError as e:
                 if attempt < max_retries - 1:
                     # Exponential backoff
-                    delay = base_delay * (2 ** attempt)
+                    delay = base_delay * (2**attempt)
                     time.sleep(delay)
                 else:
-                    raise EmbeddingException(f"Rate limit exceeded after {max_retries} retries: {e}")
-            
+                    raise EmbeddingException(
+                        f"Rate limit exceeded after {max_retries} retries: {e}"
+                    )
+
             except APITimeoutError as e:
                 if attempt < max_retries - 1:
-                    delay = base_delay * (2 ** attempt)
+                    delay = base_delay * (2**attempt)
                     time.sleep(delay)
                 else:
                     raise EmbeddingException(f"API timeout after {max_retries} retries: {e}")
-            
+
             except APIError as e:
                 if attempt < max_retries - 1:
-                    delay = base_delay * (2 ** attempt)
+                    delay = base_delay * (2**attempt)
                     time.sleep(delay)
                 else:
                     raise EmbeddingException(f"API error after {max_retries} retries: {e}")
-            
+
             except Exception as e:
                 raise EmbeddingException(f"Unexpected error generating embeddings: {e}")
-        
+
         raise EmbeddingException("Failed to generate embeddings")
-    
+
     def _generate_local_embeddings(self, texts: List[str]) -> List[List[float]]:
         """
         Generate embeddings using local sentence-transformers model.
-        
+
         Args:
             texts: List of texts to embed
-            
+
         Returns:
             List of embedding vectors
         """
         if self._local_model is None:
             try:
                 from sentence_transformers import SentenceTransformer
+
                 # Use a multilingual model for Chinese + English support
                 model_name = "paraphrase-multilingual-mpnet-base-v2"
                 self._local_model = SentenceTransformer(model_name)
@@ -307,18 +317,18 @@ class EmbeddingGenerator:
                     "sentence-transformers not installed. "
                     "Install with: pip install sentence-transformers"
                 )
-        
+
         try:
             embeddings = self._local_model.encode(texts, convert_to_numpy=True)
             # Convert numpy arrays to lists
             return [emb.tolist() for emb in embeddings]
         except Exception as e:
             raise EmbeddingException(f"Local embedding generation failed: {e}")
-    
+
     def get_embedding_dimension(self) -> int:
         """
         Get the dimension of embeddings for the current model.
-        
+
         Returns:
             Embedding dimension
         """
@@ -334,32 +344,3 @@ class EmbeddingGenerator:
             # Local model - generate test embedding
             test_emb = self.generate_embeddings(["test"])
             return len(test_emb[0]) if test_emb else 768  # Default for most local models
-
-
-def retry_with_exponential_backoff(
-    max_retries: int = 3,
-    initial_delay: float = 1.0,
-    max_delay: float = 60.0
-):
-    """
-    Decorator for retry logic with exponential backoff.
-    
-    Args:
-        max_retries: Maximum number of retry attempts
-        initial_delay: Initial delay in seconds
-        max_delay: Maximum delay in seconds
-    """
-    def decorator(func):
-        def wrapper(*args, **kwargs):
-            for attempt in range(max_retries):
-                try:
-                    return func(*args, **kwargs)
-                except (APITimeoutError, RateLimitError, APIError) as e:
-                    if attempt < max_retries - 1:
-                        delay = min(initial_delay * (2 ** attempt), max_delay)
-                        time.sleep(delay)
-                    else:
-                        raise EmbeddingException(f"Failed after {max_retries} retries: {e}")
-            return None
-        return wrapper
-    return decorator
