@@ -45,6 +45,9 @@
   publication slots remain atomic while failed rollback audit fields advance,
   staging is reverified immediately after digesting, and optional marker
   Pylint findings are deterministically suppressed at their exact call sites.
+- Copilot's one actionable review finding was confirmed and fixed: the
+  synthetic commit-failure context manager now executes the transaction body,
+  raises during exit, and delegates rollback to the real transaction manager.
 
 ## Acceptance results
 
@@ -69,6 +72,9 @@
 - Post-CI focused regression: 6 passed and 5 Windows symlink skips. Static
   baselines now match exactly at 213 Black files, 142 isort files, and 22
   Pylint identities; the dead-code gate remains exact.
+- After the Copilot fix, its focused regression passed, then the complete
+  unified quality gate passed again with 1,880 passed and 10 skipped; the
+  dead-code gate also remained exact at 9/5 files and 28/93 symbols.
 
 ## Files changed
 
