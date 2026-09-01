@@ -553,7 +553,9 @@
   database activity. Focused tests passed 319/7, the full suite passed 1857/10,
   independent semantic and mechanical reviews found no issues, and both the
   dead-code and quality baselines are now completely empty: 0 files/0 symbols
-  and 0/0/0 respectively.
+  and 0/0/0 respectively. All five remote CI jobs passed. PR #318 is clean and
+  mergeable; the only review thread was an older Copilot finding already fixed
+  and acknowledged before this final cleanup.
 
 ## Working tree notes
 
@@ -570,6 +572,5 @@
 
 ## Recommended next action
 
-- Commit and push the final root `tests/` cleanup to PR #318, verify all remote
-  CI jobs and review feedback, then report the completed directory-by-directory
-  cleanup. Merge only after explicit authorization.
+- Report the completed directory-by-directory cleanup and leave the clean,
+  mergeable PR #318 open. Merge only after explicit authorization.
