@@ -1,6 +1,5 @@
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1] / "client" / "src"
 SETTINGS_TSX = ROOT / "pages" / "Settings.tsx"
 I18N_TS = ROOT / "hooks" / "use-i18n.ts"
@@ -22,7 +21,7 @@ def test_settings_model_routing_does_not_round_trip_failed_credentials():
 
     assert "function credentialUsable" in src
     assert "credential.decrypt_ok === false" in src
-    assert "routing[functionName]?.credential_error ? \"\"" in src
+    assert 'routing[functionName]?.credential_error ? ""' in src
     assert "credentialUsable(credential)" in src
 
 
@@ -30,12 +29,18 @@ def test_settings_model_routing_keeps_embeddings_editable_with_rebuild_warning()
     src = SETTINGS_TSX.read_text(encoding="utf-8")
     i18n = I18N_TS.read_text(encoding="utf-8")
 
-    assert '{ key: "embeddings", label: t("settings.routing_embeddings"), capability: "embeddings" }' in src
-    assert 'data-testid={`button-edit-model-${card.key}`}' in src
-    assert 'data-testid={`select-model-${card.key}`}' in src
-    assert 'response.rebuild_required' in src
+    assert (
+        '{ key: "embeddings", label: t("settings.routing_embeddings"), capability: "embeddings" }'
+        in src
+    )
+    assert "data-testid={`button-edit-model-${card.key}`}" in src
+    assert "data-testid={`select-model-${card.key}`}" in src
+    assert "response.rebuild_required" in src
     assert 'data-testid="routing-warning-reindex"' in src
-    assert '"settings.routing_saved_reindex_required": "AI routing saved; embeddings changed. Rebuild affected KB indexes before using them in Chat."' in i18n
+    assert (
+        '"settings.routing_saved_reindex_required": "AI routing saved; embeddings changed. Rebuild affected KB indexes before using them in Chat."'
+        in i18n
+    )
 
 
 def test_settings_system_flags_are_yaml_backed_controls():
@@ -67,7 +72,9 @@ def test_settings_categories_preserve_ai_keywords_alias():
 
 def test_settings_exposes_markdown_conversion_as_independent_tab():
     src = SETTINGS_TSX.read_text(encoding="utf-8")
-    tab_src = (ROOT / "pages" / "settings" / "MarkdownConversionTab.tsx").read_text(encoding="utf-8")
+    tab_src = (ROOT / "pages" / "settings" / "MarkdownConversionTab.tsx").read_text(
+        encoding="utf-8"
+    )
     i18n = I18N_TS.read_text(encoding="utf-8")
 
     assert 'testId="tab-markdown-conversion"' in src
@@ -88,9 +95,12 @@ def test_settings_exposes_provider_maintenance_actions():
 
     assert '"/api/config/provider-credentials/import-env"' in src
     assert '"/api/config/provider-credentials/re-encrypt"' in src
-    assert 'apiGet<{ available: Record<string, AvailableModel[]> }>("/api/config/model-catalog?refresh=true")' in src
-    assert 'apiDelete(`/api/config/provider-credentials/${providerId}?category=search`)' in src
+    assert (
+        'apiGet<{ available: Record<string, AvailableModel[]> }>("/api/config/model-catalog?refresh=true")'
+        in src
+    )
+    assert "apiDelete(`/api/config/provider-credentials/${providerId}?category=search`)" in src
     assert 'data-testid="button-import-provider-env"' in src
     assert 'data-testid="button-refresh-model-catalog"' in src
     assert 'data-testid="button-reencrypt-credentials"' in src
-    assert 'disabled={!oldEncryptionKey.trim() || maintenanceBusy !== null}' in src
+    assert "disabled={!oldEncryptionKey.trim() || maintenanceBusy !== null}" in src

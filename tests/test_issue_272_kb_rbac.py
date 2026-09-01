@@ -48,9 +48,7 @@ def _operator_client(app, seed):
     return op
 
 
-def test_kb_rbac_list_projects_diagnostics_for_customers(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_kb_rbac_list_projects_diagnostics_for_customers(tmp_path: Path, monkeypatch) -> None:
     client, app, seed = _build_test_client(tmp_path, monkeypatch)
     created = client.post(
         "/api/rag/knowledge-bases",
@@ -84,9 +82,7 @@ def test_kb_rbac_list_projects_diagnostics_for_customers(
     assert "current_embeddings" in op_body
 
 
-def test_kb_rbac_detail_and_files_project_for_customers(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_kb_rbac_detail_and_files_project_for_customers(tmp_path: Path, monkeypatch) -> None:
     client, app, seed = _build_test_client(tmp_path, monkeypatch)
     created = client.post(
         "/api/rag/knowledge-bases",
@@ -136,17 +132,22 @@ def test_kb_rbac_manifest_requires_tasks_run(tmp_path: Path, monkeypatch) -> Non
     assert created.status_code == 201, created.text
 
     anon, registered = _customer_clients(app, seed)
-    assert anon.get(
-        "/api/rag/knowledge-bases/kb-rbac-manifest/agentic-ready-manifest"
-    ).status_code == 401
-    assert registered.get(
-        "/api/rag/knowledge-bases/kb-rbac-manifest/agentic-ready-manifest"
-    ).status_code == 403
+    assert (
+        anon.get("/api/rag/knowledge-bases/kb-rbac-manifest/agentic-ready-manifest").status_code
+        == 401
+    )
+    assert (
+        registered.get(
+            "/api/rag/knowledge-bases/kb-rbac-manifest/agentic-ready-manifest"
+        ).status_code
+        == 403
+    )
 
     op = _operator_client(app, seed)
-    assert op.get(
-        "/api/rag/knowledge-bases/kb-rbac-manifest/agentic-ready-manifest"
-    ).status_code == 200
+    assert (
+        op.get("/api/rag/knowledge-bases/kb-rbac-manifest/agentic-ready-manifest").status_code
+        == 200
+    )
 
 
 def test_chat_knowledge_bases_projects_diagnostics_for_customers(

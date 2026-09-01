@@ -7,22 +7,33 @@ import yaml
 
 from ai_actuarial.api.services import ops_write as ops_write_service
 from ai_actuarial.task_runtime import NativeTaskRuntime
-from ai_actuarial.web_listening_rule import generate_draft_rule, materialize_rule, rule_to_yaml, validate_rule
+from ai_actuarial.web_listening_rule import (
+    generate_draft_rule,
+    materialize_rule,
+    rule_to_yaml,
+    validate_rule,
+)
 from tests.test_fastapi_ops_read_endpoints import _build_test_client, _patch_available_models
-from tests.test_fastapi_ops_write_endpoints import _BridgeRecorder, _install_bridge, _install_public_dns_resolver
+from tests.test_fastapi_ops_write_endpoints import (
+    _BridgeRecorder,
+    _install_bridge,
+    _install_public_dns_resolver,
+)
 
 
 def test_web_listening_rule_draft_validate_and_materialize_helpers(monkeypatch) -> None:
     _install_public_dns_resolver(monkeypatch, "example.com")
-    rule = generate_draft_rule(website_url="https://example.com/research", goal="Monitor actuarial AI research reports")
+    rule = generate_draft_rule(
+        website_url="https://example.com/research", goal="Monitor actuarial AI research reports"
+    )
 
     assert rule.schema_version == "web-listening-agent-rule.v1"
     assert rule.acquisition_profile.name == "Web Listening: example.com"
     assert rule.acquisition_profile.tools == ["crawler", "search"]
     assert rule.acquisition_profile.content_types == ["file", "webpage"]
-    assert rule.section_selection.content_selector == "main"
-    assert rule.section_selection.allow_url_patterns == ["/research"]
-    assert "actuarial" in rule.monitor_scope.keywords
+    assert getattr(rule.section_selection, "content_selector") == "main"
+    assert getattr(rule.section_selection, "allow_url_patterns") == ["/research"]
+    assert "actuarial" in getattr(rule.monitor_scope, "keywords")
 
     normalized, errors, warnings = validate_rule(rule_to_yaml(rule))
     assert errors == []
@@ -41,7 +52,6 @@ def test_web_listening_rule_draft_validate_and_materialize_helpers(monkeypatch) 
     assert materialized.scheduled_task["params"]["name"] == "Scheduled: Web Listening: example.com"
 
 
-
 def test_web_listening_rule_infers_query_for_selected_content_type() -> None:
     webpage_rule = generate_draft_rule(
         website_url="https://example.com/articles",
@@ -49,7 +59,9 @@ def test_web_listening_rule_infers_query_for_selected_content_type() -> None:
         tools=["search"],
         content_types=["webpage"],
     )
-    assert webpage_rule.monitor_scope.queries == ["site:example.com Monitor actuarial AI articles"]
+    assert getattr(webpage_rule.monitor_scope, "queries") == [
+        "site:example.com Monitor actuarial AI articles"
+    ]
     webpage_site = materialize_rule(webpage_rule).site
     assert webpage_site["collect_linked_files"] is False
     assert webpage_site["collect_page_content"] is True
@@ -60,15 +72,20 @@ def test_web_listening_rule_infers_query_for_selected_content_type() -> None:
         tools=["search"],
         content_types=["file"],
     )
-    assert file_rule.monitor_scope.queries == [
+    assert getattr(file_rule.monitor_scope, "queries") == [
         "site:example.com Monitor actuarial AI reports filetype:pdf"
     ]
+
 
 def test_web_listening_rule_validation_reports_errors(monkeypatch) -> None:
     rule, errors, warnings = validate_rule(
         {
             "schema_version": "web-listening-agent-rule.v1",
-            "acquisition_profile": {"name": "Bad", "website_url": "ftp://example.com", "goal": "AI"},
+            "acquisition_profile": {
+                "name": "Bad",
+                "website_url": "ftp://example.com",
+                "goal": "AI",
+            },
             "monitor_task": {"name": "Bad Monitor", "schedule_interval": "hourly"},
         }
     )
@@ -188,13 +205,17 @@ def test_web_listening_rule_routes_materialize_idempotently(tmp_path: Path, monk
     rule["section_selection"]["allow_url_patterns"] = ["/insights", "/globalassets/"]
     rule["monitor_scope"]["exclude_prefixes"] = ["archive_"]
 
-    validation = client.post("/api/web-listening/rules/validate", json={"rule": rule}, headers=headers)
+    validation = client.post(
+        "/api/web-listening/rules/validate", json={"rule": rule}, headers=headers
+    )
     assert validation.status_code == 200, validation.text
     validation_body = validation.json()
     assert validation_body["valid"] is True
     assert validation_body["materialized_config"]["site"]["max_pages"] == 12
 
-    first = client.post("/api/web-listening/rules/materialize", json={"rule": rule}, headers=headers)
+    first = client.post(
+        "/api/web-listening/rules/materialize", json={"rule": rule}, headers=headers
+    )
     assert first.status_code == 200, first.text
     first_body = first.json()
     assert first_body["success"] is True
@@ -212,7 +233,11 @@ def test_web_listening_rule_routes_materialize_idempotently(tmp_path: Path, monk
     backup_names_after_first = {path.name for path in backup_dir.glob("sites_*.yaml")}
     config_bytes_after_first = config_path.read_bytes()
     recorder.last_site_config = None
-    second = client.post("/api/web-listening/rules/materialize", json={"rule_yaml": first_body["yaml"]}, headers=headers)
+    second = client.post(
+        "/api/web-listening/rules/materialize",
+        json={"rule_yaml": first_body["yaml"]},
+        headers=headers,
+    )
     assert second.status_code == 200, second.text
     second_body = second.json()
     assert second_body["updated"] == {"site": False, "scheduled_task": False}
@@ -228,7 +253,11 @@ def test_web_listening_rule_routes_materialize_idempotently(tmp_path: Path, monk
 
     written = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
     matching_sites = [site for site in written["sites"] if site["name"] == "Rules Example Insights"]
-    matching_tasks = [task for task in written["scheduled_tasks"] if task["name"] == "Rules Example Insights Monitor"]
+    matching_tasks = [
+        task
+        for task in written["scheduled_tasks"]
+        if task["name"] == "Rules Example Insights Monitor"
+    ]
     assert len(matching_sites) == 1
     assert len(matching_tasks) == 1
     site = matching_sites[0]
@@ -249,7 +278,9 @@ def test_web_listening_rule_routes_materialize_idempotently(tmp_path: Path, monk
 
     read_back = client.get("/api/config/sites", headers=headers)
     assert read_back.status_code == 200, read_back.text
-    read_site = next(site for site in read_back.json()["sites"] if site["name"] == "Rules Example Insights")
+    read_site = next(
+        site for site in read_back.json()["sites"] if site["name"] == "Rules Example Insights"
+    )
     assert read_site["collect_page_content"] is True
     assert read_site["collect_linked_files"] is True
     assert read_site["acquisition_tools"] == ["crawler", "search"]
@@ -260,13 +291,17 @@ def test_web_listening_rule_routes_materialize_idempotently(tmp_path: Path, monk
     read_tasks = client.get("/api/scheduled-tasks", headers=headers)
     assert read_tasks.status_code == 200, read_tasks.text
     read_task = next(
-        task for task in read_tasks.json()["tasks"] if task["name"] == "Rules Example Insights Monitor"
+        task
+        for task in read_tasks.json()["tasks"]
+        if task["name"] == "Rules Example Insights Monitor"
     )
     assert first_body["resources"]["scheduled_task"]["config"] == read_task
     assert second_body["resources"]["scheduled_task"]["config"] == read_task
 
 
-def test_web_listening_materialize_reports_partial_resource_changes(tmp_path: Path, monkeypatch) -> None:
+def test_web_listening_materialize_reports_partial_resource_changes(
+    tmp_path: Path, monkeypatch
+) -> None:
     _patch_available_models(monkeypatch)
     _install_public_dns_resolver(monkeypatch, "partial.example")
     client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
@@ -333,7 +368,9 @@ def test_web_listening_materialize_reports_partial_resource_changes(tmp_path: Pa
 
         assert response.status_code == 200, f"{label}: {response.text}"
         body = response.json()
-        assert {key: value["status"] for key, value in body["resources"].items()} == expected_statuses
+        assert {
+            key: value["status"] for key, value in body["resources"].items()
+        } == expected_statuses
         assert body["updated"] == {
             "site": expected_statuses["site"] == "updated",
             "scheduled_task": expected_statuses["scheduled_task"] == "updated",
@@ -341,7 +378,9 @@ def test_web_listening_materialize_reports_partial_resource_changes(tmp_path: Pa
         assert body["no_op"] is False
         assert body["backup"] not in before_backups
         assert (backup_dir / body["backup"]).exists()
-        assert len({path.name for path in backup_dir.glob("sites_*.yaml")}) == len(before_backups) + 1
+        assert (
+            len({path.name for path in backup_dir.glob("sites_*.yaml")}) == len(before_backups) + 1
+        )
         assert len(write_calls) == before_write_count + 1
         assert recorder.last_site_config is not None
 

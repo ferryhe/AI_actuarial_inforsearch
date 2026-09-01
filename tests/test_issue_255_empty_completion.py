@@ -5,9 +5,9 @@ from copy import deepcopy
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-import pytest
 import httpx
 import openai
+import pytest
 
 from ai_actuarial.chatbot.config import ChatbotConfig
 from ai_actuarial.chatbot.exceptions import LLMException
@@ -329,7 +329,10 @@ def test_transient_empty_exhausts_existing_attempt_ceiling(mock_openai: Mock) ->
     ("response", "message"),
     [
         (_response(None, refusal="I cannot help"), "LLM response was refused"),
-        (_response(None, finish_reason="content_filter"), "LLM response was blocked by content filtering"),
+        (
+            _response(None, finish_reason="content_filter"),
+            "LLM response was blocked by content filtering",
+        ),
     ],
 )
 @patch("ai_actuarial.chatbot.llm.openai.OpenAI")
@@ -403,9 +406,7 @@ def test_existing_api_error_retry_behavior_is_preserved(mock_openai: Mock) -> No
         _response("success after API error"),
     ]
 
-    assert client.generate([{"role": "user", "content": "test"}]) == (
-        "success after API error"
-    )
+    assert client.generate([{"role": "user", "content": "test"}]) == ("success after API error")
     assert provider_client.chat.completions.create.call_count == 2
 
 

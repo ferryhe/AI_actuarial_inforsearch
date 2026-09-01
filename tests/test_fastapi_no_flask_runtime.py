@@ -24,8 +24,14 @@ def test_fastapi_create_app_starts_without_web_package(tmp_path: Path) -> None:
     temp_root = tmp_path / "runtime-check"
     temp_root.mkdir()
 
-    shutil.copytree(ROOT / "ai_actuarial", temp_root / "ai_actuarial", ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
-    shutil.copytree(ROOT / "config", temp_root / "config", ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+    shutil.copytree(
+        ROOT / "ai_actuarial",
+        temp_root / "ai_actuarial",
+        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+    )
+    shutil.copytree(
+        ROOT / "config", temp_root / "config", ignore=shutil.ignore_patterns("__pycache__", "*.pyc")
+    )
     shutil.rmtree(temp_root / "ai_actuarial" / "web", ignore_errors=True)
 
     script = (
@@ -52,8 +58,14 @@ def test_fastapi_no_flask_runtime_auth_roundtrip(tmp_path: Path) -> None:
     temp_root = tmp_path / "runtime-auth-check"
     temp_root.mkdir()
 
-    shutil.copytree(ROOT / "ai_actuarial", temp_root / "ai_actuarial", ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
-    shutil.copytree(ROOT / "config", temp_root / "config", ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+    shutil.copytree(
+        ROOT / "ai_actuarial",
+        temp_root / "ai_actuarial",
+        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+    )
+    shutil.copytree(
+        ROOT / "config", temp_root / "config", ignore=shutil.ignore_patterns("__pycache__", "*.pyc")
+    )
     shutil.rmtree(temp_root / "ai_actuarial" / "web", ignore_errors=True)
 
     script = (
@@ -80,7 +92,14 @@ def test_fastapi_no_flask_runtime_auth_roundtrip(tmp_path: Path) -> None:
     result = subprocess.run(
         [sys.executable, "-c", script],
         cwd=temp_root,
-        env={**os.environ, **{"PYTHONPATH": str(temp_root), "FASTAPI_SESSION_SECRET": "runtime-auth-secret", "REQUIRE_AUTH": "true"}},
+        env={
+            **os.environ,
+            **{
+                "PYTHONPATH": str(temp_root),
+                "FASTAPI_SESSION_SECRET": "runtime-auth-secret",
+                "REQUIRE_AUTH": "true",
+            },
+        },
         capture_output=True,
         text=True,
         check=False,
@@ -90,12 +109,20 @@ def test_fastapi_no_flask_runtime_auth_roundtrip(tmp_path: Path) -> None:
     assert "ok" in result.stdout
 
 
-def test_fastapi_no_flask_runtime_supports_schedule_reinit_and_file_collection(tmp_path: Path) -> None:
+def test_fastapi_no_flask_runtime_supports_schedule_reinit_and_file_collection(
+    tmp_path: Path,
+) -> None:
     temp_root = tmp_path / "runtime-endpoints-check"
     temp_root.mkdir()
 
-    shutil.copytree(ROOT / "ai_actuarial", temp_root / "ai_actuarial", ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
-    shutil.copytree(ROOT / "config", temp_root / "config", ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+    shutil.copytree(
+        ROOT / "ai_actuarial",
+        temp_root / "ai_actuarial",
+        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+    )
+    shutil.copytree(
+        ROOT / "config", temp_root / "config", ignore=shutil.ignore_patterns("__pycache__", "*.pyc")
+    )
     shutil.rmtree(temp_root / "ai_actuarial" / "web", ignore_errors=True)
 
     script = (
@@ -157,8 +184,14 @@ def test_fastapi_no_flask_runtime_persists_guest_chat_session(tmp_path: Path) ->
     temp_root = tmp_path / "runtime-chat-check"
     temp_root.mkdir()
 
-    shutil.copytree(ROOT / "ai_actuarial", temp_root / "ai_actuarial", ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
-    shutil.copytree(ROOT / "config", temp_root / "config", ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+    shutil.copytree(
+        ROOT / "ai_actuarial",
+        temp_root / "ai_actuarial",
+        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+    )
+    shutil.copytree(
+        ROOT / "config", temp_root / "config", ignore=shutil.ignore_patterns("__pycache__", "*.pyc")
+    )
     shutil.rmtree(temp_root / "ai_actuarial" / "web", ignore_errors=True)
 
     script = (

@@ -2,7 +2,6 @@ import os
 import subprocess
 from pathlib import Path
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CLIENT_ROOT = REPO_ROOT / "client" / "src"
 MARKDOWN_COMPONENT = CLIENT_ROOT / "components" / "MarkdownContent.tsx"
@@ -16,17 +15,17 @@ NPM_COMMAND = "npm.cmd" if os.name == "nt" else "npm"
 def test_shared_markdown_component_has_fixed_safe_contract():
     src = MARKDOWN_COMPONENT.read_text(encoding="utf-8")
 
-    assert 'import ReactMarkdown' in src
+    assert "import ReactMarkdown" in src
     assert 'import remarkGfm from "remark-gfm"' in src
     assert 'import remarkBreaks from "remark-breaks"' in src
     assert "const REMARK_PLUGINS" in src
     assert "const MARKDOWN_COMPONENTS" in src
     assert "getTableAlignmentClass" in src
-    assert 'start={start}' in src
+    assert "start={start}" in src
     assert 'hasGeneratedClass(className, "contains-task-list")' in src
     assert "skipHtml" in src
     assert "urlTransform={transformMarkdownUrl}" in src
-    assert 'disallowedElements={DISALLOWED_ELEMENTS}' in src
+    assert "disallowedElements={DISALLOWED_ELEMENTS}" in src
     assert 'const DISALLOWED_ELEMENTS = ["img"]' in src
     assert "memo(MarkdownContentImpl)" in src
     assert "dangerouslySetInnerHTML" not in src

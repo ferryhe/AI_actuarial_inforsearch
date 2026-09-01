@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from ai_actuarial.embedding_service import EmbeddingIdentity
 from ai_actuarial.collectors.base import CollectionResult
+from ai_actuarial.embedding_service import EmbeddingIdentity
 from ai_actuarial.rag.config import RAGConfig
 from ai_actuarial.rag.kb_index import (
     KBIndexContractError,
@@ -166,9 +166,7 @@ def test_create_kb_defaults_to_current_server_embedding_identity(
         runtime._load_site_config = lambda: {}
         monkeypatch.setattr(
             "ai_actuarial.task_runtime.resolve_kb_bound_chunks",
-            lambda _storage, _kb_id: {
-                "binding_snapshot_fingerprint": "bind-default-identity"
-            },
+            lambda _storage, _kb_id: {"binding_snapshot_fingerprint": "bind-default-identity"},
         )
         payload = runtime._pipeline_kb_index_input("kb-default-identity")
         assert payload["embedding_identity_key"] == identity.embedding_identity_key
@@ -304,8 +302,7 @@ def test_create_kb_index_version_rejects_incomplete_mapping_without_publication(
             chunk_count=2,
         )
         chunk_ids = [
-            str(row["chunk_id"])
-            for row in resolve_kb_bound_chunks(storage, "kb-238")["chunks"]
+            str(row["chunk_id"]) for row in resolve_kb_bound_chunks(storage, "kb-238")["chunks"]
         ]
         previous = storage.create_kb_index_version(
             kb_id="kb-238",
@@ -330,14 +327,20 @@ def test_create_kb_index_version_rejects_incomplete_mapping_without_publication(
                 status="ready",
             )
 
-        assert storage._conn.execute(
-            "SELECT index_version_id FROM kb_ready_index_state WHERE kb_id = ?",
-            ("kb-238",),
-        ).fetchone()[0] == previous["index_version_id"]
-        assert storage._conn.execute(
-            "SELECT COUNT(*) FROM kb_index_versions WHERE kb_id = ?",
-            ("kb-238",),
-        ).fetchone()[0] == 1
+        assert (
+            storage._conn.execute(
+                "SELECT index_version_id FROM kb_ready_index_state WHERE kb_id = ?",
+                ("kb-238",),
+            ).fetchone()[0]
+            == previous["index_version_id"]
+        )
+        assert (
+            storage._conn.execute(
+                "SELECT COUNT(*) FROM kb_index_versions WHERE kb_id = ?",
+                ("kb-238",),
+            ).fetchone()[0]
+            == 1
+        )
     finally:
         storage.close()
 
@@ -378,10 +381,13 @@ def test_stale_snapshot_and_stop_preserve_previous_ready_pointer(tmp_path: Path)
                 stop_check=lambda: True,
             )
         assert stopped.value.code == "build_failure"
-        assert storage._conn.execute(
-            "SELECT index_version_id FROM kb_ready_index_state WHERE kb_id = ?",
-            ("kb-238",),
-        ).fetchone()[0] == first["index_version_id"]
+        assert (
+            storage._conn.execute(
+                "SELECT index_version_id FROM kb_ready_index_state WHERE kb_id = ?",
+                ("kb-238",),
+            ).fetchone()[0]
+            == first["index_version_id"]
+        )
     finally:
         storage.close()
 
@@ -396,9 +402,7 @@ def test_cleanup_retains_removed_file_chunks_referenced_by_immutable_index(
         indexed = build_kb_index(
             storage=storage,
             kb_id="kb-238",
-            expected_binding_snapshot_fingerprint=snapshot[
-                "binding_snapshot_fingerprint"
-            ],
+            expected_binding_snapshot_fingerprint=snapshot["binding_snapshot_fingerprint"],
             embedding_identity_key=identity.embedding_identity_key,
             identity=identity,
             config=manager.config,
@@ -417,26 +421,41 @@ def test_cleanup_retains_removed_file_chunks_referenced_by_immutable_index(
         )
 
         assert cleanup["deleted_chunk_sets"] == 0
-        assert storage._conn.execute(
-            "SELECT index_version_id FROM kb_ready_index_state WHERE kb_id = ?",
-            ("kb-238",),
-        ).fetchone()[0] == indexed["index_version_id"]
-        assert storage._conn.execute(
-            "SELECT status FROM kb_index_versions WHERE index_version_id = ?",
-            (indexed["index_version_id"],),
-        ).fetchone()[0] == "ready"
-        assert storage._conn.execute(
-            "SELECT COUNT(*) FROM kb_index_items WHERE index_version_id = ?",
-            (indexed["index_version_id"],),
-        ).fetchone()[0] == 3
-        assert storage._conn.execute(
-            "SELECT COUNT(*) FROM global_chunks WHERE chunk_set_id = ?",
-            (chunk_set["chunk_set_id"],),
-        ).fetchone()[0] == 3
-        assert storage._conn.execute(
-            "SELECT COUNT(*) FROM chunk_embeddings WHERE chunk_id LIKE ?",
-            (f"{chunk_set['chunk_set_id']}:%",),
-        ).fetchone()[0] == 3
+        assert (
+            storage._conn.execute(
+                "SELECT index_version_id FROM kb_ready_index_state WHERE kb_id = ?",
+                ("kb-238",),
+            ).fetchone()[0]
+            == indexed["index_version_id"]
+        )
+        assert (
+            storage._conn.execute(
+                "SELECT status FROM kb_index_versions WHERE index_version_id = ?",
+                (indexed["index_version_id"],),
+            ).fetchone()[0]
+            == "ready"
+        )
+        assert (
+            storage._conn.execute(
+                "SELECT COUNT(*) FROM kb_index_items WHERE index_version_id = ?",
+                (indexed["index_version_id"],),
+            ).fetchone()[0]
+            == 3
+        )
+        assert (
+            storage._conn.execute(
+                "SELECT COUNT(*) FROM global_chunks WHERE chunk_set_id = ?",
+                (chunk_set["chunk_set_id"],),
+            ).fetchone()[0]
+            == 3
+        )
+        assert (
+            storage._conn.execute(
+                "SELECT COUNT(*) FROM chunk_embeddings WHERE chunk_id LIKE ?",
+                (f"{chunk_set['chunk_set_id']}:%",),
+            ).fetchone()[0]
+            == 3
+        )
     finally:
         storage.close()
 
@@ -453,9 +472,7 @@ def test_queued_ready_input_for_replaced_index_is_stale_snapshot(tmp_path: Path)
         first = build_kb_index(
             storage=storage,
             kb_id="kb-238",
-            expected_binding_snapshot_fingerprint=snapshot[
-                "binding_snapshot_fingerprint"
-            ],
+            expected_binding_snapshot_fingerprint=snapshot["binding_snapshot_fingerprint"],
             embedding_identity_key=identity.embedding_identity_key,
             identity=identity,
             config=manager.config,
@@ -468,9 +485,7 @@ def test_queued_ready_input_for_replaced_index_is_stale_snapshot(tmp_path: Path)
         second = build_kb_index(
             storage=storage,
             kb_id="kb-238",
-            expected_binding_snapshot_fingerprint=snapshot[
-                "binding_snapshot_fingerprint"
-            ],
+            expected_binding_snapshot_fingerprint=snapshot["binding_snapshot_fingerprint"],
             embedding_identity_key=identity.embedding_identity_key,
             identity=identity,
             config=manager.config,
@@ -494,10 +509,13 @@ def test_queued_ready_input_for_replaced_index_is_stale_snapshot(tmp_path: Path)
                     ],
                 },
             )
-        assert storage._conn.execute(
-            "SELECT index_version_id FROM kb_ready_index_state WHERE kb_id = ?",
-            ("kb-238",),
-        ).fetchone()[0] == second["index_version_id"]
+        assert (
+            storage._conn.execute(
+                "SELECT index_version_id FROM kb_ready_index_state WHERE kb_id = ?",
+                ("kb-238",),
+            ).fetchone()[0]
+            == second["index_version_id"]
+        )
     finally:
         storage.close()
 
@@ -513,9 +531,7 @@ def test_runtime_index_stop_finishes_stopped_and_preserves_ready_index(
         first = build_kb_index(
             storage=storage,
             kb_id="kb-238",
-            expected_binding_snapshot_fingerprint=snapshot[
-                "binding_snapshot_fingerprint"
-            ],
+            expected_binding_snapshot_fingerprint=snapshot["binding_snapshot_fingerprint"],
             embedding_identity_key=identity.embedding_identity_key,
             identity=identity,
             config=manager.config,
@@ -541,9 +557,7 @@ def test_runtime_index_stop_finishes_stopped_and_preserves_ready_index(
             {
                 "contract_version": 1,
                 "kb_id": "kb-238",
-                "expected_binding_snapshot_fingerprint": snapshot[
-                    "binding_snapshot_fingerprint"
-                ],
+                "expected_binding_snapshot_fingerprint": snapshot["binding_snapshot_fingerprint"],
                 "embedding_identity_key": identity.embedding_identity_key,
             },
         )
@@ -552,14 +566,20 @@ def test_runtime_index_stop_finishes_stopped_and_preserves_ready_index(
         assert result.success is False
         assert result.metadata == {"kb_id": "kb-238", "stopped": True}
         assert runtime.task_history[-1]["status"] == "stopped"
-        assert storage._conn.execute(
-            "SELECT index_version_id FROM kb_ready_index_state WHERE kb_id = ?",
-            ("kb-238",),
-        ).fetchone()[0] == first["index_version_id"]
-        assert storage._conn.execute(
-            "SELECT COUNT(*) FROM kb_index_versions WHERE kb_id = ?",
-            ("kb-238",),
-        ).fetchone()[0] == 1
+        assert (
+            storage._conn.execute(
+                "SELECT index_version_id FROM kb_ready_index_state WHERE kb_id = ?",
+                ("kb-238",),
+            ).fetchone()[0]
+            == first["index_version_id"]
+        )
+        assert (
+            storage._conn.execute(
+                "SELECT COUNT(*) FROM kb_index_versions WHERE kb_id = ?",
+                ("kb-238",),
+            ).fetchone()[0]
+            == 1
+        )
     finally:
         storage.close()
 
@@ -631,9 +651,7 @@ def test_ready_data_doc_chunk_count_tracks_exact_pinned_rebinding(tmp_path: Path
         first_index = build_kb_index(
             storage=storage,
             kb_id="kb-238",
-            expected_binding_snapshot_fingerprint=first_snapshot[
-                "binding_snapshot_fingerprint"
-            ],
+            expected_binding_snapshot_fingerprint=first_snapshot["binding_snapshot_fingerprint"],
             embedding_identity_key=identity.embedding_identity_key,
             identity=identity,
             config=manager.config,
@@ -651,9 +669,7 @@ def test_ready_data_doc_chunk_count_tracks_exact_pinned_rebinding(tmp_path: Path
             profile="general",
             kb_id="kb-238",
             index_version_id=first_index["index_version_id"],
-            expected_source_snapshot_fingerprint=first_source[
-                "source_snapshot_fingerprint"
-            ],
+            expected_source_snapshot_fingerprint=first_source["source_snapshot_fingerprint"],
         )
         first_doc = json.loads(
             (first_output / "doc_catalog.jsonl").read_text(encoding="utf-8").strip()
@@ -663,9 +679,7 @@ def test_ready_data_doc_chunk_count_tracks_exact_pinned_rebinding(tmp_path: Path
             file_url=file_url,
             profile_id=str(first_snapshot["files"][0]["profile_id"]),
             markdown_hash="ready-count-rebind",
-            profile_config_hash=str(
-                first_snapshot["files"][0]["profile_config_hash"]
-            ),
+            profile_config_hash=str(first_snapshot["files"][0]["profile_config_hash"]),
         )
         storage.replace_global_chunks(
             chunk_set_id=str(second_set["chunk_set_id"]),
@@ -677,9 +691,7 @@ def test_ready_data_doc_chunk_count_tracks_exact_pinned_rebinding(tmp_path: Path
                 }
             ],
         )
-        rebound_chunk = storage.list_chunks_for_embedding(
-            [str(second_set["chunk_set_id"])]
-        )[0]
+        rebound_chunk = storage.list_chunks_for_embedding([str(second_set["chunk_set_id"])])[0]
         storage.batch_upsert_chunk_embeddings(
             [{"chunk_id": rebound_chunk["chunk_id"], "vector": [1.0, 0.5, -0.5]}],
             identity=identity.as_dict(),
@@ -694,9 +706,7 @@ def test_ready_data_doc_chunk_count_tracks_exact_pinned_rebinding(tmp_path: Path
         second_index = build_kb_index(
             storage=storage,
             kb_id="kb-238",
-            expected_binding_snapshot_fingerprint=second_snapshot[
-                "binding_snapshot_fingerprint"
-            ],
+            expected_binding_snapshot_fingerprint=second_snapshot["binding_snapshot_fingerprint"],
             embedding_identity_key=identity.embedding_identity_key,
             identity=identity,
             config=manager.config,
@@ -714,9 +724,7 @@ def test_ready_data_doc_chunk_count_tracks_exact_pinned_rebinding(tmp_path: Path
             profile="general",
             kb_id="kb-238",
             index_version_id=second_index["index_version_id"],
-            expected_source_snapshot_fingerprint=second_source[
-                "source_snapshot_fingerprint"
-            ],
+            expected_source_snapshot_fingerprint=second_source["source_snapshot_fingerprint"],
         )
         second_doc = json.loads(
             (second_output / "doc_catalog.jsonl").read_text(encoding="utf-8").strip()
@@ -726,10 +734,13 @@ def test_ready_data_doc_chunk_count_tracks_exact_pinned_rebinding(tmp_path: Path
         assert first_manifest["section_count"] == first_index["chunk_count"] == 3
         assert second_doc["rag_chunk_count"] == 1
         assert second_manifest["section_count"] == second_index["chunk_count"] == 1
-        assert storage._conn.execute(
-            "SELECT COUNT(*) FROM global_chunks WHERE chunk_set_id = ?",
-            (first_set["chunk_set_id"],),
-        ).fetchone()[0] == 3
+        assert (
+            storage._conn.execute(
+                "SELECT COUNT(*) FROM global_chunks WHERE chunk_set_id = ?",
+                (first_set["chunk_set_id"],),
+            ).fetchone()[0]
+            == 3
+        )
     finally:
         storage.close()
 
@@ -761,10 +772,13 @@ def test_rebind_switches_effective_snapshot_without_mutating_old_chunk_set(tmp_p
         assert second["binding_snapshot_fingerprint"] != first["binding_snapshot_fingerprint"]
         assert second["bound_chunk_count"] == 1
         assert second["files"][0]["chunk_set_id"] == second_set["chunk_set_id"]
-        assert storage._conn.execute(
-            "SELECT COUNT(*) FROM global_chunks WHERE chunk_set_id = ?",
-            (first_set["chunk_set_id"],),
-        ).fetchone()[0] == 3
+        assert (
+            storage._conn.execute(
+                "SELECT COUNT(*) FROM global_chunks WHERE chunk_set_id = ?",
+                (first_set["chunk_set_id"],),
+            ).fetchone()[0]
+            == 3
+        )
     finally:
         storage.close()
 
@@ -825,10 +839,13 @@ def test_cross_kb_reuses_same_identity_embeddings(tmp_path: Path) -> None:
         )
 
         assert generator.generated == 3
-        assert storage._conn.execute(
-            "SELECT COUNT(*) FROM chunk_embeddings WHERE embedding_identity_key = ?",
-            (identity.embedding_identity_key,),
-        ).fetchone()[0] == 3
+        assert (
+            storage._conn.execute(
+                "SELECT COUNT(*) FROM chunk_embeddings WHERE embedding_identity_key = ?",
+                (identity.embedding_identity_key,),
+            ).fetchone()[0]
+            == 3
+        )
     finally:
         storage.close()
 
@@ -894,10 +911,13 @@ def test_identity_race_and_commit_failure_preserve_ready_pointer(
                 config=manager.config,
             )
         assert failed.value.code == "build_failure"
-        assert storage._conn.execute(
-            "SELECT index_version_id FROM kb_ready_index_state WHERE kb_id = ?",
-            ("kb-238",),
-        ).fetchone()[0] == first["index_version_id"]
+        assert (
+            storage._conn.execute(
+                "SELECT index_version_id FROM kb_ready_index_state WHERE kb_id = ?",
+                ("kb-238",),
+            ).fetchone()[0]
+            == first["index_version_id"]
+        )
     finally:
         storage.close()
 
@@ -942,6 +962,7 @@ def test_embedding_and_faiss_failure_preserve_ready_pointer(
 
             generator = FailingGenerator()
         else:
+
             def fail_faiss(*_args, **_kwargs):
                 raise RuntimeError("synthetic FAISS failure")
 
@@ -954,19 +975,20 @@ def test_embedding_and_faiss_failure_preserve_ready_pointer(
             build_kb_index(
                 storage=storage,
                 kb_id="kb-238",
-                expected_binding_snapshot_fingerprint=snapshot[
-                    "binding_snapshot_fingerprint"
-                ],
+                expected_binding_snapshot_fingerprint=snapshot["binding_snapshot_fingerprint"],
                 embedding_identity_key=identity.embedding_identity_key,
                 identity=identity,
                 generator=generator,
                 config=manager.config,
             )
         assert failed.value.code == expected_code
-        assert storage._conn.execute(
-            "SELECT index_version_id FROM kb_ready_index_state WHERE kb_id = ?",
-            ("kb-238",),
-        ).fetchone()[0] == first["index_version_id"]
+        assert (
+            storage._conn.execute(
+                "SELECT index_version_id FROM kb_ready_index_state WHERE kb_id = ?",
+                ("kb-238",),
+            ).fetchone()[0]
+            == first["index_version_id"]
+        )
     finally:
         storage.close()
 
@@ -982,9 +1004,7 @@ def test_embedding_provider_initialization_failure_is_canonical_and_preserves_re
         first = build_kb_index(
             storage=storage,
             kb_id="kb-238",
-            expected_binding_snapshot_fingerprint=snapshot[
-                "binding_snapshot_fingerprint"
-            ],
+            expected_binding_snapshot_fingerprint=snapshot["binding_snapshot_fingerprint"],
             embedding_identity_key=identity.embedding_identity_key,
             identity=identity,
             config=manager.config,
@@ -1001,9 +1021,7 @@ def test_embedding_provider_initialization_failure_is_canonical_and_preserves_re
             build_kb_index(
                 storage=storage,
                 kb_id="kb-238",
-                expected_binding_snapshot_fingerprint=snapshot[
-                    "binding_snapshot_fingerprint"
-                ],
+                expected_binding_snapshot_fingerprint=snapshot["binding_snapshot_fingerprint"],
                 embedding_identity_key=identity.embedding_identity_key,
                 identity=identity,
                 config=manager.config,
@@ -1011,14 +1029,20 @@ def test_embedding_provider_initialization_failure_is_canonical_and_preserves_re
 
         assert failed.value.code == "missing_or_failed_embedding"
         assert "leaked-secret-value" not in str(failed.value)
-        assert storage._conn.execute(
-            "SELECT index_version_id FROM kb_ready_index_state WHERE kb_id = ?",
-            ("kb-238",),
-        ).fetchone()[0] == first["index_version_id"]
-        assert storage._conn.execute(
-            "SELECT COUNT(*) FROM kb_index_versions WHERE kb_id = ?",
-            ("kb-238",),
-        ).fetchone()[0] == 1
+        assert (
+            storage._conn.execute(
+                "SELECT index_version_id FROM kb_ready_index_state WHERE kb_id = ?",
+                ("kb-238",),
+            ).fetchone()[0]
+            == first["index_version_id"]
+        )
+        assert (
+            storage._conn.execute(
+                "SELECT COUNT(*) FROM kb_index_versions WHERE kb_id = ?",
+                ("kb-238",),
+            ).fetchone()[0]
+            == 1
+        )
     finally:
         storage.close()
 
@@ -1280,10 +1304,14 @@ def test_cli_task_status_log_stop_are_thin_json_adapters(
 
     assert [command.func(command) for command in commands] == [0, 0, 0, 0]
     output = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
-    assert output[0] == output[1] == {
-        "job_id": "job-238",
-        "task": {"id": "job-238", "status": "running"},
-    }
+    assert (
+        output[0]
+        == output[1]
+        == {
+            "job_id": "job-238",
+            "task": {"id": "job-238", "status": "running"},
+        }
+    )
     assert output[2] == {"task_id": "job-238", "log": "Resolve"}
     assert output[3]["job_id"] == "job-238"
     assert calls == [
@@ -1358,10 +1386,15 @@ def test_cli_kb_binding_get_and_set_are_thin_idempotent_json_adapters(
 
     assert [command.func(command) for command in commands] == [0, 0, 0]
     output = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
-    assert output[0] == output[1] == output[2] == {
-        "kb_id": "kb/238",
-        "binding": contract,
-    }
+    assert (
+        output[0]
+        == output[1]
+        == output[2]
+        == {
+            "kb_id": "kb/238",
+            "binding": contract,
+        }
+    )
     assert calls == [
         ("GET", "/api/rag/knowledge-bases/kb%2F238/bindings", None),
         (
@@ -1463,7 +1496,7 @@ def test_cli_ready_get_then_publish_is_thin_exact_json_adapter(
                 "publication_id": "arp-238",
                 "expected_active_publication_id": "arp-active",
             },
-        )
+        ),
     ]
 
 
@@ -1504,9 +1537,7 @@ def test_ready_task_manual_and_auto_publish_are_both_successful(
                     "section_count": 3,
                 },
                 "publication_state": (
-                    {"active_publication_id": "publication-238"}
-                    if auto_publish
-                    else {}
+                    {"active_publication_id": "publication-238"} if auto_publish else {}
                 ),
             }
 

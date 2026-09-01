@@ -691,6 +691,7 @@ def test_follow_latest_without_matching_rows_does_not_validate_missing_target(
 ) -> None:
     storage = Storage(str(tmp_path / "follow-noop-missing-target.db"))
     try:
+
         def fail_if_transaction_starts(*, immediate: bool = False):
             raise AssertionError(f"unexpected transaction: immediate={immediate}")
 

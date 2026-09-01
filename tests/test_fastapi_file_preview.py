@@ -12,7 +12,6 @@ from ai_actuarial.api.services.files_write import get_rag_file_preview
 from ai_actuarial.api.services.read import SENSITIVE_FILE_FIELDS
 from ai_actuarial.storage import Storage
 
-
 PDF_BYTES = b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n"
 
 
@@ -46,7 +45,6 @@ def _write_config_files(base_dir: Path) -> tuple[Path, Path, Path, Path]:
     config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
     categories_path.write_text(yaml.safe_dump(categories, sort_keys=False), encoding="utf-8")
     return db_path, config_path, categories_path, files_dir
-
 
 
 def _seed_storage(db_path: Path, files_dir: Path) -> dict[str, str]:
@@ -102,7 +100,6 @@ def _seed_storage(db_path: Path, files_dir: Path) -> dict[str, str]:
     }
 
 
-
 def _build_test_client(tmp_path: Path, monkeypatch) -> tuple[TestClient, object, dict[str, str]]:
     db_path, config_path, categories_path, files_dir = _write_config_files(tmp_path)
     seed = _seed_storage(db_path, files_dir)
@@ -133,8 +130,9 @@ def _wait_for_task(app: object, task_id: str) -> dict[str, object]:
     raise AssertionError(f"task did not finish: {task_id}")
 
 
-
-def test_fastapi_file_preview_routes_are_listed_in_native_inventory(tmp_path: Path, monkeypatch) -> None:
+def test_fastapi_file_preview_routes_are_listed_in_native_inventory(
+    tmp_path: Path, monkeypatch
+) -> None:
     client, _app, _seed = _build_test_client(tmp_path, monkeypatch)
 
     migration = client.get("/api/migration/status")
@@ -145,7 +143,9 @@ def test_fastapi_file_preview_routes_are_listed_in_native_inventory(tmp_path: Pa
     assert "/api/files/{file_url:path}/chunk-sets/generate" in body["native_paths"]
 
 
-def test_file_preview_service_hides_sensitive_fields_by_default(tmp_path: Path, monkeypatch) -> None:
+def test_file_preview_service_hides_sensitive_fields_by_default(
+    tmp_path: Path, monkeypatch
+) -> None:
     _client, app, seed = _build_test_client(tmp_path, monkeypatch)
 
     public_preview = get_rag_file_preview(
@@ -186,9 +186,7 @@ def test_fastapi_file_preview_sensitive_fields_follow_existing_capability_gate(
         json={"include_sensitive": True},
     )
     assert authenticated_reader.status_code == 200, authenticated_reader.text
-    assert set(SENSITIVE_FILE_FIELDS).isdisjoint(
-        authenticated_reader.json()["file_info"]
-    )
+    assert set(SENSITIVE_FILE_FIELDS).isdisjoint(authenticated_reader.json()["file_info"])
 
     for role in ("registered", "premium", "operator", "admin"):
         privileged = client.get(
@@ -202,13 +200,14 @@ def test_fastapi_file_preview_sensitive_fields_follow_existing_capability_gate(
         assert file_info["sha256"] == seed["file_sha"]
 
 
-
 def test_fastapi_file_preview_and_chunk_generation_work(tmp_path: Path, monkeypatch) -> None:
     client, app, seed = _build_test_client(tmp_path, monkeypatch)
     file_url = seed["file_url"]
     headers = {"Authorization": f"Bearer {seed['operator_token']}"}
 
-    before_preview = client.get("/api/rag/files/preview", params={"file_url": file_url}, headers=headers)
+    before_preview = client.get(
+        "/api/rag/files/preview", params={"file_url": file_url}, headers=headers
+    )
     assert before_preview.status_code == 200, before_preview.text
     before_body = before_preview.json()
     assert before_body["file_info"]["url"] == file_url
@@ -255,8 +254,7 @@ def test_fastapi_file_preview_and_chunk_generation_work(tmp_path: Path, monkeypa
         "created_at": first_list["chunk_sets"][0]["created_at"],
         "updated_at": first_list["chunk_sets"][0]["updated_at"],
         "chunks": [
-            (row["chunk_id"], row["content"], row["created_at"])
-            for row in first_preview["chunks"]
+            (row["chunk_id"], row["content"], row["created_at"]) for row in first_preview["chunks"]
         ],
     }
 
@@ -294,13 +292,14 @@ def test_fastapi_file_preview_and_chunk_generation_work(tmp_path: Path, monkeypa
         "created_at": second_list["chunk_sets"][0]["created_at"],
         "updated_at": second_list["chunk_sets"][0]["updated_at"],
         "chunks": [
-            (row["chunk_id"], row["content"], row["created_at"])
-            for row in second_preview["chunks"]
+            (row["chunk_id"], row["content"], row["created_at"]) for row in second_preview["chunks"]
         ],
     } == first_snapshot
 
 
-def test_fastapi_file_chunk_generation_rejects_removed_kb_binding_options(tmp_path: Path, monkeypatch) -> None:
+def test_fastapi_file_chunk_generation_rejects_removed_kb_binding_options(
+    tmp_path: Path, monkeypatch
+) -> None:
     client, _app, seed = _build_test_client(tmp_path, monkeypatch)
     file_url = seed["file_url"]
     headers = {"Authorization": f"Bearer {seed['admin_token']}"}

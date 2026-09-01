@@ -150,7 +150,9 @@ def test_fastapi_uses_rebound_legacy_task_history_reference(monkeypatch, tmp_pat
     monkeypatch.setenv("BOOTSTRAP_ADMIN_TOKEN", "entrypoint-admin-token")
 
     client = TestClient(create_app())
-    response = client.get("/api/tasks/history?limit=5", headers={"X-Auth-Token": "entrypoint-admin-token"})
+    response = client.get(
+        "/api/tasks/history?limit=5", headers={"X-Auth-Token": "entrypoint-admin-token"}
+    )
 
     assert response.status_code == 200
     body = response.json()

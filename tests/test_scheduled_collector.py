@@ -68,7 +68,9 @@ def test_scheduled_collector_preserves_crawler_diagnostic_for_swallowed_empty_fa
         CollectionConfig(
             name="Scheduled",
             source_type="scheduled",
-            metadata={"site_configs": [SiteConfig(name="Blocked Empty", url="https://blocked.example")]},
+            metadata={
+                "site_configs": [SiteConfig(name="Blocked Empty", url="https://blocked.example")]
+            },
         )
     )
 
@@ -98,7 +100,9 @@ def test_scheduled_collector_marks_generic_diagnostic_error_failed() -> None:
         CollectionConfig(
             name="Scheduled",
             source_type="scheduled",
-            metadata={"site_configs": [SiteConfig(name="Errored Empty", url="https://error.example")]},
+            metadata={
+                "site_configs": [SiteConfig(name="Errored Empty", url="https://error.example")]
+            },
         )
     )
 

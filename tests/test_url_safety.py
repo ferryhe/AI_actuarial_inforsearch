@@ -12,7 +12,9 @@ from ai_actuarial.storage import Storage
 
 
 class _FakeResponse:
-    def __init__(self, code: int, headers: dict[str, str] | None = None, body: bytes = b"", url: str = "") -> None:
+    def __init__(
+        self, code: int, headers: dict[str, str] | None = None, body: bytes = b"", url: str = ""
+    ) -> None:
         self.status = code
         self.headers = headers or {}
         self._body = body
@@ -90,7 +92,11 @@ class TestEnsureSafeHttpUrl(unittest.TestCase):
             ensure_safe_http_url("http://[::1", resolver=_resolver)
 
     def test_invalid_port_raises_unsafe_url_error(self) -> None:
-        for url in ("http://public.example:abc", "http://public.example:99999", "http://public.example:0"):
+        for url in (
+            "http://public.example:abc",
+            "http://public.example:99999",
+            "http://public.example:0",
+        ):
             with self.subTest(url=url):
                 with self.assertRaises(UnsafeUrlError):
                     ensure_safe_http_url(url, resolver=_resolver)
@@ -109,12 +115,17 @@ class TestCrawlerRedirectRevalidation(unittest.TestCase):
 
             def fake_open(url, resolution, *, timeout: int, delay_seconds=None):
                 resolved_during_open.extend(str(address) for address in resolution.addresses)
-                return _FakeResponse(200, headers={"Content-Type": "text/html"}, body=b"ok", url=url)
+                return _FakeResponse(
+                    200, headers={"Content-Type": "text/html"}, body=b"ok", url=url
+                )
 
-            with patch(
-                "ai_actuarial.security.url_safety.socket.getaddrinfo",
-                side_effect=_resolver,
-            ), patch.object(crawler, "_open_pinned_http", side_effect=fake_open):
+            with (
+                patch(
+                    "ai_actuarial.security.url_safety.socket.getaddrinfo",
+                    side_effect=_resolver,
+                ),
+                patch.object(crawler, "_open_pinned_http", side_effect=fake_open),
+            ):
                 body, _headers, final_url = crawler._request("https://public.example/start")
 
             self.assertEqual(b"ok", body)
@@ -134,10 +145,13 @@ class TestCrawlerRedirectRevalidation(unittest.TestCase):
                     url=url,
                 )
 
-            with patch(
-                "ai_actuarial.security.url_safety.socket.getaddrinfo",
-                side_effect=_resolver,
-            ), patch.object(crawler, "_open_pinned_http", side_effect=fake_open):
+            with (
+                patch(
+                    "ai_actuarial.security.url_safety.socket.getaddrinfo",
+                    side_effect=_resolver,
+                ),
+                patch.object(crawler, "_open_pinned_http", side_effect=fake_open),
+            ):
                 with self.assertRaises(UnsafeUrlError):
                     crawler._request("https://public.example/start")
 
@@ -155,10 +169,13 @@ class TestCrawlerRedirectRevalidation(unittest.TestCase):
                     url=url,
                 )
 
-            with patch(
-                "ai_actuarial.security.url_safety.socket.getaddrinfo",
-                side_effect=_resolver,
-            ), patch.object(crawler, "_open_pinned_http", side_effect=fake_open):
+            with (
+                patch(
+                    "ai_actuarial.security.url_safety.socket.getaddrinfo",
+                    side_effect=_resolver,
+                ),
+                patch.object(crawler, "_open_pinned_http", side_effect=fake_open),
+            ):
                 body, _headers, final_url = crawler._request("https://public.example/not-modified")
 
             self.assertEqual(b"", body)
@@ -178,10 +195,13 @@ class TestCrawlerRedirectRevalidation(unittest.TestCase):
                     url=url,
                 )
 
-            with patch(
-                "ai_actuarial.security.url_safety.socket.getaddrinfo",
-                side_effect=_resolver,
-            ), patch.object(crawler, "_open_pinned_http", side_effect=fake_open):
+            with (
+                patch(
+                    "ai_actuarial.security.url_safety.socket.getaddrinfo",
+                    side_effect=_resolver,
+                ),
+                patch.object(crawler, "_open_pinned_http", side_effect=fake_open),
+            ):
                 with self.assertRaises(UnsafeUrlError):
                     crawler._download_file("https://public.example/file.pdf", target_dir)
 
@@ -200,7 +220,13 @@ class TestCrawlerRedirectRevalidation(unittest.TestCase):
 
             def request(self, method: str, target: str, headers: dict[str, str]):
                 self.__class__.calls.append(
-                    {"method": method, "target": target, "headers": headers, "host": self.host, "port": self.port}
+                    {
+                        "method": method,
+                        "target": target,
+                        "headers": headers,
+                        "host": self.host,
+                        "port": self.port,
+                    }
                 )
 
             def getresponse(self):
@@ -216,13 +242,16 @@ class TestCrawlerRedirectRevalidation(unittest.TestCase):
                 host="2001:4860:4860::8888",
                 addresses=(ipaddress.ip_address("2001:4860:4860::8888"),),
             )
-            with patch("ai_actuarial.crawler.http.client.HTTPConnection", FakeHTTPConnection), patch(
-                "ai_actuarial.crawler.socket.create_connection", return_value=object()
+            with (
+                patch("ai_actuarial.crawler.http.client.HTTPConnection", FakeHTTPConnection),
+                patch("ai_actuarial.crawler.socket.create_connection", return_value=object()),
             ):
                 with crawler._open_pinned_stdlib(resolution.url, resolution, timeout=30):
                     pass
 
-        self.assertEqual("[2001:4860:4860::8888]:8080", FakeHTTPConnection.calls[0]["headers"]["Host"])
+        self.assertEqual(
+            "[2001:4860:4860::8888]:8080", FakeHTTPConnection.calls[0]["headers"]["Host"]
+        )
 
 
 if __name__ == "__main__":

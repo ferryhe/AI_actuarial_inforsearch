@@ -9,11 +9,11 @@ from pathlib import Path
 
 import pytest
 
+from ai_actuarial.api.services import rag_admin as rag_admin_service
 from ai_actuarial.api.services.agentic_rag import (
     AgenticRagError,
     _resolve_ready_output_dir,
 )
-from ai_actuarial.api.services import rag_admin as rag_admin_service
 from ai_actuarial.api.services.rag_admin import (
     READY_DATA_GC_POLICY_VERSION,
     _ready_data_gc_tree_is_safe,
@@ -23,7 +23,6 @@ from ai_actuarial.api.services.rag_admin import (
 from ai_actuarial.rag.config import RAGConfig
 from ai_actuarial.rag.knowledge_base import KnowledgeBaseManager
 from ai_actuarial.storage import Storage
-
 
 CUTOFF = "2026-09-01T00:00:00+00:00"
 OLD_MARK = "2026-08-01T00:00:00+00:00"
@@ -47,14 +46,7 @@ def _open_storage(tmp_path: Path) -> Storage:
 
 def _candidate_dir(tmp_path: Path, name: str) -> Path:
     candidate = (
-        tmp_path
-        / "agentic_ready_data"
-        / "kbs"
-        / "kb-ready"
-        / "general"
-        / "1"
-        / "staging"
-        / name
+        tmp_path / "agentic_ready_data" / "kbs" / "kb-ready" / "general" / "1" / "staging" / name
     )
     candidate.mkdir(parents=True)
     (candidate / "artifact.jsonl").write_text('{"ok":true}\n', encoding="utf-8")
@@ -179,9 +171,7 @@ def test_superseded_generation_removes_retryable_gc_metadata_and_stays_protected
         marked = storage.get_agentic_ready_publication(candidate_id)
         assert marked is not None
 
-        assert storage.mark_agentic_ready_publication_superseded_generation(
-            candidate_id
-        )
+        assert storage.mark_agentic_ready_publication_superseded_generation(candidate_id)
         superseded = storage.get_agentic_ready_publication(candidate_id)
         assert superseded is not None
         assert superseded["attempt_disposition"] == "superseded_generation"
@@ -195,14 +185,10 @@ def test_superseded_generation_removes_retryable_gc_metadata_and_stays_protected
             "attempt_disposition_superseded_generation",
         )
         retained_item = next(
-            item
-            for item in plan["retained"]
-            if item["publication_id"] == candidate_id
+            item for item in plan["retained"] if item["publication_id"] == candidate_id
         )
         assert retained_item["attempt_disposition"] == "superseded_generation"
-        assert candidate_id not in {
-            str(item["publication_id"]) for item in plan["candidates"]
-        }
+        assert candidate_id not in {str(item["publication_id"]) for item in plan["candidates"]}
         result = execute_ready_data_publication_gc(
             db_path=storage.db_path,
             cutoff_at=CUTOFF,
@@ -214,13 +200,16 @@ def test_superseded_generation_removes_retryable_gc_metadata_and_stays_protected
             "attempt_disposition_superseded_generation",
         )
         assert candidate_path.is_dir()
-        assert storage.claim_agentic_ready_publication_gc(
-            candidate_id,
-            expected_gc_state="eligible",
-            expected_marked_at=str(marked["gc_marked_at"]),
-            quarantine_dir=str(candidate_path.parent / f".gc-quarantine-{candidate_id}"),
-            cutoff_at=CUTOFF,
-        ) is None
+        assert (
+            storage.claim_agentic_ready_publication_gc(
+                candidate_id,
+                expected_gc_state="eligible",
+                expected_marked_at=str(marked["gc_marked_at"]),
+                quarantine_dir=str(candidate_path.parent / f".gc-quarantine-{candidate_id}"),
+                cutoff_at=CUTOFF,
+            )
+            is None
+        )
     finally:
         storage.close()
 
@@ -231,9 +220,12 @@ def test_superseded_generation_rejects_serving_or_claimed_attempts(
     storage = _open_storage(tmp_path)
     try:
         active = _active(storage, tmp_path)
-        assert storage.mark_agentic_ready_publication_superseded_generation(
-            str(active["publication_id"])
-        ) is False
+        assert (
+            storage.mark_agentic_ready_publication_superseded_generation(
+                str(active["publication_id"])
+            )
+            is False
+        )
 
         candidate = _record(storage, _candidate_dir(tmp_path, "build-claimed"))
         _mark(storage, active, candidate)
@@ -247,9 +239,12 @@ def test_superseded_generation_rejects_serving_or_claimed_attempts(
         )
         storage._conn.commit()
 
-        assert storage.mark_agentic_ready_publication_superseded_generation(
-            str(candidate["publication_id"])
-        ) is False
+        assert (
+            storage.mark_agentic_ready_publication_superseded_generation(
+                str(candidate["publication_id"])
+            )
+            is False
+        )
         claimed = storage.get_agentic_ready_publication(str(candidate["publication_id"]))
         assert claimed is not None
         assert claimed["attempt_disposition"] == ""
@@ -295,9 +290,7 @@ def test_superseded_generation_rejects_delete_failed_and_preserves_gc_recovery(
         assert not Path(str(doomed["output_dir"])).exists()
 
         before = storage.get_agentic_ready_publication(doomed_id)
-        assert storage.mark_agentic_ready_publication_superseded_generation(
-            doomed_id
-        ) is False
+        assert storage.mark_agentic_ready_publication_superseded_generation(doomed_id) is False
         after = storage.get_agentic_ready_publication(doomed_id)
         assert after == before
         assert after is not None
@@ -327,13 +320,14 @@ def test_superseded_generation_candidate_cannot_be_published(tmp_path: Path) -> 
         active = _active(storage, tmp_path)
         candidate = _record(storage, _candidate_dir(tmp_path, "build-superseded-publish"))
         candidate_id = str(candidate["publication_id"])
-        assert storage.mark_agentic_ready_publication_superseded_generation(
-            candidate_id
+        assert storage.mark_agentic_ready_publication_superseded_generation(candidate_id)
+        assert (
+            storage.discard_agentic_ready_publication(
+                candidate_id,
+                expected_active_publication_id=str(active["publication_id"]),
+            )
+            is False
         )
-        assert storage.discard_agentic_ready_publication(
-            candidate_id,
-            expected_active_publication_id=str(active["publication_id"]),
-        ) is False
 
         with pytest.raises(ValueError, match="attempt disposition"):
             storage.publish_agentic_ready_publication(
@@ -364,9 +358,7 @@ def test_retention_uses_age_and_newest_two_with_stable_id_tiebreak(tmp_path: Pat
 
         plan = _plan(storage)
 
-        old_ids_desc = sorted(
-            (str(item["publication_id"]) for item in attempts[:4]), reverse=True
-        )
+        old_ids_desc = sorted((str(item["publication_id"]) for item in attempts[:4]), reverse=True)
         candidate_ids = {str(item["publication_id"]) for item in plan["candidates"]}
         assert candidate_ids == set(old_ids_desc[1:])
         assert {
@@ -388,8 +380,7 @@ def test_dry_run_does_not_change_database_or_files(tmp_path: Path) -> None:
     try:
         active = _active(storage, tmp_path)
         attempts = [
-            _record(storage, _candidate_dir(tmp_path, f"build-dry-{index}"))
-            for index in range(3)
+            _record(storage, _candidate_dir(tmp_path, f"build-dry-{index}")) for index in range(3)
         ]
         for attempt in attempts:
             _mark(storage, active, attempt)
@@ -411,8 +402,7 @@ def test_dry_run_does_not_create_or_change_sqlite_sidecars(tmp_path: Path) -> No
     storage = _open_storage(tmp_path)
     active = _active(storage, tmp_path)
     attempts = [
-        _record(storage, _candidate_dir(tmp_path, f"build-sidecar-{index}"))
-        for index in range(3)
+        _record(storage, _candidate_dir(tmp_path, f"build-sidecar-{index}")) for index in range(3)
     ]
     for attempt in attempts:
         _mark(storage, active, attempt)
@@ -487,9 +477,7 @@ def test_plan_fingerprint_binds_derived_candidate_membership(tmp_path: Path) -> 
 
         second = _plan(storage)
 
-        assert str(candidate["publication_id"]) in _reason_ids(
-            second, "skipped", "unsafe_path"
-        )
+        assert str(candidate["publication_id"]) in _reason_ids(second, "skipped", "unsafe_path")
         assert first["plan_fingerprint"] != second["plan_fingerprint"]
     finally:
         storage.close()
@@ -510,9 +498,7 @@ def test_dry_run_does_not_migrate_a_legacy_database(tmp_path: Path) -> None:
     connection = sqlite3.connect(db_path)
     connection.execute("CREATE TABLE legacy_only (id INTEGER PRIMARY KEY)")
     connection.commit()
-    before = connection.execute(
-        "SELECT name, sql FROM sqlite_master ORDER BY name"
-    ).fetchall()
+    before = connection.execute("SELECT name, sql FROM sqlite_master ORDER BY name").fetchall()
     connection.close()
 
     with pytest.raises((sqlite3.OperationalError, ValueError)):
@@ -544,8 +530,7 @@ def test_minimum_age_is_required_even_outside_newest_two(tmp_path: Path) -> None
     try:
         active = _active(storage, tmp_path)
         attempts = [
-            _record(storage, _candidate_dir(tmp_path, f"build-age-{index}"))
-            for index in range(4)
+            _record(storage, _candidate_dir(tmp_path, f"build-age-{index}")) for index in range(4)
         ]
         for attempt in attempts[:2]:
             _mark(storage, active, attempt, marked_at="2026-08-25T00:00:00+00:00")
@@ -591,12 +576,13 @@ def test_execute_deletes_candidate_and_keeps_audit_tombstone(tmp_path: Path) -> 
         assert tombstone["output_dir"] == ""
         assert tombstone["artifact_files"] == []
         before = dict(tombstone)
-        assert storage.mark_agentic_ready_publication_superseded_generation(
-            str(doomed["publication_id"])
-        ) is False
-        assert storage.get_agentic_ready_publication(
-            str(doomed["publication_id"])
-        ) == before
+        assert (
+            storage.mark_agentic_ready_publication_superseded_generation(
+                str(doomed["publication_id"])
+            )
+            is False
+        )
+        assert storage.get_agentic_ready_publication(str(doomed["publication_id"])) == before
     finally:
         storage.close()
 
@@ -658,8 +644,7 @@ def test_publication_that_wins_before_gc_claim_is_not_deleted(tmp_path: Path) ->
     try:
         active = _active(storage, tmp_path)
         attempts = [
-            _record(storage, _candidate_dir(tmp_path, f"build-race-{index}"))
-            for index in range(3)
+            _record(storage, _candidate_dir(tmp_path, f"build-race-{index}")) for index in range(3)
         ]
         for attempt in attempts:
             _mark(storage, active, attempt)
@@ -678,9 +663,12 @@ def test_publication_that_wins_before_gc_claim_is_not_deleted(tmp_path: Path) ->
             )
 
         assert Path(str(plan["candidates"][0]["output_dir"])).is_dir()
-        assert storage.get_agentic_ready_publication_state(
-            kb_id="kb-ready", profile="general"
-        )["active_publication_id"] == winner_id
+        assert (
+            storage.get_agentic_ready_publication_state(kb_id="kb-ready", profile="general")[
+                "active_publication_id"
+            ]
+            == winner_id
+        )
     finally:
         storage.close()
 
@@ -690,8 +678,7 @@ def test_gc_claim_that_wins_causes_publish_to_reject(tmp_path: Path) -> None:
     try:
         active = _active(storage, tmp_path)
         attempts = [
-            _record(storage, _candidate_dir(tmp_path, f"build-claim-{index}"))
-            for index in range(3)
+            _record(storage, _candidate_dir(tmp_path, f"build-claim-{index}")) for index in range(3)
         ]
         for attempt in attempts:
             _mark(storage, active, attempt)
@@ -704,10 +691,13 @@ def test_gc_claim_that_wins_causes_publish_to_reject(tmp_path: Path) -> None:
             quarantine_dir=str(doomed["quarantine_dir"]),
         )
         assert claim is not None
-        assert storage.discard_agentic_ready_publication(
-            str(doomed["publication_id"]),
-            expected_active_publication_id=str(active["publication_id"]),
-        ) is False
+        assert (
+            storage.discard_agentic_ready_publication(
+                str(doomed["publication_id"]),
+                expected_active_publication_id=str(active["publication_id"]),
+            )
+            is False
+        )
 
         with pytest.raises(ValueError, match="garbage collection"):
             storage.publish_agentic_ready_publication(
@@ -746,16 +736,13 @@ def test_serving_output_path_alias_is_protected_by_plan_and_claim(tmp_path: Path
 
         plan = _plan(storage)
 
-        assert str(alias["publication_id"]) in _reason_ids(
-            plan, "retained", "serving_output_path"
-        )
+        assert str(alias["publication_id"]) in _reason_ids(plan, "retained", "serving_output_path")
         claim = storage.claim_agentic_ready_publication_gc(
             str(alias["publication_id"]),
             expected_gc_state="eligible",
             expected_marked_at=OLD_MARK,
             quarantine_dir=str(
-                Path(str(alias["output_dir"])).parent
-                / f'.gc-quarantine-{alias["publication_id"]}'
+                Path(str(alias["output_dir"])).parent / f'.gc-quarantine-{alias["publication_id"]}'
             ),
             cutoff_at=CUTOFF,
             minimum_age_days=14,
@@ -853,9 +840,7 @@ def test_nested_reserved_paths_are_never_recursive_gc_candidates(
         plan = _plan(storage)
 
         publication_id = str(doomed["publication_id"])
-        assert publication_id not in {
-            str(item["publication_id"]) for item in plan["candidates"]
-        }
+        assert publication_id not in {str(item["publication_id"]) for item in plan["candidates"]}
         assert publication_id in _reason_ids(plan, "retained", expected_reason)
         assert doomed_path.is_dir()
         assert reserved_path.is_dir()
@@ -1053,7 +1038,9 @@ def test_expired_claim_recovery_lease_has_only_one_new_owner(tmp_path: Path) -> 
             connection.close()
 
     with ThreadPoolExecutor(max_workers=2) as pool:
-        outcomes = [future.result(timeout=10) for future in (pool.submit(resume), pool.submit(resume))]
+        outcomes = [
+            future.result(timeout=10) for future in (pool.submit(resume), pool.submit(resume))
+        ]
 
     assert outcomes.count("lost") == 1
     assert sum(outcome.startswith("argc_") for outcome in outcomes) == 1
@@ -1249,9 +1236,7 @@ def test_transaction_rollback_recovers_crash_during_filesystem_delete(
             plan_fingerprint=str(retry_plan["plan_fingerprint"]),
         )
 
-        assert _reason_ids(result, "deleted", "deleted") == {
-            str(candidate["publication_id"])
-        }
+        assert _reason_ids(result, "deleted", "deleted") == {str(candidate["publication_id"])}
         tombstone = storage.get_agentic_ready_publication(str(candidate["publication_id"]))
         assert tombstone is not None and tombstone["gc_state"] == "deleted"
     finally:
@@ -1387,9 +1372,7 @@ def test_legacy_ready_data_is_never_a_gc_candidate(tmp_path: Path) -> None:
         )
         plan = _plan(storage)
 
-        assert str(legacy["publication_id"]) in _reason_ids(
-            plan, "retained", "legacy_publication"
-        )
+        assert str(legacy["publication_id"]) in _reason_ids(plan, "retained", "legacy_publication")
         assert legacy_dir.is_dir()
     finally:
         storage.close()
@@ -1414,8 +1397,7 @@ def test_execute_rejects_plan_candidate_slot_cutoff_or_policy_drift(
     try:
         active = _active(storage, tmp_path)
         attempts = [
-            _record(storage, _candidate_dir(tmp_path, f"build-drift-{index}"))
-            for index in range(3)
+            _record(storage, _candidate_dir(tmp_path, f"build-drift-{index}")) for index in range(3)
         ]
         for attempt in attempts:
             _mark(storage, active, attempt)
@@ -1460,8 +1442,7 @@ def test_claimed_quarantine_from_interrupted_run_converges_on_retry(tmp_path: Pa
     try:
         active = _active(storage, tmp_path)
         attempts = [
-            _record(storage, _candidate_dir(tmp_path, f"build-crash-{index}"))
-            for index in range(3)
+            _record(storage, _candidate_dir(tmp_path, f"build-crash-{index}")) for index in range(3)
         ]
         for attempt in attempts:
             _mark(storage, active, attempt)

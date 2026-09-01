@@ -22,11 +22,10 @@ from ai_actuarial.api.services.ready_data_automation import (
 from ai_actuarial.api.services.ready_data_publication import (
     read_public_ready_data_snapshot,
 )
-from ai_actuarial.rag.knowledge_base import KnowledgeBaseManager
 from ai_actuarial.rag.kb_index import resolve_kb_bound_chunks
+from ai_actuarial.rag.knowledge_base import KnowledgeBaseManager
 from ai_actuarial.storage import Storage
 from ai_actuarial.task_runtime import NativeTaskRuntime
-
 
 UTC = timezone.utc
 
@@ -330,8 +329,14 @@ def test_default_off_runner_does_not_build_or_write_attempt_state(tmp_path: Path
     assert calls == []
     storage = Storage(str(db_path))
     try:
-        assert storage._conn.execute("SELECT COUNT(*) FROM agentic_ready_publications").fetchone()[0] == 0
-        assert storage._conn.execute("SELECT COUNT(*) FROM agentic_ready_automation").fetchone()[0] == 0
+        assert (
+            storage._conn.execute("SELECT COUNT(*) FROM agentic_ready_publications").fetchone()[0]
+            == 0
+        )
+        assert (
+            storage._conn.execute("SELECT COUNT(*) FROM agentic_ready_automation").fetchone()[0]
+            == 0
+        )
     finally:
         storage.close()
 
@@ -496,9 +501,10 @@ def test_enabling_publish_revalidates_and_publishes_existing_candidate(tmp_path:
     assert first["status"] == "awaiting_publish"
     assert second["status"] == "published"
     assert calls == [1]
-    assert second["publication_state"]["active_publication_id"] == first[
-        "candidate_publication"
-    ]["publication_id"]
+    assert (
+        second["publication_state"]["active_publication_id"]
+        == first["candidate_publication"]["publication_id"]
+    )
     storage = Storage(str(db_path))
     try:
         automation = storage.get_agentic_ready_automation_state(
@@ -512,9 +518,10 @@ def test_enabling_publish_revalidates_and_publishes_existing_candidate(tmp_path:
         )
     finally:
         storage.close()
-    assert automation["last_attempt_publication_id"] == first[
-        "candidate_publication"
-    ]["publication_id"]
+    assert (
+        automation["last_attempt_publication_id"]
+        == first["candidate_publication"]["publication_id"]
+    )
     assert snapshot["publication_state"]["latest_operation_kind"] == "publish"
     assert snapshot["publication_state"]["latest_operation_state"] == "succeeded"
 
@@ -561,10 +568,7 @@ def test_manual_operation_evidence_does_not_unblock_empty_candidate_confirmation
             kb_id="kb-auto",
             profile="general",
         )
-        assert (
-            automation["last_error"]
-            == "empty ready_data requires manual publish confirmation"
-        )
+        assert automation["last_error"] == "empty ready_data requires manual publish confirmation"
         manual_operation = storage.get_agentic_ready_manual_operation(
             kb_id="kb-auto",
             profile="general",
@@ -738,9 +742,12 @@ def test_lost_claim_owner_cannot_publish(tmp_path: Path) -> None:
     assert result["status"] == "claim_lost"
     storage = Storage(str(db_path))
     try:
-        assert storage.get_agentic_ready_publication_state(
-            kb_id="kb-auto", profile="general"
-        )["active_publication_id"] is None
+        assert (
+            storage.get_agentic_ready_publication_state(kb_id="kb-auto", profile="general")[
+                "active_publication_id"
+            ]
+            is None
+        )
     finally:
         storage.close()
 
@@ -809,7 +816,8 @@ def test_failures_do_not_move_serving_slots_or_retry_same_generation(
         if failure_kind != "cas":
             assert state["active_publication_id"] == active["publication_id"]
         else:
-            assert state["active_publication"]["source_version_id"] == "cas-winner"
+            active_publication = dict(state["active_publication"])
+            assert active_publication["source_version_id"] == "cas-winner"
         assert state["active_publication_id"] != first.get("candidate_publication", {}).get(
             "publication_id"
         )
@@ -937,9 +945,10 @@ def test_automatic_execution_never_enables_or_runs_gc(tmp_path: Path) -> None:
         )
         assert not candidate["gc_state"]
         assert candidate["attempt_disposition"] == ""
-        assert storage._conn.execute(
-            "SELECT COUNT(*) FROM agentic_ready_publication_gc"
-        ).fetchone()[0] == 0
+        assert (
+            storage._conn.execute("SELECT COUNT(*) FROM agentic_ready_publication_gc").fetchone()[0]
+            == 0
+        )
     finally:
         storage.close()
 
@@ -1042,11 +1051,17 @@ def test_automation_api_is_permission_protected_and_kb_scoped(
     assert response.json()["automation"]["claim_token"] is None
     storage = Storage(str(db_path))
     try:
-        assert storage.get_agentic_ready_publication_state(
-            kb_id="kb-one", profile="general"
-        )["automatic_build_enabled"] is True
-        assert storage.get_agentic_ready_publication_state(
-            kb_id="kb-two", profile="general"
-        )["automatic_build_enabled"] is False
+        assert (
+            storage.get_agentic_ready_publication_state(kb_id="kb-one", profile="general")[
+                "automatic_build_enabled"
+            ]
+            is True
+        )
+        assert (
+            storage.get_agentic_ready_publication_state(kb_id="kb-two", profile="general")[
+                "automatic_build_enabled"
+            ]
+            is False
+        )
     finally:
         storage.close()

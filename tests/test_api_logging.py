@@ -19,7 +19,9 @@ def restore_logging_state():
     original_handler_state = {
         handler: (handler.level, handler.formatter) for handler in original_handlers
     }
-    uvicorn_loggers = [logging.getLogger(name) for name in ("uvicorn", "uvicorn.error", "uvicorn.access")]
+    uvicorn_loggers = [
+        logging.getLogger(name) for name in ("uvicorn", "uvicorn.error", "uvicorn.access")
+    ]
     original_uvicorn_state = [
         (logger, logger.handlers[:], logger.level, logger.propagate) for logger in uvicorn_loggers
     ]
@@ -70,8 +72,7 @@ def test_logging_setup_writes_file_and_keeps_stream_handler(tmp_path: Path) -> N
     assert rotating_handlers[0].maxBytes == 10 * 1024 * 1024
     assert rotating_handlers[0].backupCount == 5
     assert any(
-        isinstance(handler, logging.StreamHandler)
-        and not isinstance(handler, logging.FileHandler)
+        isinstance(handler, logging.StreamHandler) and not isinstance(handler, logging.FileHandler)
         for handler in root.handlers
     )
     assert logging.getLogger("uvicorn.error").propagate is True

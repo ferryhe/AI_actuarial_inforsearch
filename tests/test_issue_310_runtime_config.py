@@ -30,7 +30,11 @@ def test_explicit_config_path_is_authoritative_and_never_falls_back(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from ai_actuarial.shared_runtime import SitesConfigError, get_sites_config_path, load_sites_config
+    from ai_actuarial.shared_runtime import (
+        SitesConfigError,
+        get_sites_config_path,
+        load_sites_config,
+    )
     from config.yaml_config import _get_sites_config_path, invalidate_config_cache, load_yaml_config
 
     fallback = tmp_path / "config" / "sites.yaml"
@@ -84,8 +88,8 @@ def test_production_rejects_the_tracked_template(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from ai_actuarial.shared_runtime import (
-        SitesConfigError,
         TRACKED_SITES_CONFIG_PATH,
+        SitesConfigError,
         load_sites_config,
     )
 
@@ -338,9 +342,7 @@ def test_external_runtime_config_survives_git_reset_checkout_and_clean(
     _git(repo, "clean", "-fd")
 
     assert load_sites_config() == {"chat_model": "operator-selected-model"}
-    assert yaml.safe_load(tracked.read_text(encoding="utf-8")) == {
-        "chat_model": "template-model"
-    }
+    assert yaml.safe_load(tracked.read_text(encoding="utf-8")) == {"chat_model": "template-model"}
 
 
 def test_settings_write_changes_only_external_config_and_survives_reload(

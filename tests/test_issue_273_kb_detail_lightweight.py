@@ -8,7 +8,6 @@ import pytest
 from ai_actuarial.api.services import rag_admin
 from ai_actuarial.embedding_service import EmbeddingIdentity
 from ai_actuarial.storage import Storage
-
 from tests.test_issue_256_lightweight_list_apis import (
     _identity,
     _patch_identity,

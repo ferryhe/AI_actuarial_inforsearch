@@ -109,7 +109,10 @@ def _run_cli_search_outcomes(
     *,
     site_branch: bool = False,
 ) -> int:
-    results = [SearchResult(f"https://example.com/result-{index}.pdf", "test") for index in range(len(specs))]
+    results = [
+        SearchResult(f"https://example.com/result-{index}.pdf", "test")
+        for index in range(len(specs))
+    ]
     reports = {}
     for result, (disposition, downloaded, skipped, failed) in zip(results, specs):
         subreason = {
@@ -119,7 +122,11 @@ def _run_cli_search_outcomes(
             "no_eligible_file_found": "empty",
         }.get(disposition)
         reports[result.url] = SimpleNamespace(
-            items=([{"url": result.url, "local_path": f"files/result-{len(reports)}.pdf"}] if downloaded else []),
+            items=(
+                [{"url": result.url, "local_path": f"files/result-{len(reports)}.pdf"}]
+                if downloaded
+                else []
+            ),
             outcome=make_acquisition_outcome(
                 disposition,
                 url=result.url,
@@ -173,7 +180,9 @@ def _run_cli_search_outcomes(
         return reports[url]
 
     search_results = [results, []] if site_branch else [results]
-    args = Namespace(config=str(config_path), site=None, max_pages=None, max_depth=None, no_search=False)
+    args = Namespace(
+        config=str(config_path), site=None, max_pages=None, max_depth=None, no_search=False
+    )
     with (
         patch.object(Crawler, "scan_page_for_files", return_value=[]),
         patch.object(Crawler, "scan_page_for_files_with_outcome", create=True, new=acquire),
@@ -185,7 +194,9 @@ def _run_cli_search_outcomes(
 
 def test_five_http_403_results_are_failed_and_fully_audited(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
-    results = [SearchResult(f"https://blocked.example/report-{index}.pdf", "test") for index in range(5)]
+    results = [
+        SearchResult(f"https://blocked.example/report-{index}.pdf", "test") for index in range(5)
+    ]
 
     def blocked(url: str, **_kwargs):
         raise RuntimeError(f"HTTP Error 403 for {url}")
@@ -208,7 +219,9 @@ def test_five_http_403_results_are_failed_and_fully_audited(tmp_path: Path, monk
     assert log_text.count("disposition=access_blocked") == 5
     assert "access_blocked=5" in log_text
 
-    history_runtime = NativeTaskRuntime(pipeline_baton_state_path=str(tmp_path / "history-baton.json"))
+    history_runtime = NativeTaskRuntime(
+        pipeline_baton_state_path=str(tmp_path / "history-baton.json")
+    )
     history_runtime.active_tasks["task-history-403"] = {
         "id": "task-history-403",
         "name": "Blocked search",
@@ -222,9 +235,13 @@ def test_five_http_403_results_are_failed_and_fully_audited(tmp_path: Path, monk
     assert history["metadata"]["acquisition_summary"]["access_blocked"] == 5
 
 
-def test_five_exact_url_duplicates_are_completed_noop_and_skipped(tmp_path: Path, monkeypatch) -> None:
+def test_five_exact_url_duplicates_are_completed_noop_and_skipped(
+    tmp_path: Path, monkeypatch
+) -> None:
     monkeypatch.chdir(tmp_path)
-    results = [SearchResult(f"https://duplicate.example/report-{index}.pdf", "test") for index in range(5)]
+    results = [
+        SearchResult(f"https://duplicate.example/report-{index}.pdf", "test") for index in range(5)
+    ]
 
     def fetched(url: str, **_kwargs):
         return b"%PDF", {"content-type": "application/pdf"}, url
@@ -307,9 +324,13 @@ def test_link_download_error_is_not_silently_continued(tmp_path: Path) -> None:
             "_request",
             return_value=(html.encode(), {"content-type": "text/html"}, page_url),
         ),
-        patch.object(crawler, "_download_file", side_effect=OSError("network reset with response body")),
+        patch.object(
+            crawler, "_download_file", side_effect=OSError("network reset with response body")
+        ),
     ):
-        report = crawler.scan_page_for_files_with_outcome(page_url, _site(page_url), source_site="test")
+        report = crawler.scan_page_for_files_with_outcome(
+            page_url, _site(page_url), source_site="test"
+        )
 
     assert report.outcome["disposition"] == "download_failed"
     assert report.outcome["failed"] == 1
@@ -452,7 +473,9 @@ def test_downloaded_filename_keyword_filter_has_a_structured_subreason(tmp_path:
     handle.assert_not_called()
 
 
-def test_mixed_success_and_blocked_result_keeps_success_with_warning(tmp_path: Path, monkeypatch) -> None:
+def test_mixed_success_and_blocked_result_keeps_success_with_warning(
+    tmp_path: Path, monkeypatch
+) -> None:
     monkeypatch.chdir(tmp_path)
     ok_url = "https://example.com/new.pdf"
     blocked_url = "https://blocked.example/report.pdf"
@@ -505,9 +528,15 @@ def test_page_without_candidates_is_no_eligible_file_found(tmp_path: Path) -> No
     with patch.object(
         crawler,
         "_request",
-        return_value=(b"<html><body>No reports</body></html>", {"content-type": "text/html"}, page_url),
+        return_value=(
+            b"<html><body>No reports</body></html>",
+            {"content-type": "text/html"},
+            page_url,
+        ),
     ):
-        report = crawler.scan_page_for_files_with_outcome(page_url, _site(page_url), source_site="test")
+        report = crawler.scan_page_for_files_with_outcome(
+            page_url, _site(page_url), source_site="test"
+        )
 
     assert report.outcome["disposition"] == "no_eligible_file_found"
     assert report.outcome["skipped"] == 1
@@ -522,7 +551,9 @@ def test_ordinary_navigation_link_does_not_count_as_extension_filter(tmp_path: P
         "_request",
         return_value=(html, {"content-type": "text/html"}, page_url),
     ):
-        report = crawler.scan_page_for_files_with_outcome(page_url, _site(page_url), source_site="test")
+        report = crawler.scan_page_for_files_with_outcome(
+            page_url, _site(page_url), source_site="test"
+        )
 
     assert report.outcome["disposition"] == "no_eligible_file_found"
     assert report.outcome["subreason"] == "empty"
@@ -542,11 +573,11 @@ def test_navigation_link_does_not_override_linked_duplicate_subreason(
     crawler = _crawler(tmp_path, storage)
     staged = tmp_path / f"{duplicate_subreason}.part"
     staged.write_bytes(b"same")
-    html = (
-        f'<html><body><a href="/about">About</a><a href="{raw_link}">Report</a></body></html>'.encode()
-    )
+    html = f'<html><body><a href="/about">About</a><a href="{raw_link}">Report</a></body></html>'.encode()
     with (
-        patch.object(crawler, "_request", return_value=(html, {"content-type": "text/html"}, page_url)),
+        patch.object(
+            crawler, "_request", return_value=(html, {"content-type": "text/html"}, page_url)
+        ),
         patch.object(
             crawler,
             "_download_file",
@@ -554,7 +585,9 @@ def test_navigation_link_does_not_override_linked_duplicate_subreason(
         ) as download,
         patch.object(crawler, "_handle_file") as handle,
     ):
-        report = crawler.scan_page_for_files_with_outcome(page_url, _site(page_url), source_site="test")
+        report = crawler.scan_page_for_files_with_outcome(
+            page_url, _site(page_url), source_site="test"
+        )
 
     assert report.outcome["disposition"] == "already_exists"
     assert report.outcome["subreason"] == duplicate_subreason
@@ -572,7 +605,9 @@ def test_recognized_disallowed_document_extension_is_still_filtered(tmp_path: Pa
         "_request",
         return_value=(html, {"content-type": "text/html"}, page_url),
     ):
-        report = crawler.scan_page_for_files_with_outcome(page_url, _site(page_url), source_site="test")
+        report = crawler.scan_page_for_files_with_outcome(
+            page_url, _site(page_url), source_site="test"
+        )
 
     assert report.outcome["disposition"] == "filtered"
     assert report.outcome["subreason"] == "extension"
@@ -725,8 +760,7 @@ def test_outcome_and_task_log_redact_and_bound_sensitive_urls(tmp_path: Path, mo
     url = (
         "https://blocked.example/report.pdf?token="
         f"{secret}&X-Amz-Signature={secret}&X-Amz-Credential={secret}"
-        f"#access_token={fragment_secret}&padding="
-        + ("x" * 900)
+        f"#access_token={fragment_secret}&padding=" + ("x" * 900)
     )
     results = [SearchResult(url, "test")]
 
@@ -749,7 +783,9 @@ def test_outcome_and_task_log_redact_and_bound_sensitive_urls(tmp_path: Path, mo
     assert "[REDACTED]" in log_text
 
 
-def test_api_and_cli_search_use_the_same_shared_summary(tmp_path: Path, caplog, monkeypatch) -> None:
+def test_api_and_cli_search_use_the_same_shared_summary(
+    tmp_path: Path, caplog, monkeypatch
+) -> None:
     monkeypatch.chdir(tmp_path)
     results = [
         SearchResult("https://example.com/new.pdf", "test"),
@@ -811,7 +847,9 @@ def test_api_and_cli_search_use_the_same_shared_summary(tmp_path: Path, caplog, 
         ),
         encoding="utf-8",
     )
-    args = Namespace(config=str(config_path), site=None, max_pages=None, max_depth=None, no_search=False)
+    args = Namespace(
+        config=str(config_path), site=None, max_pages=None, max_depth=None, no_search=False
+    )
 
     with (
         patch.object(Crawler, "scan_page_for_files", return_value=[]),
@@ -831,20 +869,27 @@ def test_api_and_cli_search_use_the_same_shared_summary(tmp_path: Path, caplog, 
         assert cmd_update(args) == 0
 
     summary_record = next(
-        record for record in caplog.records if record.getMessage().startswith("Search acquisition summary: ")
+        record
+        for record in caplog.records
+        if record.getMessage().startswith("Search acquisition summary: ")
     )
     cli_summary = json.loads(summary_record.getMessage().split(": ", 1)[1])
     assert cli_summary == api_result.metadata["acquisition_summary"]
 
 
 @pytest.mark.parametrize("site_branch", [False, True], ids=["global-search", "site-search"])
-def test_cli_all_failed_search_returns_nonzero(tmp_path: Path, monkeypatch, site_branch: bool) -> None:
+def test_cli_all_failed_search_returns_nonzero(
+    tmp_path: Path, monkeypatch, site_branch: bool
+) -> None:
     monkeypatch.chdir(tmp_path)
-    assert _run_cli_search_outcomes(
-        tmp_path,
-        [("access_blocked", 0, 0, 1)],
-        site_branch=site_branch,
-    ) != 0
+    assert (
+        _run_cli_search_outcomes(
+            tmp_path,
+            [("access_blocked", 0, 0, 1)],
+            site_branch=site_branch,
+        )
+        != 0
+    )
 
 
 @pytest.mark.parametrize(
@@ -916,7 +961,9 @@ def test_cli_both_search_branches_consume_outcomes_without_legacy_scans(
         ),
         encoding="utf-8",
     )
-    args = Namespace(config=str(config_path), site=None, max_pages=None, max_depth=None, no_search=False)
+    args = Namespace(
+        config=str(config_path), site=None, max_pages=None, max_depth=None, no_search=False
+    )
     caplog.set_level(logging.INFO, logger="ai_actuarial.cli")
 
     with (
@@ -927,7 +974,9 @@ def test_cli_both_search_branches_consume_outcomes_without_legacy_scans(
             autospec=True,
             side_effect=acquire,
         ) as outcome_scan,
-        patch("ai_actuarial.cli.search_all", side_effect=[[site_result], [global_result]]) as search,
+        patch(
+            "ai_actuarial.cli.search_all", side_effect=[[site_result], [global_result]]
+        ) as search,
         patch("ai_actuarial.cli.get_search_runtime_credentials", return_value={}),
     ):
         assert cmd_update(args) == 0
@@ -936,7 +985,9 @@ def test_cli_both_search_branches_consume_outcomes_without_legacy_scans(
     assert outcome_scan.call_count == 2
     legacy_scan.assert_not_called()
     summary_record = next(
-        record for record in caplog.records if record.getMessage().startswith("Search acquisition summary: ")
+        record
+        for record in caplog.records
+        if record.getMessage().startswith("Search acquisition summary: ")
     )
     summary = json.loads(summary_record.getMessage().split(": ", 1)[1])
     assert summary["total"] == summary["outcome_count"] == 2
@@ -951,7 +1002,9 @@ def test_cli_both_search_branches_consume_outcomes_without_legacy_scans(
     assert "result 2/2" in result_messages[1]
 
 
-def test_stop_produces_one_terminal_outcome_per_discovery_result(tmp_path: Path, monkeypatch) -> None:
+def test_stop_produces_one_terminal_outcome_per_discovery_result(
+    tmp_path: Path, monkeypatch
+) -> None:
     monkeypatch.chdir(tmp_path)
     results = [
         SearchResult("https://example.com/one.pdf", "test"),
@@ -1018,7 +1071,9 @@ def test_file_like_url_rejects_incompatible_mime(tmp_path: Path, content_type: s
     staged.write_bytes(b"not a pdf")
     crawler = _crawler(tmp_path)
     with (
-        patch.object(crawler, "_request", return_value=(b"not a pdf", {"content-type": content_type}, url)),
+        patch.object(
+            crawler, "_request", return_value=(b"not a pdf", {"content-type": content_type}, url)
+        ),
         patch.object(
             crawler,
             "_download_file",
@@ -1069,7 +1124,9 @@ def test_normalized_url_duplicate_is_distinct_from_exact_url_duplicate(tmp_path:
         ),
         patch.object(crawler, "_download_file") as download,
     ):
-        report = crawler.scan_page_for_files_with_outcome(raw_url, _site(raw_url), source_site="test")
+        report = crawler.scan_page_for_files_with_outcome(
+            raw_url, _site(raw_url), source_site="test"
+        )
 
     assert report.outcome["disposition"] == "already_exists"
     assert report.outcome["subreason"] == "normalized_url"
@@ -1132,7 +1189,9 @@ def test_url_collector_keeps_legacy_storage_exception_semantics(tmp_path: Path) 
     assert result.errors and "database unavailable" in result.errors[0]
 
 
-def test_legacy_list_preserves_direct_vs_linked_download_exception_semantics(tmp_path: Path) -> None:
+def test_legacy_list_preserves_direct_vs_linked_download_exception_semantics(
+    tmp_path: Path,
+) -> None:
     direct_url = "https://example.com/direct.pdf"
     direct = _crawler(tmp_path)
     with (
@@ -1194,9 +1253,15 @@ def test_legacy_list_propagates_linked_handler_and_page_content_failures(tmp_pat
         patch.object(
             page_content,
             "_request",
-            return_value=(b"<html><body>Actuarial content</body></html>", {"content-type": "text/html"}, page_url),
+            return_value=(
+                b"<html><body>Actuarial content</body></html>",
+                {"content-type": "text/html"},
+                page_url,
+            ),
         ),
-        patch.object(page_content, "_handle_page_content", side_effect=OSError("page storage failed")),
+        patch.object(
+            page_content, "_handle_page_content", side_effect=OSError("page storage failed")
+        ),
         pytest.raises(OSError, match="page storage failed"),
     ):
         page_content.scan_page_for_files(
@@ -1229,7 +1294,9 @@ def test_linked_normalized_url_duplicate_keeps_its_subreason(tmp_path: Path) -> 
         ),
         patch.object(crawler, "_download_file") as download,
     ):
-        report = crawler.scan_page_for_files_with_outcome(page_url, _site(page_url), source_site="test")
+        report = crawler.scan_page_for_files_with_outcome(
+            page_url, _site(page_url), source_site="test"
+        )
 
     assert report.outcome["disposition"] == "already_exists"
     assert report.outcome["subreason"] == "normalized_url"
@@ -1259,7 +1326,9 @@ def test_linked_content_hash_duplicate_keeps_its_subreason(tmp_path: Path) -> No
         ),
         patch.object(crawler, "_handle_file") as handle,
     ):
-        report = crawler.scan_page_for_files_with_outcome(page_url, _site(page_url), source_site="test")
+        report = crawler.scan_page_for_files_with_outcome(
+            page_url, _site(page_url), source_site="test"
+        )
 
     assert report.outcome["disposition"] == "already_exists"
     assert report.outcome["subreason"] == "content_hash"
@@ -1273,7 +1342,11 @@ def test_page_content_hash_duplicate_keeps_its_subreason(tmp_path: Path) -> None
         patch.object(
             crawler,
             "_request",
-            return_value=(b"<html><body>Research</body></html>", {"content-type": "text/html"}, page_url),
+            return_value=(
+                b"<html><body>Research</body></html>",
+                {"content-type": "text/html"},
+                page_url,
+            ),
         ),
         patch.object(crawler, "_extract_text_from_html", return_value="x" * 200),
     ):
@@ -1317,7 +1390,11 @@ def test_page_content_url_duplicate_preserves_exact_or_normalized_subreason(
         patch.object(
             crawler,
             "_request",
-            return_value=(b"<html><body>Changed content</body></html>", {"content-type": "text/html"}, page_url),
+            return_value=(
+                b"<html><body>Changed content</body></html>",
+                {"content-type": "text/html"},
+                page_url,
+            ),
         ),
         patch.object(crawler, "_extract_text_from_html", return_value=changed_content) as extract,
     ):
@@ -1405,7 +1482,9 @@ def test_linked_html_access_walls_are_classified_before_mismatch(tmp_path: Path)
                 return_value=(staged, {"content-type": "text/html"}, linked_url, "sha", len(body)),
             ),
         ):
-            report = crawler.scan_page_for_files_with_outcome(page_url, _site(page_url), source_site="test")
+            report = crawler.scan_page_for_files_with_outcome(
+                page_url, _site(page_url), source_site="test"
+            )
 
         assert report.outcome["disposition"] == "access_blocked"
         assert report.outcome["subreason"] == expected_subreason
@@ -1587,7 +1666,11 @@ def test_quoted_site_search_flags_produce_same_real_api_and_cli_summary(
     with (
         patch("ai_actuarial.task_runtime.search_all", return_value=[result]),
         patch("ai_actuarial.task_runtime.get_search_runtime_credentials", return_value={}),
-        patch.object(Crawler, "_request", return_value=(b"%PDF", {"content-type": "application/pdf"}, result_url)),
+        patch.object(
+            Crawler,
+            "_request",
+            return_value=(b"%PDF", {"content-type": "application/pdf"}, result_url),
+        ),
         patch.object(Crawler, "scan_page_for_files_with_outcome", new=acquire),
         patch.object(Crawler, "_download_file") as download,
     ):
@@ -1601,25 +1684,37 @@ def test_quoted_site_search_flags_produce_same_real_api_and_cli_summary(
 
     download.assert_not_called()
     caplog.set_level(logging.INFO, logger="ai_actuarial.cli")
-    args = Namespace(config=str(config_path), site=None, max_pages=None, max_depth=None, no_search=False)
+    args = Namespace(
+        config=str(config_path), site=None, max_pages=None, max_depth=None, no_search=False
+    )
     staged = tmp_path / "cli-parity.part"
     staged.write_bytes(b"%PDF")
     with (
         patch("ai_actuarial.cli.search_all", side_effect=[[result], []]),
         patch("ai_actuarial.cli.get_search_runtime_credentials", return_value={}),
-        patch.object(Crawler, "_request", return_value=(b"%PDF", {"content-type": "application/pdf"}, result_url)),
+        patch.object(
+            Crawler,
+            "_request",
+            return_value=(b"%PDF", {"content-type": "application/pdf"}, result_url),
+        ),
         patch.object(Crawler, "scan_page_for_files_with_outcome", new=acquire),
         patch.object(
             Crawler,
             "_download_file",
             return_value=(staged, {"content-type": "application/pdf"}, result_url, "sha", 4),
         ),
-        patch.object(Crawler, "_handle_file", return_value={"url": result_url, "local_path": "files/report.pdf"}),
+        patch.object(
+            Crawler,
+            "_handle_file",
+            return_value={"url": result_url, "local_path": "files/report.pdf"},
+        ),
     ):
         assert cmd_update(args) == 0
 
     summary_record = next(
-        record for record in reversed(caplog.records) if record.getMessage().startswith("Search acquisition summary: ")
+        record
+        for record in reversed(caplog.records)
+        if record.getMessage().startswith("Search acquisition summary: ")
     )
     cli_summary = json.loads(summary_record.getMessage().split(": ", 1)[1])
     assert cli_summary == api_result.metadata["acquisition_summary"]
@@ -1699,7 +1794,11 @@ def test_stop_after_html_parsing_prevents_page_content_persistence(tmp_path: Pat
         patch.object(
             crawler,
             "_request",
-            return_value=(b"<html><body>Research</body></html>", {"content-type": "text/html"}, page_url),
+            return_value=(
+                b"<html><body>Research</body></html>",
+                {"content-type": "text/html"},
+                page_url,
+            ),
         ),
         patch("ai_actuarial.crawler.html_to_text", side_effect=parse_html),
         patch.object(crawler, "_handle_page_content") as handle_page,
@@ -1774,7 +1873,9 @@ def test_stop_after_linked_staging_validation_cleans_tmp_before_handler(tmp_path
 
     html = f'<html><body><a href="{linked_url}">Report</a></body></html>'.encode()
     with (
-        patch.object(crawler, "_request", return_value=(html, {"content-type": "text/html"}, page_url)),
+        patch.object(
+            crawler, "_request", return_value=(html, {"content-type": "text/html"}, page_url)
+        ),
         patch.object(
             crawler,
             "_download_file",
@@ -1783,7 +1884,9 @@ def test_stop_after_linked_staging_validation_cleans_tmp_before_handler(tmp_path
         patch.object(crawler, "_staged_access_page_subreason", side_effect=validate_staged),
         patch.object(crawler, "_handle_file") as handle_file,
     ):
-        report = crawler.scan_page_for_files_with_outcome(page_url, _site(page_url), source_site="test")
+        report = crawler.scan_page_for_files_with_outcome(
+            page_url, _site(page_url), source_site="test"
+        )
 
     assert report.items == []
     assert report.outcome["disposition"] == "stopped_or_timeout"
@@ -1878,7 +1981,9 @@ def test_single_page_mixed_link_failure_is_auditable_in_runtime_and_cli(
         return staged, {"content-type": "application/pdf"}, url, "sha", 4
 
     with (
-        patch.object(Crawler, "_request", return_value=(html, {"content-type": "text/html"}, page_url)),
+        patch.object(
+            Crawler, "_request", return_value=(html, {"content-type": "text/html"}, page_url)
+        ),
         patch.object(Crawler, "_download_file", side_effect=download),
         patch.object(Crawler, "_handle_file", return_value=item),
     ):
@@ -1921,24 +2026,32 @@ def test_single_page_mixed_link_failure_is_auditable_in_runtime_and_cli(
         ),
         encoding="utf-8",
     )
-    args = Namespace(config=str(config_path), site=None, max_pages=None, max_depth=None, no_search=False)
+    args = Namespace(
+        config=str(config_path), site=None, max_pages=None, max_depth=None, no_search=False
+    )
     caplog.clear()
     caplog.set_level(logging.INFO, logger="ai_actuarial.cli")
     with (
         patch("ai_actuarial.cli.search_all", return_value=[result]),
         patch("ai_actuarial.cli.get_search_runtime_credentials", return_value={}),
-        patch.object(Crawler, "_request", return_value=(html, {"content-type": "text/html"}, page_url)),
+        patch.object(
+            Crawler, "_request", return_value=(html, {"content-type": "text/html"}, page_url)
+        ),
         patch.object(Crawler, "_download_file", side_effect=download),
         patch.object(Crawler, "_handle_file", return_value=item),
     ):
         assert cmd_update(args) == 0
 
     summary_record = next(
-        record for record in caplog.records if record.getMessage().startswith("Search acquisition summary: ")
+        record
+        for record in caplog.records
+        if record.getMessage().startswith("Search acquisition summary: ")
     )
     cli_summary = json.loads(summary_record.getMessage().split(": ", 1)[1])
     warning_record = next(
-        record for record in caplog.records if record.getMessage().startswith("Search acquisition result 1/1:")
+        record
+        for record in caplog.records
+        if record.getMessage().startswith("Search acquisition result 1/1:")
     )
     assert cli_summary == summary
     assert warning_record.levelno == logging.WARNING
@@ -1982,7 +2095,9 @@ def test_linked_storage_lookup_failure_keeps_prior_item_in_crawler_runtime_and_c
     storage.file_exists.side_effect = lookup
     crawler = _crawler(tmp_path, storage)
     with (
-        patch.object(crawler, "_request", return_value=(html, {"content-type": "text/html"}, page_url)),
+        patch.object(
+            crawler, "_request", return_value=(html, {"content-type": "text/html"}, page_url)
+        ),
         patch.object(
             crawler,
             "_download_file",
@@ -1990,7 +2105,9 @@ def test_linked_storage_lookup_failure_keeps_prior_item_in_crawler_runtime_and_c
         ),
         patch.object(crawler, "_handle_file", return_value=item),
     ):
-        report = crawler.scan_page_for_files_with_outcome(page_url, _site(page_url), source_site="test")
+        report = crawler.scan_page_for_files_with_outcome(
+            page_url, _site(page_url), source_site="test"
+        )
 
     assert report.items == [item]
     assert report.outcome["disposition"] == "storage_failed"
@@ -2051,7 +2168,9 @@ def test_linked_storage_lookup_failure_keeps_prior_item_in_crawler_runtime_and_c
         ),
         encoding="utf-8",
     )
-    args = Namespace(config=str(config_path), site=None, max_pages=None, max_depth=None, no_search=False)
+    args = Namespace(
+        config=str(config_path), site=None, max_pages=None, max_depth=None, no_search=False
+    )
     caplog.clear()
     caplog.set_level(logging.INFO, logger="ai_actuarial.cli")
     with (
@@ -2062,7 +2181,9 @@ def test_linked_storage_lookup_failure_keeps_prior_item_in_crawler_runtime_and_c
         assert cmd_update(args) == 0
 
     summary_record = next(
-        record for record in caplog.records if record.getMessage().startswith("Search acquisition summary: ")
+        record
+        for record in caplog.records
+        if record.getMessage().startswith("Search acquisition summary: ")
     )
     cli_summary = json.loads(summary_record.getMessage().split(": ", 1)[1])
     assert cli_summary == summary
@@ -2095,7 +2216,9 @@ def test_linked_staged_storage_lookup_failure_is_reported_and_cleaned(
     crawler = _crawler(tmp_path, storage)
 
     with (
-        patch.object(crawler, "_request", return_value=(html, {"content-type": "text/html"}, page_url)),
+        patch.object(
+            crawler, "_request", return_value=(html, {"content-type": "text/html"}, page_url)
+        ),
         patch.object(
             crawler,
             "_download_file",
@@ -2103,7 +2226,9 @@ def test_linked_staged_storage_lookup_failure_is_reported_and_cleaned(
         ),
         patch.object(crawler, "_handle_file", return_value=None) as handle,
     ):
-        report = crawler.scan_page_for_files_with_outcome(page_url, _site(page_url), source_site="test")
+        report = crawler.scan_page_for_files_with_outcome(
+            page_url, _site(page_url), source_site="test"
+        )
 
     assert report.items == []
     assert report.outcome["disposition"] == "storage_failed"
@@ -2237,7 +2362,9 @@ def test_file_persistence_failure_removes_new_artifact_and_database_rows(
                     crawler.scan_page_for_files(url, _site(url), source_site="test")
                 report = None
             else:
-                report = crawler.scan_page_for_files_with_outcome(url, _site(url), source_site="test")
+                report = crawler.scan_page_for_files_with_outcome(
+                    url, _site(url), source_site="test"
+                )
 
         if report is not None:
             assert report.items == []
@@ -2284,7 +2411,9 @@ def test_page_content_insert_failure_removes_new_markdown_and_database_row(
 
     try:
         with (
-            patch.object(crawler, "_request", return_value=(html, {"content-type": "text/html"}, url)),
+            patch.object(
+                crawler, "_request", return_value=(html, {"content-type": "text/html"}, url)
+            ),
             patch.object(crawler, "_extract_text_from_html", return_value="page content " * 20),
         ):
             if legacy:

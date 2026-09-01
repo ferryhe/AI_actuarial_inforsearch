@@ -9,8 +9,6 @@ from pathlib import Path
 
 import pytest
 
-from ai_actuarial.storage import Storage
-from ai_actuarial.sqlite_schema import CURRENT_SQLITE_SCHEMA_VERSION
 from ai_actuarial.api.services.rag_admin import (
     _ready_data_artifact_digest,
     _remove_unreferenced_staging_dir,
@@ -18,6 +16,8 @@ from ai_actuarial.api.services.rag_admin import (
 from ai_actuarial.api.services.ready_data_publication import (
     public_ready_data_manifest,
 )
+from ai_actuarial.sqlite_schema import CURRENT_SQLITE_SCHEMA_VERSION
+from ai_actuarial.storage import Storage
 
 
 def test_public_ready_manifest_projects_only_canonical_ready_build_input() -> None:
@@ -60,8 +60,7 @@ def test_public_ready_manifest_projects_only_canonical_ready_build_input() -> No
 def _open_storage(tmp_path: Path) -> Storage:
     db_path = tmp_path / "index.db"
     storage = Storage(str(db_path))
-    storage._conn.execute(
-        """
+    storage._conn.execute("""
         CREATE TABLE IF NOT EXISTS rag_knowledge_bases (
             kb_id TEXT PRIMARY KEY,
             name TEXT NOT NULL,
@@ -82,8 +81,7 @@ def _open_storage(tmp_path: Path) -> Storage:
             chunk_count INTEGER DEFAULT 0,
             index_dirty_at TEXT
         )
-        """
-    )
+        """)
     storage._conn.executemany(
         """
         INSERT OR IGNORE INTO rag_knowledge_bases (
@@ -158,14 +156,11 @@ def test_publication_column_capability_is_checked_once_per_storage_instance(
     try:
         publications = reopened.list_agentic_ready_publications_for_gc()
         assert len(publications) == 2
-        assert reopened.get_agentic_ready_publication(
-            str(first["publication_id"])
-        ) is not None
+        assert reopened.get_agentic_ready_publication(str(first["publication_id"])) is not None
         capability_checks = [
             statement
             for statement in statements
-            if statement.strip().lower()
-            == "pragma table_info(agentic_ready_publications)"
+            if statement.strip().lower() == "pragma table_info(agentic_ready_publications)"
         ]
         assert len(capability_checks) == 1
     finally:
@@ -376,19 +371,28 @@ def test_rollback_fail_closes_invalid_slot_publication_invariants(
                 validate_previous_publication=lambda _candidate: True,
             )
 
-        assert storage._conn.execute(
-            "SELECT active_publication_id, previous_publication_id FROM agentic_ready_slots "
-            "WHERE kb_id = ? AND profile = ?",
-            ("kb-ready", "general"),
-        ).fetchone() == slots_before
-        assert storage._conn.execute(
-            "SELECT publication_id, kb_id, profile, status FROM agentic_ready_publications "
-            "ORDER BY publication_id"
-        ).fetchall() == publications_before
-        assert storage.get_agentic_ready_manifest(
-            kb_id="kb-ready",
-            profile="general",
-        ) == manifest_before
+        assert (
+            storage._conn.execute(
+                "SELECT active_publication_id, previous_publication_id FROM agentic_ready_slots "
+                "WHERE kb_id = ? AND profile = ?",
+                ("kb-ready", "general"),
+            ).fetchone()
+            == slots_before
+        )
+        assert (
+            storage._conn.execute(
+                "SELECT publication_id, kb_id, profile, status FROM agentic_ready_publications "
+                "ORDER BY publication_id"
+            ).fetchall()
+            == publications_before
+        )
+        assert (
+            storage.get_agentic_ready_manifest(
+                kb_id="kb-ready",
+                profile="general",
+            )
+            == manifest_before
+        )
     finally:
         storage.close()
 
@@ -446,10 +450,13 @@ def test_publication_revision_changes_only_with_committed_pointer_swaps(
                 validated_previous_publication_id=str(first["publication_id"]),
                 validate_previous_publication=lambda _publication: False,
             )
-        assert storage.get_agentic_ready_publication_state(
-            kb_id="kb-ready",
-            profile="general",
-        )["publication_revision"] == 2
+        assert (
+            storage.get_agentic_ready_publication_state(
+                kb_id="kb-ready",
+                profile="general",
+            )["publication_revision"]
+            == 2
+        )
 
         def fail_serving_manifest(_publication: dict[str, object]) -> None:
             raise RuntimeError("injected rollback manifest failure")
@@ -733,15 +740,21 @@ def test_discard_duplicate_requires_the_same_expected_active(tmp_path: Path) -> 
             output_dir=str(tmp_path / "staging" / "duplicate"),
         )
 
-        assert storage.discard_agentic_ready_publication(
-            str(duplicate["publication_id"]),
-            expected_active_publication_id="arp-concurrent-winner",
-        ) is False
+        assert (
+            storage.discard_agentic_ready_publication(
+                str(duplicate["publication_id"]),
+                expected_active_publication_id="arp-concurrent-winner",
+            )
+            is False
+        )
         assert storage.get_agentic_ready_publication(str(duplicate["publication_id"])) is not None
-        assert storage.discard_agentic_ready_publication(
-            str(duplicate["publication_id"]),
-            expected_active_publication_id=str(active["publication_id"]),
-        ) is True
+        assert (
+            storage.discard_agentic_ready_publication(
+                str(duplicate["publication_id"]),
+                expected_active_publication_id=str(active["publication_id"]),
+            )
+            is True
+        )
         assert storage.get_agentic_ready_publication(str(duplicate["publication_id"])) is None
     finally:
         storage.close()
@@ -929,8 +942,7 @@ def test_storage_rejects_legacy_draft_identity_schema_without_mutating(
 ) -> None:
     db_path = tmp_path / "index.db"
     conn = sqlite3.connect(db_path)
-    conn.executescript(
-        """
+    conn.executescript("""
         CREATE TABLE rag_knowledge_bases (
             kb_id TEXT PRIMARY KEY,
             embedding_model TEXT NOT NULL DEFAULT 'text-embedding-3-large'
@@ -989,8 +1001,7 @@ def test_storage_rejects_legacy_draft_identity_schema_without_mutating(
         INSERT INTO agentic_ready_slots (
             kb_id, profile, active_publication_id, previous_publication_id, updated_at
         ) VALUES ('kb-ready', 'general', 'arp-active', 'arp-previous', '2026-08-18');
-        """
-    )
+        """)
     conn.execute(f"PRAGMA user_version={CURRENT_SQLITE_SCHEMA_VERSION}")
     conn.commit()
     conn.close()
@@ -999,16 +1010,12 @@ def test_storage_rejects_legacy_draft_identity_schema_without_mutating(
     try:
         before_schema = {
             str(row[1])
-            for row in before_rows.execute(
-                "PRAGMA table_info(agentic_ready_slots)"
-            ).fetchall()
+            for row in before_rows.execute("PRAGMA table_info(agentic_ready_slots)").fetchall()
         }
-        slot_pointer = before_rows.execute(
-            """
+        slot_pointer = before_rows.execute("""
             SELECT active_publication_id, previous_publication_id
             FROM agentic_ready_slots
-            """
-        ).fetchone()
+            """).fetchone()
     finally:
         before_rows.close()
 
@@ -1023,16 +1030,17 @@ def test_storage_rejects_legacy_draft_identity_schema_without_mutating(
         }
         assert after_schema == before_schema
         assert "publication_revision" not in after_schema
-        assert check.execute(
-            """
+        assert check.execute("""
             SELECT active_publication_id, previous_publication_id
             FROM agentic_ready_slots
-            """
-        ).fetchone() == slot_pointer
-        assert check.execute(
-            "SELECT 1 FROM sqlite_schema WHERE name = ?",
-            ("agentic_ready_publications_attempts_new",),
-        ).fetchone() is None
+            """).fetchone() == slot_pointer
+        assert (
+            check.execute(
+                "SELECT 1 FROM sqlite_schema WHERE name = ?",
+                ("agentic_ready_publications_attempts_new",),
+            ).fetchone()
+            is None
+        )
     finally:
         check.close()
 
@@ -1042,8 +1050,7 @@ def test_storage_rejects_dangling_draft_slots_without_committing_migration(
 ) -> None:
     db_path = tmp_path / "index.db"
     conn = sqlite3.connect(db_path)
-    conn.executescript(
-        """
+    conn.executescript("""
         CREATE TABLE rag_knowledge_bases (
             kb_id TEXT PRIMARY KEY,
             embedding_model TEXT NOT NULL DEFAULT 'text-embedding-3-large'
@@ -1087,8 +1094,7 @@ def test_storage_rejects_dangling_draft_slots_without_committing_migration(
         INSERT INTO agentic_ready_slots (
             kb_id, profile, active_publication_id, previous_publication_id, updated_at
         ) VALUES ('kb-ready', 'general', 'arp-missing', NULL, '2026-08-18');
-        """
-    )
+        """)
     conn.execute(f"PRAGMA user_version={CURRENT_SQLITE_SCHEMA_VERSION}")
     conn.commit()
     conn.close()
@@ -1102,9 +1108,7 @@ def test_storage_rejects_dangling_draft_slots_without_committing_migration(
 
         check = sqlite3.connect(db_path)
         try:
-            indexes = check.execute(
-                "PRAGMA index_list(agentic_ready_publications)"
-            ).fetchall()
+            indexes = check.execute("PRAGMA index_list(agentic_ready_publications)").fetchall()
             unique_column_sets = [
                 {
                     str(column[2])
@@ -1125,10 +1129,13 @@ def test_storage_rejects_dangling_draft_slots_without_committing_migration(
             assert check.execute(
                 "SELECT active_publication_id FROM agentic_ready_slots"
             ).fetchone() == ("arp-missing",)
-            assert check.execute(
-                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
-                ("agentic_ready_publications_attempts_new",),
-            ).fetchone() is None
+            assert (
+                check.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+                    ("agentic_ready_publications_attempts_new",),
+                ).fetchone()
+                is None
+            )
         finally:
             check.close()
 
@@ -1156,7 +1163,9 @@ def test_artifact_digest_ignores_restore_specific_manifest_paths(tmp_path: Path)
     assert digests[0] == digests[1]
 
 
-def test_cleanup_rejects_symlink_candidate_without_deleting_outside_sentinel(tmp_path: Path) -> None:
+def test_cleanup_rejects_symlink_candidate_without_deleting_outside_sentinel(
+    tmp_path: Path,
+) -> None:
     storage = _open_storage(tmp_path)
     staging_root = tmp_path / "agentic_ready_data" / "staging"
     staging_root.mkdir(parents=True)

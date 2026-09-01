@@ -316,7 +316,10 @@ def test_ingest_manifest_skips_non_dict_assets() -> None:
     manifest["downloaded_assets"] = [
         "not-a-dict",
         None,
-        {"url": "https://example.com/valid", "checksum": {"algorithm": "sha256", "value": "a" * 64}},
+        {
+            "url": "https://example.com/valid",
+            "checksum": {"algorithm": "sha256", "value": "a" * 64},
+        },
     ]
     storage = Storage(":memory:")
     try:

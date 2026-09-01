@@ -116,10 +116,13 @@ def test_soft_stale_remains_usable_and_is_explicitly_marked(tmp_path: Path) -> N
         assert status["usable"] is True
         assert status["serving_stale"] is True
         assert status["fallback_mode"] == "agentic"
-        assert _resolve_ready_output_dir(
-            db_path=storage.db_path,
-            payload={"kb_id": "kb-source-state", "profile": "general"},
-        )[0] == status["output_dir"]
+        assert (
+            _resolve_ready_output_dir(
+                db_path=storage.db_path,
+                payload={"kb_id": "kb-source-state", "profile": "general"},
+            )[0]
+            == status["output_dir"]
+        )
     finally:
         storage.close()
 
@@ -350,9 +353,7 @@ def test_source_evaluation_preserves_generation_backed_running_claim(tmp_path: P
             profile="general",
             reason="index_committed",
         )
-        claimed = storage.claim_next_agentic_ready_automation(
-            claim_token="live-generation-claim"
-        )
+        claimed = storage.claim_next_agentic_ready_automation(claim_token="live-generation-claim")
         assert claimed is not None
         before = storage.get_agentic_ready_publication_state(
             kb_id="kb-source-state",
@@ -761,10 +762,13 @@ def test_registered_previous_output_is_rejected_after_hard_state_catches_up(
             tmp_path,
             source_version_id="rdsnap_b",
         )
-        assert storage.get_agentic_ready_source_state(
-            kb_id="kb-source-state",
-            profile="general",
-        )["serving_allowed"] is True
+        assert (
+            storage.get_agentic_ready_source_state(
+                kb_id="kb-source-state",
+                profile="general",
+            )["serving_allowed"]
+            is True
+        )
 
         with pytest.raises(AgenticRagError, match="not the current serving") as exc_info:
             _resolve_ready_output_dir(
@@ -941,10 +945,13 @@ def test_superseded_attempt_cannot_be_classified_as_redundant_duplicate(tmp_path
         )
         storage._conn.commit()
 
-        assert storage.mark_agentic_ready_publication_redundant_duplicate(
-            str(duplicate["publication_id"]),
-            expected_active_publication_id=str(active_manifest["publication_id"]),
-        ) is False
+        assert (
+            storage.mark_agentic_ready_publication_redundant_duplicate(
+                str(duplicate["publication_id"]),
+                expected_active_publication_id=str(active_manifest["publication_id"]),
+            )
+            is False
+        )
         recorded = storage.get_agentic_ready_publication(str(duplicate["publication_id"]))
         assert recorded is not None
         assert recorded["retention_class"] == ""

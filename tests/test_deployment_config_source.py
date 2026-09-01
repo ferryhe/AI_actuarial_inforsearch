@@ -2,7 +2,6 @@ from pathlib import Path
 
 import yaml
 
-
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -14,8 +13,13 @@ def test_production_compose_uses_fastapi_env_and_keeps_features_in_yaml():
     assert "- ENV=production" not in lines
     assert "- REQUIRE_AUTH=true" not in lines
     assert "- RATE_LIMIT_ENABLED=true" not in lines
-    assert "FASTAPI_CORS_ORIGINS=${FASTAPI_CORS_ORIGINS:?FASTAPI_CORS_ORIGINS is required in production}" in src
-    assert "VITE_API_BASE_URL=${VITE_API_BASE_URL:?VITE_API_BASE_URL is required in production}" in src
+    assert (
+        "FASTAPI_CORS_ORIGINS=${FASTAPI_CORS_ORIGINS:?FASTAPI_CORS_ORIGINS is required in production}"
+        in src
+    )
+    assert (
+        "VITE_API_BASE_URL=${VITE_API_BASE_URL:?VITE_API_BASE_URL is required in production}" in src
+    )
     assert "ENABLE_CSRF=${ENABLE_CSRF:-true}" in src
     assert "FASTAPI_SESSION_COOKIE_SECURE=${FASTAPI_SESSION_COOKIE_SECURE:-true}" in src
     assert "TRUST_PROXY=${TRUST_PROXY:-false}" in src
@@ -36,7 +40,7 @@ def test_caddy_fail2ban_access_log_and_healthcheck_are_deployable():
 
     assert "output file /data/access.log" in src
     assert "/data/logs/access.log" not in src
-    assert "http://localhost:80 {\n\tbind 127.0.0.1 [::1]\n\trespond \"ok\" 200\n}" in src
+    assert 'http://localhost:80 {\n\tbind 127.0.0.1 [::1]\n\trespond "ok" 200\n}' in src
 
 
 def test_public_caddyfile_uses_environment_placeholders_not_real_topology():
@@ -64,8 +68,8 @@ def test_compose_does_not_pin_public_bridge_topology():
 def test_container_entrypoint_keeps_container_bind_reachable():
     src = (ROOT / "docker-entrypoint.sh").read_text(encoding="utf-8")
 
-    assert 'FASTAPI_HOST:-0.0.0.0' in src
-    assert 'FASTAPI_HOST:-127.0.0.1' not in src
+    assert "FASTAPI_HOST:-0.0.0.0" in src
+    assert "FASTAPI_HOST:-127.0.0.1" not in src
 
 
 def test_committed_sites_yaml_uses_safe_public_security_defaults():

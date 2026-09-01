@@ -6,55 +6,6 @@
     "typescript-files": [],
     "python-files": [],
     "typescript-symbols": [],
-    "python-symbols": [
-      {
-        "path": "tests/test_api_token_model.py",
-        "kind": "unused variable",
-        "symbol": "original_updated_at",
-        "confidence": 60,
-        "classification": "whitelist",
-        "reason": "Framework, configuration, or test contract candidate; retain until a narrow symbol reference or safe removal is confirmed."
-      },
-      {
-        "path": "tests/test_chatbot_integration.py",
-        "kind": "unused attribute",
-        "symbol": "mock_embedding_class",
-        "confidence": 60,
-        "classification": "whitelist",
-        "reason": "Framework, configuration, or test contract candidate; retain until a narrow symbol reference or safe removal is confirmed."
-      },
-      {
-        "path": "tests/test_chatbot_integration.py",
-        "kind": "unused attribute",
-        "symbol": "mock_kb_manager_class",
-        "confidence": 60,
-        "classification": "whitelist",
-        "reason": "Framework, configuration, or test contract candidate; retain until a narrow symbol reference or safe removal is confirmed."
-      },
-      {
-        "path": "tests/test_fastapi_rag_admin_endpoints.py",
-        "kind": "unused function",
-        "symbol": "_assert_publication_slots",
-        "confidence": 60,
-        "classification": "whitelist",
-        "reason": "Framework, configuration, or test contract candidate; retain until a narrow symbol reference or safe removal is confirmed."
-      },
-      {
-        "path": "tests/test_issue_267_weekly_explanations.py",
-        "kind": "unused variable",
-        "symbol": "OLDER_END",
-        "confidence": 60,
-        "classification": "whitelist",
-        "reason": "Framework, configuration, or test contract candidate; retain until a narrow symbol reference or safe removal is confirmed."
-      },
-      {
-        "path": "tests/test_issue_267_weekly_explanations.py",
-        "kind": "unused variable",
-        "symbol": "OLDER_START",
-        "confidence": 60,
-        "classification": "whitelist",
-        "reason": "Framework, configuration, or test contract candidate; retain until a narrow symbol reference or safe removal is confirmed."
-      }
-    ]
+    "python-symbols": []
   }
 }

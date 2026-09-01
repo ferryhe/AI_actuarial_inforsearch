@@ -2,7 +2,6 @@ import os
 import subprocess
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 PAGES = ROOT / "client" / "src" / "pages"
 TASKS_DIR = PAGES / "tasks"
@@ -88,19 +87,13 @@ def test_task_metric_aliases_and_canonical_fields_are_wired() -> None:
     ):
         assert fallback in helper
 
-    assert (
-        "task.catalog_ok ?? task.items_downloaded ?? task.items_processed ?? 0"
-        in helper
-    )
+    assert "task.catalog_ok ?? task.items_downloaded ?? task.items_processed ?? 0" in helper
     assert 'const LOCAL_IMPORT_TYPES = new Set(["file", "file_import"]);' in helper
     assert "if (LOCAL_IMPORT_TYPES.has(type)) return processedMetrics(task);" in helper
     assert "task.result?.chunk_sets == null" in helper
     assert "].some((value) => value != null)" in helper
     assert "task.items_processed ?? task.items_downloaded" in helper
-    assert (
-        'metric("converted", task.items_downloaded ?? task.items_processed ?? 0)'
-        in helper
-    )
+    assert 'metric("converted", task.items_downloaded ?? task.items_processed ?? 0)' in helper
     assert "status?: string;" in helper
     for active_status in ("running", "pending", "queued", "stopping"):
         assert f'"{active_status}"' in helper
@@ -108,9 +101,7 @@ def test_task_metric_aliases_and_canonical_fields_are_wired() -> None:
 
 
 def test_task_metric_labels_have_english_and_chinese_translations() -> None:
-    i18n = (ROOT / "client" / "src" / "hooks" / "use-i18n.ts").read_text(
-        encoding="utf-8"
-    )
+    i18n = (ROOT / "client" / "src" / "hooks" / "use-i18n.ts").read_text(encoding="utf-8")
 
     for key, english, chinese in (
         ("processed", "Processed", "已处理"),

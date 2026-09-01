@@ -1,6 +1,5 @@
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1] / "client" / "src"
 APP_TSX = ROOT / "App.tsx"
 LAYOUT_TSX = ROOT / "components" / "Layout.tsx"
@@ -18,7 +17,7 @@ def test_categories_page_route_nav_and_permission_contracts():
     assert 'import Categories from "@/pages/Categories"' in app_src
     assert 'path="/categories"' in app_src
     assert 'permission="files.read"' in app_src
-    assert '<Categories />' in app_src
+    assert "<Categories />" in app_src
 
     assert 'path: "/categories"' in layout_src
     assert 'labelKey: "nav.categories"' in layout_src

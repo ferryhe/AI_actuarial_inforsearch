@@ -21,31 +21,32 @@ import time
 import unittest
 from pathlib import Path
 
-from ai_actuarial.storage import Storage
+from ai_actuarial.api.services.import_batches import ImportBatchError, _safe_relative_path
+from ai_actuarial.catalog import CatalogItem
 from ai_actuarial.catalog_incremental import _connect, _count_candidates, _upsert_catalog_row
 from ai_actuarial.crawler import Crawler
-from ai_actuarial.catalog import CatalogItem
-from ai_actuarial.api.services.import_batches import ImportBatchError, _safe_relative_path
+from ai_actuarial.storage import Storage
 
 
 class TestSkippedItemsStatus(unittest.TestCase):
     """Test that skipped items are marked with status='skipped' not 'ok'."""
-    
+
     def setUp(self):
         """Create a temporary database."""
         self.temp_dir = tempfile.mkdtemp()
         self.db_path = os.path.join(self.temp_dir, "test.db")
-    
+
     def tearDown(self):
         """Clean up temporary files."""
         import shutil
+
         if os.path.exists(self.temp_dir):
             shutil.rmtree(self.temp_dir)
-    
+
     def test_skipped_status_inserted(self):
         """Test that catalog items can be inserted with skipped status."""
         conn = _connect(self.db_path)
-        
+
         item = CatalogItem(
             source_site="test.com",
             title="Test Document",
@@ -56,7 +57,7 @@ class TestSkippedItemsStatus(unittest.TestCase):
             summary="Test summary",
             category="(filtered: non-AI)",
         )
-        
+
         _upsert_catalog_row(
             conn,
             item=item,
@@ -66,20 +67,14 @@ class TestSkippedItemsStatus(unittest.TestCase):
             processed_at="2024-01-01T00:00:00Z",
         )
         conn.commit()
-        
+
         # Verify status is 'skipped'
-        cur = conn.execute(
-            "SELECT status FROM catalog_items WHERE file_url = ?",
-            (item.url,)
-        )
+        cur = conn.execute("SELECT status FROM catalog_items WHERE file_url = ?", (item.url,))
         result = cur.fetchone()
         self.assertEqual(result[0], "skipped")
-        
+
         # Verify category indicates it was filtered
-        cur = conn.execute(
-            "SELECT category FROM catalog_items WHERE file_url = ?",
-            (item.url,)
-        )
+        cur = conn.execute("SELECT category FROM catalog_items WHERE file_url = ?", (item.url,))
         result = cur.fetchone()
         self.assertIn("filtered", result[0].lower())
         conn.close()
@@ -94,6 +89,7 @@ class TestCatalogSchemaCompatibility(unittest.TestCase):
 
     def tearDown(self):
         import shutil
+
         if os.path.exists(self.temp_dir):
             for _ in range(5):
                 try:
@@ -108,33 +104,25 @@ class TestCatalogSchemaCompatibility(unittest.TestCase):
         storage.close()
 
         with sqlite3.connect(self.db_path) as check_conn:
-            cols_before = {
-                row[1]
-                for row in check_conn.execute("PRAGMA table_info(catalog_items)")
-            }
+            cols_before = {row[1] for row in check_conn.execute("PRAGMA table_info(catalog_items)")}
             # Baseline sanity: table exists before _connect migration helper runs.
             self.assertIn("file_url", cols_before)
 
         # _connect should apply compatibility migration.
         conn = _connect(self.db_path)
         try:
-            cols_after = {
-                row[1]
-                for row in conn.execute("PRAGMA table_info(catalog_items)")
-            }
+            cols_after = {row[1] for row in conn.execute("PRAGMA table_info(catalog_items)")}
             self.assertIn("file_sha256", cols_after)
             self.assertIn("catalog_version", cols_after)
 
             # This query used to fail with "no such column: c.file_sha256".
-            conn.execute(
-                """
+            conn.execute("""
                 SELECT f.url
                 FROM files f
                 LEFT JOIN catalog_items c ON c.file_url = f.url
                 WHERE c.file_sha256 IS NULL
                 LIMIT 1
-                """
-            ).fetchall()
+                """).fetchall()
         finally:
             conn.close()
 
@@ -142,8 +130,7 @@ class TestCatalogSchemaCompatibility(unittest.TestCase):
         # Build a strict legacy table to reproduce:
         # sqlite3.IntegrityError: NOT NULL constraint failed: catalog_items.sha256
         with sqlite3.connect(self.db_path) as conn:
-            conn.execute(
-                """
+            conn.execute("""
                 CREATE TABLE files (
                     id INTEGER PRIMARY KEY,
                     url TEXT UNIQUE,
@@ -153,10 +140,8 @@ class TestCatalogSchemaCompatibility(unittest.TestCase):
                     original_filename TEXT,
                     local_path TEXT
                 )
-                """
-            )
-            conn.execute(
-                """
+                """)
+            conn.execute("""
                 CREATE TABLE catalog_items (
                     file_url TEXT PRIMARY KEY,
                     sha256 TEXT NOT NULL,
@@ -168,8 +153,7 @@ class TestCatalogSchemaCompatibility(unittest.TestCase):
                     status TEXT,
                     error TEXT
                 )
-                """
-            )
+                """)
             conn.commit()
 
         conn = _connect(self.db_path)
@@ -205,20 +189,21 @@ class TestCatalogSchemaCompatibility(unittest.TestCase):
 
 class TestStorageAbstraction(unittest.TestCase):
     """Test Storage abstraction methods instead of direct _conn access."""
-    
+
     def setUp(self):
         """Create a temporary database."""
         self.temp_dir = tempfile.mkdtemp()
         self.db_path = os.path.join(self.temp_dir, "test.db")
         self.storage = Storage(self.db_path)
-    
+
     def tearDown(self):
         """Clean up temporary files."""
         import shutil
+
         self.storage.close()
         if os.path.exists(self.temp_dir):
             shutil.rmtree(self.temp_dir)
-    
+
     def test_get_file_count(self):
         """Test get_file_count method."""
         # Insert test files
@@ -244,10 +229,10 @@ class TestStorageAbstraction(unittest.TestCase):
             bytes=2048,
             content_type="application/pdf",
         )
-        
+
         count = self.storage.get_file_count(require_local=True)
         self.assertEqual(count, 2)
-    
+
     def test_get_cataloged_count(self):
         """Test get_cataloged_count method."""
         # Insert test file
@@ -262,7 +247,7 @@ class TestStorageAbstraction(unittest.TestCase):
             bytes=1024,
             content_type="application/pdf",
         )
-        
+
         # Insert catalog item with status='ok'
         self.storage.upsert_catalog_item(
             item={
@@ -275,10 +260,10 @@ class TestStorageAbstraction(unittest.TestCase):
             pipeline_version="v1",
             status="ok",
         )
-        
+
         count = self.storage.get_cataloged_count()
         self.assertEqual(count, 1)
-    
+
     def test_get_sources_count(self):
         """Test get_sources_count method."""
         self.storage.insert_file(
@@ -303,10 +288,10 @@ class TestStorageAbstraction(unittest.TestCase):
             bytes=2048,
             content_type="application/pdf",
         )
-        
+
         count = self.storage.get_sources_count()
         self.assertEqual(count, 2)
-    
+
     def test_get_unique_sources(self):
         """Test get_unique_sources method."""
         self.storage.insert_file(
@@ -320,10 +305,10 @@ class TestStorageAbstraction(unittest.TestCase):
             bytes=1024,
             content_type="application/pdf",
         )
-        
+
         sources = self.storage.get_unique_sources()
         self.assertIn("test.com", sources)
-    
+
     def test_get_unique_categories(self):
         """Test get_unique_categories method."""
         self.storage.insert_file(
@@ -337,7 +322,7 @@ class TestStorageAbstraction(unittest.TestCase):
             bytes=1024,
             content_type="application/pdf",
         )
-        
+
         self.storage.upsert_catalog_item(
             item={
                 "url": "http://test.com/file1.pdf",
@@ -372,12 +357,12 @@ class TestStorageAbstraction(unittest.TestCase):
             pipeline_version="v1",
             status="error",
         )
-        
+
         categories = self.storage.get_unique_categories()
         self.assertIn("TestCategory", categories)
         self.assertIn("Pricing", categories)
         self.assertNotIn("(error)", categories)
-    
+
     def test_query_files_with_catalog(self):
         """Test query_files_with_catalog method."""
         # Insert test file
@@ -392,7 +377,7 @@ class TestStorageAbstraction(unittest.TestCase):
             bytes=1024,
             content_type="application/pdf",
         )
-        
+
         self.storage.upsert_catalog_item(
             item={
                 "url": "http://test.com/file1.pdf",
@@ -404,14 +389,14 @@ class TestStorageAbstraction(unittest.TestCase):
             pipeline_version="v1",
             status="ok",
         )
-        
+
         files, total = self.storage.query_files_with_catalog(
             limit=10,
             offset=0,
             order_by="last_seen",
             order_dir="desc",
         )
-        
+
         self.assertEqual(total, 1)
         self.assertEqual(len(files), 1)
         self.assertEqual(files[0]["title"], "Test Document")
@@ -455,20 +440,21 @@ class TestStorageAbstraction(unittest.TestCase):
 
 class TestSQLInjectionProtection(unittest.TestCase):
     """Test that SQL injection is prevented through parameterized queries."""
-    
+
     def setUp(self):
         """Create a temporary database."""
         self.temp_dir = tempfile.mkdtemp()
         self.db_path = os.path.join(self.temp_dir, "test.db")
         self.storage = Storage(self.db_path)
-    
+
     def tearDown(self):
         """Clean up temporary files."""
         import shutil
+
         self.storage.close()
         if os.path.exists(self.temp_dir):
             shutil.rmtree(self.temp_dir)
-    
+
     def test_category_filter_sql_injection(self):
         """Test that category filter prevents SQL injection."""
         # Insert test file
@@ -483,16 +469,16 @@ class TestSQLInjectionProtection(unittest.TestCase):
             bytes=1024,
             content_type="application/pdf",
         )
-        
+
         # Try SQL injection in category parameter
         malicious_category = "'; DROP TABLE files; --"
-        
+
         # This should not cause an error or drop the table
         # Intentionally ignore return values since we're testing for side effects
         _ = self.storage.query_files_with_catalog(
             category=malicious_category,
         )
-        
+
         # Verify table still exists by using abstraction method
         count = self.storage.get_file_count(require_local=False)
         self.assertEqual(count, 1)
@@ -522,6 +508,7 @@ class TestCatalogCandidateSelection(unittest.TestCase):
 
     def tearDown(self):
         import shutil
+
         if os.path.exists(self.temp_dir):
             shutil.rmtree(self.temp_dir)
 
@@ -565,7 +552,7 @@ class TestCatalogCandidateSelection(unittest.TestCase):
 
 class TestConcurrentSQLiteWrites(unittest.TestCase):
     """Test that BEGIN IMMEDIATE is used for concurrent write protection."""
-    
+
     def test_begin_immediate_in_code(self):
         """Test that catalog_incremental uses thread-safe writes."""
         # Read the source code to verify thread-safe write protection
@@ -573,7 +560,7 @@ class TestConcurrentSQLiteWrites(unittest.TestCase):
         catalog_path = project_root / "ai_actuarial" / "catalog_incremental.py"
         with open(catalog_path, "r", encoding="utf-8") as f:
             content = f.read()
-        
+
         # Main's version uses ThreadPoolExecutor with _db_lock for thread safety
         # Verify that _db_lock is used in _upsert_catalog_row
         self.assertIn("_db_lock", content, "Should have _db_lock defined")
@@ -582,17 +569,18 @@ class TestConcurrentSQLiteWrites(unittest.TestCase):
 
 class TestFilenameExclusionLogic(unittest.TestCase):
     """Test consolidated filename exclusion logic."""
-    
+
     def setUp(self):
         """Create a temporary directory and crawler."""
         self.temp_dir = tempfile.mkdtemp()
         self.db_path = os.path.join(self.temp_dir, "test.db")
         self.storage = Storage(self.db_path)
         self.crawler = Crawler(self.storage, self.temp_dir, "TestAgent/1.0")
-     
+
     def tearDown(self):
         """Clean up temporary files."""
         import shutil
+
         try:
             # Ensure SQLite connection is closed on Windows so the temp directory can be removed.
             if hasattr(self, "storage") and self.storage is not None:
@@ -601,61 +589,55 @@ class TestFilenameExclusionLogic(unittest.TestCase):
             pass
         if os.path.exists(self.temp_dir):
             shutil.rmtree(self.temp_dir)
-    
+
     def test_should_exclude_url_keyword(self):
         """Test URL exclusion by keyword."""
         exclude = ["calendar", "archive"]
         exclude_prefixes = []
-        
+
         result = self.crawler._should_exclude_url(
-            "http://test.com/calendar/2023",
-            exclude,
-            exclude_prefixes
+            "http://test.com/calendar/2023", exclude, exclude_prefixes
         )
         self.assertTrue(result)
-    
+
     def test_should_exclude_url_prefix(self):
         """Test URL exclusion by filename prefix."""
         exclude = []
         exclude_prefixes = ["tmp_", "draft_"]
-        
+
         result = self.crawler._should_exclude_url(
-            "http://test.com/files/tmp_document.pdf",
-            exclude,
-            exclude_prefixes
+            "http://test.com/files/tmp_document.pdf", exclude, exclude_prefixes
         )
         self.assertTrue(result)
-    
+
     def test_should_not_exclude_url(self):
         """Test that valid URLs are not excluded."""
         exclude = ["calendar"]
         exclude_prefixes = ["tmp_"]
-        
+
         result = self.crawler._should_exclude_url(
-            "http://test.com/files/report.pdf",
-            exclude,
-            exclude_prefixes
+            "http://test.com/files/report.pdf", exclude, exclude_prefixes
         )
         self.assertFalse(result)
 
 
 class TestOrderByDocumentation(unittest.TestCase):
     """Test that ORDER BY behavior is documented."""
-    
+
     def test_order_by_comment_exists(self):
         """Test that ORDER BY comment exists in catalog_incremental."""
         project_root = Path(__file__).resolve().parents[1]
         catalog_path = project_root / "ai_actuarial" / "catalog_incremental.py"
         with open(catalog_path, "r", encoding="utf-8") as f:
             content = f.read()
-        
+
         # Verify comment about ORDER BY is present (DESC version from main)
         self.assertIn("ORDER BY f.id DESC", content)
 
 
 class TestPathTraversalProtection(unittest.TestCase):
     """Test that path traversal attacks are prevented."""
-    
+
     def test_import_batch_relative_path_rejects_traversal(self):
         """Test current upload/import path validation rejects traversal."""
         traversal_paths = [

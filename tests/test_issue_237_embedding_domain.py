@@ -21,9 +21,9 @@ def _downgrade_chunk_tables_to_v7(db_path: Path, *, with_rows: bool) -> dict[str
         if with_rows:
             seeded = _seed_chunks(storage)
             chunk_id = str(
-                storage.list_chunks_for_embedding(
-                    [str(seeded["chunk_set"]["chunk_set_id"])]
-                )[0]["chunk_id"]
+                storage.list_chunks_for_embedding([str(seeded["chunk_set"]["chunk_set_id"])])[0][
+                    "chunk_id"
+                ]
             )
             storage._conn.execute(
                 """
@@ -42,8 +42,7 @@ def _downgrade_chunk_tables_to_v7(db_path: Path, *, with_rows: bool) -> dict[str
 
     with sqlite3.connect(db_path) as conn:
         conn.execute("PRAGMA foreign_keys=OFF")
-        conn.executescript(
-            """
+        conn.executescript("""
             CREATE TABLE file_chunk_sets_v7 (
                 chunk_set_id TEXT PRIMARY KEY,
                 file_url TEXT NOT NULL,
@@ -79,8 +78,7 @@ def _downgrade_chunk_tables_to_v7(db_path: Path, *, with_rows: bool) -> dict[str
             DROP TABLE chunk_embeddings;
             ALTER TABLE chunk_embeddings_v7 RENAME TO chunk_embeddings;
             PRAGMA user_version=7;
-            """
-        )
+            """)
 
     return {
         "chunk_set_id": str((seeded or {}).get("chunk_set", {}).get("chunk_set_id", "")),
@@ -88,7 +86,9 @@ def _downgrade_chunk_tables_to_v7(db_path: Path, *, with_rows: bool) -> dict[str
     }
 
 
-def _seed_chunks(storage: Storage, *, file_url: str = "https://example.test/a.pdf") -> dict[str, object]:
+def _seed_chunks(
+    storage: Storage, *, file_url: str = "https://example.test/a.pdf"
+) -> dict[str, object]:
     storage.insert_file(
         file_url,
         "file-hash",
@@ -159,10 +159,13 @@ def test_chunk_set_identity_includes_actual_profile_contract_and_ready_rows_are_
         assert reused["chunk_set_id"] == first["chunk_set_id"]
         assert changed["chunk_set_id"] != first["chunk_set_id"]
         assert no_op["replaced"] is False
-        assert storage._conn.execute(
-            "SELECT chunk_id, content, created_at FROM global_chunks WHERE chunk_set_id = ? ORDER BY chunk_index",
-            (first["chunk_set_id"],),
-        ).fetchall() == original
+        assert (
+            storage._conn.execute(
+                "SELECT chunk_id, content, created_at FROM global_chunks WHERE chunk_set_id = ? ORDER BY chunk_index",
+                (first["chunk_set_id"],),
+            ).fetchall()
+            == original
+        )
     finally:
         storage.close()
 
@@ -394,13 +397,10 @@ def test_supported_default_embedding_models_have_known_dimensions() -> None:
         for model in models
         if "embeddings" in model.get("types", [])
     }
-    dimensions = {
-        key: infer_embedding_dimension(key[1]) for key in supported_models
-    }
+    dimensions = {key: infer_embedding_dimension(key[1]) for key in supported_models}
 
     assert all(
-        type(dimension) is int and dimension > 0
-        for dimension in dimensions.values()
+        type(dimension) is int and dimension > 0 for dimension in dimensions.values()
     ), dimensions
     assert {key: dimensions[key] for key in expected_dimensions} == expected_dimensions
 
@@ -455,7 +455,9 @@ class _FakeGenerator:
         return self._batches.pop(0)
 
 
-def test_ensure_embeddings_reuses_valid_rows_and_repairs_only_one_invalid_row(tmp_path: Path) -> None:
+def test_ensure_embeddings_reuses_valid_rows_and_repairs_only_one_invalid_row(
+    tmp_path: Path,
+) -> None:
     from ai_actuarial.embedding_service import compute_embedding_identity, ensure_chunk_embeddings
 
     storage = Storage(str(tmp_path / "index.db"))
@@ -471,9 +473,7 @@ def test_ensure_embeddings_reuses_valid_rows_and_repairs_only_one_invalid_row(tm
             ),
             dimension=3,
         )
-        first_generator = _FakeGenerator(
-            [[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]]
-        )
+        first_generator = _FakeGenerator([[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]])
         first = ensure_chunk_embeddings(
             storage=storage,
             chunks=chunks,
@@ -509,9 +509,12 @@ def test_ensure_embeddings_reuses_valid_rows_and_repairs_only_one_invalid_row(tm
         assert second_generator.calls == []
         assert repaired.invalid_regenerated == 1
         assert repair_generator.calls == [["beta"]]
-        assert storage.embedding_coverage(
-            chunk_set_ids=[chunk_set_id], identity=identity.as_dict()
-        )["ready_count"] == 3
+        assert (
+            storage.embedding_coverage(chunk_set_ids=[chunk_set_id], identity=identity.as_dict())[
+                "ready_count"
+            ]
+            == 3
+        )
     finally:
         storage.close()
 
@@ -524,9 +527,7 @@ def test_ensure_embeddings_persists_completed_batch_then_stops_before_next_batch
     storage = Storage(str(tmp_path / "index.db"))
     try:
         seeded = _seed_chunks(storage)
-        chunks = storage.list_chunks_for_embedding(
-            [str(seeded["chunk_set"]["chunk_set_id"])]
-        )
+        chunks = storage.list_chunks_for_embedding([str(seeded["chunk_set"]["chunk_set_id"])])
         identity = compute_embedding_identity(
             RAGConfig(embedding_provider="local", embedding_model="test-model"),
             dimension=3,
@@ -569,9 +570,7 @@ def test_ensure_embeddings_rechecks_stop_after_only_persisted_batch(
     storage = Storage(str(tmp_path / "index.db"))
     try:
         seeded = _seed_chunks(storage)
-        chunks = storage.list_chunks_for_embedding(
-            [str(seeded["chunk_set"]["chunk_set_id"])]
-        )[:1]
+        chunks = storage.list_chunks_for_embedding([str(seeded["chunk_set"]["chunk_set_id"])])[:1]
         identity = compute_embedding_identity(
             RAGConfig(embedding_provider="local", embedding_model="test-model"),
             dimension=3,
@@ -610,9 +609,7 @@ def test_provider_count_mismatch_fails_whole_batch_without_persisting(
     storage = Storage(str(tmp_path / "index.db"))
     try:
         seeded = _seed_chunks(storage)
-        chunks = storage.list_chunks_for_embedding(
-            [str(seeded["chunk_set"]["chunk_set_id"])]
-        )[:2]
+        chunks = storage.list_chunks_for_embedding([str(seeded["chunk_set"]["chunk_set_id"])])[:2]
         identity = compute_embedding_identity(
             RAGConfig(embedding_provider="local", embedding_model="test-model"),
             dimension=3,
@@ -640,9 +637,9 @@ def test_concurrent_embedding_upserts_keep_one_identity_row(tmp_path: Path) -> N
     try:
         seeded = _seed_chunks(storage)
         chunk_id = str(
-            storage.list_chunks_for_embedding(
-                [str(seeded["chunk_set"]["chunk_set_id"])]
-            )[0]["chunk_id"]
+            storage.list_chunks_for_embedding([str(seeded["chunk_set"]["chunk_set_id"])])[0][
+                "chunk_id"
+            ]
         )
     finally:
         storage.close()
@@ -665,13 +662,16 @@ def test_concurrent_embedding_upserts_keep_one_identity_row(tmp_path: Path) -> N
         list(pool.map(upsert, range(8)))
 
     with sqlite3.connect(db_path) as conn:
-        assert conn.execute(
-            """
+        assert (
+            conn.execute(
+                """
             SELECT COUNT(*) FROM chunk_embeddings
             WHERE chunk_id = ? AND embedding_identity_key = ?
             """,
-            (chunk_id, identity.embedding_identity_key),
-        ).fetchone()[0] == 1
+                (chunk_id, identity.embedding_identity_key),
+            ).fetchone()[0]
+            == 1
+        )
 
 
 def test_openai_provider_response_order_is_validated() -> None:
@@ -710,7 +710,9 @@ def test_openai_provider_response_order_is_validated() -> None:
     ],
     ids=["missing", "string", "bool", "duplicate", "mismatch"],
 )
-def test_openai_provider_requires_explicit_exact_integer_indices(items: list[SimpleNamespace]) -> None:
+def test_openai_provider_requires_explicit_exact_integer_indices(
+    items: list[SimpleNamespace],
+) -> None:
     from ai_actuarial.rag.embeddings import EmbeddingGenerator
 
     generator = EmbeddingGenerator.__new__(EmbeddingGenerator)
@@ -730,8 +732,15 @@ def test_ready_zero_chunk_set_is_immutable_in_storage(tmp_path: Path) -> None:
     storage = Storage(str(tmp_path / "ready-zero.db"))
     try:
         storage.insert_file(
-            "https://example.test/zero.pdf", "hash", "Zero", "test", None,
-            "zero.pdf", "zero.pdf", 1, "application/pdf",
+            "https://example.test/zero.pdf",
+            "hash",
+            "Zero",
+            "test",
+            None,
+            "zero.pdf",
+            "zero.pdf",
+            1,
+            "application/pdf",
         )
         profile = storage.create_chunk_profile(name="zero", chunk_size=100, chunk_overlap=10)
         chunk_set = storage.get_or_create_file_chunk_set(
@@ -757,10 +766,13 @@ def test_ready_zero_chunk_set_is_immutable_in_storage(tmp_path: Path) -> None:
             (chunk_set["chunk_set_id"],),
         ).fetchone()
         assert after == before == ("ready", 0, chunk_set["updated_at"])
-        assert storage._conn.execute(
-            "SELECT COUNT(*) FROM global_chunks WHERE chunk_set_id = ?",
-            (chunk_set["chunk_set_id"],),
-        ).fetchone()[0] == 0
+        assert (
+            storage._conn.execute(
+                "SELECT COUNT(*) FROM global_chunks WHERE chunk_set_id = ?",
+                (chunk_set["chunk_set_id"],),
+            ).fetchone()[0]
+            == 0
+        )
     finally:
         storage.close()
 
@@ -777,8 +789,15 @@ def test_ready_zero_chunk_set_is_not_repaired_by_generation(
     storage = Storage(str(db_path))
     try:
         storage.insert_file(
-            file_url, "hash", "Zero", "test", None,
-            "zero.pdf", "zero.pdf", 1, "application/pdf",
+            file_url,
+            "hash",
+            "Zero",
+            "test",
+            None,
+            "zero.pdf",
+            "zero.pdf",
+            1,
+            "application/pdf",
         )
         storage.update_file_markdown(file_url, markdown, "manual")
         profile = storage.create_chunk_profile(name="zero", chunk_size=100, chunk_overlap=10)
@@ -864,7 +883,9 @@ def test_provider_invalid_item_is_not_persisted_and_error_is_sanitized(
         storage.close()
 
 
-def test_oversized_vector_json_is_rejected_before_json_parsing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_oversized_vector_json_is_rejected_before_json_parsing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from ai_actuarial.embedding_service import compute_embedding_identity
 
     storage = Storage(str(tmp_path / "index.db"))
@@ -912,12 +933,12 @@ def test_oversized_vector_json_is_rejected_before_json_parsing(tmp_path: Path, m
                 return CursorProbe(real_conn.execute(statement, params))
 
         storage._conn = ConnectionProbe()  # type: ignore[assignment]
-        monkeypatch.setattr(json, "loads", lambda _value: (_ for _ in ()).throw(AssertionError("parsed")))
+        monkeypatch.setattr(
+            json, "loads", lambda _value: (_ for _ in ()).throw(AssertionError("parsed"))
+        )
 
         try:
-            result = storage.read_valid_chunk_embeddings(
-                [chunk_id], identity=identity.as_dict()
-            )
+            result = storage.read_valid_chunk_embeddings([chunk_id], identity=identity.as_dict())
         finally:
             storage._conn = real_conn
 
@@ -950,9 +971,7 @@ def test_v7_embedding_schema_migrates_empty_and_nonempty_tables_without_reusing_
     ]
     with sqlite3.connect(db_path) as conn:
         assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
-        embedding_columns = {
-            row[1] for row in conn.execute("PRAGMA table_info(chunk_embeddings)")
-        }
+        embedding_columns = {row[1] for row in conn.execute("PRAGMA table_info(chunk_embeddings)")}
         assert {"embedding_identity_key", "embedding_provider", "dimension", "status"}.issubset(
             embedding_columns
         )
@@ -965,13 +984,11 @@ def test_v7_embedding_schema_migrates_empty_and_nonempty_tables_without_reusing_
                 expected["profile_config_hash"],
                 3,
             )
-            legacy = conn.execute(
-                """
+            legacy = conn.execute("""
                 SELECT embedding_identity_key, embedding_provider, embedding_model,
                        dimension, vector_json, status, failure_reason
                 FROM chunk_embeddings
-                """
-            ).fetchone()
+                """).fetchone()
             assert legacy[0].startswith("legacy:")
             assert legacy[1:] == (
                 "legacy",
@@ -986,7 +1003,7 @@ def test_v7_embedding_schema_migrates_empty_and_nonempty_tables_without_reusing_
 
 
 def test_v7_embedding_schema_rejects_missing_prerequisite_column(tmp_path: Path) -> None:
-    from ai_actuarial.sqlite_schema import apply_schema, schema_status, SchemaMigrationError
+    from ai_actuarial.sqlite_schema import SchemaMigrationError, apply_schema, schema_status
 
     db_path = tmp_path / "broken-v7.db"
     _downgrade_chunk_tables_to_v7(db_path, with_rows=False)

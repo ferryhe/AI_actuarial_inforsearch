@@ -18,7 +18,6 @@ from ai_actuarial.rag.config import RAGConfig
 from ai_actuarial.rag.knowledge_base import KnowledgeBaseManager
 from ai_actuarial.storage import Storage
 
-
 LARGE_CHUNK_COUNT = 8_704
 LARGE_EMBEDDING_DIMENSION = 3_072
 
@@ -184,7 +183,9 @@ def _seed_shared_kbs(
 
 
 def _patch_identity(monkeypatch: pytest.MonkeyPatch, identity: EmbeddingIdentity) -> None:
-    monkeypatch.setattr(rag_admin, "resolve_server_embedding_identity", lambda *_args, **_kwargs: identity)
+    monkeypatch.setattr(
+        rag_admin, "resolve_server_embedding_identity", lambda *_args, **_kwargs: identity
+    )
     monkeypatch.setattr(
         rag_admin,
         "_current_embeddings_payload",
@@ -273,9 +274,9 @@ def test_kb_list_rejects_binding_for_non_member_file(
             ("https://issue-256.test/non-member.pdf",),
         )
 
-    coverage = rag_admin.list_knowledge_bases(db_path=str(db_path), query={})[
-        "knowledge_bases"
-    ][0]["index_coverage"]
+    coverage = rag_admin.list_knowledge_bases(db_path=str(db_path), query={})["knowledge_bases"][0][
+        "index_coverage"
+    ]
 
     assert coverage["invalid_bindings"] == 1
     assert coverage["binding_error"] == "KB chunk binding metadata is invalid"
@@ -390,6 +391,7 @@ def test_kb_list_decodes_only_bounded_publication_history(
 
     storage = Storage(str(db_path))
     try:
+
         def record(name: str, *, status: str = "validated") -> dict[str, Any]:
             return storage.record_agentic_ready_publication(
                 kb_id="kb-publications",
@@ -446,9 +448,9 @@ def test_kb_list_decodes_only_bounded_publication_history(
     finally:
         storage.close()
 
-    baseline = rag_admin.list_knowledge_bases(db_path=str(db_path), query={})[
-        "knowledge_bases"
-    ][0]["agentic_ready_manifest"]["publication_state"]
+    baseline = rag_admin.list_knowledge_bases(db_path=str(db_path), query={})["knowledge_bases"][0][
+        "agentic_ready_manifest"
+    ]["publication_state"]
 
     decoded_publication_ids: list[str] = []
     sentinel_decodes = 0
@@ -473,9 +475,7 @@ def test_kb_list_decodes_only_bounded_publication_history(
     monkeypatch.setattr(rag_admin.json, "loads", track_json_loads)
 
     payload = rag_admin.list_knowledge_bases(db_path=str(db_path), query={})
-    publication_state = payload["knowledge_bases"][0]["agentic_ready_manifest"][
-        "publication_state"
-    ]
+    publication_state = payload["knowledge_bases"][0]["agentic_ready_manifest"]["publication_state"]
 
     assert publication_state == baseline
     assert set(decoded_publication_ids) == {
@@ -598,18 +598,21 @@ def test_file_lists_are_compact_for_public_admin_and_operator(
     response_bytes["adjacent"] = len(adjacent.content)
 
     list_selects = [
-        sql
-        for sql in statements
-        if "from files f" in sql.lower() and "limit" in sql.lower()
+        sql for sql in statements if "from files f" in sql.lower() and "limit" in sql.lower()
     ]
     assert list_selects
     for sql in list_selects:
         projection = sql.lower().split("from files f", 1)[0]
         assert "c.markdown_content" not in projection
-    assert any("c.markdown_content" in sql.lower().split("from files f", 1)[1] for sql in list_selects)
+    assert any(
+        "c.markdown_content" in sql.lower().split("from files f", 1)[1] for sql in list_selects
+    )
     assert max(response_bytes.values()) < 8_192
     assert response_bytes["admin"] < len(large_markdown.encode("utf-8")) // 10
-    print("issue256-file-list-bytes " + " ".join(f"{key}={value}" for key, value in response_bytes.items()))
+    print(
+        "issue256-file-list-bytes "
+        + " ".join(f"{key}={value}" for key, value in response_bytes.items())
+    )
 
 
 def test_ordinary_file_list_does_not_materialize_markdown_body(tmp_path: Path) -> None:
@@ -648,7 +651,9 @@ def test_knowledge_build_fetches_fresh_selector_before_posting() -> None:
     handler = source[start:end]
 
     manifest_path = "`/api/rag/knowledge-bases/${encodeURIComponent(kbId)}/agentic-ready-manifest?include_ready_build_input=true`"
-    build_path = "`/api/rag/knowledge-bases/${encodeURIComponent(kbId)}/agentic-ready-manifest/build`"
+    build_path = (
+        "`/api/rag/knowledge-bases/${encodeURIComponent(kbId)}/agentic-ready-manifest/build`"
+    )
     assert manifest_path in handler
     assert "await apiGet" in handler
     assert "const readyBuildInput = manifestResponse.manifest?.ready_build_input;" in handler

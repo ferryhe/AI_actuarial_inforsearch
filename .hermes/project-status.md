@@ -544,7 +544,16 @@
   baseline identities. No code or tests were removed. Focused tests passed
   40/40, the full suite passed 1857/10 plus Black, isort, and Pylint, the
   dead-code baseline remains 0 files/6 symbols, and the quality baseline fell
-  from 91/58/9 to 89/56/9.
+  from 91/58/9 to 89/56/9. All five remote CI jobs passed.
+- Twenty-eighth and final historical directory cleanup: formatted all 105
+  direct Python files under `tests/` (89 historical Black and 56 isort baseline
+  identities), resolved all nine Pylint identities, removed six unused test
+  symbols without deleting any test case, strengthened the API-token timestamp
+  assertion, and isolated the mutating schema-validator test from background
+  database activity. Focused tests passed 319/7, the full suite passed 1857/10,
+  independent semantic and mechanical reviews found no issues, and both the
+  dead-code and quality baselines are now completely empty: 0 files/0 symbols
+  and 0/0/0 respectively.
 
 ## Working tree notes
 
@@ -561,6 +570,6 @@
 
 ## Recommended next action
 
-- Commit and push the `tests/unit/` formatting cleanup to PR #318, verify CI,
-  then clean the remaining six Python symbol findings and all formatter/linter
-  debt in the root `tests/` directory. Merge only after explicit authorization.
+- Commit and push the final root `tests/` cleanup to PR #318, verify all remote
+  CI jobs and review feedback, then report the completed directory-by-directory
+  cleanup. Merge only after explicit authorization.

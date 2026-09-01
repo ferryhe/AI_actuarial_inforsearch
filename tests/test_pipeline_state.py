@@ -51,7 +51,11 @@ def test_update_pipeline_run_fields() -> None:
     try:
         storage.create_pipeline_run("run-1")
         storage.update_pipeline_run(
-            "run-1", status="failed", watermark="chunk_generation", error="boom", finished_at="2026-01-01T00:00:00+00:00"
+            "run-1",
+            status="failed",
+            watermark="chunk_generation",
+            error="boom",
+            finished_at="2026-01-01T00:00:00+00:00",
         )
         run = storage.get_pipeline_run("run-1")
         assert run is not None
@@ -83,8 +87,12 @@ def test_upsert_and_get_pipeline_stages() -> None:
     storage = Storage(":memory:")
     try:
         storage.create_pipeline_run("run-1")
-        storage.upsert_pipeline_stage("run-1", "acquisition", stage_order=1, options_json='{"sites": 2}')
-        storage.upsert_pipeline_stage("run-1", "catalog", stage_order=2, options_json='{"model": "gpt-4o-mini"}')
+        storage.upsert_pipeline_stage(
+            "run-1", "acquisition", stage_order=1, options_json='{"sites": 2}'
+        )
+        storage.upsert_pipeline_stage(
+            "run-1", "catalog", stage_order=2, options_json='{"model": "gpt-4o-mini"}'
+        )
 
         stages = storage.get_pipeline_stages("run-1")
         assert [s["stage_name"] for s in stages] == ["acquisition", "catalog"]
@@ -100,7 +108,9 @@ def test_upsert_pipeline_stage_resets() -> None:
     storage = Storage(":memory:")
     try:
         storage.create_pipeline_run("run-1")
-        storage.upsert_pipeline_stage("run-1", "catalog", stage_order=1, options_json='{"model": "a"}')
+        storage.upsert_pipeline_stage(
+            "run-1", "catalog", stage_order=1, options_json='{"model": "a"}'
+        )
         # Dirty the stage with in-flight progress, then re-upsert: every progress
         # field must reset to a clean pending state (no stale checkpoint/artifacts/
         # error/retry/timestamps leaking into the new attempt).
@@ -115,7 +125,9 @@ def test_upsert_pipeline_stage_resets() -> None:
             started_at="2026-08-25T00:00:00+00:00",
             finished_at="2026-08-25T00:01:00+00:00",
         )
-        storage.upsert_pipeline_stage("run-1", "catalog", stage_order=1, options_json='{"model": "b"}')
+        storage.upsert_pipeline_stage(
+            "run-1", "catalog", stage_order=1, options_json='{"model": "b"}'
+        )
         stage = storage.get_pipeline_stages("run-1")[0]
         assert stage["options_json"] == '{"model": "b"}'
         assert stage["status"] == "pending"

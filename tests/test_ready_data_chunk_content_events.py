@@ -628,7 +628,10 @@ def test_all_known_ready_data_profiles_advance_once(tmp_path: Path) -> None:
             "manifest-profile",
             "publication-profile",
         }
-        before = {profile: int(_state(storage, kb_id, profile)["event_generation"]) for profile in profiles}
+        before = {
+            profile: int(_state(storage, kb_id, profile)["event_generation"])
+            for profile in profiles
+        }
 
         storage.replace_global_chunks(
             chunk_set_id=chunk_set_id,

@@ -70,9 +70,12 @@ class TestCatalogRuntime(unittest.TestCase):
             raw_config={"timeout_seconds": 12},
         )
 
-        with patch.dict(sys.modules, {"openai": mock_openai}), patch(
-            "ai_actuarial.catalog_llm.resolve_ai_function_runtime",
-            return_value=mock_runtime,
+        with (
+            patch.dict(sys.modules, {"openai": mock_openai}),
+            patch(
+                "ai_actuarial.catalog_llm.resolve_ai_function_runtime",
+                return_value=mock_runtime,
+            ),
         ):
             catalog_with_openai(
                 title="Document",
@@ -101,9 +104,12 @@ class TestCatalogRuntime(unittest.TestCase):
             raw_config={},
         )
 
-        with patch.dict(sys.modules, {"openai": mock_openai}), patch(
-            "ai_actuarial.catalog_llm.resolve_ai_function_runtime",
-            return_value=mock_runtime,
+        with (
+            patch.dict(sys.modules, {"openai": mock_openai}),
+            patch(
+                "ai_actuarial.catalog_llm.resolve_ai_function_runtime",
+                return_value=mock_runtime,
+            ),
         ):
             catalog_with_openai(title="Document", content="Sample content")
 
@@ -125,9 +131,12 @@ class TestCatalogRuntime(unittest.TestCase):
             raw_config={},
         )
 
-        with patch.dict(sys.modules, {"openai": mock_openai}), patch(
-            "ai_actuarial.catalog_llm.resolve_ai_function_runtime",
-            return_value=mock_runtime,
+        with (
+            patch.dict(sys.modules, {"openai": mock_openai}),
+            patch(
+                "ai_actuarial.catalog_llm.resolve_ai_function_runtime",
+                return_value=mock_runtime,
+            ),
         ):
             result = confirm_category_for_summary(
                 summary="Summary",

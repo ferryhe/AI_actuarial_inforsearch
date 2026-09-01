@@ -1,6 +1,5 @@
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1] / "client" / "src"
 APP_TSX = ROOT / "App.tsx"
 SECTION_TSX = ROOT / "components" / "WeeklyDashboardSection.tsx"
@@ -54,7 +53,7 @@ def test_weekly_lib_loads_list_and_detail_without_write_ops():
     # Detail fetches detail + files + explanation in parallel, read-only.
     assert "loadWeeklyUpdateDetail" in lib
     assert "Promise.allSettled" in lib
-    assert 'get<WeeklySnapshotDetailEnvelope>(`/api/weekly-updates/${snapshotId}`)' in lib
+    assert "get<WeeklySnapshotDetailEnvelope>(`/api/weekly-updates/${snapshotId}`)" in lib
     assert "/files?limit=" in lib
     assert "/explanation" in lib
 

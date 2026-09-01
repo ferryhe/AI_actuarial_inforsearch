@@ -6,25 +6,26 @@ Covers:
   3. Keyword gating still applies when allow_url_patterns is absent.
   4. Invalid regex patterns are skipped with a warning (no crash).
 """
+
 from __future__ import annotations
 
 import hashlib
 import os
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from ai_actuarial.crawler import Crawler, SiteConfig
 from ai_actuarial.storage import Storage
 
-
 # ---------------------------------------------------------------------------
 # Minimal HTML fixture helper
 # ---------------------------------------------------------------------------
+
 
 def _index_page(links: list[tuple[str, str]]) -> str:
     """Build a minimal HTML page with the given (href, text) links."""
@@ -35,6 +36,7 @@ def _index_page(links: list[tuple[str, str]]) -> str:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_storage(tmp_dir: str) -> Storage:
     db_path = os.path.join(tmp_dir, "test.db")
@@ -65,6 +67,7 @@ def _sitecfg(**kwargs) -> SiteConfig:
 # Tests
 # ---------------------------------------------------------------------------
 
+
 class TestAllowUrlPatternsSubpageQueuing(unittest.TestCase):
     """Subpages should only be queued when they match an allow pattern."""
 
@@ -84,8 +87,10 @@ class TestAllowUrlPatternsSubpageQueuing(unittest.TestCase):
             storage = _make_storage(tmp)
             try:
                 crawler = _make_crawler(storage, tmp)
-                with patch.object(crawler, "_request", side_effect=fake_request_method), \
-                     patch.object(crawler, "_load_sitemap", return_value=[]):
+                with (
+                    patch.object(crawler, "_request", side_effect=fake_request_method),
+                    patch.object(crawler, "_load_sitemap", return_value=[]),
+                ):
                     crawler.crawl_site(cfg)
             finally:
                 storage.close()
@@ -93,10 +98,12 @@ class TestAllowUrlPatternsSubpageQueuing(unittest.TestCase):
 
     def test_no_allow_patterns_queues_all_subpages(self):
         """Without allow_url_patterns every in-domain subpage is queued."""
-        index_html = _index_page([
-            ("https://example.com/research/", "Research"),
-            ("https://example.com/about/", "About"),
-        ])
+        index_html = _index_page(
+            [
+                ("https://example.com/research/", "Research"),
+                ("https://example.com/about/", "About"),
+            ]
+        )
         pages = {
             "https://example.com/": index_html,
             "https://example.com/research/": "<html><body></body></html>",
@@ -109,11 +116,13 @@ class TestAllowUrlPatternsSubpageQueuing(unittest.TestCase):
 
     def test_allow_patterns_restricts_subpage_queuing(self):
         """With allow_url_patterns, only matching subpages are queued."""
-        index_html = _index_page([
-            ("https://example.com/research/ai-report/", "AI Report"),
-            ("https://example.com/about/", "About"),
-            ("https://example.com/careers/", "Careers"),
-        ])
+        index_html = _index_page(
+            [
+                ("https://example.com/research/ai-report/", "AI Report"),
+                ("https://example.com/about/", "About"),
+                ("https://example.com/careers/", "Careers"),
+            ]
+        )
         pages = {
             "https://example.com/": index_html,
             "https://example.com/research/ai-report/": "<html><body></body></html>",
@@ -132,11 +141,13 @@ class TestAllowUrlPatternsSubpageQueuing(unittest.TestCase):
 
     def test_multiple_allow_patterns(self):
         """Multiple allow patterns: subpages matching any pattern are queued."""
-        index_html = _index_page([
-            ("https://example.com/research/", "Research"),
-            ("https://example.com/resources/", "Resources"),
-            ("https://example.com/shop/", "Shop"),
-        ])
+        index_html = _index_page(
+            [
+                ("https://example.com/research/", "Research"),
+                ("https://example.com/resources/", "Resources"),
+                ("https://example.com/shop/", "Shop"),
+            ]
+        )
         pages = {
             "https://example.com/": index_html,
             "https://example.com/research/": "<html><body></body></html>",
@@ -176,10 +187,12 @@ class TestAllowUrlPatternsFileDownload(unittest.TestCase):
             storage = _make_storage(tmp)
             try:
                 crawler = _make_crawler(storage, tmp)
-                with patch.object(crawler, "_request", side_effect=fake_request_method), \
-                     patch.object(crawler, "_load_sitemap", return_value=[]), \
-                     patch.object(crawler, "_download_file", side_effect=fake_download_file), \
-                     patch.object(crawler, "_handle_file", return_value=None):
+                with (
+                    patch.object(crawler, "_request", side_effect=fake_request_method),
+                    patch.object(crawler, "_load_sitemap", return_value=[]),
+                    patch.object(crawler, "_download_file", side_effect=fake_download_file),
+                    patch.object(crawler, "_handle_file", return_value=None),
+                ):
                     crawler.crawl_site(cfg)
             finally:
                 storage.close()
@@ -187,10 +200,12 @@ class TestAllowUrlPatternsFileDownload(unittest.TestCase):
 
     def test_allow_patterns_gates_file_download(self):
         """Files not matching any allow pattern should be skipped."""
-        index_html = _index_page([
-            ("https://example.com/globalassets/report.pdf", "Download"),
-            ("https://example.com/other/unrelated.pdf", "Other PDF"),
-        ])
+        index_html = _index_page(
+            [
+                ("https://example.com/globalassets/report.pdf", "Download"),
+                ("https://example.com/other/unrelated.pdf", "Other PDF"),
+            ]
+        )
         cfg = _sitecfg(
             url="https://example.com/",
             max_depth=1,
@@ -202,10 +217,12 @@ class TestAllowUrlPatternsFileDownload(unittest.TestCase):
 
     def test_no_allow_patterns_uses_keyword_gating(self):
         """Without allow_url_patterns, keyword gating still applies to file links."""
-        index_html = _index_page([
-            ("https://example.com/ai-research.pdf", "AI Research"),
-            ("https://example.com/unrelated-report.pdf", "Unrelated"),
-        ])
+        index_html = _index_page(
+            [
+                ("https://example.com/ai-research.pdf", "AI Research"),
+                ("https://example.com/unrelated-report.pdf", "Unrelated"),
+            ]
+        )
         cfg = _sitecfg(
             url="https://example.com/",
             max_depth=1,
@@ -217,22 +234,25 @@ class TestAllowUrlPatternsFileDownload(unittest.TestCase):
 
     def test_no_allow_patterns_no_keywords_downloads_all(self):
         """Without allow_url_patterns and without keywords, all files are downloaded."""
-        index_html = _index_page([
-            ("https://example.com/report-a.pdf", "Report A"),
-            ("https://example.com/report-b.pdf", "Report B"),
-        ])
+        index_html = _index_page(
+            [
+                ("https://example.com/report-a.pdf", "Report A"),
+                ("https://example.com/report-b.pdf", "Report B"),
+            ]
+        )
         cfg = _sitecfg(url="https://example.com/", max_depth=1)
         downloaded = self._run_crawl_collect_downloads(cfg, index_html)
         self.assertIn("https://example.com/report-a.pdf", downloaded)
         self.assertIn("https://example.com/report-b.pdf", downloaded)
 
 
-
 class TestContentTypeStrategy(unittest.TestCase):
     def test_scan_page_collects_webpage_without_downloading_linked_files(self):
-        html = _index_page([
-            ("https://example.com/report.pdf", "Report"),
-        ])
+        html = _index_page(
+            [
+                ("https://example.com/report.pdf", "Report"),
+            ]
+        )
         cfg = _sitecfg(
             collect_linked_files=False,
             collect_page_content=True,
@@ -244,13 +264,21 @@ class TestContentTypeStrategy(unittest.TestCase):
             storage = _make_storage(tmp)
             try:
                 crawler = _make_crawler(storage, tmp)
-                with patch.object(
-                    crawler,
-                    "_request",
-                    return_value=(html.encode(), {"content-type": "text/html"}, "https://example.com/article"),
-                ), patch.object(
-                    crawler, "_handle_page_content", return_value=page_item
-                ) as handle_page, patch.object(crawler, "_download_file") as download_file:
+                with (
+                    patch.object(
+                        crawler,
+                        "_request",
+                        return_value=(
+                            html.encode(),
+                            {"content-type": "text/html"},
+                            "https://example.com/article",
+                        ),
+                    ),
+                    patch.object(
+                        crawler, "_handle_page_content", return_value=page_item
+                    ) as handle_page,
+                    patch.object(crawler, "_download_file") as download_file,
+                ):
                     result = crawler.scan_page_for_files(
                         "https://example.com/article",
                         cfg,
@@ -262,6 +290,7 @@ class TestContentTypeStrategy(unittest.TestCase):
         self.assertEqual(result, [page_item])
         handle_page.assert_called_once()
         download_file.assert_not_called()
+
 
 class TestAllowUrlPatternsInvalidRegex(unittest.TestCase):
     """Invalid regex patterns should be skipped with a warning, not crash."""
@@ -281,9 +310,11 @@ class TestAllowUrlPatternsInvalidRegex(unittest.TestCase):
             storage = _make_storage(tmp)
             try:
                 crawler = _make_crawler(storage, tmp)
-                with patch.object(crawler, "_request", side_effect=fake_request_method), \
-                     patch.object(crawler, "_load_sitemap", return_value=[]), \
-                     self.assertLogs("ai_actuarial.crawler", level="WARNING"):
+                with (
+                    patch.object(crawler, "_request", side_effect=fake_request_method),
+                    patch.object(crawler, "_load_sitemap", return_value=[]),
+                    self.assertLogs("ai_actuarial.crawler", level="WARNING"),
+                ):
                     result = crawler.crawl_site(cfg)
             finally:
                 storage.close()

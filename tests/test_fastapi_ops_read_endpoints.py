@@ -70,7 +70,11 @@ def _write_config_files(base_dir: Path) -> tuple[Path, Path, Path]:
             "content_security_policy": "",
         },
         "ai_config": {
-            "catalog": {"provider": "openai", "model": "gpt-4o-mini", "system_prompt": "catalog prompt"},
+            "catalog": {
+                "provider": "openai",
+                "model": "gpt-4o-mini",
+                "system_prompt": "catalog prompt",
+            },
             "embeddings": {"provider": "openai", "model": "text-embedding-3-large"},
             "chatbot": {
                 "provider": "openai",
@@ -237,7 +241,9 @@ def _seed_storage(db_path: Path) -> dict[str, object]:
     }
 
 
-def _build_test_client(tmp_path: Path, monkeypatch, *, require_auth: bool) -> tuple[TestClient, object, dict[str, object]]:
+def _build_test_client(
+    tmp_path: Path, monkeypatch, *, require_auth: bool
+) -> tuple[TestClient, object, dict[str, object]]:
     db_path, config_path, categories_path = _write_config_files(tmp_path)
     TokenEncryption._instance = None
     monkeypatch.setenv("TOKEN_ENCRYPTION_KEY", Fernet.generate_key().decode())
@@ -350,14 +356,30 @@ def _patch_available_models(monkeypatch) -> None:
     fake_models = {
         "openai": [
             {"name": "gpt-4o-mini", "display_name": "GPT-4o Mini", "types": ["catalog", "chatbot"]},
-            {"name": "text-embedding-3-large", "display_name": "Text Embedding 3 Large", "types": ["embeddings"]},
-            {"name": "text-embedding-3-small", "display_name": "Text Embedding 3 Small", "types": ["embeddings"]},
+            {
+                "name": "text-embedding-3-large",
+                "display_name": "Text Embedding 3 Large",
+                "types": ["embeddings"],
+            },
+            {
+                "name": "text-embedding-3-small",
+                "display_name": "Text Embedding 3 Small",
+                "types": ["embeddings"],
+            },
         ],
         "qwen": [
-            {"name": "text-embedding-v3", "display_name": "Qwen Text Embedding V3", "types": ["embeddings"]},
+            {
+                "name": "text-embedding-v3",
+                "display_name": "Qwen Text Embedding V3",
+                "types": ["embeddings"],
+            },
         ],
         "mistral": [
-            {"name": "mistral-small-latest", "display_name": "Mistral Small Latest", "types": ["catalog", "chatbot"]},
+            {
+                "name": "mistral-small-latest",
+                "display_name": "Mistral Small Latest",
+                "types": ["catalog", "chatbot"],
+            },
         ],
         "local": [
             {"name": "docling", "display_name": "Docling", "types": ["ocr"]},
@@ -366,11 +388,18 @@ def _patch_available_models(monkeypatch) -> None:
 
     import ai_actuarial.llm_models as llm_models
 
-    monkeypatch.setattr(llm_models, "get_available_models", lambda provider=None, **kwargs: fake_models, raising=True)
+    monkeypatch.setattr(
+        llm_models,
+        "get_available_models",
+        lambda provider=None, **kwargs: fake_models,
+        raising=True,
+    )
     monkeypatch.setattr(llm_models, "refresh_models", lambda **kwargs: None, raising=True)
 
 
-def test_fastapi_ops_read_routes_are_native_and_return_expected_shapes(tmp_path: Path, monkeypatch) -> None:
+def test_fastapi_ops_read_routes_are_native_and_return_expected_shapes(
+    tmp_path: Path, monkeypatch
+) -> None:
     _patch_available_models(monkeypatch)
     client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
     _install_runtime_state(monkeypatch, app)
@@ -442,7 +471,9 @@ def test_fastapi_ops_read_routes_are_native_and_return_expected_shapes(tmp_path:
     assert health.headers["x-frame-options"] == "DENY"
 
 
-def test_fastapi_ops_read_routes_require_operator_access_when_auth_enabled(tmp_path: Path, monkeypatch) -> None:
+def test_fastapi_ops_read_routes_require_operator_access_when_auth_enabled(
+    tmp_path: Path, monkeypatch
+) -> None:
     _patch_available_models(monkeypatch)
     client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
     _install_runtime_state(monkeypatch, app)
@@ -473,7 +504,9 @@ def test_fastapi_ops_read_routes_require_operator_access_when_auth_enabled(tmp_p
     assert "Completed task" in log_response.json()["log"]
 
 
-def test_fastapi_ai_config_registry_credentials_and_routing_read_endpoints(tmp_path: Path, monkeypatch) -> None:
+def test_fastapi_ai_config_registry_credentials_and_routing_read_endpoints(
+    tmp_path: Path, monkeypatch
+) -> None:
     _patch_available_models(monkeypatch)
     client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
     _install_runtime_state(monkeypatch, app)
@@ -484,7 +517,22 @@ def test_fastapi_ai_config_registry_credentials_and_routing_read_endpoints(tmp_p
     provider_rows = providers.json()["providers"]
     provider_ids = {row["provider_id"] for row in provider_rows}
     assert any(row["provider_id"] == "openai" for row in provider_rows)
-    assert {"azure_openai", "openrouter", "vllm", "localai", "huggingface", "volcengine", "tencent_cloud", "baiduyiyan", "xunfei_spark", "google_cloud", "bedrock", "fish_audio", "mineru", "paddleocr"}.issubset(provider_ids)
+    assert {
+        "azure_openai",
+        "openrouter",
+        "vllm",
+        "localai",
+        "huggingface",
+        "volcengine",
+        "tencent_cloud",
+        "baiduyiyan",
+        "xunfei_spark",
+        "google_cloud",
+        "bedrock",
+        "fish_audio",
+        "mineru",
+        "paddleocr",
+    }.issubset(provider_ids)
     openai_row = next(row for row in provider_rows if row["provider_id"] == "openai")
     assert openai_row["supports"]["chat"] is True
     assert openai_row["supports"]["embeddings"] is True
@@ -492,11 +540,19 @@ def test_fastapi_ai_config_registry_credentials_and_routing_read_endpoints(tmp_p
     credentials = client.get("/api/config/provider-credentials", headers=headers)
     assert credentials.status_code == 200, credentials.text
     credential_rows = credentials.json()["credentials"]
-    openai_credentials = [row for row in credential_rows if row["provider_id"] == "openai" and row["source"] == "db"]
+    openai_credentials = [
+        row for row in credential_rows if row["provider_id"] == "openai" and row["source"] == "db"
+    ]
     assert len(openai_credentials) == 2
-    assert any(row["instance_id"] == "primary" and row["is_default"] is True for row in openai_credentials)
-    assert any(row["instance_id"] == "backup" and row["is_default"] is False for row in openai_credentials)
-    assert any(row["provider_id"] == "serper" and row["category"] == "search" for row in credential_rows)
+    assert any(
+        row["instance_id"] == "primary" and row["is_default"] is True for row in openai_credentials
+    )
+    assert any(
+        row["instance_id"] == "backup" and row["is_default"] is False for row in openai_credentials
+    )
+    assert any(
+        row["provider_id"] == "serper" and row["category"] == "search" for row in credential_rows
+    )
 
     search_engines = client.get("/api/config/search-engines", headers=headers)
     assert search_engines.status_code == 200, search_engines.text
@@ -519,11 +575,14 @@ def test_fastapi_ai_config_registry_credentials_and_routing_read_endpoints(tmp_p
     assert bindings["embeddings"]["configured"] is True
     assert bindings["embeddings"]["credential_error"] is None
     assert bindings["embeddings"]["embedding_dimension"] == 3072
-    assert bindings["embeddings"]["embedding_fingerprint"].startswith("openai:text-embedding-3-large:")
+    assert bindings["embeddings"]["embedding_fingerprint"].startswith(
+        "openai:text-embedding-3-large:"
+    )
 
     refreshed_catalog = client.get("/api/config/model-catalog?refresh=true", headers=headers)
     assert refreshed_catalog.status_code == 200, refreshed_catalog.text
     assert "openai" in refreshed_catalog.json()["available"]
+
 
 def test_fastapi_global_logs_read_endpoint_is_native(tmp_path: Path, monkeypatch) -> None:
     _patch_available_models(monkeypatch)
@@ -602,7 +661,9 @@ def test_fastapi_global_logs_read_endpoint_keeps_rate_limit(tmp_path: Path, monk
     assert limited.status_code == 429, limited.text
 
 
-def test_rate_limit_defaults_are_enforced_from_runtime_features(tmp_path: Path, monkeypatch) -> None:
+def test_rate_limit_defaults_are_enforced_from_runtime_features(
+    tmp_path: Path, monkeypatch
+) -> None:
     _patch_available_models(monkeypatch)
     client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
     app.state.enable_rate_limiting = True

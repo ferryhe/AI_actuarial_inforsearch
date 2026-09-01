@@ -1,6 +1,5 @@
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1] / "client" / "src" / "pages"
 KNOWLEDGE_TSX = ROOT / "Knowledge.tsx"
 KB_DETAIL_TSX = ROOT / "KBDetail.tsx"
@@ -13,7 +12,7 @@ def test_knowledge_pages_surface_reembed_action_for_embedding_mismatch():
     detail_src = KB_DETAIL_TSX.read_text(encoding="utf-8")
 
     assert "handleReembedKB" in knowledge_src
-    assert 'data-testid={`button-reembed-kb-${kbId}`}' in knowledge_src
+    assert "data-testid={`button-reembed-kb-${kbId}`}" in knowledge_src
     assert "kb.needs_reindex || kb.embedding_compatible === false" in knowledge_src
 
     assert "needsEmbeddingRebuild" in detail_src
@@ -40,7 +39,7 @@ def test_knowledge_create_supports_document_and_category_multiselects():
     assert '"/api/rag/categories/mapping"' in src
     assert 'data-testid="kb-document-picker"' in src
     assert 'data-testid="kb-category-picker"' in src
-    assert "file_urls: kbForm.kb_mode === \"manual\" ? kbForm.file_urls : []" in src
+    assert 'file_urls: kbForm.kb_mode === "manual" ? kbForm.file_urls : []' in src
     assert "categories: kbForm.categories" in src
     assert "toggleKbFile" in src
     assert "toggleKbCategory" in src
@@ -55,7 +54,7 @@ def test_knowledge_create_supports_select_all_and_all_mode():
     src = KNOWLEDGE_TSX.read_text(encoding="utf-8")
 
     assert '<option value="all">{t("knowledge.mode_all")}</option>' in src
-    assert "kbForm.kb_mode === \"all\"" in src
+    assert 'kbForm.kb_mode === "all"' in src
     assert "handleSelectAllKbFiles" in src
     assert 'data-testid="button-select-all-kb-files"' in src
     assert "selectableFiles.every((file) => current.file_urls.includes(file.url))" in src
@@ -112,7 +111,7 @@ def test_kb_detail_manual_mode_can_add_files_with_select_all_and_category_index_
     assert 'data-testid="button-select-all-bind-files"' in src
     assert "`/api/rag/knowledge-bases/${encodeURIComponent(kbId)}/files`" in src
     assert "file_urls: selectedBindFiles" in src
-    assert "meta.kb_mode === \"manual\"" in src
+    assert 'meta.kb_mode === "manual"' in src
     assert 'data-testid="banner-category-index-required"' in src
 
 
@@ -129,7 +128,7 @@ def test_knowledge_list_surfaces_agentic_manifest_status_and_build_action():
     assert 'manifest_profile: "general"' in src
     assert "manifest_profile: kbForm.manifest_profile" in src
     assert 'data-testid="select-kb-manifest-profile"' in src
-    assert "status: \"missing\" | \"ready\" | \"building\" | \"failed\" | \"stale\"" in state_src
+    assert 'status: "missing" | "ready" | "building" | "failed" | "stale"' in state_src
     assert "usable: boolean" in state_src
     assert "fallback_mode?: string" in state_src
     assert "stale_reason?: string" in state_src
@@ -147,11 +146,13 @@ def test_knowledge_list_surfaces_agentic_manifest_status_and_build_action():
     assert "Agentic manifest build did not produce ready data" not in src
     assert '"knowledge.manifest_profile"' in i18n_src
     assert '"knowledge.manifest_build_not_ready"' in i18n_src
-    assert "`/api/rag/knowledge-bases/${encodeURIComponent(kbId)}/agentic-ready-manifest/build`" in src
+    assert (
+        "`/api/rag/knowledge-bases/${encodeURIComponent(kbId)}/agentic-ready-manifest/build`" in src
+    )
     assert "buildingManifestKb === kbId" in src
-    assert 'data-testid={`badge-agentic-manifest-${kbId}`}' in src
-    assert 'data-testid={`message-agentic-manifest-${kbId}`}' in src
-    assert 'data-testid={`button-build-agentic-manifest-${kbId}`}' in src
+    assert "data-testid={`badge-agentic-manifest-${kbId}`}" in src
+    assert "data-testid={`message-agentic-manifest-${kbId}`}" in src
+    assert "data-testid={`button-build-agentic-manifest-${kbId}`}" in src
 
 
 def test_kb_detail_surfaces_agentic_manifest_endpoint_status_and_build_action():
@@ -163,8 +164,14 @@ def test_kb_detail_surfaces_agentic_manifest_endpoint_status_and_build_action():
     assert "manifest_profile?: string" in src
     assert "agentic_ready_manifest?: AgenticReadyManifest" in src
     assert "loadAgenticManifest" in src
-    assert "`/api/rag/knowledge-bases/${encodeURIComponent(requestRoute.kbId)}/agentic-ready-manifest`" in src
-    assert "`/api/rag/knowledge-bases/${encodeURIComponent(mutationKbId)}/agentic-ready-manifest/build`" in src
+    assert (
+        "`/api/rag/knowledge-bases/${encodeURIComponent(requestRoute.kbId)}/agentic-ready-manifest`"
+        in src
+    )
+    assert (
+        "`/api/rag/knowledge-bases/${encodeURIComponent(mutationKbId)}/agentic-ready-manifest/build`"
+        in src
+    )
     assert "handleBuildAgenticManifest" in src
     assert "validation?: { valid?: boolean; errors?: string[] }" in src
     assert "res.validation?.valid !== false" in src
@@ -281,7 +288,7 @@ def test_knowledge_list_separates_serving_and_automation_status():
     assert "isReadyDataAutomationBusy" in state_src
     assert "normalizeReadyAutomationStatus" in state_src
     assert "isReadyDataAutomationBusy(manifest)" in src
-    assert 'data-testid={`badge-agentic-automation-${kbId}`}' in src
+    assert "data-testid={`badge-agentic-automation-${kbId}`}" in src
     assert "getServingStatusLabel(manifestServing, t)" in src
     assert "getAutomationStatusLabel(manifestOperation.status, t)" in src
     for page_src in (src, detail_src):
@@ -290,8 +297,8 @@ def test_knowledge_list_separates_serving_and_automation_status():
         assert "readyDataOperationKindTranslationKey" in page_src
         assert "isReadyDataAutomationBusy" in page_src
         assert "function normalizeReadyServingStatus" not in page_src
-        assert 't(`knowledge.ready_serving_' not in page_src
-        assert 't(`knowledge.ready_automation_' not in page_src
+        assert "t(`knowledge.ready_serving_" not in page_src
+        assert "t(`knowledge.ready_automation_" not in page_src
         assert 'case "unavailable":' in page_src
         assert 'case "awaiting_manual_confirmation":' in page_src
         assert 'return t("knowledge.ready_serving_missing")' in page_src
@@ -312,7 +319,7 @@ def test_knowledge_pages_keep_operation_failures_out_of_serving_messages():
         assert "manifest?.error_message" not in fallback_src
         assert "manifest?.stale_reason" not in fallback_src
 
-    assert 'data-testid={`message-agentic-operation-${kbId}`}' in list_src
+    assert "data-testid={`message-agentic-operation-${kbId}`}" in list_src
     assert 'data-testid="ready-data-last-operation-error"' in detail_src
     for page_src in (list_src, detail_src):
         assert 'manifestStatus === "building"' not in page_src
@@ -360,7 +367,10 @@ def test_kb_detail_starts_a_fresh_poll_episode_for_each_kb():
     route_effect_end = src.index("}, [kbId]);", route_effect)
     route_effect_src = src[route_effect:route_effect_end]
     assert "manifestPollAttempts.current = 0;" in route_effect_src
-    assert "readyDataRoute.current = syncReadyDataRoute(readyDataRoute.current, kbId);" in route_effect_src
+    assert (
+        "readyDataRoute.current = syncReadyDataRoute(readyDataRoute.current, kbId);"
+        in route_effect_src
+    )
     assert "setManifestPollVersion((current) => current + 1);" in route_effect_src
     assert "setAgenticManifest(null);" in route_effect_src
     assert "selectEffectiveReadyDataManifest(" in src
@@ -379,8 +389,11 @@ def test_knowledge_pages_use_fixed_manifest_mode_and_unavailable_messages():
         assert '"knowledge.manifest_stale_agentic_serving"' in src
         assert 't("knowledge.manifest_unavailable_message")' in src
         assert 'case "unavailable":' in src
-        assert 'status: "missing" | "ready" | "building" | "failed" | "stale" | "unavailable"' in state_src
-        assert 't(`knowledge.manifest_' not in src
+        assert (
+            'status: "missing" | "ready" | "building" | "failed" | "stale" | "unavailable"'
+            in state_src
+        )
+        assert "t(`knowledge.manifest_" not in src
 
     for key in (
         "knowledge.manifest_agentic_mode",
@@ -429,7 +442,7 @@ def test_kb_detail_localizes_public_ready_errors_and_smoke_statuses():
 
     for smoke_status in ("passed", "failed", "not_run", "skipped_empty"):
         assert f'case "{smoke_status}":' in src
-        assert f'knowledge.ready_smoke_{smoke_status}' in src
+        assert f"knowledge.ready_smoke_{smoke_status}" in src
     assert 'return t("knowledge.ready_smoke_unknown")' in src
     assert "getReadyPublicMessageLabel(manifestOperation.error, t)" in src
     assert (
@@ -438,7 +451,7 @@ def test_kb_detail_localizes_public_ready_errors_and_smoke_statuses():
     )
     assert "displayValue(manifest?.last_error)" not in src
     assert "displayValue(activePublication?.smoke_status)" not in src
-    assert "{ detail }) : \"\"" not in src
+    assert '{ detail }) : ""' not in src
 
     for key in (
         "knowledge.ready_smoke_passed",
@@ -473,9 +486,14 @@ def test_kb_detail_guards_ready_data_mutations_by_route_epoch():
         (automation_src, "setAutomationSaving(false)"),
         (rollback_src, "setRollbackRunning(false)"),
     ):
-        assert "captureReadyDataRoute(readyDataRoute.current, manifestMounted.current, kbId)" in handler_src
+        assert (
+            "captureReadyDataRoute(readyDataRoute.current, manifestMounted.current, kbId)"
+            in handler_src
+        )
         assert "await runReadyDataRouteRequest({" in handler_src
-        assert "isCurrent: () => isCurrentReadyDataRoute(mutationKbId, mutationEpoch)" in handler_src
+        assert (
+            "isCurrent: () => isCurrentReadyDataRoute(mutationKbId, mutationEpoch)" in handler_src
+        )
         assert handler_src.count("isCurrentReadyDataRoute(mutationKbId, mutationEpoch)") >= 2
         assert "onSuccess:" in handler_src
         assert "onError:" in handler_src
@@ -647,7 +665,9 @@ def test_automation_confirmation_uses_latest_functional_manifest_bases():
     automation_src = src[start:end]
 
     assert "mergeConfirmedReadyDataAutomationForKb" in automation_src
-    assert "const responseTime = selectResponseTimeReadyDataManifest(mutationKbId)" in automation_src
+    assert (
+        "const responseTime = selectResponseTimeReadyDataManifest(mutationKbId)" in automation_src
+    )
     assert "const confirmedManifest = mergeConfirmedReadyDataAutomationForKb(" in automation_src
     assert "applyReadyDataManifestUpdate(" in automation_src
     assert "manifestEpisodeVersion" in automation_src
@@ -685,7 +705,7 @@ def test_every_manifest_write_uses_publication_revision_ordering():
     assert "applyReadyDataManifestUpdate(" in build_src
     assert "applyReadyDataManifestUpdate(" in rollback_src
     assert "selectResponseTimeReadyDataManifest(" in automation_src
-    assert "mutationManifest," not in automation_src[automation_src.index("onSuccess:"):]
+    assert "mutationManifest," not in automation_src[automation_src.index("onSuccess:") :]
 
     manifest_loader_start = src.index("const loadAgenticManifest")
     stats_loader_start = src.index("const loadStats", manifest_loader_start)
@@ -744,8 +764,12 @@ def test_ready_data_manifest_merging_tracks_dynamic_freshness_and_profile_identi
     assert "const readyDataListAppliedManifestEpisodes = useRef(" in knowledge_src
     assert "const requestManifestVersion = ++readyDataListManifestVersion.current;" in knowledge_src
     assert "applyReadyDataListManifestEpisode(" in knowledge_src
-    assert "const mutationManifestVersion = ++readyDataListManifestVersion.current;" in knowledge_src
-    assert "readyDataListAppliedManifestEpisodes.current.set(kbId, decision.applied);" in knowledge_src
+    assert (
+        "const mutationManifestVersion = ++readyDataListManifestVersion.current;" in knowledge_src
+    )
+    assert (
+        "readyDataListAppliedManifestEpisodes.current.set(kbId, decision.applied);" in knowledge_src
+    )
     assert "mergeReadyDataKnowledgeList(" in knowledge_src
 
     assert "selectReadyDataMutationProfile(" in detail_src
@@ -763,7 +787,10 @@ def test_manifest_episode_authority_is_shared_in_detail_and_scoped_per_list_item
     assert "export function resolveReadyDataSafeMutationManifestEpisode" in state_src
     assert "export interface ReadyDataManifestEpisode" in state_src
     assert "const manifestEpisodeSequence = useRef(0);" in detail_src
-    assert "const manifestAppliedEpisode = useRef<ReadyDataManifestEpisode | null>(null);" in detail_src
+    assert (
+        "const manifestAppliedEpisode = useRef<ReadyDataManifestEpisode | null>(null);"
+        in detail_src
+    )
     assert "const manifestEpisodeVersion = ++manifestEpisodeSequence.current;" in detail_src
     assert detail_src.count("++manifestEpisodeSequence.current") >= 5
 
@@ -788,14 +815,16 @@ def test_manifest_episode_authority_is_shared_in_detail_and_scoped_per_list_item
     assert "(kbId) => manifestAuthorityByKb.get(kbId) ?? false" in knowledge_src
 
     detail_build = detail_src[
-        detail_src.index("const handleBuildAgenticManifest"):
-        detail_src.index("const updateReadyDataAutomation")
+        detail_src.index("const handleBuildAgenticManifest") : detail_src.index(
+            "const updateReadyDataAutomation"
+        )
     ]
     assert "safeMutationSnapshot: true" in detail_build
     assert "resolveReadyDataSafeMutationManifestEpisode(" in detail_src
     knowledge_build = knowledge_src[
-        knowledge_src.index("const handleBuildAgenticManifest"):
-        knowledge_src.index("const toggleKbCategory")
+        knowledge_src.index("const handleBuildAgenticManifest") : knowledge_src.index(
+            "const toggleKbCategory"
+        )
     ]
     assert "resolveReadyDataSafeMutationManifestEpisode(" in knowledge_src
     assert "currentManifest," in knowledge_build

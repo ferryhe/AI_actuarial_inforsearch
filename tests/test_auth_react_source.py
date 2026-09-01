@@ -1,6 +1,5 @@
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1] / "client" / "src"
 APP_TSX = ROOT / "App.tsx"
 LOGIN_TSX = ROOT / "pages" / "Login.tsx"
@@ -28,39 +27,41 @@ def test_auth_react_shell_restores_native_auth_routes_and_contracts():
     assert 'path="/register" component={Register}' in app_src
     assert 'path="/profile"' in app_src
     assert 'path="/users"' in app_src
-    assert 'function RequirePermission' in app_src
+    assert "function RequirePermission" in app_src
     assert 'permission="tasks.view"' in app_src
     assert 'permission="config.write"' in app_src
     assert 'permission="users.manage"' in app_src
     assert 'navigate("/login")' in app_src
 
     assert 'apiPost("/api/auth/login"' in login_src
-    assert 'setStoredAuthToken(token.trim(), false)' in login_src
+    assert "setStoredAuthToken(token.trim(), false)" in login_src
     assert 'setStoredAuthToken("", true)' in login_src
     assert 't("login.title")' in login_src
     assert 't("auth.back_home")' in login_src
     assert 'href="/"' in login_src
     assert 'apiPost("/api/auth/register"' in register_src
-    assert 'formatAuthSubmitError' in login_src
-    assert 'formatAuthSubmitError' in register_src
-    assert 'export function formatAuthSubmitError' in auth_errors_src
-    assert 'err.status === 429' in auth_errors_src
-    assert 'auth.error.rate_limited' in auth_errors_src
-    assert 'auth.error.system_unavailable' in auth_errors_src
+    assert "formatAuthSubmitError" in login_src
+    assert "formatAuthSubmitError" in register_src
+    assert "export function formatAuthSubmitError" in auth_errors_src
+    assert "err.status === 429" in auth_errors_src
+    assert "auth.error.rate_limited" in auth_errors_src
+    assert "auth.error.system_unavailable" in auth_errors_src
     assert '"auth.error.rate_limited": "尝试次数过多，请稍等一分钟再试。"' in i18n_src
     assert '"auth.error.system_unavailable": "服务暂时不可用，请稍后再试。"' in i18n_src
     assert 't("register.title")' in register_src
     assert 't("auth.back_home")' in register_src
     assert 'href="/"' in register_src
     assert 'href="/login"' in profile_src
-    assert 'button-logout' in layout_src
+    assert "button-logout" in layout_src
     assert 'permission: "tasks.view"' in layout_src
     assert 'permission: "config.write"' in layout_src
     assert 'permissions.includes("users.manage")' in layout_src
     assert 'i18n.t("nav.users")' in layout_src
     assert 'i18n.t("auth.signIn")' in layout_src
     assert 'data-testid="button-login"' in layout_src
-    login_button_classes = layout_src.split('data-testid="button-login"', 1)[0].rsplit('className="', 1)[1]
+    login_button_classes = layout_src.split('data-testid="button-login"', 1)[0].rsplit(
+        'className="', 1
+    )[1]
     assert not login_button_classes.startswith("hidden ")
     assert 'i18n.t("auth.register")' in layout_src
     assert 'apiGet<AuthMeResponse>("/api/auth/me")' in auth_ctx_src

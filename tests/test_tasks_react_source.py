@@ -1,6 +1,5 @@
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1] / "client" / "src"
 SCHEDULED_TASKS_TSX = ROOT / "pages" / "tasks" / "ScheduledTasksSection.tsx"
 SCHEDULE_FROM_TASK_TSX = ROOT / "pages" / "tasks" / "ScheduleFromTaskButton.tsx"
@@ -22,7 +21,7 @@ def test_scheduled_tasks_section_uses_native_schedule_status_contract():
 def test_scheduled_tasks_section_surfaces_write_errors_instead_of_silently_ignoring_them():
     src = SCHEDULED_TASKS_TSX.read_text(encoding="utf-8")
 
-    assert 'return formatApiErrorDetail(error) || t(fallbackKey);' in src
+    assert "return formatApiErrorDetail(error) || t(fallbackKey);" in src
     assert "import { ApiError" not in src
     assert "error.detail || error.message" not in src
     assert "errorMsg" in src
@@ -35,12 +34,12 @@ def test_scheduled_tasks_section_does_not_offer_old_full_pipeline_type():
     src = SCHEDULED_TASKS_TSX.read_text(encoding="utf-8")
 
     assert "scheduledParamFields" in src
-    assert 'weekly_summary: [' in src
+    assert "weekly_summary: [" in src
     assert '{ value: "weekly_summary", label: t("tasks.type.weekly_summary") }' in src
-    assert 'full_pipeline: [' not in src
+    assert "full_pipeline: [" not in src
     assert '{ value: "full_pipeline", label: t("tasks.type.full_pipeline") }' not in src
     assert 'value: "file"' not in src
-    assert 'data-testid={`input-sched-param-${field.key}`}' in src
+    assert "data-testid={`input-sched-param-${field.key}`}" in src
     assert 'data-testid="input-sched-params"' in src
     assert 't("tasks.sched.advanced_parameters")' in src
     assert "parseParamsObject(formParams) || {}" in src
@@ -49,13 +48,16 @@ def test_scheduled_tasks_section_does_not_offer_old_full_pipeline_type():
     assert '{ key: "max_depth", labelKey: "tasks.sched.param.max_depth", type: "number" }' in src
     assert '{ key: "count", labelKey: "tasks.sched.param.count", type: "number" }' in src
     assert '{ key: "urls", labelKey: "tasks.sched.param.urls", type: "textarea"' in src
-    assert '{ key: "overwrite_existing", labelKey: "tasks.sched.param.overwrite_existing", type: "boolean" }' in src
+    assert (
+        '{ key: "overwrite_existing", labelKey: "tasks.sched.param.overwrite_existing", type: "boolean" }'
+        in src
+    )
     assert 'key: "source_dir"' not in src
     assert 'key: "force", labelKey: "tasks.sched.param.force"' not in src
     assert "const nextNumber = Number(trimmed);" in src
     assert "Number.isFinite(nextNumber)" in src
     assert 'value.trim().toLowerCase() === "true"' in src
-    assert 'url: [' in src
+    assert "url: [" in src
     assert '{ key: "urls", labelKey: "tasks.sched.param.urls", type: "textarea"' in src
     assert '{ key: "query", labelKey: "tasks.sched.param.query" }' in src
 
@@ -115,9 +117,7 @@ def test_legacy_collection_forms_expose_add_to_schedule_control():
         assert "ScheduleFromTaskButton" in src, form_name
         assert "buildTask" in src or "buildCollectionTask" in src, form_name
 
-    rag_src = (ROOT / "pages" / "tasks" / "RagIndexForm.tsx").read_text(
-        encoding="utf-8"
-    )
+    rag_src = (ROOT / "pages" / "tasks" / "RagIndexForm.tsx").read_text(encoding="utf-8")
     assert "ScheduleFromTaskButton" not in rag_src
 
 
@@ -141,7 +141,9 @@ def test_file_import_form_uses_browser_upload_batches_not_server_folder_browser(
 
 
 def test_recommended_markdown_conversion_tools_are_in_frontend_defaults():
-    settings_src = (ROOT / "pages" / "settings" / "MarkdownConversionTab.tsx").read_text(encoding="utf-8")
+    settings_src = (ROOT / "pages" / "settings" / "MarkdownConversionTab.tsx").read_text(
+        encoding="utf-8"
+    )
 
     assert '"/api/config/markdown-conversion"' in settings_src
     assert "default_tool" in settings_src
@@ -166,7 +168,7 @@ def test_tasks_page_restores_rag_indexing_task_form():
     assert 'type: "rag_index"' in tasks_src
     assert 'apiType: "rag_indexing"' in tasks_src
     assert "<RagIndexForm onSubmit={handleSubmitRagIndex} submitting={submitting} />" in tasks_src
-    assert '`/api/rag/knowledge-bases/${encodeURIComponent(kbId)}/index`' in tasks_src
+    assert "`/api/rag/knowledge-bases/${encodeURIComponent(kbId)}/index`" in tasks_src
     assert '"/api/rag/knowledge-bases"' in rag_src
     assert "kb_id: selectedKbId" in rag_src
     assert "force_rebuild: forceRebuild" in rag_src
@@ -245,7 +247,7 @@ def test_tasks_page_exposes_agentic_site_monitoring_form():
     assert '"/api/web-listening/rules/validate"' in form_src
     assert '"/api/web-listening/rules/materialize"' in form_src
     assert '"/api/schedule/reinit"' in form_src
-    assert 'scheduled-tasks:changed' in form_src
+    assert "scheduled-tasks:changed" in form_src
     assert 'data-testid="form-web-listening"' in form_src
     assert 'data-testid="checkbox-web-listening-tool-crawler"' in form_src
     assert 'data-testid="checkbox-web-listening-tool-search"' in form_src
@@ -287,6 +289,7 @@ def test_site_config_form_manages_agentic_monitoring_strategy():
     assert '"tasks.sites.save_error": "Failed to save site"' in i18n_src
     assert '"tasks.sites.save_error": "保存站点失败"' in i18n_src
 
+
 def test_web_listening_entry_uses_site_permission_not_tasks_run_only():
     tasks_src = TASKS_TSX.read_text(encoding="utf-8")
     filter_src = (ROOT / "pages" / "tasks" / "FilterBar.tsx").read_text(encoding="utf-8")
@@ -306,9 +309,9 @@ def test_tasks_page_exposes_fixed_collapsible_pipeline_baton():
     assert 'type: "full_pipeline"' not in tasks_src
     assert "FullPipelineForm" not in tasks_src
     assert "PipelineRuns" not in tasks_src
-    assert '<PipelineBaton onViewLog={viewPipelineLog} />' in tasks_src
-    assert 'useState<Set<string>>(new Set())' in form_src
-    assert 'aria-expanded={expanded.has(step.step)}' in form_src
+    assert "<PipelineBaton onViewLog={viewPipelineLog} />" in tasks_src
+    assert "useState<Set<string>>(new Set())" in form_src
+    assert "aria-expanded={expanded.has(step.step)}" in form_src
     for step in ("scheduled", "markdown_conversion", "catalog", "chunk_generation", "rag_indexing"):
         assert f'"pipeline-step-{step}"' in form_src
     assert 'apiGet<PipelineView>("/api/pipeline/status")' in form_src
@@ -332,9 +335,14 @@ def test_tasks_page_exposes_fixed_collapsible_pipeline_baton():
     assert 'rag_indexing: ["incremental", "force_reindex", "kb_id"]' in form_src
     assert "forbiddenFields.has(key)" in form_src
     assert "Number.isFinite(numericValue)" in form_src
-    assert 'throw new Error(`${key} must be a finite number`)' in form_src
-    assert 'setError(caught instanceof Error ? caught.message : t("tasks.sched.save_fail"))' in form_src
-    assert form_src.index("Number.isFinite(numericValue)") < form_src.index('apiPost("/api/scheduled-tasks/update"')
+    assert "throw new Error(`${key} must be a finite number`)" in form_src
+    assert (
+        'setError(caught instanceof Error ? caught.message : t("tasks.sched.save_fail"))'
+        in form_src
+    )
+    assert form_src.index("Number.isFinite(numericValue)") < form_src.index(
+        'apiPost("/api/scheduled-tasks/update"'
+    )
     assert "advanced" not in form_src.lower()
 
 
@@ -365,7 +373,7 @@ def test_tasks_page_has_fixed_pipeline_tab_not_pipeline_runs():
     assert 'data-testid="tab-pipeline-baton"' in src
     assert 'data-testid="tab-pipeline-runs"' not in src
     assert 'taskView === "pipeline"' in src
-    assert '<PipelineBaton onViewLog={viewPipelineLog} />' in src
+    assert "<PipelineBaton onViewLog={viewPipelineLog} />" in src
     assert 'useState<"run" | "scheduled" | "pipeline">' in src
     assert "viewPipelineLog" in src
 

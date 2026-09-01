@@ -143,11 +143,15 @@ def test_indexing_pipeline_stops_before_second_file(tmp_path) -> None:
         processed_files.append(file_url)
         return {"success": True, "chunk_count": 2}
 
-    with patch("ai_actuarial.rag.indexing.VectorStore") as mock_vector_store, patch.object(
-        IndexingPipeline,
-        "_index_single_file",
-        fake_index_single_file,
-    ), patch.object(IndexingPipeline, "_update_kb_stats"):
+    with (
+        patch("ai_actuarial.rag.indexing.VectorStore") as mock_vector_store,
+        patch.object(
+            IndexingPipeline,
+            "_index_single_file",
+            fake_index_single_file,
+        ),
+        patch.object(IndexingPipeline, "_update_kb_stats"),
+    ):
         pipeline = IndexingPipeline(kb_manager, stop_check=stop_check)
         stats = pipeline.index_files(
             kb_id="kb-stop-test",
@@ -278,11 +282,15 @@ def test_indexing_pipeline_records_current_embedding_index_version(tmp_path) -> 
         get_kb=MagicMock(return_value=kb),
     )
 
-    with patch("ai_actuarial.rag.indexing.VectorStore") as mock_vector_store, patch.object(
-        IndexingPipeline,
-        "_index_single_file",
-        return_value={"success": True, "chunk_count": 4},
-    ), patch.object(IndexingPipeline, "_update_kb_stats"):
+    with (
+        patch("ai_actuarial.rag.indexing.VectorStore") as mock_vector_store,
+        patch.object(
+            IndexingPipeline,
+            "_index_single_file",
+            return_value={"success": True, "chunk_count": 4},
+        ),
+        patch.object(IndexingPipeline, "_update_kb_stats"),
+    ):
         pipeline = IndexingPipeline(kb_manager)
         stats = pipeline.index_files(
             kb_id=kb_id,
@@ -330,23 +338,46 @@ def test_indexing_pipeline_force_reindex_removes_chunks_for_deleted_files(tmp_pa
             INSERT INTO rag_chunks (chunk_id, kb_id, file_url, chunk_index, content, token_count, section_hierarchy, embedding_hash, created_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (f"{kb_id}:removed:0", kb_id, old_url, 0, "Removed stale chunk", 3, "Removed", "hash-removed", "2026-05-24T02:00:00+00:00"),
+            (
+                f"{kb_id}:removed:0",
+                kb_id,
+                old_url,
+                0,
+                "Removed stale chunk",
+                3,
+                "Removed",
+                "hash-removed",
+                "2026-05-24T02:00:00+00:00",
+            ),
         )
         storage._conn.execute(
             """
             INSERT INTO rag_chunks (chunk_id, kb_id, file_url, chunk_index, content, token_count, section_hierarchy, embedding_hash, created_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (f"{kb_id}:current:0", kb_id, current_url, 0, "Current stale chunk", 3, "Current", "hash-current", "2026-05-24T02:00:00+00:00"),
+            (
+                f"{kb_id}:current:0",
+                kb_id,
+                current_url,
+                0,
+                "Current stale chunk",
+                3,
+                "Current",
+                "hash-current",
+                "2026-05-24T02:00:00+00:00",
+            ),
         )
         storage._conn.commit()
 
         manager.embedding_generator = MagicMock()
         manager.embedding_generator.get_embedding_dimension.return_value = 3
-        with patch("ai_actuarial.rag.indexing.VectorStore") as mock_vector_store, patch.object(
-            IndexingPipeline,
-            "_index_single_file",
-            return_value={"success": True, "chunk_count": 1},
+        with (
+            patch("ai_actuarial.rag.indexing.VectorStore") as mock_vector_store,
+            patch.object(
+                IndexingPipeline,
+                "_index_single_file",
+                return_value={"success": True, "chunk_count": 1},
+            ),
         ):
             pipeline = IndexingPipeline(manager)
             stats = pipeline.index_files(kb_id=kb_id, file_urls=[current_url], force_reindex=True)
@@ -389,16 +420,11 @@ def test_vector_store_soft_delete_ignores_invalid_indices_and_filters_search(tmp
 
 def test_vector_store_search_caps_soft_deleted_overfetch(tmp_path) -> None:
     store = VectorStore(dimension=2, index_path=str(tmp_path / "bounded-search.faiss"))
-    store.metadata = [
-        {"id": f"deleted-near-{idx}", "_deleted": True}
-        for idx in range(5)
-    ] + [
-        {"id": f"active-{idx}"}
-        for idx in range(5, 20)
-    ] + [
-        {"id": f"deleted-far-{idx}", "_deleted": True}
-        for idx in range(20, 200)
-    ]
+    store.metadata = (
+        [{"id": f"deleted-near-{idx}", "_deleted": True} for idx in range(5)]
+        + [{"id": f"active-{idx}"} for idx in range(5, 20)]
+        + [{"id": f"deleted-far-{idx}", "_deleted": True} for idx in range(20, 200)]
+    )
 
     class FakeIndex:
         ntotal = 200
@@ -438,7 +464,9 @@ def test_indexing_pipeline_update_soft_deletes_old_file_vectors_before_append(tm
             content_type="application/pdf",
         )
         storage.update_file_markdown(file_url, "# Updated\n\nNew content", "manual")
-        manager = KnowledgeBaseManager(storage, config=RAGConfig(data_dir=str(tmp_path / "rag-data")))
+        manager = KnowledgeBaseManager(
+            storage, config=RAGConfig(data_dir=str(tmp_path / "rag-data"))
+        )
         manager.create_kb(kb_id, "Update Soft Delete KB", kb_mode="manual")
         manager.add_files_to_kb(kb_id, [file_url])
         manager.chunker = SimpleNamespace(
@@ -462,7 +490,11 @@ def test_indexing_pipeline_update_soft_deletes_old_file_vectors_before_append(tm
             def __init__(self) -> None:
                 self.metadata = [
                     {"kb_id": kb_id, "file_url": file_url, "content": "Old chunk"},
-                    {"kb_id": kb_id, "file_url": "https://example.com/other.pdf", "content": "Other chunk"},
+                    {
+                        "kb_id": kb_id,
+                        "file_url": "https://example.com/other.pdf",
+                        "content": "Other chunk",
+                    },
                 ]
 
             def add_vectors(self, _vectors, metadata):
@@ -502,7 +534,9 @@ def test_indexing_pipeline_force_reindex_rebuilds_full_kb_when_subset_requested(
             )
             storage.update_file_markdown(file_url, f"# {title}\n\n{title} content", "manual")
 
-        manager = KnowledgeBaseManager(storage, config=RAGConfig(data_dir=str(tmp_path / "rag-data")))
+        manager = KnowledgeBaseManager(
+            storage, config=RAGConfig(data_dir=str(tmp_path / "rag-data"))
+        )
         manager.create_kb(kb_id, "Force Reindex Full KB", kb_mode="manual")
         manager.add_files_to_kb(kb_id, [first_url, second_url])
         manager.chunker = SimpleNamespace(
@@ -562,7 +596,9 @@ def test_remove_files_from_kb_preserves_immutable_artifact_and_marks_kb_stale(tm
                 bytes=1024,
                 content_type="application/pdf",
             )
-        manager = KnowledgeBaseManager(storage, config=RAGConfig(data_dir=str(tmp_path / "rag-data")))
+        manager = KnowledgeBaseManager(
+            storage, config=RAGConfig(data_dir=str(tmp_path / "rag-data"))
+        )
         manager.create_kb(kb_id, "Remove Soft Delete KB", kb_mode="manual")
         manager.add_files_to_kb(kb_id, [removed_url, kept_url])
         index_path = tmp_path / "rag-data" / kb_id / "index.faiss"
@@ -582,10 +618,13 @@ def test_remove_files_from_kb_preserves_immutable_artifact_and_marks_kb_stale(tm
         reloaded = VectorStore(dimension=3, index_path=str(index_path))
         assert reloaded.metadata[0].get("_deleted") is not True
         assert reloaded.metadata[1].get("_deleted") is not True
-        assert storage._conn.execute(
-            "SELECT COUNT(*) FROM rag_kb_files WHERE kb_id = ? AND file_url = ?",
-            (kb_id, removed_url),
-        ).fetchone()[0] == 0
+        assert (
+            storage._conn.execute(
+                "SELECT COUNT(*) FROM rag_kb_files WHERE kb_id = ? AND file_url = ?",
+                (kb_id, removed_url),
+            ).fetchone()[0]
+            == 0
+        )
         assert storage._conn.execute(
             "SELECT index_dirty_at FROM rag_knowledge_bases WHERE kb_id = ?",
             (kb_id,),
@@ -596,7 +635,9 @@ def test_remove_files_from_kb_preserves_immutable_artifact_and_marks_kb_stale(tm
 
 def test_indexing_pipeline_fails_closed_when_ready_version_recording_fails(tmp_path) -> None:
     kb_id = "kb-index-version-warning"
-    storage = SimpleNamespace(create_kb_index_version=MagicMock(side_effect=RuntimeError("locked database")))
+    storage = SimpleNamespace(
+        create_kb_index_version=MagicMock(side_effect=RuntimeError("locked database"))
+    )
     embedding_generator = MagicMock()
     embedding_generator.get_embedding_dimension.return_value = 3
     kb = SimpleNamespace(
@@ -629,11 +670,15 @@ def test_indexing_pipeline_fails_closed_when_ready_version_recording_fails(tmp_p
         get_kb=MagicMock(return_value=kb),
     )
 
-    with patch("ai_actuarial.rag.indexing.VectorStore") as mock_vector_store, patch.object(
-        IndexingPipeline,
-        "_index_single_file",
-        return_value={"success": True, "chunk_count": 4},
-    ), patch.object(IndexingPipeline, "_update_kb_stats"):
+    with (
+        patch("ai_actuarial.rag.indexing.VectorStore") as mock_vector_store,
+        patch.object(
+            IndexingPipeline,
+            "_index_single_file",
+            return_value={"success": True, "chunk_count": 4},
+        ),
+        patch.object(IndexingPipeline, "_update_kb_stats"),
+    ):
         pipeline = IndexingPipeline(kb_manager)
         with pytest.raises(RAGException, match="record ready KB index version"):
             pipeline.index_files(
@@ -679,13 +724,17 @@ def test_native_task_runtime_runs_rag_indexing_collection(tmp_path, monkeypatch)
     }
 
     runtime = NativeTaskRuntime()
-    with patch("ai_actuarial.task_runtime.KnowledgeBaseManager", return_value=fake_manager), patch(
-        "ai_actuarial.task_runtime.resolve_kb_bound_chunks",
-        return_value={"binding_snapshot_fingerprint": "binding-runtime"},
-    ) as resolve, patch(
-        "ai_actuarial.task_runtime.build_kb_index",
-        return_value=index_result,
-    ) as build:
+    with (
+        patch("ai_actuarial.task_runtime.KnowledgeBaseManager", return_value=fake_manager),
+        patch(
+            "ai_actuarial.task_runtime.resolve_kb_bound_chunks",
+            return_value={"binding_snapshot_fingerprint": "binding-runtime"},
+        ) as resolve,
+        patch(
+            "ai_actuarial.task_runtime.build_kb_index",
+            return_value=index_result,
+        ) as build,
+    ):
         result = runtime._run_collection(
             "task-rag",
             "rag_indexing",
@@ -727,7 +776,9 @@ def test_native_task_runtime_rejects_new_kb_index_build_launches(tmp_path, monke
     assert runtime.active_tasks == {}
 
 
-def test_native_task_runtime_catalog_uses_yaml_routing_for_explicit_file_urls(tmp_path, monkeypatch) -> None:
+def test_native_task_runtime_catalog_uses_yaml_routing_for_explicit_file_urls(
+    tmp_path, monkeypatch
+) -> None:
     config_path = tmp_path / "sites.yaml"
     db_path = tmp_path / "runtime-catalog.db"
     download_dir = tmp_path / "files"
@@ -754,10 +805,19 @@ def test_native_task_runtime_catalog_uses_yaml_routing_for_explicit_file_urls(tm
     from ai_actuarial.task_runtime import NativeTaskRuntime
 
     runtime = NativeTaskRuntime()
-    with patch(
-        "ai_actuarial.task_runtime.run_catalog_for_urls",
-        return_value={"scanned": 1, "processed": 1, "skipped_ai": 0, "errors": 0, "stopped": False},
-    ) as mock_for_urls, patch("ai_actuarial.task_runtime.run_incremental_catalog") as mock_incremental:
+    with (
+        patch(
+            "ai_actuarial.task_runtime.run_catalog_for_urls",
+            return_value={
+                "scanned": 1,
+                "processed": 1,
+                "skipped_ai": 0,
+                "errors": 0,
+                "stopped": False,
+            },
+        ) as mock_for_urls,
+        patch("ai_actuarial.task_runtime.run_incremental_catalog") as mock_incremental,
+    ):
         result = runtime._run_collection(
             "task-catalog",
             "catalog",
@@ -811,10 +871,19 @@ def test_native_task_runtime_catalog_scan_uses_stats_version_and_scan_window(
     from ai_actuarial.task_runtime import NativeTaskRuntime
 
     runtime = NativeTaskRuntime()
-    with patch(
-        "ai_actuarial.task_runtime.run_incremental_catalog",
-        return_value={"scanned": 2, "processed": 2, "skipped_ai": 0, "errors": 0, "stopped": False},
-    ) as mock_incremental, patch("ai_actuarial.task_runtime.run_catalog_for_urls") as mock_for_urls:
+    with (
+        patch(
+            "ai_actuarial.task_runtime.run_incremental_catalog",
+            return_value={
+                "scanned": 2,
+                "processed": 2,
+                "skipped_ai": 0,
+                "errors": 0,
+                "stopped": False,
+            },
+        ) as mock_incremental,
+        patch("ai_actuarial.task_runtime.run_catalog_for_urls") as mock_for_urls,
+    ):
         result = runtime._run_collection(
             "task-catalog-scan",
             "catalog",
@@ -896,7 +965,9 @@ def test_native_task_runtime_quick_check_uses_submitted_url_config(tmp_path, mon
     assert crawler_cls.call_args.kwargs["default_delay_seconds"] == 0
 
 
-def test_native_task_runtime_search_uses_selected_engine_and_db_credentials(tmp_path, monkeypatch) -> None:
+def test_native_task_runtime_search_uses_selected_engine_and_db_credentials(
+    tmp_path, monkeypatch
+) -> None:
     config_path = tmp_path / "sites.yaml"
     db_path = tmp_path / "runtime-search.db"
     download_dir = tmp_path / "files"
@@ -944,13 +1015,22 @@ def test_native_task_runtime_search_uses_selected_engine_and_db_credentials(tmp_
     )
     runtime = NativeTaskRuntime()
     search_result = SimpleNamespace(url="https://example.com/report", source="Search")
-    with patch(
-        "ai_actuarial.task_runtime.get_search_runtime_credentials",
-        return_value={"brave": "brave-key", "google": "google-key", "serper": None, "tavily": None},
-    ), patch("ai_actuarial.task_runtime.search_all", return_value=[search_result]) as mock_search, patch(
-        "ai_actuarial.task_runtime.Crawler",
-        return_value=fake_crawler,
-    ) as crawler_cls:
+    with (
+        patch(
+            "ai_actuarial.task_runtime.get_search_runtime_credentials",
+            return_value={
+                "brave": "brave-key",
+                "google": "google-key",
+                "serper": None,
+                "tavily": None,
+            },
+        ),
+        patch("ai_actuarial.task_runtime.search_all", return_value=[search_result]) as mock_search,
+        patch(
+            "ai_actuarial.task_runtime.Crawler",
+            return_value=fake_crawler,
+        ) as crawler_cls,
+    ):
         result = runtime._run_collection(
             "task-search",
             "search",
@@ -982,7 +1062,9 @@ def test_native_task_runtime_search_uses_selected_engine_and_db_credentials(tmp_
     assert crawler_cls.call_args.kwargs["default_delay_seconds"] == 0
 
 
-def test_native_task_runtime_search_passes_check_database_false_to_scan_config(tmp_path, monkeypatch) -> None:
+def test_native_task_runtime_search_passes_check_database_false_to_scan_config(
+    tmp_path, monkeypatch
+) -> None:
     config_path = tmp_path / "sites.yaml"
     db_path = tmp_path / "runtime-search-no-db-check.db"
     download_dir = tmp_path / "files"
@@ -1020,12 +1102,16 @@ def test_native_task_runtime_search_passes_check_database_false_to_scan_config(t
     )
     runtime = NativeTaskRuntime()
     search_result = SimpleNamespace(url="https://example.com/report", source="Search")
-    with patch(
-        "ai_actuarial.task_runtime.get_search_runtime_credentials",
-        return_value={"brave": "brave-key", "google": None, "serper": None, "tavily": None},
-    ), patch("ai_actuarial.task_runtime.search_all", return_value=[search_result]), patch(
-        "ai_actuarial.task_runtime.Crawler",
-        return_value=fake_crawler,
+    with (
+        patch(
+            "ai_actuarial.task_runtime.get_search_runtime_credentials",
+            return_value={"brave": "brave-key", "google": None, "serper": None, "tavily": None},
+        ),
+        patch("ai_actuarial.task_runtime.search_all", return_value=[search_result]),
+        patch(
+            "ai_actuarial.task_runtime.Crawler",
+            return_value=fake_crawler,
+        ),
     ):
         result = runtime._run_collection(
             "task-search-no-db-check",
@@ -1042,7 +1128,9 @@ def test_native_task_runtime_search_passes_check_database_false_to_scan_config(t
     assert site_cfg.check_database is False
 
 
-def test_native_task_runtime_missing_site_results_do_not_enqueue_search_fallback(tmp_path, monkeypatch) -> None:
+def test_native_task_runtime_missing_site_results_do_not_enqueue_search_fallback(
+    tmp_path, monkeypatch
+) -> None:
     monkeypatch.chdir(tmp_path)
 
     from ai_actuarial.task_runtime import NativeTaskRuntime
@@ -1080,8 +1168,9 @@ def test_native_task_runtime_missing_site_results_do_not_enqueue_search_fallback
     runtime.start_background_task.assert_not_called()
 
 
-
-def test_native_task_runtime_crawler_only_site_does_not_enqueue_search_fallback(tmp_path, monkeypatch) -> None:
+def test_native_task_runtime_crawler_only_site_does_not_enqueue_search_fallback(
+    tmp_path, monkeypatch
+) -> None:
     monkeypatch.chdir(tmp_path)
 
     from ai_actuarial.task_runtime import NativeTaskRuntime
@@ -1127,7 +1216,10 @@ def test_native_task_runtime_crawler_only_site_does_not_enqueue_search_fallback(
     assert result.metadata["search_fallback_task_ids"] == []
     runtime.start_background_task.assert_not_called()
 
-def test_native_task_runtime_unmatched_site_result_does_not_enqueue_search_fallback(tmp_path, monkeypatch) -> None:
+
+def test_native_task_runtime_unmatched_site_result_does_not_enqueue_search_fallback(
+    tmp_path, monkeypatch
+) -> None:
     monkeypatch.chdir(tmp_path)
 
     from ai_actuarial.task_runtime import NativeTaskRuntime
@@ -1173,7 +1265,9 @@ def test_native_task_runtime_unmatched_site_result_does_not_enqueue_search_fallb
     runtime.start_background_task.assert_not_called()
 
 
-def test_native_task_runtime_scheduled_success_with_queries_does_not_enqueue_search_fallback(tmp_path, monkeypatch) -> None:
+def test_native_task_runtime_scheduled_success_with_queries_does_not_enqueue_search_fallback(
+    tmp_path, monkeypatch
+) -> None:
     monkeypatch.chdir(tmp_path)
     config_path = tmp_path / "sites.yaml"
     db_path = tmp_path / "runtime-scheduled-success.db"
@@ -1211,13 +1305,19 @@ def test_native_task_runtime_scheduled_success_with_queries_does_not_enqueue_sea
     runtime = NativeTaskRuntime()
     runtime.start_background_task = MagicMock(return_value="child-not-used")
 
-    with patch.object(runtime, "_run_search_task", wraps=runtime._run_search_task) as mock_run_search_task, patch(
-        "ai_actuarial.task_runtime.search_all"
-    ) as mock_search, patch(
-        "ai_actuarial.task_runtime.Crawler",
-        return_value=fake_crawler,
+    with (
+        patch.object(
+            runtime, "_run_search_task", wraps=runtime._run_search_task
+        ) as mock_run_search_task,
+        patch("ai_actuarial.task_runtime.search_all") as mock_search,
+        patch(
+            "ai_actuarial.task_runtime.Crawler",
+            return_value=fake_crawler,
+        ),
     ):
-        result = runtime._run_collection("task-scheduled-success", "scheduled", {"check_database": False})
+        result = runtime._run_collection(
+            "task-scheduled-success", "scheduled", {"check_database": False}
+        )
 
     assert result.success is True
     assert result.items_found == 1
@@ -1230,7 +1330,9 @@ def test_native_task_runtime_scheduled_success_with_queries_does_not_enqueue_sea
     mock_search.assert_not_called()
 
 
-def test_native_task_runtime_scheduled_blocked_outcome_enqueues_search_fallback(tmp_path, monkeypatch) -> None:
+def test_native_task_runtime_scheduled_blocked_outcome_enqueues_search_fallback(
+    tmp_path, monkeypatch
+) -> None:
     monkeypatch.chdir(tmp_path)
     config_path = tmp_path / "sites.yaml"
     db_path = tmp_path / "runtime-scheduled-blocked.db"
@@ -1268,11 +1370,15 @@ def test_native_task_runtime_scheduled_blocked_outcome_enqueues_search_fallback(
     runtime = NativeTaskRuntime()
     runtime.start_background_task = MagicMock(return_value="child-search-1")
 
-    with patch.object(runtime, "_run_search_task", wraps=runtime._run_search_task) as mock_run_search_task, patch(
-        "ai_actuarial.task_runtime.search_all"
-    ) as mock_search, patch(
-        "ai_actuarial.task_runtime.Crawler",
-        return_value=fake_crawler,
+    with (
+        patch.object(
+            runtime, "_run_search_task", wraps=runtime._run_search_task
+        ) as mock_run_search_task,
+        patch("ai_actuarial.task_runtime.search_all") as mock_search,
+        patch(
+            "ai_actuarial.task_runtime.Crawler",
+            return_value=fake_crawler,
+        ),
     ):
         result = runtime._run_collection("task-scheduled-blocked", "scheduled", {})
 
@@ -1310,11 +1416,15 @@ def test_native_task_runtime_scheduled_blocked_outcome_enqueues_search_fallback(
     }
     mock_run_search_task.assert_not_called()
     mock_search.assert_not_called()
-    log_text = (tmp_path / "data" / "task_logs" / "task-scheduled-blocked.log").read_text(encoding="utf-8")
+    log_text = (tmp_path / "data" / "task_logs" / "task-scheduled-blocked.log").read_text(
+        encoding="utf-8"
+    )
     assert "enqueued search fallback task child-search-1" in log_text
 
 
-def test_native_task_runtime_search_fallback_prefers_query_site_domain_for_www_site_config() -> None:
+def test_native_task_runtime_search_fallback_prefers_query_site_domain_for_www_site_config() -> (
+    None
+):
     from ai_actuarial.search import SearchResult
     from ai_actuarial.task_runtime import NativeTaskRuntime
 
@@ -1335,7 +1445,10 @@ def test_native_task_runtime_search_fallback_prefers_query_site_domain_for_www_s
 
     assert payload["site"] == "soa.org"
     assert payload["query"] == "site:soa.org actuarial report"
-    assert runtime._query_with_site_filter(payload["query"], payload["site"]) == "site:soa.org actuarial report"
+    assert (
+        runtime._query_with_site_filter(payload["query"], payload["site"])
+        == "site:soa.org actuarial report"
+    )
     assert runtime._dedupe_search_results(
         [
             SearchResult(url="https://soa.org/resources/research-report.pdf", source="test"),
@@ -1349,7 +1462,9 @@ def test_native_task_runtime_search_fallback_prefers_query_site_domain_for_www_s
     ]
 
 
-def test_native_task_runtime_scheduled_zero_result_outcome_enqueues_brave_search_fallback(tmp_path, monkeypatch) -> None:
+def test_native_task_runtime_scheduled_zero_result_outcome_enqueues_brave_search_fallback(
+    tmp_path, monkeypatch
+) -> None:
     monkeypatch.chdir(tmp_path)
     config_path = tmp_path / "sites.yaml"
     db_path = tmp_path / "runtime-scheduled-zero.db"
@@ -1383,11 +1498,15 @@ def test_native_task_runtime_scheduled_zero_result_outcome_enqueues_brave_search
     runtime = NativeTaskRuntime()
     runtime.start_background_task = MagicMock(return_value="child-search-zero")
 
-    with patch.object(runtime, "_run_search_task", wraps=runtime._run_search_task) as mock_run_search_task, patch(
-        "ai_actuarial.task_runtime.search_all"
-    ) as mock_search, patch(
-        "ai_actuarial.task_runtime.Crawler",
-        return_value=fake_crawler,
+    with (
+        patch.object(
+            runtime, "_run_search_task", wraps=runtime._run_search_task
+        ) as mock_run_search_task,
+        patch("ai_actuarial.task_runtime.search_all") as mock_search,
+        patch(
+            "ai_actuarial.task_runtime.Crawler",
+            return_value=fake_crawler,
+        ),
     ):
         result = runtime._run_collection("task-scheduled-zero", "scheduled", {})
 
@@ -1411,7 +1530,9 @@ def test_native_task_runtime_scheduled_zero_result_outcome_enqueues_brave_search
     mock_search.assert_not_called()
 
 
-def test_native_task_runtime_scheduled_search_disabled_does_not_enqueue_fallback(tmp_path, monkeypatch) -> None:
+def test_native_task_runtime_scheduled_search_disabled_does_not_enqueue_fallback(
+    tmp_path, monkeypatch
+) -> None:
     monkeypatch.chdir(tmp_path)
     config_path = tmp_path / "sites.yaml"
     db_path = tmp_path / "runtime-scheduled-disabled.db"
@@ -1442,11 +1563,15 @@ def test_native_task_runtime_scheduled_search_disabled_does_not_enqueue_fallback
     runtime = NativeTaskRuntime()
     runtime.start_background_task = MagicMock(return_value="child-not-used")
 
-    with patch.object(runtime, "_run_search_task", wraps=runtime._run_search_task) as mock_run_search_task, patch(
-        "ai_actuarial.task_runtime.search_all"
-    ) as mock_search, patch(
-        "ai_actuarial.task_runtime.Crawler",
-        return_value=fake_crawler,
+    with (
+        patch.object(
+            runtime, "_run_search_task", wraps=runtime._run_search_task
+        ) as mock_run_search_task,
+        patch("ai_actuarial.task_runtime.search_all") as mock_search,
+        patch(
+            "ai_actuarial.task_runtime.Crawler",
+            return_value=fake_crawler,
+        ),
     ):
         result = runtime._run_collection("task-scheduled-disabled", "scheduled", {})
 
@@ -1460,7 +1585,9 @@ def test_native_task_runtime_scheduled_search_disabled_does_not_enqueue_fallback
     mock_search.assert_not_called()
 
 
-def test_native_task_runtime_scheduled_site_without_queries_does_not_enqueue_fallback(tmp_path, monkeypatch) -> None:
+def test_native_task_runtime_scheduled_site_without_queries_does_not_enqueue_fallback(
+    tmp_path, monkeypatch
+) -> None:
     monkeypatch.chdir(tmp_path)
     config_path = tmp_path / "sites.yaml"
     db_path = tmp_path / "runtime-scheduled-no-queries.db"
@@ -1490,11 +1617,15 @@ def test_native_task_runtime_scheduled_site_without_queries_does_not_enqueue_fal
     runtime = NativeTaskRuntime()
     runtime.start_background_task = MagicMock(return_value="child-not-used")
 
-    with patch.object(runtime, "_run_search_task", wraps=runtime._run_search_task) as mock_run_search_task, patch(
-        "ai_actuarial.task_runtime.search_all"
-    ) as mock_search, patch(
-        "ai_actuarial.task_runtime.Crawler",
-        return_value=fake_crawler,
+    with (
+        patch.object(
+            runtime, "_run_search_task", wraps=runtime._run_search_task
+        ) as mock_run_search_task,
+        patch("ai_actuarial.task_runtime.search_all") as mock_search,
+        patch(
+            "ai_actuarial.task_runtime.Crawler",
+            return_value=fake_crawler,
+        ),
     ):
         result = runtime._run_collection("task-scheduled-no-queries", "scheduled", {})
 
@@ -1507,7 +1638,9 @@ def test_native_task_runtime_scheduled_site_without_queries_does_not_enqueue_fal
     mock_search.assert_not_called()
 
 
-def test_native_task_runtime_scheduled_multiple_queries_enqueue_multiple_child_tasks(tmp_path, monkeypatch) -> None:
+def test_native_task_runtime_scheduled_multiple_queries_enqueue_multiple_child_tasks(
+    tmp_path, monkeypatch
+) -> None:
     monkeypatch.chdir(tmp_path)
     config_path = tmp_path / "sites.yaml"
     db_path = tmp_path / "runtime-scheduled-multi-query.db"
@@ -1546,11 +1679,15 @@ def test_native_task_runtime_scheduled_multiple_queries_enqueue_multiple_child_t
     runtime = NativeTaskRuntime()
     runtime.start_background_task = MagicMock(side_effect=["child-search-1", "child-search-2"])
 
-    with patch.object(runtime, "_run_search_task", wraps=runtime._run_search_task) as mock_run_search_task, patch(
-        "ai_actuarial.task_runtime.search_all"
-    ) as mock_search, patch(
-        "ai_actuarial.task_runtime.Crawler",
-        return_value=fake_crawler,
+    with (
+        patch.object(
+            runtime, "_run_search_task", wraps=runtime._run_search_task
+        ) as mock_run_search_task,
+        patch("ai_actuarial.task_runtime.search_all") as mock_search,
+        patch(
+            "ai_actuarial.task_runtime.Crawler",
+            return_value=fake_crawler,
+        ),
     ):
         result = runtime._run_collection("task-scheduled-multi-query", "scheduled", {})
 
@@ -1559,7 +1696,10 @@ def test_native_task_runtime_scheduled_multiple_queries_enqueue_multiple_child_t
     assert result.metadata["search_fallback_task_ids"] == ["child-search-1", "child-search-2"]
     assert runtime.start_background_task.call_count == 2
     payloads = [call.args[1] for call in runtime.start_background_task.call_args_list]
-    assert [payload["query"] for payload in payloads] == ["actuarial annual report", "solvency filing"]
+    assert [payload["query"] for payload in payloads] == [
+        "actuarial annual report",
+        "solvency filing",
+    ]
     assert all(payload["site"] == "multi.example" for payload in payloads)
     assert all(payload["engine"] == "tavily" for payload in payloads)
     assert all(payload["count"] == 3 for payload in payloads)
@@ -1570,7 +1710,10 @@ def test_native_task_runtime_scheduled_multiple_queries_enqueue_multiple_child_t
         "Search fallback: Multi Query Site (1/2): actuarial annual report",
         "Search fallback: Multi Query Site (2/2): solvency filing",
     ]
-    assert [call.kwargs["extra_fields"]["fallback_reason"] for call in runtime.start_background_task.call_args_list] == [
+    assert [
+        call.kwargs["extra_fields"]["fallback_reason"]
+        for call in runtime.start_background_task.call_args_list
+    ] == [
         "zero_results",
         "zero_results",
     ]
@@ -1578,7 +1721,9 @@ def test_native_task_runtime_scheduled_multiple_queries_enqueue_multiple_child_t
     mock_search.assert_not_called()
 
 
-def test_native_task_runtime_search_task_does_not_enqueue_recursive_fallback(tmp_path, monkeypatch) -> None:
+def test_native_task_runtime_search_task_does_not_enqueue_recursive_fallback(
+    tmp_path, monkeypatch
+) -> None:
     config_path = tmp_path / "sites.yaml"
     db_path = tmp_path / "runtime-search-no-recursion.db"
     download_dir = tmp_path / "files"
@@ -1602,12 +1747,14 @@ def test_native_task_runtime_search_task_does_not_enqueue_recursive_fallback(tmp
 
     runtime = NativeTaskRuntime()
     runtime.start_background_task = MagicMock(return_value="child-not-used")
-    with patch(
-        "ai_actuarial.task_runtime.get_search_runtime_credentials",
-        return_value={"brave": "brave-key", "google": None, "serper": None, "tavily": None},
-    ), patch("ai_actuarial.task_runtime.search_all", return_value=[]) as mock_search, patch(
-        "ai_actuarial.task_runtime.Crawler"
-    ) as mock_crawler:
+    with (
+        patch(
+            "ai_actuarial.task_runtime.get_search_runtime_credentials",
+            return_value={"brave": "brave-key", "google": None, "serper": None, "tavily": None},
+        ),
+        patch("ai_actuarial.task_runtime.search_all", return_value=[]) as mock_search,
+        patch("ai_actuarial.task_runtime.Crawler") as mock_crawler,
+    ):
         result = runtime._run_collection(
             "task-search-no-recursion",
             "search",
@@ -1750,7 +1897,9 @@ def test_native_task_runtime_chunk_generation_uses_existing_service(tmp_path, mo
     assert kwargs["payload"]["chunk_overlap"] == 20
 
 
-def test_native_task_runtime_chunk_generation_rejects_removed_binding_options(tmp_path, monkeypatch) -> None:
+def test_native_task_runtime_chunk_generation_rejects_removed_binding_options(
+    tmp_path, monkeypatch
+) -> None:
     config_path = tmp_path / "sites.yaml"
     db_path = tmp_path / "runtime-chunk-binding.db"
     download_dir = tmp_path / "files"
@@ -1862,7 +2011,9 @@ def test_native_task_runtime_chunk_generation_rejects_removed_binding_options(tm
     assert binding_count == 0
 
 
-def test_native_task_runtime_chunk_generation_filters_existing_chunks_by_selected_profile(tmp_path, monkeypatch) -> None:
+def test_native_task_runtime_chunk_generation_filters_existing_chunks_by_selected_profile(
+    tmp_path, monkeypatch
+) -> None:
     config_path = tmp_path / "sites.yaml"
     db_path = tmp_path / "runtime-chunk-profile.db"
     download_dir = tmp_path / "files"
@@ -1935,7 +2086,9 @@ def test_native_task_runtime_chunk_generation_filters_existing_chunks_by_selecte
     assert mock_generate.call_args.kwargs["payload"]["profile_id"] == selected_profile["profile_id"]
 
 
-def test_native_task_runtime_chunk_generation_resolves_custom_profile_before_filtering(tmp_path, monkeypatch) -> None:
+def test_native_task_runtime_chunk_generation_resolves_custom_profile_before_filtering(
+    tmp_path, monkeypatch
+) -> None:
     config_path = tmp_path / "sites.yaml"
     db_path = tmp_path / "runtime-chunk-custom-profile.db"
     download_dir = tmp_path / "files"
@@ -2007,7 +2160,9 @@ def test_native_task_runtime_chunk_generation_resolves_custom_profile_before_fil
     assert payload["name"] == "New Custom Profile"
 
 
-def test_native_task_runtime_chunk_generation_rejects_removed_binding_mode(tmp_path, monkeypatch) -> None:
+def test_native_task_runtime_chunk_generation_rejects_removed_binding_mode(
+    tmp_path, monkeypatch
+) -> None:
     config_path = tmp_path / "sites.yaml"
     db_path = tmp_path / "runtime-chunk-binding-mode.db"
     download_dir = tmp_path / "files"
