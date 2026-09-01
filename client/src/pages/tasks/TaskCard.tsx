@@ -116,6 +116,4 @@ export function TaskCard({ task, index, onStop, onViewLog }: TaskCardProps) {
   );
 }
 
-export { statusBadge, statusIcon, formatDate };
-// The shared summary owns provider identity and invalid_regenerated metrics across all task surfaces.
-export { TaskMetrics as TaskResultSummary } from "./TaskMetrics";
+export { statusBadge, formatDate };

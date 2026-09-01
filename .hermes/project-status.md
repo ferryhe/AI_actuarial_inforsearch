@@ -366,6 +366,22 @@
   suite passed with 1,881 tests and 10 platform skips, and the unified quality
   gate passed at 129/81/16. The dead-code gate shrank exactly from 7/1 files
   and 7/64 symbols to 2/1 files and 6/64 symbols.
+- Remote commit `77e54a9` contains the exact `client/src/pages/` cleanup. CI
+  run 33544476773 passed all five jobs, and no new review comment was added.
+- `client/src/pages/tasks/` no longer contains the unreachable
+  `FolderBrowser.tsx` or its unreachable barrel `index.ts`. Three live
+  implementation details remain in use but are no longer exported, and three
+  duplicate schedule types with no caller were removed. The negative test
+  proving that browser uploads do not use the retired folder browser remains
+  because it covers current behavior.
+- The task-page cleanup passed 32 focused source/runtime tests, directory
+  ESLint, frontend type-check, and the production build. One full-suite source
+  assertion was corrected to inspect the shared `TaskMetrics` implementation
+  instead of relying on a removed re-export comment; its focused rerun passed.
+- The complete pytest suite then passed with 1,881 tests and 10 platform skips,
+  and the unified quality gate passed at 129/81/16. The dead-code gate shrank
+  exactly from 2/1 files and 6/64 symbols to 0/1 files and 0/64 symbols, so the
+  TypeScript historical dead-code baseline is now empty.
 
 ## Files changed
 
@@ -445,6 +461,11 @@
   files under `client/src/pages/`, made the live chat route selection type
   private, removed only the test constants and assertions tied to the deleted
   pages, and removed the matching six TypeScript dead-code baseline entries.
+- Nineteenth historical directory cleanup: deleted the unreachable
+  `client/src/pages/tasks/FolderBrowser.tsx` and barrel `index.ts`, removed
+  three unused exports and three unused duplicate schedule types, corrected
+  one source-contract test to inspect the real shared metrics component, and
+  removed the final eight TypeScript dead-code baseline entries.
 
 ## Working tree notes
 
@@ -461,8 +482,8 @@
 
 ## Recommended next action
 
-- Commit and push the path-specific `client/src/pages/` cleanup to PR #318,
-  verify its CI and review feedback, then continue with `client/src/pages/tasks/`.
-  Keep the final root-level orphan
-  `ai_actuarial/pipeline_config.py` for a separately verified cleanup. Merge
-  only after explicit authorization.
+- Commit and push the path-specific `client/src/pages/tasks/` cleanup to PR
+  #318, verify its CI and review feedback, then classify the retained public
+  `CollectionConfig.auto_download` field in a separate collectors follow-up.
+  Keep the final root-level orphan `ai_actuarial/pipeline_config.py` for a
+  separately verified cleanup. Merge only after explicit authorization.

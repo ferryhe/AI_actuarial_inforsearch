@@ -719,6 +719,7 @@ def test_tasks_ui_persistently_displays_ids_logs_and_chunk_embedding_results() -
     root = Path(__file__).resolve().parents[1] / "client/src/pages"
     types = (root / "tasks/Tasks.types.ts").read_text(encoding="utf-8")
     card = (root / "tasks/TaskCard.tsx").read_text(encoding="utf-8")
+    metrics = (root / "tasks/TaskMetrics.tsx").read_text(encoding="utf-8")
     table = (root / "tasks/TaskTable.tsx").read_text(encoding="utf-8")
     tasks = (root / "Tasks.tsx").read_text(encoding="utf-8")
 
@@ -735,9 +736,10 @@ def test_tasks_ui_persistently_displays_ids_logs_and_chunk_embedding_results() -
     ):
         assert field in types
     assert "task.id" in card and "onViewLog" in card
+    assert "TaskMetrics" in card
     assert "task.id" in table and "task.result" in table
-    assert "invalid_regenerated" in card
-    assert "provider" in card
+    assert "invalid_regenerated" in metrics
+    assert "provider" in metrics
     assert "TaskResultSummary" in table
     assert "onViewLog={viewTaskLog}" in tasks
 

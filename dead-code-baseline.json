@@ -3,24 +3,7 @@
   "normalization": "path + kind + symbol",
   "policy": "Every current finding must match exactly; update-baseline may only remove entries.",
   "gates": {
-    "typescript-files": [
-      {
-        "path": "client/src/pages/tasks/FolderBrowser.tsx",
-        "kind": "unused_file",
-        "symbol": "client/src/pages/tasks/FolderBrowser.tsx",
-        "classification": "remove",
-        "reason": "Production-orphan cleanup candidate; verify behavior before deleting the file.",
-        "confidence": 0
-      },
-      {
-        "path": "client/src/pages/tasks/index.ts",
-        "kind": "unused_file",
-        "symbol": "client/src/pages/tasks/index.ts",
-        "classification": "remove",
-        "reason": "Production-orphan cleanup candidate; verify behavior before deleting the file.",
-        "confidence": 0
-      }
-    ],
+    "typescript-files": [],
     "python-files": [
       {
         "path": "ai_actuarial/pipeline_config.py",
@@ -30,56 +13,7 @@
         "reason": "Unreachable production module; verify scripts and compatibility callers before deletion."
       }
     ],
-    "typescript-symbols": [
-      {
-        "path": "client/src/pages/tasks/TaskCard.tsx",
-        "kind": "unused_export",
-        "symbol": "TaskResultSummary",
-        "classification": "remove",
-        "reason": "Unused production export/type; remove the export or symbol after focused review.",
-        "confidence": 0
-      },
-      {
-        "path": "client/src/pages/tasks/TaskCard.tsx",
-        "kind": "unused_export",
-        "symbol": "statusIcon",
-        "classification": "remove",
-        "reason": "Unused production export/type; remove the export or symbol after focused review.",
-        "confidence": 0
-      },
-      {
-        "path": "client/src/pages/tasks/TaskMetrics.tsx",
-        "kind": "unused_export",
-        "symbol": "getTaskMetrics",
-        "classification": "remove",
-        "reason": "Unused production export/type; remove the export or symbol after focused review.",
-        "confidence": 0
-      },
-      {
-        "path": "client/src/pages/tasks/Tasks.types.ts",
-        "kind": "unused_type",
-        "symbol": "ScheduleJob",
-        "classification": "remove",
-        "reason": "Unused production export/type; remove the export or symbol after focused review.",
-        "confidence": 0
-      },
-      {
-        "path": "client/src/pages/tasks/Tasks.types.ts",
-        "kind": "unused_type",
-        "symbol": "ScheduleStatus",
-        "classification": "remove",
-        "reason": "Unused production export/type; remove the export or symbol after focused review.",
-        "confidence": 0
-      },
-      {
-        "path": "client/src/pages/tasks/Tasks.types.ts",
-        "kind": "unused_type",
-        "symbol": "ScheduledTask",
-        "classification": "remove",
-        "reason": "Unused production export/type; remove the export or symbol after focused review.",
-        "confidence": 0
-      }
-    ],
+    "typescript-symbols": [],
     "python-symbols": [
       {
         "path": "ai_actuarial/ai_runtime.py",

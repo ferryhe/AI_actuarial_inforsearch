@@ -57,7 +57,7 @@ function progressMetrics(task: TaskMetricData): TaskMetric[] {
   ];
 }
 
-export function getTaskMetrics(task: TaskMetricData): TaskMetric[] {
+function getTaskMetrics(task: TaskMetricData): TaskMetric[] {
   const type = String(task.type || "").toLowerCase();
   const status = String(task.status || "").toLowerCase();
   const isActive = ACTIVE_STATUSES.has(status);
