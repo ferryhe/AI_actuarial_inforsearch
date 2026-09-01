@@ -79,6 +79,11 @@
   export and token-encryption implementation have direct runtime, API, and
   diagnostic consumers plus dedicated integration tests, so both files
   received only Black/isort formatting and no symbol was removed.
+- The eighth completed directory is `ai_actuarial/processors/`. Unlike the
+  earlier directories, all three Python modules were production-unreachable,
+  had no code or test callers, and were already classified `remove` in the
+  reviewed dead-code baseline. The three modules and their inaccurate README
+  were deleted rather than reformatted.
 
 ## Acceptance results
 
@@ -185,6 +190,17 @@
   tests and 10 platform skips. The full static gate passed at 186 Black files,
   122 isort files, and 20 Pylint identities, with zero new or stale entries.
   The complete dead-code gate remained exact at 9/5 files and 28/93 symbols.
+- Remote commit `4bc201e` contains the exact `services/` tree. CI run
+  33475164224 passed all five jobs, including the 7m05s Linux quality gate,
+  and no new Review or Copilot comment was added.
+- `ai_actuarial/processors/` focused validation found no remaining Python
+  caller, compiled the repository successfully, and passed all 23 catalog,
+  collector, and dead-code-gate regression tests.
+- The complete pytest suite passed after removing `processors/` with 1,881
+  tests and 10 platform skips. The full static gate passed at 184 Black files,
+  121 isort files, and 20 Pylint identities, with zero new or stale entries.
+  The dead-code gate shrank exactly from 9/5 files and 28/93 symbols to 9/2
+  files and 28/89 symbols.
 
 ## Files changed
 
@@ -216,6 +232,10 @@
 - Seventh historical directory cleanup: `ai_actuarial/services/__init__.py`,
   `ai_actuarial/services/token_encryption.py`, and the matching removals from
   `quality-gate-baseline.json`.
+- Eighth historical directory cleanup: deleted the unreachable
+  `ai_actuarial/processors/` package and its inaccurate README, then removed
+  exactly three module and four method findings from `dead-code-baseline.json`
+  plus the three matching formatter paths from `quality-gate-baseline.json`.
 
 ## Working tree notes
 
@@ -232,6 +252,6 @@
 
 ## Recommended next action
 
-- Commit and push the path-specific `services/` cleanup, verify PR #318, then
-  continue with `ai_actuarial/processors/` as the next small independent
+- Commit and push the path-specific `processors/` cleanup, verify PR #318,
+  then continue with `ai_actuarial/collectors/` as the next independent
   directory. Merge only after explicit authorization.

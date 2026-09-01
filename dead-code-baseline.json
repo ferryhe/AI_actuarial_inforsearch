@@ -82,27 +82,6 @@
         "symbol": "ai_actuarial.pipeline_config",
         "classification": "remove",
         "reason": "Unreachable production module; verify scripts and compatibility callers before deletion."
-      },
-      {
-        "path": "ai_actuarial/processors/__init__.py",
-        "kind": "unused_module",
-        "symbol": "ai_actuarial.processors",
-        "classification": "remove",
-        "reason": "Unreachable production module; verify scripts and compatibility callers before deletion."
-      },
-      {
-        "path": "ai_actuarial/processors/categorizer.py",
-        "kind": "unused_module",
-        "symbol": "ai_actuarial.processors.categorizer",
-        "classification": "remove",
-        "reason": "Unreachable production module; verify scripts and compatibility callers before deletion."
-      },
-      {
-        "path": "ai_actuarial/processors/cleaner.py",
-        "kind": "unused_module",
-        "symbol": "ai_actuarial.processors.cleaner",
-        "classification": "remove",
-        "reason": "Unreachable production module; verify scripts and compatibility callers before deletion."
       }
     ],
     "typescript-symbols": [
@@ -724,38 +703,6 @@
         "path": "ai_actuarial/markdown_conversion_config.py",
         "kind": "unused variable",
         "symbol": "LOCAL_ENGINES",
-        "confidence": 60,
-        "classification": "remove",
-        "reason": "Vulture 60% cleanup candidate; verify dynamic/public callers and tests before removal."
-      },
-      {
-        "path": "ai_actuarial/processors/categorizer.py",
-        "kind": "unused method",
-        "symbol": "categorize_multi",
-        "confidence": 60,
-        "classification": "remove",
-        "reason": "Vulture 60% cleanup candidate; verify dynamic/public callers and tests before removal."
-      },
-      {
-        "path": "ai_actuarial/processors/categorizer.py",
-        "kind": "unused method",
-        "symbol": "filter_by_category",
-        "confidence": 60,
-        "classification": "remove",
-        "reason": "Vulture 60% cleanup candidate; verify dynamic/public callers and tests before removal."
-      },
-      {
-        "path": "ai_actuarial/processors/cleaner.py",
-        "kind": "unused method",
-        "symbol": "clean_text",
-        "confidence": 60,
-        "classification": "remove",
-        "reason": "Vulture 60% cleanup candidate; verify dynamic/public callers and tests before removal."
-      },
-      {
-        "path": "ai_actuarial/processors/cleaner.py",
-        "kind": "unused method",
-        "symbol": "should_keep",
         "confidence": 60,
         "classification": "remove",
         "reason": "Vulture 60% cleanup candidate; verify dynamic/public callers and tests before removal."
