@@ -18,6 +18,7 @@
 
 ## Implementation state
 
+- PR #318 is open: `https://github.com/ferryhe/AI_actuarial_inforsearch/pull/318`.
 - Added production-first Knip and AST module-reachability checks, followed by
   Knip/ESLint and Vulture symbol checks.
 - Production and test entries are separate. Constant dynamic imports require a
@@ -85,5 +86,5 @@
 
 ## Recommended next action
 
-- Commit and publish the implementation PR, then evaluate required checks and
-  remote review/Copilot feedback on the final head.
+- Evaluate required checks and remote review/Copilot feedback on PR #318's
+  final head. Merge only after explicit authorization.
