@@ -7,7 +7,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1] / "client" / "src"
 FILE_DETAIL_TSX = ROOT / "pages" / "FileDetail.tsx"
 FILE_PREVIEW_TSX = ROOT / "pages" / "FilePreview.tsx"
-NATIVE_FILE_DETAIL_TSX = ROOT / "pages" / "NativeFileDetail.tsx"
 LATEST_REQUEST_HOOK_TS = ROOT / "hooks" / "use-latest-request.ts"
 REPO_ROOT = Path(__file__).resolve().parents[1]
 NPM_COMMAND = "npm.cmd" if os.name == "nt" else "npm"
@@ -114,7 +113,7 @@ for (const fileUrl of fileUrls) {
 
 
 def test_file_detail_and_preview_pages_use_raw_browser_search():
-    for path in (FILE_DETAIL_TSX, FILE_PREVIEW_TSX, NATIVE_FILE_DETAIL_TSX):
+    for path in (FILE_DETAIL_TSX, FILE_PREVIEW_TSX):
         src = path.read_text(encoding="utf-8")
 
         assert "useRawSearchParams" in src
@@ -185,10 +184,9 @@ verifySamePathQueryNavigation('/file-preview', 'file_url');
     assert result.returncode == 0, result.stderr
 
 
-def test_query_navigation_reloads_detail_preview_and_native_detail():
+def test_query_navigation_reloads_detail_and_preview():
     detail_src = FILE_DETAIL_TSX.read_text(encoding="utf-8")
     preview_src = FILE_PREVIEW_TSX.read_text(encoding="utf-8")
-    native_src = NATIVE_FILE_DETAIL_TSX.read_text(encoding="utf-8")
 
     assert "const searchParams = useRawSearchParams();" in detail_src
     assert "}, [beginFileRequest, fileUrl]);" in detail_src
@@ -201,9 +199,6 @@ def test_query_navigation_reloads_detail_preview_and_native_detail():
     assert "useEffect(() => { fetchPreview(initialChunkSetId); }, [fetchPreview, initialChunkSetId]);" in preview_src
     assert "const params = new URLSearchParams({ file_url: requestIdentity });" in preview_src
     assert "`/api/rag/files/preview?${params}`" in preview_src
-    assert "const params = useRawSearchParams();" in native_src
-    assert "}, [fileUrl]);" in native_src
-    assert "`/api/files/detail?url=${encodeURIComponent(fileUrl)}`" in native_src
 
 
 def test_latest_request_guard_rejects_deferred_stale_success_error_and_finally():

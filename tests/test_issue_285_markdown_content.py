@@ -9,7 +9,6 @@ MARKDOWN_COMPONENT = CLIENT_ROOT / "components" / "MarkdownContent.tsx"
 MARKDOWN_COMPONENT_TEST = CLIENT_ROOT / "components" / "MarkdownContent.test.tsx"
 CHAT_TSX = CLIENT_ROOT / "pages" / "Chat.tsx"
 FILE_DETAIL_TSX = CLIENT_ROOT / "pages" / "FileDetail.tsx"
-NATIVE_FILE_DETAIL_TSX = CLIENT_ROOT / "pages" / "NativeFileDetail.tsx"
 FILE_PREVIEW_TSX = CLIENT_ROOT / "pages" / "FilePreview.tsx"
 NPM_COMMAND = "npm.cmd" if os.name == "nt" else "npm"
 
@@ -50,7 +49,6 @@ def test_chat_and_file_detail_share_markdown_without_crossing_structured_ui_boun
     assert "!isUser && <AgenticTrace" in chat
     assert "function MarkdownRenderer" not in detail
     assert "<MarkdownContent content={markdownContent}" in detail
-    assert "MarkdownContent" not in NATIVE_FILE_DETAIL_TSX.read_text(encoding="utf-8")
     assert "MarkdownContent" not in FILE_PREVIEW_TSX.read_text(encoding="utf-8")
 
 

@@ -352,6 +352,20 @@
   passed. The complete pytest suite passed with 1,881 tests and 10 platform
   skips, and the unified quality gate passed at 129/81/16. The dead-code gate
   shrank exactly from 7/1 files and 25/64 symbols to 7/1 files and 7/64 symbols.
+- Remote commit `8beb8d8` contains the exact `client/src/lib/` cleanup. CI run
+  33543437722 passed all five jobs, including the 7m41s Linux quality gate, and
+  no new Review or Copilot comment was added.
+- Five unreachable historical page implementations were removed from
+  `client/src/pages/`: `FeatureUnavailable`, `NativeFileDetail`, `NativeLogs`,
+  `NativeSettings`, and `NativeTasks`. The live chat route selection type is
+  now private to its module.
+- Test constants and assertions that read the deleted native file/task pages
+  were removed while current FileDetail, FilePreview, task metrics, Markdown,
+  and chat route coverage was retained. All 41 focused tests, directory ESLint,
+  frontend type-check, and the production build passed. The complete pytest
+  suite passed with 1,881 tests and 10 platform skips, and the unified quality
+  gate passed at 129/81/16. The dead-code gate shrank exactly from 7/1 files
+  and 7/64 symbols to 2/1 files and 6/64 symbols.
 
 ## Files changed
 
@@ -427,6 +441,10 @@
   export, made fourteen live implementation details private, updated the one
   cross-directory caller and focused tests, and removed the matching eighteen
   TypeScript dead-code baseline entries.
+- Eighteenth historical directory cleanup: deleted five unreachable legacy
+  files under `client/src/pages/`, made the live chat route selection type
+  private, removed only the test constants and assertions tied to the deleted
+  pages, and removed the matching six TypeScript dead-code baseline entries.
 
 ## Working tree notes
 
@@ -443,8 +461,8 @@
 
 ## Recommended next action
 
-- Commit and push the path-specific `client/src/lib/` cleanup to PR #318,
-  verify its CI and review feedback, then continue with `client/src/pages/`.
+- Commit and push the path-specific `client/src/pages/` cleanup to PR #318,
+  verify its CI and review feedback, then continue with `client/src/pages/tasks/`.
   Keep the final root-level orphan
   `ai_actuarial/pipeline_config.py` for a separately verified cleanup. Merge
   only after explicit authorization.

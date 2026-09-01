@@ -5,46 +5,6 @@
   "gates": {
     "typescript-files": [
       {
-        "path": "client/src/pages/FeatureUnavailable.tsx",
-        "kind": "unused_file",
-        "symbol": "client/src/pages/FeatureUnavailable.tsx",
-        "classification": "remove",
-        "reason": "Production-orphan cleanup candidate; verify behavior before deleting the file.",
-        "confidence": 0
-      },
-      {
-        "path": "client/src/pages/NativeFileDetail.tsx",
-        "kind": "unused_file",
-        "symbol": "client/src/pages/NativeFileDetail.tsx",
-        "classification": "remove",
-        "reason": "Production-orphan cleanup candidate; verify behavior before deleting the file.",
-        "confidence": 0
-      },
-      {
-        "path": "client/src/pages/NativeLogs.tsx",
-        "kind": "unused_file",
-        "symbol": "client/src/pages/NativeLogs.tsx",
-        "classification": "remove",
-        "reason": "Production-orphan cleanup candidate; verify behavior before deleting the file.",
-        "confidence": 0
-      },
-      {
-        "path": "client/src/pages/NativeSettings.tsx",
-        "kind": "unused_file",
-        "symbol": "client/src/pages/NativeSettings.tsx",
-        "classification": "remove",
-        "reason": "Production-orphan cleanup candidate; verify behavior before deleting the file.",
-        "confidence": 0
-      },
-      {
-        "path": "client/src/pages/NativeTasks.tsx",
-        "kind": "unused_file",
-        "symbol": "client/src/pages/NativeTasks.tsx",
-        "classification": "remove",
-        "reason": "Production-orphan cleanup candidate; verify behavior before deleting the file.",
-        "confidence": 0
-      },
-      {
         "path": "client/src/pages/tasks/FolderBrowser.tsx",
         "kind": "unused_file",
         "symbol": "client/src/pages/tasks/FolderBrowser.tsx",
@@ -71,14 +31,6 @@
       }
     ],
     "typescript-symbols": [
-      {
-        "path": "client/src/pages/chat/routeTarget.ts",
-        "kind": "unused_type",
-        "symbol": "ChatRouteSelection",
-        "classification": "remove",
-        "reason": "Unused production export/type; remove the export or symbol after focused review.",
-        "confidence": 0
-      },
       {
         "path": "client/src/pages/tasks/TaskCard.tsx",
         "kind": "unused_export",

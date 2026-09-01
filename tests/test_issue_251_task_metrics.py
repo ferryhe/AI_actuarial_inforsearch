@@ -33,16 +33,13 @@ def test_all_task_result_surfaces_use_shared_metrics_component() -> None:
     card = (TASKS_DIR / "TaskCard.tsx").read_text(encoding="utf-8")
     table = (TASKS_DIR / "TaskTable.tsx").read_text(encoding="utf-8")
     tasks = (PAGES / "Tasks.tsx").read_text(encoding="utf-8")
-    native = (PAGES / "NativeTasks.tsx").read_text(encoding="utf-8")
 
     assert "getTaskMetrics" in helper
     assert "TaskMetrics" in card
     assert "TaskMetrics" in table
     assert "TaskMetrics" in tasks
-    assert native.count("<TaskMetrics") >= 2
     assert 't("tasks.stats.downloaded")' not in table
     assert 't("tasks.stats.downloaded")' not in tasks
-    assert "· 下载" not in native
 
 
 def test_task_metric_aliases_and_canonical_fields_are_wired() -> None:
