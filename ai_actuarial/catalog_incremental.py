@@ -6,11 +6,14 @@ This module provides incremental catalog generation that:
 - Appends output to JSONL and Markdown files (no full rewrites)
 - Supports resumable batch processing
 """
+
 from __future__ import annotations
 
 import json
 import logging
 import sqlite3
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -26,9 +29,6 @@ from .catalog import (
     write_catalog_md,
 )
 from .storage import Storage
-
-from concurrent.futures import ThreadPoolExecutor, as_completed
-import threading
 
 logger = logging.getLogger(__name__)
 
@@ -96,68 +96,54 @@ def _ensure_catalog_schema(conn: sqlite3.Connection) -> None:
 
     for col_name, col_type in CATALOG_OPTIONAL_COLUMNS.items():
         if col_name not in existing:
-            conn.execute(
-                f"ALTER TABLE catalog_items ADD COLUMN {col_name} {col_type}"
-            )
+            conn.execute(f"ALTER TABLE catalog_items ADD COLUMN {col_name} {col_type}")
 
     existing = _table_columns(conn, "catalog_items")
 
     # Backfill incremental columns from legacy schema when available.
     if "sha256" in existing and "file_sha256" in existing:
-        conn.execute(
-            """
+        conn.execute("""
             UPDATE catalog_items
             SET file_sha256 = sha256
             WHERE (file_sha256 IS NULL OR file_sha256 = '')
               AND sha256 IS NOT NULL
-            """
-        )
+            """)
     if "pipeline_version" in existing and "catalog_version" in existing:
-        conn.execute(
-            """
+        conn.execute("""
             UPDATE catalog_items
             SET catalog_version = pipeline_version
             WHERE (catalog_version IS NULL OR catalog_version = '')
               AND pipeline_version IS NOT NULL
-            """
-        )
+            """)
     if "keywords" in existing and "keywords_json" in existing:
-        conn.execute(
-            """
+        conn.execute("""
             UPDATE catalog_items
             SET keywords_json = keywords
             WHERE (keywords_json IS NULL OR keywords_json = '')
               AND keywords IS NOT NULL
-            """
-        )
+            """)
     # Keep legacy sha256/pipeline_version/keywords populated for NOT NULL schemas.
     if "sha256" in existing and "file_sha256" in existing:
-        conn.execute(
-            """
+        conn.execute("""
             UPDATE catalog_items
             SET sha256 = file_sha256
             WHERE (sha256 IS NULL OR sha256 = '')
               AND file_sha256 IS NOT NULL
-            """
-        )
+            """)
     if "pipeline_version" in existing and "catalog_version" in existing:
-        conn.execute(
-            """
+        conn.execute("""
             UPDATE catalog_items
             SET pipeline_version = catalog_version
             WHERE (pipeline_version IS NULL OR pipeline_version = '')
               AND catalog_version IS NOT NULL
-            """
-        )
+            """)
     if "keywords" in existing and "keywords_json" in existing:
-        conn.execute(
-            """
+        conn.execute("""
             UPDATE catalog_items
             SET keywords = keywords_json
             WHERE (keywords IS NULL OR keywords = '')
               AND keywords_json IS NOT NULL
-            """
-        )
+            """)
 
 
 def _connect(db_path: str) -> sqlite3.Connection:
@@ -189,7 +175,7 @@ def _fetch_candidates(
     - not in catalog_items, OR
     - sha256 changed, OR
     - catalog_version changed
-    
+
     By default, already-processed files (including errors) are NOT retried.
     Set retry_errors=True to reprocess files with status='error'.
     Deterministic order: files.id ASC.
@@ -250,9 +236,7 @@ def _candidate_filter_sql(
     if site_filter:
         sites = [s.strip().lower() for s in site_filter.split(",") if s.strip()]
         if sites:
-            filters.append(
-                "(" + " OR ".join(["LOWER(f.source_site) LIKE ?"] * len(sites)) + ")"
-            )
+            filters.append("(" + " OR ".join(["LOWER(f.source_site) LIKE ?"] * len(sites)) + ")")
             params.extend([f"%{s}%" for s in sites])
 
     where_extra = (" AND " + " AND ".join(filters)) if filters else ""
@@ -312,7 +296,7 @@ def _upsert_catalog_row(
     suggested_title: str | None = None,
 ) -> None:
     """Upsert catalog item with thread-safe locking.
-    
+
     Uses _db_lock to prevent concurrent write conflicts with SQLite.
     """
     with _db_lock:
@@ -417,7 +401,7 @@ def _resolve_path(path_str: str, base_dirs: list[Path] | None = None) -> Path:
     p = Path(path_str)
     if p.exists():
         return p
-        
+
     if base_dirs:
         for base in base_dirs:
             # Try combining
@@ -426,14 +410,14 @@ def _resolve_path(path_str: str, base_dirs: list[Path] | None = None) -> Path:
                 return candidate
             # Try relative to base if p is absolute or contains redundant parts?
             # E.g. base=data, p=files/foo -> data/files/foo
-            
+
     # Hardcoded fallback for common project structure issues
     # If path starts with 'files' and 'data/files' exists
     if str(p).startswith("files") or str(p).startswith("files\\"):
         candidate = Path("data") / p
         if candidate.exists():
             return candidate
-            
+
     return p
 
 
@@ -617,7 +601,7 @@ def run_incremental_catalog(
     stop_check: Optional[Callable[[], bool]] = None,
 ) -> dict:
     """Run incremental catalog processing.
-    
+
     Args:
         db_path: Path to SQLite database
         out_jsonl: Path to output JSONL file (append mode)
@@ -633,7 +617,7 @@ def run_incremental_catalog(
         update_title: If True, update files.title with the AI-suggested title
         catalog_system_prompt: Optional system prompt override for the LLM cataloger.
         output_language: Language for LLM output (``"auto"``, ``"en"``, ``"zh"``).
-        
+
     Returns:
         dict with stats: {scanned, processed, written, skipped_ai, errors}
     """
@@ -648,6 +632,7 @@ def run_incremental_catalog(
     catalog_base_url: str | None = None
     if provider_norm != "local":
         from .ai_runtime import is_catalog_provider_supported, resolve_ai_function_runtime
+
         if not is_catalog_provider_supported(provider_norm):
             storage.close()
             raise RuntimeError(f"unsupported catalog provider: {provider}")
@@ -666,11 +651,11 @@ def run_incremental_catalog(
         catalog_model = runtime.model
         catalog_api_key = runtime.api_key
         catalog_base_url = runtime.base_url
-    
+
     # Ensure output directories exist
     out_jsonl.parent.mkdir(parents=True, exist_ok=True)
     out_md.parent.mkdir(parents=True, exist_ok=True)
-    
+
     stats = {
         "scanned": 0,
         "processed": 0,
@@ -681,7 +666,7 @@ def run_incremental_catalog(
         "error_samples": [],
         "stopped": False,
     }
-    
+
     seen_urls = set()
     total_candidates = _count_candidates(
         conn,
@@ -716,7 +701,7 @@ def run_incremental_catalog(
         current_batch_size = batch
         # We generally want to fetch enough to make progress, even if we discard duplicates
         # But we don't want to fetch too many.
-        
+
         rows = _fetch_candidates(
             conn,
             batch=current_batch_size,
@@ -727,10 +712,10 @@ def run_incremental_catalog(
             skip_existing=skip_existing,
         )
         remaining_offset = 0
-        
+
         # Filter already seen URLs to prevent infinite loops when retrying errors
         new_rows = [r for r in rows if r["url"] not in seen_urls]
-        
+
         if not new_rows:
             if not rows:
                 # No more candidates at all
@@ -739,18 +724,18 @@ def run_incremental_catalog(
                 # Candidates exist but we've seen them all in this run = loop detected
                 logger.info("Infinite loop detected (all duplicates), stopping")
                 break
-            
+
         stats["scanned"] += len(new_rows)
         batch_items: list[CatalogItem] = []
         batch_jsonl: list[dict] = []
-        
+
         # Convert sqlite rows to dicts for thread safety (sqlite3.Row might bind to thread?)
         row_dicts = [dict(r) for r in new_rows]
-        
+
         # Mark as seen
         for r in row_dicts:
             seen_urls.add(r["url"])
-        
+
         stop_requested = False
         shutdown_without_wait = False
         executor = ThreadPoolExecutor(max_workers=max_workers)
@@ -780,10 +765,10 @@ def run_incremental_catalog(
                     output_language=output_language,
                 )
                 future_to_url[future] = r["url"]
-            
+
             # We will batch writes at the end of the batch processing to keep DB logic simple
             # Or writing as they complete? Batch write is safer for transaction.
-            
+
             for future in as_completed(future_to_url):
                 if stop_check and stop_check():
                     logger.info("Catalog stop requested while workers are running")
@@ -796,12 +781,12 @@ def run_incremental_catalog(
                     r_data, item, status, suggested_title = future.result()
                     processed_at = datetime.now(timezone.utc).isoformat()
                     file_sha256 = r_data["sha256"] or ""
-                    
+
                     if status == "ok":
                         stats["processed"] += 1
                         batch_items.append(item)
                         batch_jsonl.append(asdict(item))
-                        
+
                         _upsert_catalog_row(
                             conn,
                             item=item,
@@ -810,20 +795,16 @@ def run_incremental_catalog(
                             status="ok",
                             processed_at=processed_at,
                             storage=storage,
-                            suggested_title=(
-                                suggested_title if update_title else None
-                            ),
+                            suggested_title=(suggested_title if update_title else None),
                         )
                         if progress_callback:
-                            completed = (
-                                stats["processed"] + stats["skipped_ai"] + stats["errors"]
-                            )
+                            completed = stats["processed"] + stats["skipped_ai"] + stats["errors"]
                             progress_callback(
                                 completed,
                                 max(total_candidates, completed, 1),
                                 f"Cataloging {completed}/{max(total_candidates, 1)}",
                             )
-                        
+
                     elif status == "skipped":
                         # Non-AI (or otherwise skipped) items are treated as fully processed.
                         # Persist this status so they are not retried on subsequent runs.
@@ -838,15 +819,13 @@ def run_incremental_catalog(
                             storage=storage,
                         )
                         if progress_callback:
-                            completed = (
-                                stats["processed"] + stats["skipped_ai"] + stats["errors"]
-                            )
+                            completed = stats["processed"] + stats["skipped_ai"] + stats["errors"]
                             progress_callback(
                                 completed,
                                 max(total_candidates, completed, 1),
                                 f"Cataloging {completed}/{max(total_candidates, 1)}",
                             )
-                        
+
                     elif status.startswith("error:"):
                         stats["errors"] += 1
                         err_msg = status[6:]
@@ -854,7 +833,7 @@ def run_incremental_catalog(
                             stats["error_samples"].append(err_msg)
                         if "File not found" in err_msg:
                             stats["missing_files"] += 1
-                            
+
                         logger.warning("Error processing %s: %s", r_data["url"], err_msg)
                         _upsert_catalog_row(
                             conn,
@@ -867,15 +846,13 @@ def run_incremental_catalog(
                             storage=storage,
                         )
                         if progress_callback:
-                            completed = (
-                                stats["processed"] + stats["skipped_ai"] + stats["errors"]
-                            )
+                            completed = stats["processed"] + stats["skipped_ai"] + stats["errors"]
                             progress_callback(
                                 completed,
                                 max(total_candidates, completed, 1),
                                 f"Cataloging {completed}/{max(total_candidates, 1)}",
                             )
-                        
+
                 except Exception as e:
                     logger.exception("Worker thread crashed")
                     stats["errors"] += 1
@@ -884,7 +861,7 @@ def run_incremental_catalog(
         finally:
             if not shutdown_without_wait:
                 executor.shutdown(wait=True)
-        
+
         # Append outputs incrementally
         if batch_items:
             _append_jsonl(out_jsonl, batch_jsonl)
@@ -892,18 +869,26 @@ def run_incremental_catalog(
             stats["written"] += len(batch_items)
         if stop_requested:
             break
-            
+
         logger.info(
             "Batch done: scanned=%d processed=%d written=%d skipped_ai=%d errors=%d missing=%d",
-            len(new_rows), stats["processed"], stats["written"], 
-            stats["skipped_ai"], stats["errors"], stats["missing_files"]
+            len(new_rows),
+            stats["processed"],
+            stats["written"],
+            stats["skipped_ai"],
+            stats["errors"],
+            stats["missing_files"],
         )
-        
+
     storage.close()
     logger.info(
         "Incremental catalog finished: scanned=%d processed=%d written=%d skipped_ai=%d errors=%d missing=%d",
-        stats["scanned"], stats["processed"], stats["written"],
-        stats["skipped_ai"], stats["errors"], stats["missing_files"]
+        stats["scanned"],
+        stats["processed"],
+        stats["written"],
+        stats["skipped_ai"],
+        stats["errors"],
+        stats["missing_files"],
     )
     if progress_callback:
         completed = stats["processed"] + stats["skipped_ai"] + stats["errors"]
@@ -957,6 +942,7 @@ def run_catalog_for_urls(
     catalog_base_url: str | None = None
     if provider_norm != "local":
         from .ai_runtime import is_catalog_provider_supported, resolve_ai_function_runtime
+
         if not is_catalog_provider_supported(provider_norm):
             storage.close()
             raise RuntimeError(f"unsupported catalog provider: {provider}")
@@ -1144,7 +1130,11 @@ def run_catalog_for_urls(
                     )
                 if progress_callback:
                     completed = stats["processed"] + stats["skipped_ai"] + stats["errors"]
-                    progress_callback(completed, max(len(candidates), completed, 1), f"Cataloging {completed}/{max(len(candidates), 1)}")
+                    progress_callback(
+                        completed,
+                        max(len(candidates), completed, 1),
+                        f"Cataloging {completed}/{max(len(candidates), 1)}",
+                    )
             except Exception as e:
                 logger.exception("Worker thread crashed for %s", url)
                 stats["errors"] += 1

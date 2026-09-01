@@ -11,30 +11,30 @@ from typing import Any
 # All available permissions in the system
 PERMISSIONS: frozenset[str] = frozenset(
     {
-        "stats.read",          # View dashboard stats
-        "files.read",          # Browse files (no download)
-        "files.download",      # Download files
-        "files.delete",        # Delete files
-        "catalog.read",        # Read catalog/KB list
-        "catalog.write",      # Write catalog/KB
-        "markdown.read",      # Read markdown content
-        "markdown.write",     # Write markdown content
-        "config.read",        # Read system config
-        "config.write",       # Write system config
-        "sites.write",        # Manage monitored site definitions and site-level crawl settings
-        "schedule.write",    # Manage scheduled tasks
-        "files.import.server", # Use legacy server-side filesystem import helpers
-        "tasks.view",        # View tasks (list/details)
-        "tasks.run",         # Run/create tasks
-        "tasks.stop",        # Stop tasks
-        "logs.task.read",    # Read task logs
+        "stats.read",  # View dashboard stats
+        "files.read",  # Browse files (no download)
+        "files.download",  # Download files
+        "files.delete",  # Delete files
+        "catalog.read",  # Read catalog/KB list
+        "catalog.write",  # Write catalog/KB
+        "markdown.read",  # Read markdown content
+        "markdown.write",  # Write markdown content
+        "config.read",  # Read system config
+        "config.write",  # Write system config
+        "sites.write",  # Manage monitored site definitions and site-level crawl settings
+        "schedule.write",  # Manage scheduled tasks
+        "files.import.server",  # Use legacy server-side filesystem import helpers
+        "tasks.view",  # View tasks (list/details)
+        "tasks.run",  # Run/create tasks
+        "tasks.stop",  # Stop tasks
+        "logs.task.read",  # Read task logs
         "logs.system.read",  # Read system logs
-        "export.read",       # Export data
-        "tokens.manage",    # Manage API tokens
-        "chat.view",        # View chat interface
-        "chat.query",       # Send chat messages
-        "chat.conversations", # Manage conversations
-        "users.manage",     # Manage users
+        "export.read",  # Export data
+        "tokens.manage",  # Manage API tokens
+        "chat.view",  # View chat interface
+        "chat.query",  # Send chat messages
+        "chat.conversations",  # Manage conversations
+        "users.manage",  # Manage users
     }
 )
 
@@ -131,15 +131,15 @@ GROUP_PERMISSIONS: dict[str, frozenset[str]] = {
 
 # Chat quota per user group (0 = no access, positive = limit, 999999 = unlimited)
 AI_CHAT_QUOTA: dict[str, int] = {
-    "guest": 5,           # Limited to 5 messages
-    "registered": 20,      # 20 messages
-    "premium": 50,        # 50 messages
-    "operator": 200,      # 200 messages
-    "admin": 999999,     # Unlimited (use large sentinel, not -1; storage treats <=0 as "no access")
+    "guest": 5,  # Limited to 5 messages
+    "registered": 20,  # 20 messages
+    "premium": 50,  # 50 messages
+    "operator": 200,  # 200 messages
+    "admin": 999999,  # Unlimited (use large sentinel, not -1; storage treats <=0 as "no access")
     # Legacy role aliases for backwards compatibility
-    "anonymous": 5,       # Alias for guest
-    "reader": 20,         # Alias for registered
-    "operator_ai": 200,   # Alias for operator
+    "anonymous": 5,  # Alias for guest
+    "reader": 20,  # Alias for registered
+    "operator_ai": 200,  # Alias for operator
 }
 
 # Valid user roles
@@ -155,6 +155,7 @@ VALID_USER_ROLES: tuple[str, ...] = (
 # ============================================================
 # Token & Password Functions
 # ============================================================
+
 
 def hash_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()

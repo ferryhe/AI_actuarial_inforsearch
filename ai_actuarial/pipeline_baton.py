@@ -11,7 +11,6 @@ from ai_actuarial.embedding_service import (
     sanitize_legacy_chunk_generation_payload,
 )
 
-
 PIPELINE_STEPS = (
     "scheduled",
     "markdown_conversion",
@@ -125,9 +124,13 @@ class PipelineBaton:
             if step == "chunk_generation":
                 forbidden = forbidden.union(LEGACY_CHUNK_OPTIONS.intersection(payload))
             if step == "rag_indexing":
-                forbidden = forbidden.union({"kb_id", "force_reindex", "incremental"}.intersection(payload))
+                forbidden = forbidden.union(
+                    {"kb_id", "force_reindex", "incremental"}.intersection(payload)
+                )
             if forbidden:
-                raise ValueError(f"Pipeline override for {step} cannot set: {', '.join(sorted(forbidden))}")
+                raise ValueError(
+                    f"Pipeline override for {step} cannot set: {', '.join(sorted(forbidden))}"
+                )
             if payload:
                 normalized[step] = dict(payload)
         with self._lock:
@@ -229,10 +232,14 @@ class PipelineBaton:
                 if state.get("chunk_embedding_phase") == "embedding":
                     self._start_next_rag_or_complete(document)
                 else:
-                    chunk_task_id = str(state.get("chunk_task_id") or state["current_task_id"] or "")
+                    chunk_task_id = str(
+                        state.get("chunk_task_id") or state["current_task_id"] or ""
+                    )
                     task_result = self._task_result(chunk_task_id) or {}
                     result = task_result.get("result") if isinstance(task_result, dict) else None
-                    chunk_sets = (result or {}).get("chunk_sets") if isinstance(result, dict) else None
+                    chunk_sets = (
+                        (result or {}).get("chunk_sets") if isinstance(result, dict) else None
+                    )
                     chunk_set_ids = [
                         str(row.get("chunk_set_id") or "")
                         for row in chunk_sets or []
@@ -244,16 +251,12 @@ class PipelineBaton:
                         self._start_embedding_step(document, chunk_set_ids)
             elif current_step == "rag_indexing":
                 if state.get("kb_index_ready_phase") == "ready_data":
-                    self._record_current_kb(
-                        document, succeeded=True, status="completed"
-                    )
+                    self._record_current_kb(document, succeeded=True, status="completed")
                     self._start_next_rag_or_complete(document)
                 elif self._ready_data_input is None:
                     # Compatibility for callers that use the baton without the
                     # product runtime's Ready Data input resolver.
-                    self._record_current_kb(
-                        document, succeeded=True, status="completed"
-                    )
+                    self._record_current_kb(document, succeeded=True, status="completed")
                     self._start_next_rag_or_complete(document)
                 else:
                     task = self._task_result(str(state["current_task_id"] or "")) or {}
@@ -420,9 +423,7 @@ class PipelineBaton:
                     kb_index_task_id=None,
                     ready_data_task_id=None,
                 )
-                state["summary"]["attempted"] = (
-                    int(state["summary"].get("attempted") or 0) + 1
-                )
+                state["summary"]["attempted"] = int(state["summary"].get("attempted") or 0) + 1
                 self._record_current_kb(
                     document,
                     succeeded=False,

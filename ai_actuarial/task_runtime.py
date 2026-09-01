@@ -11,15 +11,26 @@ import threading
 import time
 from collections import deque
 from dataclasses import dataclass
-from datetime import datetime, time as datetime_time
+from datetime import datetime
+from datetime import time as datetime_time
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlparse
 
 import schedule
 
-from ai_actuarial.ai_runtime import apply_ocr_runtime_environment, get_search_runtime_credentials, resolve_ocr_runtime
+from ai_actuarial.ai_runtime import (
+    apply_ocr_runtime_environment,
+    get_search_runtime_credentials,
+    resolve_ocr_runtime,
+)
 from ai_actuarial.capacity import ensure_capacity
+from ai_actuarial.catalog_incremental import run_catalog_for_urls, run_incremental_catalog
+from ai_actuarial.collectors.base import CollectionConfig, CollectionResult
+from ai_actuarial.collectors.file import FileCollector
+from ai_actuarial.collectors.scheduled import ScheduledCollector
+from ai_actuarial.collectors.url import URLCollector
+from ai_actuarial.crawler import Crawler, SiteConfig
 from ai_actuarial.embedding_service import (
     embedding_coverage_for_selection,
     ensure_chunk_embeddings,
@@ -29,27 +40,32 @@ from ai_actuarial.embedding_service import (
     validate_chunk_generation_payload,
     validate_embedding_generation_payload,
 )
-from ai_actuarial.markdown_conversion_config import HARD_MAX_SCAN_COUNT, candidate_chain_for_path, load_markdown_conversion_config
-from ai_actuarial.catalog_incremental import run_catalog_for_urls, run_incremental_catalog
-from ai_actuarial.collectors.base import CollectionConfig, CollectionResult
-from ai_actuarial.collectors.file import FileCollector
-from ai_actuarial.collectors.scheduled import ScheduledCollector
-from ai_actuarial.collectors.url import URLCollector
-from ai_actuarial.crawler import Crawler, SiteConfig
-from ai_actuarial.rag.knowledge_base import KnowledgeBaseManager
+from ai_actuarial.markdown_conversion_config import (
+    HARD_MAX_SCAN_COUNT,
+    candidate_chain_for_path,
+    load_markdown_conversion_config,
+)
+from ai_actuarial.pipeline_baton import PIPELINE_STEPS, PipelineBaton
 from ai_actuarial.rag.kb_index import (
     KBIndexStopped,
     build_kb_index,
     resolve_kb_bound_chunks,
 )
+from ai_actuarial.rag.knowledge_base import KnowledgeBaseManager
 from ai_actuarial.search import search_all
 from ai_actuarial.search_acquisition import (
     format_acquisition_outcome,
     format_acquisition_summary,
     summarize_acquisition_outcomes,
 )
-from ai_actuarial.shared_runtime import append_task_log, coerce_bool, get_sites_config_path, load_yaml, parse_int_clamped, task_log_path
-from ai_actuarial.pipeline_baton import PIPELINE_STEPS, PipelineBaton
+from ai_actuarial.shared_runtime import (
+    append_task_log,
+    coerce_bool,
+    get_sites_config_path,
+    load_yaml,
+    parse_int_clamped,
+    task_log_path,
+)
 from ai_actuarial.storage import Storage
 
 logger = logging.getLogger(__name__)
@@ -94,7 +110,9 @@ def generate_file_chunk_sets(
     payload: dict[str, Any],
     expected_markdown_hash: str | None = None,
 ) -> dict[str, Any]:
-    from ai_actuarial.api.services.files_write import generate_file_chunk_sets as _generate_file_chunk_sets
+    from ai_actuarial.api.services.files_write import (
+        generate_file_chunk_sets as _generate_file_chunk_sets,
+    )
 
     return _generate_file_chunk_sets(
         db_path=db_path,
@@ -272,7 +290,9 @@ class NativeTaskRuntime:
                     try:
                         rows.append(json.loads(line))
                     except json.JSONDecodeError as exc:
-                        logger.warning("Skipping malformed job history line %s in %s: %s", line_no, path, exc)
+                        logger.warning(
+                            "Skipping malformed job history line %s in %s: %s", line_no, path, exc
+                        )
             return list(rows)
         except Exception as exc:  # noqa: BLE001
             logger.error("Failed to load job history: %s", exc)
@@ -316,14 +336,12 @@ class NativeTaskRuntime:
     def _indexable_kb_ids(self) -> list[str]:
         db_path = self._ready_data_db_path or self._resolve_db_path(self._load_site_config())
         with sqlite3.connect(db_path) as conn:
-            rows = conn.execute(
-                """
+            rows = conn.execute("""
                 SELECT kb_id
                 FROM rag_knowledge_bases
                 WHERE COALESCE(kb_mode, 'category') IN ('manual', 'category', 'all')
                 ORDER BY kb_id
-                """
-            ).fetchall()
+                """).fetchall()
         return [str(row[0]) for row in rows if str(row[0] or "")]
 
     def _pipeline_kb_index_input(self, kb_id: str) -> dict[str, Any]:
@@ -339,12 +357,8 @@ class NativeTaskRuntime:
             return {
                 "contract_version": 1,
                 "kb_id": kb_id,
-                "expected_binding_snapshot_fingerprint": snapshot[
-                    "binding_snapshot_fingerprint"
-                ],
-                "embedding_identity_key": str(
-                    getattr(kb, "embedding_identity_key", "") or ""
-                ),
+                "expected_binding_snapshot_fingerprint": snapshot["binding_snapshot_fingerprint"],
+                "embedding_identity_key": str(getattr(kb, "embedding_identity_key", "") or ""),
                 "force_rebuild": False,
             }
         finally:
@@ -381,9 +395,7 @@ class NativeTaskRuntime:
                 "kb_id": kb_id,
                 "profile": profile,
                 "index_version_id": index_version_id,
-                "expected_source_snapshot_fingerprint": source[
-                    "source_snapshot_fingerprint"
-                ],
+                "expected_source_snapshot_fingerprint": source["source_snapshot_fingerprint"],
             }
         finally:
             storage.close()
@@ -397,7 +409,9 @@ class NativeTaskRuntime:
             tasks.extend(dict(task) for task in self.active_tasks.values())
         stage_tasks: dict[str, list[dict[str, Any]]] = {step: [] for step in PIPELINE_STEPS}
         if source_task_id:
-            source = next((task for task in tasks if str(task.get("id") or "") == source_task_id), None)
+            source = next(
+                (task for task in tasks if str(task.get("id") or "") == source_task_id), None
+            )
             stage_tasks["scheduled"].append(
                 {
                     "task_id": source_task_id,
@@ -421,9 +435,7 @@ class NativeTaskRuntime:
                 subtask = str(task.get("pipeline_baton_subtask") or "kb_index")
                 projected["subtask"] = subtask
                 projected["label"] = (
-                    "Ready Data Build/Publish"
-                    if subtask == "ready_data_build"
-                    else "KB Index"
+                    "Ready Data Build/Publish" if subtask == "ready_data_build" else "KB Index"
                 )
             stage_tasks[step].append(projected)
         view["stages"] = [
@@ -569,7 +581,9 @@ class NativeTaskRuntime:
 
     def init_scheduler(self) -> None:
         site_config = self._load_site_config()
-        global_schedule = str((site_config.get("defaults") or {}).get("schedule_interval") or "").strip()
+        global_schedule = str(
+            (site_config.get("defaults") or {}).get("schedule_interval") or ""
+        ).strip()
         sites = list(site_config.get("sites") or [])
         generic_tasks = list(site_config.get("scheduled_tasks") or [])
 
@@ -607,11 +621,18 @@ class NativeTaskRuntime:
                 task_type = str(task_cfg.get("type") or "catalog")
                 if task_type == "chunk_generation":
                     params = sanitize_legacy_chunk_generation_payload(params)
-                is_pipeline_source = task_name == "Scheduled Collection" and task_type == "scheduled"
-                if is_pipeline_source and self._pipeline_baton.status()["state"]["round_status"] == "running":
+                is_pipeline_source = (
+                    task_name == "Scheduled Collection" and task_type == "scheduled"
+                )
+                if (
+                    is_pipeline_source
+                    and self._pipeline_baton.status()["state"]["round_status"] == "running"
+                ):
                     return
                 params.setdefault("name", f"Scheduled: {task_name}")
-                task_id = self.start_background_task(task_type, params, task_name=f"Scheduled: {task_name}")
+                task_id = self.start_background_task(
+                    task_type, params, task_name=f"Scheduled: {task_name}"
+                )
                 if is_pipeline_source:
                     self._pipeline_baton.start(task_id)
                 elif (
@@ -691,9 +712,7 @@ class NativeTaskRuntime:
     def _scheduler_loop(self) -> None:
         logger.info("Native FastAPI scheduler loop started")
         sleep_seconds = (
-            min(60, self._ready_data_poll_interval_seconds)
-            if self._ready_data_db_path
-            else 60
+            min(60, self._ready_data_poll_interval_seconds) if self._ready_data_db_path else 60
         )
         while True:
             with self._scheduler_lock:
@@ -702,9 +721,7 @@ class NativeTaskRuntime:
 
     def _wake_ready_data_automation(self) -> None:
         """Wake one worker without making the scheduler thread own durable state."""
-        if not self._ready_data_db_path or not self._ready_data_worker_lock.acquire(
-            blocking=False
-        ):
+        if not self._ready_data_db_path or not self._ready_data_worker_lock.acquire(blocking=False):
             return
 
         def run() -> None:
@@ -746,7 +763,9 @@ class NativeTaskRuntime:
                 else:
                     weekly_job.at("00:30").do(job_func)
             elif interval.startswith("daily at "):
-                self.scheduler.every().day.at(interval.replace("daily at ", "", 1).strip()).do(job_func)
+                self.scheduler.every().day.at(interval.replace("daily at ", "", 1).strip()).do(
+                    job_func
+                )
             elif interval.startswith("every "):
                 parts = interval.split()
                 if len(parts) >= 3:
@@ -759,8 +778,12 @@ class NativeTaskRuntime:
         except Exception as exc:  # noqa: BLE001
             logger.error("Failed to parse schedule '%s': %s", interval_str, exc)
 
-    def _execute_collection_task(self, task_id: str, collection_type: str, data: dict[str, Any]) -> None:
-        self._update_task(task_id, status="running", current_activity=f"Starting {collection_type} task")
+    def _execute_collection_task(
+        self, task_id: str, collection_type: str, data: dict[str, Any]
+    ) -> None:
+        self._update_task(
+            task_id, status="running", current_activity=f"Starting {collection_type} task"
+        )
         append_task_log(task_id, "INFO", f"Starting background task (type={collection_type})")
         try:
             result = self._run_collection(task_id, collection_type, data)
@@ -771,7 +794,9 @@ class NativeTaskRuntime:
             self._finalize_task_error(task_id, str(exc))
             self._finalize_child_run(data, error=str(exc))
 
-    def _run_collection(self, task_id: str, collection_type: str, data: dict[str, Any]) -> CollectionResult:
+    def _run_collection(
+        self, task_id: str, collection_type: str, data: dict[str, Any]
+    ) -> CollectionResult:
         config = self._load_site_config()
         db_path = str((config.get("paths") or {}).get("db") or "data/index.db")
         download_dir = str((config.get("paths") or {}).get("download_dir") or "data/files")
@@ -806,16 +831,21 @@ class NativeTaskRuntime:
                     download_dir,
                     str(defaults.get("user_agent") or "AI-Actuarial/1.0"),
                     stop_check=lambda: self._stop_requested(task_id),
-                    default_delay_seconds=self._configured_delay_seconds(defaults.get("delay_seconds")),
+                    default_delay_seconds=self._configured_delay_seconds(
+                        defaults.get("delay_seconds")
+                    ),
                 )
                 collector = URLCollector(storage, crawler)
                 cfg = CollectionConfig(
                     name=str(data.get("name") or "URL Collection"),
                     source_type="url",
                     check_database=bool(data.get("check_database", True)),
-                    keywords=self._coerce_list(data.get("keywords")) or list(defaults.get("keywords") or []),
-                    file_exts=self._coerce_list(data.get("file_exts")) or list(defaults.get("file_exts") or []),
-                    exclude_keywords=self._coerce_list(data.get("exclude_keywords")) or list(defaults.get("exclude_keywords") or []),
+                    keywords=self._coerce_list(data.get("keywords"))
+                    or list(defaults.get("keywords") or []),
+                    file_exts=self._coerce_list(data.get("file_exts"))
+                    or list(defaults.get("file_exts") or []),
+                    exclude_keywords=self._coerce_list(data.get("exclude_keywords"))
+                    or list(defaults.get("exclude_keywords") or []),
                     metadata={"urls": self._coerce_list(data.get("urls"))},
                 )
                 return collector.collect(cfg, progress_callback=self._progress_callback(task_id))
@@ -830,7 +860,9 @@ class NativeTaskRuntime:
                     download_dir,
                     str(defaults.get("user_agent") or "AI-Actuarial/1.0"),
                     stop_check=lambda: self._stop_requested(task_id),
-                    default_delay_seconds=self._configured_delay_seconds(defaults.get("delay_seconds")),
+                    default_delay_seconds=self._configured_delay_seconds(
+                        defaults.get("delay_seconds")
+                    ),
                 )
                 collector = ScheduledCollector(storage, crawler)
                 site_configs = (
@@ -861,10 +893,15 @@ class NativeTaskRuntime:
                         "categories.yaml taxonomy has changed; run the recategory task before catalog"
                     )
                 category = str(data.get("category") or "").strip() or None
-                catalog_cfg = ((config.get("ai_config") or {}).get("catalog") or {})
+                catalog_cfg = (config.get("ai_config") or {}).get("catalog") or {}
                 if not isinstance(catalog_cfg, dict):
                     catalog_cfg = {}
-                provider = str(data.get("provider") or catalog_cfg.get("provider") or "local").strip().lower() or "local"
+                provider = (
+                    str(data.get("provider") or catalog_cfg.get("provider") or "local")
+                    .strip()
+                    .lower()
+                    or "local"
+                )
                 input_source = str(data.get("input_source") or "markdown").strip() or "markdown"
                 catalog_version = str(data.get("catalog_version") or "").strip()
                 if not catalog_version:
@@ -902,7 +939,8 @@ class NativeTaskRuntime:
                     "input_source": input_source,
                     "max_workers": int(data.get("max_workers") or 5),
                     "update_title": bool(data.get("update_title", False)),
-                    "catalog_system_prompt": str(catalog_cfg.get("system_prompt") or "").strip() or None,
+                    "catalog_system_prompt": str(catalog_cfg.get("system_prompt") or "").strip()
+                    or None,
                     "output_language": str(data.get("output_language") or "auto").strip() or "auto",
                     "progress_callback": self._progress_callback(task_id),
                 }
@@ -925,11 +963,16 @@ class NativeTaskRuntime:
                         **common_catalog_kwargs,
                     )
                 return CollectionResult(
-                    success=not int(stats.get("errors", 0)) and not bool(stats.get("stopped", False)),
+                    success=not int(stats.get("errors", 0))
+                    and not bool(stats.get("stopped", False)),
                     items_found=int(stats.get("scanned", 0)),
                     items_downloaded=int(stats.get("processed", 0)),
                     items_skipped=int(stats.get("skipped_ai", 0)),
-                    errors=[] if not int(stats.get("errors", 0)) else [f"Catalog errors: {stats.get('errors', 0)}"],
+                    errors=(
+                        []
+                        if not int(stats.get("errors", 0))
+                        else [f"Catalog errors: {stats.get('errors', 0)}"]
+                    ),
                     metadata={
                         "category": category,
                         "provider": provider,
@@ -992,11 +1035,15 @@ class NativeTaskRuntime:
                     metadata=summary,
                 )
 
-            raise RuntimeError(f"Native runtime does not yet support collection type '{collection_type}'")
+            raise RuntimeError(
+                f"Native runtime does not yet support collection type '{collection_type}'"
+            )
         finally:
             storage.close()
 
-    def _run_recategory(self, task_id: str, storage: Storage, data: dict[str, Any]) -> CollectionResult:
+    def _run_recategory(
+        self, task_id: str, storage: Storage, data: dict[str, Any]
+    ) -> CollectionResult:
         from ai_actuarial.recategory import apply_recategory, plan_recategory
 
         mode = str(data.get("mode") or "plan").strip().lower() or "plan"
@@ -1015,6 +1062,7 @@ class NativeTaskRuntime:
                 )
 
         progress_callback = self._progress_callback(task_id)
+
         def stop_check() -> bool:
             return self._stop_requested(task_id)
 
@@ -1054,7 +1102,9 @@ class NativeTaskRuntime:
             metadata=result,
         )
 
-    def _run_weekly_summary(self, db_path: str, data: dict[str, Any], *, storage: Storage | None = None) -> CollectionResult:
+    def _run_weekly_summary(
+        self, db_path: str, data: dict[str, Any], *, storage: Storage | None = None
+    ) -> CollectionResult:
         from ai_actuarial.api.services.weekly_updates import generate_weekly_update_summary
 
         summary = generate_weekly_update_summary(
@@ -1063,7 +1113,9 @@ class NativeTaskRuntime:
             period_start=str(data.get("period_start") or "").strip() or None,
             period_end=str(data.get("period_end") or "").strip() or None,
             relative_period=str(data.get("relative_period") or "").strip() or None,
-            max_files=parse_int_clamped(data.get("max_files"), default=500, min_value=1, max_value=500),
+            max_files=parse_int_clamped(
+                data.get("max_files"), default=500, min_value=1, max_value=500
+            ),
             force=coerce_bool(data.get("force"), default=False),
         )
         file_count = int(summary.get("file_count") or 0)
@@ -1149,7 +1201,11 @@ class NativeTaskRuntime:
                 }
                 if tools and "search" not in tools:
                     continue
-                queries = [str(query).strip() for query in (site_config.queries or []) if str(query).strip()]
+                queries = [
+                    str(query).strip()
+                    for query in (site_config.queries or [])
+                    if str(query).strip()
+                ]
                 if not queries:
                     continue
                 fallback_reason = self._site_search_fallback_reason(site_config, site_outcomes)
@@ -1208,7 +1264,10 @@ class NativeTaskRuntime:
         data: dict[str, Any],
     ) -> dict[str, Any]:
         search_cfg = dict(config.get("search") or {})
-        engine = str(data.get("engine") or search_cfg.get("engine") or "brave").strip().lower() or "brave"
+        engine = (
+            str(data.get("engine") or search_cfg.get("engine") or "brave").strip().lower()
+            or "brave"
+        )
         site_host = self._site_filter_for_query(site_config.url, query)
 
         task_data = {
@@ -1269,9 +1328,9 @@ class NativeTaskRuntime:
         site_config: SiteConfig,
         site_outcomes: dict[str, dict[str, Any]],
     ) -> str | None:
-        outcome = site_outcomes.get(f"name:{site_config.name.strip().lower()}") or site_outcomes.get(
-            f"url:{site_config.url.strip().lower()}"
-        )
+        outcome = site_outcomes.get(
+            f"name:{site_config.name.strip().lower()}"
+        ) or site_outcomes.get(f"url:{site_config.url.strip().lower()}")
         if not outcome:
             return None
         reason = str(outcome.get("fallback_reason") or "").strip()
@@ -1287,7 +1346,9 @@ class NativeTaskRuntime:
             return reason or "zero_results"
         return None
 
-    def _run_rag_indexing(self, task_id: str, storage: Storage, data: dict[str, Any]) -> CollectionResult:
+    def _run_rag_indexing(
+        self, task_id: str, storage: Storage, data: dict[str, Any]
+    ) -> CollectionResult:
         kb_id = str(data.get("kb_id") or "").strip()
         if not kb_id:
             raise RuntimeError("kb_id is required for RAG indexing")
@@ -1369,9 +1430,7 @@ class NativeTaskRuntime:
         kb_id = str(data.get("kb_id") or "").strip()
         profile = str(data.get("profile") or "general").strip().lower() or "general"
         index_version_id = str(data.get("index_version_id") or "").strip()
-        expected_source = str(
-            data.get("expected_source_snapshot_fingerprint") or ""
-        ).strip()
+        expected_source = str(data.get("expected_source_snapshot_fingerprint") or "").strip()
         if (
             int(data.get("contract_version") or 0) != 1
             or not kb_id
@@ -1415,15 +1474,9 @@ class NativeTaskRuntime:
             )
         validation = dict(payload.get("validation") or {})
         if not validation.get("valid"):
-            validation_errors = [
-                str(error) for error in validation.get("errors") or []
-            ]
+            validation_errors = [str(error) for error in validation.get("errors") or []]
             stale_error = next(
-                (
-                    error
-                    for error in validation_errors
-                    if "stale_snapshot:" in error
-                ),
+                (error for error in validation_errors if "stale_snapshot:" in error),
                 None,
             )
             if stale_error:
@@ -1440,8 +1493,7 @@ class NativeTaskRuntime:
                 and state.get("cas_won") is True
                 and isinstance(active_publication, dict)
                 and publication_id
-                and str(active_publication.get("publication_id") or "")
-                == publication_id
+                and str(active_publication.get("publication_id") or "") == publication_id
                 and str(active_publication.get("status") or "") == "active"
             )
             if not publication_id or (
@@ -1456,7 +1508,9 @@ class NativeTaskRuntime:
             "contract_version": 1,
             "publication_id": publication_id,
             "publish_status": publish_status,
-            "source_snapshot_fingerprint": str(candidate.get("source_version_id") or expected_source),
+            "source_snapshot_fingerprint": str(
+                candidate.get("source_version_id") or expected_source
+            ),
             "index_version_id": index_version_id,
             "artifact_digest": str(candidate.get("artifact_digest") or ""),
             "doc_count": int(candidate.get("doc_count") or 0),
@@ -1486,13 +1540,17 @@ class NativeTaskRuntime:
 
         defaults = dict(config.get("defaults") or {})
         search_cfg = dict(config.get("search") or {})
-        delay_seconds = self._configured_delay_seconds(search_cfg.get("delay_seconds"), defaults.get("delay_seconds"))
+        delay_seconds = self._configured_delay_seconds(
+            search_cfg.get("delay_seconds"), defaults.get("delay_seconds")
+        )
         user_agent = str(defaults.get("user_agent") or "AI-Actuarial/1.0")
         use_defaults = bool(data.get("use_search_defaults", True))
 
         site_filter = str(data.get("site") or "").strip()
         search_query = self._query_with_site_filter(query, site_filter)
-        max_results = self._positive_int(data.get("count"), self._positive_int(search_cfg.get("max_results"), 5))
+        max_results = self._positive_int(
+            data.get("count"), self._positive_int(search_cfg.get("max_results"), 5)
+        )
 
         languages = self._coerce_list(data.get("search_lang"))
         if not languages and use_defaults:
@@ -1501,7 +1559,11 @@ class NativeTaskRuntime:
             languages = ["en"]
 
         countries = self._coerce_list(data.get("search_country"))
-        country = countries[0] if countries else (str(search_cfg.get("country") or "").strip() if use_defaults else "")
+        country = (
+            countries[0]
+            if countries
+            else (str(search_cfg.get("country") or "").strip() if use_defaults else "")
+        )
         country = country or None
 
         file_exts = self._coerce_list(data.get("file_exts"))
@@ -1512,13 +1574,17 @@ class NativeTaskRuntime:
         if not keywords and use_defaults:
             keywords = self._coerce_list(defaults.get("keywords"))
 
-        exclude_keywords = self._coerce_list(data.get("search_exclude_keywords")) or self._coerce_list(data.get("exclude_keywords"))
+        exclude_keywords = self._coerce_list(
+            data.get("search_exclude_keywords")
+        ) or self._coerce_list(data.get("exclude_keywords"))
         if use_defaults:
-            exclude_keywords = self._dedupe_list(exclude_keywords + self._coerce_list(search_cfg.get("exclude_keywords")))
+            exclude_keywords = self._dedupe_list(
+                exclude_keywords + self._coerce_list(search_cfg.get("exclude_keywords"))
+            )
 
-        exclude_prefixes = self._coerce_list(data.get("search_exclude_prefixes")) or self._coerce_list(
-            data.get("exclude_prefixes")
-        )
+        exclude_prefixes = self._coerce_list(
+            data.get("search_exclude_prefixes")
+        ) or self._coerce_list(data.get("exclude_prefixes"))
         if use_defaults:
             exclude_prefixes = self._dedupe_list(
                 exclude_prefixes + self._coerce_list(defaults.get("exclude_prefixes"))
@@ -1533,7 +1599,9 @@ class NativeTaskRuntime:
                 raise RuntimeError(f"Unsupported search engine: {engine}")
             if not credentials.get(engine):
                 raise RuntimeError(f"Search engine '{engine}' is not configured")
-            selected_credentials = {key: value if key == engine else None for key, value in credentials.items()}
+            selected_credentials = {
+                key: value if key == engine else None for key, value in credentials.items()
+            }
 
         progress = self._progress_callback(task_id)
         progress(0, max_results, f"Searching: {query}")
@@ -1650,7 +1718,8 @@ class NativeTaskRuntime:
                 else "already_exists_or_filtered"
             )
         stopped = any(
-            outcome.get("disposition") == "stopped_or_timeout" and outcome.get("subreason") == "stopped"
+            outcome.get("disposition") == "stopped_or_timeout"
+            and outcome.get("subreason") == "stopped"
             for outcome in acquisition_outcomes
         )
         success = bool(
@@ -1704,12 +1773,21 @@ class NativeTaskRuntime:
             )
 
         md_config = load_markdown_conversion_config()
-        conversion_tool = str(data.get("conversion_tool") or md_config.get("default_tool") or "auto").strip().lower() or "auto"
+        conversion_tool = (
+            str(data.get("conversion_tool") or md_config.get("default_tool") or "auto")
+            .strip()
+            .lower()
+            or "auto"
+        )
         explicit_runtime = None
         if conversion_tool != "auto":
             explicit_tool_cfg = (md_config.get("tools") or {}).get(conversion_tool) or {}
-            if not isinstance(explicit_tool_cfg, dict) or not explicit_tool_cfg.get("enabled", True):
-                raise RuntimeError(f"Markdown conversion tool '{conversion_tool}' is disabled or not configured")
+            if not isinstance(explicit_tool_cfg, dict) or not explicit_tool_cfg.get(
+                "enabled", True
+            ):
+                raise RuntimeError(
+                    f"Markdown conversion tool '{conversion_tool}' is disabled or not configured"
+                )
             explicit_model = explicit_tool_cfg.get("model")
             explicit_runtime = resolve_ocr_runtime(
                 storage=storage,
@@ -1782,9 +1860,7 @@ class NativeTaskRuntime:
                 if ok:
                     converted += 1
                     last_provider = provider
-                    markdown_hash = hashlib.sha256(
-                        output.markdown.encode("utf-8")
-                    ).hexdigest()
+                    markdown_hash = hashlib.sha256(output.markdown.encode("utf-8")).hexdigest()
                     result_files.append(
                         {
                             "file_url": file_url,
@@ -1918,9 +1994,7 @@ class NativeTaskRuntime:
         candidate_data = {**data, "profile_id": payload["profile_id"]}
         file_urls = self._chunk_candidate_file_urls(storage, candidate_data)
         expected_hashes = {
-            str(item.get("file_url") or "").strip(): str(
-                item.get("markdown_hash") or ""
-            ).strip()
+            str(item.get("file_url") or "").strip(): str(item.get("markdown_hash") or "").strip()
             for item in (data.get("files") or [])
             if isinstance(item, dict)
         }
@@ -2034,14 +2108,9 @@ class NativeTaskRuntime:
             selection=selection,
             identity=identity,
         )
-        status = "stopped" if ensured.stopped else (
-            "completed" if not ensured.failed else "error"
-        )
+        status = "stopped" if ensured.stopped else ("completed" if not ensured.failed else "error")
         items_processed = (
-            ensured.reused
-            + ensured.generated
-            + ensured.invalid_regenerated
-            + ensured.failed
+            ensured.reused + ensured.generated + ensured.invalid_regenerated + ensured.failed
         )
         result = {
             "contract_version": 1,
@@ -2091,30 +2160,52 @@ class NativeTaskRuntime:
         from ai_actuarial.api.services.import_batches import file_paths_for_batch
 
         raw_exts = list(data.get("extensions") or [])
-        allowed_exts = {str(ext).lower().lstrip('.') for ext in raw_exts if str(ext).strip()}
+        allowed_exts = {str(ext).lower().lstrip(".") for ext in raw_exts if str(ext).strip()}
         paths = file_paths_for_batch(upload_batch_id)
         if allowed_exts:
-            paths = [path for path in paths if Path(path).suffix.lower().lstrip('.') in allowed_exts]
+            paths = [
+                path for path in paths if Path(path).suffix.lower().lstrip(".") in allowed_exts
+            ]
         return paths
 
-    def _site_configs_for_run(self, config: dict[str, Any], data: dict[str, Any]) -> list[SiteConfig]:
+    def _site_configs_for_run(
+        self, config: dict[str, Any], data: dict[str, Any]
+    ) -> list[SiteConfig]:
         defaults = dict(config.get("defaults") or {})
         sites = list(config.get("sites") or [])
         selected_site = str(data.get("site") or "").strip()
-        site_rows = [row for row in sites if not selected_site or str(row.get("name") or "") == selected_site]
+        site_rows = [
+            row for row in sites if not selected_site or str(row.get("name") or "") == selected_site
+        ]
         default_exclude_keywords = self._coerce_list(defaults.get("exclude_keywords"))
         default_exclude_prefixes = self._coerce_list(defaults.get("exclude_prefixes"))
         return [
             SiteConfig(
                 name=str(row.get("name") or "Unnamed Site"),
                 url=str(row.get("url") or ""),
-                max_pages=self._positive_int(data.get("max_pages"), self._positive_int(row.get("max_pages"), self._positive_int(defaults.get("max_pages"), 200))),
-                max_depth=self._positive_int(data.get("max_depth"), self._positive_int(row.get("max_depth"), self._positive_int(defaults.get("max_depth"), 2))),
-                delay_seconds=self._configured_delay_seconds(row.get("delay_seconds"), defaults.get("delay_seconds")),
+                max_pages=self._positive_int(
+                    data.get("max_pages"),
+                    self._positive_int(
+                        row.get("max_pages"), self._positive_int(defaults.get("max_pages"), 200)
+                    ),
+                ),
+                max_depth=self._positive_int(
+                    data.get("max_depth"),
+                    self._positive_int(
+                        row.get("max_depth"), self._positive_int(defaults.get("max_depth"), 2)
+                    ),
+                ),
+                delay_seconds=self._configured_delay_seconds(
+                    row.get("delay_seconds"), defaults.get("delay_seconds")
+                ),
                 keywords=list(row.get("keywords") or defaults.get("keywords") or []),
                 file_exts=list(row.get("file_exts") or defaults.get("file_exts") or []),
-                exclude_keywords=self._dedupe_list(default_exclude_keywords + self._coerce_list(row.get("exclude_keywords"))),
-                exclude_prefixes=self._dedupe_list(default_exclude_prefixes + self._coerce_list(row.get("exclude_prefixes"))),
+                exclude_keywords=self._dedupe_list(
+                    default_exclude_keywords + self._coerce_list(row.get("exclude_keywords"))
+                ),
+                exclude_prefixes=self._dedupe_list(
+                    default_exclude_prefixes + self._coerce_list(row.get("exclude_prefixes"))
+                ),
                 collect_linked_files=(
                     coerce_bool(row.get("collect_linked_files"), default=True)
                     if "collect_linked_files" in row
@@ -2141,11 +2232,19 @@ class NativeTaskRuntime:
         return SiteConfig(
             name=str(data.get("name") or "Quick Check"),
             url=str(data.get("url") or "").strip(),
-            max_pages=self._positive_int(data.get("max_pages"), self._positive_int(defaults.get("max_pages"), 10)),
-            max_depth=self._positive_int(data.get("max_depth"), self._positive_int(defaults.get("max_depth"), 1)),
-            delay_seconds=self._configured_delay_seconds(data.get("delay_seconds"), defaults.get("delay_seconds")),
-            keywords=self._coerce_list(data.get("keywords")) or self._coerce_list(defaults.get("keywords")),
-            file_exts=self._coerce_list(data.get("file_exts")) or self._coerce_list(defaults.get("file_exts")),
+            max_pages=self._positive_int(
+                data.get("max_pages"), self._positive_int(defaults.get("max_pages"), 10)
+            ),
+            max_depth=self._positive_int(
+                data.get("max_depth"), self._positive_int(defaults.get("max_depth"), 1)
+            ),
+            delay_seconds=self._configured_delay_seconds(
+                data.get("delay_seconds"), defaults.get("delay_seconds")
+            ),
+            keywords=self._coerce_list(data.get("keywords"))
+            or self._coerce_list(defaults.get("keywords")),
+            file_exts=self._coerce_list(data.get("file_exts"))
+            or self._coerce_list(defaults.get("file_exts")),
             exclude_keywords=self._dedupe_list(
                 self._coerce_list(data.get("exclude_keywords"))
                 + self._coerce_list(defaults.get("exclude_keywords"))
@@ -2155,7 +2254,9 @@ class NativeTaskRuntime:
             check_database=bool(data.get("check_database", True)),
         )
 
-    def _markdown_candidate_files(self, storage: Storage, data: dict[str, Any]) -> list[dict[str, Any]]:
+    def _markdown_candidate_files(
+        self, storage: Storage, data: dict[str, Any]
+    ) -> list[dict[str, Any]]:
         explicit_urls = self._explicit_file_urls(data)
         overwrite_existing = bool(data.get("overwrite_existing", False))
         skip_existing = bool(data.get("skip_existing", True)) and not overwrite_existing
@@ -2184,7 +2285,9 @@ class NativeTaskRuntime:
             }
             return [by_url[url] for url in explicit_urls if url in by_url]
 
-        category_sql, params = self._category_sql(str(data.get("category") or "").strip(), alias="c")
+        category_sql, params = self._category_sql(
+            str(data.get("category") or "").strip(), alias="c"
+        )
         where = _CONVERTIBLE_MARKDOWN_PREDICATE + category_sql
         if skip_existing:
             where += " AND (c.markdown_content IS NULL OR c.markdown_content = '')"
@@ -2192,7 +2295,10 @@ class NativeTaskRuntime:
         raw_limits = md_config.get("limits")
         limits = raw_limits if isinstance(raw_limits, dict) else {}
         default_limit = self._positive_int(limits.get("default_scan_count"), 50)
-        max_limit = min(HARD_MAX_SCAN_COUNT, max(default_limit, self._positive_int(limits.get("max_scan_count"), 2000)))
+        max_limit = min(
+            HARD_MAX_SCAN_COUNT,
+            max(default_limit, self._positive_int(limits.get("max_scan_count"), 2000)),
+        )
         limit = min(self._positive_int(data.get("scan_count"), default_limit), max_limit)
         offset = max(0, self._positive_int(data.get("scan_start_index"), 1) - 1)
         rows = conn.execute(
@@ -2231,7 +2337,9 @@ class NativeTaskRuntime:
                 expected_hash = str(raw.get("markdown_hash") or "").strip()
                 markdown_version = str(raw.get("markdown_version") or expected_hash).strip()
                 if not file_url or not expected_hash or markdown_version != expected_hash:
-                    raise RuntimeError("chunk files selector requires a stable Markdown hash/version")
+                    raise RuntimeError(
+                        "chunk files selector requires a stable Markdown hash/version"
+                    )
                 if file_url in seen:
                     raise RuntimeError(f"duplicate chunk file selector: {file_url}")
                 seen.add(file_url)
@@ -2272,7 +2380,9 @@ class NativeTaskRuntime:
                 ).fetchall()
             ]
 
-        category_sql, params = self._category_sql(str(data.get("category") or "").strip(), alias="c")
+        category_sql, params = self._category_sql(
+            str(data.get("category") or "").strip(), alias="c"
+        )
         where = """
             f.deleted_at IS NULL
             AND c.markdown_content IS NOT NULL
@@ -2355,7 +2465,11 @@ class NativeTaskRuntime:
         if value is None:
             return []
         if isinstance(value, str):
-            return [part.strip() for part in value.replace("\r\n", "\n").replace(",", "\n").split("\n") if part.strip()]
+            return [
+                part.strip()
+                for part in value.replace("\r\n", "\n").replace(",", "\n").split("\n")
+                if part.strip()
+            ]
         if isinstance(value, (list, tuple, set)):
             return [str(item).strip() for item in value if str(item).strip()]
         return [str(value).strip()] if str(value).strip() else []
@@ -2422,7 +2536,9 @@ class NativeTaskRuntime:
             if task is not None:
                 task.update(fields)
 
-    def _finalize_task_success(self, task_id: str, collection_type: str, result: CollectionResult) -> None:
+    def _finalize_task_success(
+        self, task_id: str, collection_type: str, result: CollectionResult
+    ) -> None:
         ready_followup: tuple[str, dict[str, Any]] | None = None
         with self.task_lock:
             task_data = self.active_tasks.pop(task_id, None)
@@ -2448,10 +2564,16 @@ class NativeTaskRuntime:
                     progress = 0
             task_data.update(
                 {
-                    "status": "stopped" if stopped else ("completed" if result.success else "error"),
+                    "status": (
+                        "stopped" if stopped else ("completed" if result.success else "error")
+                    ),
                     "progress": progress,
                     "completed_at": datetime.now().isoformat(),
-                    "current_activity": "Stopped" if stopped else ("Completed" if result.success else "Completed with errors"),
+                    "current_activity": (
+                        "Stopped"
+                        if stopped
+                        else ("Completed" if result.success else "Completed with errors")
+                    ),
                     "items_processed": items_processed,
                     "items_total": items_total,
                     "items_downloaded": result.items_downloaded,
@@ -2470,9 +2592,7 @@ class NativeTaskRuntime:
                 and not task_data.get("pipeline_baton_source_task_id")
             ):
                 kb_id = str(
-                    (result.metadata or {}).get("kb_id")
-                    or task_data.get("kb_id")
-                    or ""
+                    (result.metadata or {}).get("kb_id") or task_data.get("kb_id") or ""
                 ).strip()
                 if kb_id:
                     ready_followup = (kb_id, dict(canonical_result))
@@ -2505,7 +2625,10 @@ class NativeTaskRuntime:
                             "weekly_explanation",
                             {"snapshot_id": snapshot_id},
                             task_name=f"Weekly explanation: {snapshot_id}",
-                            extra_fields={"snapshot_id": snapshot_id, "weekly_snapshot_task_id": task_id},
+                            extra_fields={
+                                "snapshot_id": snapshot_id,
+                                "weekly_snapshot_task_id": task_id,
+                            },
                         )
                         task_data["explanation_task_id"] = explanation_task_id
                     except Exception as exc:  # noqa: BLE001
@@ -2516,7 +2639,9 @@ class NativeTaskRuntime:
                             f"Weekly explanation task launch failed: {exc}",
                         )
             self.task_history.append(task_data)
-        append_task_log(task_id, "INFO", f"Task finished (type={collection_type}, success={result.success})")
+        append_task_log(
+            task_id, "INFO", f"Task finished (type={collection_type}, success={result.success})"
+        )
         self._append_history_to_disk(task_data)
 
     def _finalize_task_error(self, task_id: str, error: str) -> None:
@@ -2569,7 +2694,11 @@ class NativeTaskRuntime:
             if result.success and not stopped:
                 storage.update_child_run(child_run_id, status="succeeded", error="")
                 return
-            message = "stopped" if stopped else ("; ".join(list(result.errors or [])) or "unsuccessful result")
+            message = (
+                "stopped"
+                if stopped
+                else ("; ".join(list(result.errors or [])) or "unsuccessful result")
+            )
             storage.update_child_run(child_run_id, status="failed", partial=1, error=message)
         finally:
             storage.close()

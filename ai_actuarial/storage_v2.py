@@ -9,22 +9,22 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import Iterable, Any
+from typing import Any, Iterable
 
-from sqlalchemy import or_, func
+from sqlalchemy import func, or_
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from .db_backend import create_backend
-from .db_models import File, Page, Blob, CatalogItem
+from .db_models import Blob, CatalogItem, File, Page
 
 
 class StorageV2:
     """Storage implementation using SQLAlchemy for multi-database support."""
-    
+
     def __init__(self, db_config: dict[str, Any]) -> None:
         """Initialize storage with database configuration.
-        
+
         Args:
             db_config: Database configuration dict:
                 - type: 'sqlite' or 'postgresql'
@@ -34,48 +34,48 @@ class StorageV2:
         self.backend = create_backend(db_config)
         self.backend.connect()
         self.db_path = db_config.get("path") if db_config.get("type") == "sqlite" else None
-        
+
     def close(self) -> None:
         """Close database connection."""
         self.backend.close()
-    
+
     def now(self) -> str:
         """Get current timestamp."""
         return self.backend.now()
-    
+
     @property
     def _session(self):
         """Get current database session."""
         return self.backend.get_session()
-    
+
     @property
     def _conn(self):
         """Get raw database connection for compatibility."""
         return self._session.connection()
-    
+
     def transaction(self):
         """Context manager for database transactions."""
         return self.backend.transaction()
-    
+
     def file_exists(self, url: str) -> bool:
         """Check if file exists by URL."""
         result = self._session.query(File).filter(File.url == url).first()
         return result is not None
-    
+
     def get_file_by_url(self, url: str) -> dict | None:
         """Get file record by URL."""
         file_obj = self._session.query(File).filter(File.url == url).first()
         if not file_obj:
             return None
         return self._model_to_dict(file_obj)
-    
+
     def get_file_by_sha256(self, sha256: str) -> dict | None:
         """Get file record by SHA256 hash."""
         file_obj = self._session.query(File).filter(File.sha256 == sha256).first()
         if not file_obj:
             return None
         return self._model_to_dict(file_obj)
-    
+
     def insert_file(
         self,
         url: str,
@@ -112,7 +112,7 @@ class StorageV2:
         )
         self._session.add(file_obj)
         self.backend._maybe_commit()
-    
+
     def upsert_file(
         self,
         url: str,
@@ -147,7 +147,7 @@ class StorageV2:
             "last_seen": ts,
             "crawl_time": ts,
         }
-        
+
         # Use database-specific upsert
         if self.backend.engine.dialect.name == "postgresql":
             stmt = pg_insert(File).values(**values)
@@ -167,7 +167,7 @@ class StorageV2:
                     "published_time": stmt.excluded.published_time,
                     "last_seen": stmt.excluded.last_seen,
                     "crawl_time": stmt.excluded.crawl_time,
-                }
+                },
             )
         else:  # SQLite
             stmt = sqlite_insert(File).values(**values)
@@ -187,44 +187,52 @@ class StorageV2:
                     "published_time": stmt.excluded.published_time,
                     "last_seen": stmt.excluded.last_seen,
                     "crawl_time": stmt.excluded.crawl_time,
-                }
+                },
             )
-        
+
         self._session.execute(stmt)
         self.backend._maybe_commit()
-    
+
     def mark_page_seen(self, url: str) -> None:
         """Mark page as seen."""
         ts = self.now()
         values = {"url": url, "last_seen": ts}
-        
+
         if self.backend.engine.dialect.name == "postgresql":
             stmt = pg_insert(Page).values(**values)
             stmt = stmt.on_conflict_do_update(
-                index_elements=["url"],
-                set_={"last_seen": stmt.excluded.last_seen}
+                index_elements=["url"], set_={"last_seen": stmt.excluded.last_seen}
             )
         else:  # SQLite
             stmt = sqlite_insert(Page).values(**values)
             stmt = stmt.on_conflict_do_update(
-                index_elements=["url"],
-                set_={"last_seen": stmt.excluded.last_seen}
+                index_elements=["url"], set_={"last_seen": stmt.excluded.last_seen}
             )
-        
+
         self._session.execute(stmt)
         self.backend._maybe_commit()
-    
+
     def export_files(self) -> list[dict]:
         """Export all files."""
         files = self._session.query(File).order_by(File.last_seen.desc()).all()
         return [self._model_to_dict(f) for f in files]
-    
+
     # Allowed columns for ORDER BY
-    _ALLOWED_ORDER_COLUMNS = frozenset([
-        "id", "url", "sha256", "title", "source_site", "local_path",
-        "bytes", "first_seen", "last_seen", "crawl_time"
-    ])
-    
+    _ALLOWED_ORDER_COLUMNS = frozenset(
+        [
+            "id",
+            "url",
+            "sha256",
+            "title",
+            "source_site",
+            "local_path",
+            "bytes",
+            "first_seen",
+            "last_seen",
+            "crawl_time",
+        ]
+    )
+
     def iter_files(
         self,
         site_filter: str | None,
@@ -240,23 +248,20 @@ class StorageV2:
         # Validate order_by
         if order_by not in self._ALLOWED_ORDER_COLUMNS:
             raise ValueError(f"Invalid order_by column: {order_by}")
-        
+
         # Build query
         query = self._session.query(File)
-        
+
         # Apply filters
         if require_local_path:
             query = query.filter(File.local_path.isnot(None), File.local_path != "")
-        
+
         if site_filter:
+
             def _escape_like(token: str) -> str:
                 """Escape SQL LIKE wildcard characters so they are treated literally."""
-                return (
-                    token.replace("\\", "\\\\")
-                    .replace("%", "\\%")
-                    .replace("_", "\\_")
-                )
-            
+                return token.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
             tokens = [t.strip().lower() for t in site_filter.split(",") if t.strip()]
             if tokens:
                 or_conditions = []
@@ -269,7 +274,7 @@ class StorageV2:
                         func.lower(File.url).like(f"%{escaped_token}%", escape="\\")
                     )
                 query = query.filter(or_(*or_conditions))
-        
+
         if only_changed:
             if not extractor_version:
                 raise ValueError("extractor_version is required when only_changed is True")
@@ -278,27 +283,25 @@ class StorageV2:
             conditions = or_(
                 CatalogItem.file_url.is_(None),
                 CatalogItem.sha256 != File.sha256,
-                CatalogItem.pipeline_version != extractor_version
+                CatalogItem.pipeline_version != extractor_version,
             )
             if include_errors:
                 conditions = or_(
-                    conditions,
-                    CatalogItem.status.is_(None),
-                    CatalogItem.status != "ok"
+                    conditions, CatalogItem.status.is_(None), CatalogItem.status != "ok"
                 )
             query = query.filter(conditions)
-        
+
         # Apply ordering
         order_col = getattr(File, order_by)
         query = query.order_by(order_col)
-        
+
         # Apply pagination
         if limit is not None:
             query = query.limit(limit).offset(offset)
-        
+
         files = query.all()
         return [self._model_to_dict(f) for f in files]
-    
+
     def get_blob(self, sha256: str) -> dict | None:
         """Get blob by SHA256."""
         blob = self._session.query(Blob).filter(Blob.sha256 == sha256).first()
@@ -310,7 +313,7 @@ class StorageV2:
             "bytes": blob.bytes,
             "content_type": blob.content_type,
         }
-    
+
     def upsert_blob(
         self,
         sha256: str,
@@ -328,7 +331,7 @@ class StorageV2:
             "first_seen": ts,
             "last_seen": ts,
         }
-        
+
         if self.backend.engine.dialect.name == "postgresql":
             stmt = pg_insert(Blob).values(**values)
             stmt = stmt.on_conflict_do_update(
@@ -338,7 +341,7 @@ class StorageV2:
                     "bytes": stmt.excluded.bytes,
                     "content_type": stmt.excluded.content_type,
                     "last_seen": stmt.excluded.last_seen,
-                }
+                },
             )
         else:  # SQLite
             stmt = sqlite_insert(Blob).values(**values)
@@ -349,29 +352,12 @@ class StorageV2:
                     "bytes": stmt.excluded.bytes,
                     "content_type": stmt.excluded.content_type,
                     "last_seen": stmt.excluded.last_seen,
-                }
+                },
             )
-        
+
         self._session.execute(stmt)
         self.backend._maybe_commit()
-    
-    def catalog_item_fresh(
-        self,
-        url: str,
-        sha256: str,
-        pipeline_version: str | None = None,
-        extractor_version: str | None = None,
-    ) -> bool:
-        """Check if catalog item is fresh."""
-        effective_version = pipeline_version or extractor_version or ""
-        result = self._session.query(CatalogItem).filter(
-            CatalogItem.file_url == url,
-            CatalogItem.sha256 == sha256,
-            CatalogItem.pipeline_version == effective_version,
-            CatalogItem.status == "ok"
-        ).first()
-        return result is not None
-    
+
     def upsert_catalog_item(
         self,
         item: dict,
@@ -385,7 +371,7 @@ class StorageV2:
         processed_ts = processed_at or self.now()
         updated_ts = self.now()
         effective_version = pipeline_version or extractor_version or ""
-        
+
         values = {
             "file_url": item.get("url"),
             "sha256": item.get("sha256"),
@@ -398,7 +384,7 @@ class StorageV2:
             "category": item.get("category") or "",
             "updated_at": updated_ts,
         }
-        
+
         if self.backend.engine.dialect.name == "postgresql":
             stmt = pg_insert(CatalogItem).values(**values)
             stmt = stmt.on_conflict_do_update(
@@ -413,7 +399,7 @@ class StorageV2:
                     "summary": stmt.excluded.summary,
                     "category": stmt.excluded.category,
                     "updated_at": stmt.excluded.updated_at,
-                }
+                },
             )
         else:  # SQLite
             stmt = sqlite_insert(CatalogItem).values(**values)
@@ -429,12 +415,12 @@ class StorageV2:
                     "summary": stmt.excluded.summary,
                     "category": stmt.excluded.category,
                     "updated_at": stmt.excluded.updated_at,
-                }
+                },
             )
-        
+
         self._session.execute(stmt)
         self.backend._maybe_commit()
-    
+
     def write_last_run(self, output_path: str, items: Iterable[dict]) -> None:
         """Write last run results to file."""
         dir_path = os.path.dirname(output_path)
@@ -442,7 +428,7 @@ class StorageV2:
             Path(dir_path).mkdir(parents=True, exist_ok=True)
         with open(output_path, "w", encoding="utf-8") as f:
             json.dump(list(items), f, ensure_ascii=False, indent=2)
-    
+
     def _model_to_dict(self, model) -> dict:
         """Convert SQLAlchemy model to dictionary."""
         if isinstance(model, File):

@@ -2,7 +2,7 @@
 
 - Updated: 2026-09-01 EDT
 - Repository: `AI_actuarial_inforsearch`
-- Checkout: `C:\Project\AI_actuarial_inforsearch`
+- Checkout: `C:\Project\AI_actuarial_inforsearch\.codex-tmp-agentic-rag`
 - Branch: `codex/issue-317-dead-code-detection`
 - Baseline: `origin/main@bd6f47f`
 - Task: implement Issue #317 and the requested unified pytest/Black/isort/Pylint gate
@@ -30,7 +30,8 @@
   updates can only shrink the baseline.
 - Classified the initial baseline: 9 TypeScript files, 5 Python modules, 28
   TypeScript symbols, and 93 Python symbols. Reviewed cleanups have since
-  reduced the Python side to 1 module and 72 symbols.
+  reduced all dead-file findings to zero and all symbol findings to 17 Python
+  compatibility/test items.
 - Added the requested unified quality gate: full pytest plus non-mutating
   Black, isort, and Pylint checks, with an exact shrink-only compatibility
   baseline for existing formatter/linter debt. Pytest failures cannot be
@@ -499,6 +500,15 @@
   formatted the touched immutable-guards test while preserving its live
   manifest traceability case, and removed the final Python dead-file baseline
   plus the matching Black/isort baseline entries.
+- Twenty-second historical directory cleanup: formatted all 31 direct Python
+  files under `ai_actuarial/`, deleted 20 confirmed-unused root symbols plus one
+  cascading legacy weekly-summary reader, retained 27 framework/public
+  contracts through exact validated whitelist references, and narrowed seven
+  SQLAlchemy/Pydantic Pylint suppressions to their individual call sites. No
+  test was removed because none was dedicated to the deleted code. Focused
+  tests passed 132/1, the full suite passed 1857/10, the dead-code gate passed
+  at 0 files/17 symbols, and the quality baseline fell from 127/80/16 to
+  96/60/9.
 
 ## Working tree notes
 
@@ -515,8 +525,8 @@
 
 ## Recommended next action
 
-- Commit and push the pipeline-config cleanup to PR #318, verify its CI and
-  review feedback, then clean the direct Python files under `ai_actuarial/`:
-  remove confirmed dead symbols, retain framework/public contracts through
-  exact whitelist references, and shrink the formatter/linter baselines in a
-  separate verified commit. Merge only after explicit authorization.
+- Commit and push the direct `ai_actuarial/` cleanup to PR #318, verify its CI
+  and review feedback, then classify and clear the remaining 17 Python symbol
+  findings directory by directory (`api/app.py`, `chatbot/`, `rag/`, and test
+  directories) while continuing to shrink the 96/60/9 quality baseline. Merge
+  only after explicit authorization.

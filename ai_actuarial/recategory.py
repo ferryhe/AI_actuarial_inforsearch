@@ -47,9 +47,7 @@ def _configured_categories() -> dict[str, list[str]]:
     try:
         config = load_category_config(get_categories_config_path())
     except FileNotFoundError as exc:
-        raise RuntimeError(
-            "categories.yaml is missing; refusing to re-categorize"
-        ) from exc
+        raise RuntimeError("categories.yaml is missing; refusing to re-categorize") from exc
     if not isinstance(config, dict):
         raise RuntimeError(
             "categories.yaml is malformed (expected a top-level mapping); "
@@ -62,10 +60,7 @@ def _configured_categories() -> dict[str, list[str]]:
         raise RuntimeError(
             "categories.yaml 'categories' must be a mapping; refusing to re-categorize"
         )
-    return {
-        str(name): [str(term) for term in (terms or [])]
-        for name, terms in categories.items()
-    }
+    return {str(name): [str(term) for term in (terms or [])] for name, terms in categories.items()}
 
 
 def _diff_categories(storage: Storage) -> tuple[set[str], set[str]]:
@@ -122,9 +117,7 @@ def plan_recategory(storage: Storage) -> dict[str, Any]:
     removed_impact: dict[str, int] = {}
     for category in sorted(removed):
         removed_impact[category] = sum(
-            1
-            for item in items
-            if category in _split_visible_categories(item["category"])
+            1 for item in items if category in _split_visible_categories(item["category"])
         )
 
     added_impact: dict[str, int] = {}

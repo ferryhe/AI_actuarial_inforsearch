@@ -12,7 +12,6 @@ from ai_actuarial.ai_runtime import infer_embedding_dimension
 from ai_actuarial.rag.config import RAGConfig
 from ai_actuarial.storage import Storage
 
-
 CHUNK_REMOVED_OPTIONS = frozenset(
     {
         "kb_id",
@@ -62,18 +61,14 @@ OVERWRITE_DEPRECATION_WARNING = (
     "overwrite_same_profile is deprecated and ignored; ready chunk sets are immutable. "
     "Change Markdown or create a new profile/version to generate a new chunk set."
 )
-KB_BINDING_GUIDANCE = (
-    "Run KB Binding separately after Chunk & Embedding completes."
-)
+KB_BINDING_GUIDANCE = "Run KB Binding separately after Chunk & Embedding completes."
 
 
 class UnsupportedOptionsError(ValueError):
     def __init__(self, options: Iterable[str], guidance: str) -> None:
         self.options = sorted({str(option) for option in options})
         self.guidance = guidance
-        super().__init__(
-            f"unsupported_option: {', '.join(self.options)}. {self.guidance}"
-        )
+        super().__init__(f"unsupported_option: {', '.join(self.options)}. {self.guidance}")
 
 
 class EmbeddingSelectionError(ValueError):
@@ -89,9 +84,7 @@ def validate_chunk_generation_payload(payload: Mapping[str, Any]) -> list[str]:
 
 def sanitize_legacy_chunk_generation_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
     return {
-        str(key): value
-        for key, value in payload.items()
-        if str(key) not in LEGACY_CHUNK_OPTIONS
+        str(key): value for key, value in payload.items() if str(key) not in LEGACY_CHUNK_OPTIONS
     }
 
 
@@ -157,9 +150,7 @@ def compute_embedding_identity(
     provider = str(config.embedding_provider or "").strip().lower()
     model = str(config.embedding_model or "").strip()
     resolved_dimension = int(
-        dimension
-        if dimension is not None
-        else (infer_embedding_dimension(model) or 0)
+        dimension if dimension is not None else (infer_embedding_dimension(model) or 0)
     )
     if not provider or not model or resolved_dimension <= 0:
         raise ValueError("embedding provider, model, and dimension must be configured")
@@ -200,9 +191,7 @@ def resolve_server_embedding_identity(
 
 
 def _dedupe(values: Iterable[Any]) -> list[str]:
-    return list(
-        dict.fromkeys(str(value).strip() for value in values if str(value).strip())
-    )
+    return list(dict.fromkeys(str(value).strip() for value in values if str(value).strip()))
 
 
 def resolve_embedding_selection(
@@ -216,9 +205,7 @@ def resolve_embedding_selection(
     requested_files = _dedupe(file_urls)
     requested_profile = str(profile_id or "").strip()
     if bool(requested_chunk_sets) == bool(requested_files):
-        raise EmbeddingSelectionError(
-            "provide exactly one selector: chunk_set_ids or file_urls"
-        )
+        raise EmbeddingSelectionError("provide exactly one selector: chunk_set_ids or file_urls")
     selected_rows: list[tuple[Any, ...]] = []
     if requested_chunk_sets:
         selected_rows = storage._conn.execute(
@@ -250,9 +237,7 @@ def resolve_embedding_selection(
                 (file_url, requested_profile),
             ).fetchall()
             if not rows:
-                raise EmbeddingSelectionError(
-                    f"no ready chunk set for file_url={file_url}"
-                )
+                raise EmbeddingSelectionError(f"no ready chunk set for file_url={file_url}")
             if len(rows) != 1:
                 raise EmbeddingSelectionError(
                     f"ambiguous ready chunk sets for file_url={file_url}; use chunk_set_ids"
@@ -272,9 +257,7 @@ def resolve_embedding_selection(
     for row in selected_rows:
         chunk_set_id = str(row[0])
         if int(row[5] or 0) <= 0 or actual_counts.get(chunk_set_id, 0) != int(row[5] or 0):
-            raise EmbeddingSelectionError(
-                f"chunk set is not stably ready: {chunk_set_id}"
-            )
+            raise EmbeddingSelectionError(f"chunk set is not stably ready: {chunk_set_id}")
     return {
         "requested_file_urls": requested_files,
         "requested_chunk_set_ids": requested_chunk_sets,
@@ -335,9 +318,7 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _safe_error(
-    chunk: Mapping[str, Any], identity: EmbeddingIdentity, code: str
-) -> dict[str, Any]:
+def _safe_error(chunk: Mapping[str, Any], identity: EmbeddingIdentity, code: str) -> dict[str, Any]:
     return {
         "chunk_id": str(chunk.get("chunk_id") or ""),
         "provider": identity.provider,

@@ -9,20 +9,12 @@ from typing import Any
 
 import yaml
 
-
 TRACKED_SITES_CONFIG_PATH = Path(__file__).resolve().parents[1] / "config" / "sites.yaml"
 PRODUCTION_ENVIRONMENTS = frozenset({"prod", "production"})
 
 
 class SitesConfigError(RuntimeError):
     """Raised when the authoritative runtime configuration cannot be used safely."""
-
-
-def env_flag(name: str, default: bool = False) -> bool:
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _env_flag_override(*names: str) -> bool | None:
@@ -240,7 +232,9 @@ def load_sites_config(
         ) from exc
     read_bits = stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH
     if not file_mode & read_bits or not os.access(config_path, os.R_OK):
-        raise SitesConfigError(f"Authoritative runtime configuration is not readable: {config_path}")
+        raise SitesConfigError(
+            f"Authoritative runtime configuration is not readable: {config_path}"
+        )
 
     try:
         with config_path.open("r", encoding="utf-8") as handle:
@@ -260,9 +254,7 @@ def load_sites_config(
 
     server = data.get("server") or {}
     yaml_environment = (
-        str(server.get("fastapi_env") or "").strip().lower()
-        if isinstance(server, dict)
-        else ""
+        str(server.get("fastapi_env") or "").strip().lower() if isinstance(server, dict) else ""
     )
     if yaml_environment in PRODUCTION_ENVIRONMENTS and not explicit:
         raise SitesConfigError(
@@ -357,7 +349,9 @@ def get_default_catalog_provider() -> str:
     catalog_cfg = ai_cfg.get("catalog") or {}
     if not isinstance(catalog_cfg, dict):
         catalog_cfg = {}
-    provider = str(catalog_cfg.get("provider") or ai_cfg.get("catalog_provider") or "").strip().lower()
+    provider = (
+        str(catalog_cfg.get("provider") or ai_cfg.get("catalog_provider") or "").strip().lower()
+    )
     return provider or "openai"
 
 

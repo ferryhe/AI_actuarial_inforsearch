@@ -325,6 +325,7 @@ api_publish_ready_data_publication  # reason: FastAPI registers this decorated r
 api_rollback_ready_data_publication  # reason: FastAPI registers this decorated route.
 
 from ai_actuarial.api.routers.weekly_updates import (
+    WeeklySnapshotDetailModel,
     WeeklySnapshotFilesModel,
     api_weekly_explanation_detail,
     api_weekly_explanation_generate,
@@ -345,6 +346,7 @@ api_weekly_explanation_detail  # reason: FastAPI registers this decorated route.
 api_weekly_update_files  # reason: FastAPI registers this decorated route.
 api_weekly_update_detail  # reason: FastAPI registers this decorated route.
 WeeklySnapshotFilesModel.truncated  # reason: Pydantic serializes this response field.
+WeeklySnapshotDetailModel.summary_markdown  # reason: Pydantic serializes this response field.
 
 from ai_actuarial.web_listening_rule import (
     AcquisitionProfile,
@@ -370,6 +372,55 @@ RateLimitMiddleware.dispatch  # reason: Starlette invokes the middleware protoco
 from ai_actuarial.collectors.base import CollectionConfig
 
 CollectionConfig.auto_download  # reason: Public exported dataclass constructor field retained for compatibility.
+
+from ai_actuarial.config import Settings
+
+Settings.DATA_DIR  # reason: Public exported Settings contract.
+Settings.DOWNLOAD_DIR  # reason: Public exported Settings contract.
+Settings.SECRET_KEY  # reason: Public exported Settings contract.
+Settings.REQUIRE_AUTH  # reason: Public exported Settings contract.
+Settings.RATE_LIMIT_ENABLED  # reason: Public exported Settings contract.
+Settings.RATE_LIMIT_PER_MINUTE  # reason: Public exported Settings contract.
+Settings.RATE_LIMIT_BURST  # reason: Public exported Settings contract.
+Settings.DEFAULT_CHAT_QUOTA_PER_DAY  # reason: Public exported Settings contract.
+Settings.DEFAULT_CHAT_QUOTA_PER_WEEK  # reason: Public exported Settings contract.
+Settings.DEFAULT_CHAT_QUOTA_GUEST_PER_DAY  # reason: Public exported Settings contract.
+Settings.ENABLE_FILE_DELETION  # reason: Public exported Settings contract.
+Settings.FASTAPI_ENABLE_MIGRATION_INVENTORY  # reason: Public exported Settings contract.
+Settings.is_search_engine_configured  # reason: Public exported Settings method.
+
+from ai_actuarial.db_models import ChunkEmbedding, User, UserActivityLog, UserQuota
+
+User  # reason: SQLAlchemy discovers this declarative model through Base metadata.
+User.email_verified  # reason: SQLAlchemy maps this declarative column dynamically.
+User.email_verified_at  # reason: SQLAlchemy maps this declarative column dynamically.
+User.last_login_at  # reason: SQLAlchemy maps this declarative column dynamically.
+UserQuota  # reason: SQLAlchemy discovers this declarative model through Base metadata.
+UserQuota.ai_chat_count  # reason: SQLAlchemy maps this declarative column dynamically.
+UserActivityLog  # reason: SQLAlchemy discovers this declarative model through Base metadata.
+ChunkEmbedding.validated_at  # reason: SQLAlchemy maps this declarative column dynamically.
+
+from ai_actuarial.markdown_conversion_config import (
+    markdown_conversion_config_file_exists,
+)
+
+markdown_conversion_config_file_exists  # reason: Conversion registry resolves this public helper lazily.
+
+from ai_actuarial.shared_auth import PUBLIC_PERMISSIONS_WHEN_AUTH_DISABLED
+
+PUBLIC_PERMISSIONS_WHEN_AUTH_DISABLED  # reason: Explicit backwards-compatible public alias.
+
+from ai_actuarial.storage import Storage
+
+Storage.increment_ai_chat_quota  # reason: Explicit deprecated public compatibility method.
+
+from ai_actuarial.storage_factory import get_database_config_from_env
+
+get_database_config_from_env  # reason: Documented public configuration helper.
+
+from ai_actuarial.utils import _TextExtractor
+
+_TextExtractor.handle_data  # reason: HTMLParser invokes this protocol callback dynamically.
 
 from tests.agentic_rag.test_ready_data_builder import test_db_path
 from tests.conftest import admin_token, guest_token, sample_task, sample_user

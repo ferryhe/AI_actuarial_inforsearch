@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from typing import Any, Iterable, Mapping
 from urllib.parse import parse_qsl, unquote_plus, urlencode, urlsplit, urlunsplit
 
-
 ACQUISITION_DISPOSITIONS = (
     "downloaded_new",
     "already_exists",

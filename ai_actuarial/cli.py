@@ -13,7 +13,15 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .crawler import Crawler, SiteConfig
+from .ai_runtime import get_search_runtime_credentials
+from .api.services.weekly_updates import (
+    WeeklySnapshotNotFoundError,
+    WeeklySnapshotValidationError,
+    generate_weekly_update_summary,
+    get_latest_weekly_update_summary,
+    get_weekly_update_summary_files,
+    list_weekly_update_summaries,
+)
 from .catalog import (
     CATALOG_VERSION,
     CatalogItem,
@@ -23,24 +31,23 @@ from .catalog import (
     write_catalog_md,
 )
 from .catalog_incremental import run_incremental_catalog
+from .collectors import CollectionConfig
+from .collectors.file import FileCollector
+from .collectors.url import URLCollector
+from .crawler import Crawler, SiteConfig
 from .search import search_all
 from .search_acquisition import (
     format_acquisition_outcome,
     summarize_acquisition_outcomes,
 )
 from .shared_runtime import (
-    SitesConfigError,
     TRACKED_SITES_CONFIG_PATH,
+    SitesConfigError,
     bootstrap_sites_config,
     coerce_bool,
     get_sites_config_path,
     load_sites_config,
 )
-from .ai_runtime import get_search_runtime_credentials
-from .storage import Storage
-from .collectors import CollectionConfig
-from .collectors.url import URLCollector
-from .collectors.file import FileCollector
 from .sqlite_schema import (
     SchemaMigrationError,
     apply_schema,
@@ -48,14 +55,7 @@ from .sqlite_schema import (
     schema_plan,
     schema_status,
 )
-from .api.services.weekly_updates import (
-    WeeklySnapshotNotFoundError,
-    WeeklySnapshotValidationError,
-    generate_weekly_update_summary,
-    get_latest_weekly_update_summary,
-    get_weekly_update_summary_files,
-    list_weekly_update_summaries,
-)
+from .storage import Storage
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +87,7 @@ def _load_config(path: str) -> dict:
 def _site_configs(cfg: dict) -> list[SiteConfig]:
     sites = []
     defaults = cfg.get("defaults", {})
-    
+
     # Pre-calculated merged defaults for efficiency
     def_excl_kw = defaults.get("exclude_keywords", [])
     def_excl_pfx = defaults.get("exclude_prefixes", [])
@@ -284,7 +284,9 @@ def cmd_update(args: argparse.Namespace) -> int:
     storage.close()
 
     logger.info(f"New files: {len(all_new)}")
-    return 1 if search_summary and search_summary["failed"] and not search_summary["downloaded"] else 0
+    return (
+        1 if search_summary and search_summary["failed"] and not search_summary["downloaded"] else 0
+    )
 
 
 def cmd_export(args: argparse.Namespace) -> int:
@@ -371,7 +373,7 @@ def cmd_catalog(args: argparse.Namespace) -> int:
         write_catalog_md(out_md, items, append=args.append)
         logger.info(f"[legacy] Catalog items: {len(items)}")
         return 0
-    
+
     if args.legacy_incremental:
         out_jsonl = Path(args.output_jsonl)
         out_md = Path(args.output_md)
@@ -533,9 +535,7 @@ def pipeline_api_request(
     request = urllib.request.Request(url, headers=headers, method=method)
     try:
         # The API endpoint is supplied by the operator.
-        with urllib.request.urlopen(
-            request, timeout=_PIPELINE_API_TIMEOUT_SECONDS
-        ) as response:
+        with urllib.request.urlopen(request, timeout=_PIPELINE_API_TIMEOUT_SECONDS) as response:
             return json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")
@@ -686,11 +686,7 @@ def _get_api_task(args: argparse.Namespace, job_id: str) -> dict:
         timeout=args.timeout,
     )
     match = next(
-        (
-            task
-            for task in active.get("tasks") or []
-            if str(task.get("id") or "") == job_id
-        ),
+        (task for task in active.get("tasks") or [] if str(task.get("id") or "") == job_id),
         None,
     )
     if match is None:
@@ -702,11 +698,7 @@ def _get_api_task(args: argparse.Namespace, job_id: str) -> dict:
             timeout=args.timeout,
         )
         match = next(
-            (
-                task
-                for task in history.get("tasks") or []
-                if str(task.get("id") or "") == job_id
-            ),
+            (task for task in history.get("tasks") or [] if str(task.get("id") or "") == job_id),
             None,
         )
     if match is None:
@@ -766,10 +758,14 @@ def cmd_task_run(args: argparse.Namespace) -> int:
         try:
             decoded = json.loads(args.payload_json)
         except json.JSONDecodeError as exc:
-            _print_cli_payload({"success": False, "error": f"invalid --payload-json: {exc}"}, as_json=args.json)
+            _print_cli_payload(
+                {"success": False, "error": f"invalid --payload-json: {exc}"}, as_json=args.json
+            )
             return 2
         if not isinstance(decoded, dict):
-            _print_cli_payload({"success": False, "error": "--payload-json must be an object"}, as_json=args.json)
+            _print_cli_payload(
+                {"success": False, "error": "--payload-json must be an object"}, as_json=args.json
+            )
             return 2
         payload.update(decoded)
     payload["type"] = args.task_type
@@ -835,10 +831,7 @@ def cmd_embedding_coverage(args: argparse.Namespace) -> int:
 
 
 def cmd_kb_binding(args: argparse.Namespace) -> int:
-    path = (
-        "/api/rag/knowledge-bases/"
-        f"{urllib.parse.quote(args.kb_id, safe='')}/bindings"
-    )
+    path = "/api/rag/knowledge-bases/" f"{urllib.parse.quote(args.kb_id, safe='')}/bindings"
     payload = None
     method = "GET"
     if args.binding_cmd == "set":
@@ -1002,39 +995,48 @@ def build_parser() -> argparse.ArgumentParser:
     p_catalog.add_argument("--output-md", default="data/catalog.md", help="Markdown output path")
     # Incremental mode options (default)
     p_catalog.add_argument(
-        "--batch", type=int,
+        "--batch",
+        type=int,
         default=int(os.getenv("CATALOG_BATCH", "200")),
-        help="Batch size for incremental processing (default: 200)"
+        help="Batch size for incremental processing (default: 200)",
     )
     p_catalog.add_argument(
         "--version",
         "--catalog-version",
         dest="version",
         default=CATALOG_VERSION,
-        help="Version string for catalog (change to force reprocessing)"
+        help="Version string for catalog (change to force reprocessing)",
     )
     p_catalog.add_argument(
-        "--max-chars", type=int,
+        "--max-chars",
+        type=int,
         default=int(os.getenv("CATALOG_MAX_CHARS", "20000")),
-        help="Max characters to extract per file (default: 20000)"
+        help="Max characters to extract per file (default: 20000)",
     )
     p_catalog.add_argument(
-        "--output-jsonl", default="data/catalog.jsonl",
-        help="JSONL output path for incremental mode"
+        "--output-jsonl",
+        default="data/catalog.jsonl",
+        help="JSONL output path for incremental mode",
     )
     p_catalog.add_argument(
-        "--retry-errors", action="store_true",
-        help="Retry files that previously failed (e.g., Excel, corrupt PDFs)"
+        "--retry-errors",
+        action="store_true",
+        help="Retry files that previously failed (e.g., Excel, corrupt PDFs)",
     )
     # Legacy mode options
     p_catalog.add_argument(
-        "--legacy", action="store_true",
-        help="Use legacy mode: full rewrite to JSON instead of incremental JSONL"
+        "--legacy",
+        action="store_true",
+        help="Use legacy mode: full rewrite to JSON instead of incremental JSONL",
     )
     p_catalog.add_argument("--limit", type=int, default=100, help="[legacy] Max files to process")
     p_catalog.add_argument("--offset", type=int, default=0, help="[legacy] Skip the first N files")
-    p_catalog.add_argument("--output-json", default="data/catalog.json", help="[legacy] JSON output path")
-    p_catalog.add_argument("--append", action="store_true", help="[legacy] Append to existing outputs")
+    p_catalog.add_argument(
+        "--output-json", default="data/catalog.json", help="[legacy] JSON output path"
+    )
+    p_catalog.add_argument(
+        "--append", action="store_true", help="[legacy] Append to existing outputs"
+    )
     p_catalog.set_defaults(func=cmd_catalog)
 
     p_schema = sub.add_parser("schema", help="Inspect or apply SQLite schema migrations")
@@ -1162,7 +1164,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_pipeline = sub.add_parser("pipeline", help="Control the fixed five-step pipeline baton")
     p_pipeline_sub = p_pipeline.add_subparsers(dest="pipeline_cmd", required=True)
     for action in ("status", "start", "tick", "config"):
-        action_help = "Show saved pipeline baton configuration" if action == "config" else f"Pipeline baton {action}"
+        action_help = (
+            "Show saved pipeline baton configuration"
+            if action == "config"
+            else f"Pipeline baton {action}"
+        )
         p_pipeline_action = p_pipeline_sub.add_parser(action, help=action_help)
         p_pipeline_action.add_argument(
             "--api-url",
@@ -1185,15 +1191,31 @@ def build_parser() -> argparse.ArgumentParser:
     p_task_sub = p_task.add_subparsers(dest="task_cmd", required=True)
     p_task_run = p_task_sub.add_parser("run", help="Launch a generic background task")
     p_task_run.add_argument("--type", dest="task_type", required=True, help="Task type")
-    p_task_run.add_argument("--file-url", action="append", default=[], help="Stable file URL selector (repeatable)")
-    p_task_run.add_argument("--chunk-set-id", action="append", default=[], help="Stable chunk set selector (repeatable)")
+    p_task_run.add_argument(
+        "--file-url", action="append", default=[], help="Stable file URL selector (repeatable)"
+    )
+    p_task_run.add_argument(
+        "--chunk-set-id", action="append", default=[], help="Stable chunk set selector (repeatable)"
+    )
     p_task_run.add_argument("--profile-id", default=None, help="Chunk profile selector")
-    p_task_run.add_argument("--embedding-identity-key", default=None, help="Server-allowed embedding identity")
-    p_task_run.add_argument("--payload-json", default=None, help="Additional task payload as a JSON object")
-    p_task_run.add_argument("--api-url", default=os.getenv("AI_ACTUARIAL_API_URL", "http://127.0.0.1:5000"), help="FastAPI base URL")
-    p_task_run.add_argument("--token", default=os.getenv("AI_ACTUARIAL_API_TOKEN"), help="Bearer token")
+    p_task_run.add_argument(
+        "--embedding-identity-key", default=None, help="Server-allowed embedding identity"
+    )
+    p_task_run.add_argument(
+        "--payload-json", default=None, help="Additional task payload as a JSON object"
+    )
+    p_task_run.add_argument(
+        "--api-url",
+        default=os.getenv("AI_ACTUARIAL_API_URL", "http://127.0.0.1:5000"),
+        help="FastAPI base URL",
+    )
+    p_task_run.add_argument(
+        "--token", default=os.getenv("AI_ACTUARIAL_API_TOKEN"), help="Bearer token"
+    )
     p_task_run.add_argument("--wait", action="store_true", help="Wait for terminal task status")
-    p_task_run.add_argument("--timeout", type=float, default=300, help="Request/wait timeout in seconds")
+    p_task_run.add_argument(
+        "--timeout", type=float, default=300, help="Request/wait timeout in seconds"
+    )
     p_task_run.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
     p_task_run.set_defaults(func=cmd_task_run)
     for action, handler, action_help in (
@@ -1236,14 +1258,30 @@ def build_parser() -> argparse.ArgumentParser:
     p_embedding = sub.add_parser("embedding", help="Inspect persisted embedding coverage")
     p_embedding_sub = p_embedding.add_subparsers(dest="embedding_cmd", required=True)
     p_embedding_coverage = p_embedding_sub.add_parser("coverage", help="Query embedding coverage")
-    p_embedding_coverage.add_argument("--chunk-set-id", action="append", default=[], help="Stable chunk set selector (repeatable)")
-    p_embedding_coverage.add_argument("--file-url", action="append", default=[], help="Stable file URL selector (repeatable)")
+    p_embedding_coverage.add_argument(
+        "--chunk-set-id", action="append", default=[], help="Stable chunk set selector (repeatable)"
+    )
+    p_embedding_coverage.add_argument(
+        "--file-url", action="append", default=[], help="Stable file URL selector (repeatable)"
+    )
     p_embedding_coverage.add_argument("--profile-id", default=None, help="Chunk profile selector")
-    p_embedding_coverage.add_argument("--embedding-identity-key", default=None, help="Server-allowed embedding identity")
-    p_embedding_coverage.add_argument("--api-url", default=os.getenv("AI_ACTUARIAL_API_URL", "http://127.0.0.1:5000"), help="FastAPI base URL")
-    p_embedding_coverage.add_argument("--token", default=os.getenv("AI_ACTUARIAL_API_TOKEN"), help="Bearer token")
-    p_embedding_coverage.add_argument("--timeout", type=float, default=30, help="Request timeout in seconds")
-    p_embedding_coverage.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+    p_embedding_coverage.add_argument(
+        "--embedding-identity-key", default=None, help="Server-allowed embedding identity"
+    )
+    p_embedding_coverage.add_argument(
+        "--api-url",
+        default=os.getenv("AI_ACTUARIAL_API_URL", "http://127.0.0.1:5000"),
+        help="FastAPI base URL",
+    )
+    p_embedding_coverage.add_argument(
+        "--token", default=os.getenv("AI_ACTUARIAL_API_TOKEN"), help="Bearer token"
+    )
+    p_embedding_coverage.add_argument(
+        "--timeout", type=float, default=30, help="Request timeout in seconds"
+    )
+    p_embedding_coverage.add_argument(
+        "--json", action="store_true", help="Emit machine-readable JSON"
+    )
     p_embedding_coverage.set_defaults(func=cmd_embedding_coverage)
 
     p_kb = sub.add_parser("kb", help="Operate on knowledge-base resources")
@@ -1349,22 +1387,28 @@ def build_parser() -> argparse.ArgumentParser:
     # Collection commands using new modular structure
     p_collect = sub.add_parser("collect", help="Run specific collection workflow")
     p_collect_sub = p_collect.add_subparsers(dest="collect_type", required=True)
-    
+
     # URL collection
     p_collect_url = p_collect_sub.add_parser("url", help="Collect from specific URLs")
     p_collect_url.add_argument("urls", nargs="+", help="URLs to collect from")
     p_collect_url.add_argument("--name", default="URL Collection", help="Collection name")
-    p_collect_url.add_argument("--no-db-check", action="store_true", help="Skip database duplicate check")
+    p_collect_url.add_argument(
+        "--no-db-check", action="store_true", help="Skip database duplicate check"
+    )
     p_collect_url.set_defaults(func=cmd_collect_url)
-    
+
     # File import
     p_collect_file = p_collect_sub.add_parser("file", help="Import files from local filesystem")
     p_collect_file.add_argument("files", nargs="+", help="File paths to import")
     p_collect_file.add_argument("--name", default="File Import", help="Collection name")
-    p_collect_file.add_argument("--subdir", default="imported", help="Target subdirectory in data/files")
-    p_collect_file.add_argument("--no-db-check", action="store_true", help="Skip database duplicate check")
+    p_collect_file.add_argument(
+        "--subdir", default="imported", help="Target subdirectory in data/files"
+    )
+    p_collect_file.add_argument(
+        "--no-db-check", action="store_true", help="Skip database duplicate check"
+    )
     p_collect_file.set_defaults(func=cmd_collect_file)
-    
+
     p_api = sub.add_parser("api", help="Start FastAPI gateway for the React frontend")
     p_api.add_argument("--host", default="127.0.0.1", help="Host to bind to")
     p_api.add_argument("--port", type=int, default=5000, help="Port to bind to")
@@ -1384,9 +1428,9 @@ def cmd_collect_url(args: argparse.Namespace) -> int:
         cfg["defaults"]["user_agent"],
         default_delay_seconds=float(cfg["defaults"].get("delay_seconds", 0.5)),
     )
-    
+
     collector = URLCollector(storage, crawler)
-    
+
     config = CollectionConfig(
         name=args.name,
         source_type="url",
@@ -1395,11 +1439,11 @@ def cmd_collect_url(args: argparse.Namespace) -> int:
         file_exts=cfg["defaults"].get("file_exts", []),
         metadata={"urls": args.urls},
     )
-    
+
     result = collector.collect(config)
-    
+
     storage.close()
-    
+
     print("\nURL Collection Results:")
     logger.info(f"  Found: {result.items_found}")
     logger.info(f"  Downloaded: {result.items_downloaded}")
@@ -1408,7 +1452,7 @@ def cmd_collect_url(args: argparse.Namespace) -> int:
         logger.warning(f"  Errors: {len(result.errors)}")
         for error in result.errors[:5]:  # Show first 5 errors
             logger.warning(f"    - {error}")
-    
+
     return 0 if result.success else 1
 
 
@@ -1416,9 +1460,9 @@ def cmd_collect_file(args: argparse.Namespace) -> int:
     """Import files from local filesystem."""
     cfg = _load_config(args.config)
     storage = Storage(cfg["paths"]["db"])
-    
+
     collector = FileCollector(storage, cfg["paths"]["download_dir"])
-    
+
     config = CollectionConfig(
         name=args.name,
         source_type="file",
@@ -1428,11 +1472,11 @@ def cmd_collect_file(args: argparse.Namespace) -> int:
             "target_subdir": args.subdir,
         },
     )
-    
+
     result = collector.collect(config)
-    
+
     storage.close()
-    
+
     print("\nFile Import Results:")
     logger.info(f"  Found: {result.items_found}")
     logger.info(f"  Imported: {result.items_downloaded}")
@@ -1441,7 +1485,7 @@ def cmd_collect_file(args: argparse.Namespace) -> int:
         logger.warning(f"  Errors: {len(result.errors)}")
         for error in result.errors[:5]:  # Show first 5 errors
             logger.warning(f"    - {error}")
-    
+
     return 0 if result.success else 1
 
 

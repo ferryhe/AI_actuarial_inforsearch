@@ -11,7 +11,6 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable
 
-
 CURRENT_SQLITE_SCHEMA_VERSION = 12
 
 _AWARE_RFC3339_RE = re.compile(
@@ -115,9 +114,7 @@ _OPTIONAL_TABLE_ALLOWED_COLUMNS: dict[str, frozenset[str]] = {
             "metadata_path",
         }
     ),
-    "rag_kb_files": frozenset(
-        {"kb_id", "file_url", "added_at", "chunk_count", "indexed_at"}
-    ),
+    "rag_kb_files": frozenset({"kb_id", "file_url", "added_at", "chunk_count", "indexed_at"}),
     "rag_chunks": frozenset(
         {
             "chunk_id",
@@ -131,9 +128,7 @@ _OPTIONAL_TABLE_ALLOWED_COLUMNS: dict[str, frozenset[str]] = {
             "created_at",
         }
     ),
-    "rag_kb_category_mappings": frozenset(
-        {"kb_id", "category", "auto_sync", "created_at"}
-    ),
+    "rag_kb_category_mappings": frozenset({"kb_id", "category", "auto_sync", "created_at"}),
     "conversations": frozenset(
         {
             "conversation_id",
@@ -185,9 +180,7 @@ _OPTIONAL_TABLE_REQUIRED_COLUMNS: dict[str, frozenset[str]] = {
     ),
     "rag_kb_files": _OPTIONAL_TABLE_ALLOWED_COLUMNS["rag_kb_files"],
     "rag_chunks": _OPTIONAL_TABLE_ALLOWED_COLUMNS["rag_chunks"],
-    "rag_kb_category_mappings": _OPTIONAL_TABLE_ALLOWED_COLUMNS[
-        "rag_kb_category_mappings"
-    ],
+    "rag_kb_category_mappings": _OPTIONAL_TABLE_ALLOWED_COLUMNS["rag_kb_category_mappings"],
     "conversations": _OPTIONAL_TABLE_ALLOWED_COLUMNS["conversations"],
     "messages": _OPTIONAL_TABLE_ALLOWED_COLUMNS["messages"],
 }
@@ -254,15 +247,13 @@ def _baseline_storage_schema_v1(conn: sqlite3.Connection) -> None:
 
 
 def _add_taxonomy_state_v2(conn: sqlite3.Connection) -> None:
-    conn.execute(
-        """
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS taxonomy_state (
             id INTEGER PRIMARY KEY CHECK (id = 1),
             applied_hash TEXT NOT NULL,
             applied_at TEXT
         )
-        """
-    )
+        """)
     _set_user_version(conn, 2)
 
 
@@ -278,9 +269,7 @@ def _accept_version_1_source(
 def _add_taxonomy_categories_v3(conn: sqlite3.Connection) -> None:
     columns = {row[1] for row in conn.execute("PRAGMA table_info(taxonomy_state)")}
     if "applied_categories" not in columns:
-        conn.execute(
-            "ALTER TABLE taxonomy_state ADD COLUMN applied_categories TEXT"
-        )
+        conn.execute("ALTER TABLE taxonomy_state ADD COLUMN applied_categories TEXT")
     _set_user_version(conn, 3)
 
 
@@ -298,16 +287,12 @@ def _accept_version_2_source(
 def _add_files_content_kind_v4(conn: sqlite3.Connection) -> None:
     columns = {row[1] for row in conn.execute("PRAGMA table_info(files)")}
     if "content_kind" not in columns:
-        conn.execute(
-            "ALTER TABLE files ADD COLUMN content_kind TEXT DEFAULT 'file'"
-        )
+        conn.execute("ALTER TABLE files ADD COLUMN content_kind TEXT DEFAULT 'file'")
         # One-time backfill: existing HTML rows are web pages, not files.
         conn.execute(
-            "UPDATE files SET content_kind = 'web_page' "
-            "WHERE content_type LIKE 'text/html%'"
+            "UPDATE files SET content_kind = 'web_page' " "WHERE content_type LIKE 'text/html%'"
         )
-    conn.execute(
-        """
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS manifest_raw (
             manifest_id TEXT PRIMARY KEY,
             schema_version TEXT,
@@ -316,8 +301,7 @@ def _add_files_content_kind_v4(conn: sqlite3.Connection) -> None:
             manifest_json TEXT,
             ingested_at TEXT
         )
-        """
-    )
+        """)
     _set_user_version(conn, 4)
 
 
@@ -332,8 +316,7 @@ def _accept_version_3_source(
 
 def _add_pipeline_state_v5(conn: sqlite3.Connection) -> None:
     """Add the #179 pipeline state-machine tables (pipeline_run/stage/child_run)."""
-    conn.execute(
-        """
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS pipeline_run (
             run_id TEXT PRIMARY KEY,
             correlation_id TEXT NOT NULL DEFAULT '',
@@ -346,10 +329,8 @@ def _add_pipeline_state_v5(conn: sqlite3.Connection) -> None:
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         )
-        """
-    )
-    conn.execute(
-        """
+        """)
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS pipeline_stage (
             run_id TEXT NOT NULL,
             stage_name TEXT NOT NULL,
@@ -365,10 +346,8 @@ def _add_pipeline_state_v5(conn: sqlite3.Connection) -> None:
             updated_at TEXT NOT NULL,
             PRIMARY KEY(run_id, stage_name)
         )
-        """
-    )
-    conn.execute(
-        """
+        """)
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS child_run (
             child_run_id TEXT PRIMARY KEY,
             parent_run_id TEXT NOT NULL,
@@ -379,8 +358,7 @@ def _add_pipeline_state_v5(conn: sqlite3.Connection) -> None:
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         )
-        """
-    )
+        """)
     _set_user_version(conn, 5)
 
 
@@ -420,8 +398,7 @@ def _add_pipeline_fks_v6(conn: sqlite3.Connection) -> None:
     that no other table references, and existing rows are copied before the old
     table is dropped, so no data is lost.
     """
-    conn.execute(
-        """
+    conn.execute("""
         CREATE TABLE pipeline_stage_new (
             run_id TEXT NOT NULL,
             stage_name TEXT NOT NULL,
@@ -438,10 +415,8 @@ def _add_pipeline_fks_v6(conn: sqlite3.Connection) -> None:
             PRIMARY KEY(run_id, stage_name),
             FOREIGN KEY(run_id) REFERENCES pipeline_run(run_id)
         )
-        """
-    )
-    conn.execute(
-        """
+        """)
+    conn.execute("""
         INSERT INTO pipeline_stage_new (
             run_id, stage_name, stage_order, options_json, status, checkpoint_json,
             retry_count, committed_artifacts_json, error, started_at, finished_at,
@@ -452,13 +427,11 @@ def _add_pipeline_fks_v6(conn: sqlite3.Connection) -> None:
             retry_count, committed_artifacts_json, error, started_at, finished_at,
             updated_at
         FROM pipeline_stage
-        """
-    )
+        """)
     conn.execute("DROP TABLE pipeline_stage")
     conn.execute("ALTER TABLE pipeline_stage_new RENAME TO pipeline_stage")
 
-    conn.execute(
-        """
+    conn.execute("""
         CREATE TABLE child_run_new (
             child_run_id TEXT PRIMARY KEY,
             parent_run_id TEXT NOT NULL,
@@ -470,10 +443,8 @@ def _add_pipeline_fks_v6(conn: sqlite3.Connection) -> None:
             updated_at TEXT NOT NULL,
             FOREIGN KEY(parent_run_id) REFERENCES pipeline_run(run_id)
         )
-        """
-    )
-    conn.execute(
-        """
+        """)
+    conn.execute("""
         INSERT INTO child_run_new (
             child_run_id, parent_run_id, correlation_id, status, partial, error,
             created_at, updated_at
@@ -482,14 +453,11 @@ def _add_pipeline_fks_v6(conn: sqlite3.Connection) -> None:
             child_run_id, parent_run_id, correlation_id, status, partial, error,
             created_at, updated_at
         FROM child_run
-        """
-    )
+        """)
     conn.execute("DROP TABLE child_run")
     conn.execute("ALTER TABLE child_run_new RENAME TO child_run")
 
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_pipeline_run_status ON pipeline_run(status)"
-    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_pipeline_run_status ON pipeline_run(status)")
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_child_run_parent_run_id ON child_run(parent_run_id)"
     )
@@ -607,8 +575,7 @@ def _add_chunk_embedding_identity_v8(conn: sqlite3.Connection) -> None:
     for table, columns in prerequisites.items():
         _require_migration_columns(tables, table, columns)
 
-    conn.execute(
-        """
+    conn.execute("""
         CREATE TABLE file_chunk_sets_v8 (
             chunk_set_id TEXT PRIMARY KEY,
             file_url TEXT NOT NULL,
@@ -623,10 +590,8 @@ def _add_chunk_embedding_identity_v8(conn: sqlite3.Connection) -> None:
             FOREIGN KEY(file_url) REFERENCES files(url) ON DELETE CASCADE,
             FOREIGN KEY(profile_id) REFERENCES chunk_profiles(profile_id) ON DELETE CASCADE
         )
-        """
-    )
-    conn.execute(
-        """
+        """)
+    conn.execute("""
         INSERT INTO file_chunk_sets_v8 (
             chunk_set_id, file_url, profile_id, markdown_hash, profile_config_hash,
             status, chunk_count, created_at, updated_at
@@ -636,10 +601,8 @@ def _add_chunk_embedding_identity_v8(conn: sqlite3.Connection) -> None:
             s.status, s.chunk_count, s.created_at, s.updated_at
         FROM file_chunk_sets s
         JOIN chunk_profiles p ON p.profile_id = s.profile_id
-        """
-    )
-    conn.execute(
-        """
+        """)
+    conn.execute("""
         CREATE TABLE global_chunks_v8 (
             chunk_id TEXT PRIMARY KEY,
             chunk_set_id TEXT NOT NULL,
@@ -652,11 +615,9 @@ def _add_chunk_embedding_identity_v8(conn: sqlite3.Connection) -> None:
             UNIQUE(chunk_set_id, chunk_index),
             FOREIGN KEY(chunk_set_id) REFERENCES file_chunk_sets_v8(chunk_set_id) ON DELETE CASCADE
         )
-        """
-    )
+        """)
     conn.execute("INSERT INTO global_chunks_v8 SELECT * FROM global_chunks")
-    conn.execute(
-        """
+    conn.execute("""
         CREATE TABLE chunk_embeddings_v8 (
             chunk_id TEXT NOT NULL,
             embedding_identity_key TEXT NOT NULL,
@@ -673,15 +634,15 @@ def _add_chunk_embedding_identity_v8(conn: sqlite3.Connection) -> None:
             PRIMARY KEY (chunk_id, embedding_identity_key),
             FOREIGN KEY(chunk_id) REFERENCES global_chunks_v8(chunk_id) ON DELETE CASCADE
         )
-        """
-    )
+        """)
     rows = conn.execute(
         "SELECT chunk_id, embedding_model, dim, vector_json, created_at FROM chunk_embeddings"
     ).fetchall()
     for chunk_id, model, dimension, vector_json, created_at in rows:
-        legacy_key = "legacy:" + hashlib.sha256(
-            f"{model or ''}\0{int(dimension or 0)}".encode("utf-8")
-        ).hexdigest()
+        legacy_key = (
+            "legacy:"
+            + hashlib.sha256(f"{model or ''}\0{int(dimension or 0)}".encode("utf-8")).hexdigest()
+        )
         conn.execute(
             """
             INSERT INTO chunk_embeddings_v8 (
@@ -701,8 +662,7 @@ def _add_chunk_embedding_identity_v8(conn: sqlite3.Connection) -> None:
                 created_at,
             ),
         )
-    conn.execute(
-        """
+    conn.execute("""
         CREATE TABLE kb_chunk_bindings_v8 (
             kb_id TEXT NOT NULL,
             file_url TEXT NOT NULL,
@@ -715,11 +675,9 @@ def _add_chunk_embedding_identity_v8(conn: sqlite3.Connection) -> None:
             FOREIGN KEY(file_url) REFERENCES files(url) ON DELETE CASCADE,
             FOREIGN KEY(chunk_set_id) REFERENCES file_chunk_sets_v8(chunk_set_id) ON DELETE CASCADE
         )
-        """
-    )
+        """)
     conn.execute("INSERT INTO kb_chunk_bindings_v8 SELECT * FROM kb_chunk_bindings")
-    conn.execute(
-        """
+    conn.execute("""
         CREATE TABLE kb_index_items_v8 (
             index_version_id TEXT NOT NULL,
             chunk_id TEXT NOT NULL,
@@ -727,16 +685,14 @@ def _add_chunk_embedding_identity_v8(conn: sqlite3.Connection) -> None:
             FOREIGN KEY(index_version_id) REFERENCES kb_index_versions(index_version_id) ON DELETE CASCADE,
             FOREIGN KEY(chunk_id) REFERENCES global_chunks_v8(chunk_id) ON DELETE CASCADE
         )
-        """
-    )
+        """)
     # V7 chunk embeddings cannot prove the identity or vector order behind any
     # legacy KB artifact. Keep the source chunks/bindings, but force a rebuild
     # instead of manufacturing a ready mapping from chunk_id order. Rebuilding
     # the ready-pointer table also works for schema-only deployments where its
     # optional rag_knowledge_bases parent has never been created.
     conn.execute("DROP TABLE kb_ready_index_state")
-    conn.execute(
-        """
+    conn.execute("""
         CREATE TABLE kb_ready_index_state (
             kb_id TEXT PRIMARY KEY,
             index_version_id TEXT NOT NULL,
@@ -746,8 +702,7 @@ def _add_chunk_embedding_identity_v8(conn: sqlite3.Connection) -> None:
             updated_at TEXT NOT NULL,
             FOREIGN KEY(kb_id) REFERENCES rag_knowledge_bases(kb_id) ON DELETE CASCADE
         )
-        """
-    )
+        """)
     conn.execute("DELETE FROM kb_index_versions")
 
     for table in (
@@ -766,24 +721,14 @@ def _add_chunk_embedding_identity_v8(conn: sqlite3.Connection) -> None:
         ("kb_index_items_v8", "kb_index_items"),
     ):
         conn.execute(f"ALTER TABLE {source} RENAME TO {target}")
-    conn.execute(
-        "CREATE INDEX idx_file_chunk_sets_file_url ON file_chunk_sets(file_url)"
-    )
-    conn.execute(
-        "CREATE INDEX idx_file_chunk_sets_profile_id ON file_chunk_sets(profile_id)"
-    )
-    conn.execute(
-        "CREATE INDEX idx_global_chunks_chunk_set_id ON global_chunks(chunk_set_id)"
-    )
+    conn.execute("CREATE INDEX idx_file_chunk_sets_file_url ON file_chunk_sets(file_url)")
+    conn.execute("CREATE INDEX idx_file_chunk_sets_profile_id ON file_chunk_sets(profile_id)")
+    conn.execute("CREATE INDEX idx_global_chunks_chunk_set_id ON global_chunks(chunk_set_id)")
     conn.execute(
         "CREATE INDEX idx_chunk_embeddings_identity ON chunk_embeddings(embedding_identity_key)"
     )
-    conn.execute(
-        "CREATE INDEX idx_kb_chunk_bindings_kb_id ON kb_chunk_bindings(kb_id)"
-    )
-    conn.execute(
-        "CREATE INDEX idx_kb_chunk_bindings_file_url ON kb_chunk_bindings(file_url)"
-    )
+    conn.execute("CREATE INDEX idx_kb_chunk_bindings_kb_id ON kb_chunk_bindings(kb_id)")
+    conn.execute("CREATE INDEX idx_kb_chunk_bindings_file_url ON kb_chunk_bindings(file_url)")
     violations = conn.execute("PRAGMA foreign_key_check").fetchall()
     if violations:
         raise SchemaMigrationError("embedding identity migration broke foreign-key references")
@@ -840,9 +785,7 @@ def _accept_version_7_source(
         "kb_index_items": frozenset({"index_version_id", "chunk_id"}),
     }
     chunk_v7_tables = frozenset({"file_chunk_sets", "chunk_embeddings"})
-    kb_index_tables = frozenset(
-        {"kb_index_versions", "kb_ready_index_state", "kb_index_items"}
-    )
+    kb_index_tables = frozenset({"kb_index_versions", "kb_ready_index_state", "kb_index_items"})
     if any(
         table not in tables or _column_names(tables[table]) != old_columns[table]
         for table in chunk_v7_tables
@@ -862,8 +805,7 @@ def _accept_version_7_source(
         if table in tables and _column_names(tables[table]) == old_columns[table]
     )
     if any(
-        table not in kb_v7_tables
-        and (table not in tables or tables[table] != expected[table])
+        table not in kb_v7_tables and (table not in tables or tables[table] != expected[table])
         for table in kb_index_tables
     ):
         return False
@@ -875,10 +817,14 @@ def _accept_version_7_source(
         actual_by_name = {column[0]: column for column in actual_signature.columns}
         expected_by_name = {column[0]: column for column in expected[table].columns}
         for name in columns:
-            legacy_embedding_column = {
-                "embedding_model": ("embedding_model", "TEXT", 1, None, 2, 0),
-                "dim": ("dim", "INTEGER", 1, "0", 0, 0),
-            }.get(name) if table == "chunk_embeddings" else None
+            legacy_embedding_column = (
+                {
+                    "embedding_model": ("embedding_model", "TEXT", 1, None, 2, 0),
+                    "dim": ("dim", "INTEGER", 1, "0", 0, 0),
+                }.get(name)
+                if table == "chunk_embeddings"
+                else None
+            )
             if legacy_embedding_column is not None:
                 if actual_by_name[name] != legacy_embedding_column:
                     return False
@@ -888,12 +834,11 @@ def _accept_version_7_source(
                 return False
         expected_indexes = expected_v7_indexes[table]
         if table == "file_chunk_sets" and not kb_v7_tables:
-            expected_indexes = tuple(
-                index for index in expected_indexes if index[1] != "c"
-            )
-        if not _indexes_equivalent(
-            actual_signature.indexes, expected_indexes
-        ) or actual_signature.foreign_keys != expected[table].foreign_keys:
+            expected_indexes = tuple(index for index in expected_indexes if index[1] != "c")
+        if (
+            not _indexes_equivalent(actual_signature.indexes, expected_indexes)
+            or actual_signature.foreign_keys != expected[table].foreign_keys
+        ):
             return False
     adjusted = dict(tables)
     for table in v7_tables:
@@ -925,8 +870,7 @@ def _add_kb_index_contract_v9(conn: sqlite3.Connection) -> None:
 
     item_columns = {row[1] for row in conn.execute("PRAGMA table_info(kb_index_items)")}
     if "vector_ordinal" not in item_columns:
-        conn.execute(
-            """
+        conn.execute("""
             CREATE TABLE kb_index_items_v9 (
                 index_version_id TEXT NOT NULL,
                 chunk_id TEXT NOT NULL,
@@ -936,18 +880,15 @@ def _add_kb_index_contract_v9(conn: sqlite3.Connection) -> None:
                 FOREIGN KEY(index_version_id) REFERENCES kb_index_versions(index_version_id) ON DELETE CASCADE,
                 FOREIGN KEY(chunk_id) REFERENCES global_chunks(chunk_id) ON DELETE CASCADE
             )
-            """
-        )
-        conn.execute(
-            """
+            """)
+        conn.execute("""
             INSERT INTO kb_index_items_v9 (index_version_id, chunk_id, vector_ordinal)
             SELECT index_version_id, chunk_id,
                    ROW_NUMBER() OVER (
                        PARTITION BY index_version_id ORDER BY chunk_id
                    ) - 1
             FROM kb_index_items
-            """
-        )
+            """)
         conn.execute("DROP TABLE kb_index_items")
         conn.execute("ALTER TABLE kb_index_items_v9 RENAME TO kb_index_items")
 
@@ -972,9 +913,7 @@ def _accept_version_8_source(
         "kb_index_versions": frozenset(
             {"index_version_id", "kb_id", "embedding_model", "artifact_path"}
         ),
-        "kb_ready_index_state": frozenset(
-            {"kb_id", "index_version_id", "embedding_model"}
-        ),
+        "kb_ready_index_state": frozenset({"kb_id", "index_version_id", "embedding_model"}),
         "kb_index_items": frozenset({"index_version_id", "chunk_id"}),
     }
     return all(
@@ -984,8 +923,7 @@ def _accept_version_8_source(
 
 
 def _add_agentic_ready_manual_operation_state_v10(conn: sqlite3.Connection) -> None:
-    conn.execute(
-        """
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS agentic_ready_manual_operation_state (
             kb_id TEXT NOT NULL,
             profile TEXT NOT NULL,
@@ -997,8 +935,7 @@ def _add_agentic_ready_manual_operation_state_v10(conn: sqlite3.Connection) -> N
             CHECK(operation_state IN ('succeeded', 'failed')),
             FOREIGN KEY(kb_id) REFERENCES rag_knowledge_bases(kb_id) ON DELETE CASCADE
         )
-        """
-    )
+        """)
     _set_user_version(conn, 10)
 
 
@@ -1028,8 +965,7 @@ def _canonical_legacy_weekly_boundary(value: Any) -> tuple[datetime, str] | None
 
 def _add_weekly_snapshots_v11(conn: sqlite3.Connection) -> None:
     """Add immutable weekly snapshots and backfill legacy summary rows."""
-    conn.execute(
-        """
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS weekly_snapshots (
             id TEXT PRIMARY KEY,
             period_start TEXT NOT NULL,
@@ -1041,10 +977,8 @@ def _add_weekly_snapshots_v11(conn: sqlite3.Connection) -> None:
             metadata_json TEXT NOT NULL DEFAULT '{}',
             CHECK(status IN ('published', 'superseded', 'failed'))
         )
-        """
-    )
-    conn.execute(
-        """
+        """)
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS weekly_snapshot_members (
             snapshot_id TEXT NOT NULL,
             file_url TEXT NOT NULL,
@@ -1054,44 +988,33 @@ def _add_weekly_snapshots_v11(conn: sqlite3.Connection) -> None:
             PRIMARY KEY(snapshot_id, file_url),
             FOREIGN KEY(snapshot_id) REFERENCES weekly_snapshots(id) ON DELETE CASCADE
         )
-        """
-    )
-    conn.execute(
-        """
+        """)
+    conn.execute("""
         CREATE UNIQUE INDEX IF NOT EXISTS idx_weekly_snapshots_published_period
         ON weekly_snapshots(period_start, period_end)
         WHERE status = 'published'
-        """
-    )
-    conn.execute(
-        """
+        """)
+    conn.execute("""
         CREATE INDEX IF NOT EXISTS idx_weekly_snapshots_list
         ON weekly_snapshots(status, period_end DESC, generated_at DESC)
-        """
-    )
-    conn.execute(
-        """
+        """)
+    conn.execute("""
         CREATE INDEX IF NOT EXISTS idx_weekly_snapshot_members_page
         ON weekly_snapshot_members(snapshot_id, ordinal)
-        """
-    )
+        """)
 
-    legacy_rows = conn.execute(
-        """
+    legacy_rows = conn.execute("""
         SELECT id, period_start, period_end, generated_at, file_count,
                files_json, summary_markdown, metadata_json
         FROM weekly_update_summaries
-        """
-    ).fetchall()
+        """).fetchall()
     valid_legacy_rows: list[tuple[str, str, str, str, sqlite3.Row | tuple[Any, ...]]] = []
     for row in legacy_rows:
         start = _canonical_legacy_weekly_boundary(row[1])
         end = _canonical_legacy_weekly_boundary(row[2])
         if start is None or end is None or end[0] <= start[0]:
             continue
-        valid_legacy_rows.append(
-            (start[1], end[1], str(row[3]), str(row[0]), row)
-        )
+        valid_legacy_rows.append((start[1], end[1], str(row[3]), str(row[0]), row))
     valid_legacy_rows.sort(key=lambda item: item[:4])
 
     for period_start, period_end, _generated_at, snapshot_id, row in valid_legacy_rows:
@@ -1131,13 +1054,9 @@ def _add_weekly_snapshots_v11(conn: sqlite3.Connection) -> None:
                 (file_url,),
             ).fetchone()
             first_seen = str(
-                item.get("first_seen")
-                or (current[0] if current else "")
-                or period_start
+                item.get("first_seen") or (current[0] if current else "") or period_start
             )
-            original_filename = item.get("original_filename") or (
-                current[1] if current else None
-            )
+            original_filename = item.get("original_filename") or (current[1] if current else None)
             conn.execute(
                 """
                 INSERT OR IGNORE INTO weekly_snapshot_members (
@@ -1175,8 +1094,7 @@ def _accept_version_10_source(
 
 def _add_weekly_explanations_v12(conn: sqlite3.Connection) -> None:
     """Add persisted bilingual explanations bound to immutable snapshots."""
-    conn.execute(
-        """
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS weekly_explanations (
             snapshot_id TEXT PRIMARY KEY,
             input_fingerprint TEXT NOT NULL,
@@ -1195,8 +1113,7 @@ def _add_weekly_explanations_v12(conn: sqlite3.Connection) -> None:
             CHECK(status IN ('complete', 'failed')),
             FOREIGN KEY(snapshot_id) REFERENCES weekly_snapshots(id) ON DELETE CASCADE
         )
-        """
-    )
+        """)
     _set_user_version(conn, 12)
 
 
@@ -1308,9 +1225,7 @@ def _index_columns(
     conn: sqlite3.Connection,
     index_name: str,
 ) -> tuple[IndexColumnSignature, ...]:
-    rows = conn.execute(
-        f"PRAGMA index_xinfo({_quote_identifier(index_name)})"
-    ).fetchall()
+    rows = conn.execute(f"PRAGMA index_xinfo({_quote_identifier(index_name)})").fetchall()
     return tuple(
         (
             int(row[0]),
@@ -1334,9 +1249,7 @@ def _table_signature(conn: sqlite3.Connection, table: str) -> TableSignature:
             int(row[5]),
             int(row[6]),
         )
-        for row in conn.execute(
-            f"PRAGMA table_xinfo({_quote_identifier(table)})"
-        ).fetchall()
+        for row in conn.execute(f"PRAGMA table_xinfo({_quote_identifier(table)})").fetchall()
     )
     indexes = tuple(
         sorted(
@@ -1346,9 +1259,7 @@ def _table_signature(conn: sqlite3.Connection, table: str) -> TableSignature:
                 int(row[4]),
                 _index_columns(conn, str(row[1])),
             )
-            for row in conn.execute(
-                f"PRAGMA index_list({_quote_identifier(table)})"
-            ).fetchall()
+            for row in conn.execute(f"PRAGMA index_list({_quote_identifier(table)})").fetchall()
         )
     )
     foreign_keys = tuple(
@@ -1391,8 +1302,7 @@ def _schema_signature(conn: sqlite3.Connection) -> dict[str, TableSignature]:
 @lru_cache(maxsize=1)
 def _version_7_index_signatures() -> dict[str, tuple[IndexSignature, ...]]:
     with sqlite3.connect(":memory:") as conn:
-        conn.executescript(
-            """
+        conn.executescript("""
             CREATE TABLE file_chunk_sets (
                 chunk_set_id TEXT PRIMARY KEY,
                 file_url TEXT,
@@ -1418,21 +1328,18 @@ def _version_7_index_signatures() -> dict[str, tuple[IndexSignature, ...]]:
                 chunk_id TEXT,
                 PRIMARY KEY (index_version_id, chunk_id)
             );
-            """
-        )
+            """)
         signatures = _schema_signature(conn)
     return {table: signature.indexes for table, signature in signatures.items()}
 
 
 def _user_schema_objects(conn: sqlite3.Connection) -> tuple[SchemaObject, ...]:
-    rows = conn.execute(
-        """
+    rows = conn.execute("""
         SELECT type, name, tbl_name
         FROM sqlite_schema
         WHERE name NOT LIKE 'sqlite_%'
         ORDER BY type, name, tbl_name
-        """
-    ).fetchall()
+        """).fetchall()
     return tuple(
         (
             str(row[0] or ""),
@@ -1453,9 +1360,7 @@ def _captured_index_names(
 ) -> frozenset[str]:
     names: set[str] = set()
     for table in tables:
-        rows = conn.execute(
-            f"PRAGMA index_list({_quote_identifier(table)})"
-        ).fetchall()
+        rows = conn.execute(f"PRAGMA index_list({_quote_identifier(table)})").fetchall()
         names.update(str(row[1]) for row in rows)
     return frozenset(names)
 
@@ -1736,10 +1641,7 @@ def _optional_column_signature_variants() -> dict[str, dict[str, frozenset[Colum
                 per_table.setdefault(column[0], set()).add(column)
         column_variants[table] = per_table
     return {
-        table: {
-            column: frozenset(signatures)
-            for column, signatures in per_table.items()
-        }
+        table: {column: frozenset(signatures) for column, signatures in per_table.items()}
         for table, per_table in column_variants.items()
     }
 
@@ -1783,8 +1685,7 @@ def _indexes_equivalent(
         ] = Counter()
         for unique, origin, partial, columns in indexes:
             norm_columns = tuple(
-                (seqno, name, desc, coll, key)
-                for seqno, _cid, name, desc, coll, key in columns
+                (seqno, name, desc, coll, key) for seqno, _cid, name, desc, coll, key in columns
             )
             normalized[(unique, origin, partial, norm_columns)] += 1
         return normalized
@@ -1896,7 +1797,8 @@ def _schema_validation(
             sorted(
                 name
                 for name in actual_columns & allowed_extra_columns
-                if actual_by_name[name] not in allowed_extra_signatures.get(
+                if actual_by_name[name]
+                not in allowed_extra_signatures.get(
                     name,
                     frozenset(),
                 )

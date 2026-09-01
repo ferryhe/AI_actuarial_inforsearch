@@ -12,6 +12,7 @@ from typing import Any
 from sqlalchemy import and_
 
 from .db_models import AuthToken
+
 # ApiToken maps to the 'api_tokens' table and is the only correct model for
 # LLM provider token CRUD.  If the import fails the module is mis-installed
 # and we must not silently continue with an incompatible AuthToken alias.
@@ -26,37 +27,35 @@ except ImportError as exc:
 
 class StorageV2AuthMixin:
     """Mixin providing Auth token and LLM provider operations."""
-    
+
     def __init__(self, db_config: dict[str, Any]) -> None:
         """Initialize storage with database configuration."""
         self.backend = None
         self.db_path = db_config.get("path") if db_config.get("type") == "sqlite" else None
-    
+
     @property
     def _session(self):
         return self.backend.get_session()
-    
+
     @property
     def _conn(self):
         return self._session.connection()
-    
+
     def now(self) -> str:
         """Get current timestamp."""
         return datetime.now(timezone.utc).isoformat()
-    
+
     # ---------------------------------------------------------------------------
     # Auth Token Management
     # ---------------------------------------------------------------------------
-    
+
     def get_auth_token_by_id(self, token_id: int) -> dict | None:
         """Get auth token by ID."""
-        token = self._session.query(AuthToken).filter(
-            AuthToken.id == int(token_id)
-        ).first()
-        
+        token = self._session.query(AuthToken).filter(AuthToken.id == int(token_id)).first()
+
         if not token:
             return None
-        
+
         return {
             "id": token.id,
             "subject": token.subject,
@@ -67,16 +66,16 @@ class StorageV2AuthMixin:
             "revoked_at": token.revoked_at,
             "expires_at": token.expires_at,
         }
-    
+
     def get_auth_token_by_hash(self, token_hash: str) -> dict | None:
         """Get auth token by hash."""
-        token = self._session.query(AuthToken).filter(
-            AuthToken.token_hash == str(token_hash)
-        ).first()
-        
+        token = (
+            self._session.query(AuthToken).filter(AuthToken.token_hash == str(token_hash)).first()
+        )
+
         if not token:
             return None
-        
+
         return {
             "id": token.id,
             "subject": token.subject,
@@ -87,11 +86,11 @@ class StorageV2AuthMixin:
             "revoked_at": token.revoked_at,
             "expires_at": token.expires_at,
         }
-    
+
     def list_auth_tokens(self) -> list[dict]:
         """List all auth tokens."""
         tokens = self._session.query(AuthToken).order_by(AuthToken.id.desc()).all()
-        
+
         return [
             {
                 "id": t.id,
@@ -105,7 +104,7 @@ class StorageV2AuthMixin:
             }
             for t in tokens
         ]
-    
+
     def create_auth_token(
         self,
         *,
@@ -116,7 +115,7 @@ class StorageV2AuthMixin:
     ) -> int:
         """Create a new auth token."""
         ts = self.now()
-        
+
         token = AuthToken(
             subject=str(subject),
             group_name=str(group_name),
@@ -127,9 +126,9 @@ class StorageV2AuthMixin:
         )
         self._session.add(token)
         self.backend._maybe_commit()
-        
+
         return int(token.id)
-    
+
     def upsert_auth_token_by_hash(
         self,
         *,
@@ -140,18 +139,18 @@ class StorageV2AuthMixin:
     ) -> int:
         """Upsert auth token by hash."""
         ts = self.now()
-        
-        existing = self._session.query(AuthToken).filter(
-            AuthToken.token_hash == str(token_hash)
-        ).first()
-        
+
+        existing = (
+            self._session.query(AuthToken).filter(AuthToken.token_hash == str(token_hash)).first()
+        )
+
         if existing:
             existing.subject = str(subject)
             existing.group_name = str(group_name)
             existing.is_active = 1 if is_active else 0
             self.backend._maybe_commit()
             return int(existing.id)
-        
+
         token = AuthToken(
             subject=str(subject),
             group_name=str(group_name),
@@ -161,44 +160,52 @@ class StorageV2AuthMixin:
         )
         self._session.add(token)
         self.backend._maybe_commit()
-        
+
         return int(token.id)
-    
+
     def revoke_auth_token(self, token_id: int) -> bool:
         """Revoke an auth token."""
         ts = self.now()
-        
-        token = self._session.query(AuthToken).filter(
-            AuthToken.id == int(token_id)
-        ).first()
-        
+
+        token = self._session.query(AuthToken).filter(AuthToken.id == int(token_id)).first()
+
         if not token:
             return False
-        
+
         token.is_active = 0
         token.revoked_at = ts
         self.backend._maybe_commit()
-        
+
         return True
-    
+
     def touch_auth_token_last_used(self, token_id: int) -> None:
         """Update last_used_at for an auth token."""
         ts = self.now()
-        
-        self._session.query(AuthToken).filter(
-            AuthToken.id == int(token_id)
-        ).update({"last_used_at": ts})
+
+        self._session.query(AuthToken).filter(AuthToken.id == int(token_id)).update(
+            {"last_used_at": ts}
+        )
         self.backend._maybe_commit()
-    
+
     # ---------------------------------------------------------------------------
     # LLM Provider API Token Management
     # ---------------------------------------------------------------------------
-    
+
     _LLM_TOKEN_COLS = (
-        "id", "provider", "category", "instance_id", "label", "is_default", "api_key_encrypted",
-        "api_base_url", "status", "created_at", "updated_at", "notes",
+        "id",
+        "provider",
+        "category",
+        "instance_id",
+        "label",
+        "is_default",
+        "api_key_encrypted",
+        "api_base_url",
+        "status",
+        "created_at",
+        "updated_at",
+        "notes",
     )
-    
+
     def upsert_llm_provider(
         self,
         provider: str,
@@ -221,16 +228,23 @@ class StorageV2AuthMixin:
                     ApiToken.provider == provider,
                     ApiToken.category == category,
                 )
-            ).update({"is_default": 0, "updated_at": datetime.now(timezone.utc)}, synchronize_session=False)
-
-        existing = self._session.query(ApiToken).filter(
-            and_(
-                ApiToken.provider == provider,
-                ApiToken.category == category,
-                ApiToken.instance_id == normalized_instance,
+            ).update(
+                {"is_default": 0, "updated_at": datetime.now(timezone.utc)},
+                synchronize_session=False,
             )
-        ).first()
-        
+
+        existing = (
+            self._session.query(ApiToken)
+            .filter(
+                and_(
+                    ApiToken.provider == provider,
+                    ApiToken.category == category,
+                    ApiToken.instance_id == normalized_instance,
+                )
+            )
+            .first()
+        )
+
         if existing:
             existing.label = normalized_label
             existing.is_default = 1 if is_default else 0
@@ -257,28 +271,27 @@ class StorageV2AuthMixin:
             self._session.add(api_token)
             self._session.flush()
             token_id = int(api_token.id)
-        
+
         self.backend._maybe_commit()
         return token_id
-    
+
     def get_llm_provider(
         self, provider: str, category: str = "llm", instance_id: str | None = None
     ) -> dict | None:
         """Get a single LLM provider record."""
         query = self._session.query(ApiToken).filter(
-            and_(
-                ApiToken.provider == provider,
-                ApiToken.category == category
-            )
+            and_(ApiToken.provider == provider, ApiToken.category == category)
         )
         if instance_id:
             token = query.filter(ApiToken.instance_id == instance_id).first()
         else:
-            token = query.order_by(ApiToken.is_default.desc(), ApiToken.updated_at.desc(), ApiToken.id.desc()).first()
-        
+            token = query.order_by(
+                ApiToken.is_default.desc(), ApiToken.updated_at.desc(), ApiToken.id.desc()
+            ).first()
+
         if not token:
             return None
-        
+
         return {
             "id": token.id,
             "provider": token.provider,
@@ -293,13 +306,21 @@ class StorageV2AuthMixin:
             "updated_at": str(token.updated_at) if token.updated_at else None,
             "notes": token.notes,
         }
-    
+
     def list_llm_providers(self, category: str = "llm") -> list[dict]:
         """List all LLM provider records for the given category."""
-        tokens = self._session.query(ApiToken).filter(
-            ApiToken.category == category
-        ).order_by(ApiToken.provider, ApiToken.is_default.desc(), ApiToken.updated_at.desc(), ApiToken.id.desc()).all()
-        
+        tokens = (
+            self._session.query(ApiToken)
+            .filter(ApiToken.category == category)
+            .order_by(
+                ApiToken.provider,
+                ApiToken.is_default.desc(),
+                ApiToken.updated_at.desc(),
+                ApiToken.id.desc(),
+            )
+            .all()
+        )
+
         return [
             {
                 "id": t.id,
@@ -317,18 +338,17 @@ class StorageV2AuthMixin:
             }
             for t in tokens
         ]
-    
-    def delete_llm_provider(self, provider: str, category: str = "llm", instance_id: str | None = None) -> bool:
+
+    def delete_llm_provider(
+        self, provider: str, category: str = "llm", instance_id: str | None = None
+    ) -> bool:
         """Delete an LLM provider record."""
         query = self._session.query(ApiToken).filter(
-            and_(
-                ApiToken.provider == provider,
-                ApiToken.category == category
-            )
+            and_(ApiToken.provider == provider, ApiToken.category == category)
         )
         if instance_id:
             query = query.filter(ApiToken.instance_id == instance_id)
         deleted = query.delete(synchronize_session=False)
-        
+
         self.backend._maybe_commit()
         return deleted > 0
