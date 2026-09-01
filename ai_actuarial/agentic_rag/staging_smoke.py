@@ -13,16 +13,13 @@ from typing import Any, Iterator
 
 from .agentic_loop import run_agentic_rag_loop
 
-
 STAGING_SMOKE_CONTRACT_VERSION = "ready-data-staging-smoke.v1"
 STAGING_SMOKE_QUERY_MAX_CHARS = 160
 STAGING_SMOKE_IDENTIFIER_MAX_CHARS = 512
 
 
 def _bounded_text(value: Any, max_chars: int) -> str:
-    text = " ".join(
-        unicodedata.normalize("NFKC", str(value or "")).split()
-    ).strip()
+    text = " ".join(unicodedata.normalize("NFKC", str(value or "")).split()).strip()
     return text[:max_chars].rstrip()
 
 
@@ -98,18 +95,10 @@ def select_staging_smoke_query(output_dir: str | Path) -> dict[str, Any]:
     catalog = _read_jsonl(root / "doc_catalog.jsonl")
     catalog.sort(key=_stable_catalog_key)
     doc_ids = sorted(
-        {
-            value
-            for row in catalog
-            if (value := _reference_identifier(row.get("doc_id")))
-        }
+        {value for row in catalog if (value := _reference_identifier(row.get("doc_id")))}
     )
     file_urls = sorted(
-        {
-            value
-            for row in catalog
-            if (value := _reference_identifier(row.get("file_url")))
-        }
+        {value for row in catalog if (value := _reference_identifier(row.get("file_url")))}
     )
     selection: dict[str, Any] = {
         "catalog_doc_count": len(catalog),
@@ -276,10 +265,14 @@ def _execute_bounded_smoke(
                 "status": "error",
                 "failure_reason": "query_process_failed",
             }
-        return payload if isinstance(payload, dict) else {
-            "status": "error",
-            "failure_reason": "query_process_failed",
-        }
+        return (
+            payload
+            if isinstance(payload, dict)
+            else {
+                "status": "error",
+                "failure_reason": "query_process_failed",
+            }
+        )
     except (OSError, RuntimeError):
         return {
             "status": "error",
@@ -440,9 +433,7 @@ def run_staging_smoke(
         from ai_actuarial.storage import Storage
 
         timeout_seconds = float(
-            Storage.AGENTIC_READY_FUTURE_EXECUTION_POLICY[
-                "staging_smoke_timeout_seconds"
-            ]
+            Storage.AGENTIC_READY_FUTURE_EXECUTION_POLICY["staging_smoke_timeout_seconds"]
         )
     timeout = max(0.000001, float(timeout_seconds))
     worker_result = _execute_bounded_smoke(

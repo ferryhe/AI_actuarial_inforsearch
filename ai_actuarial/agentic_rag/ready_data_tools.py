@@ -7,7 +7,6 @@ from typing import Any
 
 from ai_actuarial.retrieval_indicators import build_retrieval_indicators
 
-
 _TOKEN_PART_RE = re.compile(r"[a-z0-9_]+|[\u4e00-\u9fff]+", re.IGNORECASE | re.UNICODE)
 _CJK_RE = re.compile(r"[\u4e00-\u9fff]", re.UNICODE)
 
@@ -85,7 +84,9 @@ def _safe_child_path(root: Path, value: Any, default_name: str) -> Path:
 def _artifact_path(output_dir: Path, manifest: dict[str, Any], default_name: str) -> Path:
     artifact_files = manifest.get("artifact_files") or []
     if isinstance(artifact_files, dict):
-        value = artifact_files.get(default_name) or artifact_files.get(default_name.replace(".jsonl", ""))
+        value = artifact_files.get(default_name) or artifact_files.get(
+            default_name.replace(".jsonl", "")
+        )
         if value:
             return _safe_child_path(output_dir, value, default_name)
     if isinstance(artifact_files, list):
@@ -168,7 +169,11 @@ def _sections_by_doc(sections: list[dict[str, Any]]) -> dict[str, str]:
         if not doc_id:
             continue
         heading_path = section.get("heading_path") or []
-        heading_text = " ".join(_norm(item) for item in heading_path) if isinstance(heading_path, list) else _norm(heading_path)
+        heading_text = (
+            " ".join(_norm(item) for item in heading_path)
+            if isinstance(heading_path, list)
+            else _norm(heading_path)
+        )
         text = f"{heading_text} {_norm(section.get('text'))}".strip()
         if text:
             by_doc.setdefault(doc_id, []).append(text)
@@ -279,7 +284,9 @@ def _alias_match_score(query_text: str, alias_row: dict[str, Any]) -> tuple[floa
     candidates: list[tuple[str, str]] = []
     candidates.extend(("alias", item) for item in _list_text(alias_row.get("aliases")))
     candidates.extend(("identifier", item) for item in _list_text(alias_row.get("identifiers")))
-    candidates.extend(("document_number", item) for item in _list_text(alias_row.get("document_numbers")))
+    candidates.extend(
+        ("document_number", item) for item in _list_text(alias_row.get("document_numbers"))
+    )
     candidates.extend(("rule_number", item) for item in _list_text(alias_row.get("rule_numbers")))
     candidates.append(("title", _norm(alias_row.get("title"))))
     best_score = 0.0
@@ -296,9 +303,15 @@ def _alias_match_score(query_text: str, alias_row: dict[str, Any]) -> tuple[floa
             else:
                 continue
         elif _bounded_phrase_contains(query_lower, candidate_lower):
-            score = 88.0 + min(len(candidate_lower), len(query_lower)) / max(len(candidate_lower), len(query_lower))
-        elif len(_tokens(query_lower)) >= 2 and _bounded_phrase_contains(candidate_lower, query_lower):
-            score = 80.0 + min(len(candidate_lower), len(query_lower)) / max(len(candidate_lower), len(query_lower))
+            score = 88.0 + min(len(candidate_lower), len(query_lower)) / max(
+                len(candidate_lower), len(query_lower)
+            )
+        elif len(_tokens(query_lower)) >= 2 and _bounded_phrase_contains(
+            candidate_lower, query_lower
+        ):
+            score = 80.0 + min(len(candidate_lower), len(query_lower)) / max(
+                len(candidate_lower), len(query_lower)
+            )
         else:
             continue
         if score > best_score:
@@ -315,7 +328,9 @@ def _limit(value: int | None) -> int:
     return max(1, min(parsed, 100))
 
 
-def search_summaries(query: str, *, output_dir: str | Path, limit: int = 10) -> list[dict[str, Any]]:
+def search_summaries(
+    query: str, *, output_dir: str | Path, limit: int = 10
+) -> list[dict[str, Any]]:
     """Search L0 ready-data summaries and return stable result dictionaries."""
     query_text = _norm(query)
     query_tokens = _tokens(query_text)
@@ -325,14 +340,20 @@ def search_summaries(query: str, *, output_dir: str | Path, limit: int = 10) -> 
     if not ready_data:
         return []
 
-    docs, catalog_keys, summary_keys = _merge_summary_docs(ready_data["catalog"], ready_data["summaries"])
+    docs, catalog_keys, summary_keys = _merge_summary_docs(
+        ready_data["catalog"], ready_data["summaries"]
+    )
     section_text = _sections_by_doc(ready_data["sections"])
     keyword_max = len(query_tokens) * (4.0 + 2.0 + 1.0 + 1.0 + 0.75) + 3.0
     scored: list[dict[str, Any]] = []
     for row in docs:
         doc_id = _doc_key(row)
         headings = row.get("headings") or []
-        heading_text = " ".join(_norm(item) for item in headings) if isinstance(headings, list) else _norm(headings)
+        heading_text = (
+            " ".join(_norm(item) for item in headings)
+            if isinstance(headings, list)
+            else _norm(headings)
+        )
         summary_score = _field_score(query_tokens, _norm(row.get("summary")), 4.0)
         title_score = _field_score(query_tokens, _norm(row.get("title")), 2.0)
         category_score = _field_score(query_tokens, _norm(row.get("category")), 1.0)
@@ -395,7 +416,9 @@ def search_titles(query: str, *, output_dir: str | Path, limit: int = 10) -> lis
         alias_hits.append(result)
         seen_alias_docs.add(result["doc_id"])
     if alias_hits:
-        alias_hits.sort(key=lambda item: (-float(item["score"]), item["title"].lower(), item["file_url"]))
+        alias_hits.sort(
+            key=lambda item: (-float(item["score"]), item["title"].lower(), item["file_url"])
+        )
         if len(alias_hits) >= _limit(limit):
             return alias_hits[: _limit(limit)]
 
@@ -405,7 +428,11 @@ def search_titles(query: str, *, output_dir: str | Path, limit: int = 10) -> lis
         if doc_id in seen_alias_docs:
             continue
         headings = row.get("headings") or []
-        heading_text = " ".join(_norm(item) for item in headings) if isinstance(headings, list) else _norm(headings)
+        heading_text = (
+            " ".join(_norm(item) for item in headings)
+            if isinstance(headings, list)
+            else _norm(headings)
+        )
         title = _norm(row.get("title"))
         score = (
             _field_score(query_tokens, title, 5.0)
@@ -455,12 +482,16 @@ def search_sections(query: str, *, output_dir: str | Path, limit: int = 10) -> l
         heading_path = _list_text(section.get("heading_path"))
         heading = _norm(section.get("heading")) or _first_text(heading_path)
         text = _norm(section.get("text"))
-        alias_text = " ".join(_list_text(section.get("aliases")) + _list_text(section.get("document_aliases")))
+        alias_text = " ".join(
+            _list_text(section.get("aliases")) + _list_text(section.get("document_aliases"))
+        )
         score = (
             _field_score(query_tokens, heading, 4.0)
             + _field_score(query_tokens, " ".join(heading_path), 3.0)
             + _field_score(query_tokens, text, 1.0)
-            + _field_score(query_tokens, _norm(doc.get("title")) or _norm(section.get("title")), 1.0)
+            + _field_score(
+                query_tokens, _norm(doc.get("title")) or _norm(section.get("title")), 1.0
+            )
             + _field_score(query_tokens, alias_text, 4.0)
         )
         if query_text.lower() and query_text.lower() in f"{heading} {text}".lower():
@@ -471,15 +502,15 @@ def search_sections(query: str, *, output_dir: str | Path, limit: int = 10) -> l
         scored.append(
             _with_retrieval_indicators(
                 {
-                "doc_id": doc_id,
-                "file_url": file_url,
-                "title": _norm(section.get("title")) or _norm(doc.get("title")) or file_url,
-                "section_id": _norm(section.get("section_id")),
-                "heading_path": heading_path,
-                "heading": heading,
-                "text_snippet": _text_snippet(text),
-                "score": round(float(score), 4),
-                "source": source,
+                    "doc_id": doc_id,
+                    "file_url": file_url,
+                    "title": _norm(section.get("title")) or _norm(doc.get("title")) or file_url,
+                    "section_id": _norm(section.get("section_id")),
+                    "heading_path": heading_path,
+                    "heading": heading,
+                    "text_snippet": _text_snippet(text),
+                    "score": round(float(score), 4),
+                    "source": source,
                 },
                 score=score,
                 source=source,
@@ -492,7 +523,9 @@ def search_sections(query: str, *, output_dir: str | Path, limit: int = 10) -> l
     return scored[: _limit(limit)]
 
 
-def search_formula_cards(query: str, *, output_dir: str | Path, limit: int = 10) -> list[dict[str, Any]]:
+def search_formula_cards(
+    query: str, *, output_dir: str | Path, limit: int = 10
+) -> list[dict[str, Any]]:
     """Search L2 formula cards and return stable formula result dictionaries."""
     query_text = _norm(query)
     query_tokens = _tokens(query_text)
@@ -526,18 +559,18 @@ def search_formula_cards(query: str, *, output_dir: str | Path, limit: int = 10)
         scored.append(
             _with_retrieval_indicators(
                 {
-                "doc_id": _norm(row.get("doc_id")) or file_url,
-                "file_url": file_url,
-                "title": title or file_url,
-                "formula_id": _norm(row.get("formula_id")),
-                "section_id": _norm(row.get("section_id")),
-                "heading_path": heading_path,
-                "heading": heading,
-                "formula_text": formula_text,
-                "context_snippet": _text_snippet(context),
-                "terms": terms,
-                "score": round(float(score), 4),
-                "source": "formula_cards",
+                    "doc_id": _norm(row.get("doc_id")) or file_url,
+                    "file_url": file_url,
+                    "title": title or file_url,
+                    "formula_id": _norm(row.get("formula_id")),
+                    "section_id": _norm(row.get("section_id")),
+                    "heading_path": heading_path,
+                    "heading": heading,
+                    "formula_text": formula_text,
+                    "context_snippet": _text_snippet(context),
+                    "terms": terms,
+                    "score": round(float(score), 4),
+                    "source": "formula_cards",
                 },
                 score=score,
                 source="formula_cards",
@@ -566,7 +599,9 @@ def _table_rows_text(rows: Any) -> str:
     return " ".join(parts)
 
 
-def search_structured_tables(query: str, *, output_dir: str | Path, limit: int = 10) -> list[dict[str, Any]]:
+def search_structured_tables(
+    query: str, *, output_dir: str | Path, limit: int = 10
+) -> list[dict[str, Any]]:
     """Search L2 structured table artifacts."""
     query_text = _norm(query)
     query_tokens = _tokens(query_text)
@@ -610,19 +645,19 @@ def search_structured_tables(query: str, *, output_dir: str | Path, limit: int =
         scored.append(
             _with_retrieval_indicators(
                 {
-                "doc_id": _norm(row.get("doc_id")) or file_url,
-                "file_url": file_url,
-                "title": _norm(row.get("title")) or file_url,
-                "table_id": _norm(row.get("table_id")),
-                "section_id": _norm(row.get("section_id")),
-                "heading_path": heading_path,
-                "heading": heading,
-                "caption": caption,
-                "headers": headers,
-                "rows": rows,
-                "text_snippet": _text_snippet(table_text),
-                "score": round(float(score), 4),
-                "source": "tables_structured",
+                    "doc_id": _norm(row.get("doc_id")) or file_url,
+                    "file_url": file_url,
+                    "title": _norm(row.get("title")) or file_url,
+                    "table_id": _norm(row.get("table_id")),
+                    "section_id": _norm(row.get("section_id")),
+                    "heading_path": heading_path,
+                    "heading": heading,
+                    "caption": caption,
+                    "headers": headers,
+                    "rows": rows,
+                    "text_snippet": _text_snippet(table_text),
+                    "score": round(float(score), 4),
+                    "source": "tables_structured",
                 },
                 score=score,
                 source="tables_structured",
@@ -635,7 +670,9 @@ def search_structured_tables(query: str, *, output_dir: str | Path, limit: int =
     return scored[: _limit(limit)]
 
 
-def search_calculation_terms(query: str, *, output_dir: str | Path, limit: int = 10) -> list[dict[str, Any]]:
+def search_calculation_terms(
+    query: str, *, output_dir: str | Path, limit: int = 10
+) -> list[dict[str, Any]]:
     """Search L2 calculation term artifacts."""
     query_text = _norm(query)
     query_tokens = _tokens(query_text)
@@ -669,17 +706,17 @@ def search_calculation_terms(query: str, *, output_dir: str | Path, limit: int =
         scored.append(
             _with_retrieval_indicators(
                 {
-                "doc_id": _norm(row.get("doc_id")) or file_url,
-                "file_url": file_url,
-                "title": _norm(row.get("title")) or file_url,
-                "term_id": _norm(row.get("term_id")),
-                "term": term,
-                "normalized_term": normalized_term,
-                "section_id": _norm(row.get("section_id")),
-                "heading_path": heading_path,
-                "context_snippet": _text_snippet(context),
-                "score": round(float(score), 4),
-                "source": "calculation_terms",
+                    "doc_id": _norm(row.get("doc_id")) or file_url,
+                    "file_url": file_url,
+                    "title": _norm(row.get("title")) or file_url,
+                    "term_id": _norm(row.get("term_id")),
+                    "term": term,
+                    "normalized_term": normalized_term,
+                    "section_id": _norm(row.get("section_id")),
+                    "heading_path": heading_path,
+                    "context_snippet": _text_snippet(context),
+                    "score": round(float(score), 4),
+                    "source": "calculation_terms",
                 },
                 score=score,
                 source="calculation_terms",
@@ -692,7 +729,9 @@ def search_calculation_terms(query: str, *, output_dir: str | Path, limit: int =
     return scored[: _limit(limit)]
 
 
-def trace_relations(query_or_doc: str, *, output_dir: str | Path, limit: int = 10) -> list[dict[str, Any]]:
+def trace_relations(
+    query_or_doc: str, *, output_dir: str | Path, limit: int = 10
+) -> list[dict[str, Any]]:
     """Trace L1 relation rows for an alias, document, or section query."""
     query_text = _norm(query_or_doc)
     query_tokens = _tokens(query_text)

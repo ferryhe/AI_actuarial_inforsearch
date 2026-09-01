@@ -157,6 +157,7 @@ CALCULATION_TERM_FIELDS = [
 
 # ── Extraction helpers ────────────────────────────────────────────────────────
 
+
 def _extract_headings(chunks: list[dict]) -> list[str]:
     """Extract unique ordered headings from section_hierarchy across chunks."""
     seen: set[str] = set()
@@ -233,7 +234,11 @@ def _extract_identifier_parts(title: str, file_url: str) -> tuple[list[str], lis
     stem = Path(parsed.path or file_url).stem
     if stem:
         identifiers.append(stem)
-    return _unique_strings(identifiers), _unique_strings(document_numbers), _unique_strings(rule_numbers)
+    return (
+        _unique_strings(identifiers),
+        _unique_strings(document_numbers),
+        _unique_strings(rule_numbers),
+    )
 
 
 def _build_doc_aliases(entry: dict[str, Any]) -> tuple[list[str], list[str], list[str], list[str]]:
@@ -448,7 +453,9 @@ def _load_builder_source_snapshot(
             where_params.append(kb_id)
         catalog_columns = _table_columns(conn, "catalog_items")
         markdown_select = "c.markdown_content" if "markdown_content" in catalog_columns else "NULL"
-        rag_chunk_count_select = "c.rag_chunk_count" if "rag_chunk_count" in catalog_columns else "0"
+        rag_chunk_count_select = (
+            "c.rag_chunk_count" if "rag_chunk_count" in catalog_columns else "0"
+        )
         catalog_rows = conn.execute(
             f"""SELECT c.file_url, f.title, c.category, c.summary, c.keywords,
                        {rag_chunk_count_select} AS rag_chunk_count,
@@ -497,10 +504,7 @@ def _load_builder_source_snapshot(
                     chunk_set_id = str(row[1] or "")
                     if str(row[2] or "") != str(file_url):
                         raise ValueError("ready_data binding crosses file boundaries")
-                    if (
-                        selected_chunk_profile_id
-                        and str(row[3] or "") != selected_chunk_profile_id
-                    ):
+                    if selected_chunk_profile_id and str(row[3] or "") != selected_chunk_profile_id:
                         raise ValueError("ready_data binding uses the wrong chunk profile")
                     if str(row[5] or "") != "ready" or int(row[6] or 0) <= 0:
                         raise ValueError("ready_data binding does not reference a ready chunk set")
@@ -567,7 +571,10 @@ def _load_builder_source_snapshot(
                 raise ValueError("ready_data requires a committed ready KB index")
             observed_index_version_id = str(index_row[0] or "").strip()
             requested_index_version_id = str(index_version_id or "").strip()
-            if requested_index_version_id and requested_index_version_id != observed_index_version_id:
+            if (
+                requested_index_version_id
+                and requested_index_version_id != observed_index_version_id
+            ):
                 raise ValueError(
                     "stale_snapshot: Ready Data index_version_id is no longer the committed ready index"
                 )
@@ -580,16 +587,12 @@ def _load_builder_source_snapshot(
             }
             if (
                 not index_payload["embedding_identity_key"]
-                or index_payload["embedding_identity_key"]
-                != selected_embedding_identity_key
+                or index_payload["embedding_identity_key"] != selected_embedding_identity_key
             ):
                 raise ValueError("ready_data index embedding identity is stale")
             if not index_payload["binding_snapshot_fingerprint"]:
                 raise ValueError("ready_data index binding snapshot is missing")
-            if (
-                index_payload["binding_snapshot_fingerprint"]
-                != current_binding_fingerprint
-            ):
+            if index_payload["binding_snapshot_fingerprint"] != current_binding_fingerprint:
                 raise ValueError("ready_data index binding snapshot is stale")
             item_rows = conn.execute(
                 """
@@ -684,15 +687,15 @@ def _build_l0_with_connection(
         Manifest dict with built_at, doc_count, section_count, artifact_files.
     """
     if profile not in PROFILES:
-        raise ValueError(
-            f"Unknown profile {profile!r}. Use one of: {', '.join(PROFILES)}"
-        )
+        raise ValueError(f"Unknown profile {profile!r}. Use one of: {', '.join(PROFILES)}")
     profile_def = PROFILES[profile]
 
     if output_dir is None:
         if kb_id:
             safe_kb_id = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in kb_id)
-            output_dir = os.path.join("data", "agentic_ready_data", "kbs", safe_kb_id, profile, profile_def.version)
+            output_dir = os.path.join(
+                "data", "agentic_ready_data", "kbs", safe_kb_id, profile, profile_def.version
+            )
         else:
             output_dir = os.path.join("data", "agentic_ready_data", profile, profile_def.version)
     os.makedirs(output_dir, exist_ok=True)
@@ -700,11 +703,13 @@ def _build_l0_with_connection(
     now_utc = datetime.now(timezone.utc).isoformat()
 
     # ── 1. Build doc_catalog.jsonl ────────────────────────────────────────
-    catalog_rows, chunk_rows, source_version_id, observed_index_version_id = _load_builder_source_snapshot(
-        conn,
-        kb_id=kb_id,
-        profile=profile,
-        index_version_id=index_version_id,
+    catalog_rows, chunk_rows, source_version_id, observed_index_version_id = (
+        _load_builder_source_snapshot(
+            conn,
+            kb_id=kb_id,
+            profile=profile,
+            index_version_id=index_version_id,
+        )
     )
     expected_source = str(expected_source_snapshot_fingerprint or "").strip()
     if expected_source and expected_source != source_version_id:
@@ -885,7 +890,11 @@ def _build_l0_with_connection(
             for section in structured_sections:
                 text = str(section.get("text") or "")
                 section_id = str(section.get("section_id") or "")
-                heading_path = section.get("heading_path") if isinstance(section.get("heading_path"), list) else []
+                heading_path = (
+                    section.get("heading_path")
+                    if isinstance(section.get("heading_path"), list)
+                    else []
+                )
                 heading = str(section.get("heading") or _section_heading(heading_path))
                 doc_id = str(section.get("doc_id") or "")
                 file_url = str(section.get("file_url") or doc_id)
@@ -1186,7 +1195,9 @@ def validate(output_dir: str) -> dict:
                     artifact_paths[artifact_name] = path
         if not os.path.isfile(path):
             errors.append(f"artifact missing: {artifact}")
-        elif artifact_text.endswith(".jsonl") or any(name.endswith(".jsonl") for name in artifact_names):
+        elif artifact_text.endswith(".jsonl") or any(
+            name.endswith(".jsonl") for name in artifact_names
+        ):
             # Validate JSONL: every line must parse
             bad_lines = 0
             with open(path, "r", encoding="utf-8") as af:
@@ -1203,7 +1214,9 @@ def validate(output_dir: str) -> dict:
             if bad_lines:
                 errors.append(f"{artifact}: {bad_lines} invalid JSON lines")
 
-        elif artifact_text.endswith(".json") or any(name.endswith(".json") for name in artifact_names):
+        elif artifact_text.endswith(".json") or any(
+            name.endswith(".json") for name in artifact_names
+        ):
             try:
                 with open(path, "r", encoding="utf-8") as af:
                     json.load(af)
@@ -1211,8 +1224,12 @@ def validate(output_dir: str) -> dict:
                 errors.append(f"{artifact}: invalid JSON: {e}")
 
     # Cross-reference: doc_ids in sections must exist in catalog.
-    doc_catalog_path = artifact_paths.get("doc_catalog.jsonl") or os.path.join(output_dir, "doc_catalog.jsonl")
-    sections_path = artifact_paths.get("sections.jsonl") or os.path.join(output_dir, "sections.jsonl")
+    doc_catalog_path = artifact_paths.get("doc_catalog.jsonl") or os.path.join(
+        output_dir, "doc_catalog.jsonl"
+    )
+    sections_path = artifact_paths.get("sections.jsonl") or os.path.join(
+        output_dir, "sections.jsonl"
+    )
     catalog_entries: list[dict[str, Any]] = []
     catalog_doc_ids: set[str] = set()
     if os.path.isfile(doc_catalog_path):
@@ -1243,7 +1260,9 @@ def validate(output_dir: str) -> dict:
                 f"(e.g. {list(docs_without_sections)[:3]})"
             )
 
-    structured_sections_path = artifact_paths.get("sections_structured.jsonl") or os.path.join(output_dir, "sections_structured.jsonl")
+    structured_sections_path = artifact_paths.get("sections_structured.jsonl") or os.path.join(
+        output_dir, "sections_structured.jsonl"
+    )
     structured_section_ids: set[str] = set()
     if catalog_doc_ids and os.path.isfile(structured_sections_path):
         structured_entries, structured_errors = _safe_jsonl_load(structured_sections_path)
@@ -1255,7 +1274,9 @@ def validate(output_dir: str) -> dict:
                 f"{len(orphan_structured)} structured section doc_ids not in catalog "
                 f"(e.g. {list(orphan_structured)[:3]})"
             )
-        structured_section_ids = {e.get("section_id", "") for e in structured_entries if e.get("section_id")}
+        structured_section_ids = {
+            e.get("section_id", "") for e in structured_entries if e.get("section_id")
+        }
 
     known_section_ids = section_ids | structured_section_ids
     l2_target_ids: dict[str, set[str]] = {
@@ -1289,7 +1310,9 @@ def validate(output_dir: str) -> dict:
                 f"(e.g. {list(orphan_sections)[:3]})"
             )
 
-    relations_path = artifact_paths.get("relations_graph.json") or os.path.join(output_dir, "relations_graph.json")
+    relations_path = artifact_paths.get("relations_graph.json") or os.path.join(
+        output_dir, "relations_graph.json"
+    )
     if catalog_doc_ids and os.path.isfile(relations_path):
         try:
             with open(relations_path, "r", encoding="utf-8") as f:
@@ -1315,7 +1338,9 @@ def validate(output_dir: str) -> dict:
                 relation_section_ids = {
                     row.get("target_id", "")
                     for row in relations
-                    if isinstance(row, dict) and row.get("target_type") == "section" and row.get("target_id")
+                    if isinstance(row, dict)
+                    and row.get("target_type") == "section"
+                    and row.get("target_id")
                 }
                 relation_section_ids.update(
                     row.get("section_id", "")
@@ -1352,6 +1377,7 @@ def validate(output_dir: str) -> dict:
 
 # ── CLI entry point ───────────────────────────────────────────────────────────
 
+
 def main():
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
@@ -1359,9 +1385,7 @@ def main():
 
     parser = argparse.ArgumentParser(description="Build Agentic RAG ready_data")
     parser.add_argument("--db", default=None, help="SQLite DB path")
-    parser.add_argument(
-        "--output-dir", default=None, help="Output directory for ready_data"
-    )
+    parser.add_argument("--output-dir", default=None, help="Output directory for ready_data")
     parser.add_argument(
         "--profile",
         default="general",
@@ -1382,14 +1406,17 @@ def main():
 
     if args.validate:
         profile_version = PROFILES[args.profile].version
-        default_output_dir = os.path.join("data", "agentic_ready_data", args.profile, profile_version)
-        if args.kb_id:
-            safe_kb_id = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in args.kb_id)
-            default_output_dir = os.path.join("data", "agentic_ready_data", "kbs", safe_kb_id, args.profile, profile_version)
-        result = validate(
-            args.output_dir
-            or default_output_dir
+        default_output_dir = os.path.join(
+            "data", "agentic_ready_data", args.profile, profile_version
         )
+        if args.kb_id:
+            safe_kb_id = "".join(
+                ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in args.kb_id
+            )
+            default_output_dir = os.path.join(
+                "data", "agentic_ready_data", "kbs", safe_kb_id, args.profile, profile_version
+            )
+        result = validate(args.output_dir or default_output_dir)
         status = "✅ valid" if result["valid"] else "❌ invalid"
         print(f"\nValidation: {status}")
         if result["errors"]:

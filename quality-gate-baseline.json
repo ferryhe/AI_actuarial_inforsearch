@@ -4,13 +4,6 @@
   "tools": {
     "black": [
       "ai_actuarial/__main__.py",
-      "ai_actuarial/agentic_rag/agentic_loop.py",
-      "ai_actuarial/agentic_rag/eval.py",
-      "ai_actuarial/agentic_rag/planner.py",
-      "ai_actuarial/agentic_rag/ready_data_builder.py",
-      "ai_actuarial/agentic_rag/ready_data_tools.py",
-      "ai_actuarial/agentic_rag/staging_smoke.py",
-      "ai_actuarial/agentic_rag/tools.py",
       "ai_actuarial/ai_runtime.py",
       "ai_actuarial/api/app.py",
       "ai_actuarial/api/deps.py",
@@ -206,11 +199,6 @@
     ],
     "isort": [
       "ai_actuarial/__main__.py",
-      "ai_actuarial/agentic_rag/agentic_loop.py",
-      "ai_actuarial/agentic_rag/planner.py",
-      "ai_actuarial/agentic_rag/ready_data_tools.py",
-      "ai_actuarial/agentic_rag/staging_smoke.py",
-      "ai_actuarial/agentic_rag/tools.py",
       "ai_actuarial/api/app.py",
       "ai_actuarial/api/middleware/rate_limit.py",
       "ai_actuarial/api/route_inventory.py",

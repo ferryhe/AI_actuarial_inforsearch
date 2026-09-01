@@ -16,7 +16,6 @@ from .ready_data_tools import (
     trace_relations,
 )
 
-
 NO_EVIDENCE_ANSWER = "No evidence found in ready_data for this query."
 
 _TOOL_FUNCTIONS: dict[str, Callable[..., list[dict[str, Any]]]] = {
@@ -42,7 +41,9 @@ def _bounded_limit(value: int | None) -> int:
     return max(1, min(parsed, 100))
 
 
-def _trace_entry(step: ToolStep, *, status: str, result_count: int = 0, error: str | None = None) -> dict[str, Any]:
+def _trace_entry(
+    step: ToolStep, *, status: str, result_count: int = 0, error: str | None = None
+) -> dict[str, Any]:
     return {
         "tool_name": step.tool_name,
         "status": status,
@@ -154,7 +155,19 @@ def _citation_record(item: dict[str, Any]) -> dict[str, Any] | None:
         value = _norm(item.get(key))
         if value:
             citation[key] = value
-    if not any(citation.get(key) for key in ("doc_id", "file_url", "title", "section_id", "formula_id", "table_id", "term_id", "target_id")):
+    if not any(
+        citation.get(key)
+        for key in (
+            "doc_id",
+            "file_url",
+            "title",
+            "section_id",
+            "formula_id",
+            "table_id",
+            "term_id",
+            "target_id",
+        )
+    ):
         return None
     return citation
 

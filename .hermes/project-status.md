@@ -61,6 +61,10 @@
 - The second completed directory is `scripts/`. Eleven Python scripts received
   only Black/isort formatting; no behavior, dead-code decision, or script entry
   point was changed.
+- The third completed directory is `ai_actuarial/agentic_rag/`. Graphify
+  confirmed that its primary modules connect to runtime/API consumers and
+  dedicated tests, so seven historical files received only Black/isort
+  formatting and no file or symbol was removed.
 
 ## Acceptance results
 
@@ -112,6 +116,18 @@
   directory, from 210/140/20 to 200 Black files, 132 isort files, and 20 Pylint
   identities. The complete dead-code gate remained exact at 9/5 files and
   28/93 symbols.
+- Path-specific commit `c601182` was pushed to PR #318 and all five remote CI
+  jobs passed with no new review feedback.
+- `ai_actuarial/agentic_rag/` focused validation passed: Black, isort, and
+  Pylint reported no findings, and all 94 dedicated tests passed.
+- The complete unified quality gate passed after the `agentic_rag/` cleanup
+  with 1,881 tests passed and 10 skipped. The reviewed baseline shrank only for
+  this directory, from 200/132/20 to 193 Black files, 127 isort files, and 20
+  Pylint identities. The complete dead-code gate remained exact at 9/5 files
+  and 28/93 symbols.
+- The machine's existing global Black cache caused high-CPU CLI stalls for the
+  changed files. Black's API verified them immediately; the official CLI and
+  complete gate then passed with an isolated temporary `BLACK_CACHE_DIR`.
 
 ## Files changed
 
@@ -128,6 +144,9 @@
   `quality-gate-baseline.json`.
 - Second historical directory cleanup: eleven formatted Python files under
   `scripts/` and the matching removals from `quality-gate-baseline.json`.
+- Third historical directory cleanup: seven formatted Python files under
+  `ai_actuarial/agentic_rag/` and the matching removals from
+  `quality-gate-baseline.json`.
 
 ## Working tree notes
 
@@ -144,6 +163,6 @@
 
 ## Recommended next action
 
-- After the path-specific `scripts/` commit passes CI, continue with
-  `ai_actuarial/agentic_rag/` as the next independent directory. Merge only
-  after explicit authorization.
+- After the path-specific `agentic_rag/` commit passes CI, continue with
+  `ai_actuarial/api/middleware/` as the next smallest independent directory.
+  Merge only after explicit authorization.

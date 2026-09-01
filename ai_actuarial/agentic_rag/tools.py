@@ -12,7 +12,6 @@ from .ready_data_tools import (
     trace_relations,
 )
 
-
 QuestionCategory = Literal["catalog", "locate", "summary", "document_qa"]
 
 
@@ -23,8 +22,29 @@ def classify_question(question: str) -> QuestionCategory:
         return "document_qa"
 
     summary_terms = ("summarize", "summary", "overview", "brief", "概述", "总结", "摘要")
-    locate_terms = ("find", "locate", "which document", "titled", "title", "url", "file", "where is", "查找", "定位", "标题")
-    catalog_terms = ("catalog", "list all", "all documents", "categories", "show documents", "目录", "清单", "全部文档")
+    locate_terms = (
+        "find",
+        "locate",
+        "which document",
+        "titled",
+        "title",
+        "url",
+        "file",
+        "where is",
+        "查找",
+        "定位",
+        "标题",
+    )
+    catalog_terms = (
+        "catalog",
+        "list all",
+        "all documents",
+        "categories",
+        "show documents",
+        "目录",
+        "清单",
+        "全部文档",
+    )
 
     if any(term in text for term in summary_terms):
         return "summary"
