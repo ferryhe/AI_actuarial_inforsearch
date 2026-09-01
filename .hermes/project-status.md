@@ -311,6 +311,20 @@
   files, and 16 Pylint error identities, with zero new or stale entries. The
   dead-code gate shrank exactly from 9/1 files and 28/71 symbols to 9/1 files
   and 28/64 symbols.
+- Remote commit `cbd933b` contains the exact `ai_actuarial/api/services/`
+  cleanup. CI run 33539534698 passed all five jobs, including the 6m47s Linux
+  quality gate, and no new Review or Copilot comment was added.
+- `client/src/components/` no longer contains the unreachable
+  `LoadingSkeleton.tsx`. `transformMarkdownUrl` remains live inside
+  `MarkdownContent.tsx` but is no longer exported solely for tests; the direct
+  helper assertions were removed while the component-level link and hostile
+  input coverage was retained.
+- The focused component checks passed: both TypeScript dead-code ratchets,
+  ESLint, the three Markdown content source tests, frontend type-check, and the
+  production build. The complete pytest suite passed with 1,881 tests and 10
+  platform skips, and the full unified quality gate passed at 129 Black files,
+  81 isort files, and 16 Pylint error identities. The dead-code gate shrank
+  exactly from 9/1 files and 28/64 symbols to 8/1 files and 27/64 symbols.
 
 ## Files changed
 
@@ -374,6 +388,10 @@
   symbols plus two cascading private orphans, fixed three Pylint identities,
   added the two-entry-point encryption failure regression, and removed the
   matching dead-code and 27 formatter/linter baseline entries.
+- Fifteenth historical directory cleanup: deleted the unreachable
+  `client/src/components/LoadingSkeleton.tsx`, made the live Markdown URL
+  transformer private, removed only its direct test-only import and assertions,
+  and removed the matching two TypeScript dead-code baseline entries.
 
 ## Working tree notes
 
@@ -390,8 +408,8 @@
 
 ## Recommended next action
 
-- Commit and push the path-specific `ai_actuarial/api/services/` cleanup to PR
+- Commit and push the path-specific `client/src/components/` cleanup to PR
   #318, verify its CI and review feedback, then continue with
-  `client/src/components/`. Keep the final root-level orphan
+  `client/src/hooks/`. Keep the final root-level orphan
   `ai_actuarial/pipeline_config.py` for a separately verified cleanup. Merge
   only after explicit authorization.

@@ -5,67 +5,68 @@
   "gates": {
     "typescript-files": [
       {
-        "path": "client/src/components/LoadingSkeleton.tsx",
-        "kind": "unused_file",
-        "symbol": "client/src/components/LoadingSkeleton.tsx",
-        "classification": "remove",
-        "reason": "Production-orphan cleanup candidate; verify behavior before deleting the file."
-      },
-      {
         "path": "client/src/hooks/use-api-query.ts",
         "kind": "unused_file",
         "symbol": "client/src/hooks/use-api-query.ts",
         "classification": "remove",
-        "reason": "Production-orphan cleanup candidate; verify behavior before deleting the file."
+        "reason": "Production-orphan cleanup candidate; verify behavior before deleting the file.",
+        "confidence": 0
       },
       {
         "path": "client/src/pages/FeatureUnavailable.tsx",
         "kind": "unused_file",
         "symbol": "client/src/pages/FeatureUnavailable.tsx",
         "classification": "remove",
-        "reason": "Production-orphan cleanup candidate; verify behavior before deleting the file."
+        "reason": "Production-orphan cleanup candidate; verify behavior before deleting the file.",
+        "confidence": 0
       },
       {
         "path": "client/src/pages/NativeFileDetail.tsx",
         "kind": "unused_file",
         "symbol": "client/src/pages/NativeFileDetail.tsx",
         "classification": "remove",
-        "reason": "Production-orphan cleanup candidate; verify behavior before deleting the file."
+        "reason": "Production-orphan cleanup candidate; verify behavior before deleting the file.",
+        "confidence": 0
       },
       {
         "path": "client/src/pages/NativeLogs.tsx",
         "kind": "unused_file",
         "symbol": "client/src/pages/NativeLogs.tsx",
         "classification": "remove",
-        "reason": "Production-orphan cleanup candidate; verify behavior before deleting the file."
+        "reason": "Production-orphan cleanup candidate; verify behavior before deleting the file.",
+        "confidence": 0
       },
       {
         "path": "client/src/pages/NativeSettings.tsx",
         "kind": "unused_file",
         "symbol": "client/src/pages/NativeSettings.tsx",
         "classification": "remove",
-        "reason": "Production-orphan cleanup candidate; verify behavior before deleting the file."
+        "reason": "Production-orphan cleanup candidate; verify behavior before deleting the file.",
+        "confidence": 0
       },
       {
         "path": "client/src/pages/NativeTasks.tsx",
         "kind": "unused_file",
         "symbol": "client/src/pages/NativeTasks.tsx",
         "classification": "remove",
-        "reason": "Production-orphan cleanup candidate; verify behavior before deleting the file."
+        "reason": "Production-orphan cleanup candidate; verify behavior before deleting the file.",
+        "confidence": 0
       },
       {
         "path": "client/src/pages/tasks/FolderBrowser.tsx",
         "kind": "unused_file",
         "symbol": "client/src/pages/tasks/FolderBrowser.tsx",
         "classification": "remove",
-        "reason": "Production-orphan cleanup candidate; verify behavior before deleting the file."
+        "reason": "Production-orphan cleanup candidate; verify behavior before deleting the file.",
+        "confidence": 0
       },
       {
         "path": "client/src/pages/tasks/index.ts",
         "kind": "unused_file",
         "symbol": "client/src/pages/tasks/index.ts",
         "classification": "remove",
-        "reason": "Production-orphan cleanup candidate; verify behavior before deleting the file."
+        "reason": "Production-orphan cleanup candidate; verify behavior before deleting the file.",
+        "confidence": 0
       }
     ],
     "python-files": [
@@ -79,200 +80,220 @@
     ],
     "typescript-symbols": [
       {
-        "path": "client/src/components/MarkdownContent.tsx",
-        "kind": "unused_export",
-        "symbol": "transformMarkdownUrl",
-        "classification": "remove",
-        "reason": "Unused production export/type; remove the export or symbol after focused review."
-      },
-      {
         "path": "client/src/hooks/use-task-options.ts",
         "kind": "unused_type",
         "symbol": "ConversionTool",
         "classification": "remove",
-        "reason": "Unused production export/type; remove the export or symbol after focused review."
+        "reason": "Unused production export/type; remove the export or symbol after focused review.",
+        "confidence": 0
       },
       {
         "path": "client/src/hooks/use-task-options.ts",
         "kind": "unused_type",
         "symbol": "MarkdownConversionLimits",
         "classification": "remove",
-        "reason": "Unused production export/type; remove the export or symbol after focused review."
+        "reason": "Unused production export/type; remove the export or symbol after focused review.",
+        "confidence": 0
       },
       {
         "path": "client/src/lib/category-labels.ts",
         "kind": "unused_export",
         "symbol": "categoryValue",
         "classification": "remove",
-        "reason": "Unused production export/type; remove the export or symbol after focused review."
+        "reason": "Unused production export/type; remove the export or symbol after focused review.",
+        "confidence": 0
       },
       {
         "path": "client/src/lib/navigation.ts",
         "kind": "unused_export",
         "symbol": "getCurrentRelativeLocation",
         "classification": "remove",
-        "reason": "Unused production export/type; remove the export or symbol after focused review."
+        "reason": "Unused production export/type; remove the export or symbol after focused review.",
+        "confidence": 0
       },
       {
         "path": "client/src/lib/navigation.ts",
         "kind": "unused_export",
         "symbol": "getRawSearchParams",
         "classification": "remove",
-        "reason": "Unused production export/type; remove the export or symbol after focused review."
+        "reason": "Unused production export/type; remove the export or symbol after focused review.",
+        "confidence": 0
       },
       {
         "path": "client/src/lib/navigation.ts",
         "kind": "unused_export",
         "symbol": "getReturnPathFromSearch",
         "classification": "remove",
-        "reason": "Unused production export/type; remove the export or symbol after focused review."
+        "reason": "Unused production export/type; remove the export or symbol after focused review.",
+        "confidence": 0
       },
       {
         "path": "client/src/lib/ready-data-ui-state.ts",
         "kind": "duplicate_export",
         "symbol": "runReadyDataRouteMutation = runReadyDataRouteRequest",
         "classification": "remove",
-        "reason": "Unused production export/type; remove the export or symbol after focused review."
+        "reason": "Unused production export/type; remove the export or symbol after focused review.",
+        "confidence": 0
       },
       {
         "path": "client/src/lib/ready-data-ui-state.ts",
         "kind": "unused_export",
         "symbol": "canonicalReadyDataProfile",
         "classification": "remove",
-        "reason": "Unused production export/type; remove the export or symbol after focused review."
+        "reason": "Unused production export/type; remove the export or symbol after focused review.",
+        "confidence": 0
       },
       {
         "path": "client/src/lib/ready-data-ui-state.ts",
         "kind": "unused_export",
         "symbol": "compareReadyDataManifestMonotonicFreshness",
         "classification": "remove",
-        "reason": "Unused production export/type; remove the export or symbol after focused review."
+        "reason": "Unused production export/type; remove the export or symbol after focused review.",
+        "confidence": 0
       },
       {
         "path": "client/src/lib/ready-data-ui-state.ts",
         "kind": "unused_export",
         "symbol": "isReadyDataKnowledgeListManifestAuthoritative",
         "classification": "remove",
-        "reason": "Unused production export/type; remove the export or symbol after focused review."
+        "reason": "Unused production export/type; remove the export or symbol after focused review.",
+        "confidence": 0
       },
       {
         "path": "client/src/lib/ready-data-ui-state.ts",
         "kind": "unused_export",
         "symbol": "mergeConfirmedReadyDataAutomation",
         "classification": "remove",
-        "reason": "Unused production export/type; remove the export or symbol after focused review."
+        "reason": "Unused production export/type; remove the export or symbol after focused review.",
+        "confidence": 0
       },
       {
         "path": "client/src/lib/ready-data-ui-state.ts",
         "kind": "unused_export",
         "symbol": "readyDataPublicationRevision",
         "classification": "remove",
-        "reason": "Unused production export/type; remove the export or symbol after focused review."
+        "reason": "Unused production export/type; remove the export or symbol after focused review.",
+        "confidence": 0
       },
       {
         "path": "client/src/lib/ready-data-ui-state.ts",
         "kind": "unused_type",
         "symbol": "ReadyDataPublication",
         "classification": "remove",
-        "reason": "Unused production export/type; remove the export or symbol after focused review."
+        "reason": "Unused production export/type; remove the export or symbol after focused review.",
+        "confidence": 0
       },
       {
         "path": "client/src/lib/ready-data-ui-state.ts",
         "kind": "unused_type",
         "symbol": "ReadyDataPublicationState",
         "classification": "remove",
-        "reason": "Unused production export/type; remove the export or symbol after focused review."
+        "reason": "Unused production export/type; remove the export or symbol after focused review.",
+        "confidence": 0
       },
       {
         "path": "client/src/lib/ready-data-ui-state.ts",
         "kind": "unused_type",
         "symbol": "ReadyDataServingStatus",
         "classification": "remove",
-        "reason": "Unused production export/type; remove the export or symbol after focused review."
+        "reason": "Unused production export/type; remove the export or symbol after focused review.",
+        "confidence": 0
       },
       {
         "path": "client/src/lib/weekly-dashboard.ts",
         "kind": "unused_export",
         "symbol": "WEEKLY_PREVIEW_LIMIT",
         "classification": "remove",
-        "reason": "Unused production export/type; remove the export or symbol after focused review."
+        "reason": "Unused production export/type; remove the export or symbol after focused review.",
+        "confidence": 0
       },
       {
         "path": "client/src/lib/weekly-dashboard.ts",
         "kind": "unused_type",
         "symbol": "WeeklyExplanation",
         "classification": "remove",
-        "reason": "Unused production export/type; remove the export or symbol after focused review."
+        "reason": "Unused production export/type; remove the export or symbol after focused review.",
+        "confidence": 0
       },
       {
         "path": "client/src/lib/weekly-dashboard.ts",
         "kind": "unused_type",
         "symbol": "WeeklyExplanationState",
         "classification": "remove",
-        "reason": "Unused production export/type; remove the export or symbol after focused review."
+        "reason": "Unused production export/type; remove the export or symbol after focused review.",
+        "confidence": 0
       },
       {
         "path": "client/src/lib/weekly-dashboard.ts",
         "kind": "unused_type",
         "symbol": "WeeklySnapshotDetail",
         "classification": "remove",
-        "reason": "Unused production export/type; remove the export or symbol after focused review."
+        "reason": "Unused production export/type; remove the export or symbol after focused review.",
+        "confidence": 0
       },
       {
         "path": "client/src/lib/weekly-dashboard.ts",
         "kind": "unused_type",
         "symbol": "WeeklySnapshotFile",
         "classification": "remove",
-        "reason": "Unused production export/type; remove the export or symbol after focused review."
+        "reason": "Unused production export/type; remove the export or symbol after focused review.",
+        "confidence": 0
       },
       {
         "path": "client/src/pages/chat/routeTarget.ts",
         "kind": "unused_type",
         "symbol": "ChatRouteSelection",
         "classification": "remove",
-        "reason": "Unused production export/type; remove the export or symbol after focused review."
+        "reason": "Unused production export/type; remove the export or symbol after focused review.",
+        "confidence": 0
       },
       {
         "path": "client/src/pages/tasks/TaskCard.tsx",
         "kind": "unused_export",
         "symbol": "TaskResultSummary",
         "classification": "remove",
-        "reason": "Unused production export/type; remove the export or symbol after focused review."
+        "reason": "Unused production export/type; remove the export or symbol after focused review.",
+        "confidence": 0
       },
       {
         "path": "client/src/pages/tasks/TaskCard.tsx",
         "kind": "unused_export",
         "symbol": "statusIcon",
         "classification": "remove",
-        "reason": "Unused production export/type; remove the export or symbol after focused review."
+        "reason": "Unused production export/type; remove the export or symbol after focused review.",
+        "confidence": 0
       },
       {
         "path": "client/src/pages/tasks/TaskMetrics.tsx",
         "kind": "unused_export",
         "symbol": "getTaskMetrics",
         "classification": "remove",
-        "reason": "Unused production export/type; remove the export or symbol after focused review."
+        "reason": "Unused production export/type; remove the export or symbol after focused review.",
+        "confidence": 0
       },
       {
         "path": "client/src/pages/tasks/Tasks.types.ts",
         "kind": "unused_type",
         "symbol": "ScheduleJob",
         "classification": "remove",
-        "reason": "Unused production export/type; remove the export or symbol after focused review."
+        "reason": "Unused production export/type; remove the export or symbol after focused review.",
+        "confidence": 0
       },
       {
         "path": "client/src/pages/tasks/Tasks.types.ts",
         "kind": "unused_type",
         "symbol": "ScheduleStatus",
         "classification": "remove",
-        "reason": "Unused production export/type; remove the export or symbol after focused review."
+        "reason": "Unused production export/type; remove the export or symbol after focused review.",
+        "confidence": 0
       },
       {
         "path": "client/src/pages/tasks/Tasks.types.ts",
         "kind": "unused_type",
         "symbol": "ScheduledTask",
         "classification": "remove",
-        "reason": "Unused production export/type; remove the export or symbol after focused review."
+        "reason": "Unused production export/type; remove the export or symbol after focused review.",
+        "confidence": 0
       }
     ],
     "python-symbols": [

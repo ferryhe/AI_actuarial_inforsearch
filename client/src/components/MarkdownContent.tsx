@@ -23,7 +23,7 @@ function isWellFormedMarkdownUrl(url: string): boolean {
   }
 }
 
-export function transformMarkdownUrl(url: string, key: string): string | undefined {
+function transformMarkdownUrl(url: string, key: string): string | undefined {
   if (key !== "href" || !url || url !== url.trim() || !isWellFormedMarkdownUrl(url)) {
     return undefined;
   }
