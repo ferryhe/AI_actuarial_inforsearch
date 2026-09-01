@@ -391,7 +391,9 @@ def _read_pdf_marker(path: Path, max_chars: int) -> str:
         # marker>=? sometimes exposes PdfConverter like this
         from marker.converters.pdf import PdfConverter  # type: ignore
 
+        # pylint: disable-next=no-value-for-parameter
         converter = PdfConverter()
+        # pylint: disable-next=no-member
         md = converter.convert(str(path))  # type: ignore
     except Exception:
         md = None
@@ -399,6 +401,8 @@ def _read_pdf_marker(path: Path, max_chars: int) -> str:
     if md is None:
         try:
             # Some installs may provide a simple convert function
+            # Optional marker versions expose different public entry points.
+            # pylint: disable-next=no-name-in-module
             from marker import convert  # type: ignore
 
             md = convert(str(path))  # type: ignore

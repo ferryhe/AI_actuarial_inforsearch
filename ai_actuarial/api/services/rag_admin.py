@@ -4270,6 +4270,12 @@ def _build_agentic_ready_manifest_core(
             validation = ready_data_builder.validate(candidate_output_dir)
             artifact_files = list(builder_manifest.get("artifact_files") or [])
             artifact_digest = _ready_data_artifact_digest(candidate_output_dir, artifact_files)
+            _require_generated_staging_candidate(
+                returned_output_dir=candidate_output_dir,
+                expected_output_dir=staging_output_dir,
+                staging_root=staging_root,
+                allowed_output_root=allowed_output_root,
+            )
             if artifact_digest != str(builder_manifest.get("artifact_digest") or ""):
                 raise ValueError("build_failure: Ready Data artifact digest mismatch")
             if validation.get("valid"):

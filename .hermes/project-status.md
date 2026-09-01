@@ -38,6 +38,13 @@
   top-level commands, watch mode, and investigation/cleanup documentation.
 - Removed confirmed unused TypeScript locals/imports and corrected narrow test
   contracts exposed by the new full-suite gate.
+- The first PR #318 run passed file/symbol, frontend, and Python smoke jobs. Its
+  full Linux gate exposed one POSIX path-normalization bug, two FastAPI 0.141
+  route-introspection assumptions, five Linux symlink-path assertions, and
+  four platform-dependent static-baseline entries. These were fixed narrowly:
+  publication slots remain atomic while failed rollback audit fields advance,
+  staging is reverified immediately after digesting, and optional marker
+  Pylint findings are deterministically suppressed at their exact call sites.
 
 ## Acceptance results
 
@@ -59,6 +66,9 @@
   outside Issue #317.
 - Pre-commit config validation, CI YAML parsing, CLI `--help`, and
   `git diff --check`: passed.
+- Post-CI focused regression: 6 passed and 5 Windows symlink skips. Static
+  baselines now match exactly at 213 Black files, 142 isort files, and 22
+  Pylint identities; the dead-code gate remains exact.
 
 ## Files changed
 

@@ -17,13 +17,14 @@ ISORT_LINE = re.compile(r"^ERROR: (.+?) Imports are incorrectly sorted and/or fo
 
 
 def _normalize_path(raw_path: str, root: Path) -> str:
-    path = Path(raw_path.strip())
+    normalized_raw = raw_path.strip().replace("\\", "/")
+    path = Path(normalized_raw)
     if not path.is_absolute():
         path = root / path
     try:
         return path.resolve().relative_to(root.resolve()).as_posix()
     except ValueError:
-        return raw_path.strip().replace("\\", "/")
+        return normalized_raw
 
 
 def parse_black_output(output: str, root: Path) -> list[str]:

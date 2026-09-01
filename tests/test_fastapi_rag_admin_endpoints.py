@@ -58,6 +58,34 @@ class _KBContractTestClient(TestClient):
         return super().post(url, *args, **kwargs)
 
 
+def _assert_failed_rollback_preserved_publication(
+    before: dict[str, object],
+    after: dict[str, object],
+) -> None:
+    """A rejected rollback updates its audit fields but not publication state."""
+    scrubbed_before = json.loads(json.dumps(before))
+    scrubbed_after = json.loads(json.dumps(after))
+    operation_fields = {
+        "latest_operation_kind",
+        "latest_operation_state",
+        "latest_operation_at",
+        "latest_operation_error",
+    }
+    for payload in (scrubbed_before, scrubbed_after):
+        for section_name in ("manifest", "publication_state"):
+            section = payload.get(section_name)
+            if isinstance(section, dict):
+                for field in operation_fields:
+                    section.pop(field, None)
+    assert scrubbed_after == scrubbed_before
+    for section_name in ("manifest", "publication_state"):
+        section = after[section_name]
+        assert isinstance(section, dict)
+        assert section["latest_operation_kind"] == "rollback"
+        assert section["latest_operation_state"] == "failed"
+        assert section["latest_operation_error"] == "ready_data operation failed"
+
+
 def _prepare_committed_kb_index(
     db_path: Path,
     kb_id: str,
@@ -5011,9 +5039,10 @@ def test_public_rollback_rejects_linked_allowed_root_before_structure_validation
     )
     assert response.status_code == 422, response.text
     assert validator_calls == 0
-    assert client.get(
+    after = client.get(
         f"/api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest"
-    ).json() == before
+    ).json()
+    _assert_failed_rollback_preserved_publication(before, after)
 
 
 @pytest.mark.parametrize("artifact_name", ["ready_data_manifest.json", "doc_catalog.jsonl"])
@@ -5075,9 +5104,10 @@ def test_public_rollback_rejects_linked_artifact_before_structure_validation(
     )
     assert response.status_code == 422, response.text
     assert validator_calls == 0
-    assert client.get(
+    after = client.get(
         f"/api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest"
-    ).json() == before
+    ).json()
+    _assert_failed_rollback_preserved_publication(before, after)
 
 
 def test_public_rollback_rejects_nested_artifact_ancestor_link_atomically(
@@ -5164,9 +5194,10 @@ def test_public_rollback_rejects_nested_artifact_ancestor_link_atomically(
     )
     assert response.status_code == 422, response.text
     assert validator_calls == 0
-    assert client.get(
+    after = client.get(
         f"/api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest"
-    ).json() == before
+    ).json()
+    _assert_failed_rollback_preserved_publication(before, after)
 
 
 @pytest.mark.parametrize(

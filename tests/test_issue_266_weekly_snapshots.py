@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 from ai_actuarial import cli
 from ai_actuarial import task_runtime
 from ai_actuarial.api.app import create_app
+from ai_actuarial.api.route_inventory import _iter_routes
 from ai_actuarial.api.services import weekly_updates
 from ai_actuarial.sqlite_schema import (
     CURRENT_SQLITE_SCHEMA_VERSION,
@@ -409,7 +410,11 @@ def test_api_list_latest_detail_and_files_are_typed_and_lightweight(
         "/api/weekly-updates/{snapshot_id}",
         "/api/weekly-updates/{snapshot_id}/files",
     }
-    routes = {getattr(route, "path", ""): route for route in app.routes}
+    routes = {
+        path: route
+        for route, path, _include_in_schema in _iter_routes(app.router.routes)
+        if path
+    }
     assert all(routes[path].response_model is not None for path in typed_paths)
 
 

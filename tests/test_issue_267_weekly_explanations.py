@@ -16,6 +16,7 @@ import yaml
 from cryptography.fernet import Fernet
 
 from ai_actuarial import cli
+from ai_actuarial.api.route_inventory import _iter_routes
 from ai_actuarial.api.services import weekly_updates
 from ai_actuarial.services.token_encryption import TokenEncryption
 from ai_actuarial.sqlite_schema import (
@@ -962,7 +963,11 @@ def test_typed_explanation_routes_redact_audit_and_gets_never_call_model(
         "/api/weekly-updates/not-a-snapshot/explanation", headers=headers
     )
     assert missing.status_code == 404
-    route_paths = [route.path for route in app.routes]
+    route_paths = [
+        path
+        for _route, path, _include_in_schema in _iter_routes(app.router.routes)
+        if path
+    ]
     assert route_paths.index("/api/weekly-updates/explanations/latest") < route_paths.index(
         "/api/weekly-updates/{snapshot_id}"
     )
