@@ -4,15 +4,7 @@
   "policy": "Every current finding must match exactly; update-baseline may only remove entries.",
   "gates": {
     "typescript-files": [],
-    "python-files": [
-      {
-        "path": "ai_actuarial/pipeline_config.py",
-        "kind": "unused_module",
-        "symbol": "ai_actuarial.pipeline_config",
-        "classification": "remove",
-        "reason": "Unreachable production module; verify scripts and compatibility callers before deletion."
-      }
-    ],
+    "python-files": [],
     "typescript-symbols": [],
     "python-symbols": [
       {

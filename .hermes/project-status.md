@@ -393,6 +393,19 @@
 - The complete pytest suite passed with 1,881 tests and 10 platform skips, and
   the unified quality gate passed at 129/81/16. The dead-code gate shrank
   exactly from 0/1 files and 0/64 symbols to 0/1 files and 0/63 symbols.
+- Remote commit `1a792e0` contains the exact collector public-contract
+  classification. CI run 33549779936 passed all five jobs, including the
+  complete Linux quality gate, and no new review comment was added.
+- The final unreachable Python module `ai_actuarial/pipeline_config.py` was
+  deleted. Its 20-test dedicated file and four tests in the immutable-guards
+  suite that imported only that module were deleted with it; the live manifest
+  schema-version ingestion traceability test remains.
+- The pipeline-config cleanup compiled successfully, passed all 44 retained
+  focused tests, and left no repository reference to the deleted module. The
+  complete pytest suite passed with 1,857 tests and 10 platform skips. The
+  unified quality gate passed after shrinking to 127 Black files, 80 isort
+  files, and 16 Pylint identities. Both TypeScript and Python dead-file
+  baselines are now empty; symbol findings remain 0/63.
 
 ## Files changed
 
@@ -481,6 +494,11 @@
   `CollectionConfig.auto_download` constructor field, recorded its exact
   compatibility reference in the validated whitelist, and removed its stale
   Python dead-code baseline entry without changing source or tests.
+- Twenty-first historical directory cleanup: deleted the unreachable
+  `ai_actuarial/pipeline_config.py` module and its 24 module-only tests,
+  formatted the touched immutable-guards test while preserving its live
+  manifest traceability case, and removed the final Python dead-file baseline
+  plus the matching Black/isort baseline entries.
 
 ## Working tree notes
 
@@ -497,7 +515,8 @@
 
 ## Recommended next action
 
-- Commit and push the collectors public-contract classification to PR #318,
-  verify its CI and review feedback, then delete the final unreachable module
-  `ai_actuarial/pipeline_config.py` together with its 24 module-only tests in a
+- Commit and push the pipeline-config cleanup to PR #318, verify its CI and
+  review feedback, then clean the direct Python files under `ai_actuarial/`:
+  remove confirmed dead symbols, retain framework/public contracts through
+  exact whitelist references, and shrink the formatter/linter baselines in a
   separate verified commit. Merge only after explicit authorization.
