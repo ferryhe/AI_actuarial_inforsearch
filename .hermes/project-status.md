@@ -337,6 +337,21 @@
   at 129 Black files, 81 isort files, and 16 Pylint error identities. The
   dead-code gate shrank exactly from 8/1 files and 27/64 symbols to 7/1 files
   and 25/64 symbols.
+- Remote commit `f80d52d` contains the exact `client/src/hooks/` cleanup. CI
+  run 33542287174 passed all five jobs, including the 7m35s Linux quality gate,
+  and no new Review or Copilot comment was added.
+- `client/src/lib/` now exposes only externally consumed contracts. Two unused
+  navigation helpers and the test-only knowledge-list authority helper were
+  removed; the duplicate ready-data route helper was consolidated under the
+  request name. Live helpers and data shapes that are internal to their module
+  remain implemented but are no longer exported.
+- Tests were updated to exercise the public ready-data merge helper and native
+  URL parsing. The one runtime test segment dedicated only to the removed
+  authority helper was deleted; the surrounding current behavior tests remain.
+  All 77 focused tests, ESLint, frontend type-check, and the production build
+  passed. The complete pytest suite passed with 1,881 tests and 10 platform
+  skips, and the unified quality gate passed at 129/81/16. The dead-code gate
+  shrank exactly from 7/1 files and 25/64 symbols to 7/1 files and 7/64 symbols.
 
 ## Files changed
 
@@ -407,6 +422,11 @@
 - Sixteenth historical directory cleanup: deleted the unreachable
   `client/src/hooks/use-api-query.ts`, made two live task-option interfaces
   private, and removed the matching three TypeScript dead-code baseline entries.
+- Seventeenth historical directory cleanup: removed three confirmed dead
+  `client/src/lib/` functions, consolidated a duplicate ready-data request
+  export, made fourteen live implementation details private, updated the one
+  cross-directory caller and focused tests, and removed the matching eighteen
+  TypeScript dead-code baseline entries.
 
 ## Working tree notes
 
@@ -423,8 +443,8 @@
 
 ## Recommended next action
 
-- Commit and push the path-specific `client/src/hooks/` cleanup to PR #318,
-  verify its CI and review feedback, then continue with `client/src/lib/`.
+- Commit and push the path-specific `client/src/lib/` cleanup to PR #318,
+  verify its CI and review feedback, then continue with `client/src/pages/`.
   Keep the final root-level orphan
   `ai_actuarial/pipeline_config.py` for a separately verified cleanup. Merge
   only after explicit authorization.

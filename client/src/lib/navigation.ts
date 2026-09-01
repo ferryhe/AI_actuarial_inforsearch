@@ -19,16 +19,7 @@ export function sanitizeReturnPath(value: string | null | undefined): string | n
   return raw;
 }
 
-export function getCurrentRelativeLocation(): string {
-  if (typeof window === "undefined") {
-    return "/";
-  }
-
-  const next = `${window.location.pathname}${window.location.search}${window.location.hash}`;
-  return sanitizeReturnPath(next) || "/";
-}
-
-export function getRawSearchParams(rawSearch?: string): URLSearchParams {
+function getRawSearchParams(rawSearch?: string): URLSearchParams {
   const search = rawSearch ?? (typeof window === "undefined" ? "" : window.location.search);
   return new URLSearchParams(search);
 }
@@ -78,10 +69,6 @@ export function parseAskAiChatTarget(rawSearch?: string): AskAiChatTarget | null
     return null;
   }
   return { kbId, ragMode: "agentic" };
-}
-
-export function getReturnPathFromSearch(search: string): string | null {
-  return sanitizeReturnPath(new URLSearchParams(search).get("from"));
 }
 
 export function buildFileDetailPath(fileUrl: string, from?: string | null): string {

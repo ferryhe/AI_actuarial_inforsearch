@@ -1,4 +1,4 @@
-export interface ReadyDataPublication {
+interface ReadyDataPublication {
   publication_id?: string | null;
   profile?: string | null;
   profile_version?: string | null;
@@ -18,7 +18,7 @@ export interface ReadyDataPublication {
   smoke_checked_at?: string | null;
 }
 
-export interface ReadyDataPublicationState {
+interface ReadyDataPublicationState {
   publication_revision?: number | null;
   serving_status?: "missing" | "ready" | "stale" | "failed" | "unavailable" | null;
   serving_usable?: boolean;
@@ -35,7 +35,7 @@ export interface ReadyDataPublicationState {
   previous_publication?: ReadyDataPublication | null;
 }
 
-export type ReadyDataServingStatus = "missing" | "ready" | "stale" | "failed" | "unavailable";
+type ReadyDataServingStatus = "missing" | "ready" | "stale" | "failed" | "unavailable";
 
 export interface ReadyDataServingState {
   status: ReadyDataServingStatus;
@@ -196,7 +196,7 @@ export function isReadyDataRequestCurrent(
   );
 }
 
-export async function runReadyDataRouteMutation<T>(options: {
+export async function runReadyDataRouteRequest<T>(options: {
   request: () => Promise<T>;
   isCurrent: () => boolean;
   onSuccess: (response: T) => void | Promise<void>;
@@ -215,8 +215,6 @@ export async function runReadyDataRouteMutation<T>(options: {
   }
 }
 
-export const runReadyDataRouteRequest = runReadyDataRouteMutation;
-
 export function selectReadyDataMutationProfile(
   kbId: string,
   manifest: AgenticReadyManifest | null,
@@ -232,7 +230,7 @@ export function selectReadyDataMutationProfile(
   return "general";
 }
 
-export function canonicalReadyDataProfile(value: unknown): string {
+function canonicalReadyDataProfile(value: unknown): string {
   return typeof value === "string" ? value.trim().toLowerCase() : "";
 }
 
@@ -426,7 +424,7 @@ export function readyDataOperationKindTranslationKey(kind: unknown): string {
   }
 }
 
-export function mergeConfirmedReadyDataAutomation(
+function mergeConfirmedReadyDataAutomation(
   current: AgenticReadyManifest | null,
   kbId: string,
   profile: string,
@@ -500,7 +498,7 @@ export function mergeConfirmedReadyDataAutomationForKb(
   );
 }
 
-export function readyDataPublicationRevision(
+function readyDataPublicationRevision(
   manifest: AgenticReadyManifest | null | undefined,
 ): number | null {
   const values = [
@@ -550,7 +548,7 @@ function readyDataEvaluatedGeneration(
   return Math.max(directGeneration, nestedGeneration);
 }
 
-export function compareReadyDataManifestMonotonicFreshness(
+function compareReadyDataManifestMonotonicFreshness(
   current: AgenticReadyManifest | null | undefined,
   incoming: AgenticReadyManifest | null | undefined,
 ): -1 | 0 | 1 {
@@ -784,13 +782,6 @@ export function mergeReadyDataKnowledgeList<T extends ReadyDataKnowledgeListItem
       agentic_ready_manifest: manifest || undefined,
     } as T;
   });
-}
-
-export function isReadyDataKnowledgeListManifestAuthoritative(
-  requestVersion: number,
-  latestAppliedVersion: number,
-): boolean {
-  return requestVersion >= latestAppliedVersion;
 }
 
 export function mergeReadyDataKnowledgeManifest<T extends ReadyDataKnowledgeListItem>(

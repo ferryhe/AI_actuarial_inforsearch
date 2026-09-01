@@ -474,7 +474,7 @@ def test_kb_detail_guards_ready_data_mutations_by_route_epoch():
         (rollback_src, "setRollbackRunning(false)"),
     ):
         assert "captureReadyDataRoute(readyDataRoute.current, manifestMounted.current, kbId)" in handler_src
-        assert "await runReadyDataRouteMutation({" in handler_src
+        assert "await runReadyDataRouteRequest({" in handler_src
         assert "isCurrent: () => isCurrentReadyDataRoute(mutationKbId, mutationEpoch)" in handler_src
         assert handler_src.count("isCurrentReadyDataRoute(mutationKbId, mutationEpoch)") >= 2
         assert "onSuccess:" in handler_src
@@ -487,7 +487,7 @@ def test_kb_detail_guards_ready_data_mutations_by_route_epoch():
     assert "export function syncReadyDataRoute" in state_src
     assert "export function captureReadyDataRoute" in state_src
     assert "export function isReadyDataRouteCurrent" in state_src
-    assert "export async function runReadyDataRouteMutation" in state_src
+    assert "export async function runReadyDataRouteRequest" in state_src
 
 
 def test_kb_detail_uses_effective_current_kb_manifest_for_render_and_polling():
@@ -585,7 +585,7 @@ def test_kb_detail_guards_every_route_bound_loader_and_profile_fallback():
     assert "selectReadyDataMutationProfile(" in automation_src
     assert "selectReadyDataMutationProfile(" in rollback_src
     assert "effectiveManifest?.profile || meta?.manifest_profile" not in src
-    assert "export const runReadyDataRouteRequest" in state_src
+    assert "export async function runReadyDataRouteRequest" in state_src
     assert "export function selectReadyDataMutationProfile" in state_src
 
 
@@ -759,7 +759,7 @@ def test_manifest_episode_authority_is_shared_in_detail_and_scoped_per_list_item
     state_src = READY_DATA_UI_STATE_TS.read_text(encoding="utf-8")
 
     assert "export function resolveReadyDataManifestEpisode" in state_src
-    assert "export function compareReadyDataManifestMonotonicFreshness" in state_src
+    assert "function compareReadyDataManifestMonotonicFreshness" in state_src
     assert "export function resolveReadyDataSafeMutationManifestEpisode" in state_src
     assert "export interface ReadyDataManifestEpisode" in state_src
     assert "const manifestEpisodeSequence = useRef(0);" in detail_src

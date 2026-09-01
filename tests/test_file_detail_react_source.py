@@ -89,15 +89,14 @@ def test_file_routes_parse_raw_browser_search_without_changing_encoded_url_ident
         "https://example.com/a+b.pdf",
     ]
     script = """
-import { buildFileDetailPath, buildFilePreviewPath, getRawSearchParams } from './client/src/lib/navigation.ts';
+import { buildFileDetailPath, buildFilePreviewPath } from './client/src/lib/navigation.ts';
 const fileUrls = JSON.parse(process.argv[1]);
 for (const fileUrl of fileUrls) {
   for (const [route, key] of [
     [buildFileDetailPath(fileUrl), 'url'],
     [buildFilePreviewPath(fileUrl), 'file_url'],
   ]) {
-    globalThis.window = { location: { search: route.slice(route.indexOf('?')) } };
-    const actual = getRawSearchParams().get(key);
+    const actual = new URLSearchParams(route.slice(route.indexOf('?'))).get(key);
     if (actual !== fileUrl) throw new Error(`${actual} !== ${fileUrl}`);
   }
 }
