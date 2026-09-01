@@ -68,6 +68,9 @@
 - The fourth completed directory is `ai_actuarial/api/middleware/`. Its single
   implementation file is directly exercised by FastAPI auth and ops tests, so
   it received only Black/isort formatting and no file or symbol was removed.
+- The fifth completed directory is `ai_actuarial/models/`. Both the package
+  exports and `ApiToken` model have direct runtime/storage consumers and
+  dedicated tests, so both files received only Black/isort formatting.
 
 ## Acceptance results
 
@@ -145,6 +148,15 @@
   files, 126 isort files, and 20 Pylint identities, with zero new or stale
   entries. The complete dead-code gate remained exact at 9/5 files and 28/93
   symbols.
+- Remote commit `b2c0d92` contains the exact `middleware/` tree. CI run
+  33470766007 passed all five jobs, including the 6m27s Linux quality gate, and
+  no new Review or Copilot comment was added.
+- `ai_actuarial/models/` focused validation passed: Black, isort, and Pylint
+  reported no gate findings, and all 23 model/storage integration tests passed.
+- The complete pytest suite passed after the `models/` cleanup with 1,881 tests
+  and 10 platform skips. The full static gate passed at 190 Black files, 124
+  isort files, and 20 Pylint identities, with zero new or stale entries. The
+  dead-code gate remained exact at 9/5 files and 28/93 symbols.
 
 ## Files changed
 
@@ -167,6 +179,9 @@
 - Fourth historical directory cleanup:
   `ai_actuarial/api/middleware/rate_limit.py` and the matching removals from
   `quality-gate-baseline.json`.
+- Fifth historical directory cleanup: `ai_actuarial/models/__init__.py`,
+  `ai_actuarial/models/api_token.py`, and the matching removals from
+  `quality-gate-baseline.json`.
 
 ## Working tree notes
 
@@ -183,6 +198,6 @@
 
 ## Recommended next action
 
-- Commit and push the path-specific `middleware/` cleanup, verify PR #318, then
-  continue with `ai_actuarial/models/` as the next small independent directory.
+- Commit and push the path-specific `models/` cleanup, verify PR #318, then
+  continue with `ai_actuarial/security/` as the next small independent directory.
   Merge only after explicit authorization.
