@@ -8,14 +8,6 @@
     "typescript-symbols": [],
     "python-symbols": [
       {
-        "path": "ai_actuarial/rag/config.py",
-        "kind": "unused variable",
-        "symbol": "chunk_strategy",
-        "confidence": 60,
-        "classification": "whitelist",
-        "reason": "Public RAG configuration contract loaded from YAML and environment settings and covered by configuration tests."
-      },
-      {
         "path": "tests/agentic_rag/test_eval.py",
         "kind": "unused attribute",
         "symbol": "last_query",

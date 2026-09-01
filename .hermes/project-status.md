@@ -525,7 +525,13 @@
   exact validated whitelist reference. No production code or tests were
   removed. Focused tests passed 115/115, the full suite passed 1857/10 plus
   Black, isort, and Pylint, and the dead-code symbol baseline fell from 16 to
-  9; the quality baseline remains 96/60/9.
+  9; the quality baseline remains 96/60/9. All five remote CI jobs passed.
+- Twenty-fifth historical directory cleanup: retained the public
+  `RAGConfig.chunk_strategy` field loaded from environment/YAML settings and
+  recorded its exact validated whitelist reference. No production code or
+  tests were removed. Focused tests passed 41/41, the full suite passed 1857/10
+  plus Black, isort, and Pylint, and the dead-code symbol baseline fell from 9
+  to 8; the quality baseline remains 96/60/9.
 
 ## Working tree notes
 
@@ -542,7 +548,7 @@
 
 ## Recommended next action
 
-- Commit and push the `ai_actuarial/chatbot/` compatibility references to PR
-  #318, verify CI, then process the remaining nine Python symbol findings
-  directory by directory (`rag/` and test directories) while continuing to
-  shrink the 96/60/9 quality baseline. Merge only after explicit authorization.
+- Commit and push the `ai_actuarial/rag/` compatibility reference to PR #318,
+  verify CI, then process the remaining eight Python symbol findings and
+  formatter/linter debt directory by directory under `tests/`. Merge only
+  after explicit authorization.

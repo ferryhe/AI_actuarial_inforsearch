@@ -419,6 +419,10 @@ from ai_actuarial.markdown_conversion_config import (
 
 markdown_conversion_config_file_exists  # reason: Conversion registry resolves this public helper lazily.
 
+from ai_actuarial.rag.config import RAGConfig
+
+RAGConfig.chunk_strategy  # reason: Public RAG configuration field loaded from YAML and environment settings.
+
 from ai_actuarial.shared_auth import PUBLIC_PERMISSIONS_WHEN_AUTH_DISABLED
 
 PUBLIC_PERMISSIONS_WHEN_AUTH_DISABLED  # reason: Explicit backwards-compatible public alias.
