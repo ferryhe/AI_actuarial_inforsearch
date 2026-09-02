@@ -7,8 +7,9 @@
 - Baseline: `origin/main@0cdc25fce76d9eaf21d484020ccaa223fef0f3b6`
 - Issue: `#308 fix(chat): distinguish inapplicable retrieval metrics from missing score data`
 - State file: `C:\Users\ferry\.codex\issue-to-merge-state\AI_actuarial_inforsearch\issue-308.json`
-- Delivery stage: local implementation, independent review, required validation, and browser smoke
-  passed; ready to commit and publish Draft PR
+- PR: `https://github.com/ferryhe/AI_actuarial_inforsearch/pull/326`
+- Delivery stage: Draft PR #326 created with `Closes #308`; final status commit pending before
+  Ready for review
 
 ## Issue #308 scope and acceptance criteria
 
