@@ -7,8 +7,9 @@
 - Baseline: `origin/main@29b73be7ecf65d236570b5f9d698783a8966cb46`
 - Issue: `#320 fix(manifest): reject incompatible producer payloads instead of silent zero import`
 - State file: `C:\Users\ferry\.codex\issue-to-merge-state\AI_actuarial_inforsearch\issue-320.json`
-- Delivery stage: local implementation and review complete; all required local checks pass; commit,
-  Draft PR, Ready transition, one 600-second feedback window, CI, merge, and cleanup remain
+- PR: `https://github.com/ferryhe/AI_actuarial_inforsearch/pull/329`
+- Delivery stage: Draft PR #329 created with `Closes #320`; final status commit pending before the
+  Ready transition and single 600-second feedback/CI window
 
 ## Issue #320 scope and acceptance criteria
 
@@ -73,8 +74,8 @@
   `tests/test_issue_220_immutable_guards.py`, `tests/test_fastapi_ops_read_endpoints.py`,
   `tests/test_fastapi_ops_write_endpoints.py`, and this manager-owned status file.
 - No unrelated uncommitted or untracked files are present. There are no local blockers; the next
-  action is to commit, push, open the Draft PR with `Closes #320`, mark it Ready, then perform the
-  single required feedback/CI/merge/cleanup lifecycle.
+  action is to push this final status commit, mark PR #329 Ready, then perform the single required
+  feedback/CI/merge/cleanup lifecycle.
 
 # Project Status — Issue #308 inapplicable retrieval metrics
 
