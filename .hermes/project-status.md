@@ -1,3 +1,60 @@
+# Project Status — Issue #306 metadata-only Chunk & Embedding stats
+
+- Updated: 2026-09-01 EDT
+- Repository: `AI_actuarial_inforsearch`
+- Worktree: `C:\Users\ferry\.codex\worktrees\692c\AI_actuarial_inforsearch`
+- Branch: `codex/issue-306-metadata-only-stats`
+- Baseline: `origin/main@1e7f5f6b1cf29e7e9c0a413e221e774d77bdeee2`
+- Issue: `#306 perf(tasks): make Chunk & Embedding stats metadata-only`
+- State file: `C:\Users\ferry\.codex\issue-to-merge-state\AI_actuarial_inforsearch\issue-306.json`
+- Delivery stage: implementation, two local review rounds, browser smoke, and final local validation
+  passed; Draft PR creation is next
+- Progress heartbeat: id `bug-issue`, status `ACTIVE`, 15-minute cadence
+
+## Issue #306 scope and boundaries
+
+- This repository is the only writable project workspace; sibling repositories are off-limits.
+- Ordinary `GET /api/chunk_generation/stats` must use aggregate metadata only and must not read
+  `global_chunks.content` or `chunk_embeddings.vector_json`.
+- Preserve the response shape, category filtering, embedding identity fields, and
+  `first_without_chunks_index` semantics.
+- Preserve deep vector-body validation for build, audit, repair, and explicit coverage paths.
+- Add measured covering-index/query-plan evidence, regression guards, dimension/byte-size
+  performance evidence, focused API/storage/schema checks, frontend build, and browser smoke.
+- Non-goals remain caching the deep scan, changing embedding generation or serialization,
+  weakening fail-closed build/audit behavior, replacing SQLite, or redesigning Tasks UI.
+
+## Issue #306 baseline evidence
+
+- Worktree was clean; assigned branch and `HEAD` exactly matched the supplied baseline.
+- A baseline endpoint run with 3,072-dimension stored vectors called
+  `Storage.embedding_coverage`, `Storage.list_chunks_for_embedding`, and
+  `Storage.read_valid_chunk_embeddings` once each.
+- Targeted blame/log evidence traces the deep statistics path to the persisted-embedding
+  implementation; current intent already keeps metadata-only and deep validation paths separate
+  for Knowledge Base detail, so Issue #306 is reproducible and not stale.
+
+## Issue #306 current validation
+
+- Issue-focused tests: 10 passed. The added v0 regression proves a real pre-v13 database
+  without the new indexes is recognized, migrated with data preserved, and idempotent.
+- Schema/API combinations: 153 schema migration checks and 42 related API/lightweight-path
+  checks passed.
+- Production-scale benchmark: 21,314 rows at 3,072 dimensions with about 262 MB of stored
+  vector bodies; first new connection 0.02653s and 20-run warm p95 0.02172s.
+- Frontend lint, type-check, production build, dead-code file/symbol gates, and the unified
+  quality gate passed. Final full pytest result: 1,867 passed, 10 skipped, 0 failed;
+  Black, isort, and Pylint also passed. Agentic eval smoke passed 3/3.
+- Browser smoke passed on Tasks → Chunk & Embedding: stats and selected embedding identity
+  rendered without a persistent loading state, the stats API returned 200, and the browser
+  console had no errors.
+- Local review closed after two rounds. One real v0 migration gap was fixed and independently
+  revalidated. A proposed manual wrong-name index construction was rejected under the repository
+  review policy because no supported create or migration path can produce it and Issue #306 does
+  not require compatibility with manual schema tampering.
+
+## Prior project status (Issue #317 historical record)
+
 # Project Status — Issue #317 dead-code and unified quality gates
 
 - Updated: 2026-09-01 EDT
