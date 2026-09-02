@@ -23,12 +23,49 @@ EngineName = Literal[
     "local",
 ]
 
+_FAILURE_DETAIL_MAX_LENGTH = 800
+
 
 @dataclass(slots=True)
 class ConversionOutput:
     markdown: str
     engine: str
     model: str
+
+
+def _safe_failure_detail(exc: Exception, path: Path) -> str:
+    detail = " ".join(str(exc).split()) or type(exc).__name__
+    path_texts = {str(path)}
+    try:
+        path_texts.add(str(path.resolve()))
+    except OSError:
+        pass
+    for path_text in sorted(path_texts, key=len, reverse=True):
+        if path_text:
+            detail = detail.replace(path_text, path.name)
+    return detail[:_FAILURE_DETAIL_MAX_LENGTH]
+
+
+def _format_auto_failure(path: Path, failure_details: list[tuple[str, str]]) -> str:
+    prefix = f"Auto conversion failed for {path.name}: "
+    if not failure_details:
+        return f"{prefix}no candidates configured"
+    candidate_prefixes = [f"{candidate}: " for candidate, _detail in failure_details]
+    separator_length = 2 * (len(failure_details) - 1)
+    available = (
+        _FAILURE_DETAIL_MAX_LENGTH
+        - len(prefix)
+        - sum(len(candidate_prefix) for candidate_prefix in candidate_prefixes)
+        - separator_length
+    )
+    per_candidate_limit = max(1, available // len(failure_details))
+    entries = [
+        f"{candidate_prefix}{detail[:per_candidate_limit]}"
+        for candidate_prefix, (_candidate, detail) in zip(
+            candidate_prefixes, failure_details, strict=True
+        )
+    ]
+    return (prefix + "; ".join(entries))[:_FAILURE_DETAIL_MAX_LENGTH]
 
 
 def _import_engine(engine: str):
@@ -121,6 +158,7 @@ def convert_path(
 ) -> ConversionOutput:
     if engine == "auto":
         last_exc: Exception | None = None
+        failure_details: list[tuple[str, str]] = []
         for candidate in _auto_candidates(path):
             try:
                 return convert_path(
@@ -132,8 +170,9 @@ def convert_path(
                 )
             except Exception as exc:  # noqa: BLE001 - auto mode tries fallbacks
                 last_exc = exc
+                failure_details.append((candidate, _safe_failure_detail(exc, path)))
                 continue
-        raise RuntimeError(f"Auto conversion failed for {path.name}") from last_exc
+        raise RuntimeError(_format_auto_failure(path, failure_details)) from last_exc
 
     engine_cls = _import_engine(engine)
     init_kwargs = {}
@@ -155,4 +194,6 @@ def convert_path(
             engine_instance = engine_cls()
 
     response = engine_instance.convert(path)
-    return ConversionOutput(markdown=response.markdown, engine=str(engine_instance.name), model=str(response.model))
+    return ConversionOutput(
+        markdown=response.markdown, engine=str(engine_instance.name), model=str(response.model)
+    )

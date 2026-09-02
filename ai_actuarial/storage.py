@@ -95,6 +95,7 @@ class Storage:
     _SCHEMA_TABLES = frozenset(
         {
             "files",
+            "markdown_terminal_source_state",
             "pages",
             "blobs",
             "catalog_items",
@@ -269,6 +270,16 @@ class Storage:
                 run_id TEXT,
                 manifest_json TEXT,
                 ingested_at TEXT
+            )
+            """)
+
+        self._conn.execute("""
+            CREATE TABLE IF NOT EXISTS markdown_terminal_source_state (
+                file_url TEXT PRIMARY KEY,
+                terminal_code TEXT NOT NULL,
+                source_fingerprint TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(file_url) REFERENCES files(url) ON DELETE CASCADE
             )
             """)
 
@@ -3828,6 +3839,37 @@ class Storage:
                 before=before,
             )
             return (True, None)
+
+    def record_markdown_terminal_source_state(
+        self,
+        *,
+        file_url: str,
+        terminal_code: str,
+        source_fingerprint: str,
+    ) -> None:
+        """Persist a terminal Markdown preflight outcome for one source state."""
+        self._conn.execute(
+            """
+            INSERT INTO markdown_terminal_source_state (
+                file_url, terminal_code, source_fingerprint, updated_at
+            )
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(file_url) DO UPDATE SET
+                terminal_code=excluded.terminal_code,
+                source_fingerprint=excluded.source_fingerprint,
+                updated_at=excluded.updated_at
+            """,
+            (file_url, terminal_code, source_fingerprint, self.now()),
+        )
+        self._maybe_commit()
+
+    def clear_markdown_terminal_source_state(self, file_url: str) -> None:
+        """Clear stale terminal state once a source is eligible again."""
+        self._conn.execute(
+            "DELETE FROM markdown_terminal_source_state WHERE file_url = ?",
+            (file_url,),
+        )
+        self._maybe_commit()
 
     def get_file_markdown(self, url: str) -> dict | None:
         """Get markdown content for a file.

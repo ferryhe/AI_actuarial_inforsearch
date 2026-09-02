@@ -561,7 +561,11 @@ def test_markdown_partial_failure_or_stop_is_not_success(
         SimpleNamespace(engine="local", model="model", markdown="# ready"),
         "local",
     )
-    storage = SimpleNamespace(update_file_markdown=lambda *_args, **_kwargs: (True, ""))
+    storage = SimpleNamespace(
+        update_file_markdown=lambda *_args, **_kwargs: (True, ""),
+        record_markdown_terminal_source_state=lambda **_kwargs: None,
+        clear_markdown_terminal_source_state=lambda _file_url: None,
+    )
     monkeypatch.setattr(
         "ai_actuarial.task_runtime.load_markdown_conversion_config",
         lambda: {"default_tool": "auto", "tools": {}},
@@ -573,6 +577,8 @@ def test_markdown_partial_failure_or_stop_is_not_success(
     assert result.metadata["stopped"] is stop_after_first
     assert result.items_downloaded == 1
     assert len(result.metadata["result"]["files"]) == 1
+    assert result.metadata["items_terminal_skipped"] == (0 if stop_after_first else 1)
+    assert len(result.metadata["result"]["outcomes"]) == (1 if stop_after_first else 2)
 
 
 def test_markdown_stop_requested_during_only_file_preserves_output_as_stopped(

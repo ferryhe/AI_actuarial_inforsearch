@@ -1,3 +1,143 @@
+# Project Status — Issue #322 Markdown terminal preflight
+
+- Updated: 2026-09-02 EDT
+- Repository: `AI_actuarial_inforsearch`
+- Worktree: `C:\Users\ferry\.codex\worktrees\8480\AI_actuarial_inforsearch`
+- Branch: `codex/issue-322-markdown-terminal-preflight`
+- Baseline: `origin/main@e0645f92b867a7209af91f2ddd28027cede28778`
+- Issue: `#322 fix(markdown): preflight terminal source failures before conversion`
+- State file: `C:\Users\ferry\.codex\issue-to-merge-state\AI_actuarial_inforsearch\issue-322.json`
+- PR: `https://github.com/ferryhe/AI_actuarial_inforsearch/pull/330`
+- Delivery stage: PR #330 is Ready. Its single feedback window completed after 720.2 seconds;
+  the sole valid Copilot wording fix is pending commit/push and current-head CI.
+- Progress heartbeat: id `issue-322-delivery-progress`, status `ACTIVE`, 15-minute cadence
+
+## Issue #322 acceptance criteria
+
+- AC-1: A legacy binary `.ppt` is classified as `unsupported_legacy_ppt` before converter
+  execution and is excluded from later automatic Markdown backlogs while its source/state is
+  unchanged, unless an operator explicitly retries it.
+- AC-2: A missing local source is durably classified as `repair_required` before converter
+  execution and does not repeat the same scheduled conversion error.
+- AC-3: A `.pdf` whose declared MIME/content kind or magic identifies HTML is durably classified
+  as `invalid_source` and is not accepted solely from its extension or URL.
+- AC-4: Terminal preflight outcomes remain distinct from retryable converter failures. An unchanged
+  terminal source stays out of ordinary incremental selection; a verified source/state change or
+  explicit operator selection makes it eligible again under one narrow rule.
+- AC-5: Terminal skips have their own task counter and per-item result visibility, separate from
+  successful conversions, ordinary skips, and retryable errors; they cannot falsely make a run
+  successful.
+- AC-6: Auto exhaustion preserves every attempted converter and its concrete failure reason in
+  task details instead of only `Auto conversion failed`.
+- AC-7: Valid supported sources preserve the existing incremental selection, conversion,
+  persistence, and retry behavior; downstream Chunk and Embedding contracts do not change.
+- AC-8: Regression tests cover legacy PPT, missing source, HTML-disguised PDF, a valid supported
+  control, durable exclusion/re-entry, separate terminal statistics, and Auto failure details.
+
+## Issue #322 baseline and duplicate evidence
+
+- After fetch, `HEAD`, `origin/main`, and their merge-base all matched the supplied baseline
+  `e0645f92b867a7209af91f2ddd28027cede28778`; the worktree was clean and detached before the
+  isolated task branch was created.
+- No open, closed, or merged PR matched Issue #322, its URL/number, or the distinctive terminal
+  Markdown-preflight title. The remote exposes only `main`, and targeted commit history found no
+  equivalent terminal source state. Closed Issue #319 changes loose-coupled stage continuation and
+  does not implement Markdown source preflight or terminal eligibility.
+- A temporary-database reproduction made a real OLE-header `.ppt`, a missing `.pdf`, an HTML-body
+  `.pdf` with `content_type=text/html` and `content_kind=web_page`, and a valid `%PDF` control.
+  The first run called a converter for the PPT, HTML PDF, and valid PDF; the HTML PDF was accepted.
+  The second ordinary run selected the unchanged PPT and missing PDF again and repeated both
+  failures.
+- A separate runtime reproduction forced `markitdown` and `local` to fail concretely. The exposed
+  Auto error was only `Auto conversion failed for control.pdf`; only the final `local` failure
+  survived as the exception cause.
+- `git blame` and targeted `git log -S` trace broad candidate selection and missing-file retries to
+  the original May task runtime, and generic Auto exhaustion to the February/June converter work.
+  No later history establishes terminal preflight as intentionally excluded, so the bug premise is
+  current.
+
+## Issue #322 scope and validation
+
+- Worker-owned scope is limited to Markdown candidate selection/preflight, the smallest durable
+  state needed for unchanged-terminal exclusion and source-change/explicit-selection re-entry,
+  task result/stat visibility, Auto failure details, and directly corresponding migrations/tests.
+- Likely touched surfaces are `ai_actuarial/task_runtime.py`, storage/schema code only if durable
+  state requires it, the two task display-summary services, the shared frontend task metrics/types
+  and bilingual label, plus focused Python/React/schema tests. Exact edits must be justified by an
+  acceptance criterion; `doc_to_md/registry.py` is an inspected sibling and is edited only if the
+  task contract actually routes through it.
+- Required final checks: Issue-focused red/green tests, relevant Markdown/task/API/schema/frontend
+  regression, `git diff --check`, both dead-code gates, frontend lint/type-check/build, the unified
+  quality gate, and all three Python smoke commands from CI. Browser smoke is required if visible
+  Task metrics change.
+- Non-goals: LibreOffice or new converter installation, automatic source repair/redownload,
+  Issue #319 pipeline redesign, downstream Chunk/Embedding changes, sibling-repository work,
+  security frameworks, schema registries, or speculative abstractions.
+- No unrelated uncommitted or untracked files were present at startup. Generated ignored
+  `graphify-out/` data is manager-created analysis output and will not be committed.
+
+## Issue #322 implementation and local review
+
+- A schema-v14 `markdown_terminal_source_state` record persists `unsupported_legacy_ppt`,
+  `repair_required`, or `invalid_source` together with a bounded source fingerprint. Ordinary
+  selection excludes an unchanged terminal source before logical offset/limit, while explicit
+  selection and verified source changes re-enter preflight.
+- Task results keep downstream-ready files separate from per-item outcomes, expose an independent
+  `items_terminal_skipped` metric through both API summaries and the shared Task UI, and do not
+  report a terminal-only run as successful. Retryable converter failures remain eligible.
+- Runtime Auto and the same-shaped converter registry now retain every attempted converter and a
+  bounded concrete reason. Candidate reasons share the 800-character public budget, so later
+  candidates cannot disappear from the final task detail.
+- TDD first reproduced 12 failures for the original implementation gap. Local review round 1 found
+  two valid defects: generic-MIME OLE `.ppt` records were omitted from the automatic candidate
+  predicate, and a long Auto aggregate was truncated before all converter reasons reached the
+  public task result. The same persistent worker fixed both with red/green tests.
+- Fresh read-only review round 2 independently checked the full diff and returned PASS. Current
+  evidence includes 11 Issue-focused tests, 324 related regression tests, schema and Pipeline Baton
+  coverage, frontend TaskMetrics runtime/type checks, and `git diff --check` passing.
+- The first final dead-symbol gate found one Issue-added exported-but-module-private
+  `TaskFileOutcome`. The same persistent worker removed only the unnecessary `export`; the gate
+  then passed with zero findings. Because this happened after round 2 PASS, a third fresh read-only
+  reviewer checked the full current diff and returned supplemental PASS with no findings.
+
+## Issue #322 final local validation
+
+- Unified quality gate passed: 2,011 tests passed and 10 skipped, then Black, isort, and Pylint all
+  passed.
+- Dead-code files and symbols both passed with zero baseline findings. Frontend lint passed with
+  zero errors and five existing Hook warnings; TypeScript type-check and production build passed,
+  with only the existing large-chunk advisory.
+- Python CI smoke passed: 13 FastAPI authority tests, 31 Agentic evaluation tests, and all 3 CLI
+  evaluation cases. Evidence/citation/refusal rates were 1.0 and unsupported-answer rate was 0.0.
+- In-app-browser smoke used an isolated temporary database and one local test token. The real Task
+  History page rendered `Terminal skips: 1` for a Markdown terminal-source result, and browser
+  console errors were empty. Both local services were stopped after the check; no real account or
+  production data was used.
+- `git diff --check` passed. CRLF notices are informational workspace conversion warnings.
+- Files in scope: Markdown runtime, storage/schema, both task summary services, shared Task metric
+  UI/types/i18n, same-shaped converter registry, focused Issue test, related schema/task/frontend
+  regression fixtures, and this manager-owned status file. No downstream Chunk/Embedding production
+  code changed.
+
+## Issue #322 remote feedback
+
+- PR #330 was marked Ready at head `a0474909ee11b1c5fca8cc046753b737c80161ab`.
+  One complete snapshot was fetched 720.2 seconds later; there will be no second feedback fetch.
+- All five required checks on that head passed. No PR conversation comment or Issue comment was
+  present. Copilot left one inline comment about a failed item still reporting `Converted` progress.
+- The persistent worker and manager confirmed the comment under AC-5: a canonical
+  `retryable_error` must not have success-shaped visible progress. The minimal fix changes only
+  `Converted markdown` to neutral `Processed markdown` and adds a public-result progress assertion.
+- The new assertion failed before the fix and passed afterward. The worker also passed 131 related
+  tests plus Black, isort, Python compilation, and diff checks; the manager independently reran the
+  focused public-result test successfully.
+
+## Issue #322 blockers or decisions needed
+
+- None. Commit and push the confirmed wording fix, wait for all five required checks on the new
+  exact head, then squash merge, verify Issue closure, and clean the remote branch, worktree, and
+  local branch.
+
 # Project Status — Issue #320 strict manifest validation
 
 - Updated: 2026-09-02 EDT

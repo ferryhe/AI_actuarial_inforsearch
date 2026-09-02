@@ -67,6 +67,8 @@ def test_task_metric_aliases_and_canonical_fields_are_wired() -> None:
 
     for field in (
         "files",
+        "outcome",
+        "terminal_code",
         "chunk_sets",
         "chunk_count",
         "reused_existing",
@@ -106,6 +108,7 @@ def test_task_metric_labels_have_english_and_chinese_translations() -> None:
     for key, english, chinese in (
         ("processed", "Processed", "已处理"),
         ("converted", "Converted", "已转换"),
+        ("terminal_skipped", "Terminal skips", "终态跳过"),
         ("expected", "Expected", "预期"),
         ("ready", "Ready", "就绪"),
     ):
