@@ -1,3 +1,96 @@
+# Project Status — Issue #308 inapplicable retrieval metrics
+
+- Updated: 2026-09-02 EDT
+- Repository: `AI_actuarial_inforsearch`
+- Worktree: `C:\Users\ferry\.codex\worktrees\2378\AI_actuarial_inforsearch`
+- Branch: `codex/issue-308-inapplicable-retrieval-metrics`
+- Baseline: `origin/main@0cdc25fce76d9eaf21d484020ccaa223fef0f3b6`
+- Issue: `#308 fix(chat): distinguish inapplicable retrieval metrics from missing score data`
+- State file: `C:\Users\ferry\.codex\issue-to-merge-state\AI_actuarial_inforsearch\issue-308.json`
+- Delivery stage: local implementation, independent review, required validation, and browser smoke
+  passed; ready to commit and publish Draft PR
+
+## Issue #308 scope and acceptance criteria
+
+- AC-1: Keyword-only methods (`summaries`, `titles`, `sections`, `relations`, `formulas`,
+  `tables`, and `calculation_terms`) show Keyword relevance plus Retrieval method and omit
+  Semantic relevance when its canonical value is absent.
+- AC-2: `vector` evidence shows Semantic relevance plus Retrieval method and omits Keyword
+  relevance when its canonical value is absent.
+- AC-3: A metric applicable to the method remains visible as `—` when its canonical value is
+  missing, invalid, non-integer, or outside `0..100`.
+- AC-4: Any present valid canonical semantic or keyword value is shown regardless of method, so
+  hybrid evidence can show both.
+- AC-5: Unknown methods infer no applicability and show only valid scores actually present, plus
+  the safely normalized Other method badge.
+- AC-6: Citation Cards and Retrieved Blocks use the same shared component and therefore the same
+  rendering rules.
+- AC-7: Every rendered badge remains screen-reader labeled, `whitespace-nowrap`, flex-wrapping,
+  and free of horizontal overflow at 320, 768, 1024, and 1440 px.
+- AC-8: Backend response fields, persistence/history, ranking, result order, thresholds, planner,
+  tool selection, and retrieval APIs remain unchanged.
+
+## Issue #308 ownership, non-goals, and validation
+
+- Implementation ownership is limited to
+  `client/src/pages/chat/RetrievalIndicators.tsx` and its focused component test. The manager owns
+  this status file. `Chat.tsx` is inspected as the two-call-site contract and is edited only if the
+  shared-component contract cannot satisfy AC-6.
+- Sibling repositories are off-limits.
+- Non-goals: adding vector scoring to Ready Data, relabeling scores, creating a combined score,
+  changing any backend contract or retrieval behavior, backfilling history, adding a security
+  framework, or introducing a speculative abstraction.
+- Component matrix: vector-only; every keyword-only method; valid hybrid scores; applicable
+  missing/invalid/out-of-range scores; all missing; and unknown method with absent, one, or both
+  valid scores. Assertions cover exact visible and absent accessible labels.
+- Regression matrix: the existing backend Issue #265 suite preserves Agentic raw-score and
+  Standard vector-mapping contracts; frontend lint, type-check, build, real browser smoke, both
+  dead-code gates, the unified quality gate, and all three Python smoke commands are required.
+
+## Issue #308 baseline evidence
+
+- The assigned worktree arrived clean but detached. After fetching, `HEAD`, `origin/main`, and
+  their merge-base all matched the supplied baseline exactly; the manager created the isolated
+  branch named above without changing files.
+- Runtime server rendering reproduced both defects: `titles` with keyword score `31` rendered an
+  extra `Semantic relevance: —` badge, and `vector` with semantic score `83` rendered an extra
+  `Keyword relevance: —` badge.
+- `git blame` and the complete path history show that PR #286 introduced the component with a
+  fixed three-badge array and no later change. Issue #308 explicitly supersedes that earlier layout
+  rule as a focused UX follow-up, so the report is current rather than stale or duplicate work.
+- Duplicate search found no equivalent PR or branch. Merged PR #286 is the linked #265 origin and
+  does not implement the new applicability distinction.
+
+## Issue #308 implementation and validation
+
+- The shared component now treats `vector` as semantic-applicable, the seven Ready Data methods as
+  keyword-applicable, and unknown methods as having no inferred applicability. Any valid canonical
+  score is still rendered regardless of method, while an applicable invalid/missing score remains
+  visible as `—`.
+- TDD red evidence showed the original vector-only and keyword-only cases each rendered the extra
+  inapplicable `—` badge. The expanded component matrix then passed after the minimal component
+  change.
+- Local review completed after one fresh read-only reviewer round with no valid findings. Citation
+  Cards and Retrieved Blocks were independently confirmed to pass identical fields to the same
+  shared component.
+- The Issue-focused component test passed. The retrieval/backend regression selection passed 143
+  tests, preserving Agentic raw-score and Standard vector-mapping contracts.
+- Frontend lint passed with zero errors and five existing Hook warnings; type-check and production
+  build passed, with only the existing large-chunk advisory. Both dead-code gates passed with zero
+  findings.
+- Python smoke passed: 13 FastAPI authority tests, 31 Agentic evaluation tests, and all 3 CLI smoke
+  cases with quality rates at 1.0.
+- The unified quality gate passed: 1,882 tests passed and 10 skipped; Black, isort, and Pylint all
+  passed.
+- Real browser smoke used controlled local API responses in the actual Chat page. Citation Cards
+  and expanded Retrieved Blocks rendered keyword-only, vector-only, applicable-missing, unknown,
+  and hybrid cases identically. At 320, 768, 1024, and 1440 px, all 22 expected badges stayed
+  within their containers, retained `nowrap`, wrapped as whole badges, and produced no page
+  overflow or console errors. The existing narrow-screen sidebar was closed before inspecting the
+  conversation content.
+- Final fetch confirmed `origin/main`, branch merge-base, and the original baseline remain
+  `0cdc25fce76d9eaf21d484020ccaa223fef0f3b6`.
+
 # Project Status — Issue #307 scheduler reconciliation
 
 - Updated: 2026-09-02 EDT

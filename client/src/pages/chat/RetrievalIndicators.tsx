@@ -18,10 +18,12 @@ interface RetrievalIndicatorsProps {
   t: Translate;
 }
 
+function isValidRelevance(value: number | null | undefined): boolean {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 100;
+}
+
 function formatRelevance(value: number | null | undefined): string {
-  return Number.isInteger(value) && Number(value) >= 0 && Number(value) <= 100
-    ? `${value}/100`
-    : "—";
+  return isValidRelevance(value) ? `${value}/100` : "—";
 }
 
 function methodKey(value: string | null | undefined): string {
@@ -38,14 +40,19 @@ export function RetrievalIndicators({
   const semanticLabel = t("chat.relevance.semantic");
   const keywordLabel = t("chat.relevance.keyword");
   const methodLabel = t("chat.relevance.method");
+  const method = methodKey(retrievalMethod);
   const semanticValue = formatRelevance(semanticRelevance100);
   const keywordValue = formatRelevance(keywordRelevance100);
-  const methodValue = t(`chat.retrieval_method.${methodKey(retrievalMethod)}`);
-  const badges = [
-    [semanticLabel, semanticValue],
-    [keywordLabel, keywordValue],
-    [methodLabel, methodValue],
-  ];
+  const methodValue = t(`chat.retrieval_method.${method}`);
+  const badges: [string, string][] = [];
+
+  if (method === "vector" || isValidRelevance(semanticRelevance100)) {
+    badges.push([semanticLabel, semanticValue]);
+  }
+  if ((method !== "vector" && method !== "other") || isValidRelevance(keywordRelevance100)) {
+    badges.push([keywordLabel, keywordValue]);
+  }
+  badges.push([methodLabel, methodValue]);
 
   return (
     <div className="flex flex-wrap items-center gap-2">

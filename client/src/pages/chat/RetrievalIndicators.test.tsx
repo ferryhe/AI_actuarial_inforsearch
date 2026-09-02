@@ -19,34 +19,139 @@ const translations: Record<string, string> = {
 };
 const t = (key: string) => translations[key] || key;
 
-function render(values: Parameters<typeof RetrievalIndicators>[0]): string {
-  return renderToStaticMarkup(<RetrievalIndicators {...values} />);
+function render(values: Omit<Parameters<typeof RetrievalIndicators>[0], "t">): string {
+  return renderToStaticMarkup(<RetrievalIndicators {...values} t={t} />);
 }
 
-const full = render({
-  semanticRelevance100: 83,
-  keywordRelevance100: 50,
-  retrievalMethod: "formulas",
-  t,
-});
-assert.match(full, /Semantic relevance: 83\/100/);
-assert.match(full, /Keyword relevance: 50\/100/);
-assert.match(full, /Retrieval method: Formulas/);
-assert.equal((full.match(/whitespace-nowrap/g) || []).length, 3);
+function assertLabels(
+  values: Omit<Parameters<typeof RetrievalIndicators>[0], "t">,
+  expectedLabels: string[],
+): void {
+  const markup = render(values);
+  const labels = Array.from(markup.matchAll(/aria-label="([^"]+)"/g), (match) => match[1]);
+  assert.deepEqual(labels, expectedLabels);
+  assert.equal((markup.match(/whitespace-nowrap/g) || []).length, expectedLabels.length);
+  assert.match(markup, /class="flex flex-wrap items-center gap-2"/);
+}
 
-const single = render({ keywordRelevance100: 72, t });
-assert.match(single, /Semantic relevance: —/);
-assert.match(single, /Keyword relevance: 72\/100/);
-assert.match(single, /Retrieval method: Other/);
+const keywordMethods = [
+  ["summaries", "Summaries"],
+  ["titles", "Titles"],
+  ["sections", "Sections"],
+  ["relations", "Relations"],
+  ["formulas", "Formulas"],
+  ["tables", "Tables"],
+  ["calculation_terms", "Calculation terms"],
+] as const;
 
-const missing = render({ t });
-assert.match(missing, /Semantic relevance: —/);
-assert.match(missing, /Keyword relevance: —/);
-assert.match(missing, /Retrieval method: Other/);
+for (const [method, methodLabel] of keywordMethods) {
+  assertLabels(
+    { keywordRelevance100: 31, retrievalMethod: method },
+    ["Keyword relevance: 31/100", `Retrieval method: ${methodLabel}`],
+  );
+}
 
-const unknown = render({ retrievalMethod: "future_method", t });
-assert.match(unknown, /Retrieval method: Other/);
-assert.match(unknown, /aria-label="Retrieval method: Other"/);
+assertLabels(
+  { semanticRelevance100: 83, retrievalMethod: "vector" },
+  ["Semantic relevance: 83/100", "Retrieval method: Semantic retrieval"],
+);
+assertLabels(
+  { semanticRelevance100: 0, retrievalMethod: "vector" },
+  ["Semantic relevance: 0/100", "Retrieval method: Semantic retrieval"],
+);
+assertLabels(
+  { keywordRelevance100: 100, retrievalMethod: "tables" },
+  ["Keyword relevance: 100/100", "Retrieval method: Tables"],
+);
+
+assertLabels(
+  {
+    semanticRelevance100: 83,
+    keywordRelevance100: 50,
+    retrievalMethod: "formulas",
+  },
+  [
+    "Semantic relevance: 83/100",
+    "Keyword relevance: 50/100",
+    "Retrieval method: Formulas",
+  ],
+);
+assertLabels(
+  {
+    semanticRelevance100: 83,
+    keywordRelevance100: 50,
+    retrievalMethod: "vector",
+  },
+  [
+    "Semantic relevance: 83/100",
+    "Keyword relevance: 50/100",
+    "Retrieval method: Semantic retrieval",
+  ],
+);
+
+const invalidApplicableScores = [
+  undefined,
+  null,
+  Number.NaN,
+  Number.POSITIVE_INFINITY,
+  10.5,
+  -1,
+  101,
+];
+
+for (const score of invalidApplicableScores) {
+  assertLabels(
+    { semanticRelevance100: score, retrievalMethod: "vector" },
+    ["Semantic relevance: —", "Retrieval method: Semantic retrieval"],
+  );
+  assertLabels(
+    { keywordRelevance100: score, retrievalMethod: "titles" },
+    ["Keyword relevance: —", "Retrieval method: Titles"],
+  );
+}
+
+assertLabels(
+  { retrievalMethod: "titles" },
+  ["Keyword relevance: —", "Retrieval method: Titles"],
+);
+assertLabels(
+  { retrievalMethod: "vector" },
+  ["Semantic relevance: —", "Retrieval method: Semantic retrieval"],
+);
+
+assertLabels(
+  { retrievalMethod: "  future_method  " },
+  ["Retrieval method: Other"],
+);
+assertLabels(
+  { semanticRelevance100: 72, retrievalMethod: "future_method" },
+  ["Semantic relevance: 72/100", "Retrieval method: Other"],
+);
+assertLabels(
+  { keywordRelevance100: 48, retrievalMethod: "future_method" },
+  ["Keyword relevance: 48/100", "Retrieval method: Other"],
+);
+assertLabels(
+  {
+    semanticRelevance100: 72,
+    keywordRelevance100: 48,
+    retrievalMethod: "future_method",
+  },
+  [
+    "Semantic relevance: 72/100",
+    "Keyword relevance: 48/100",
+    "Retrieval method: Other",
+  ],
+);
+assertLabels(
+  {
+    semanticRelevance100: Number.NaN,
+    keywordRelevance100: 10.5,
+    retrievalMethod: "future_method",
+  },
+  ["Retrieval method: Other"],
+);
+assertLabels({}, ["Retrieval method: Other"]);
 
 const componentSource = readFileSync(new URL("./RetrievalIndicators.tsx", import.meta.url), "utf8");
 assert.match(componentSource, /flex flex-wrap items-center gap-2/);
