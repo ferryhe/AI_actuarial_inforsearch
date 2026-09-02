@@ -135,7 +135,6 @@ export function PipelineBaton({ onViewLog }: { onViewLog: (taskId: string, taskN
         enabled: scheduledEnabled,
         params,
       });
-      await apiPost("/api/schedule/reinit");
       await refresh();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : t("tasks.sched.save_fail"));

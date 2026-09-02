@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 from typing import Any
@@ -152,7 +153,7 @@ def get_config_sites() -> dict[str, object]:
 
 def get_schedule_status(schedule_ref: Any) -> dict[str, object]:
     jobs = []
-    for job in list(getattr(schedule_ref, "jobs", []) or []):
+    for index, job in enumerate(list(getattr(schedule_ref, "jobs", []) or [])):
         next_run = job.next_run.isoformat() if getattr(job, "next_run", None) else None
         last_run = job.last_run.isoformat() if getattr(job, "last_run", None) else None
         unit = getattr(job, "unit", None) or ""
@@ -168,8 +169,32 @@ def get_schedule_status(schedule_ref: Any) -> dict[str, object]:
             if at_str:
                 label += f" at {at_str}"
         else:
-            label = str(job)
-        jobs.append({"label": label, "next_run": next_run, "last_run": last_run})
+            label = "unspecified"
+        metadata = getattr(job, "_ops_metadata", None)
+        if not isinstance(metadata, dict):
+            identity = f"unmanaged\0{index}\0{label}".encode("utf-8")
+            metadata = {
+                "job_key": f"job_{hashlib.sha256(identity).hexdigest()[:20]}",
+                "kind": "unmanaged",
+                "source": "runtime",
+                "display_name": f"Runtime Scheduler Job {index + 1}",
+                "managed": False,
+                "deletable": False,
+            }
+            setattr(job, "_ops_metadata", metadata)
+        jobs.append(
+            {
+                "job_key": str(metadata.get("job_key") or ""),
+                "kind": str(metadata.get("kind") or "unmanaged"),
+                "source": str(metadata.get("source") or "runtime"),
+                "display_name": str(metadata.get("display_name") or "Runtime Scheduler Job"),
+                "interval": label,
+                "last_run": last_run,
+                "next_run": next_run,
+                "managed": bool(metadata.get("managed")),
+                "deletable": bool(metadata.get("deletable")),
+            }
+        )
     return {"jobs": jobs, "count": len(jobs)}
 
 

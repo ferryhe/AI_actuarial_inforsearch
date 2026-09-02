@@ -96,7 +96,6 @@ export default function Tasks() {
   const { permissions } = useAuth();
   const canRunTasks = permissions.includes("tasks.run");
   const canStopTasks = permissions.includes("tasks.stop");
-  const canManageSchedules = permissions.includes("schedule.write");
   const canManageSites = permissions.includes("sites.write");
   const canReadTaskLogs = permissions.includes("logs.task.read");
   const [activeTasks, setActiveTasks] = useState<Task[]>([]);
@@ -385,7 +384,7 @@ export default function Tasks() {
           <Network className="w-4 h-4" />
           {t("tasks.pipeline.title")}
         </button>
-        {canManageSchedules && <button
+        <button
           type="button"
           onClick={() => setTaskView("scheduled")}
           className={cn(
@@ -396,10 +395,10 @@ export default function Tasks() {
         >
           <Clock className="w-4 h-4" />
           {t("tasks.view.scheduled_tasks")}
-        </button>}
+        </button>
       </div>
 
-      {taskView === "scheduled" && canManageSchedules ? (
+      {taskView === "scheduled" ? (
         <ScheduledTasksSection />
       ) : taskView === "pipeline" ? (
         <PipelineBaton onViewLog={viewPipelineLog} />

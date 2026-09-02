@@ -6,6 +6,7 @@ import os
 import re
 import sqlite3
 import time
+from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -37,7 +38,11 @@ from ai_actuarial.ai_runtime import (
     resolve_provider_credentials,
 )
 from ai_actuarial.api.services.import_batches import ImportBatchError, load_import_batch
-from ai_actuarial.api.services.ops_read import get_config_sites, get_scheduled_tasks
+from ai_actuarial.api.services.ops_read import (
+    get_config_sites,
+    get_schedule_status,
+    get_scheduled_tasks,
+)
 from ai_actuarial.api.services.weekly_updates import (
     WeeklySnapshotValidationError,
     validate_weekly_snapshot_period,
@@ -238,6 +243,8 @@ class BridgeState:
         self.schedule_ref = getattr(app_state, "schedule_ref", None)
         self.start_background_task = getattr(app_state, "start_background_task", None)
         self.init_scheduler = getattr(app_state, "init_scheduler", None)
+        native_runtime = getattr(app_state, "native_task_runtime", None)
+        self.reconcile_scheduler = getattr(native_runtime, "reconcile_configured_tasks", None)
         self.set_site_config = getattr(app_state, "set_site_config", None)
         self.pipeline_baton_start = getattr(app_state, "pipeline_baton_start", None)
         self.pipeline_baton_tick = getattr(app_state, "pipeline_baton_tick", None)
@@ -258,6 +265,99 @@ def _notify_site_config_updated(bridge: BridgeState | None, config_data: dict[st
     setter = bridge.set_site_config
     if callable(setter):
         setter(config_data)
+
+
+def _effective_interval(interval: str) -> str:
+    normalized = str(interval or "").strip().lower()
+    if normalized == "daily":
+        return "daily at 00:30"
+    if normalized == "weekly":
+        return "weekly on monday at 00:30"
+    daily_at = re.fullmatch(r"daily at (\d{1,2}):(\d{1,2})", normalized)
+    if daily_at:
+        hour, minute = daily_at.groups()
+        return f"daily at {int(hour):02d}:{int(minute):02d}"
+    if normalized.startswith("every "):
+        parts = normalized.split()
+        if len(parts) == 3:
+            unit = "hours" if "hour" in parts[2] else "minutes"
+            return f"every {parts[1]} {unit}"
+    return normalized
+
+
+def _configured_task_specs(config_data: dict[str, Any]) -> list[tuple[str, str]]:
+    return sorted(
+        (
+            str(task.get("name") or ""),
+            _effective_interval(str(task.get("interval") or "")),
+        )
+        for task in list(config_data.get("scheduled_tasks") or [])
+        if task.get("enabled", True)
+        and str(task.get("interval") or "").strip()
+        and str(task.get("name") or "")
+    )
+
+
+def _assert_scheduler_matches_config(config_data: dict[str, Any], bridge: BridgeState) -> None:
+    status = get_schedule_status(bridge.schedule_ref)
+    jobs = status.get("jobs")
+    if not isinstance(jobs, list):
+        raise RuntimeError("Effective scheduler jobs are unavailable")
+    effective_specs = sorted(
+        (
+            str(job.get("source") or ""),
+            str(job.get("interval") or "").strip().lower(),
+        )
+        for job in jobs
+        if isinstance(job, dict) and job.get("kind") == "configured_task"
+    )
+    desired_specs = _configured_task_specs(config_data)
+    if effective_specs != desired_specs:
+        raise RuntimeError("Configured recurring tasks do not match effective scheduler jobs")
+
+
+def _write_config_and_reconcile_scheduler(
+    config_data: dict[str, Any],
+    *,
+    previous_config: dict[str, Any],
+    bridge: BridgeState | None,
+) -> None:
+    if bridge is None or bridge.schedule_ref is None:
+        raise OpsWriteError("Scheduler bridge is unavailable", status_code=503)
+    reconcile_scheduler = (
+        bridge.reconcile_scheduler
+        if callable(bridge.reconcile_scheduler)
+        else bridge.init_scheduler
+    )
+    if not callable(reconcile_scheduler):
+        raise OpsWriteError("Scheduler bridge is unavailable", status_code=503)
+
+    registration_completed = False
+    try:
+        _write_config_data(config_data)
+        _notify_site_config_updated(bridge, config_data)
+        reconcile_scheduler()
+        registration_completed = True
+        _assert_scheduler_matches_config(config_data, bridge)
+    except Exception as exc:  # noqa: BLE001 - rollback spans config and runtime boundaries
+        rollback_error: Exception | None = None
+        try:
+            _write_config_data(previous_config)
+            _notify_site_config_updated(bridge, previous_config)
+            if registration_completed:
+                reconcile_scheduler()
+                _assert_scheduler_matches_config(previous_config, bridge)
+        except Exception as caught:  # noqa: BLE001 - preserve the original failure
+            rollback_error = caught
+        details = {"reason": str(exc)}
+        if rollback_error is not None:
+            details["rollback_error"] = str(rollback_error)
+        raise OpsWriteError(
+            "Scheduler reconciliation failed; previous configuration was restored",
+            status_code=503,
+            code="scheduler_reconciliation_failed",
+            details=details,
+        ) from exc
 
 
 def _notify_runtime_features_updated(
@@ -901,6 +1001,7 @@ def materialize_web_listening_rule(
 
     materialized = materialize_rule(rule)
     config_data = _load_config_data()
+    previous_config = deepcopy(config_data)
     sites = list(config_data.get("sites") or [])
     tasks = list(config_data.get("scheduled_tasks") or [])
 
@@ -938,8 +1039,11 @@ def materialize_web_listening_rule(
         backup_name = _backup_config("before_web_listening_rule")
         config_data["sites"] = sites
         config_data["scheduled_tasks"] = tasks
-        _write_config_data(config_data)
-        _notify_site_config_updated(bridge, config_data)
+        _write_config_and_reconcile_scheduler(
+            config_data,
+            previous_config=previous_config,
+            bridge=bridge,
+        )
 
     persisted_site = next(
         site for site in get_config_sites()["sites"] if str(site.get("name") or "") == site_name
@@ -1949,6 +2053,7 @@ def add_scheduled_task(
         )
 
     config_data = _load_config_data()
+    previous_config = deepcopy(config_data)
     tasks = list(config_data.get("scheduled_tasks") or [])
     if any(str(task.get("name") or "") == name for task in tasks):
         raise OpsWriteError("Task name already exists")
@@ -1977,8 +2082,11 @@ def add_scheduled_task(
         }
     )
     config_data["scheduled_tasks"] = tasks
-    _write_config_data(config_data)
-    _notify_site_config_updated(bridge, config_data)
+    _write_config_and_reconcile_scheduler(
+        config_data,
+        previous_config=previous_config,
+        bridge=bridge,
+    )
     return {"success": True}
 
 
@@ -1991,7 +2099,10 @@ def update_scheduled_task(
         raise OpsWriteError("original_name and name are required")
 
     config_data = _load_config_data()
+    previous_config = deepcopy(config_data)
     tasks = list(config_data.get("scheduled_tasks") or [])
+    if original_name != name and any(str(task.get("name") or "") == name for task in tasks):
+        raise OpsWriteError("Task name already exists")
     found = False
     for task in tasks:
         if str(task.get("name") or "") != original_name:
@@ -2038,8 +2149,11 @@ def update_scheduled_task(
         raise OpsWriteError("Task not found", status_code=404)
 
     config_data["scheduled_tasks"] = tasks
-    _write_config_data(config_data)
-    _notify_site_config_updated(bridge, config_data)
+    _write_config_and_reconcile_scheduler(
+        config_data,
+        previous_config=previous_config,
+        bridge=bridge,
+    )
     return {"success": True}
 
 
@@ -2048,13 +2162,17 @@ def delete_scheduled_task(name: str, *, bridge: BridgeState | None = None) -> di
     if not task_name:
         raise OpsWriteError("Task name is required")
     config_data = _load_config_data()
+    previous_config = deepcopy(config_data)
     tasks = list(config_data.get("scheduled_tasks") or [])
     filtered = [task for task in tasks if str(task.get("name") or "") != task_name]
     if len(filtered) == len(tasks):
         raise OpsWriteError("Task not found", status_code=404)
     config_data["scheduled_tasks"] = filtered
-    _write_config_data(config_data)
-    _notify_site_config_updated(bridge, config_data)
+    _write_config_and_reconcile_scheduler(
+        config_data,
+        previous_config=previous_config,
+        bridge=bridge,
+    )
     return {"success": True}
 
 

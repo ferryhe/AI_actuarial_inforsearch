@@ -101,6 +101,7 @@ class _BridgeRecorder:
         self.started: list[tuple[str, dict[str, object], str | None, dict[str, object] | None]] = []
         self.reinit_calls = 0
         self.last_site_config: dict[str, object] | None = None
+        self.schedule_ref = SimpleNamespace(jobs=[])
 
     def start_background_task(
         self,
@@ -115,16 +116,61 @@ class _BridgeRecorder:
 
     def init_scheduler(self) -> None:
         self.reinit_calls += 1
+        config_data = self.last_site_config or {}
+        jobs = []
+        for task in list(config_data.get("scheduled_tasks") or []):
+            if not task.get("enabled", True) or not str(task.get("interval") or "").strip():
+                continue
+            name = str(task.get("name") or "")
+            schedule_interval = str(task.get("interval") or "").strip().lower()
+            interval = 1
+            unit = "days"
+            at_time = None
+            start_day = None
+            if schedule_interval == "daily":
+                at_time = datetime.strptime("00:30", "%H:%M").time()
+            elif schedule_interval == "weekly":
+                unit = "weeks"
+                start_day = "monday"
+                at_time = datetime.strptime("00:30", "%H:%M").time()
+            elif schedule_interval.startswith("daily at "):
+                at_time = datetime.strptime(
+                    schedule_interval.removeprefix("daily at "), "%H:%M"
+                ).time()
+            elif schedule_interval.startswith("every "):
+                parts = schedule_interval.split()
+                interval = int(parts[1])
+                unit = "hours" if "hour" in parts[2] else "minutes"
+            jobs.append(
+                SimpleNamespace(
+                    next_run=None,
+                    last_run=None,
+                    unit=unit,
+                    interval=interval,
+                    at_time=at_time,
+                    start_day=start_day,
+                    _ops_metadata={
+                        "job_key": f"test_{name}",
+                        "kind": "configured_task",
+                        "source": name,
+                        "display_name": name,
+                        "managed": True,
+                        "deletable": True,
+                    },
+                )
+            )
+        self.schedule_ref.jobs[:] = jobs
 
     def set_site_config(self, config_data: dict[str, object]) -> None:
         self.last_site_config = dict(config_data)
 
 
 def _install_bridge(app, recorder: _BridgeRecorder) -> None:
+    app.state.native_task_runtime = None
     app.state.start_background_task = recorder.start_background_task
     app.state.init_scheduler = recorder.init_scheduler
     app.state.set_site_config = recorder.set_site_config
-    app.state.schedule_ref = SimpleNamespace(jobs=[object(), object()])
+    app.state.schedule_ref = recorder.schedule_ref
 
 
 def test_ops_write_routes_are_listed_in_native_inventory(tmp_path: Path, monkeypatch) -> None:
@@ -732,13 +778,14 @@ def test_scheduled_tasks_write_and_schedule_reinit_roundtrip(tmp_path: Path, mon
     reinit_response = client.post("/api/schedule/reinit", headers=headers)
     assert reinit_response.status_code == 200, reinit_response.text
     assert reinit_response.json()["job_count"] == 2
-    assert recorder.reinit_calls == 1
+    assert recorder.reinit_calls == 4
 
     delete_response = client.post(
         "/api/scheduled-tasks/delete", json={"name": "Weekly Chunk"}, headers=headers
     )
     assert delete_response.status_code == 200, delete_response.text
     assert all(task["name"] != "Weekly Chunk" for task in _read_scheduled_tasks(config_path))
+    assert recorder.reinit_calls == 5
 
 
 def test_browse_folder_and_stats_endpoints_return_real_values(tmp_path: Path, monkeypatch) -> None:

@@ -75,7 +75,6 @@ export function ScheduleFromTaskButton({ buildTask, disabled = false }: Schedule
         enabled: true,
         params: taskParamsFromPayload(task),
       });
-      await apiPost("/api/schedule/reinit").catch(() => null);
       if (typeof window !== "undefined") {
         window.dispatchEvent(new CustomEvent("scheduled-tasks:changed"));
       }
