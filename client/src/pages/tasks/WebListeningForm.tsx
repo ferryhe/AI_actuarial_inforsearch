@@ -153,7 +153,6 @@ export function WebListeningForm({ onMaterialized }: WebListeningFormProps) {
     try {
       const res = await apiPost<WebListeningMaterializeResponse>("/api/web-listening/rules/materialize", { rule_yaml: yamlText });
       setResult(res);
-      await apiPost("/api/schedule/reinit", {}).catch(() => null);
       if (typeof window !== "undefined") {
         window.dispatchEvent(new CustomEvent("scheduled-tasks:changed"));
       }

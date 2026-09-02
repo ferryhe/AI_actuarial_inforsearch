@@ -225,6 +225,44 @@ def _new_scheduler() -> Any:
     return _FallbackScheduler()
 
 
+def _scheduler_job_metadata(
+    *,
+    kind: str,
+    source: str,
+    display_name: str,
+    managed: bool,
+    deletable: bool,
+) -> dict[str, Any]:
+    identity = f"{kind}\0{source}".encode("utf-8")
+    return {
+        "job_key": f"job_{hashlib.sha256(identity).hexdigest()[:20]}",
+        "kind": kind,
+        "source": source,
+        "display_name": display_name,
+        "managed": managed,
+        "deletable": deletable,
+    }
+
+
+def _tag_scheduler_job(
+    job: Any,
+    *,
+    kind: str,
+    source: str,
+    display_name: str,
+    managed: bool,
+    deletable: bool,
+) -> Any:
+    job._ops_metadata = _scheduler_job_metadata(
+        kind=kind,
+        source=source,
+        display_name=display_name,
+        managed=managed,
+        deletable=deletable,
+    )
+    return job
+
+
 @dataclass(slots=True)
 class RuntimeRefs:
     active_tasks_ref: dict[str, dict[str, Any]]
@@ -579,13 +617,14 @@ class NativeTaskRuntime:
         thread.start()
         return task_id
 
-    def init_scheduler(self) -> None:
+    def init_scheduler(self, *, configured_only: bool = False) -> None:
         site_config = self._load_site_config()
         global_schedule = str(
             (site_config.get("defaults") or {}).get("schedule_interval") or ""
         ).strip()
         sites = list(site_config.get("sites") or [])
         generic_tasks = list(site_config.get("scheduled_tasks") or [])
+        staged_scheduler = _new_scheduler()
 
         def global_run() -> None:
             self.start_background_task(
@@ -647,34 +686,92 @@ class NativeTaskRuntime:
 
             return job_wrapper
 
-        with self._scheduler_lock:
-            self.scheduler.clear()
+        if not configured_only:
             if global_schedule:
-                self._register_schedule(global_schedule, global_run)
+                _tag_scheduler_job(
+                    self._register_schedule(
+                        global_schedule, global_run, scheduler_ref=staged_scheduler
+                    ),
+                    kind="global",
+                    source="defaults.schedule_interval",
+                    display_name="All Sites",
+                    managed=False,
+                    deletable=False,
+                )
             for site in sites:
                 interval = str(site.get("schedule_interval") or "").strip()
                 if interval:
-                    self._register_schedule(interval, make_site_job(site))
-            for task_cfg in generic_tasks:
-                if not task_cfg.get("enabled", True):
-                    continue
-                interval = str(task_cfg.get("interval") or "").strip()
-                if interval:
+                    site_name = str(site.get("name") or "Site")
+                    _tag_scheduler_job(
+                        self._register_schedule(
+                            interval,
+                            make_site_job(site),
+                            scheduler_ref=staged_scheduler,
+                        ),
+                        kind="site",
+                        source=site_name,
+                        display_name=f"Site: {site_name}",
+                        managed=False,
+                        deletable=False,
+                    )
+        for task_cfg in generic_tasks:
+            if not task_cfg.get("enabled", True):
+                continue
+            interval = str(task_cfg.get("interval") or "").strip()
+            if interval:
+                task_name = str(task_cfg.get("name") or "Generic Task")
+                _tag_scheduler_job(
                     self._register_schedule(
                         interval,
                         make_generic_task_job(task_cfg),
-                        at_timezone="UTC" if task_cfg.get("type") == "weekly_summary" else None,
-                    )
-            self.scheduler.every(30).minutes.do(self._scheduled_pipeline_baton_tick)
-            if self._ready_data_db_path:
-                self.scheduler.every(self._ready_data_poll_interval_seconds).seconds.do(
-                    self._wake_ready_data_automation
+                        at_timezone=("UTC" if task_cfg.get("type") == "weekly_summary" else None),
+                        scheduler_ref=staged_scheduler,
+                    ),
+                    kind="configured_task",
+                    source=task_name,
+                    display_name=task_name,
+                    managed=True,
+                    deletable=True,
                 )
+        if not configured_only:
+            _tag_scheduler_job(
+                staged_scheduler.every(30).minutes.do(self._scheduled_pipeline_baton_tick),
+                kind="pipeline_baton",
+                source="pipeline_baton",
+                display_name="Pipeline Baton",
+                managed=False,
+                deletable=False,
+            )
+            if self._ready_data_db_path:
+                _tag_scheduler_job(
+                    staged_scheduler.every(self._ready_data_poll_interval_seconds).seconds.do(
+                        self._wake_ready_data_automation
+                    ),
+                    kind="ready_data",
+                    source="ready_data_automation",
+                    display_name="Ready Data Automation",
+                    managed=False,
+                    deletable=False,
+                )
+
+        with self._scheduler_lock:
+            if configured_only:
+                system_jobs = []
+                for job in self.scheduler.jobs:
+                    metadata = getattr(job, "_ops_metadata", None)
+                    if not isinstance(metadata, dict) or metadata.get("kind") != "configured_task":
+                        system_jobs.append(job)
+                self.scheduler.jobs[:] = [*system_jobs, *staged_scheduler.jobs]
+            else:
+                self.scheduler.jobs[:] = list(staged_scheduler.jobs)
 
         if not self._scheduler_loop_started:
             thread = threading.Thread(target=self._scheduler_loop, daemon=True)
             thread.start()
             self._scheduler_loop_started = True
+
+    def reconcile_configured_tasks(self) -> None:
+        self.init_scheduler(configured_only=True)
 
     def _complete_scheduled_chunk_embedding(
         self,
@@ -751,32 +848,31 @@ class NativeTaskRuntime:
         job_func: Callable[[], None],
         *,
         at_timezone: str | None = None,
-    ) -> None:
+        scheduler_ref: Any | None = None,
+    ) -> Any:
+        scheduler = scheduler_ref or self.scheduler
         interval = str(interval_str or "").strip().lower()
-        try:
-            if interval == "daily":
-                self.scheduler.every().day.at("00:30").do(job_func)
-            elif interval == "weekly":
-                weekly_job = self.scheduler.every().monday
-                if at_timezone:
-                    weekly_job.at("00:30", at_timezone).do(job_func)
-                else:
-                    weekly_job.at("00:30").do(job_func)
-            elif interval.startswith("daily at "):
-                self.scheduler.every().day.at(interval.replace("daily at ", "", 1).strip()).do(
-                    job_func
-                )
-            elif interval.startswith("every "):
-                parts = interval.split()
-                if len(parts) >= 3:
-                    qty = int(parts[1])
-                    unit = parts[2]
-                    if "hour" in unit:
-                        self.scheduler.every(qty).hours.do(job_func)
-                    elif "minute" in unit:
-                        self.scheduler.every(qty).minutes.do(job_func)
-        except Exception as exc:  # noqa: BLE001
-            logger.error("Failed to parse schedule '%s': %s", interval_str, exc)
+        if interval == "daily":
+            return scheduler.every().day.at("00:30").do(job_func)
+        if interval == "weekly":
+            weekly_job = scheduler.every().monday
+            if at_timezone:
+                return weekly_job.at("00:30", at_timezone).do(job_func)
+            return weekly_job.at("00:30").do(job_func)
+        if interval.startswith("daily at "):
+            return (
+                scheduler.every().day.at(interval.replace("daily at ", "", 1).strip()).do(job_func)
+            )
+        if interval.startswith("every "):
+            parts = interval.split()
+            if len(parts) == 3:
+                qty = int(parts[1])
+                unit = parts[2]
+                if unit in {"hour", "hours"}:
+                    return scheduler.every(qty).hours.do(job_func)
+                if unit in {"minute", "minutes"}:
+                    return scheduler.every(qty).minutes.do(job_func)
+        raise ValueError(f"Unsupported schedule interval: {interval_str}")
 
     def _execute_collection_task(
         self, task_id: str, collection_type: str, data: dict[str, Any]

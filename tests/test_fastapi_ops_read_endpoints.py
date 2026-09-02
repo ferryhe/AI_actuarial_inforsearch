@@ -433,7 +433,10 @@ def test_fastapi_ops_read_routes_are_native_and_return_expected_shapes(
             assert body["sites"][0]["collect_linked_files"] is False
         elif endpoint == "/api/schedule/status":
             assert body["count"] == 1
-            assert body["jobs"][0]["label"].startswith("daily")
+            assert body["jobs"][0]["interval"].startswith("daily")
+            assert body["jobs"][0]["kind"] == "unmanaged"
+            assert body["jobs"][0]["source"] == "runtime"
+            assert "label" not in body["jobs"][0]
         elif endpoint == "/api/scheduled-tasks":
             assert body["tasks"][0]["name"] == "Nightly Catalog"
         elif endpoint == "/api/tasks/active":

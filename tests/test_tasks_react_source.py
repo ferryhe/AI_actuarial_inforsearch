@@ -12,10 +12,44 @@ LAYOUT_TSX = ROOT / "components" / "Layout.tsx"
 def test_scheduled_tasks_section_uses_native_schedule_status_contract():
     src = SCHEDULED_TASKS_TSX.read_text(encoding="utf-8")
 
-    assert "label?: string" in src
+    assert "job_key: string" in src
+    assert "kind: ScheduleJobKind" in src
+    assert "source: string" in src
+    assert "display_name: string" in src
+    assert "managed: boolean" in src
+    assert "deletable: boolean" in src
     assert "count?: number" in src
     assert "scheduleStatus.count" in src
-    assert "job.label" in src
+    assert "job.display_name" in src
+    assert "job.source === task.name" in src
+
+
+def test_scheduled_tasks_reader_visibility_and_reinitialize_copy_are_explicit():
+    section_src = SCHEDULED_TASKS_TSX.read_text(encoding="utf-8")
+    tasks_src = TASKS_TSX.read_text(encoding="utf-8")
+    i18n_src = (ROOT / "hooks" / "use-i18n.ts").read_text(encoding="utf-8")
+
+    assert "{canManageSchedules && <button" not in tasks_src
+    assert 'taskView === "scheduled" ?' in tasks_src
+    assert "canManageSchedule &&" in section_src
+    assert "tasks.sched.effective_scheduler_jobs" in section_src
+    assert "tasks.sched.configured_recurring_tasks" in section_src
+    assert "tasks.sched.reinit_diagnostic_hint" in section_src
+    assert "tasks.sched.confirm_delete_recurrence" in section_src
+    assert "Removing recurrence does not stop a running task or delete history or logs." in i18n_src
+    assert "删除重复计划不会停止正在运行的任务，也不会删除历史记录或日志。" in i18n_src
+    assert "Diagnostic/recovery action" in i18n_src
+    assert "诊断/恢复操作" in i18n_src
+
+
+def test_scheduled_task_mutation_callers_do_not_manually_reinitialize():
+    for file_name in (
+        "ScheduleFromTaskButton.tsx",
+        "WebListeningForm.tsx",
+        "PipelineBaton.tsx",
+    ):
+        src = (ROOT / "pages" / "tasks" / file_name).read_text(encoding="utf-8")
+        assert 'apiPost("/api/schedule/reinit"' not in src, file_name
 
 
 def test_scheduled_tasks_section_surfaces_write_errors_instead_of_silently_ignoring_them():
@@ -246,7 +280,7 @@ def test_tasks_page_exposes_agentic_site_monitoring_form():
     assert '"/api/web-listening/rules/draft"' in form_src
     assert '"/api/web-listening/rules/validate"' in form_src
     assert '"/api/web-listening/rules/materialize"' in form_src
-    assert '"/api/schedule/reinit"' in form_src
+    assert '"/api/schedule/reinit"' not in form_src
     assert "scheduled-tasks:changed" in form_src
     assert 'data-testid="form-web-listening"' in form_src
     assert 'data-testid="checkbox-web-listening-tool-crawler"' in form_src
