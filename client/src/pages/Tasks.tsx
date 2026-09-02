@@ -251,13 +251,13 @@ export default function Tasks() {
       if (data.type === "chunk_generation" && res.job_id) {
         const chunkTask = await waitForTaskResult(res.job_id);
         const chunk_set_ids = (chunkTask.result?.chunk_sets || [])
-          .map((item) => item.chunk_set_id)
-          .filter((id): id is string => Boolean(id));
+          .map((item) => String(item.chunk_set_id || "").trim())
+          .filter((id) => Boolean(id));
         if (chunk_set_ids.length === 0) throw new Error("Chunk task returned no stable chunk_set_ids");
         const embedding = await apiPost<{ job_id?: string; error?: string }>("/api/collections/run", {
           type: "embedding_generation",
           name: "Chunk & Embedding",
-          chunk_set_ids,
+          incremental: true,
         });
         if (embedding.error || !embedding.job_id) throw new Error(embedding.error || "Embedding task did not start");
         const embeddingTask = await waitForTaskResult(embedding.job_id);

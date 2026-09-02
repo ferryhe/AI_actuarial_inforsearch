@@ -93,7 +93,7 @@ def validate_embedding_generation_payload(payload: Mapping[str, Any]) -> None:
     if forbidden:
         raise UnsupportedOptionsError(
             forbidden,
-            "Select a server-allowed embedding_identity_key and stable chunk selectors only.",
+            "Use the server-owned incremental backlog or select stable chunk sets.",
         )
 
 
@@ -200,14 +200,33 @@ def resolve_embedding_selection(
     chunk_set_ids: Iterable[str] = (),
     file_urls: Iterable[str] = (),
     profile_id: str | None = None,
+    incremental: bool = False,
+    identity: EmbeddingIdentity | None = None,
 ) -> dict[str, Any]:
     requested_chunk_sets = _dedupe(chunk_set_ids)
     requested_files = _dedupe(file_urls)
     requested_profile = str(profile_id or "").strip()
-    if bool(requested_chunk_sets) == bool(requested_files):
-        raise EmbeddingSelectionError("provide exactly one selector: chunk_set_ids or file_urls")
+    selector_count = int(bool(requested_chunk_sets)) + int(bool(requested_files))
+    if selector_count > 1 or (selector_count == 0 and not incremental):
+        raise EmbeddingSelectionError(
+            "provide one selection mode: chunk_set_ids, file_urls, or incremental"
+        )
+    if selector_count and incremental:
+        raise EmbeddingSelectionError(
+            "provide one selection mode: chunk_set_ids, file_urls, or incremental"
+        )
+    if incremental and identity is None:
+        raise EmbeddingSelectionError("embedding identity is required for incremental selection")
     selected_rows: list[tuple[Any, ...]] = []
-    if requested_chunk_sets:
+    if incremental:
+        selected_rows = storage._conn.execute("""
+            SELECT chunk_set_id, file_url, profile_id, markdown_hash,
+                   profile_config_hash, chunk_count
+            FROM file_chunk_sets
+            WHERE status = 'ready'
+            ORDER BY created_at, chunk_set_id
+            """).fetchall()
+    elif requested_chunk_sets:
         selected_rows = storage._conn.execute(
             f"""
             SELECT chunk_set_id, file_url, profile_id, markdown_hash,
@@ -258,6 +277,20 @@ def resolve_embedding_selection(
         chunk_set_id = str(row[0])
         if int(row[5] or 0) <= 0 or actual_counts.get(chunk_set_id, 0) != int(row[5] or 0):
             raise EmbeddingSelectionError(f"chunk set is not stably ready: {chunk_set_id}")
+    if incremental:
+        coverage = storage.read_valid_chunk_embeddings(
+            [str(chunk["chunk_id"]) for chunk in chunks],
+            identity=identity.as_dict(),
+        )
+        pending_chunk_ids = set(coverage["missing_chunk_ids"]).union(coverage["invalid_chunk_ids"])
+        eligible_ids = {
+            str(chunk["chunk_set_id"])
+            for chunk in chunks
+            if str(chunk["chunk_id"]) in pending_chunk_ids
+        }
+        selected_rows = [row for row in selected_rows if str(row[0]) in eligible_ids]
+        resolved_ids = [str(row[0]) for row in selected_rows]
+        chunks = [chunk for chunk in chunks if str(chunk["chunk_set_id"]) in eligible_ids]
     return {
         "requested_file_urls": requested_files,
         "requested_chunk_set_ids": requested_chunk_sets,

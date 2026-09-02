@@ -936,3 +936,159 @@
 
 - Report the completed directory-by-directory cleanup and leave the clean,
   mergeable PR #318 open. Merge only after explicit authorization.
+
+# Project Status — Issue #319 loose-coupled incremental stages
+
+- Updated: 2026-09-02 EDT
+- Repository: `AI_actuarial_inforsearch`
+- Worktree: `C:\Users\ferry\.codex\worktrees\e680\AI_actuarial_inforsearch`
+- Branch: `codex/issue-319-loose-coupled-stages`
+- Baseline: `origin/main@ae3e4e689c1bcdbd0c80982f8abaafa7e0af73e9`
+- Issue: `#319 fix(pipeline): continue loose-coupled incremental stages after partial success`
+- State file: `C:\Users\ferry\.codex\issue-to-merge-state\AI_actuarial_inforsearch\issue-319.json`
+- Delivery stage: implementation complete; local review and required gates passed; publication pending
+
+## Issue #319 acceptance criteria
+
+- AC-1: Production-shaped Markdown `status=error` with `items_downloaded=2` launches Catalog
+  exactly once while preserving the Markdown task's original status, errors, counters, result,
+  and log.
+- AC-2: Scheduled, Markdown, Catalog, Chunk, and Embedding all use the same terminal decision
+  matrix: `completed/error + successful outputs > 0` advances once; `completed + 0` completes as
+  a clean no-op; `error + 0` ends in error; `stopped` ends stopped; missing task or hard exception
+  ends in error.
+- AC-3: Catalog launches from its saved/default incremental configuration without predecessor
+  `file_urls` and may select its normal historical uncataloged/outdated backlog.
+- AC-4: Chunk launches from its saved/default incremental configuration without predecessor
+  Markdown `files` and may select its normal historical Markdown-ready backlog.
+- AC-5: Embedding launches without predecessor `chunk_set_ids` or `file_urls`; a minimal
+  module-owned selector-free incremental backlog mode computes its own eligible ready chunk-set
+  backlog and is available through both manual/API and Baton launches.
+- AC-6: Given the same saved/default module configuration, Baton and manual launches resolve
+  equivalent runtime parameters and work-selection behavior; raw frontend payload equality is not
+  required.
+- AC-7: Existing skipped, reused, retry-eligible, and historical backlog behavior remains owned by
+  each module; skipped work is not reinterpreted as a predecessor handoff artifact.
+- AC-8: Repeated ordinary ticks do not launch a next stage or subtask twice.
+- AC-9: Current indexable KBs are enumerated in stable order across `manual`, `category`, and `all`
+  modes; zero KBs completes cleanly.
+- AC-10: One failed KB Index or Ready Data task is recorded and does not block later KBs; any
+  stopped KB subtask stops the whole round immediately and launches no later KB.
+- AC-11: If relay reaches the end, `round_status=completed` means orchestration completed and does
+  not rewrite any individual task outcome.
+- AC-12: Baton state remains compact: current stage/task plus existing KB summary only; no copied
+  per-item errors, partial-evidence schema, or source-task mutation.
+- AC-13: Existing standalone/manual task APIs, forms, saved/default configuration, module logs,
+  status semantics, and Ready Data/KB behavior remain unchanged except for the shared Embedding
+  selector-free backlog mode required by AC-5.
+- AC-14: Existing Baton/runtime tests, the full stage matrix, production-shape Markdown regression,
+  selector-absence and historical-backlog regressions, manual/Baton equivalence, KB failure/stop
+  paths, duplicate-tick behavior, and all repository-required checks pass.
+
+## Issue #319 stage decision matrix
+
+| Task outcome | Successful output count | Baton result |
+| --- | ---: | --- |
+| `completed` | `> 0` | Launch the next module's normal incremental task once |
+| `error` | `> 0` | Preserve the task error and launch the next module once |
+| `completed` | `0` | Complete the round as a clean no-op |
+| `error` | `0` | End the round as `error` |
+| `stopped` | any | End the round as `stopped` |
+| missing task or hard exception | unknown / `0` | End the round as `error` |
+
+## Issue #319 scope and non-goals
+
+- Owned production scope: `ai_actuarial/pipeline_baton.py`; minimal shared runtime/API/Embedding
+  wiring only where AC-5/AC-6 requires it. Focused Baton/runtime/API/domain tests are in scope.
+  Pipeline status/UI copy changes are conditional on observable wording changes.
+- Sibling repositories and the primary checkout's Issue #317 changes are off-limits.
+- No predecessor file/hash/chunk-set handoff, frozen cohort, global lineage, new publication
+  transaction, DAG, retry/resume/checkpoint/lease framework, automatic retry, crawler change,
+  module redesign, or suppression/rewriting of task errors.
+- Review-policy override: none. Findings must be realistically reproducible and map directly to
+  an AC above.
+
+## Issue #319 baseline and history evidence
+
+- The assigned worktree was clean and detached at the supplied baseline. After fetch, `HEAD`,
+  `origin/main`, and their merge-base all remained exactly `ae3e4e689c1bcdbd0c80982f8abaafa7e0af73e9`;
+  the isolated branch above was then created.
+- A production-shaped no-edit reproduction showed Markdown `error + items_downloaded=2` leaves
+  `round_status=error` and starts no Catalog task. Existing #292 Scheduled partial-success tests
+  still pass.
+- The same baseline reproduction showed Catalog receives predecessor `file_urls`, Chunk receives
+  predecessor Markdown `files`, and Embedding receives predecessor `chunk_set_ids`.
+- `git blame` and `git log -S` trace the general terminal behavior to the original Baton, the
+  Scheduled-only exception to merged PR #292, and all three exact selector injections to commit
+  `7a175050` (`feat: persist chunk embeddings`). The original #179 Baton regression explicitly
+  asserted independent tasks without output handoff before that commit changed the contract.
+- Duplicate search across open/closed/merged PRs, local/remote branches, and commit messages found
+  no equivalent #319 work. Merged PR #292 covers Scheduled only and is not a duplicate.
+
+## Issue #319 implementation state
+
+- Baton now uses `items_downloaded` as the single authoritative successful-output count for all
+  five non-KB phases. Partial errors advance once, clean zero-output completions stop cleanly,
+  zero-output errors fail, stopped tasks halt, and missing tasks or hard orchestration failures fail.
+- Catalog and Chunk now launch their normal saved/default incremental backlog without predecessor
+  selectors. Baton no longer persists copied Markdown file evidence.
+- Embedding now exposes a selector-free `incremental` mode owned by the embedding module. It
+  resolves the current server identity first, scans ready chunk sets in stable order, validates
+  chunk-set stability, and selects sets containing missing or invalid embeddings while preserving
+  existing reuse and repair behavior.
+- Manual/API, Baton, Tasks, and scheduled Chunk & Embedding composition use the same selector-free
+  Embedding mode. File Detail retains its explicit single-file `chunk_set_ids` scope.
+- Scheduled composition and Tasks both retain their existing empty Chunk-result guard. Reused
+  stable chunk sets still launch selector-free Embedding so historical missing/invalid coverage can
+  be repaired.
+- KB Index/Ready Data preserves stable `manual`/`category`/`all` enumeration: one KB error is
+  recorded and later KBs continue; a stopped KB task halts the round immediately.
+
+## Issue #319 local review
+
+- Round 1 found and fixed a scheduled-composition regression where reused stable chunk sets had
+  `items_downloaded=0` and incorrectly skipped Embedding. The fix gates on non-empty stable
+  `result.chunk_sets` and still launches only `incremental: true`.
+- Round 2 found and fixed the matching Tasks regression where an empty Chunk result could launch an
+  unrelated global Embedding backlog. Tasks now keeps the non-empty result guard without handing
+  the IDs to Embedding.
+- Round 3 used a fresh read-only reviewer and passed with no reproducible #319 finding. The final
+  reviewer independently ran 96 focused tests.
+
+## Issue #319 verification
+
+- TDD red baseline for the new focused file: 18 product failures and 15 passes after correcting
+  three test-fixture defects; final focused file: 33 passes.
+- Final related Baton/runtime/API/CLI/UI suite: 102 passes; broader related suite previously passed
+  151 tests plus 40 Embedding/Chunk domain tests.
+- Unified quality gate: 1916 passed, 10 skipped; Black, isort, and Pylint passed. The first attempt
+  was stopped after the pytest process reached 23.6 GB and left 0.1 GB host memory; a clean isolated
+  rerun used normal memory and passed without source changes.
+- Dead-code file and symbol gates: 0 findings. Frontend lint: 0 errors and five existing warnings;
+  typecheck and production build passed.
+- Python smoke: FastAPI 13 passed; Agentic RAG eval 31 passed; eval CLI passed all 3 cases with full
+  evidence/citation/refusal metrics.
+- `git diff --check` passed. No visible form, layout, or wording changed, so browser visual smoke was
+  not required; the changed request contract is covered by source tests, typecheck, and build.
+- After final fetch, `HEAD`, `origin/main`, and their merge-base remain
+  `ae3e4e689c1bcdbd0c80982f8abaafa7e0af73e9`.
+
+## Issue #319 working tree notes
+
+- Scoped production changes are limited to Pipeline Baton, Embedding selection/runtime/API wiring,
+  and the Tasks request path. Scoped test changes cover the matrix, storage backlog, API/manual
+  parity, scheduled/Tasks empty and reused results, and KB error/stop behavior.
+- The new untracked `tests/test_issue_319_loose_coupled_pipeline.py` is an intentional scoped test
+  file and will be included in the commit. Generated reports, coverage, build output, and installed
+  dependencies are ignored.
+- No unrelated local change is present. Sibling repositories and the primary checkout's Issue #317
+  changes remain unread and untouched.
+
+## Issue #319 blockers or decisions needed
+
+- No implementation, review, validation, or publication blocker.
+
+## Issue #319 recommended next action
+
+- Commit the reviewed diff, push the task branch, create a Draft PR that closes #319, mark it Ready,
+  then perform the single required 600-second remote feedback window before merge.
