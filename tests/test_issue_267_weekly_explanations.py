@@ -176,7 +176,7 @@ def test_v12_then_v13_migrations_preserve_v11_data(tmp_path: Path) -> None:
         conn.execute("DROP TABLE IF EXISTS weekly_explanations")
         conn.execute("PRAGMA user_version=11")
 
-    assert CURRENT_SQLITE_SCHEMA_VERSION == 13
+    assert CURRENT_SQLITE_SCHEMA_VERSION == 14
     status = schema_status(db_path)
     plan = schema_plan(db_path)
     assert status["state"] == "needs_migration"
@@ -184,6 +184,7 @@ def test_v12_then_v13_migrations_preserve_v11_data(tmp_path: Path) -> None:
     assert [action["id"] for action in plan["plan"]["actions"]] == [
         "add_weekly_explanations_v12",
         "add_chunk_stats_metadata_indexes_v13",
+        "add_markdown_terminal_source_state_v14",
     ]
 
     applied = apply_schema(db_path)
@@ -191,6 +192,7 @@ def test_v12_then_v13_migrations_preserve_v11_data(tmp_path: Path) -> None:
     assert applied["applied_migrations"] == [
         "add_weekly_explanations_v12",
         "add_chunk_stats_metadata_indexes_v13",
+        "add_markdown_terminal_source_state_v14",
     ]
     with sqlite3.connect(db_path) as conn:
         assert conn.execute("SELECT id FROM weekly_snapshots").fetchone()[0] == snapshot["id"]

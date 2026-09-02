@@ -81,6 +81,11 @@ _CHILD_RUN_POLL_INTERVAL_SECONDS = 0.2
 
 _QUERY_SITE_FILTER_RE = re.compile(r"(?:^|\s)site:([^\s)]+)", re.IGNORECASE)
 
+_MARKDOWN_PREFLIGHT_READ_BYTES = 8192
+_MARKDOWN_TERMINAL_SCAN_PAGE_SIZE = 32
+_MARKDOWN_FAILURE_DETAIL_MAX_LENGTH = 800
+_OLE_COMPOUND_FILE_HEADER = bytes.fromhex("d0cf11e0a1b11ae1")
+
 _CONVERTIBLE_MARKDOWN_PREDICATE = """
     f.local_path IS NOT NULL AND f.local_path != ''
     AND f.deleted_at IS NULL
@@ -93,6 +98,7 @@ _CONVERTIBLE_MARKDOWN_PREDICATE = """
         OR LOWER(IFNULL(f.content_type,'')) LIKE '%image%'
         OR LOWER(IFNULL(f.original_filename,'')) LIKE '%.pdf'
         OR LOWER(IFNULL(f.original_filename,'')) LIKE '%.docx'
+        OR LOWER(IFNULL(f.original_filename,'')) LIKE '%.ppt'
         OR LOWER(IFNULL(f.original_filename,'')) LIKE '%.pptx'
         OR LOWER(IFNULL(f.original_filename,'')) LIKE '%.png'
         OR LOWER(IFNULL(f.original_filename,'')) LIKE '%.jpg'
@@ -126,6 +132,44 @@ def _convert_document_path(path: Path, **kwargs: Any) -> Any:
     from doc_to_md.registry import convert_path
 
     return convert_path(path, **kwargs)
+
+
+def _safe_markdown_failure_detail(exc: Exception, local_path: Path) -> str:
+    detail = " ".join(str(exc).split()) or type(exc).__name__
+    path_texts = {str(local_path)}
+    try:
+        path_texts.add(str(local_path.resolve()))
+    except OSError:
+        pass
+    for path_text in sorted(path_texts, key=len, reverse=True):
+        if path_text:
+            detail = detail.replace(path_text, local_path.name)
+    return detail[:_MARKDOWN_FAILURE_DETAIL_MAX_LENGTH]
+
+
+def _format_markdown_auto_failure(
+    local_path: Path,
+    failure_details: list[tuple[str, str]],
+) -> str:
+    prefix = f"Auto conversion failed for {local_path.name}: "
+    if not failure_details:
+        return f"{prefix}no candidate completed"
+    candidate_prefixes = [f"{candidate}: " for candidate, _detail in failure_details]
+    separator_length = 2 * (len(failure_details) - 1)
+    available = (
+        _MARKDOWN_FAILURE_DETAIL_MAX_LENGTH
+        - len(prefix)
+        - sum(len(candidate_prefix) for candidate_prefix in candidate_prefixes)
+        - separator_length
+    )
+    per_candidate_limit = max(1, available // len(failure_details))
+    entries = [
+        f"{candidate_prefix}{detail[:per_candidate_limit]}"
+        for candidate_prefix, (_candidate, detail) in zip(
+            candidate_prefixes, failure_details, strict=True
+        )
+    ]
+    return (prefix + "; ".join(entries))[:_MARKDOWN_FAILURE_DETAIL_MAX_LENGTH]
 
 
 class _FallbackScheduleJob:
@@ -601,6 +645,7 @@ class NativeTaskRuntime:
             "items_total": 0,
             "items_downloaded": 0,
             "items_skipped": 0,
+            "items_terminal_skipped": 0,
             "log_file": str(task_log_path(task_id)),
             "errors": [],
         }
@@ -1878,7 +1923,9 @@ class NativeTaskRuntime:
         download_dir: str,
         data: dict[str, Any],
     ) -> CollectionResult:
-        file_rows = self._markdown_candidate_files(storage, data)
+        candidate_data = dict(data)
+        candidate_data["_markdown_download_dir"] = download_dir
+        file_rows = self._markdown_candidate_files(storage, candidate_data)
         if not file_rows:
             return CollectionResult(
                 success=True,
@@ -1889,7 +1936,8 @@ class NativeTaskRuntime:
                 metadata={
                     "source_type": "markdown_conversion",
                     "stopped": False,
-                    "result": {"contract_version": 1, "files": []},
+                    "items_terminal_skipped": 0,
+                    "result": {"contract_version": 1, "files": [], "outcomes": []},
                 },
             )
 
@@ -1925,12 +1973,14 @@ class NativeTaskRuntime:
         errors: list[str] = []
         converted = 0
         skipped = 0
+        terminal_skipped = 0
         stopped = False
         total = len(file_rows)
         progress(0, total, "Starting markdown conversion")
         last_resolved_engine = explicit_runtime.engine if explicit_runtime is not None else "auto"
         last_provider = explicit_runtime.provider if explicit_runtime is not None else "auto"
         result_files: list[dict[str, Any]] = []
+        result_outcomes: list[dict[str, Any]] = []
 
         for index, row in enumerate(file_rows, start=1):
             file_url = str(row.get("url") or "").strip()
@@ -1939,29 +1989,54 @@ class NativeTaskRuntime:
                 errors.append("Task stopped by user")
                 break
             if skip_existing and str(row.get("markdown_content") or "").strip():
+                if row.get("terminal_code"):
+                    storage.clear_markdown_terminal_source_state(file_url)
                 skipped += 1
                 markdown_hash = hashlib.sha256(
                     str(row["markdown_content"]).encode("utf-8")
                 ).hexdigest()
-                result_files.append(
-                    {
-                        "file_url": file_url,
-                        "markdown_hash": markdown_hash,
-                        "markdown_version": markdown_hash,
-                        "status": "ready",
-                    }
-                )
+                file_result = {
+                    "file_url": file_url,
+                    "markdown_hash": markdown_hash,
+                    "markdown_version": markdown_hash,
+                    "status": "ready",
+                    "outcome": "skipped_existing",
+                }
+                result_files.append(file_result)
+                result_outcomes.append(file_result)
                 progress(index, total, f"Skipped existing markdown {index}/{total}")
                 if self._stop_requested(task_id):
                     stopped = True
                     errors.append("Task stopped by user")
                     break
                 continue
-            local_path = self._resolve_file_path(row.get("local_path"), download_dir)
-            if not local_path.exists():
-                errors.append(f"{file_url}: local file not found ({row.get('local_path')})")
-                progress(index, total, f"Missing file {index}/{total}")
+            preflight = row.get("_markdown_preflight")
+            if not isinstance(preflight, dict):
+                preflight = self._markdown_source_preflight(row, download_dir)
+            local_path = Path(str(preflight["local_path"]))
+            source_fingerprint = str(preflight["source_fingerprint"])
+            terminal_code = str(preflight.get("terminal_code") or "")
+            if terminal_code:
+                storage.record_markdown_terminal_source_state(
+                    file_url=file_url,
+                    terminal_code=terminal_code,
+                    source_fingerprint=source_fingerprint,
+                )
+                terminal_skipped += 1
+                if hasattr(self, "task_lock") and hasattr(self, "active_tasks"):
+                    self._update_task(task_id, items_terminal_skipped=terminal_skipped)
+                result_outcomes.append(
+                    {
+                        "file_url": file_url,
+                        "status": "terminal_skipped",
+                        "outcome": "terminal_skipped",
+                        "terminal_code": terminal_code,
+                    }
+                )
+                progress(index, total, f"Terminal source skipped {index}/{total}")
                 continue
+            if row.get("terminal_code"):
+                storage.clear_markdown_terminal_source_state(file_url)
             try:
                 output, provider = self._convert_markdown_candidate_chain(
                     local_path,
@@ -1982,18 +2057,37 @@ class NativeTaskRuntime:
                     converted += 1
                     last_provider = provider
                     markdown_hash = hashlib.sha256(output.markdown.encode("utf-8")).hexdigest()
-                    result_files.append(
+                    file_result = {
+                        "file_url": file_url,
+                        "markdown_hash": markdown_hash,
+                        "markdown_version": markdown_hash,
+                        "status": "ready",
+                        "outcome": "converted",
+                    }
+                    result_files.append(file_result)
+                    result_outcomes.append(file_result)
+                else:
+                    detail = str(reason or "markdown update failed")
+                    errors.append(f"{file_url}: {detail}")
+                    result_outcomes.append(
                         {
                             "file_url": file_url,
-                            "markdown_hash": markdown_hash,
-                            "markdown_version": markdown_hash,
-                            "status": "ready",
+                            "status": "error",
+                            "outcome": "retryable_error",
+                            "detail": detail,
                         }
                     )
-                else:
-                    errors.append(f"{file_url}: {reason or 'markdown update failed'}")
             except Exception as exc:  # noqa: BLE001
-                errors.append(f"{file_url}: {exc}")
+                detail = _safe_markdown_failure_detail(exc, local_path)
+                errors.append(f"{file_url}: {detail}")
+                result_outcomes.append(
+                    {
+                        "file_url": file_url,
+                        "status": "error",
+                        "outcome": "retryable_error",
+                        "detail": detail,
+                    }
+                )
             progress(index, total, f"Converted markdown {index}/{total}")
             if self._stop_requested(task_id):
                 stopped = True
@@ -2001,7 +2095,7 @@ class NativeTaskRuntime:
                 break
 
         return CollectionResult(
-            success=not errors and not stopped,
+            success=not errors and not stopped and terminal_skipped == 0,
             items_found=total,
             items_downloaded=converted,
             items_skipped=skipped,
@@ -2012,7 +2106,12 @@ class NativeTaskRuntime:
                 "resolved_engine": last_resolved_engine,
                 "provider": last_provider,
                 "stopped": stopped,
-                "result": {"contract_version": 1, "files": result_files},
+                "items_terminal_skipped": terminal_skipped,
+                "result": {
+                    "contract_version": 1,
+                    "files": result_files,
+                    "outcomes": result_outcomes,
+                },
             },
         )
 
@@ -2041,18 +2140,23 @@ class NativeTaskRuntime:
             raise RuntimeError(f"No auto conversion candidates configured for {local_path.name}")
 
         last_exc: Exception | None = None
-        skipped_unconfigured: list[str] = []
+        failure_details: list[tuple[str, str]] = []
         for candidate in candidates:
             tool_cfg = (md_config.get("tools") or {}).get(candidate) or {}
             candidate_model = tool_cfg.get("model") if isinstance(tool_cfg, dict) else None
-            runtime = resolve_ocr_runtime(
-                storage=storage,
-                yaml_config=config,
-                engine_override=candidate,
-                model_override=str(candidate_model).strip() if candidate_model else None,
-            )
+            try:
+                runtime = resolve_ocr_runtime(
+                    storage=storage,
+                    yaml_config=config,
+                    engine_override=candidate,
+                    model_override=str(candidate_model).strip() if candidate_model else None,
+                )
+            except Exception as exc:  # noqa: BLE001 - auto mode tries fallbacks
+                last_exc = exc
+                failure_details.append((candidate, _safe_markdown_failure_detail(exc, local_path)))
+                continue
             if runtime.provider != "local" and not runtime.api_key:
-                skipped_unconfigured.append(candidate)
+                failure_details.append((candidate, "provider not configured"))
                 continue
             try:
                 apply_ocr_runtime_environment(runtime)
@@ -2066,12 +2170,10 @@ class NativeTaskRuntime:
                 return output, runtime.provider
             except Exception as exc:  # noqa: BLE001 - auto mode tries fallbacks
                 last_exc = exc
+                failure_details.append((candidate, _safe_markdown_failure_detail(exc, local_path)))
                 continue
 
-        details = ""
-        if skipped_unconfigured:
-            details = f" (skipped unconfigured API tools: {', '.join(skipped_unconfigured)})"
-        raise RuntimeError(f"Auto conversion failed for {local_path.name}{details}") from last_exc
+        raise RuntimeError(_format_markdown_auto_failure(local_path, failure_details)) from last_exc
 
     def _run_chunk_generation(
         self,
@@ -2377,35 +2479,142 @@ class NativeTaskRuntime:
             check_database=bool(data.get("check_database", True)),
         )
 
+    def _markdown_source_preflight(
+        self,
+        row: dict[str, Any],
+        download_dir: str,
+    ) -> dict[str, Any]:
+        raw_path = str(row.get("local_path") or "").strip()
+        fingerprint_payload: dict[str, Any] = {
+            "sha256": str(row.get("sha256") or ""),
+            "local_path": raw_path,
+            "bytes": row.get("bytes"),
+            "original_filename": str(row.get("original_filename") or ""),
+            "content_type": str(row.get("content_type") or "").strip().lower(),
+            "content_kind": str(row.get("content_kind") or "").strip().lower(),
+        }
+
+        def outcome(
+            local_path: Path,
+            path_state: dict[str, Any],
+            terminal_code: str = "",
+        ) -> dict[str, Any]:
+            fingerprint_payload["path_state"] = path_state
+            source_fingerprint = hashlib.sha256(
+                json.dumps(
+                    fingerprint_payload,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ).hexdigest()
+            return {
+                "local_path": str(local_path),
+                "source_fingerprint": source_fingerprint,
+                "terminal_code": terminal_code,
+            }
+
+        if not raw_path:
+            return outcome(Path(), {"kind": "missing"}, "repair_required")
+
+        local_path = self._resolve_file_path(raw_path, download_dir)
+        try:
+            stat = local_path.stat()
+        except OSError:
+            return outcome(local_path, {"kind": "missing"}, "repair_required")
+        if not local_path.is_file():
+            return outcome(
+                local_path,
+                {
+                    "kind": "not_file",
+                    "size": int(stat.st_size),
+                    "mtime_ns": int(stat.st_mtime_ns),
+                },
+                "repair_required",
+            )
+        try:
+            with local_path.open("rb") as handle:
+                header = handle.read(_MARKDOWN_PREFLIGHT_READ_BYTES)
+        except OSError:
+            return outcome(
+                local_path,
+                {
+                    "kind": "unreadable",
+                    "size": int(stat.st_size),
+                    "mtime_ns": int(stat.st_mtime_ns),
+                },
+                "repair_required",
+            )
+
+        path_state = {
+            "kind": "file",
+            "size": int(stat.st_size),
+            "mtime_ns": int(stat.st_mtime_ns),
+            "header_sha256": hashlib.sha256(header).hexdigest(),
+        }
+        suffixes = {
+            Path(str(row.get("original_filename") or "")).suffix.lower(),
+            local_path.suffix.lower(),
+            Path(urlparse(str(row.get("url") or "")).path).suffix.lower(),
+        }
+        content_type = str(row.get("content_type") or "").strip().lower()
+        content_kind = str(row.get("content_kind") or "").strip().lower()
+        normalized_header = header.lstrip(b"\xef\xbb\xbf\x00\t\r\n ")[:512].lower()
+        html_magic = bool(
+            re.match(
+                rb"(?:<!doctype\s+html|<html(?:\s|>)|<head(?:\s|>)|<body(?:\s|>))",
+                normalized_header,
+            )
+        )
+        declared_html = content_kind == "web_page" or content_type.startswith(
+            ("text/html", "application/xhtml+xml")
+        )
+        pdf_candidate = ".pdf" in suffixes or "pdf" in content_type
+        if pdf_candidate and (declared_html or html_magic):
+            return outcome(local_path, path_state, "invalid_source")
+        if ".ppt" in suffixes and header.startswith(_OLE_COMPOUND_FILE_HEADER):
+            return outcome(local_path, path_state, "unsupported_legacy_ppt")
+        return outcome(local_path, path_state)
+
+    @staticmethod
+    def _markdown_candidate_row(row: tuple[Any, ...]) -> dict[str, Any]:
+        return {
+            "url": row[0],
+            "local_path": row[1],
+            "original_filename": row[2],
+            "content_type": row[3],
+            "markdown_content": row[4],
+            "sha256": row[5],
+            "bytes": row[6],
+            "content_kind": row[7],
+            "terminal_code": row[8],
+            "terminal_source_fingerprint": row[9],
+        }
+
     def _markdown_candidate_files(
         self, storage: Storage, data: dict[str, Any]
     ) -> list[dict[str, Any]]:
         explicit_urls = self._explicit_file_urls(data)
         overwrite_existing = bool(data.get("overwrite_existing", False))
         skip_existing = bool(data.get("skip_existing", True)) and not overwrite_existing
+        download_dir = str(data.get("_markdown_download_dir") or "")
         conn = storage._conn
         if explicit_urls:
             placeholders = ",".join("?" for _ in explicit_urls)
             rows = conn.execute(
                 f"""
-                SELECT f.url, f.local_path, f.original_filename, f.content_type, c.markdown_content
+                SELECT f.url, f.local_path, f.original_filename, f.content_type,
+                       c.markdown_content, f.sha256, f.bytes, f.content_kind,
+                       mts.terminal_code, mts.source_fingerprint
                 FROM files f
                 LEFT JOIN catalog_items c ON c.file_url = f.url
+                LEFT JOIN markdown_terminal_source_state mts ON mts.file_url = f.url
                 WHERE f.url IN ({placeholders})
                   AND f.deleted_at IS NULL
                 """,
                 tuple(explicit_urls),
             ).fetchall()
-            by_url = {
-                str(row[0]): {
-                    "url": row[0],
-                    "local_path": row[1],
-                    "original_filename": row[2],
-                    "content_type": row[3],
-                    "markdown_content": row[4],
-                }
-                for row in rows
-            }
+            by_url = {str(row[0]): self._markdown_candidate_row(row) for row in rows}
             return [by_url[url] for url in explicit_urls if url in by_url]
 
         category_sql, params = self._category_sql(
@@ -2424,27 +2633,47 @@ class NativeTaskRuntime:
         )
         limit = min(self._positive_int(data.get("scan_count"), default_limit), max_limit)
         offset = max(0, self._positive_int(data.get("scan_start_index"), 1) - 1)
-        rows = conn.execute(
-            f"""
-            SELECT f.url, f.local_path, f.original_filename, f.content_type, c.markdown_content
+        query = f"""
+            SELECT f.url, f.local_path, f.original_filename, f.content_type,
+                   c.markdown_content, f.sha256, f.bytes, f.content_kind,
+                   mts.terminal_code, mts.source_fingerprint
             FROM files f
             LEFT JOIN catalog_items c ON c.file_url = f.url
+            LEFT JOIN markdown_terminal_source_state mts ON mts.file_url = f.url
             WHERE {where}
             ORDER BY f.id DESC
             LIMIT ? OFFSET ?
-            """,
-            tuple(params + [limit, offset]),
-        ).fetchall()
-        return [
-            {
-                "url": row[0],
-                "local_path": row[1],
-                "original_filename": row[2],
-                "content_type": row[3],
-                "markdown_content": row[4],
-            }
-            for row in rows
-        ]
+        """
+        selected: list[dict[str, Any]] = []
+        logical_index = 0
+        raw_offset = 0
+        while len(selected) < limit:
+            rows = conn.execute(
+                query,
+                tuple(params + [_MARKDOWN_TERMINAL_SCAN_PAGE_SIZE, raw_offset]),
+            ).fetchall()
+            if not rows:
+                break
+            raw_offset += len(rows)
+            for raw_row in rows:
+                row = self._markdown_candidate_row(raw_row)
+                if row.get("terminal_code"):
+                    preflight = self._markdown_source_preflight(row, download_dir)
+                    if str(preflight["source_fingerprint"]) == str(
+                        row.get("terminal_source_fingerprint") or ""
+                    ):
+                        continue
+                    row["_markdown_preflight"] = preflight
+                if logical_index < offset:
+                    logical_index += 1
+                    continue
+                selected.append(row)
+                if len(selected) >= limit:
+                    break
+                logical_index += 1
+            if len(rows) < _MARKDOWN_TERMINAL_SCAN_PAGE_SIZE:
+                break
+        return selected
 
     def _chunk_candidate_file_urls(self, storage: Storage, data: dict[str, Any]) -> list[str]:
         if "files" in data:
@@ -2701,6 +2930,9 @@ class NativeTaskRuntime:
                     "items_total": items_total,
                     "items_downloaded": result.items_downloaded,
                     "items_skipped": result.items_skipped,
+                    "items_terminal_skipped": int(
+                        (result.metadata or {}).get("items_terminal_skipped") or 0
+                    ),
                     "errors": list(result.errors or []),
                     "metadata": dict(result.metadata or {}),
                 }

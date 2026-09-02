@@ -22,6 +22,7 @@ export interface TaskMetricData {
   items_processed?: number;
   items_downloaded?: number;
   items_skipped?: number;
+  items_terminal_skipped?: number;
   catalog_scanned?: number;
   catalog_ok?: number;
   catalog_skipped?: number;
@@ -97,6 +98,20 @@ function getTaskMetrics(task: TaskMetricData): TaskMetric[] {
     return isActive ? progressMetrics(task) : processedMetrics(task);
   }
 
+  if (MARKDOWN_TYPES.has(type)) {
+    if (isActive) {
+      return [
+        ...progressMetrics(task),
+        ...optionalMetric("terminal_skipped", task.items_terminal_skipped),
+      ];
+    }
+    return [
+      metric("converted", task.items_downloaded ?? task.items_processed ?? 0),
+      metric("skipped", task.items_skipped ?? 0),
+      ...optionalMetric("terminal_skipped", task.items_terminal_skipped),
+    ];
+  }
+
   if (isActive) return progressMetrics(task);
 
   if (type === "catalog") {
@@ -105,13 +120,6 @@ function getTaskMetrics(task: TaskMetricData): TaskMetric[] {
       ...optionalMetric("ok", task.catalog_ok ?? task.items_downloaded),
       ...optionalMetric("skipped", task.catalog_skipped ?? task.items_skipped),
       ...optionalMetric("errors", task.catalog_errors ?? task.errors?.length),
-    ];
-  }
-
-  if (MARKDOWN_TYPES.has(type)) {
-    return [
-      metric("converted", task.items_downloaded ?? task.items_processed ?? 0),
-      metric("skipped", task.items_skipped ?? 0),
     ];
   }
 

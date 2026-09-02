@@ -1,9 +1,7 @@
 export interface TaskContractResult {
   contract_version?: number;
-  files?: Array<{
-    file_url?: string;
-    status?: string;
-  }>;
+  files?: TaskFileOutcome[];
+  outcomes?: TaskFileOutcome[];
   chunk_sets?: Array<{
     chunk_set_id?: string;
     chunk_count?: number;
@@ -20,6 +18,14 @@ export interface TaskContractResult {
   failed?: number;
 }
 
+interface TaskFileOutcome {
+  file_url?: string;
+  status?: string;
+  outcome?: string;
+  terminal_code?: string;
+  detail?: string;
+}
+
 export interface Task {
   id: string;
   name: string;
@@ -32,6 +38,7 @@ export interface Task {
   items_total: number;
   items_downloaded?: number;
   items_skipped?: number;
+  items_terminal_skipped?: number;
   catalog_scanned?: number;
   catalog_ok?: number;
   catalog_skipped?: number;
@@ -62,6 +69,7 @@ export interface HistoryTask {
   items_processed?: number;
   items_downloaded?: number;
   items_skipped?: number;
+  items_terminal_skipped?: number;
   catalog_scanned?: number;
   catalog_ok?: number;
   catalog_skipped?: number;

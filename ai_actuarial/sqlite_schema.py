@@ -11,7 +11,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable
 
-CURRENT_SQLITE_SCHEMA_VERSION = 13
+CURRENT_SQLITE_SCHEMA_VERSION = 14
 
 _AWARE_RFC3339_RE = re.compile(
     r"^\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[Zz]|[+-]\d{2}:\d{2})$"
@@ -41,6 +41,7 @@ _AUTO_BACKFILL_TABLES = frozenset(
         "agentic_ready_source_state",
         "kb_ready_index_state",
         "manifest_raw",
+        "markdown_terminal_source_state",
         "child_run",
         "pipeline_run",
         "pipeline_stage",
@@ -1239,6 +1240,39 @@ def _accept_version_12_source(
     return valid
 
 
+def _add_markdown_terminal_source_state_v14(conn: sqlite3.Connection) -> None:
+    """Persist terminal Markdown preflight outcomes per unchanged source state."""
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS markdown_terminal_source_state (
+            file_url TEXT PRIMARY KEY,
+            terminal_code TEXT NOT NULL,
+            source_fingerprint TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(file_url) REFERENCES files(url) ON DELETE CASCADE
+        )
+        """)
+    _set_user_version(conn, 14)
+
+
+def _accept_version_13_source(
+    conn: sqlite3.Connection,
+    tables: dict[str, TableSignature],
+) -> bool:
+    """Accept the exact v13 schema before Markdown terminal state existed."""
+    table_name = "markdown_terminal_source_state"
+    if table_name in tables:
+        return False
+    expected = _current_storage_signature()
+    adjusted = dict(tables)
+    if table_name in expected:
+        adjusted[table_name] = expected[table_name]
+    valid, _, _ = _schema_validation(
+        adjusted,
+        unexpected_schema_objects=_unexpected_schema_object_counts(conn, tables),
+    )
+    return valid
+
+
 SQLITE_SCHEMA_MIGRATIONS: tuple[SQLiteSchemaMigration, ...] = (
     SQLiteSchemaMigration(
         version=1,
@@ -1316,6 +1350,12 @@ SQLITE_SCHEMA_MIGRATIONS: tuple[SQLiteSchemaMigration, ...] = (
         migration_id="add_chunk_stats_metadata_indexes_v13",
         apply=_add_chunk_stats_metadata_indexes_v13,
         source_validator=_accept_version_12_source,
+    ),
+    SQLiteSchemaMigration(
+        version=14,
+        migration_id="add_markdown_terminal_source_state_v14",
+        apply=_add_markdown_terminal_source_state_v14,
+        source_validator=_accept_version_13_source,
     ),
 )
 

@@ -44,6 +44,7 @@ def _build_task_display_summary(task_data: dict[str, Any]) -> dict[str, Any]:
     items_processed = int(task_data.get("items_processed") or 0)
     items_downloaded = int(task_data.get("items_downloaded") or 0)
     items_skipped = int(task_data.get("items_skipped") or 0)
+    items_terminal_skipped = int(task_data.get("items_terminal_skipped") or 0)
     error_count = _task_error_count(task_data)
 
     if task_type == "catalog":
@@ -55,12 +56,16 @@ def _build_task_display_summary(task_data: dict[str, Any]) -> dict[str, Any]:
             _task_metric("tasks.metric_skipped", "Skipped", items_skipped),
         ]
     elif task_type in {"markdown", "markdown_conversion"}:
-        primary = _task_metric(
-            "tasks.metric_converted", "Converted", items_downloaded or items_processed
-        )
+        converted = items_downloaded if "items_downloaded" in task_data else items_processed
+        primary = _task_metric("tasks.metric_converted", "Converted", converted)
         secondary = [
             _task_metric("tasks.metric_errors", "Errors", error_count),
             _task_metric("tasks.metric_skipped", "Skipped", items_skipped),
+            _task_metric(
+                "tasks.metric_terminal_skipped",
+                "Terminal skips",
+                items_terminal_skipped,
+            ),
         ]
     elif task_type in {"chunk", "chunk_generation"}:
         primary = _task_metric(

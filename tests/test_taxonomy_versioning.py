@@ -133,6 +133,7 @@ def test_migration_v1_to_v2_creates_taxonomy_state(tmp_path: Path) -> None:
         "add_weekly_snapshots_v11",
         "add_weekly_explanations_v12",
         "add_chunk_stats_metadata_indexes_v13",
+        "add_markdown_terminal_source_state_v14",
     ]
 
     with sqlite3.connect(db_path) as conn:

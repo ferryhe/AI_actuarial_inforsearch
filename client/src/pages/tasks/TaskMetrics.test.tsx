@@ -64,10 +64,12 @@ const markdown = renderMetrics({
   type: "markdown_conversion",
   items_downloaded: 2,
   items_skipped: 1,
+  items_terminal_skipped: 3,
   result: { files: [{ status: "ready" }, { status: "ready" }, { status: "ready" }] },
 });
 assert.match(markdown, /tasks\.stats\.converted[^0-9]*2/);
 assert.match(markdown, /tasks\.stats\.skipped[^0-9]*1/);
+assert.match(markdown, /tasks\.stats\.terminal_skipped[^0-9]*3/);
 assert.doesNotMatch(markdown, /tasks\.stats\.downloaded/);
 
 const legacyMarkdown = renderMetrics({
@@ -90,9 +92,11 @@ const activeMarkdown = renderMetrics({
   items_processed: 5,
   items_downloaded: 0,
   items_skipped: 1,
+  items_terminal_skipped: 2,
 });
 assert.match(activeMarkdown, /tasks\.stats\.processed[^0-9]*5/);
 assert.match(activeMarkdown, /tasks\.stats\.skipped[^0-9]*1/);
+assert.match(activeMarkdown, /tasks\.stats\.terminal_skipped[^0-9]*2/);
 assert.doesNotMatch(activeMarkdown, /tasks\.stats\.(?:converted|downloaded)/);
 
 const chunk = renderMetrics({
