@@ -48,9 +48,17 @@
   backend was not running, so proxied API requests returned connection-refused/500 responses;
   the runtime regression is the authoritative guest-cache check.
 
+## Post-merge verification
+
+- Focused React source suite: 78 passed.
+- Frontend lint, type-check, production build, and four-layer dead-code gate: passed.
+- Unified quality gate: 1,871 passed and 10 skipped; Black, isort, and Pylint passed.
+- `git diff --check`: passed.
+
 ## Delivery state
 
 - Fix commit `1d61054` is pushed to the PR branch.
 - The Copilot reply is published at discussion comment `3910583670`.
-- Post-merge local validation and the new remote CI run are the remaining checks at this snapshot.
+- Post-merge local validation is complete; the new remote CI run is the remaining check at this
+  snapshot.
 - Local task cache `.codex-black-cache-pr324/` is untracked and excluded from commits.
