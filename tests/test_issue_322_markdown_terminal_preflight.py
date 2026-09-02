@@ -625,6 +625,14 @@ def test_auto_long_failure_details_preserve_all_candidates_in_public_result(
         raise RuntimeError(f"{engine} concrete reason at {path} " + (f"{engine}-detail-" * 24))
 
     monkeypatch.setattr("ai_actuarial.task_runtime._convert_document_path", fail)
+    progress_messages: list[str] = []
+    monkeypatch.setattr(
+        NativeTaskRuntime,
+        "_progress_callback",
+        lambda _self, _task_id: (
+            lambda _current, _total, message: progress_messages.append(message)
+        ),
+    )
     result = NativeTaskRuntime()._run_collection(
         "auto-long-failures",
         "markdown_conversion",
@@ -641,6 +649,7 @@ def test_auto_long_failure_details_preserve_all_candidates_in_public_result(
     assert len(detail) <= 800
     assert str(source_path) not in detail
     assert len(result.errors) == 1
+    assert progress_messages[-1] == "Processed markdown 1/1"
     for candidate in candidates:
         expected = f"{candidate}: {candidate} concrete reason"
         assert expected in detail

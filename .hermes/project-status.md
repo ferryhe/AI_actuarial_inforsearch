@@ -8,8 +8,8 @@
 - Issue: `#322 fix(markdown): preflight terminal source failures before conversion`
 - State file: `C:\Users\ferry\.codex\issue-to-merge-state\AI_actuarial_inforsearch\issue-322.json`
 - PR: `https://github.com/ferryhe/AI_actuarial_inforsearch/pull/330`
-- Delivery stage: Draft PR #330 created with `Closes #322`; this status-only follow-up commit is
-  pending before Ready and the one complete 600-second feedback/CI window
+- Delivery stage: PR #330 is Ready. Its single feedback window completed after 720.2 seconds;
+  the sole valid Copilot wording fix is pending commit/push and current-head CI.
 - Progress heartbeat: id `issue-322-delivery-progress`, status `ACTIVE`, 15-minute cadence
 
 ## Issue #322 acceptance criteria
@@ -119,11 +119,24 @@
   regression fixtures, and this manager-owned status file. No downstream Chunk/Embedding production
   code changed.
 
+## Issue #322 remote feedback
+
+- PR #330 was marked Ready at head `a0474909ee11b1c5fca8cc046753b737c80161ab`.
+  One complete snapshot was fetched 720.2 seconds later; there will be no second feedback fetch.
+- All five required checks on that head passed. No PR conversation comment or Issue comment was
+  present. Copilot left one inline comment about a failed item still reporting `Converted` progress.
+- The persistent worker and manager confirmed the comment under AC-5: a canonical
+  `retryable_error` must not have success-shaped visible progress. The minimal fix changes only
+  `Converted markdown` to neutral `Processed markdown` and adds a public-result progress assertion.
+- The new assertion failed before the fix and passed afterward. The worker also passed 131 related
+  tests plus Black, isort, Python compilation, and diff checks; the manager independently reran the
+  focused public-result test successfully.
+
 ## Issue #322 blockers or decisions needed
 
-- None. The next action is to push this status-only follow-up, mark PR #330 Ready, complete the
-  600-second feedback/CI window, assess the single fetched snapshot, squash merge, verify Issue
-  closure, and clean the remote branch, worktree, and local branch.
+- None. Commit and push the confirmed wording fix, wait for all five required checks on the new
+  exact head, then squash merge, verify Issue closure, and clean the remote branch, worktree, and
+  local branch.
 
 # Project Status — Issue #320 strict manifest validation
 

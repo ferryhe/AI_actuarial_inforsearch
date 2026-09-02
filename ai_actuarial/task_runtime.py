@@ -2088,7 +2088,7 @@ class NativeTaskRuntime:
                         "detail": detail,
                     }
                 )
-            progress(index, total, f"Converted markdown {index}/{total}")
+            progress(index, total, f"Processed markdown {index}/{total}")
             if self._stop_requested(task_id):
                 stopped = True
                 errors.append("Task stopped by user")
