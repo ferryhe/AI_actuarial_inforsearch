@@ -888,8 +888,22 @@ class NativeTaskRuntime:
             self._finalize_task_success(task_id, collection_type, result)
             self._finalize_child_run(data, result=result)
         except Exception as exc:  # noqa: BLE001
-            logger.exception("Task %s failed", task_id)
-            self._finalize_task_error(task_id, str(exc))
+            from ai_actuarial.manifest_ingest import ManifestIngestError
+
+            if isinstance(exc, ManifestIngestError):
+                logger.error("Task %s failed: %s", task_id, exc)
+                error_code = exc.code
+                error_details = exc.details
+            else:
+                logger.exception("Task %s failed", task_id)
+                error_code = None
+                error_details = None
+            self._finalize_task_error(
+                task_id,
+                str(exc),
+                error_code=error_code,
+                error_details=error_details,
+            )
             self._finalize_child_run(data, error=str(exc))
 
     def _run_collection(
@@ -905,6 +919,28 @@ class NativeTaskRuntime:
 
         if collection_type in _CAPACITY_GATED_TYPES:
             ensure_capacity(path="/", operation=collection_type)
+
+        manifest_input: tuple[dict[str, Any], str] | None = None
+        if collection_type == "manifest_ingestion":
+            from ai_actuarial.manifest_ingest import (
+                ManifestIngestError,
+                parse_manifest_json,
+                validate_manifest,
+            )
+
+            manifest_path = str(data.get("manifest_path") or data.get("path") or "").strip()
+            if not manifest_path:
+                raise ManifestIngestError("manifest_path_required", "manifest_path")
+            path = Path(manifest_path)
+            if not path.is_file():
+                raise ManifestIngestError("manifest_file_unavailable", "manifest_path")
+            try:
+                manifest_text = path.read_bytes().decode("utf-8")
+            except (OSError, UnicodeDecodeError):
+                raise ManifestIngestError("manifest_file_unavailable", "manifest_path") from None
+            manifest = parse_manifest_json(manifest_text)
+            validate_manifest(manifest)
+            manifest_input = (manifest, manifest_text)
 
         storage = Storage(db_path)
         try:
@@ -1107,21 +1143,8 @@ class NativeTaskRuntime:
             if collection_type == "manifest_ingestion":
                 from ai_actuarial.manifest_ingest import ingest_manifest
 
-                manifest_path = str(data.get("manifest_path") or data.get("path") or "").strip()
-                if not manifest_path:
-                    raise RuntimeError("manifest_ingestion requires a manifest_path")
-                path = Path(manifest_path)
-                if not path.is_file():
-                    raise RuntimeError(f"manifest file not found: {manifest_path}")
-                manifest_text = path.read_text(encoding="utf-8")
-                try:
-                    manifest = json.loads(manifest_text)
-                except json.JSONDecodeError as exc:
-                    raise RuntimeError(f"invalid manifest JSON: {manifest_path}: {exc}") from exc
-                if not isinstance(manifest, dict):
-                    raise RuntimeError(
-                        f"manifest JSON must be an object, got {type(manifest).__name__}: {manifest_path}"
-                    )
+                assert manifest_input is not None
+                manifest, manifest_text = manifest_input
                 summary = ingest_manifest(storage, manifest, raw_text=manifest_text)
                 imported = int(summary.get("imported", 0))
                 return CollectionResult(
@@ -2744,7 +2767,14 @@ class NativeTaskRuntime:
         )
         self._append_history_to_disk(task_data)
 
-    def _finalize_task_error(self, task_id: str, error: str) -> None:
+    def _finalize_task_error(
+        self,
+        task_id: str,
+        error: str,
+        *,
+        error_code: str | None = None,
+        error_details: dict[str, Any] | None = None,
+    ) -> None:
         with self.task_lock:
             task_data = self.active_tasks.pop(task_id, None)
             if task_data is None:
@@ -2758,6 +2788,10 @@ class NativeTaskRuntime:
                     "errors": [error],
                 }
             )
+            if error_code:
+                task_data["error_code"] = error_code
+            if error_details:
+                task_data["error_details"] = dict(error_details)
             self.task_history.append(task_data)
         append_task_log(task_id, "ERROR", f"Task failed: {error}")
         self._append_history_to_disk(task_data)

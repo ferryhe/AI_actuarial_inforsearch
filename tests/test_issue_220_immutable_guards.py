@@ -741,31 +741,28 @@ def test_runtime_chunk_generation_overwrite_noop_does_not_allow_legacy_kb_option
 def test_manifest_schema_version_is_recorded_and_traceable(tmp_path: Path) -> None:
     storage = Storage(str(tmp_path / "index.db"))
     try:
-        ingest_manifest(
-            storage,
-            {
-                "manifest_id": "m1",
-                "schema_version": "v1",
-                "run": {},
-                "source": {},
-                "downloaded_assets": [],
-            },
-        )
-        ingest_manifest(
-            storage,
-            {
-                "manifest_id": "m2",
-                "schema_version": "v2",
-                "run": {},
-                "source": {},
-                "downloaded_assets": [],
-            },
-        )
+        for suffix in ("1", "2"):
+            ingest_manifest(
+                storage,
+                {
+                    "manifest_id": f"m{suffix}",
+                    "schema_version": "web-listening-manifest.v1",
+                    "run": {"run_id": f"run-{suffix}"},
+                    "source": {
+                        "source_id": f"source-{suffix}",
+                        "site_name": f"Source {suffix}",
+                        "site_url": f"https://source-{suffix}.example/",
+                    },
+                    "downloaded_assets": [],
+                },
+            )
         rows = storage._conn.execute(
             "SELECT manifest_id, schema_version FROM manifest_raw ORDER BY manifest_id"
         ).fetchall()
         versions = {row[0]: row[1] for row in rows}
-        assert versions["m1"] == "v1"
-        assert versions["m2"] == "v2"
+        assert versions == {
+            "m1": "web-listening-manifest.v1",
+            "m2": "web-listening-manifest.v1",
+        }
     finally:
         storage.close()

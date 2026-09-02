@@ -1,3 +1,81 @@
+# Project Status — Issue #320 strict manifest validation
+
+- Updated: 2026-09-02 EDT
+- Repository: `AI_actuarial_inforsearch`
+- Worktree: `C:\Users\ferry\.codex\worktrees\7a36\AI_actuarial_inforsearch`
+- Branch: `codex/issue-320-strict-manifest-validation`
+- Baseline: `origin/main@29b73be7ecf65d236570b5f9d698783a8966cb46`
+- Issue: `#320 fix(manifest): reject incompatible producer payloads instead of silent zero import`
+- State file: `C:\Users\ferry\.codex\issue-to-merge-state\AI_actuarial_inforsearch\issue-320.json`
+- Delivery stage: local implementation and review complete; all required local checks pass; commit,
+  Draft PR, Ready transition, one 600-second feedback window, CI, merge, and cleanup remain
+
+## Issue #320 scope and acceptance criteria
+
+- Accept only the exact supported legacy `web-listening-manifest.v1` object contract, with
+  non-empty manifest/run/source identities and a `downloaded_assets` list. Full producer Result
+  envelopes, nested manifests, unsupported schemas, missing identities, and wrong container types
+  fail with stable machine-readable errors instead of succeeding with zero imported assets.
+- Parse raw JSON fail-closed, including duplicate keys at any depth and non-standard numeric
+  constants. Preflight every asset before any transaction: object and asset identity; absolute
+  HTTP(S) URL; SHA-256 checksum; media type; non-boolean, non-negative integer byte count;
+  filename; and at least one valid path field with documented precedence.
+- Keep valid legacy behavior: archive the original manifest bytes exactly, retain content kind,
+  preserve URL/SHA upsert behavior and path precedence, and make repeated ingestion idempotent.
+- Direct ingestion, task execution, task history, and API-visible errors expose only stable codes
+  and safe field metadata; malformed inputs cannot leak payload values, credentials, signed query
+  strings, cookies, or local secret paths through error chains or logs.
+- Non-goals: external consumer/adapter changes, producer API calls, artifact downloads, Baton or
+  new lineage work, a schema registry, storage redesign, migration, or backfill. Sibling
+  repositories remain off-limits.
+
+## Issue #320 baseline and duplicate evidence
+
+- Startup confirmed the assigned worktree on the exact supplied baseline. Final pre-publication
+  fetch again confirmed `HEAD`, `origin/main`, and their merge-base at `29b73be7`.
+- Baseline reproduction showed that both a full `web-listening-result.v1` envelope and a nested
+  incompatible manifest returned empty IDs with `imported=0`; an unsupported schema carrying a
+  manifest ID also reported `imported=0` while writing one raw-manifest row.
+- Focused baseline tests passed 44 tests, confirming the defect was an untested contract gap rather
+  than an already-failing implementation.
+- No equivalent open/merged PR, branch, or commit was found. Merged PR #205 introduced the
+  permissive legacy importer and PR #136 covers an unrelated Agentic ready-manifest registry.
+
+## Issue #320 implementation and review
+
+- `manifest_ingest.py` now performs strict raw parsing and complete contract validation before
+  opening the write transaction, then preserves the existing valid archive/upsert/idempotency
+  path. `ManifestIngestError` carries safe machine code and field details.
+- `task_runtime.py` validates and decodes the manifest before constructing storage, persists the
+  safe error code/details in task history, and logs contract failures without unsafe exception
+  chains. The public collection-run API remains unchanged and continues to reject manifest mode.
+- Focused regression coverage now exercises incompatible envelopes, unsupported schemas, duplicate
+  keys, every field/type rule, late-asset atomicity, backslash and invalid-port URLs, exact raw-byte
+  archival, path priority, idempotency, task/history/API propagation, and secret-safe logs.
+- TDD red evidence reproduced six core failures before implementation. Local review round 1 found
+  two valid acceptance-criteria defects: backslash URLs were accepted, and chained URL/file errors
+  could leak sensitive values. The same persistent worker fixed both with targeted red/green tests.
+  Fresh read-only review round 2 returned PASS with no findings. Focused validation passed 102
+  tests; the wider related regression selection passed 201 tests.
+
+## Issue #320 final local validation
+
+- Unified quality gate passed: 2,000 tests passed and 10 skipped, then Black, isort, and Pylint all
+  passed.
+- Both dead-code gates passed with zero baseline findings. Frontend lint passed with zero errors
+  and five existing Hook warnings; type-check and production build passed, with only the existing
+  large-chunk advisory.
+- Python smoke passed: 13 FastAPI authority tests, 31 Agentic evaluation tests, and all 3 CLI
+  evaluation cases with evidence/citation/refusal rates at 1.0 and unsupported-answer rate at 0.0.
+- `git diff --check` passed. No browser smoke is required because this change has no UI behavior.
+- Files in scope: `ai_actuarial/manifest_ingest.py`, `ai_actuarial/task_runtime.py`,
+  `tests/test_manifest_ingest.py`, `tests/test_issue_320_manifest_contract.py`,
+  `tests/test_issue_220_immutable_guards.py`, `tests/test_fastapi_ops_read_endpoints.py`,
+  `tests/test_fastapi_ops_write_endpoints.py`, and this manager-owned status file.
+- No unrelated uncommitted or untracked files are present. There are no local blockers; the next
+  action is to commit, push, open the Draft PR with `Closes #320`, mark it Ready, then perform the
+  single required feedback/CI/merge/cleanup lifecycle.
+
 # Project Status — Issue #308 inapplicable retrieval metrics
 
 - Updated: 2026-09-02 EDT

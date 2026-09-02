@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 import sqlite3
 
-from ai_actuarial.manifest_ingest import content_kind_for, ingest_manifest
+import pytest
+
+from ai_actuarial.manifest_ingest import ManifestIngestError, content_kind_for, ingest_manifest
 from ai_actuarial.storage import Storage
 
 
@@ -214,45 +216,45 @@ def test_ingest_manifest_is_idempotent() -> None:
         storage.close()
 
 
-def test_ingest_manifest_non_sha256_checksum_is_ignored() -> None:
+def test_ingest_manifest_rejects_non_sha256_checksum() -> None:
     manifest = _sample_manifest()
     manifest["downloaded_assets"][0]["checksum"] = {"algorithm": "md5", "value": "e" * 32}
     storage = Storage(":memory:")
     try:
-        ingest_manifest(storage, manifest)
-        row = storage._conn.execute(
-            "SELECT sha256 FROM files WHERE url = ?",
-            ("https://www.soa.org/sample-report.pdf",),
-        ).fetchone()
-        assert row[0] == ""  # non-sha256 algorithm must not pollute the sha256 column
+        with pytest.raises(ManifestIngestError) as exc_info:
+            ingest_manifest(storage, manifest)
+        assert exc_info.value.code == "invalid_manifest_contract"
+        assert exc_info.value.field == "downloaded_assets[0].checksum.algorithm"
+        assert storage._conn.execute("SELECT COUNT(*) FROM manifest_raw").fetchone()[0] == 0
+        assert storage._conn.execute("SELECT COUNT(*) FROM files").fetchone()[0] == 0
     finally:
         storage.close()
 
 
-def test_ingest_manifest_non_dict_checksum_is_ignored() -> None:
+def test_ingest_manifest_rejects_non_dict_checksum() -> None:
     manifest = _sample_manifest()
     manifest["downloaded_assets"][0]["checksum"] = "not-a-dict"
     storage = Storage(":memory:")
     try:
-        ingest_manifest(storage, manifest)
-        row = storage._conn.execute(
-            "SELECT sha256 FROM files WHERE url = ?",
-            ("https://www.soa.org/sample-report.pdf",),
-        ).fetchone()
-        assert row[0] == ""
+        with pytest.raises(ManifestIngestError) as exc_info:
+            ingest_manifest(storage, manifest)
+        assert exc_info.value.field == "downloaded_assets[0].checksum"
+        assert storage._conn.execute("SELECT COUNT(*) FROM manifest_raw").fetchone()[0] == 0
+        assert storage._conn.execute("SELECT COUNT(*) FROM files").fetchone()[0] == 0
     finally:
         storage.close()
 
 
-def test_ingest_manifest_missing_manifest_id_skips_raw_archive() -> None:
+def test_ingest_manifest_rejects_missing_manifest_id() -> None:
     manifest = _sample_manifest()
     del manifest["manifest_id"]
     storage = Storage(":memory:")
     try:
-        result = ingest_manifest(storage, manifest)
-        assert result["imported"] == 2
-        count = storage._conn.execute("SELECT COUNT(*) FROM manifest_raw").fetchone()[0]
-        assert count == 0  # malformed manifest is not archived under an empty key
+        with pytest.raises(ManifestIngestError) as exc_info:
+            ingest_manifest(storage, manifest)
+        assert exc_info.value.field == "manifest_id"
+        assert storage._conn.execute("SELECT COUNT(*) FROM manifest_raw").fetchone()[0] == 0
+        assert storage._conn.execute("SELECT COUNT(*) FROM files").fetchone()[0] == 0
     finally:
         storage.close()
 
@@ -270,35 +272,27 @@ def test_ingest_manifest_empty_assets_still_archives_raw() -> None:
         storage.close()
 
 
-def test_ingest_manifest_skips_assets_without_url_and_defaults_missing_media_type() -> None:
-    manifest = {
-        "schema_version": "web-listening-manifest.v1",
-        "manifest_id": "manifest-edge-001",
-        "downloaded_assets": [
-            {"asset_id": "no-url", "filename": "orphan.pdf"},
-            {
-                "asset_id": "no-media-type",
-                "url": "https://example.com/doc",
-                "filename": "doc.bin",
-                "checksum": {"algorithm": "sha256", "value": "f" * 64},
-            },
-        ],
-    }
+def test_ingest_manifest_rejects_asset_without_url() -> None:
+    manifest = _sample_manifest()
+    del manifest["downloaded_assets"][0]["url"]
     storage = Storage(":memory:")
     try:
-        result = ingest_manifest(storage, manifest)
-        assert result["imported"] == 1  # only the asset with a url
-        row = storage._conn.execute(
-            "SELECT content_kind FROM files WHERE url = ?",
-            ("https://example.com/doc",),
-        ).fetchone()
-        assert row[0] == "file"  # missing media_type -> file
+        with pytest.raises(ManifestIngestError) as exc_info:
+            ingest_manifest(storage, manifest)
+        assert exc_info.value.field == "downloaded_assets[0].url"
+        assert storage._conn.execute("SELECT COUNT(*) FROM manifest_raw").fetchone()[0] == 0
+        assert storage._conn.execute("SELECT COUNT(*) FROM files").fetchone()[0] == 0
     finally:
         storage.close()
 
 
 def test_ingest_manifest_stores_raw_text_byte_for_byte() -> None:
-    raw = '{"schema_version":"web-listening-manifest.v1","manifest_id":"m-raw",\n  "downloaded_assets": []}'
+    raw = (
+        '{"schema_version":"web-listening-manifest.v1","manifest_id":"m-raw",\n'
+        '  "run":{"run_id":"run-raw"},'
+        '"source":{"source_id":"source-raw","site_name":"Raw",'
+        '"site_url":"https://example.com/"},"downloaded_assets": []}'
+    )
     manifest = json.loads(raw)
     storage = Storage(":memory:")
     try:
@@ -311,7 +305,7 @@ def test_ingest_manifest_stores_raw_text_byte_for_byte() -> None:
         storage.close()
 
 
-def test_ingest_manifest_skips_non_dict_assets() -> None:
+def test_ingest_manifest_rejects_non_dict_assets() -> None:
     manifest = _sample_manifest()
     manifest["downloaded_assets"] = [
         "not-a-dict",
@@ -323,36 +317,38 @@ def test_ingest_manifest_skips_non_dict_assets() -> None:
     ]
     storage = Storage(":memory:")
     try:
-        result = ingest_manifest(storage, manifest)
-        assert result["imported"] == 1  # only the dict asset
-    finally:
-        storage.close()
-
-
-def test_ingest_manifest_handles_non_list_assets() -> None:
-    manifest = _sample_manifest()
-    manifest["downloaded_assets"] = "not-a-list"
-    storage = Storage(":memory:")
-    try:
-        result = ingest_manifest(storage, manifest)
-        assert result["imported"] == 0
+        with pytest.raises(ManifestIngestError) as exc_info:
+            ingest_manifest(storage, manifest)
+        assert exc_info.value.field == "downloaded_assets[0]"
+        assert storage._conn.execute("SELECT COUNT(*) FROM manifest_raw").fetchone()[0] == 0
         assert storage._conn.execute("SELECT COUNT(*) FROM files").fetchone()[0] == 0
     finally:
         storage.close()
 
 
-def test_ingest_manifest_non_string_media_type_defaults_to_file() -> None:
+def test_ingest_manifest_rejects_non_list_assets() -> None:
+    manifest = _sample_manifest()
+    manifest["downloaded_assets"] = "not-a-list"
+    storage = Storage(":memory:")
+    try:
+        with pytest.raises(ManifestIngestError) as exc_info:
+            ingest_manifest(storage, manifest)
+        assert exc_info.value.field == "downloaded_assets"
+        assert storage._conn.execute("SELECT COUNT(*) FROM manifest_raw").fetchone()[0] == 0
+        assert storage._conn.execute("SELECT COUNT(*) FROM files").fetchone()[0] == 0
+    finally:
+        storage.close()
+
+
+def test_ingest_manifest_rejects_non_string_media_type() -> None:
     manifest = _sample_manifest()
     manifest["downloaded_assets"][0]["media_type"] = 12345  # non-string
     storage = Storage(":memory:")
     try:
-        result = ingest_manifest(storage, manifest)
-        assert result["imported"] == 2
-        row = storage._conn.execute(
-            "SELECT content_kind, content_type FROM files WHERE url = ?",
-            ("https://www.soa.org/sample-report.pdf",),
-        ).fetchone()
-        assert row[0] == "file"
-        assert row[1] is None
+        with pytest.raises(ManifestIngestError) as exc_info:
+            ingest_manifest(storage, manifest)
+        assert exc_info.value.field == "downloaded_assets[0].media_type"
+        assert storage._conn.execute("SELECT COUNT(*) FROM manifest_raw").fetchone()[0] == 0
+        assert storage._conn.execute("SELECT COUNT(*) FROM files").fetchone()[0] == 0
     finally:
         storage.close()
