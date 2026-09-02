@@ -7,9 +7,9 @@
 - Baseline: `origin/main@e0645f92b867a7209af91f2ddd28027cede28778`
 - Issue: `#322 fix(markdown): preflight terminal source failures before conversion`
 - State file: `C:\Users\ferry\.codex\issue-to-merge-state\AI_actuarial_inforsearch\issue-322.json`
-- Delivery stage: implementation, supplemental local review, and complete local validation PASS;
-  manager commit and Draft PR publication are next, followed by Ready and the one 600-second
-  feedback/CI window
+- PR: `https://github.com/ferryhe/AI_actuarial_inforsearch/pull/330`
+- Delivery stage: Draft PR #330 created with `Closes #322`; this status-only follow-up commit is
+  pending before Ready and the one complete 600-second feedback/CI window
 - Progress heartbeat: id `issue-322-delivery-progress`, status `ACTIVE`, 15-minute cadence
 
 ## Issue #322 acceptance criteria
@@ -121,8 +121,9 @@
 
 ## Issue #322 blockers or decisions needed
 
-- None. The next action is manager-owned commit and Draft PR, then Ready, the complete 600-second
-  feedback/CI window, feedback assessment, squash merge, Issue closure verification, and cleanup.
+- None. The next action is to push this status-only follow-up, mark PR #330 Ready, complete the
+  600-second feedback/CI window, assess the single fetched snapshot, squash merge, verify Issue
+  closure, and clean the remote branch, worktree, and local branch.
 
 # Project Status — Issue #320 strict manifest validation
 
