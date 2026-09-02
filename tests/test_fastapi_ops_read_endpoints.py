@@ -315,15 +315,17 @@ def _install_runtime_state(monkeypatch, app) -> None:
         },
         {
             "id": "task-history-2",
-            "name": "Older Run",
-            "type": "scheduled",
-            "status": "failed",
+            "name": "Rejected Manifest",
+            "type": "manifest_ingestion",
+            "status": "error",
             "started_at": "2026-04-14T05:00:00+00:00",
             "completed_at": "2026-04-14T05:01:00+00:00",
             "items_processed": 2,
             "items_downloaded": 0,
             "items_skipped": 0,
-            "errors": ["boom"],
+            "errors": ["unsupported_manifest_contract: schema_version"],
+            "error_code": "unsupported_manifest_contract",
+            "error_details": {"field": "schema_version"},
         },
     ]
     task_lock = threading.Lock()
@@ -443,6 +445,8 @@ def test_fastapi_ops_read_routes_are_native_and_return_expected_shapes(
             assert body["tasks"][0]["id"] == "task-live"
         elif endpoint == "/api/tasks/history?limit=20":
             assert body["tasks"][0]["id"] == "task-history-1"
+            assert body["tasks"][1]["error_code"] == "unsupported_manifest_contract"
+            assert body["tasks"][1]["error_details"] == {"field": "schema_version"}
         elif endpoint == "/api/tasks/log/task-history-1?tail=500":
             assert "Completed task" in body["log"]
         elif endpoint == "/api/config/backend-settings":

@@ -931,7 +931,7 @@ def test_upload_batch_then_run_file_collection_uses_batch_not_server_path(
     assert "directory_path" not in recorder.started[-1][1]
 
 
-def test_collection_run_rejects_kb_index_alias_and_accepts_rag_indexing(
+def test_collection_run_rejects_non_public_types_and_accepts_rag_indexing(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -952,6 +952,11 @@ def test_collection_run_rejects_kb_index_alias_and_accepts_rag_indexing(
         json={"type": "kb_index_build", **contract},
         headers=headers,
     )
+    rejected_manifest = client.post(
+        "/api/collections/run",
+        json={"type": "manifest_ingestion", "manifest_path": "manifest.json"},
+        headers=headers,
+    )
     accepted = client.post(
         "/api/collections/run",
         json={"type": "rag_indexing", **contract},
@@ -960,6 +965,8 @@ def test_collection_run_rejects_kb_index_alias_and_accepts_rag_indexing(
 
     assert rejected.status_code == 400, rejected.text
     assert rejected.json()["error"] == "Invalid collection type"
+    assert rejected_manifest.status_code == 400, rejected_manifest.text
+    assert rejected_manifest.json()["error"] == "Invalid collection type"
     assert accepted.status_code == 200, accepted.text
     assert accepted.json()["job_id"] == "task-fastapi-bridge"
     assert [item[0] for item in recorder.started] == ["rag_indexing"]
