@@ -1,3 +1,123 @@
+# Project Status — Issue #331 public HTTP redirect
+
+- Updated: 2026-09-02 EDT
+- Repository: `AI_actuarial_inforsearch`
+- Worktree: `C:\Users\ferry\.codex\worktrees\a0f0\AI_actuarial_inforsearch`
+- Branch: `codex/issue-331-http-https-redirect`
+- Baseline: `origin/main@114108dd4426bdeb5b7bd93bda9b2498ebc06986`
+- Issue: `#331 ops: restore public HTTP-to-HTTPS redirects for app hostnames`
+- State file: `C:\Users\ferry\.codex\issue-to-merge-state\AI_actuarial_inforsearch\issue-331.json`
+- Delivery stage: local review and final current-diff validation complete; preparing Draft PR
+- Progress heartbeat: id `issue-331-delivery-progress`, status `ACTIVE`, 15-minute cadence
+
+## Issue #331 acceptance criteria
+
+- AC-1: Public port 80 accepts only the two app hostnames `aiinforsearch.com` and
+  `www.aiinforsearch.com` for redirect behavior and returns permanent 301/308 responses to the
+  fixed canonical origin `https://www.aiinforsearch.com`.
+- AC-2: The canonical redirect preserves the complete request path and query string, including
+  `/database?category=AI`, and never builds `Location` from the request `Host` header.
+- AC-3: Unrelated Host values on public HTTP receive a bounded non-success response and are not
+  reflected into `Location`; `http://localhost:80/` continues to return 200 for the Caddy
+  container health check.
+- AC-4: The HTTPS application routes, application/baseline security headers, API/frontend private
+  container-port posture, and non-exposed Caddy admin API remain unchanged. The
+  `cross.aiactuary.cn` site block and upstream remain byte-for-byte unchanged.
+- AC-5: Focused regression tests, production-shaped Caddy adaptation/validation, and
+  `docker compose ... config -q` prove the listener, redirect, host-rejection, health, and
+  unchanged-topology contracts before publication.
+- AC-6: After review and squash merge, production is synced to the exact merge commit only after
+  repository-external rollback artifacts capture the pre-change tracked Caddyfile and running
+  Caddy configuration; the candidate validates before a scoped Caddy-only reload, without
+  rebuilding or restarting API/frontend.
+- AC-7: The running deployment passes HTTP redirects from China Telecom, China Unicom, and China
+  Mobile; fixed canonical path/query and arbitrary-Host checks; HTTPS apex/www, API health,
+  localhost health, all three container health states, `cross.aiactuary.cn`, and sustained Caddy
+  error checks; and normal mobile plus WeChat in-app browser canaries without a redirect loop.
+
+## Issue #331 scope, non-goals, and baseline evidence
+
+- Worker-owned repository scope is limited to `Caddyfile`, the directly related deployment
+  source tests, and documentation only where the changed tracked contract requires it. This
+  manager owns `.hermes/project-status.md`.
+- Sibling repositories, the primary checkout's #317 changes, issue-269, pr-324, #328,
+  API/frontend business code, dependency upgrades, DNS/CDN/certificates, HTTPS apex
+  canonicalization, and the `cross.aiactuary.cn` block/upstream are off-limits.
+- Duplicate search across all PR titles/bodies/heads and local/remote branches found no #331 or
+  equivalent public-port-80 redirect implementation. Merged PR #107 only added JSON logging and a
+  loopback-only localhost health responder, so it is relevant history rather than a duplicate.
+- The clean detached worktree, `HEAD`, `origin/main`, and merge-base all matched
+  `114108dd4426bdeb5b7bd93bda9b2498ebc06986` before creating the assigned branch.
+- Baseline public requests to both HTTP hostnames and the path/query probe failed with curl exit 7;
+  HTTPS apex/www, API health, and `cross.aiactuary.cn` returned 200.
+- Production-shaped `caddy adapt` showed the only port-80 listener as `127.0.0.1:80` and
+  `[::1]:80`, while HTTPS listened on `:443`. Targeted blame/history traces that listener to
+  merged PR #107 and finds no documented intent to reject public HTTP.
+- Production-shaped `docker compose -f docker-compose.yml -f docker-compose.override.yml config
+  -q` passed locally with non-secret placeholders; standalone Caddy is available through the
+  pinned container image for adaptation and validation.
+- Review-policy override: none. Only realistically reproducible findings mapped directly to an
+  AC above are accepted.
+
+## Issue #331 implementation and local review
+
+- The tracked Caddy configuration disables Caddy's generated HTTP redirects and owns public port
+  80 through one explicit server. `localhost` returns 200, the apex and `www` app Host values
+  redirect permanently to fixed `https://www.aiinforsearch.com{uri}`, and every other Host returns
+  an empty 421 without a `Location` header.
+- The HTTPS application block, security-header snippets, API/frontend upstreams, and complete
+  `cross.aiactuary.cn` block/upstream remain unchanged from `origin/main`. Compose continues to
+  publish only Caddy 80/443; neither API/frontend nor the Caddy admin port is published.
+- A production-shaped semantic test uses `caddy:2-alpine` to adapt and validate the tracked file,
+  then runs only the adapted HTTP server on an isolated random loopback port. It verifies both app
+  hosts, fixed canonical path/query, localhost health, arbitrary/cross Host rejection, unchanged
+  HTTPS upstreams, and cleanup of the temporary container.
+- TDD red evidence first found no public HTTP server on the baseline. Opening port 80 alone then
+  reproduced Caddy's automatic apex redirect to `https://aiinforsearch.com/...`; the final explicit
+  routing passes with fixed canonical output.
+- The adapted configuration test directly asserts the HTTPS server's automatic redirect state so
+  the guard against generated Host-derived redirects cannot disappear while the focused suite
+  remains green.
+- Local review round 1 found one valid AC-5 gap: the semantic runtime test did not directly prove
+  that Caddy's automatic Host-derived redirect injection remained disabled. The persistent worker
+  added the focused adapted-config assertion, reproduced the failing case by removing the guard,
+  restored it, and returned the focused suite to green.
+- Fresh read-only local review round 2 independently rechecked the full diff, production-shaped
+  runtime, encoded path/query cases, Host values with case/ports, exact HTTPS/cross configuration,
+  Compose topology, CI feasibility, and temporary-container cleanup. It passed with no valid
+  #331 findings, so the local review cycle is closed after two rounds.
+
+## Issue #331 local validation
+
+- Focused deployment configuration suite: 9 passed, including real Caddy adapt, validate, and
+  isolated runtime requests. Base and production Compose `config -q` both passed.
+- Unified quality gate passed after the worktree's lockfile dependencies were installed: 2,012
+  tests passed and 10 skipped; Black, isort, and Pylint passed. The earlier 20 failures were all
+  missing React/tsx executables and passed before the clean full rerun.
+- Both dead-code gates passed with zero findings. Frontend lint passed with zero errors and five
+  existing warnings; type-check and production build passed. Python smoke passed 13 FastAPI tests,
+  31 Agentic evaluation tests, and all 3 CLI evaluation cases.
+- `git diff --check` passed. No temporary `issue-331-caddy-*` container remains. The npm audit's
+  existing dependency findings are outside #331 and did not cause dependency changes.
+- The complete current post-review diff then passed the full gate again: 2,012 tests passed and 10
+  skipped; Black, isort, Pylint, both dead-code checks, frontend lint/type-check/build, all Python
+  and Agentic smoke/evaluation suites, the 9 focused deployment tests, both Compose configurations,
+  production-shaped Caddy validation, and `git diff --check` all passed.
+
+## Issue #331 blockers or decisions needed
+
+- No repository implementation blocker. Production SSH port 22 is reachable, but this host has no
+  SSH config/private key and BatchMode authentication failed for the common server accounts. The
+  existing in-app and Chrome browser sessions both reached the Tencent Cloud login page without an
+  authenticated session. Public 17CE/443.cn probes can cover the three carrier checks after
+  deployment; a real WeChat in-app canary capability has not been found. No unavailable production
+  or browser result will be inferred.
+
+## Issue #331 recommended next action
+
+- Commit the locally reviewed current diff, push the task branch, and create the required Draft PR
+  with `Closes #331` before moving it to Ready and starting the single feedback window.
+
 # Project Status — Issue #322 Markdown terminal preflight
 
 - Updated: 2026-09-02 EDT
