@@ -860,9 +860,12 @@ class NativeTaskRuntime:
                 return weekly_job.at("00:30", at_timezone).do(job_func)
             return weekly_job.at("00:30").do(job_func)
         if interval.startswith("daily at "):
-            return (
-                scheduler.every().day.at(interval.replace("daily at ", "", 1).strip()).do(job_func)
-            )
+            at_value = interval.replace("daily at ", "", 1).strip()
+            daily_at = re.fullmatch(r"(\d{1,2}):(\d{1,2})", at_value)
+            if daily_at:
+                hour, minute = daily_at.groups()
+                at_value = f"{int(hour):02d}:{int(minute):02d}"
+            return scheduler.every().day.at(at_value).do(job_func)
         if interval.startswith("every "):
             parts = interval.split()
             if len(parts) == 3:

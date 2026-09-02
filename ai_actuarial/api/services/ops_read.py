@@ -181,6 +181,7 @@ def get_schedule_status(schedule_ref: Any) -> dict[str, object]:
                 "managed": False,
                 "deletable": False,
             }
+            setattr(job, "_ops_metadata", metadata)
         jobs.append(
             {
                 "job_key": str(metadata.get("job_key") or ""),

@@ -8,8 +8,9 @@
 - Integrated main: `origin/main@25d0e0ae96a938d97636041e77a175203184237f`
 - Issue: `#307 fix(tasks): reconcile configured recurring tasks with effective scheduler jobs`
 - State file: `C:\Users\ferry\.codex\issue-to-merge-state\AI_actuarial_inforsearch\issue-307.json`
-- Delivery stage: latest `origin/main` integrated with no business-code conflict; #307 local
-  implementation, review, and post-integration validation are complete; Draft PR creation is next
+- PR: `https://github.com/ferryhe/AI_actuarial_inforsearch/pull/325`
+- Delivery stage: PR #325 is Ready; the full 10-minute feedback window completed, all five CI
+  checks passed, and two confirmed Copilot findings are fixed and locally revalidated for push
 - Progress heartbeat: id `bug-issue`, status `ACTIVE`, 15-minute cadence
 
 ## Issue #307 pause checkpoint (historical)
@@ -67,6 +68,24 @@
 - `git diff --check` passed apart from informational CRLF conversion notices. No second local review
   was needed because the integrated upstream changes did not touch or feed the reviewed #307
   surfaces.
+
+## Issue #307 remote feedback and follow-up
+
+- PR #325 was created as Draft, verified to contain `Closes #307`, then marked Ready. The required
+  observation window ran for 635 seconds before the one permitted feedback snapshot was fetched.
+- Remote CI passed `dead-code-files`, `dead-code-symbols`, `quality-gate`, `frontend-check`, and
+  `python-smoke`; the reviewed head was `e3109b4bcab6414c5d18f1de19657f5753c21334` and GitHub
+  reported the PR mergeable and clean.
+- Copilot raised four inline comments. Two were confirmed and fixed: unmanaged scheduler jobs now
+  retain their generated sanitized metadata so identity survives in-process list reordering; and
+  `daily at H:MM` is normalized to `HH:MM` both for runtime registration and desired/effective
+  reconciliation.
+- The two comments about absolute paths in this internal workflow record were rejected under the
+  repository review policy because they do not map to any Issue #307 acceptance criterion.
+- Red evidence reproduced both accepted findings, including a 503 reconciliation failure and the
+  real scheduler rejecting the API-accepted single-digit hour. Green evidence: 2/2 focused tests,
+  46/46 Issue/API tests, and the manager's 295/295 extended regression passed. Black, isort, and
+  `git diff --check` passed for the follow-up patch.
 
 ## Issue #307 acceptance criteria and boundaries
 

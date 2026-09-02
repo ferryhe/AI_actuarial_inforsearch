@@ -273,6 +273,10 @@ def _effective_interval(interval: str) -> str:
         return "daily at 00:30"
     if normalized == "weekly":
         return "weekly on monday at 00:30"
+    daily_at = re.fullmatch(r"daily at (\d{1,2}):(\d{1,2})", normalized)
+    if daily_at:
+        hour, minute = daily_at.groups()
+        return f"daily at {int(hour):02d}:{int(minute):02d}"
     if normalized.startswith("every "):
         parts = normalized.split()
         if len(parts) == 3:

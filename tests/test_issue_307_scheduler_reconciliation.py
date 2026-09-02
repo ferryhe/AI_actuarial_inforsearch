@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 import yaml
 
@@ -108,6 +109,34 @@ def test_scheduler_status_has_stable_sanitized_identity_for_every_job_kind(
     second = get_schedule_status(runtime.scheduler)
     second_keys = {str(job["kind"]): str(job["job_key"]) for job in second["jobs"]}
     assert second_keys == first_keys
+
+
+def test_unmanaged_scheduler_job_identity_survives_runtime_reordering() -> None:
+    first_job = SimpleNamespace(
+        next_run=None,
+        last_run=None,
+        unit="hours",
+        interval=1,
+        at_time=None,
+    )
+    second_job = SimpleNamespace(
+        next_run=None,
+        last_run=None,
+        unit="hours",
+        interval=1,
+        at_time=None,
+    )
+    schedule_ref = SimpleNamespace(jobs=[first_job, second_job])
+
+    initial = get_schedule_status(schedule_ref)
+    first_job_key = initial["jobs"][0]["job_key"]
+    first_display_name = initial["jobs"][0]["display_name"]
+
+    schedule_ref.jobs = [second_job, first_job]
+    reordered = get_schedule_status(schedule_ref)
+
+    assert reordered["jobs"][1]["job_key"] == first_job_key
+    assert reordered["jobs"][1]["display_name"] == first_display_name
 
 
 def test_scheduler_reinitialize_is_atomic_when_registration_fails(
@@ -326,6 +355,29 @@ def test_scheduled_task_api_rolls_back_yaml_and_runtime_on_registration_failure(
     assert response.json()["code"] == "scheduler_reconciliation_failed"
     assert yaml.safe_load(config_path.read_text(encoding="utf-8")) == previous_yaml
     assert client.get("/api/schedule/status", headers=headers).json() == previous_status
+
+
+def test_scheduled_task_api_matches_single_digit_daily_hour(tmp_path: Path, monkeypatch) -> None:
+    _patch_available_models(monkeypatch)
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
+    headers = {"Authorization": f"Bearer {seed['operator_token']}"}
+
+    response = client.post(
+        "/api/scheduled-tasks/add",
+        json={
+            "name": "Single Digit Daily Hour",
+            "type": "catalog",
+            "interval": "daily at 9:00",
+            "enabled": True,
+            "params": {},
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 200, response.text
+    status = client.get("/api/schedule/status", headers=headers).json()
+    configured = next(job for job in status["jobs"] if job["source"] == "Single Digit Daily Hour")
+    assert configured["interval"] == "daily at 09:00"
 
 
 def test_scheduled_task_update_rejects_duplicate_effective_identity(
