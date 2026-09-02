@@ -31,8 +31,7 @@ __all__ = [
 def ensure_conversation_schema(storage: Storage) -> None:
     """Create the conversations and messages tables if they don't exist."""
     conn = storage._conn
-    conn.execute(
-        """
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS conversations (
             conversation_id TEXT PRIMARY KEY,
             user_id TEXT NOT NULL,
@@ -42,10 +41,8 @@ def ensure_conversation_schema(storage: Storage) -> None:
             created_at TEXT,
             updated_at TEXT
         )
-        """
-    )
-    conn.execute(
-        """
+        """)
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS messages (
             message_id TEXT PRIMARY KEY,
             conversation_id TEXT NOT NULL,
@@ -56,8 +53,7 @@ def ensure_conversation_schema(storage: Storage) -> None:
             created_at TEXT,
             FOREIGN KEY (conversation_id) REFERENCES conversations(conversation_id) ON DELETE CASCADE
         )
-        """
-    )
+        """)
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id)"
     )
@@ -84,7 +80,10 @@ def get_or_create_conversation(
             (conversation_id,),
         ).fetchone()
         if row:
-            cols = [d[0] for d in storage._conn.execute("SELECT * FROM conversations WHERE 1=0").description]
+            cols = [
+                d[0]
+                for d in storage._conn.execute("SELECT * FROM conversations WHERE 1=0").description
+            ]
             return dict(zip(cols, row))
 
     new_id = conversation_id or _generate_conversation_id()
@@ -238,6 +237,7 @@ def get_conversation_messages(
 
 def _generate_conversation_id() -> str:
     import uuid
+
     return f"conv_{uuid.uuid4().hex}"
 
 

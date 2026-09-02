@@ -11,9 +11,9 @@ import argparse
 from datetime import datetime
 from pathlib import Path
 
-from ai_actuarial.storage import Storage
-from ai_actuarial.rag.knowledge_base import KnowledgeBaseManager
 from ai_actuarial.rag.indexing import IndexingPipeline
+from ai_actuarial.rag.knowledge_base import KnowledgeBaseManager
+from ai_actuarial.storage import Storage
 
 
 def find_markdown_files(storage: Storage, limit: int) -> list[str]:

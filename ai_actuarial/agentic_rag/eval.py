@@ -174,7 +174,7 @@ class SimpleKeywordRetriever:
     def __enter__(self) -> "SimpleKeywordRetriever":
         return self
 
-    def __exit__(self, exc_type, exc, tb) -> None:
+    def __exit__(self, _exc_type, _exc, _tb) -> None:
         self.close()
 
     def __call__(self, query: str, top_k: int = 5) -> list[RetrievedItem]:
@@ -196,7 +196,7 @@ class SimpleKeywordRetriever:
             ).fetchall()
 
             for row in rows:
-                title = (row["title"] or row["file_url"] or "")
+                title = row["title"] or row["file_url"] or ""
                 summary = row["summary"] or ""
                 keywords = row["keywords"] or ""
                 category = row["category"] or "general"
@@ -371,7 +371,9 @@ class AgenticEvaluator:
         citations = [item for item in response.get("citations") or [] if isinstance(item, dict)]
         expected_doc_ids = set(case.expected_evidence_doc_ids)
         expected_sources = set(case.expected_evidence_sources)
-        expected_citation_sources = set(case.expected_citation_sources or case.expected_evidence_sources)
+        expected_citation_sources = set(
+            case.expected_citation_sources or case.expected_evidence_sources
+        )
         source_constraints = expected_sources or expected_citation_sources
 
         matched_evidence = _matching_evidence(
@@ -380,7 +382,9 @@ class AgenticEvaluator:
             expected_sources=source_constraints,
         )
         if expected_doc_ids:
-            evidence_hits = len({_evidence_doc_id(item) for item in matched_evidence} & expected_doc_ids)
+            evidence_hits = len(
+                {_evidence_doc_id(item) for item in matched_evidence} & expected_doc_ids
+            )
         else:
             evidence_hits = len(matched_evidence)
         matched_sources = _evidence_sources(matched_evidence)
@@ -400,7 +404,9 @@ class AgenticEvaluator:
             expected_doc_ids=expected_doc_ids,
             expected_sources=expected_citation_sources,
         )
-        citation_coverage = len(citation_key_hits) / len(expected_citation_keys) if expected_citation_keys else 1.0
+        citation_coverage = (
+            len(citation_key_hits) / len(expected_citation_keys) if expected_citation_keys else 1.0
+        )
         answer = str(response.get("answer") or "")
         refused_no_evidence = not evidence and answer == NO_EVIDENCE_ANSWER
         forbidden_terms = [term.casefold() for term in case.forbidden_answer_terms if term]
@@ -478,9 +484,7 @@ class AgenticEvaluator:
             else 1.0
         )
         unsupported_answer_rate = (
-            sum(1 for result in results if result.unsupported_answer) / total
-            if total
-            else 0.0
+            sum(1 for result in results if result.unsupported_answer) / total if total else 0.0
         )
         return AgenticEvalReport(
             total_cases=total,
@@ -534,15 +538,63 @@ def load_agentic_cases(path: str) -> list[AgenticEvalCase]:
                 AgenticEvalCase(
                     case_id=case_id,
                     query=_agentic_required_str(data, "query", path=path, line_no=line_no),
-                    expected_evidence_doc_ids=_agentic_str_list(data, "expected_evidence_doc_ids", path=path, line_no=line_no, case_id=case_id),
-                    expected_evidence_sources=_agentic_str_list(data, "expected_evidence_sources", path=path, line_no=line_no, case_id=case_id),
-                    expected_citation_sources=_agentic_str_list(data, "expected_citation_sources", path=path, line_no=line_no, case_id=case_id),
-                    forbidden_answer_terms=_agentic_str_list(data, "forbidden_answer_terms", path=path, line_no=line_no, case_id=case_id),
-                    expect_no_evidence=_agentic_bool(data, "expect_no_evidence", path=path, line_no=line_no, case_id=case_id, default=False),
-                    min_evidence_hits=_agentic_int(data, "min_evidence_hits", path=path, line_no=line_no, case_id=case_id, default=1, minimum=0),
-                    top_k=_agentic_int(data, "top_k", path=path, line_no=line_no, case_id=case_id, default=5, minimum=1),
-                    profile=_agentic_optional_str(data, "profile", path=path, line_no=line_no, case_id=case_id),
-                    notes=_agentic_optional_str(data, "notes", path=path, line_no=line_no, case_id=case_id) or "",
+                    expected_evidence_doc_ids=_agentic_str_list(
+                        data,
+                        "expected_evidence_doc_ids",
+                        path=path,
+                        line_no=line_no,
+                        case_id=case_id,
+                    ),
+                    expected_evidence_sources=_agentic_str_list(
+                        data,
+                        "expected_evidence_sources",
+                        path=path,
+                        line_no=line_no,
+                        case_id=case_id,
+                    ),
+                    expected_citation_sources=_agentic_str_list(
+                        data,
+                        "expected_citation_sources",
+                        path=path,
+                        line_no=line_no,
+                        case_id=case_id,
+                    ),
+                    forbidden_answer_terms=_agentic_str_list(
+                        data, "forbidden_answer_terms", path=path, line_no=line_no, case_id=case_id
+                    ),
+                    expect_no_evidence=_agentic_bool(
+                        data,
+                        "expect_no_evidence",
+                        path=path,
+                        line_no=line_no,
+                        case_id=case_id,
+                        default=False,
+                    ),
+                    min_evidence_hits=_agentic_int(
+                        data,
+                        "min_evidence_hits",
+                        path=path,
+                        line_no=line_no,
+                        case_id=case_id,
+                        default=1,
+                        minimum=0,
+                    ),
+                    top_k=_agentic_int(
+                        data,
+                        "top_k",
+                        path=path,
+                        line_no=line_no,
+                        case_id=case_id,
+                        default=5,
+                        minimum=1,
+                    ),
+                    profile=_agentic_optional_str(
+                        data, "profile", path=path, line_no=line_no, case_id=case_id
+                    ),
+                    notes=_agentic_optional_str(
+                        data, "notes", path=path, line_no=line_no, case_id=case_id
+                    )
+                    or "",
                 )
             )
     return cases
@@ -551,11 +603,7 @@ def load_agentic_cases(path: str) -> list[AgenticEvalCase]:
 def _category_labels(categories: Iterable[str]) -> set[str]:
     labels: set[str] = set()
     for category in categories:
-        labels.update(
-            part.strip().casefold()
-            for part in category.split(";")
-            if part.strip()
-        )
+        labels.update(part.strip().casefold() for part in category.split(";") if part.strip())
     return labels
 
 
@@ -600,7 +648,9 @@ def _matching_evidence(
     return matched
 
 
-def _expected_identity_keys(*, expected_doc_ids: set[str], expected_sources: set[str]) -> set[tuple[str, str]]:
+def _expected_identity_keys(
+    *, expected_doc_ids: set[str], expected_sources: set[str]
+) -> set[tuple[str, str]]:
     if expected_doc_ids and expected_sources:
         return {(doc_id, source) for doc_id in expected_doc_ids for source in expected_sources}
     if expected_doc_ids:
@@ -792,19 +842,19 @@ def main():
         default=None,
         help="Ready-data output directory for --mode agentic",
     )
-    parser.add_argument("--profile", default="general", help="Ready-data profile for --mode agentic")
-    parser.add_argument("--kb-id", default=None, help="Optional KB id included in Agentic loop output")
     parser.add_argument(
-        "--json", action="store_true", help="Output report as JSON"
+        "--profile", default="general", help="Ready-data profile for --mode agentic"
     )
+    parser.add_argument(
+        "--kb-id", default=None, help="Optional KB id included in Agentic loop output"
+    )
+    parser.add_argument("--json", action="store_true", help="Output report as JSON")
     args = parser.parse_args()
 
     if args.cases:
         cases_path = args.cases
     else:
-        repo_root = os.path.abspath(
-            os.path.join(os.path.dirname(__file__), "..", "..")
-        )
+        repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
         filename = "agentic_cases.jsonl" if args.mode == "agentic" else "cases.jsonl"
         cases_path = os.path.join(repo_root, "eval", filename)
 

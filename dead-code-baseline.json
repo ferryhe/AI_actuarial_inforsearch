@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "normalization": "path + kind + symbol",
+  "policy": "Every current finding must match exactly; update-baseline may only remove entries.",
+  "gates": {
+    "typescript-files": [],
+    "python-files": [],
+    "typescript-symbols": [],
+    "python-symbols": []
+  }
+}

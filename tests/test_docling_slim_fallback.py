@@ -6,7 +6,9 @@ import types
 from doc_to_md.engines.docling import DoclingEngine
 
 
-def test_docling_pdf_uses_slim_text_fallback_without_full_model_stack(tmp_path, monkeypatch) -> None:
+def test_docling_pdf_uses_slim_text_fallback_without_full_model_stack(
+    tmp_path, monkeypatch
+) -> None:
     pdf_path = tmp_path / "solvency.pdf"
     pdf_path.write_bytes(b"%PDF-1.4\n")
 

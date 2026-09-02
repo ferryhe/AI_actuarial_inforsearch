@@ -5,7 +5,6 @@ import subprocess
 import textwrap
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 CLIENT = ROOT / "client" / "src"
 TSX = ROOT / "node_modules" / ".bin" / ("tsx.cmd" if os.name == "nt" else "tsx")
@@ -33,8 +32,7 @@ def _run_typescript(script: str) -> None:
 
 
 def test_ask_ai_url_category_matrix_and_one_shot_runtime_contracts() -> None:
-    _run_typescript(
-        """
+    _run_typescript("""
         const assert = (await import("node:assert/strict")).default;
         const navigationImport = await import("./client/src/lib/navigation.ts");
         const kbImport = await import("./client/src/lib/chat-knowledge-bases.ts");
@@ -171,8 +169,7 @@ def test_ask_ai_url_category_matrix_and_one_shot_runtime_contracts() -> None:
           knowledgeBasesLoaded: true,
           processedTargetKey: rearmed.processedTargetKey,
         }).selection?.selectedKbs, ["A-only"]);
-        """
-    )
+        """)
 
 
 def test_ask_ai_entry_points_permissions_and_i18n_source_contracts() -> None:
@@ -188,7 +185,7 @@ def test_ask_ai_entry_points_permissions_and_i18n_source_contracts() -> None:
         assert 't("common.ask_ai")' in source
         assert "disabled={!" in source
 
-    assert 'data-testid={`button-ask-ai-kb-${kbId}`}' in knowledge
+    assert "data-testid={`button-ask-ai-kb-${kbId}`}" in knowledge
     assert 'data-testid="button-ask-ai-kb-detail"' in detail
     assert categories.count("button-ask-ai-category-") == 1
     assert 'apiGet<KnowledgeBasesResponse>("/api/rag/knowledge-bases")' in categories
@@ -200,8 +197,9 @@ def test_ask_ai_entry_points_permissions_and_i18n_source_contracts() -> None:
     assert "parseAskAiChatTarget(rawSearch)" in chat
     assert "resolveAskAiRouteInitialization" in chat
     initialization_effect = chat[
-        chat.index("const initialization = resolveAskAiRouteInitialization"):
-        chat.index("async function loadDocumentCategories")
+        chat.index("const initialization = resolveAskAiRouteInitialization") : chat.index(
+            "async function loadDocumentCategories"
+        )
     ]
     assert "setRagMode(initialization.selection.ragMode)" in initialization_effect
     assert "setSelectedKbs(initialization.selection.selectedKbs)" in initialization_effect

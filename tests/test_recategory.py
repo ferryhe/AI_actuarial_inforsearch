@@ -71,14 +71,10 @@ def _patch_sync(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_diff_removed_and_added(env: dict) -> None:
-    storage = _make_storage(
-        env, {"Finance": ["finance"], "Insurance": ["insurance"]}
-    )
+    storage = _make_storage(env, {"Finance": ["finance"], "Insurance": ["insurance"]})
     try:
         _add_item(storage, "u1", "Finance; Insurance")
-        _write_categories(
-            env["cfg"], {"Finance": ["finance"], "Technology": ["technology"]}
-        )
+        _write_categories(env["cfg"], {"Finance": ["finance"], "Technology": ["technology"]})
         removed, added = _diff_categories(storage)
         assert removed == {"Insurance"}
         assert added == {"Technology"}
@@ -101,9 +97,7 @@ def test_plan_is_dry_run(env: dict) -> None:
     storage = _make_storage(env, {"Finance": ["finance"], "Insurance": ["insurance"]})
     try:
         _add_item(storage, "u1", "Finance; Insurance")
-        _write_categories(
-            env["cfg"], {"Finance": ["finance"], "Technology": ["technology"]}
-        )
+        _write_categories(env["cfg"], {"Finance": ["finance"], "Technology": ["technology"]})
         plan = plan_recategory(storage)
         assert plan["dry_run"] is True
         assert plan["needs_recategory"] is True
@@ -157,9 +151,7 @@ def test_apply_adds_category_via_llm(env: dict) -> None:
             "Finance",
             summary="This document discusses insurance technology trends.",
         )
-        _write_categories(
-            env["cfg"], {"Finance": ["finance"], "Technology": ["technology"]}
-        )
+        _write_categories(env["cfg"], {"Finance": ["finance"], "Technology": ["technology"]})
         result = apply_recategory(storage)
         assert result["added_counts"]["Technology"] == 1
         items = {it["file_url"]: it for it in storage.get_catalog_items_for_recategory()}
@@ -205,9 +197,7 @@ def test_apply_replaces_other_with_new_category(env: dict) -> None:
     _patch_llm(env["monkeypatch"], True)
     try:
         _add_item(storage, "u1", "Other", summary="insurance technology trends")
-        _write_categories(
-            env["cfg"], {"Finance": ["finance"], "Technology": ["technology"]}
-        )
+        _write_categories(env["cfg"], {"Finance": ["finance"], "Technology": ["technology"]})
         result = apply_recategory(storage)
         assert result["added_counts"]["Technology"] == 1
         items = {it["file_url"]: it for it in storage.get_catalog_items_for_recategory()}
@@ -237,9 +227,7 @@ def test_apply_resumes_after_partial_llm_failure(env: dict) -> None:
     try:
         _add_item(storage, "u1", "Finance", summary="insurance technology trends")
         _add_item(storage, "u2", "Finance", summary="technology innovation report")
-        _write_categories(
-            env["cfg"], {"Finance": ["finance"], "Technology": ["technology"]}
-        )
+        _write_categories(env["cfg"], {"Finance": ["finance"], "Technology": ["technology"]})
 
         call_count = {"n": 0}
 
@@ -283,9 +271,7 @@ def test_v3_backfill_with_pending_change_falls_back_to_db(env: dict) -> None:
         storage._conn.execute("UPDATE taxonomy_state SET applied_categories = NULL")
         storage._conn.commit()
         # Pending change: add Technology.
-        _write_categories(
-            env["cfg"], {"Finance": ["finance"], "Technology": ["technology"]}
-        )
+        _write_categories(env["cfg"], {"Finance": ["finance"], "Technology": ["technology"]})
 
         # Re-open to trigger the backfill path (hash no longer matches current).
         storage.close()
@@ -354,9 +340,7 @@ def test_configured_categories_raises_when_file_missing(env: dict) -> None:
     """#4 regression: a missing categories.yaml must fail closed, not empty."""
     from ai_actuarial.recategory import _configured_categories
 
-    env["monkeypatch"].setenv(
-        "CATEGORIES_CONFIG_PATH", str(env["tmp_path"] / "missing.yaml")
-    )
+    env["monkeypatch"].setenv("CATEGORIES_CONFIG_PATH", str(env["tmp_path"] / "missing.yaml"))
     with pytest.raises(RuntimeError, match="missing"):
         _configured_categories()
 
@@ -382,9 +366,7 @@ def test_apply_refuses_to_seal_when_taxonomy_changes_midrun(env: dict) -> None:
     _patch_sync(env["monkeypatch"])
     try:
         _add_item(storage, "u1", "Finance", summary="insurance technology trends")
-        _write_categories(
-            env["cfg"], {"Finance": ["finance"], "Technology": ["technology"]}
-        )
+        _write_categories(env["cfg"], {"Finance": ["finance"], "Technology": ["technology"]})
 
         def mutating_confirm(**kwargs):
             _write_categories(
@@ -431,9 +413,7 @@ def test_apply_stops_without_sealing(env: dict) -> None:
         assert storage.taxonomy_needs_recategory() is True
 
         # Partial: only u1's Insurance was removed before the stop.
-        items = {
-            it["file_url"]: it for it in storage.get_catalog_items_for_recategory()
-        }
+        items = {it["file_url"]: it for it in storage.get_catalog_items_for_recategory()}
         assert items["u1"]["category"] == "Finance"
         assert items["u2"]["category"] == "Finance; Insurance"
     finally:
@@ -448,9 +428,7 @@ def test_recategory_rejects_scoped_request(env: dict) -> None:
 
         runtime = NativeTaskRuntime()
         with pytest.raises(RuntimeError, match="scoping"):
-            runtime._run_recategory(
-                "task-scope", storage, {"mode": "apply", "category": "Finance"}
-            )
+            runtime._run_recategory("task-scope", storage, {"mode": "apply", "category": "Finance"})
     finally:
         storage.close()
 

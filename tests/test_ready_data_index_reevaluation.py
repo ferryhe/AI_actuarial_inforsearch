@@ -24,7 +24,6 @@ from ai_actuarial.rag.kb_index import resolve_kb_bound_chunks
 from ai_actuarial.rag.knowledge_base import KnowledgeBaseManager
 from ai_actuarial.storage import Storage
 
-
 SOURCE_KIND = "catalog_chunks_snapshot"
 
 
@@ -97,12 +96,7 @@ def _record_publication(
     status: str = "validated",
     index_version_id: str = "idx-test",
 ) -> dict[str, Any]:
-    output_dir = (
-        Path(storage.db_path).resolve().parent
-        / "agentic_ready_data"
-        / "staging"
-        / label
-    )
+    output_dir = Path(storage.db_path).resolve().parent / "agentic_ready_data" / "staging" / label
     output_dir.mkdir(parents=True, exist_ok=True)
     manifest_path = output_dir / "ready_data_manifest.json"
     manifest_path.write_text(
@@ -389,9 +383,7 @@ def test_unchanged_embedding_tuple_uses_index_committed(tmp_path: Path) -> None:
 
         _commit_index(storage, "kb-index-reeval")
 
-        assert _source_state(storage, "kb-index-reeval")["pending_reasons"] == [
-            "index_committed"
-        ]
+        assert _source_state(storage, "kb-index-reeval")["pending_reasons"] == ["index_committed"]
     finally:
         storage.close()
 
@@ -400,10 +392,10 @@ def test_first_ready_index_uses_index_committed(tmp_path: Path) -> None:
     storage = Storage(str(tmp_path / "index.db"))
     try:
         _create_kb(storage)
-        _commit_index(storage, "kb-index-reeval", provider="cohere", model="embed-v4", dimension=1024)
-        assert _source_state(storage, "kb-index-reeval")["pending_reasons"] == [
-            "index_committed"
-        ]
+        _commit_index(
+            storage, "kb-index-reeval", provider="cohere", model="embed-v4", dimension=1024
+        )
+        assert _source_state(storage, "kb-index-reeval")["pending_reasons"] == ["index_committed"]
     finally:
         storage.close()
 
@@ -468,14 +460,20 @@ def test_deleted_and_recreated_kb_treats_next_ready_index_as_first(
         _commit_index(storage, "kb-index-reeval")
 
         assert manager.delete_kb("kb-index-reeval") is True
-        assert storage._conn.execute(
-            "SELECT 1 FROM kb_index_versions WHERE kb_id = ?",
-            ("kb-index-reeval",),
-        ).fetchone() is None
-        assert storage._conn.execute(
-            "SELECT 1 FROM kb_ready_index_state WHERE kb_id = ?",
-            ("kb-index-reeval",),
-        ).fetchone() is None
+        assert (
+            storage._conn.execute(
+                "SELECT 1 FROM kb_index_versions WHERE kb_id = ?",
+                ("kb-index-reeval",),
+            ).fetchone()
+            is None
+        )
+        assert (
+            storage._conn.execute(
+                "SELECT 1 FROM kb_ready_index_state WHERE kb_id = ?",
+                ("kb-index-reeval",),
+            ).fetchone()
+            is None
+        )
 
         manager.create_kb(
             kb_id="kb-index-reeval",
@@ -582,14 +580,20 @@ def test_legacy_orphan_index_state_is_not_inherited_by_recreated_kb(
 
     storage = Storage(db_path)
     try:
-        assert storage._conn.execute(
-            "SELECT 1 FROM kb_ready_index_state WHERE kb_id = ?",
-            ("kb-index-reeval",),
-        ).fetchone() is not None
-        assert storage._conn.execute(
-            "SELECT 1 FROM kb_index_versions WHERE kb_id = ?",
-            ("kb-index-reeval",),
-        ).fetchone() is not None
+        assert (
+            storage._conn.execute(
+                "SELECT 1 FROM kb_ready_index_state WHERE kb_id = ?",
+                ("kb-index-reeval",),
+            ).fetchone()
+            is not None
+        )
+        assert (
+            storage._conn.execute(
+                "SELECT 1 FROM kb_index_versions WHERE kb_id = ?",
+                ("kb-index-reeval",),
+            ).fetchone()
+            is not None
+        )
         manager = KnowledgeBaseManager(
             storage,
             config=RAGConfig(data_dir=str(tmp_path / "rag-data")),
@@ -600,27 +604,39 @@ def test_legacy_orphan_index_state_is_not_inherited_by_recreated_kb(
             kb_mode="manual",
             manifest_profile="general",
         )
-        assert storage._conn.execute(
-            "SELECT 1 FROM kb_ready_index_state WHERE kb_id = ?",
-            ("kb-index-reeval",),
-        ).fetchone() is None
-        assert storage._conn.execute(
-            "SELECT 1 FROM kb_index_versions WHERE kb_id = ?",
-            ("kb-index-reeval",),
-        ).fetchone() is None
+        assert (
+            storage._conn.execute(
+                "SELECT 1 FROM kb_ready_index_state WHERE kb_id = ?",
+                ("kb-index-reeval",),
+            ).fetchone()
+            is None
+        )
+        assert (
+            storage._conn.execute(
+                "SELECT 1 FROM kb_index_versions WHERE kb_id = ?",
+                ("kb-index-reeval",),
+            ).fetchone()
+            is None
+        )
     finally:
         storage.close()
 
     storage = Storage(db_path)
     try:
-        assert storage._conn.execute(
-            "SELECT 1 FROM kb_ready_index_state WHERE kb_id = ?",
-            ("kb-index-reeval",),
-        ).fetchone() is None
-        assert storage._conn.execute(
-            "SELECT 1 FROM kb_index_versions WHERE kb_id = ?",
-            ("kb-index-reeval",),
-        ).fetchone() is None
+        assert (
+            storage._conn.execute(
+                "SELECT 1 FROM kb_ready_index_state WHERE kb_id = ?",
+                ("kb-index-reeval",),
+            ).fetchone()
+            is None
+        )
+        assert (
+            storage._conn.execute(
+                "SELECT 1 FROM kb_index_versions WHERE kb_id = ?",
+                ("kb-index-reeval",),
+            ).fetchone()
+            is None
+        )
         _commit_index(
             storage,
             "kb-index-reeval",
@@ -628,9 +644,7 @@ def test_legacy_orphan_index_state_is_not_inherited_by_recreated_kb(
             model="text-embedding-3-large",
             dimension=3072,
         )
-        assert _source_state(storage, "kb-index-reeval")["pending_reasons"] == [
-            "index_committed"
-        ]
+        assert _source_state(storage, "kb-index-reeval")["pending_reasons"] == ["index_committed"]
     finally:
         storage.close()
 
@@ -698,9 +712,7 @@ def test_marker_failure_rolls_back_index_version_update(tmp_path: Path, monkeypa
             previous["embedding_model"],
         )
         assert _source_state(storage, "kb-index-reeval")["event_generation"] == 1
-        assert _source_state(storage, "kb-index-reeval", "regulation")[
-            "event_generation"
-        ] == 0
+        assert _source_state(storage, "kb-index-reeval", "regulation")["event_generation"] == 0
     finally:
         storage.close()
 
@@ -732,11 +744,15 @@ def test_ready_index_record_failure_fails_indexing_pipeline_without_removing_art
     )
     index_path = tmp_path / kb_id / "index.faiss"
 
-    with patch("ai_actuarial.rag.indexing.VectorStore") as vector_store_cls, patch.object(
-        IndexingPipeline,
-        "_index_single_file",
-        return_value={"success": True, "chunk_count": 4},
-    ), patch.object(IndexingPipeline, "_update_kb_stats"):
+    with (
+        patch("ai_actuarial.rag.indexing.VectorStore") as vector_store_cls,
+        patch.object(
+            IndexingPipeline,
+            "_index_single_file",
+            return_value={"success": True, "chunk_count": 4},
+        ),
+        patch.object(IndexingPipeline, "_update_kb_stats"),
+    ):
         vector_store_cls.return_value.save_index.side_effect = lambda: (
             index_path.parent.mkdir(parents=True, exist_ok=True),
             index_path.write_bytes(b"safe artifact"),
@@ -789,15 +805,19 @@ def test_ready_index_record_failure_marks_native_task_error_and_keeps_artifact(
         "errors": [],
     }
 
-    with patch(
-        "ai_actuarial.task_runtime.KnowledgeBaseManager",
-        return_value=manager,
-    ), patch(
-        "ai_actuarial.task_runtime.resolve_kb_bound_chunks",
-        return_value={"binding_snapshot_fingerprint": "binding-runtime"},
-    ), patch(
-        "ai_actuarial.task_runtime.build_kb_index",
-        side_effect=RuntimeError("build_failure: transactional source marker failed"),
+    with (
+        patch(
+            "ai_actuarial.task_runtime.KnowledgeBaseManager",
+            return_value=manager,
+        ),
+        patch(
+            "ai_actuarial.task_runtime.resolve_kb_bound_chunks",
+            return_value={"binding_snapshot_fingerprint": "binding-runtime"},
+        ),
+        patch(
+            "ai_actuarial.task_runtime.build_kb_index",
+            side_effect=RuntimeError("build_failure: transactional source marker failed"),
+        ),
     ):
         runtime._execute_collection_task(
             task_id,
@@ -874,10 +894,11 @@ def test_matching_healthy_active_settles_up_to_date_without_builder(tmp_path: Pa
     storage = Storage(db_path)
     try:
         state = storage.get_agentic_ready_publication_state(kb_id=kb_id, profile="general")
+        active_publication = dict(state["active_publication"])
         assert result["status"] == "up_to_date"
         assert calls == []
         assert state["active_publication_id"] == active["publication_id"]
-        assert state["active_publication"]["index_version_id"] == "idx-observed-at-build"
+        assert active_publication["index_version_id"] == "idx-observed-at-build"
         assert state["previous_publication_id"] is None
         assert _source_state(storage, kb_id)["pending_evaluation"] is False
         assert _publication_count(storage, kb_id) == 1
@@ -983,11 +1004,7 @@ def test_metadata_change_coalesced_with_index_event_builds_latest_generation_onc
         current = Storage(db_path)
         try:
             calls.append(
-                int(
-                    _source_state(current, kb_id, profile)[
-                        "pending_evaluation_generation"
-                    ]
-                )
+                int(_source_state(current, kb_id, profile)["pending_evaluation_generation"])
             )
         finally:
             current.close()
@@ -996,9 +1013,7 @@ def test_metadata_change_coalesced_with_index_event_builds_latest_generation_onc
             kb_id=kb_id,
             profile=profile,
             index_version_id=index_version_id,
-            expected_source_snapshot_fingerprint=(
-                expected_source_snapshot_fingerprint
-            ),
+            expected_source_snapshot_fingerprint=(expected_source_snapshot_fingerprint),
         )
 
     first = run_ready_data_automation_once(
@@ -1139,9 +1154,7 @@ def test_fingerprint_matches_build_identity_and_writes_no_artifacts(tmp_path: Pa
         profile="general",
         kb_id="kb-index-reeval",
         index_version_id=str(committed["index_version_id"]),
-        expected_source_snapshot_fingerprint=str(
-            fingerprint["source_snapshot_fingerprint"]
-        ),
+        expected_source_snapshot_fingerprint=str(fingerprint["source_snapshot_fingerprint"]),
     )
     assert {path.name for path in created_by_fingerprint} <= {"source.db-wal", "source.db-shm"}
     assert not any((tmp_path / path).is_dir() for path in created_by_fingerprint)
@@ -1165,9 +1178,7 @@ def test_prebuild_races_fail_closed_without_starting_builder(tmp_path: Path, rac
     )
     calls: list[int] = []
 
-    def race_fingerprint(
-        *, db_path: str, kb_id: str, profile: str
-    ) -> dict[str, str]:
+    def race_fingerprint(*, db_path: str, kb_id: str, profile: str) -> dict[str, str]:
         assert profile == "general"
         storage = Storage(db_path)
         try:
@@ -1231,16 +1242,16 @@ def test_prebuild_races_fail_closed_without_starting_builder(tmp_path: Path, rac
         storage.close()
 
 
-def test_fingerprint_failure_records_automation_failure_without_slot_changes(tmp_path: Path) -> None:
+def test_fingerprint_failure_records_automation_failure_without_slot_changes(
+    tmp_path: Path,
+) -> None:
     db_path, kb_id, active = _setup_automation(
         tmp_path,
         active_source_id="active-source",
         publish=True,
     )
 
-    def fail_fingerprint(
-        *, db_path: str, kb_id: str, profile: str
-    ) -> dict[str, str]:
+    def fail_fingerprint(*, db_path: str, kb_id: str, profile: str) -> dict[str, str]:
         assert profile == "general"
         raise RuntimeError(f"fingerprint failed for {kb_id} in {db_path}")
 
@@ -1325,8 +1336,11 @@ def test_repeated_same_index_profile_reevaluation_creates_no_publication(tmp_pat
         assert first["status"] == second["status"] == "up_to_date"
         assert calls == []
         assert _publication_count(storage, kb_id) == 1
-        assert storage.get_agentic_ready_publication_state(
-            kb_id=kb_id, profile="general"
-        )["active_publication_id"] == active["publication_id"]
+        assert (
+            storage.get_agentic_ready_publication_state(kb_id=kb_id, profile="general")[
+                "active_publication_id"
+            ]
+            == active["publication_id"]
+        )
     finally:
         storage.close()

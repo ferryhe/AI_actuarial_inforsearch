@@ -13,13 +13,13 @@ from cryptography.fernet import Fernet
 
 from ai_actuarial.ai_runtime import (
     get_ai_function_section,
-    get_search_runtime_credentials,
     get_provider_default_base_url,
+    get_search_runtime_credentials,
     list_provider_credentials,
-    resolve_search_engine_credentials,
-    resolve_provider_credentials,
     resolve_ai_function_runtime,
     resolve_ocr_runtime,
+    resolve_provider_credentials,
+    resolve_search_engine_credentials,
 )
 from ai_actuarial.services.token_encryption import TokenEncryption
 from ai_actuarial.storage import Storage
@@ -114,9 +114,7 @@ class TestAiRuntime(unittest.TestCase):
             }
         }
 
-        chat = resolve_ai_function_runtime(
-            "chatbot", storage=self.storage, yaml_config=yaml_config
-        )
+        chat = resolve_ai_function_runtime("chatbot", storage=self.storage, yaml_config=yaml_config)
         weekly = resolve_ai_function_runtime(
             "weekly_explanation", storage=self.storage, yaml_config=yaml_config
         )
@@ -342,7 +340,9 @@ class TestAiRuntime(unittest.TestCase):
         self.assertEqual(brave_credentials.provider, "brave_search")
         self.assertEqual(brave_credentials.source, "db")
         self.assertEqual(brave_credentials.api_key, secret)
-        self.assertEqual(brave_credentials.stable_credential_id, "brave_search:llm:instance:default")
+        self.assertEqual(
+            brave_credentials.stable_credential_id, "brave_search:llm:instance:default"
+        )
         self.assertNotIn(secret, repr(credential_rows))
 
     def test_search_runtime_credentials_prefer_search_category_over_legacy_llm_token(self):
@@ -366,7 +366,9 @@ class TestAiRuntime(unittest.TestCase):
 
         self.assertEqual(credentials["brave"], search_secret)
         self.assertEqual(brave_credentials.source, "db")
-        self.assertEqual(brave_credentials.stable_credential_id, "brave_search:search:instance:default")
+        self.assertEqual(
+            brave_credentials.stable_credential_id, "brave_search:search:instance:default"
+        )
 
     def test_resolve_provider_credentials_preserves_base_url_when_key_missing(self):
         self.storage.upsert_llm_provider(

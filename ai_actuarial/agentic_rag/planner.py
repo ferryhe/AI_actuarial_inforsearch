@@ -7,7 +7,6 @@ from typing import Any, Literal
 
 from .tools import QuestionCategory, classify_question
 
-
 ToolName = Literal[
     "search_summaries",
     "search_titles",
@@ -104,10 +103,14 @@ def _add_regulation_tools(tool_names: list[ToolName], category: QuestionCategory
     if category == "document_qa":
         ordered = ["search_sections", *tool_names, "trace_relations"]
     else:
-        ordered = [tool_names[0], "search_sections", *tool_names[1:], "trace_relations"] if tool_names else [
-            "search_sections",
-            "trace_relations",
-        ]
+        ordered = (
+            [tool_names[0], "search_sections", *tool_names[1:], "trace_relations"]
+            if tool_names
+            else [
+                "search_sections",
+                "trace_relations",
+            ]
+        )
     deduped: list[ToolName] = []
     for tool_name in ordered:
         if tool_name not in deduped:
@@ -143,14 +146,21 @@ def plan_tool_steps(
     manifest = _read_manifest(output_dir)
     resolved_profile = (_norm(profile) or _norm(manifest.get("profile")) or "general").lower()
     formula_ready = resolved_profile == "formula" or _has_l2_artifacts(output_dir, manifest)
-    regulation_ready = resolved_profile in {"regulation", "formula"} or _has_l1_artifacts(output_dir, manifest) or formula_ready
+    regulation_ready = (
+        resolved_profile in {"regulation", "formula"}
+        or _has_l1_artifacts(output_dir, manifest)
+        or formula_ready
+    )
     tool_names = _base_tool_names(resolved_category)
     if regulation_ready:
         tool_names = _add_regulation_tools(tool_names, resolved_category)
     if formula_ready:
         tool_names = _add_formula_tools(tool_names)
     step_limit = _bounded_limit(limit)
-    return [ToolStep(tool_name=tool_name, category=resolved_category, limit=step_limit) for tool_name in tool_names]
+    return [
+        ToolStep(tool_name=tool_name, category=resolved_category, limit=step_limit)
+        for tool_name in tool_names
+    ]
 
 
 __all__ = ["ToolName", "ToolStep", "plan_tool_steps"]

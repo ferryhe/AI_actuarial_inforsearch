@@ -12,7 +12,6 @@ from ai_actuarial.api.app import create_app
 from ai_actuarial.api.services.weekly_updates import generate_weekly_update_summary
 from ai_actuarial.storage import Storage
 
-
 PERIOD_START = "2026-03-09T00:00:00+00:00"
 PERIOD_END = "2026-03-16T00:00:00+00:00"
 
@@ -38,11 +37,32 @@ def _build_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Test
 
     rows = [
         ("lower.pdf", "Weekly lower", "alpha.example", PERIOD_START, "Risk", False),
-        ("middle.pdf", "Weekly middle", "alpha.example", "2026-03-12T12:00:00+00:00", "Risk", False),
+        (
+            "middle.pdf",
+            "Weekly middle",
+            "alpha.example",
+            "2026-03-12T12:00:00+00:00",
+            "Risk",
+            False,
+        ),
         ("upper.pdf", "Weekly upper", "alpha.example", PERIOD_END, "Risk", False),
         ("prior.pdf", "Weekly prior", "alpha.example", "2026-03-08T23:59:59+00:00", "Risk", False),
-        ("other.pdf", "Weekly other", "other.example", "2026-03-11T00:00:00+00:00", "Pricing", False),
-        ("deleted.pdf", "Weekly deleted", "alpha.example", "2026-03-13T00:00:00+00:00", "Risk", True),
+        (
+            "other.pdf",
+            "Weekly other",
+            "other.example",
+            "2026-03-11T00:00:00+00:00",
+            "Pricing",
+            False,
+        ),
+        (
+            "deleted.pdf",
+            "Weekly deleted",
+            "alpha.example",
+            "2026-03-13T00:00:00+00:00",
+            "Risk",
+            True,
+        ),
     ]
     storage = Storage(str(db_path))
     try:
@@ -193,14 +213,20 @@ def test_weekly_files_api_projects_a_title_edit_without_rebuilding_snapshot(
     target_url = "https://alpha.example/lower.pdf"
     first = client.get(f"/api/weekly-updates/{snapshot['id']}/files?limit=8")
     assert first.status_code == 200
-    assert next(item for item in first.json()["files"] if item["url"] == target_url)["title"] == "Weekly lower"
+    assert (
+        next(item for item in first.json()["files"] if item["url"] == target_url)["title"]
+        == "Weekly lower"
+    )
 
     with sqlite3.connect(db_path) as conn:
         conn.execute("UPDATE files SET title = ? WHERE url = ?", ("Edited live title", target_url))
 
     reloaded = client.get(f"/api/weekly-updates/{snapshot['id']}/files?limit=8")
     assert reloaded.status_code == 200
-    assert next(item for item in reloaded.json()["files"] if item["url"] == target_url)["title"] == "Edited live title"
+    assert (
+        next(item for item in reloaded.json()["files"] if item["url"] == target_url)["title"]
+        == "Edited live title"
+    )
 
     with sqlite3.connect(db_path) as conn:
         conn.execute(
@@ -214,4 +240,7 @@ def test_weekly_files_api_projects_a_title_edit_without_rebuilding_snapshot(
 
     url_fallback = client.get(f"/api/weekly-updates/{snapshot['id']}/files?limit=8")
     assert url_fallback.status_code == 200
-    assert next(item for item in url_fallback.json()["files"] if item["url"] == target_url)["title"] == ""
+    assert (
+        next(item for item in url_fallback.json()["files"] if item["url"] == target_url)["title"]
+        == ""
+    )

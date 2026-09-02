@@ -27,7 +27,6 @@ from ai_actuarial.rag.defaults import (
     get_similarity_threshold_default,
 )
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -122,7 +121,8 @@ class RAGConfig:
             embedding_provider=provider,
             embedding_model=embedding_model,
             embedding_batch_size=batch_size_default,
-            embedding_cache_enabled=os.getenv("RAG_EMBEDDING_CACHE_ENABLED", "true").lower() == "true",
+            embedding_cache_enabled=os.getenv("RAG_EMBEDDING_CACHE_ENABLED", "true").lower()
+            == "true",
             embedding_config_source="env",
             similarity_threshold=threshold_default,
             index_type=os.getenv("RAG_INDEX_TYPE", "Flat"),
@@ -293,7 +293,9 @@ class RAGConfig:
             return cls.from_env()
 
         has_rag_config = "rag_config" in yaml_config
-        has_ai_embeddings = "ai_config" in yaml_config and "embeddings" in yaml_config.get("ai_config", {})
+        has_ai_embeddings = "ai_config" in yaml_config and "embeddings" in yaml_config.get(
+            "ai_config", {}
+        )
 
         if has_rag_config or has_ai_embeddings:
             return cls.from_yaml(yaml_config, storage=storage)
@@ -310,7 +312,9 @@ class RAGConfig:
             )
 
         if provider != "local" and not self.api_key:
-            credential_hint = self.stable_credential_id or self.credential_id or "(default credential)"
+            credential_hint = (
+                self.stable_credential_id or self.credential_id or "(default credential)"
+            )
             reason = self.credential_error or "missing_api_key"
             raise ValueError(
                 "Embedding credentials are not configured for "

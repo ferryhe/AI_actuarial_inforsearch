@@ -11,22 +11,25 @@ from typing import Any, Mapping
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
 from itsdangerous import URLSafeSerializer
-from ai_actuarial.api.client_ip import client_ip
-from ai_actuarial.api.deps import _decode_request_sessions, AuthContext
+
 from ai_actuarial.ai_runtime import infer_embedding_dimension, resolve_ai_function_runtime
+from ai_actuarial.api.client_ip import client_ip
+from ai_actuarial.api.deps import AuthContext, _decode_request_sessions
 from ai_actuarial.config import settings
 from ai_actuarial.retrieval_indicators import (
     build_retrieval_indicators,
     normalize_semantic_relevance,
 )
-from ai_actuarial.storage import Storage
 from ai_actuarial.shared_auth import AI_CHAT_QUOTA
+from ai_actuarial.storage import Storage
 
 logger = logging.getLogger(__name__)
 
 
 class ChatApiError(Exception):
-    def __init__(self, message: str, *, status_code: int = 400, payload: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self, message: str, *, status_code: int = 400, payload: dict[str, Any] | None = None
+    ) -> None:
         super().__init__(message)
         self.message = message
         self.status_code = status_code
@@ -53,8 +56,7 @@ MAX_AGENTIC_FALLBACK_ITEMS = 5
 
 def _ensure_conversation_schema(storage: Storage) -> None:
     conn = storage._conn
-    conn.execute(
-        """
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS conversations (
             conversation_id TEXT PRIMARY KEY,
             user_id TEXT NOT NULL,
@@ -66,10 +68,8 @@ def _ensure_conversation_schema(storage: Storage) -> None:
             message_count INTEGER DEFAULT 0,
             metadata TEXT
         )
-        """
-    )
-    conn.execute(
-        """
+        """)
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS messages (
             message_id TEXT PRIMARY KEY,
             conversation_id TEXT NOT NULL,
@@ -81,20 +81,15 @@ def _ensure_conversation_schema(storage: Storage) -> None:
             metadata TEXT,
             FOREIGN KEY (conversation_id) REFERENCES conversations(conversation_id)
         )
-        """
-    )
-    conn.execute(
-        """
+        """)
+    conn.execute("""
         CREATE INDEX IF NOT EXISTS idx_messages_conversation
         ON messages(conversation_id, created_at)
-        """
-    )
-    conn.execute(
-        """
+        """)
+    conn.execute("""
         CREATE INDEX IF NOT EXISTS idx_conversations_user
         ON conversations(user_id, updated_at DESC)
-        """
-    )
+        """)
     conn.commit()
 
 
@@ -324,7 +319,9 @@ def apply_session_update(response, request, session_update: SessionUpdate | None
     if not secret:
         logger.debug("Skipping chat session update because no FastAPI session secret is configured")
         return
-    cookie_name = str(getattr(request.app.state, "fastapi_session_cookie_name", "session") or "session")
+    cookie_name = str(
+        getattr(request.app.state, "fastapi_session_cookie_name", "session") or "session"
+    )
     serializer = URLSafeSerializer(secret, salt="fastapi-session")
     response.set_cookie(
         key=cookie_name,
@@ -337,7 +334,9 @@ def apply_session_update(response, request, session_update: SessionUpdate | None
     )
 
 
-def list_conversations(*, db_path: str, request, auth: AuthContext) -> tuple[dict[str, Any], SessionUpdate | None]:
+def list_conversations(
+    *, db_path: str, request, auth: AuthContext
+) -> tuple[dict[str, Any], SessionUpdate | None]:
     user_id, session_update = _resolve_chat_user(request, auth)
     storage = Storage(db_path)
     try:
@@ -372,7 +371,9 @@ def list_conversations(*, db_path: str, request, auth: AuthContext) -> tuple[dic
         storage.close()
 
 
-def create_conversation(*, db_path: str, request, auth: AuthContext, payload: dict[str, Any]) -> tuple[dict[str, Any], SessionUpdate | None]:
+def create_conversation(
+    *, db_path: str, request, auth: AuthContext, payload: dict[str, Any]
+) -> tuple[dict[str, Any], SessionUpdate | None]:
     if not isinstance(payload, dict):
         raise ChatApiError("Invalid JSON body", status_code=400)
     mode = _normalize_text(payload.get("mode") or "expert").lower()
@@ -411,7 +412,9 @@ def create_conversation(*, db_path: str, request, auth: AuthContext, payload: di
         storage.close()
 
 
-def get_conversation_detail(*, db_path: str, request, auth: AuthContext, conversation_id: str) -> tuple[dict[str, Any], SessionUpdate | None]:
+def get_conversation_detail(
+    *, db_path: str, request, auth: AuthContext, conversation_id: str
+) -> tuple[dict[str, Any], SessionUpdate | None]:
     user_id, session_update = _resolve_chat_user(request, auth)
     storage = Storage(db_path)
     try:
@@ -425,17 +428,21 @@ def get_conversation_detail(*, db_path: str, request, auth: AuthContext, convers
             """,
             (conversation_id,),
         ).fetchone()
-        conversation = None if not row else {
-            "conversation_id": row[0],
-            "user_id": row[1],
-            "title": row[2],
-            "kb_id": row[3],
-            "mode": row[4],
-            "created_at": row[5],
-            "updated_at": row[6],
-            "message_count": row[7],
-            "metadata": json.loads(row[8]) if row[8] else None,
-        }
+        conversation = (
+            None
+            if not row
+            else {
+                "conversation_id": row[0],
+                "user_id": row[1],
+                "title": row[2],
+                "kb_id": row[3],
+                "mode": row[4],
+                "created_at": row[5],
+                "updated_at": row[6],
+                "message_count": row[7],
+                "metadata": json.loads(row[8]) if row[8] else None,
+            }
+        )
         if not conversation:
             raise ChatApiError("Conversation not found", status_code=404)
         if conversation.get("user_id") != user_id:
@@ -481,12 +488,17 @@ def get_conversation_detail(*, db_path: str, request, auth: AuthContext, convers
             if isinstance(retrieved_blocks, list):
                 references.extend(item for item in retrieved_blocks if isinstance(item, dict))
         _canonicalize_file_references(storage, references)
-        return {"success": True, "data": {"conversation": conversation, "messages": messages}}, session_update
+        return {
+            "success": True,
+            "data": {"conversation": conversation, "messages": messages},
+        }, session_update
     finally:
         storage.close()
 
 
-def delete_conversation(*, db_path: str, request, auth: AuthContext, conversation_id: str) -> tuple[dict[str, Any], SessionUpdate | None]:
+def delete_conversation(
+    *, db_path: str, request, auth: AuthContext, conversation_id: str
+) -> tuple[dict[str, Any], SessionUpdate | None]:
     user_id, session_update = _resolve_chat_user(request, auth)
     storage = Storage(db_path)
     try:
@@ -501,7 +513,9 @@ def delete_conversation(*, db_path: str, request, auth: AuthContext, conversatio
         if conversation.get("user_id") != user_id:
             raise ChatApiError("Access denied", status_code=403)
         storage._conn.execute("DELETE FROM messages WHERE conversation_id = ?", (conversation_id,))
-        storage._conn.execute("DELETE FROM conversations WHERE conversation_id = ?", (conversation_id,))
+        storage._conn.execute(
+            "DELETE FROM conversations WHERE conversation_id = ?", (conversation_id,)
+        )
         storage._conn.commit()
         return {"success": True, "message": "Conversation deleted"}, session_update
     finally:
@@ -536,7 +550,6 @@ def _embedding_metadata_matches(
     return True
 
 
-
 def list_knowledge_bases(*, db_path: str, auth: AuthContext | None = None) -> dict[str, Any]:
     storage = Storage(db_path)
     try:
@@ -565,26 +578,22 @@ def list_knowledge_bases(*, db_path: str, auth: AuthContext | None = None) -> di
         knowledge_bases: list[dict[str, Any]] = []
         has_manifest_profile = True
         try:
-            rows = storage._conn.execute(
-                """
+            rows = storage._conn.execute("""
                 SELECT kb_id, name, description, embedding_provider, embedding_model, embedding_dimension,
                        file_count, chunk_count, manifest_profile
                 FROM rag_knowledge_bases
                 ORDER BY created_at DESC
-                """
-            ).fetchall()
+                """).fetchall()
         except sqlite3.OperationalError as exc:
             if "no such column: manifest_profile" not in str(exc).lower():
                 raise
             has_manifest_profile = False
-            rows = storage._conn.execute(
-                """
+            rows = storage._conn.execute("""
                 SELECT kb_id, name, description, embedding_provider, embedding_model, embedding_dimension,
                        file_count, chunk_count
                 FROM rag_knowledge_bases
                 ORDER BY created_at DESC
-                """
-            ).fetchall()
+                """).fetchall()
         for row in rows:
             kb_id = row[0]
             composition = storage.get_kb_composition_status(kb_id)
@@ -593,8 +602,13 @@ def list_knowledge_bases(*, db_path: str, auth: AuthContext | None = None) -> di
             kb_provider = row[3] or "openai"
             kb_model = row[4]
             kb_dimension = row[5]
-            manifest_profile = str((row[8] if has_manifest_profile else "general") or "general").strip().lower() or "general"
-            agentic_manifest = storage.get_agentic_ready_manifest(kb_id=kb_id, profile=manifest_profile)
+            manifest_profile = (
+                str((row[8] if has_manifest_profile else "general") or "general").strip().lower()
+                or "general"
+            )
+            agentic_manifest = storage.get_agentic_ready_manifest(
+                kb_id=kb_id, profile=manifest_profile
+            )
             effective_index_provider = latest_index.get("embedding_provider") or kb_provider
             effective_index_model = latest_index.get("embedding_model") or kb_model
             effective_index_dimension = latest_index.get("embedding_dimension")
@@ -606,9 +620,17 @@ def list_knowledge_bases(*, db_path: str, auth: AuthContext | None = None) -> di
                 model=effective_index_model,
                 dimension=effective_index_dimension,
             )
-            needs_reindex = bool(composition.get("needs_reindex")) or (has_index and not embedding_compatible)
+            needs_reindex = bool(composition.get("needs_reindex")) or (
+                has_index and not embedding_compatible
+            )
             index_status = str(latest_index.get("status") or "").strip().lower()
-            if not has_index or index_status in {"pending", "queued", "running", "building", "indexing"}:
+            if not has_index or index_status in {
+                "pending",
+                "queued",
+                "running",
+                "building",
+                "indexing",
+            }:
                 availability = "building"
                 usable = False
             elif needs_reindex:
@@ -632,7 +654,8 @@ def list_knowledge_bases(*, db_path: str, auth: AuthContext | None = None) -> di
                     "index_embedding_provider": effective_index_provider,
                     "index_embedding_model": effective_index_model,
                     "index_embedding_dimension": effective_index_dimension,
-                    "index_status": latest_index.get("status") or ("ready" if has_index and effective_index_model else None),
+                    "index_status": latest_index.get("status")
+                    or ("ready" if has_index and effective_index_model else None),
                     "index_built_at": latest_index.get("built_at"),
                     "needs_reindex": needs_reindex,
                     "embedding_compatible": embedding_compatible,
@@ -640,7 +663,10 @@ def list_knowledge_bases(*, db_path: str, auth: AuthContext | None = None) -> di
                     "usable": usable,
                 }
             )
-        data: dict[str, Any] = {"knowledge_bases": knowledge_bases, "current_embeddings": current_embeddings}
+        data: dict[str, Any] = {
+            "knowledge_bases": knowledge_bases,
+            "current_embeddings": current_embeddings,
+        }
         return {"success": True, "data": data}
     finally:
         storage.close()
@@ -648,7 +674,9 @@ def list_knowledge_bases(*, db_path: str, auth: AuthContext | None = None) -> di
 
 def list_available_documents(*, db_path: str, query: Mapping[str, Any]) -> dict[str, Any]:
     categories = _query_values(query, "category")
-    categories.extend(category for category in _query_values(query, "categories") if category not in categories)
+    categories.extend(
+        category for category in _query_values(query, "categories") if category not in categories
+    )
     keywords_raw = _normalize_text(query.get("keywords"))
     keywords = [item.strip() for item in keywords_raw.split(",") if item.strip()]
 
@@ -674,7 +702,9 @@ def list_available_documents(*, db_path: str, query: Mapping[str, Any]) -> dict[
         if keywords:
             keyword_clauses = []
             for keyword in keywords:
-                keyword_clauses.append("(LOWER(f.title) LIKE ? OR LOWER(f.original_filename) LIKE ? OR LOWER(c.keywords) LIKE ?)")
+                keyword_clauses.append(
+                    "(LOWER(f.title) LIKE ? OR LOWER(f.original_filename) LIKE ? OR LOWER(c.keywords) LIKE ?)"
+                )
                 wildcard = f"%{keyword.lower()}%"
                 params.extend([wildcard, wildcard, wildcard])
             where_parts.append(f"({' OR '.join(keyword_clauses)})")
@@ -699,9 +729,13 @@ def list_available_documents(*, db_path: str, query: Mapping[str, Any]) -> dict[
                     loaded = json.loads(raw_keywords)
                     parsed_keywords = [str(item).strip() for item in loaded if str(item).strip()]
                 except Exception:
-                    parsed_keywords = [item.strip() for item in raw_keywords.split(",") if item.strip()]
+                    parsed_keywords = [
+                        item.strip() for item in raw_keywords.split(",") if item.strip()
+                    ]
             else:
-                parsed_keywords = [item.strip() for item in str(raw_keywords or "").split(",") if item.strip()]
+                parsed_keywords = [
+                    item.strip() for item in str(raw_keywords or "").split(",") if item.strip()
+                ]
             documents.append(
                 {
                     "file_url": row[0],
@@ -747,15 +781,23 @@ def _enforce_chat_quota(*, storage: Storage, request, auth: AuthContext) -> None
     today = _today_utc()
 
     if email_user:
-        allowed, _count = storage.check_and_increment_ai_chat_quota(today, limit, user_id=int(email_user["id"]))
+        allowed, _count = storage.check_and_increment_ai_chat_quota(
+            today, limit, user_id=int(email_user["id"])
+        )
     else:
-        allowed, _count = storage.check_and_increment_ai_chat_quota(today, limit, ip_address=client_ip(request))
+        allowed, _count = storage.check_and_increment_ai_chat_quota(
+            today, limit, ip_address=client_ip(request)
+        )
 
     if not allowed:
         upgrade_hint = (
-            "Please register to get more queries." if role == "anonymous"
-            else "Please upgrade to Premium for higher limits." if role == "registered"
-            else "Daily quota exceeded."
+            "Please register to get more queries."
+            if role == "anonymous"
+            else (
+                "Please upgrade to Premium for higher limits."
+                if role == "registered"
+                else "Daily quota exceeded."
+            )
         )
         raise ChatApiError(
             f"Daily AI chat limit reached ({limit}/day). {upgrade_hint}",
@@ -763,7 +805,9 @@ def _enforce_chat_quota(*, storage: Storage, request, auth: AuthContext) -> None
         )
 
 
-def _serialize_citations(chunks: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+def _serialize_citations(
+    chunks: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     citations: list[dict[str, Any]] = []
     retrieved_blocks: list[dict[str, Any]] = []
     seen_keys: set[str] = set()
@@ -790,7 +834,8 @@ def _serialize_citations(chunks: list[dict[str, Any]]) -> tuple[list[dict[str, A
             )
         block = {
             "title": _valid_file_name(metadata.get("title")),
-            "filename": _valid_file_name(metadata.get("filename")) or _file_url_basename(links["source_url"]),
+            "filename": _valid_file_name(metadata.get("filename"))
+            or _file_url_basename(links["source_url"]),
             "kb_id": metadata.get("kb_id") or "",
             "kb_name": metadata.get("kb_name") or "",
             "chunk_id": metadata.get("chunk_id") or "",
@@ -804,7 +849,9 @@ def _serialize_citations(chunks: list[dict[str, Any]]) -> tuple[list[dict[str, A
             **indicators,
         }
         retrieved_blocks.append(block)
-        dedupe_key = links["source_url"] or str(metadata.get("filename") or metadata.get("chunk_id") or len(citations))
+        dedupe_key = links["source_url"] or str(
+            metadata.get("filename") or metadata.get("chunk_id") or len(citations)
+        )
         if dedupe_key in seen_keys:
             continue
         seen_keys.add(dedupe_key)
@@ -980,7 +1027,11 @@ def _serialize_agentic_evidence(
     kb_id: str,
     kb_name: str = "",
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    rows = [item for item in evidence if isinstance(item, Mapping)] if isinstance(evidence, list) else []
+    rows = (
+        [item for item in evidence if isinstance(item, Mapping)]
+        if isinstance(evidence, list)
+        else []
+    )
     citations: list[dict[str, Any]] = []
     retrieved_blocks: list[dict[str, Any]] = []
     seen_keys: set[str] = set()
@@ -992,10 +1043,10 @@ def _serialize_agentic_evidence(
             ("title", "heading", "section_heading"),
         )
         filename = _agentic_first_text(item, ("filename",))
-        snippet = (
-            _agentic_first_text(item, ("summary", "text_snippet", "text", "content", "quote", "heading", "section_heading"))
-            or _agentic_relation_text(item)
-        )
+        snippet = _agentic_first_text(
+            item,
+            ("summary", "text_snippet", "text", "content", "quote", "heading", "section_heading"),
+        ) or _agentic_relation_text(item)
         score = _coerce_agentic_score(item.get("score"))
         chunk_id = _agentic_first_text(item, ("section_id", "chunk_id", "doc_id", "target_id"))
         indicators = build_retrieval_indicators(
@@ -1033,7 +1084,9 @@ def _serialize_agentic_evidence(
 def _agentic_blocks_to_llm_chunks(retrieved_blocks: list[dict[str, Any]]) -> list[dict[str, Any]]:
     chunks: list[dict[str, Any]] = []
     for index, block in enumerate(retrieved_blocks[:MAX_AGENTIC_SYNTHESIS_CHUNKS], start=1):
-        content = _normalize_text(block.get("content") or block.get("quote") or block.get("filename"))
+        content = _normalize_text(
+            block.get("content") or block.get("quote") or block.get("filename")
+        )
         if not content:
             continue
         if len(content) > MAX_AGENTIC_SYNTHESIS_CONTENT_CHARS:
@@ -1060,7 +1113,9 @@ def _agentic_blocks_to_llm_chunks(retrieved_blocks: list[dict[str, Any]]) -> lis
     return chunks
 
 
-def _deterministic_agentic_fallback_answer(query: str, retrieved_blocks: list[dict[str, Any]]) -> str:
+def _deterministic_agentic_fallback_answer(
+    query: str, retrieved_blocks: list[dict[str, Any]]
+) -> str:
     if not retrieved_blocks:
         return _friendly_no_results_message()
     bullets: list[str] = []
@@ -1107,12 +1162,16 @@ def _synthesize_agentic_response(
     return fallback, "deterministic_fallback"
 
 
-def _bounded_source_text(value: Any, *, fallback: str = "", max_chars: int = MAX_DOCUMENT_FIELD_CHARS) -> str:
+def _bounded_source_text(
+    value: Any, *, fallback: str = "", max_chars: int = MAX_DOCUMENT_FIELD_CHARS
+) -> str:
     text = _normalize_text(value) or fallback
     return text[:max_chars]
 
 
-def _bounded_document_source_url(value: Any, *, max_chars: int = MAX_DOCUMENT_FIELD_CHARS) -> tuple[str, bool]:
+def _bounded_document_source_url(
+    value: Any, *, max_chars: int = MAX_DOCUMENT_FIELD_CHARS
+) -> tuple[str, bool]:
     text = _normalize_text(value)
     if not text:
         return "", False
@@ -1150,7 +1209,9 @@ def _prepare_document_source_chunks(
         source_dict = source if isinstance(source, dict) else {}
         filename = _bounded_source_text(source_dict.get("filename"))
         title = _bounded_source_text(source_dict.get("title"))
-        display_name = _reference_display_name({"title": title, "filename": filename}, f"Document {index}")
+        display_name = _reference_display_name(
+            {"title": title, "filename": filename}, f"Document {index}"
+        )
         file_url, file_url_omitted = _bounded_document_source_url(source_dict.get("file_url"))
         if file_url_omitted:
             omitted_file_url_sources.append(display_name)
@@ -1198,7 +1259,9 @@ def _prepare_document_source_chunks(
     return chunks, context_notice
 
 
-def query_chat(*, db_path: str, request, auth: AuthContext, payload: dict[str, Any]) -> tuple[dict[str, Any], SessionUpdate | None]:
+def query_chat(
+    *, db_path: str, request, auth: AuthContext, payload: dict[str, Any]
+) -> tuple[dict[str, Any], SessionUpdate | None]:
     if not isinstance(payload, dict):
         raise ChatApiError("Invalid or missing JSON body", status_code=400)
 
@@ -1229,7 +1292,9 @@ def query_chat(*, db_path: str, request, auth: AuthContext, payload: dict[str, A
     if len(document_sources) > MAX_DOCUMENT_SOURCES:
         raise ChatApiError("Too many files selected; choose up to 3.", status_code=400)
     if rag_mode == "agentic" and (document_content or document_sources):
-        raise ChatApiError("Agentic RAG cannot be combined with direct document context", status_code=400)
+        raise ChatApiError(
+            "Agentic RAG cannot be combined with direct document context", status_code=400
+        )
     agentic_kb_id = _selected_agentic_kb_id(kb_ids) if rag_mode == "agentic" else None
 
     modules = _full_chat_modules()
@@ -1291,7 +1356,9 @@ def query_chat(*, db_path: str, request, auth: AuthContext, payload: dict[str, A
         if rag_mode == "agentic":
             from .agentic_rag import AgenticRagError, chat_agentic_rag
 
-            manifest_profile = _normalize_text(payload.get("manifest_profile") or payload.get("profile"))
+            manifest_profile = _normalize_text(
+                payload.get("manifest_profile") or payload.get("profile")
+            )
             agentic_payload: dict[str, Any] = {
                 "query": message,
                 "kb_id": agentic_kb_id,
@@ -1328,7 +1395,11 @@ def query_chat(*, db_path: str, request, auth: AuthContext, payload: dict[str, A
                 mode=mode,
                 conversation_history=conversation_history,
             )
-            agentic_metadata = agentic_response.get("metadata") if isinstance(agentic_response.get("metadata"), dict) else {}
+            agentic_metadata = (
+                agentic_response.get("metadata")
+                if isinstance(agentic_response.get("metadata"), dict)
+                else {}
+            )
             assistant_metadata = {
                 "model": "agentic-ready-data",
                 "mode": mode,
@@ -1343,7 +1414,9 @@ def query_chat(*, db_path: str, request, auth: AuthContext, payload: dict[str, A
                 "retrieval_time_ms": 0,
                 "generation_time_ms": 0,
                 "synthesis_source": synthesis_source,
-                "synthesis_model": getattr(config, "model", None) if synthesis_source == "llm" else None,
+                "synthesis_model": (
+                    getattr(config, "model", None) if synthesis_source == "llm" else None
+                ),
                 "num_chunks": len(retrieved_blocks),
                 "no_results": len(retrieved_blocks) == 0,
                 "used_threshold": None,
@@ -1431,7 +1504,9 @@ def query_chat(*, db_path: str, request, auth: AuthContext, payload: dict[str, A
             if kb_ids in (None, "", "all"):
                 normalized_kb_ids = None
             elif kb_ids == "auto":
-                normalized_kb_ids = modules["router"].QueryRouter(storage, config).select_kb(message)
+                normalized_kb_ids = (
+                    modules["router"].QueryRouter(storage, config).select_kb(message)
+                )
             try:
                 chunks = retriever.retrieve(message, normalized_kb_ids)
                 used_threshold = getattr(retriever, "last_effective_threshold", used_threshold)
@@ -1562,7 +1637,9 @@ def query_chat(*, db_path: str, request, auth: AuthContext, payload: dict[str, A
         conversation_exc = getattr(exceptions, "ConversationException", None)
         llm_exc = getattr(exceptions, "LLMException", None)
         retrieval_exc = getattr(exceptions, "RetrievalException", None)
-        expose_detail = bool(getattr(request.app.state, "expose_error_details", settings.EXPOSE_ERROR_DETAILS))
+        expose_detail = bool(
+            getattr(request.app.state, "expose_error_details", settings.EXPOSE_ERROR_DETAILS)
+        )
         if conversation_exc and isinstance(exc, conversation_exc):
             detail = f": {exc}" if expose_detail else ""
             raise ChatApiError(f"Conversation error{detail}", status_code=400) from exc

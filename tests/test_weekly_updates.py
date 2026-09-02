@@ -7,10 +7,12 @@ import yaml
 from fastapi.testclient import TestClient
 
 from ai_actuarial.api.app import create_app
-from ai_actuarial.api.services.weekly_updates import generate_weekly_update_summary, previous_utc_iso_week_period
+from ai_actuarial.api.services.weekly_updates import (
+    generate_weekly_update_summary,
+    previous_utc_iso_week_period,
+)
 from ai_actuarial.storage import Storage
 from ai_actuarial.task_runtime import NativeTaskRuntime
-
 
 PERIOD_START = "2026-03-09T00:00:00+00:00"
 PERIOD_END = "2026-03-16T00:00:00+00:00"
@@ -105,7 +107,9 @@ def test_weekly_summary_uses_first_seen_not_last_seen(tmp_path: Path) -> None:
     )
 
     assert summary["file_count"] == 1
-    assert [item["url"] for item in summary["files"]] == ["https://current-first-seen.example/current.pdf"]
+    assert [item["url"] for item in summary["files"]] == [
+        "https://current-first-seen.example/current.pdf"
+    ]
     assert summary["files"][0]["title"] == "Current First Seen"
     assert summary["metadata"]["content_change_detection"] is False
     assert "files.first_seen" in summary["metadata"]["logic"]
@@ -147,7 +151,9 @@ def test_weekly_updates_api_lists_summaries_and_empty_latest(tmp_path: Path, mon
     assert body["summaries"][0]["period_start"] == PERIOD_START
 
 
-def test_weekly_updates_api_is_public_readable_when_auth_required(tmp_path: Path, monkeypatch) -> None:
+def test_weekly_updates_api_is_public_readable_when_auth_required(
+    tmp_path: Path, monkeypatch
+) -> None:
     _db_path, config_path = _write_config(tmp_path)
     monkeypatch.setenv("CONFIG_PATH", str(config_path))
     monkeypatch.setenv("REQUIRE_AUTH", "true")
@@ -184,7 +190,9 @@ def test_native_task_runtime_runs_weekly_summary(tmp_path: Path, monkeypatch) ->
     assert latest["metadata"]["relative_period"] is None
 
 
-def test_native_task_runtime_weekly_summary_clamps_invalid_max_files(tmp_path: Path, monkeypatch) -> None:
+def test_native_task_runtime_weekly_summary_clamps_invalid_max_files(
+    tmp_path: Path, monkeypatch
+) -> None:
     db_path, config_path = _write_config(tmp_path)
     _seed_weekly_files(db_path)
     monkeypatch.setenv("CONFIG_PATH", str(config_path))
@@ -203,7 +211,11 @@ def test_native_task_runtime_weekly_summary_clamps_invalid_max_files(tmp_path: P
 def test_default_config_includes_previous_weekly_summary_schedule() -> None:
     config_path = Path(__file__).resolve().parents[1] / "config" / "sites.yaml"
     config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
-    task = next(task for task in config.get("scheduled_tasks", []) if task.get("name") == "Weekly Update Summary")
+    task = next(
+        task
+        for task in config.get("scheduled_tasks", [])
+        if task.get("name") == "Weekly Update Summary"
+    )
 
     assert task["type"] == "weekly_summary"
     assert task["interval"] == "weekly"

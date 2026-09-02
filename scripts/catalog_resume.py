@@ -15,6 +15,7 @@ that can be configured via environment variables:
   - CATALOG_MAX_CHARS: Max chars to extract (default: 20000)
   - CATALOG_RETRY_ERRORS: Set to "1" to retry previously failed files
 """
+
 from __future__ import annotations
 
 import os

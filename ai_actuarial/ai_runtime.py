@@ -241,13 +241,11 @@ PROVIDER_STARTUP_ENV_MAP = {
 }
 
 PROVIDER_ENV_VARS = {
-    provider: key_env
-    for provider, (key_env, _) in PROVIDER_STARTUP_ENV_MAP.items()
+    provider: key_env for provider, (key_env, _) in PROVIDER_STARTUP_ENV_MAP.items()
 }
 
 PROVIDER_BASE_URL_ENV_VARS = {
-    provider: base_url_env
-    for provider, (_, base_url_env) in PROVIDER_STARTUP_ENV_MAP.items()
+    provider: base_url_env for provider, (_, base_url_env) in PROVIDER_STARTUP_ENV_MAP.items()
 }
 
 SEARCH_ENGINE_PROVIDER_MAP = {
@@ -483,7 +481,9 @@ def list_provider_registry() -> dict[str, list[dict[str, Any]]]:
     return {"providers": providers}
 
 
-def build_stable_credential_id(provider: str | None, category: str | None, instance_id: str | None) -> str | None:
+def build_stable_credential_id(
+    provider: str | None, category: str | None, instance_id: str | None
+) -> str | None:
     provider_norm = str(provider or "").strip().lower()
     category_norm = str(category or "").strip().lower()
     instance_norm = str(instance_id or "").strip()
@@ -497,6 +497,7 @@ def parse_provider_credential_id(credential_id: str | None) -> ParsedCredentialI
     if not raw:
         return None
     parts = raw.split(":")
+
     def _normalize_provider_category(provider: str, category: str) -> tuple[str, str]:
         provider_norm = provider.strip().lower()
         category_norm = category.strip().lower()
@@ -581,7 +582,9 @@ def list_provider_credentials(*, storage: Any | None = None) -> dict[str, list[d
             for category in ("llm", "search"):
                 for entry in storage.list_llm_providers(category=category):
                     provider = str(entry.get("provider") or "").strip().lower()
-                    entry_category = str(entry.get("category") or category).strip().lower() or category
+                    entry_category = (
+                        str(entry.get("category") or category).strip().lower() or category
+                    )
                     instance_id = str(entry.get("instance_id") or "default").strip() or "default"
                     decrypt_ok = True
                     try:
@@ -593,13 +596,18 @@ def list_provider_credentials(*, storage: Any | None = None) -> dict[str, list[d
                     credentials.append(
                         {
                             "credential_id": f"{provider}:{entry_category}:db:{entry.get('id')}",
-                            "stable_credential_id": build_stable_credential_id(provider, entry_category, instance_id),
+                            "stable_credential_id": build_stable_credential_id(
+                                provider, entry_category, instance_id
+                            ),
                             "provider_id": provider,
                             "instance_id": instance_id,
-                            "label": str(entry.get("label") or f"{provider} ({entry_category})").strip(),
+                            "label": str(
+                                entry.get("label") or f"{provider} ({entry_category})"
+                            ).strip(),
                             "category": entry_category,
                             "source": "db",
-                            "api_base_url": str(entry.get("api_base_url") or "").strip() or _get_effective_base_url(provider),
+                            "api_base_url": str(entry.get("api_base_url") or "").strip()
+                            or _get_effective_base_url(provider),
                             "status": str(entry.get("status") or "active").strip() or "active",
                             "decrypt_ok": decrypt_ok,
                             "is_default": bool(entry.get("is_default", True)),
@@ -618,7 +626,11 @@ def list_provider_credentials(*, storage: Any | None = None) -> dict[str, list[d
         api_key = str(os.getenv(key_env) or "").strip()
         if not api_key:
             continue
-        category = "search" if bool(KNOWN_LLM_PROVIDERS.get(provider, {}).get("is_search_provider")) else "llm"
+        category = (
+            "search"
+            if bool(KNOWN_LLM_PROVIDERS.get(provider, {}).get("is_search_provider"))
+            else "llm"
+        )
         if f"{provider}:{category}" in seen_provider_categories:
             continue
         credentials.append(
@@ -644,7 +656,9 @@ def list_provider_credentials(*, storage: Any | None = None) -> dict[str, list[d
     return {"credentials": credentials}
 
 
-def build_model_discovery_credentials(*, storage: Any | None = None) -> dict[str, dict[str, str | None]]:
+def build_model_discovery_credentials(
+    *, storage: Any | None = None
+) -> dict[str, dict[str, str | None]]:
     """Return provider credentials for live model discovery, preferring DB rows."""
     credentials: dict[str, dict[str, str | None]] = {}
     for provider, info in KNOWN_LLM_PROVIDERS.items():
@@ -702,11 +716,15 @@ def get_model_catalog(*, refresh: bool = False, storage: Any | None = None) -> d
     }
 
 
-def get_ai_routing(*, storage: Any | None = None, yaml_config: Mapping[str, Any] | None = None) -> dict[str, Any]:
+def get_ai_routing(
+    *, storage: Any | None = None, yaml_config: Mapping[str, Any] | None = None
+) -> dict[str, Any]:
     bindings: list[dict[str, Any]] = []
     for function_name in ["chat", "embeddings", "catalog", "ocr"]:
         section_name = FUNCTION_BINDING_TO_SECTION[function_name]
-        runtime = resolve_ai_function_runtime(section_name, storage=storage, yaml_config=yaml_config)
+        runtime = resolve_ai_function_runtime(
+            section_name, storage=storage, yaml_config=yaml_config
+        )
         binding: dict[str, Any] = {
             "function_name": function_name,
             "config_section": section_name,
@@ -729,7 +747,9 @@ def get_ai_routing(*, storage: Any | None = None, yaml_config: Mapping[str, Any]
 
             defaults = get_embedding_model_defaults(runtime.provider, runtime.model)
             binding["embedding_dimension"] = infer_embedding_dimension(runtime.model)
-            binding["embedding_fingerprint"] = build_embedding_fingerprint(runtime.provider, runtime.model)
+            binding["embedding_fingerprint"] = build_embedding_fingerprint(
+                runtime.provider, runtime.model
+            )
             binding["embedding_batch_size_default"] = defaults.batch_size
             binding["similarity_threshold_default"] = defaults.similarity_threshold
         bindings.append(binding)
@@ -797,7 +817,11 @@ def get_ai_function_section(
                 ", ".join(sorted(legacy_route_fields)),
             )
         normalized.update(
-            {key: value for key, value in raw_section.items() if key not in WEEKLY_EXPLANATION_ROUTE_FIELDS}
+            {
+                key: value
+                for key, value in raw_section.items()
+                if key not in WEEKLY_EXPLANATION_ROUTE_FIELDS
+            }
         )
         chat_section = get_ai_function_section("chatbot", yaml_config={"ai_config": ai_config})
         for route_field in WEEKLY_EXPLANATION_ROUTE_FIELDS:
@@ -845,12 +869,13 @@ def resolve_ai_function_runtime(
         default=str(DEFAULT_AI_FUNCTION_CONFIG.get(function_name, {}).get("provider") or "openai"),
     )
     model = str(
-        section.get("model")
-        or DEFAULT_AI_FUNCTION_CONFIG.get(function_name, {}).get("model")
-        or ""
+        section.get("model") or DEFAULT_AI_FUNCTION_CONFIG.get(function_name, {}).get("model") or ""
     ).strip()
 
-    credential_id = str(section.get("credential_id") or section.get("provider_credential_id") or "").strip() or None
+    credential_id = (
+        str(section.get("credential_id") or section.get("provider_credential_id") or "").strip()
+        or None
+    )
 
     if provider == "local":
         return AIFunctionRuntime(
@@ -867,7 +892,9 @@ def resolve_ai_function_runtime(
             configured=True,
         )
 
-    credentials = resolve_provider_credentials(provider, storage=storage, credential_id=credential_id)
+    credentials = resolve_provider_credentials(
+        provider, storage=storage, credential_id=credential_id
+    )
     return AIFunctionRuntime(
         function_name=function_name,
         provider=provider,
@@ -909,7 +936,9 @@ def resolve_ocr_runtime(
         model_override=effective_model_override,
     )
 
-    resolved_engine = _resolve_ocr_engine(runtime.provider, runtime.model, engine_override=engine_override)
+    resolved_engine = _resolve_ocr_engine(
+        runtime.provider, runtime.model, engine_override=engine_override
+    )
     resolved_model = _resolve_ocr_model(runtime.provider, runtime.model, resolved_engine)
     return OCRRuntime(
         engine=resolved_engine,
@@ -920,24 +949,6 @@ def resolve_ocr_runtime(
         credential_source=runtime.credential_source,
         raw_config=runtime.raw_config,
     )
-
-
-def apply_runtime_environment(runtime: AIFunctionRuntime) -> None:
-    """Project runtime config into process env for legacy settings-based consumers."""
-    provider = runtime.provider
-    if provider != "local":
-        key_env = get_provider_api_key_env_var(provider)
-        base_env = get_provider_base_url_env_var(provider)
-        if key_env and runtime.api_key:
-            os.environ[key_env] = runtime.api_key
-        if base_env and runtime.base_url:
-            os.environ[base_env] = runtime.base_url
-
-    if runtime.function_name == "embeddings":
-        os.environ["RAG_EMBEDDING_PROVIDER"] = provider
-        os.environ["RAG_EMBEDDING_MODEL"] = runtime.model
-
-    _reload_settings_if_available()
 
 
 def apply_ocr_runtime_environment(runtime: OCRRuntime) -> None:
@@ -984,12 +995,14 @@ def _apply_markdown_conversion_tuning(engine: str) -> None:
             cfg = _MARKDOWN_CONVERSION_TUNING_CACHE["config"]
         else:
             cfg = load_markdown_conversion_config(path)
-            _MARKDOWN_CONVERSION_TUNING_CACHE.update({"path": path, "mtime_ns": mtime_ns, "config": cfg})
+            _MARKDOWN_CONVERSION_TUNING_CACHE.update(
+                {"path": path, "mtime_ns": mtime_ns, "config": cfg}
+            )
     except Exception:
         logger.exception("Failed to load markdown conversion tuning config")
         return
 
-    tool_cfg = ((cfg.get("tools") or {}).get(str(engine or "").strip().lower()) or {})
+    tool_cfg = (cfg.get("tools") or {}).get(str(engine or "").strip().lower()) or {}
     tuning = tool_cfg.get("tuning") if isinstance(tool_cfg, dict) else {}
     if not isinstance(tuning, Mapping):
         return
@@ -1083,7 +1096,9 @@ def resolve_provider_credentials(
                     raw_credential_id if parsed_credential_id.kind in {"instance", "env"} else None
                 ),
                 error="credential_binding_mismatch",
-                instance_id=parsed_credential_id.value if parsed_credential_id.kind == "instance" else None,
+                instance_id=(
+                    parsed_credential_id.value if parsed_credential_id.kind == "instance" else None
+                ),
             )
 
     if parsed_credential_id and parsed_credential_id.kind == "env":
@@ -1107,7 +1122,9 @@ def resolve_provider_credentials(
 
     if parsed_credential_id is not None:
         stable_id = (
-            build_stable_credential_id(normalized_provider, normalized_category, parsed_credential_id.value)
+            build_stable_credential_id(
+                normalized_provider, normalized_category, parsed_credential_id.value
+            )
             if parsed_credential_id.kind == "instance"
             else None
         )
@@ -1117,7 +1134,9 @@ def resolve_provider_credentials(
             credential_id=raw_credential_id,
             stable_credential_id=stable_id,
             error="credential_store_unavailable" if storage is None else "credential_not_found",
-            instance_id=parsed_credential_id.value if parsed_credential_id.kind == "instance" else None,
+            instance_id=(
+                parsed_credential_id.value if parsed_credential_id.kind == "instance" else None
+            ),
         )
 
     return _resolve_provider_credentials_from_env(
@@ -1203,7 +1222,9 @@ def _resolve_provider_credentials_from_storage(
                     provider,
                     category=category,
                     credential_id=credential_id,
-                    stable_credential_id=build_stable_credential_id(provider, category, instance_id),
+                    stable_credential_id=build_stable_credential_id(
+                        provider, category, instance_id
+                    ),
                     error="credential_not_found",
                     instance_id=instance_id,
                 )
@@ -1391,8 +1412,12 @@ def infer_embedding_provider(
     return normalized_fallback or None
 
 
-def build_embedding_fingerprint(provider: str | None, model: str | None, dimension: int | None = None) -> str:
+def build_embedding_fingerprint(
+    provider: str | None, model: str | None, dimension: int | None = None
+) -> str:
     provider_norm = _normalize_provider(provider)
     model_norm = str(model or "").strip()
-    effective_dimension = dimension if dimension is not None else infer_embedding_dimension(model_norm)
+    effective_dimension = (
+        dimension if dimension is not None else infer_embedding_dimension(model_norm)
+    )
     return f"{provider_norm}:{model_norm}:{effective_dimension or 'unknown'}"

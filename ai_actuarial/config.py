@@ -42,10 +42,6 @@ def _env_int(key: str, default: int) -> int:
     return default
 
 
-def _env_str(key: str, default: str = "") -> str:
-    return os.getenv(key, default) or default
-
-
 def _env_list(key: str, default: list[str] | None = None) -> list[str]:
     raw = os.getenv(key, "").strip()
     if not raw:
@@ -105,7 +101,9 @@ class Settings:
     # Feature Flags
     # -------------------------------------------------------------------------
     ENABLE_GLOBAL_LOGS_API: bool = _env_bool("ENABLE_GLOBAL_LOGS_API", False)
-    FASTAPI_ENABLE_MIGRATION_INVENTORY: bool = _env_bool("FASTAPI_ENABLE_MIGRATION_INVENTORY", False)
+    FASTAPI_ENABLE_MIGRATION_INVENTORY: bool = _env_bool(
+        "FASTAPI_ENABLE_MIGRATION_INVENTORY", False
+    )
 
     # -------------------------------------------------------------------------
     # CORS
@@ -147,8 +145,12 @@ class Settings:
     def resolve_db_path(cls, config_data: dict[str, Any] | None = None) -> str:
         """Resolve the database path from config or environment defaults."""
         if config_data:
-            paths_cfg = config_data.get("paths") if isinstance(config_data.get("paths"), dict) else {}
-            database_cfg = config_data.get("database") if isinstance(config_data.get("database"), dict) else {}
+            paths_cfg = (
+                config_data.get("paths") if isinstance(config_data.get("paths"), dict) else {}
+            )
+            database_cfg = (
+                config_data.get("database") if isinstance(config_data.get("database"), dict) else {}
+            )
             db_path = (paths_cfg or {}).get("db") or (database_cfg or {}).get("path") or cls.DB_PATH
             db_path = str(db_path or "data/index.db")
             if not os.path.isabs(db_path):

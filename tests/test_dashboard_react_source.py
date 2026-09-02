@@ -1,6 +1,5 @@
 from pathlib import Path
 
-
 DASHBOARD_TSX = Path(__file__).resolve().parents[1] / "client" / "src" / "pages" / "Dashboard.tsx"
 I18N_TS = Path(__file__).resolve().parents[1] / "client" / "src" / "hooks" / "use-i18n.ts"
 
@@ -108,4 +107,3 @@ def test_dashboard_has_single_categories_link_in_preview_header():
 
     # Weekly Additions still relies on dashboard.view_all (kept, 2x in i18n).
     assert i18n_src.count('"dashboard.view_all"') == 2
-

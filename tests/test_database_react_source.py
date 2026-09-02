@@ -1,6 +1,5 @@
 from pathlib import Path
 
-
 DATABASE_TSX = Path(__file__).resolve().parents[1] / "client" / "src" / "pages" / "Database.tsx"
 I18N_TS = Path(__file__).resolve().parents[1] / "client" / "src" / "hooks" / "use-i18n.ts"
 
@@ -30,9 +29,9 @@ def test_database_file_rows_offer_ai_explain_via_chat_route_state():
     assert "filename," in src
     assert "title: displayName" in src
     assert "getCanonicalDisplayName(file" in src
-    assert "category: file.category || \"\"" in src
-    assert 'data-testid={`button-ai-explain-${i}`}' in src
-    assert 'data-testid={`button-ai-explain-mobile-${i}`}' in src
+    assert 'category: file.category || ""' in src
+    assert "data-testid={`button-ai-explain-${i}`}" in src
+    assert "data-testid={`button-ai-explain-mobile-${i}`}" in src
     assert "disabled={!hasMd || isDeleted}" in src
 
 

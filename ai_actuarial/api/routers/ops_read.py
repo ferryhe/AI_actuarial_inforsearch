@@ -1,11 +1,18 @@
 from __future__ import annotations
 
 import time
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 
-from ai_actuarial.ai_runtime import get_ai_routing, get_model_catalog, list_provider_credentials, list_provider_registry
+from ai_actuarial.ai_runtime import (
+    get_ai_routing,
+    get_model_catalog,
+    list_provider_credentials,
+    list_provider_registry,
+)
 from ai_actuarial.storage import Storage
+
 from ..deps import AuthContext, require_permissions
 from ..services.ops_read import (
     get_ai_models,
@@ -57,7 +64,9 @@ def _enforce_global_logs_rate_limit(request: Request, auth: AuthContext) -> JSON
     if not isinstance(buckets, dict):
         buckets = {}
         request.app.state.global_logs_rate_limit_buckets = buckets
-    recent = [stamp for stamp in buckets.get(bucket_key, []) if now - stamp < _GLOBAL_LOGS_WINDOW_SECONDS]
+    recent = [
+        stamp for stamp in buckets.get(bucket_key, []) if now - stamp < _GLOBAL_LOGS_WINDOW_SECONDS
+    ]
     if len(recent) >= _GLOBAL_LOGS_RATE_LIMIT:
         return JSONResponse(status_code=429, content={"error": "Rate limit exceeded"})
     recent.append(now)
@@ -113,7 +122,9 @@ def api_pipeline_baton_config(
     request: Request,
     _auth: AuthContext = Depends(require_permissions("tasks.view")),
 ) -> dict[str, object]:
-    return get_pipeline_baton_status(getattr(request.app.state, "pipeline_baton_status", None))["config"]
+    return get_pipeline_baton_status(getattr(request.app.state, "pipeline_baton_status", None))[
+        "config"
+    ]
 
 
 @router.get("/tasks/active")
@@ -203,7 +214,9 @@ def api_logs_global(
     rate_limited = _enforce_global_logs_rate_limit(request, _auth)
     if rate_limited is not None:
         return rate_limited
-    result = get_global_logs(enabled=bool(getattr(request.app.state, "enable_global_logs_api", False)))
+    result = get_global_logs(
+        enabled=bool(getattr(request.app.state, "enable_global_logs_api", False))
+    )
     if result.get("error") == "GLOBAL_LOGS_API_DISABLED":
         return JSONResponse(status_code=403, content=result)
     return result
@@ -370,13 +383,15 @@ def api_search(
             if description and query_lower in description.lower():
                 score += 5
             if score > 0:
-                results.append({
-                    "kb_id": kb_id_row,
-                    "name": name,
-                    "description": description,
-                    "created_at": created_at,
-                    "score": score,
-                })
+                results.append(
+                    {
+                        "kb_id": kb_id_row,
+                        "name": name,
+                        "description": description,
+                        "created_at": created_at,
+                        "score": score,
+                    }
+                )
         results.sort(key=lambda x: x["score"], reverse=True)
         return {"results": results[:limit], "count": len(results)}
     finally:

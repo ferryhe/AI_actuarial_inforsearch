@@ -125,7 +125,9 @@ def _write_ready_data(
             ),
             encoding="utf-8",
         )
-        artifact_files.extend(["title_aliases.jsonl", "sections_structured.jsonl", "relations_graph.json"])
+        artifact_files.extend(
+            ["title_aliases.jsonl", "sections_structured.jsonl", "relations_graph.json"]
+        )
     if include_l2:
         _write_jsonl(
             output_dir / "formula_cards.jsonl",
@@ -178,15 +180,22 @@ def _write_ready_data(
                 }
             ],
         )
-        artifact_files.extend(["formula_cards.jsonl", "tables_structured.jsonl", "calculation_terms.jsonl"])
+        artifact_files.extend(
+            ["formula_cards.jsonl", "tables_structured.jsonl", "calculation_terms.jsonl"]
+        )
     (output_dir / "ready_data_manifest.json").write_text(
-        json.dumps({"profile": profile, "profile_version": "1", "artifact_files": artifact_files}, ensure_ascii=False),
+        json.dumps(
+            {"profile": profile, "profile_version": "1", "artifact_files": artifact_files},
+            ensure_ascii=False,
+        ),
         encoding="utf-8",
     )
 
 
 def test_planner_orders_locate_steps_before_summary_fallback() -> None:
-    steps = plan_tool_steps("Find the document titled Capital Adequacy Guideline", profile="general")
+    steps = plan_tool_steps(
+        "Find the document titled Capital Adequacy Guideline", profile="general"
+    )
 
     assert [step.tool_name for step in steps] == ["search_titles", "search_summaries"]
     assert all(step.category == "locate" for step in steps)
@@ -287,7 +296,9 @@ def test_agentic_loop_returns_evidence_for_cjk_formula_queries(tmp_path: Path) -
     assert response["metadata"]["evidence_count"] > 0
 
 
-def test_agentic_loop_returns_evidence_answer_and_trace_for_l1_regulation_tools(tmp_path: Path) -> None:
+def test_agentic_loop_returns_evidence_answer_and_trace_for_l1_regulation_tools(
+    tmp_path: Path,
+) -> None:
     _write_ready_data(tmp_path, profile="regulation", include_l1=True)
 
     response = run_agentic_rag_loop(

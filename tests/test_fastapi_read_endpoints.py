@@ -149,24 +149,42 @@ def _seed_storage(db_path: Path) -> dict[str, object]:
 
         storage._conn.execute(
             "UPDATE files SET first_seen = ?, last_seen = ? WHERE url = ?",
-            ("2026-03-01T10:00:00+00:00", "2026-03-08T10:00:00+00:00", "https://alpha.example/doc-a.pdf"),
+            (
+                "2026-03-01T10:00:00+00:00",
+                "2026-03-08T10:00:00+00:00",
+                "https://alpha.example/doc-a.pdf",
+            ),
         )
         storage._conn.execute(
             "UPDATE files SET first_seen = ?, last_seen = ? WHERE url = ?",
-            ("2026-03-10T10:00:00+00:00", "2026-03-09T10:00:00+00:00", "https://beta.example/doc-b.docx"),
+            (
+                "2026-03-10T10:00:00+00:00",
+                "2026-03-09T10:00:00+00:00",
+                "https://beta.example/doc-b.docx",
+            ),
         )
         storage._conn.execute(
             "UPDATE files SET first_seen = ?, last_seen = ? WHERE url = ?",
-            ("2026-03-07T10:00:00+00:00", "2026-03-07T10:00:00+00:00", "https://gamma.example/doc-c.pdf"),
+            (
+                "2026-03-07T10:00:00+00:00",
+                "2026-03-07T10:00:00+00:00",
+                "https://gamma.example/doc-c.pdf",
+            ),
         )
         storage._conn.commit()
     finally:
         storage.close()
 
-    return {"user_id": user_id, "token_plain": token_plain, "operator_token_plain": operator_token_plain}
+    return {
+        "user_id": user_id,
+        "token_plain": token_plain,
+        "operator_token_plain": operator_token_plain,
+    }
 
 
-def _build_test_client(tmp_path: Path, monkeypatch, *, require_auth: bool) -> tuple[TestClient, object, dict[str, object]]:
+def _build_test_client(
+    tmp_path: Path, monkeypatch, *, require_auth: bool
+) -> tuple[TestClient, object, dict[str, object]]:
     db_path, config_path, categories_path = _write_config_files(tmp_path)
     seed = _seed_storage(db_path)
 
@@ -232,7 +250,10 @@ def test_fastapi_files_supports_filters_sorting_and_deleted(tmp_path: Path, monk
 
     by_first_seen = client.get("/api/files?limit=10&order_by=first_seen&order_dir=desc")
     assert by_first_seen.status_code == 200
-    assert [item["title"] for item in by_first_seen.json()["files"]] == ["Beta Document", "Alpha Document"]
+    assert [item["title"] for item in by_first_seen.json()["files"]] == [
+        "Beta Document",
+        "Alpha Document",
+    ]
 
     filtered = client.get("/api/files?category=AI")
     assert filtered.status_code == 200
@@ -279,7 +300,9 @@ def test_fastapi_files_supports_filters_sorting_and_deleted(tmp_path: Path, monk
     ]
 
 
-def test_fastapi_native_read_routes_keep_public_reads_available_under_require_auth(tmp_path: Path, monkeypatch) -> None:
+def test_fastapi_native_read_routes_keep_public_reads_available_under_require_auth(
+    tmp_path: Path, monkeypatch
+) -> None:
     client, _app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
 
     public_stats = client.get("/api/stats")
@@ -292,10 +315,10 @@ def test_fastapi_native_read_routes_keep_public_reads_available_under_require_au
     assert "local_path" not in public_files_body["files"][0]
     assert "sha256" not in public_files_body["files"][0]
     assert "markdown_content" not in public_files_body["files"][0]
-    assert {
-        item["title"]: item["has_markdown"]
-        for item in public_files_body["files"]
-    } == {"Alpha Document": True, "Beta Document": False}
+    assert {item["title"]: item["has_markdown"] for item in public_files_body["files"]} == {
+        "Alpha Document": True,
+        "Beta Document": False,
+    }
 
     public_deleted = client.get("/api/files?include_deleted=true")
     assert public_deleted.status_code == 401
@@ -310,13 +333,15 @@ def test_fastapi_native_read_routes_keep_public_reads_available_under_require_au
     assert "local_path" in authorized_body["files"][0]
     assert "sha256" in authorized_body["files"][0]
     assert "markdown_content" not in authorized_body["files"][0]
-    assert {
-        item["title"]: item["has_markdown"]
-        for item in authorized_body["files"]
-    } == {"Alpha Document": True, "Beta Document": False}
+    assert {item["title"]: item["has_markdown"] for item in authorized_body["files"]} == {
+        "Alpha Document": True,
+        "Beta Document": False,
+    }
 
 
-def test_fastapi_sources_file_detail_and_markdown_match_legacy_contract(tmp_path: Path, monkeypatch) -> None:
+def test_fastapi_sources_file_detail_and_markdown_match_legacy_contract(
+    tmp_path: Path, monkeypatch
+) -> None:
     client, _app, _seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
 
     sources = client.get("/api/sources")
@@ -343,18 +368,27 @@ def test_fastapi_sources_file_detail_and_markdown_match_legacy_contract(tmp_path
     assert missing_file.status_code == 404
     assert missing_file.json() == {"error": "File not found"}
 
-    markdown = client.get(f"/api/files/{quote('https://alpha.example/doc-a.pdf', safe='')}/markdown")
+    markdown = client.get(
+        f"/api/files/{quote('https://alpha.example/doc-a.pdf', safe='')}/markdown"
+    )
     assert markdown.status_code == 200
     assert markdown.json()["success"] is True
-    assert markdown.json()["markdown"]["markdown_content"] == "# Alpha Document\n\nMarkdown content for alpha."
+    assert (
+        markdown.json()["markdown"]["markdown_content"]
+        == "# Alpha Document\n\nMarkdown content for alpha."
+    )
     assert markdown.json()["markdown"]["markdown_source"] == "manual"
 
-    unknown_markdown = client.get(f"/api/files/{quote('https://missing.example/doc.pdf', safe='')}/markdown")
+    unknown_markdown = client.get(
+        f"/api/files/{quote('https://missing.example/doc.pdf', safe='')}/markdown"
+    )
     assert unknown_markdown.status_code == 200
     assert unknown_markdown.json() == {"success": True, "markdown": None}
 
 
-def test_fastapi_markdown_route_preserves_percent_encoded_file_urls(tmp_path: Path, monkeypatch) -> None:
+def test_fastapi_markdown_route_preserves_percent_encoded_file_urls(
+    tmp_path: Path, monkeypatch
+) -> None:
     client, app, _seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
 
     storage = Storage(str(app.state.db_path))
@@ -382,10 +416,15 @@ def test_fastapi_markdown_route_preserves_percent_encoded_file_urls(tmp_path: Pa
     response = client.get(f"/api/files/{quote(encoded_url, safe='')}/markdown")
     assert response.status_code == 200
     assert response.json()["success"] is True
-    assert response.json()["markdown"]["markdown_content"] == "# Encoded Document\n\nStored under a percent-encoded URL."
+    assert (
+        response.json()["markdown"]["markdown_content"]
+        == "# Encoded Document\n\nStored under a percent-encoded URL."
+    )
 
 
-def test_fastapi_native_read_routes_accept_fastapi_session_cookie(tmp_path: Path, monkeypatch) -> None:
+def test_fastapi_native_read_routes_accept_fastapi_session_cookie(
+    tmp_path: Path, monkeypatch
+) -> None:
     client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
 
     cookie_name = app.state.fastapi_session_cookie_name
@@ -404,6 +443,8 @@ def test_fastapi_native_read_routes_accept_fastapi_session_cookie(tmp_path: Path
     assert detail.status_code == 200
     assert detail.json()["file"]["title"] == "Alpha Document"
 
-    markdown = client.get(f"/api/files/{quote('https://alpha.example/doc-a.pdf', safe='')}/markdown")
+    markdown = client.get(
+        f"/api/files/{quote('https://alpha.example/doc-a.pdf', safe='')}/markdown"
+    )
     assert markdown.status_code == 200
     assert markdown.json()["markdown"]["markdown_source"] == "manual"

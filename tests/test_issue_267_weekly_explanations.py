@@ -16,6 +16,7 @@ import yaml
 from cryptography.fernet import Fernet
 
 from ai_actuarial import cli
+from ai_actuarial.api.route_inventory import _iter_routes
 from ai_actuarial.api.services import weekly_updates
 from ai_actuarial.services.token_encryption import TokenEncryption
 from ai_actuarial.sqlite_schema import (
@@ -28,11 +29,8 @@ from ai_actuarial.storage import Storage
 from ai_actuarial.task_runtime import NativeTaskRuntime
 from tests.test_fastapi_ops_read_endpoints import _build_test_client, _patch_available_models
 
-
 PERIOD_START = "2026-03-09T00:00:00+00:00"
 PERIOD_END = "2026-03-16T00:00:00+00:00"
-OLDER_START = "2026-03-02T00:00:00+00:00"
-OLDER_END = "2026-03-09T00:00:00+00:00"
 
 
 class FakeWeeklyExplanationGenerator:
@@ -52,13 +50,19 @@ class FakeWeeklyExplanationGenerator:
                 "timeout_seconds": timeout_seconds,
             }
         )
-        response = self.responses.pop(0) if self.responses else '{"zh":"中文说明","en":"English explanation"}'
+        response = (
+            self.responses.pop(0)
+            if self.responses
+            else '{"zh":"中文说明","en":"English explanation"}'
+        )
         if isinstance(response, BaseException):
             raise response
         return response
 
 
-def _write_config(tmp_path: Path, *, db_path: Path | None = None) -> tuple[Path, Path, dict[str, Any]]:
+def _write_config(
+    tmp_path: Path, *, db_path: Path | None = None
+) -> tuple[Path, Path, dict[str, Any]]:
     database = db_path or tmp_path / "index.db"
     config_path = tmp_path / "sites.yaml"
     config: dict[str, Any] = {
@@ -81,10 +85,12 @@ def _write_config(tmp_path: Path, *, db_path: Path | None = None) -> tuple[Path,
                 "timeout_seconds": 5,
                 "temperature": 0,
                 "max_tokens": 800,
-            }
+            },
         },
     }
-    config_path.write_text(yaml.safe_dump(config, sort_keys=False, allow_unicode=True), encoding="utf-8")
+    config_path.write_text(
+        yaml.safe_dump(config, sort_keys=False, allow_unicode=True), encoding="utf-8"
+    )
     Storage(str(database)).close()
     return database, config_path, config
 
@@ -346,9 +352,7 @@ def test_default_generator_enforces_timeout_and_one_sdk_transport_attempt(
     assert captured_configs[0].max_retries == 1
     assert captured_configs[0].length_recovery_enabled is False
     assert len(transport_attempts) == 1
-    assert request_timeouts == [
-        {"connect": 0.1, "read": 0.1, "write": 0.1, "pool": 0.1}
-    ]
+    assert request_timeouts == [{"connect": 0.1, "read": 0.1, "write": 0.1, "pool": 0.1}]
 
 
 def test_concurrent_same_fingerprint_calls_single_flight_and_preserve_complete_result(
@@ -600,9 +604,7 @@ def test_abandoned_weekly_explanation_lease_is_reclaimed_and_retry_recovers(
             ("2000-01-01T00:00:00+00:00", retry_snapshot["id"]),
         )
 
-    generator = FakeWeeklyExplanationGenerator(
-        ['{"zh":"租约恢复","en":"Lease recovered"}']
-    )
+    generator = FakeWeeklyExplanationGenerator(['{"zh":"租约恢复","en":"Lease recovered"}'])
     recovered = weekly_explanations.retry_weekly_explanation(
         db_path=str(db_path),
         snapshot_id=retry_snapshot["id"],
@@ -685,9 +687,12 @@ def test_latest_never_falls_back_after_force_rebuild(
     _seed_files(db_path, count=1)
     old_snapshot = _snapshot(db_path)
     old_generator = FakeWeeklyExplanationGenerator()
-    assert weekly_explanations.generate_weekly_explanation(
-        db_path=str(db_path), snapshot_id=old_snapshot["id"], generator=old_generator
-    )["status"] == "complete"
+    assert (
+        weekly_explanations.generate_weekly_explanation(
+            db_path=str(db_path), snapshot_id=old_snapshot["id"], generator=old_generator
+        )["status"]
+        == "complete"
+    )
 
     rebuilt = _snapshot(db_path, force=True)
     assert rebuilt["id"] != old_snapshot["id"]
@@ -699,9 +704,12 @@ def test_latest_never_falls_back_after_force_rebuild(
         "explanation_en": "",
         "generated_at": None,
     }
-    assert weekly_explanations.get_weekly_explanation(
-        db_path=str(db_path), snapshot_id=old_snapshot["id"]
-    )["status"] == "complete"
+    assert (
+        weekly_explanations.get_weekly_explanation(
+            db_path=str(db_path), snapshot_id=old_snapshot["id"]
+        )["status"]
+        == "complete"
+    )
 
     failed_generator = FakeWeeklyExplanationGenerator(["invalid-json"])
     failed = weekly_explanations.generate_weekly_explanation(
@@ -737,9 +745,9 @@ def test_effective_prompt_change_invalidates_the_complete_fingerprint(
     finally:
         storage.close()
 
-    config["ai_config"]["weekly_explanation"]["prompt"] = (
-        "Changed bilingual structured prompt with a different effective configuration."
-    )
+    config["ai_config"]["weekly_explanation"][
+        "prompt"
+    ] = "Changed bilingual structured prompt with a different effective configuration."
     config_path.write_text(
         yaml.safe_dump(config, sort_keys=False, allow_unicode=True), encoding="utf-8"
     )
@@ -875,9 +883,7 @@ def test_chat_credential_change_invalidates_weekly_replay(
         finally:
             storage.close()
 
-        config["ai_config"]["chatbot"]["credential_id"] = (
-            "openai:llm:instance:backup"
-        )
+        config["ai_config"]["chatbot"]["credential_id"] = "openai:llm:instance:backup"
         config_path.write_text(
             yaml.safe_dump(config, sort_keys=False, allow_unicode=True), encoding="utf-8"
         )
@@ -895,12 +901,8 @@ def test_chat_credential_change_invalidates_weekly_replay(
 
     assert len(generator.calls) == 2
     assert first_audit["input_fingerprint"] != second_audit["input_fingerprint"]
-    assert first_audit["coverage"]["effective_credential_id"] == (
-        "openai:llm:instance:primary"
-    )
-    assert second_audit["coverage"]["effective_credential_id"] == (
-        "openai:llm:instance:backup"
-    )
+    assert first_audit["coverage"]["effective_credential_id"] == ("openai:llm:instance:primary")
+    assert second_audit["coverage"]["effective_credential_id"] == ("openai:llm:instance:backup")
     assert "primary-secret" not in repr((first_audit, second_audit))
     assert "backup-secret" not in repr((first_audit, second_audit))
 
@@ -937,13 +939,9 @@ def test_typed_explanation_routes_redact_audit_and_gets_never_call_model(
     }
     calls_after_generate = len(generator.calls)
 
-    detail = client.get(
-        f"/api/weekly-updates/{snapshot['id']}/explanation", headers=headers
-    )
+    detail = client.get(f"/api/weekly-updates/{snapshot['id']}/explanation", headers=headers)
     latest = client.get("/api/weekly-updates/explanations/latest", headers=headers)
-    retry = client.post(
-        f"/api/weekly-updates/{snapshot['id']}/explanation/retry", headers=headers
-    )
+    retry = client.post(f"/api/weekly-updates/{snapshot['id']}/explanation/retry", headers=headers)
     assert detail.status_code == latest.status_code == retry.status_code == 200
     assert detail.json()["explanation"] == body
     assert latest.json()["explanation"] == body
@@ -958,11 +956,11 @@ def test_typed_explanation_routes_redact_audit_and_gets_never_call_model(
         assert switched.json()["explanation"] == body
     assert len(generator.calls) == calls_after_generate
 
-    missing = client.get(
-        "/api/weekly-updates/not-a-snapshot/explanation", headers=headers
-    )
+    missing = client.get("/api/weekly-updates/not-a-snapshot/explanation", headers=headers)
     assert missing.status_code == 404
-    route_paths = [route.path for route in app.routes]
+    route_paths = [
+        path for _route, path, _include_in_schema in _iter_routes(app.router.routes) if path
+    ]
     assert route_paths.index("/api/weekly-updates/explanations/latest") < route_paths.index(
         "/api/weekly-updates/{snapshot_id}"
     )
@@ -1049,7 +1047,9 @@ def test_weekly_explanation_cli_is_http_only_with_json_success_and_error(
     assert "ai_runtime" not in source
 
 
-def test_weekly_explanation_cli_help_lists_all_matching_actions(capsys: pytest.CaptureFixture[str]) -> None:
+def test_weekly_explanation_cli_help_lists_all_matching_actions(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     parser = cli.build_parser()
     with pytest.raises(SystemExit) as exc_info:
         parser.parse_args(["weekly", "explanation", "--help"])
@@ -1114,7 +1114,9 @@ def test_weekly_snapshot_task_launches_real_idempotent_explanation_followup(
     )
     wait_for_history_count(4)
     with runtime.task_lock:
-        second_parent = next(task for task in runtime.task_history if task["id"] == second_parent_id)
+        second_parent = next(
+            task for task in runtime.task_history if task["id"] == second_parent_id
+        )
         explanation_tasks = [
             task for task in runtime.task_history if task["type"] == "weekly_explanation"
         ]
@@ -1223,12 +1225,15 @@ def test_ai_config_admin_roundtrip_keeps_weekly_policy_separate_from_chat_route(
     written = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     assert written["ai_config"]["chatbot"] == before_chatbot
     assert written["ai_config"]["weekly_explanation"]["prompt"] == weekly["prompt"]
-    assert not {
-        "provider",
-        "model",
-        "credential_id",
-        "provider_credential_id",
-    } & written["ai_config"]["weekly_explanation"].keys()
+    assert (
+        not {
+            "provider",
+            "model",
+            "credential_id",
+            "provider_credential_id",
+        }
+        & written["ai_config"]["weekly_explanation"].keys()
+    )
     assert "prompt_zh" not in written["ai_config"]["weekly_explanation"]
     assert "prompt_en" not in written["ai_config"]["weekly_explanation"]
 
@@ -1271,8 +1276,8 @@ def test_default_config_runtime_and_settings_expose_one_bilingual_prompt() -> No
     translations_source = Path("client/src/hooks/use-i18n.ts").read_text(encoding="utf-8")
     assert "weekly_explanation" in settings_source
     assert settings_source.count('testIdPrefix="weekly-explanation-prompt"') == 1
-    assert 'settings.weekly_explanation_prompt_title' in translations_source
-    assert 'settings.weekly_explanation_prompt_hint' in translations_source
+    assert "settings.weekly_explanation_prompt_title" in translations_source
+    assert "settings.weekly_explanation_prompt_hint" in translations_source
     assert translations_source.count('"settings.weekly_explanation_prompt_title"') == 2
     assert translations_source.count('"settings.weekly_explanation_prompt_hint"') == 2
     assert translations_source.count('"settings.weekly_explanation_routing_hint"') == 2

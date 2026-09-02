@@ -7,7 +7,7 @@ and error handling.
 
 import logging
 import time
-from typing import List, Dict, Any, Optional
+from typing import Any, Dict, List, Optional
 
 import openai
 
@@ -45,10 +45,7 @@ def _is_explicit_azure_gpt5_deployment(
     if str(provider or "").strip().lower() != "azure_openai":
         return False
     deployment = f"-{str(model or '').strip().lower().replace('_', '-')}-"
-    return any(
-        marker in deployment
-        for marker in ("-gpt5-", "-gpt5.", "-gpt-5-", "-gpt-5.")
-    )
+    return any(marker in deployment for marker in ("-gpt5-", "-gpt5.", "-gpt-5-", "-gpt-5."))
 
 
 def _uses_max_completion_tokens(provider: str | None, model: str | None) -> bool:
@@ -67,8 +64,7 @@ def _uses_default_temperature_only(provider: str | None, model: str | None) -> b
     provider_norm = str(provider or "").strip().lower()
     model_norm = str(model or "").strip().lower().split("/")[-1]
     return provider_norm in {"openai", "azure_openai"} and (
-        model_norm.startswith("gpt-5")
-        or _is_explicit_azure_gpt5_deployment(provider, model)
+        model_norm.startswith("gpt-5") or _is_explicit_azure_gpt5_deployment(provider, model)
     )
 
 
@@ -166,9 +162,7 @@ def _classify_response(response: Any) -> tuple[str | None, str, str | None]:
     choice = choices[0]
     finish_reason_value = _field(choice, "finish_reason", None)
     finish_reason = (
-        finish_reason_value.strip().lower()
-        if isinstance(finish_reason_value, str)
-        else None
+        finish_reason_value.strip().lower() if isinstance(finish_reason_value, str) else None
     )
     if finish_reason == "content_filter":
         return None, "content_filter", finish_reason
@@ -178,23 +172,21 @@ def _classify_response(response: Any) -> tuple[str | None, str, str | None]:
     refusal = _field(message, "refusal", None)
     if isinstance(refusal, str) and refusal.strip():
         return None, "refusal", finish_reason
-    content, classification = _extract_text_content(
-        _field(message, "content", _MISSING)
-    )
+    content, classification = _extract_text_content(_field(message, "content", _MISSING))
     return content, classification, finish_reason
 
 
 class LLMClient:
     """
     LLM client with OpenAI integration.
-    
+
     Features:
     - Support for GPT-4, GPT-4-turbo, GPT-3.5-turbo
     - Retry logic with exponential backoff
     - Rate limiting
     - Comprehensive error handling
     """
-    
+
     def __init__(
         self,
         config: Optional[ChatbotConfig] = None,
@@ -203,26 +195,24 @@ class LLMClient:
     ):
         """
         Initialize LLM client.
-        
+
         Args:
             config: Chatbot configuration
-        
+
         Raises:
             LLMException: If API key is missing
         """
         self.config = config or ChatbotConfig.from_config(storage=storage)
-        
+
         # Validate configuration
         try:
             self.config.validate()
         except ValueError as e:
             raise LLMException(f"Invalid configuration: {e}")
-        
+
         # Initialize OpenAI-compatible client
         if not is_chat_provider_supported(self.config.llm_provider):
-            raise LLMException(
-                f"Unsupported LLM provider: {self.config.llm_provider}"
-            )
+            raise LLMException(f"Unsupported LLM provider: {self.config.llm_provider}")
         client_kwargs: dict[str, Any] = {
             "api_key": self.config.api_key,
             "timeout": 60.0,
@@ -230,62 +220,60 @@ class LLMClient:
         if self.config.base_url:
             client_kwargs["base_url"] = self.config.base_url
         self.client = openai.OpenAI(**client_kwargs)
-        
+
         # Rate limiting state
         self._last_request_time = 0.0
         self._min_request_interval = 60.0 / self.config.rate_limit_rpm
-        
+
         logger.info(
             f"Initialized LLM client with provider={self.config.llm_provider}, "
             f"model={self.config.model}"
         )
-    
+
     def generate(
         self,
         messages: List[Dict[str, str]],
         model: Optional[str] = None,
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
-        stream: bool = False
+        stream: bool = False,
     ) -> str:
         """
         Generate response from LLM.
-        
+
         Args:
             messages: List of message dicts with 'role' and 'content' keys
             model: Model to use (default: config.model)
             temperature: Sampling temperature (default: config.temperature)
             max_tokens: Maximum tokens to generate (default: config.max_tokens)
             stream: Whether to stream response (not implemented in MVP)
-        
+
         Returns:
             Generated text response
-        
+
         Raises:
             LLMException: If generation fails
         """
         model = model or self.config.model
         temperature = temperature if temperature is not None else self.config.temperature
         max_tokens = max_tokens or self.config.max_tokens
-        
+
         # Validate inputs
         if not messages:
             raise LLMException("Messages list cannot be empty")
-        
+
         for msg in messages:
-            if 'role' not in msg or 'content' not in msg:
-                raise LLMException(
-                    f"Invalid message format: {msg}. Must have 'role' and 'content'"
-                )
-        
+            if "role" not in msg or "content" not in msg:
+                raise LLMException(f"Invalid message format: {msg}. Must have 'role' and 'content'")
+
         # Rate limiting
         self._apply_rate_limit()
-        
+
         # Retry logic
         attempt = 0
         last_error = None
         recovery_used = False
-        
+
         while attempt < self.config.max_retries:
             try:
                 attempt += 1
@@ -294,7 +282,7 @@ class LLMClient:
                     f"temperature={temperature}, max_tokens={max_tokens}, "
                     f"attempt={attempt}"
                 )
-                
+
                 response = self.client.chat.completions.create(
                     **self._completion_request_kwargs(
                         messages=messages,
@@ -304,7 +292,7 @@ class LLMClient:
                         stream=stream,
                     )
                 )
-                
+
                 if stream:
                     raise LLMException("Streaming not yet supported")
 
@@ -353,9 +341,7 @@ class LLMClient:
                             ) from exc
                         continue
                     if finish_reason == "length" and is_recovery:
-                        raise LLMException(
-                            "LLM response remained empty after bounded recovery"
-                        )
+                        raise LLMException("LLM response remained empty after bounded recovery")
                     if finish_reason == "length":
                         raise LLMException(
                             "LLM completion exhausted its output budget without visible content"
@@ -383,18 +369,16 @@ class LLMClient:
 
             except LLMException:
                 raise
-                
+
             except openai.AuthenticationError as e:
                 # Authentication errors are not retryable
                 logger.error("Authentication error from LLM provider")
-                raise LLMException(
-                    "Authentication failed. Please check your API key."
-                ) from e
-            
+                raise LLMException("Authentication failed. Please check your API key.") from e
+
             except openai.RateLimitError as e:
                 # Rate limit - wait and retry
                 last_error = e
-                
+
                 if attempt < self.config.max_retries:
                     wait_time = self._calculate_backoff(attempt)
                     logger.warning(
@@ -407,11 +391,11 @@ class LLMClient:
                     raise LLMException(
                         f"Rate limit exceeded after {self.config.max_retries} retries"
                     )
-            
+
             except openai.APITimeoutError as e:
                 # Timeout - retry with backoff
                 last_error = e
-                
+
                 if attempt < self.config.max_retries:
                     wait_time = self._calculate_backoff(attempt)
                     logger.warning(
@@ -421,14 +405,12 @@ class LLMClient:
                     time.sleep(wait_time)
                 else:
                     logger.error("Max retries exceeded for timeout")
-                    raise LLMException(
-                        f"API timeout after {self.config.max_retries} retries"
-                    )
-            
+                    raise LLMException(f"API timeout after {self.config.max_retries} retries")
+
             except openai.APIError as e:
                 # General API error - retry
                 last_error = e
-                
+
                 if attempt < self.config.max_retries:
                     wait_time = self._calculate_backoff(attempt)
                     logger.warning(
@@ -438,10 +420,8 @@ class LLMClient:
                     time.sleep(wait_time)
                 else:
                     logger.error("Max retries exceeded for API error")
-                    raise LLMException(
-                        f"API error after {self.config.max_retries} retries: {e}"
-                    )
-            
+                    raise LLMException(f"API error after {self.config.max_retries} retries: {e}")
+
             except Exception as e:
                 # Unexpected error - fail immediately
                 logger.error(
@@ -449,7 +429,7 @@ class LLMClient:
                     type(e).__name__,
                 )
                 raise LLMException("Unexpected LLM generation error") from e
-        
+
         # Should not reach here, but just in case
         raise LLMException(
             f"Failed to generate response after {self.config.max_retries} retries: {last_error}"
@@ -540,26 +520,26 @@ class LLMClient:
             prompts_override=prompts_override,
         )
         return self.generate(messages=messages)
-    
+
     def _apply_rate_limit(self):
         """Apply rate limiting between requests."""
         current_time = time.time()
         time_since_last = current_time - self._last_request_time
-        
+
         if time_since_last < self._min_request_interval:
             wait_time = self._min_request_interval - time_since_last
             logger.debug(f"Rate limiting: waiting {wait_time:.2f}s")
             time.sleep(wait_time)
-        
+
         self._last_request_time = time.time()
-    
+
     def _calculate_backoff(self, attempt: int) -> float:
         """
         Calculate backoff delay for retry.
-        
+
         Args:
             attempt: Retry attempt number (1-indexed)
-        
+
         Returns:
             Delay in seconds
         """
@@ -569,125 +549,32 @@ class LLMClient:
         else:
             # Linear backoff
             return self.config.retry_delay * attempt
-    
-    def validate_response(
-        self,
-        response: str,
-        retrieved_chunks: List[Dict[str, Any]]
-    ) -> Dict[str, Any]:
-        """
-        Validate LLM response quality and citations.
-        
-        Args:
-            response: Generated response text
-            retrieved_chunks: Retrieved chunks used for generation
-        
-        Returns:
-            Validation result dict with:
-            - valid: bool
-            - issues: List[str]
-            - citations_found: List[str]
-            - citations_valid: bool
-        """
-        issues = []
-        
-        # Extract citations from response
-        citations = self._extract_citations(response)
-        
-        # Get filenames from retrieved chunks
-        retrieved_filenames = {
-            chunk['metadata']['filename']
-            for chunk in retrieved_chunks
-        }
-        
-        # Validate citations
-        invalid_citations = []
-        for citation in citations:
-            if citation not in retrieved_filenames:
-                invalid_citations.append(citation)
-        
-        if invalid_citations:
-            issues.append(
-                f"Invalid citations (not in retrieved chunks): {invalid_citations}"
-            )
-        
-        # Check for hallucination indicators
-        if not citations and len(response) > 50:
-            issues.append("Response lacks citations despite substantial length")
-        
-        # Check for "I don't know" phrases (good for uncertainty)
-        uncertainty_phrases = [
-            "i don't have",
-            "i don't know",
-            "not enough information",
-            "based on the available",
-            "according to the provided"
-        ]
-        
-        has_uncertainty = any(
-            phrase in response.lower()
-            for phrase in uncertainty_phrases
-        )
-        
-        return {
-            'valid': len(issues) == 0,
-            'issues': issues,
-            'citations_found': list(citations),
-            'citations_valid': len(invalid_citations) == 0,
-            'has_uncertainty_language': has_uncertainty
-        }
-    
-    def _extract_citations(self, text: str) -> List[str]:
-        """
-        Extract citations from response text.
-        
-        Looks for [Source: filename] patterns.
-        
-        Args:
-            text: Response text
-        
-        Returns:
-            List of cited filenames
-        """
-        import re
-        
-        # Pattern: [Source: filename.pdf] or [Source: file1.pdf, file2.pdf]
-        pattern = r'\[Source:\s*([^\]]+)\]'
-        matches = re.findall(pattern, text)
-        
-        citations = []
-        for match in matches:
-            # Split by comma in case of multiple citations
-            filenames = [f.strip() for f in match.split(',')]
-            citations.extend(filenames)
-        
-        return citations
-    
+
     def count_tokens(self, text: str, model: Optional[str] = None) -> int:
         """
         Estimate token count for text.
-        
+
         Args:
             text: Text to count tokens for
             model: Model to use for tokenization (default: config.model)
-        
+
         Returns:
             Estimated token count
         """
         model = model or self.config.model
-        
+
         try:
             import tiktoken
-            
+
             # Get encoding for model
             try:
                 encoding = tiktoken.encoding_for_model(model)
             except KeyError:
                 # Default to cl100k_base for GPT-4
                 encoding = tiktoken.get_encoding("cl100k_base")
-            
+
             return len(encoding.encode(text))
-            
+
         except ImportError:
             # Fallback: approximate 4 chars per token
             logger.warning("tiktoken not available, using approximate token count")

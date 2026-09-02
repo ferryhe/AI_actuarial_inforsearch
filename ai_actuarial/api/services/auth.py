@@ -64,7 +64,9 @@ def _session_cookie_name(request: Request) -> str:
     return str(getattr(request.app.state, "fastapi_session_cookie_name", "session") or "session")
 
 
-def _apply_session_mutation(response: Response, request: Request, mutation: SessionMutation | None) -> None:
+def _apply_session_mutation(
+    response: Response, request: Request, mutation: SessionMutation | None
+) -> None:
     if mutation is None:
         return
 
@@ -116,7 +118,9 @@ def _serialize_auth_user(token: dict[str, Any] | None) -> dict[str, Any] | None:
 def auth_me(*, request: Request) -> dict[str, Any]:
     context = get_auth_context(request)
     authenticated = bool(context.token)
-    permissions = sorted(context.permissions if authenticated else public_permissions_for_request(request))
+    permissions = sorted(
+        context.permissions if authenticated else public_permissions_for_request(request)
+    )
     return {
         "success": True,
         "data": {
@@ -137,7 +141,9 @@ def auth_me(*, request: Request) -> dict[str, Any]:
     }
 
 
-def register_user(*, request: Request, payload: dict[str, Any]) -> tuple[dict[str, Any], SessionMutation]:
+def register_user(
+    *, request: Request, payload: dict[str, Any]
+) -> tuple[dict[str, Any], SessionMutation]:
     if not isinstance(payload, dict):
         raise AuthApiError("Request body must be a JSON object", status_code=400)
     email = str(payload.get("email") or "").strip().lower()
@@ -161,7 +167,9 @@ def register_user(*, request: Request, payload: dict[str, Any]) -> tuple[dict[st
             role="registered",
             display_name=display_name or None,
         )
-        storage.log_user_activity("register", user_id=user_id, ip_address=client_ip(request), detail=f"email={email}")
+        storage.log_user_activity(
+            "register", user_id=user_id, ip_address=client_ip(request), detail=f"email={email}"
+        )
     except ValueError as exc:
         raise AuthApiError(str(exc), status_code=409) from exc
     finally:
@@ -182,7 +190,9 @@ def register_user(*, request: Request, payload: dict[str, Any]) -> tuple[dict[st
     )
 
 
-def login_user(*, request: Request, payload: dict[str, Any]) -> tuple[dict[str, Any], SessionMutation]:
+def login_user(
+    *, request: Request, payload: dict[str, Any]
+) -> tuple[dict[str, Any], SessionMutation]:
     if not isinstance(payload, dict):
         raise AuthApiError("Request body must be a JSON object", status_code=400)
 
@@ -231,7 +241,9 @@ def login_user(*, request: Request, payload: dict[str, Any]) -> tuple[dict[str, 
     storage = Storage(_db_path(request))
     try:
         user = storage.get_user_by_email(email)
-        password_ok = check_password(password, user["password_hash"] if user else DUMMY_PASSWORD_HASH)
+        password_ok = check_password(
+            password, user["password_hash"] if user else DUMMY_PASSWORD_HASH
+        )
         if not user or not password_ok:
             raise AuthApiError("Invalid email or password", status_code=401)
         if not user.get("is_active"):
@@ -319,7 +331,9 @@ def user_me(*, request: Request, auth: AuthContext) -> dict[str, Any]:
         storage.close()
 
 
-def update_profile(*, request: Request, auth: AuthContext, payload: dict[str, Any]) -> dict[str, Any]:
+def update_profile(
+    *, request: Request, auth: AuthContext, payload: dict[str, Any]
+) -> dict[str, Any]:
     if not auth.token:
         raise AuthApiError("Not authenticated", status_code=401)
     email_user = auth.token.get("_email_user")
@@ -345,7 +359,9 @@ def update_profile(*, request: Request, auth: AuthContext, payload: dict[str, An
     try:
         if new_password is not None:
             if not current_password:
-                raise AuthApiError("current_password is required to change password", status_code=400)
+                raise AuthApiError(
+                    "current_password is required to change password", status_code=400
+                )
             user_with_hash = storage.get_user_by_id(int(email_user["id"]))
             if not user_with_hash:
                 raise AuthApiError("User not found", status_code=404)
@@ -354,13 +370,19 @@ def update_profile(*, request: Request, auth: AuthContext, payload: dict[str, An
             if len(new_password) < 8:
                 raise AuthApiError("New password must be at least 8 characters", status_code=400)
             if len(new_password) > 1024:
-                raise AuthApiError("New password is too long (max 1024 characters)", status_code=400)
+                raise AuthApiError(
+                    "New password is too long (max 1024 characters)", status_code=400
+                )
             password_hash = hash_password(new_password)
 
         if display_name is None and password_hash is None:
-            raise AuthApiError("No fields to update. Provide display_name or new_password.", status_code=400)
+            raise AuthApiError(
+                "No fields to update. Provide display_name or new_password.", status_code=400
+            )
 
-        ok = storage.update_user_profile(int(email_user["id"]), display_name=display_name, password_hash=password_hash)
+        ok = storage.update_user_profile(
+            int(email_user["id"]), display_name=display_name, password_hash=password_hash
+        )
         if not ok:
             raise AuthApiError("User not found", status_code=404)
 
@@ -402,7 +424,9 @@ def create_auth_token(*, request: Request, payload: dict[str, Any]) -> dict[str,
     plaintext = secrets.token_urlsafe(32)
     storage = Storage(_db_path(request))
     try:
-        token_id = storage.create_auth_token(subject=subject, group_name=group_name, token_hash=hash_token(plaintext))
+        token_id = storage.create_auth_token(
+            subject=subject, group_name=group_name, token_hash=hash_token(plaintext)
+        )
         return {
             "success": True,
             "token": {
@@ -464,19 +488,31 @@ def list_users(*, request: Request) -> dict[str, Any]:
 
     storage = Storage(_db_path(request))
     try:
-        users, total = storage.list_users(page=page, per_page=per_page, role=role_filter, search=search)
+        users, total = storage.list_users(
+            page=page, per_page=per_page, role=role_filter, search=search
+        )
         safe_users = [_serialize_user_row(storage, user) for user in users]
-        return {"success": True, "users": safe_users, "total": total, "page": page, "per_page": per_page}
+        return {
+            "success": True,
+            "users": safe_users,
+            "total": total,
+            "page": page,
+            "per_page": per_page,
+        }
     finally:
         storage.close()
 
 
-def set_user_role(*, request: Request, auth: AuthContext, user_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+def set_user_role(
+    *, request: Request, auth: AuthContext, user_id: int, payload: dict[str, Any]
+) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise AuthApiError("Request body must be a JSON object", status_code=400)
     new_role = str(payload.get("role") or "").strip().lower()
     if new_role not in VALID_USER_ROLES:
-        raise AuthApiError(f"Invalid role. Valid roles: {', '.join(VALID_USER_ROLES)}", status_code=400)
+        raise AuthApiError(
+            f"Invalid role. Valid roles: {', '.join(VALID_USER_ROLES)}", status_code=400
+        )
     storage = Storage(_db_path(request))
     try:
         ok = storage.update_user_role(user_id, new_role)
@@ -494,7 +530,9 @@ def set_user_role(*, request: Request, auth: AuthContext, user_id: int, payload:
         storage.close()
 
 
-def set_user_active(*, request: Request, auth: AuthContext, user_id: int, is_active: bool) -> dict[str, Any]:
+def set_user_active(
+    *, request: Request, auth: AuthContext, user_id: int, is_active: bool
+) -> dict[str, Any]:
     storage = Storage(_db_path(request))
     try:
         ok = storage.update_user_active(user_id, is_active)
@@ -512,7 +550,9 @@ def set_user_active(*, request: Request, auth: AuthContext, user_id: int, is_act
         storage.close()
 
 
-def reset_user_quota(*, request: Request, auth: AuthContext, user_id: int, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+def reset_user_quota(
+    *, request: Request, auth: AuthContext, user_id: int, payload: dict[str, Any] | None = None
+) -> dict[str, Any]:
     payload = payload or {}
     raw_date = payload.get("quota_date")
     if raw_date and not re.match(r"^\d{4}-\d{2}-\d{2}$", str(raw_date)):

@@ -74,18 +74,18 @@ def serpapi_search(
     # Google news specific params
     if engine == "google_news":
         params_dict["tbs"] = "sbd:1"
-        
+
     params = urllib.parse.urlencode(_filter_params(params_dict))
     url = f"https://serpapi.com/search.json?{params}"
     headers = {"User-Agent": user_agent, "Accept": "application/json"}
     data = _http_get_json(url, headers)
     results = []
-    
+
     # Handle different result keys based on engine
     result_key = "organic_results"
     if engine == "google_news":
         result_key = "news_results"
-        
+
     for item in data.get(result_key, []):
         link = item.get("link")
         if link:

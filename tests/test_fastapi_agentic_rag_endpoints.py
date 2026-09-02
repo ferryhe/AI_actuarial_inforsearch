@@ -36,7 +36,9 @@ def _write_config_files(base_dir: Path) -> Path:
         ),
         encoding="utf-8",
     )
-    categories_path.write_text(yaml.safe_dump({"categories": {}}, sort_keys=False), encoding="utf-8")
+    categories_path.write_text(
+        yaml.safe_dump({"categories": {}}, sort_keys=False), encoding="utf-8"
+    )
     return db_path
 
 
@@ -225,7 +227,9 @@ def _build_client(tmp_path: Path, monkeypatch) -> tuple[TestClient, Path]:
     return TestClient(app), db_path
 
 
-def test_fastapi_agentic_rag_summary_search_uses_explicit_output_dir(tmp_path: Path, monkeypatch) -> None:
+def test_fastapi_agentic_rag_summary_search_uses_explicit_output_dir(
+    tmp_path: Path, monkeypatch
+) -> None:
     client, _db_path = _build_client(tmp_path, monkeypatch)
     ready_dir = tmp_path / "agentic_ready_data" / "explicit"
     _write_ready_data(ready_dir)
@@ -244,7 +248,9 @@ def test_fastapi_agentic_rag_summary_search_uses_explicit_output_dir(tmp_path: P
     assert body["results"][0]["source"] == "doc_summaries"
 
 
-def test_fastapi_agentic_rag_title_search_resolves_registry_ready_manifest(tmp_path: Path, monkeypatch) -> None:
+def test_fastapi_agentic_rag_title_search_resolves_registry_ready_manifest(
+    tmp_path: Path, monkeypatch
+) -> None:
     client, db_path = _build_client(tmp_path, monkeypatch)
     ready_dir = tmp_path / "agentic_ready_data" / "kbs" / "kb-a" / "general" / "1"
     _write_ready_data(ready_dir)
@@ -324,7 +330,9 @@ def test_fastapi_agentic_rag_title_search_resolves_atomically_published_manifest
     assert response.json()["results"][0]["title"] == "Reserve Method Note"
 
 
-def test_fastapi_agentic_rag_section_search_uses_explicit_output_dir(tmp_path: Path, monkeypatch) -> None:
+def test_fastapi_agentic_rag_section_search_uses_explicit_output_dir(
+    tmp_path: Path, monkeypatch
+) -> None:
     client, _db_path = _build_client(tmp_path, monkeypatch)
     ready_dir = tmp_path / "agentic_ready_data" / "explicit"
     _write_ready_data(ready_dir)
@@ -355,7 +363,12 @@ def test_fastapi_agentic_rag_section_search_uses_kb_manifest_profile_by_default(
     storage = Storage(str(db_path))
     try:
         manager = KnowledgeBaseManager(storage)
-        manager.create_kb(kb_id="kb-regulation", name="Regulation KB", kb_mode="manual", manifest_profile="regulation")
+        manager.create_kb(
+            kb_id="kb-regulation",
+            name="Regulation KB",
+            kb_mode="manual",
+            manifest_profile="regulation",
+        )
         storage.upsert_agentic_ready_manifest(
             kb_id="kb-regulation",
             profile="regulation",
@@ -399,7 +412,9 @@ def test_fastapi_agentic_rag_section_search_uses_kb_manifest_profile_by_default(
     assert relation_body["results"][0]["relation_type"] == "document_has_section"
 
 
-def test_fastapi_agentic_rag_trace_relations_uses_explicit_output_dir(tmp_path: Path, monkeypatch) -> None:
+def test_fastapi_agentic_rag_trace_relations_uses_explicit_output_dir(
+    tmp_path: Path, monkeypatch
+) -> None:
     client, _db_path = _build_client(tmp_path, monkeypatch)
     ready_dir = tmp_path / "agentic_ready_data" / "explicit"
     _write_ready_data(ready_dir)
@@ -457,7 +472,9 @@ def test_fastapi_agentic_rag_formula_search_endpoints_use_explicit_output_dir(
     assert term_body["results"][0]["source"] == "calculation_terms"
 
 
-def test_fastapi_agentic_rag_search_returns_empty_results_for_no_match(tmp_path: Path, monkeypatch) -> None:
+def test_fastapi_agentic_rag_search_returns_empty_results_for_no_match(
+    tmp_path: Path, monkeypatch
+) -> None:
     client, _db_path = _build_client(tmp_path, monkeypatch)
     ready_dir = tmp_path / "agentic_ready_data" / "explicit"
     _write_ready_data(ready_dir)
@@ -511,14 +528,21 @@ def test_fastapi_agentic_rag_search_rejects_output_dir_mixed_with_kb_registry(
 
     response = client.post(
         "/api/agentic-rag/search/titles",
-        json={"query": "capital", "output_dir": str(ready_dir), "kb_id": "kb-a", "profile": "general"},
+        json={
+            "query": "capital",
+            "output_dir": str(ready_dir),
+            "kb_id": "kb-a",
+            "profile": "general",
+        },
     )
 
     assert response.status_code == 400
     assert "cannot be combined" in response.json()["error"]
 
 
-def test_fastapi_agentic_rag_search_rejects_missing_ready_data_registry(tmp_path: Path, monkeypatch) -> None:
+def test_fastapi_agentic_rag_search_rejects_missing_ready_data_registry(
+    tmp_path: Path, monkeypatch
+) -> None:
     client, _db_path = _build_client(tmp_path, monkeypatch)
 
     response = client.post(
@@ -540,7 +564,9 @@ def test_fastapi_agentic_rag_search_rejects_not_ready_registry_manifest(
     storage = Storage(str(db_path))
     try:
         manager = KnowledgeBaseManager(storage)
-        manager.create_kb(kb_id="kb-building", name="Building KB", kb_mode="manual", manifest_profile="general")
+        manager.create_kb(
+            kb_id="kb-building", name="Building KB", kb_mode="manual", manifest_profile="general"
+        )
         storage.upsert_agentic_ready_manifest(
             kb_id="kb-building",
             profile="general",
@@ -570,7 +596,9 @@ def test_fastapi_agentic_rag_search_rejects_registry_output_dir_outside_ready_ro
     storage = Storage(str(db_path))
     try:
         manager = KnowledgeBaseManager(storage)
-        manager.create_kb(kb_id="kb-outside", name="Outside KB", kb_mode="manual", manifest_profile="general")
+        manager.create_kb(
+            kb_id="kb-outside", name="Outside KB", kb_mode="manual", manifest_profile="general"
+        )
         storage.upsert_agentic_ready_manifest(
             kb_id="kb-outside",
             profile="general",
@@ -597,7 +625,11 @@ def test_fastapi_agentic_rag_chat_uses_explicit_output_dir(tmp_path: Path, monke
 
     response = client.post(
         "/api/agentic-rag/chat",
-        json={"query": "How does Article 19 define required capital?", "limit": 2, "output_dir": str(ready_dir)},
+        json={
+            "query": "How does Article 19 define required capital?",
+            "limit": 2,
+            "output_dir": str(ready_dir),
+        },
     )
 
     assert response.status_code == 200, response.text
@@ -631,7 +663,12 @@ def test_fastapi_agentic_rag_chat_resolves_registry_manifest_profile(
     storage = Storage(str(db_path))
     try:
         manager = KnowledgeBaseManager(storage)
-        manager.create_kb(kb_id="kb-regulation", name="Regulation KB", kb_mode="manual", manifest_profile="regulation")
+        manager.create_kb(
+            kb_id="kb-regulation",
+            name="Regulation KB",
+            kb_mode="manual",
+            manifest_profile="regulation",
+        )
         storage.upsert_agentic_ready_manifest(
             kb_id="kb-regulation",
             profile="regulation",
@@ -655,7 +692,11 @@ def test_fastapi_agentic_rag_chat_resolves_registry_manifest_profile(
 
     response = client.post(
         "/api/agentic-rag/chat",
-        json={"query": "How does Article 19 define required capital?", "limit": 2, "kb_id": "kb-regulation"},
+        json={
+            "query": "How does Article 19 define required capital?",
+            "limit": 2,
+            "kb_id": "kb-regulation",
+        },
     )
 
     assert response.status_code == 200, response.text
@@ -673,7 +714,9 @@ def test_fastapi_agentic_rag_chat_rejects_empty_query(tmp_path: Path, monkeypatc
     ready_dir = tmp_path / "agentic_ready_data" / "explicit"
     _write_ready_data(ready_dir)
 
-    response = client.post("/api/agentic-rag/chat", json={"query": "   ", "output_dir": str(ready_dir)})
+    response = client.post(
+        "/api/agentic-rag/chat", json={"query": "   ", "output_dir": str(ready_dir)}
+    )
 
     assert response.status_code == 400
     assert "query" in response.json()["error"]
@@ -685,7 +728,9 @@ def test_fastapi_agentic_rag_chat_reuses_missing_ready_data_registry_error(
 ) -> None:
     client, _db_path = _build_client(tmp_path, monkeypatch)
 
-    response = client.post("/api/agentic-rag/chat", json={"query": "capital", "kb_id": "kb-missing"})
+    response = client.post(
+        "/api/agentic-rag/chat", json={"query": "capital", "kb_id": "kb-missing"}
+    )
 
     assert response.status_code == 404
     assert "ready_data" in response.json()["error"]
@@ -701,7 +746,9 @@ def test_fastapi_agentic_rag_chat_reuses_not_ready_registry_error(
     storage = Storage(str(db_path))
     try:
         manager = KnowledgeBaseManager(storage)
-        manager.create_kb(kb_id="kb-building", name="Building KB", kb_mode="manual", manifest_profile="general")
+        manager.create_kb(
+            kb_id="kb-building", name="Building KB", kb_mode="manual", manifest_profile="general"
+        )
         storage.upsert_agentic_ready_manifest(
             kb_id="kb-building",
             profile="general",
@@ -712,7 +759,9 @@ def test_fastapi_agentic_rag_chat_reuses_not_ready_registry_error(
     finally:
         storage.close()
 
-    response = client.post("/api/agentic-rag/chat", json={"query": "capital", "kb_id": "kb-building"})
+    response = client.post(
+        "/api/agentic-rag/chat", json={"query": "capital", "kb_id": "kb-building"}
+    )
 
     assert response.status_code == 409
     assert "not ready" in response.json()["error"]
@@ -734,7 +783,10 @@ def test_fastapi_agentic_rag_chat_does_not_hide_tool_runtime_errors(
 
     response = no_raise_client.post(
         "/api/agentic-rag/chat",
-        json={"query": "How does Article 19 define required capital?", "output_dir": str(ready_dir)},
+        json={
+            "query": "How does Article 19 define required capital?",
+            "output_dir": str(ready_dir),
+        },
     )
 
     assert response.status_code == 500
@@ -742,7 +794,9 @@ def test_fastapi_agentic_rag_chat_does_not_hide_tool_runtime_errors(
     assert "tool runtime failure" not in response.text
 
 
-def test_agentic_rag_registry_profile_lookup_does_not_hide_sqlite_errors(tmp_path: Path, monkeypatch) -> None:
+def test_agentic_rag_registry_profile_lookup_does_not_hide_sqlite_errors(
+    tmp_path: Path, monkeypatch
+) -> None:
     class _BrokenConn:
         def execute(self, *_args, **_kwargs):
             raise sqlite3.OperationalError("database is locked")

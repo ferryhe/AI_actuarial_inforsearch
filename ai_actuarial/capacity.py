@@ -74,9 +74,7 @@ def ensure_capacity(
 ) -> dict[str, Any]:
     """Raise :class:`CapacityBlockedError` when ``path`` is at or over the
     threshold, otherwise return the capacity status."""
-    status = capacity_status(
-        path, threshold_percent=threshold_percent, disk_usage=disk_usage
-    )
+    status = capacity_status(path, threshold_percent=threshold_percent, disk_usage=disk_usage)
     if status["blocked"]:
         raise CapacityBlockedError(
             operation=operation,

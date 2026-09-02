@@ -15,12 +15,13 @@ Options:
     --no-backup  Skip backup creation
 """
 
+import argparse
 import os
 import sys
-import yaml
-import argparse
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
+
+import yaml
 from dotenv import load_dotenv
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -62,7 +63,7 @@ def get_float_env(key: str, default: str) -> float:
 def extract_ai_config() -> dict:
     """
     Extract AI configuration from environment variables.
-    
+
     Raises:
         ValueError: If environment variables contain invalid values with context about which section failed
     """
@@ -75,14 +76,23 @@ def extract_ai_config() -> dict:
             "marker": ("local", "marker"),
             "local": ("local", "docling"),
             "mistral": ("mistral", os.getenv("MISTRAL_DEFAULT_MODEL", "mistral-ocr-latest")),
-            "deepseekocr": ("siliconflow", os.getenv("SILICONFLOW_DEFAULT_MODEL", "deepseek-ai/DeepSeek-OCR")),
+            "deepseekocr": (
+                "siliconflow",
+                os.getenv("SILICONFLOW_DEFAULT_MODEL", "deepseek-ai/DeepSeek-OCR"),
+            ),
             "mathpix": ("mathpix", "mathpix"),
         }
-        ocr_provider, ocr_model = engine_provider_model.get(default_engine, ("local", default_engine or "docling"))
+        ocr_provider, ocr_model = engine_provider_model.get(
+            default_engine, ("local", default_engine or "docling")
+        )
         embedding_provider = os.getenv("RAG_EMBEDDING_PROVIDER", "openai")
         embedding_model = os.getenv("RAG_EMBEDDING_MODEL", "text-embedding-3-large")
-        embedding_batch_size_default = get_embedding_batch_size_default(embedding_provider, embedding_model)
-        similarity_threshold_default = get_similarity_threshold_default(embedding_provider, embedding_model)
+        embedding_batch_size_default = get_embedding_batch_size_default(
+            embedding_provider, embedding_model
+        )
+        similarity_threshold_default = get_similarity_threshold_default(
+            embedding_provider, embedding_model
+        )
 
         return {
             "catalog": {
@@ -108,9 +118,13 @@ def extract_ai_config() -> dict:
                 "default_mode": os.getenv("CHATBOT_DEFAULT_MODE", "expert"),
                 "enable_citation": get_bool_env("CHATBOT_ENABLE_CITATION", "true"),
                 "min_citation_score": get_float_env("CHATBOT_MIN_CITATION_SCORE", "0.4"),
-                "max_citations_per_response": get_int_env("CHATBOT_MAX_CITATIONS_PER_RESPONSE", "5"),
+                "max_citations_per_response": get_int_env(
+                    "CHATBOT_MAX_CITATIONS_PER_RESPONSE", "5"
+                ),
                 "enable_query_validation": get_bool_env("CHATBOT_ENABLE_QUERY_VALIDATION", "true"),
-                "enable_response_validation": get_bool_env("CHATBOT_ENABLE_RESPONSE_VALIDATION", "true"),
+                "enable_response_validation": get_bool_env(
+                    "CHATBOT_ENABLE_RESPONSE_VALIDATION", "true"
+                ),
                 "max_query_length": get_int_env("CHATBOT_MAX_QUERY_LENGTH", "1000"),
             },
             "ocr": {
@@ -140,13 +154,15 @@ def extract_ai_config() -> dict:
             },
         }
     except ValueError as e:
-        raise ValueError(f"Error extracting AI configuration from environment variables: {e}") from e
+        raise ValueError(
+            f"Error extracting AI configuration from environment variables: {e}"
+        ) from e
 
 
 def extract_rag_config() -> dict:
     """
     Extract RAG configuration from environment variables.
-    
+
     Raises:
         ValueError: If environment variables contain invalid values
     """
@@ -161,13 +177,15 @@ def extract_rag_config() -> dict:
             "index_type": os.getenv("RAG_INDEX_TYPE", "Flat"),
         }
     except ValueError as e:
-        raise ValueError(f"Error extracting RAG configuration from environment variables: {e}") from e
+        raise ValueError(
+            f"Error extracting RAG configuration from environment variables: {e}"
+        ) from e
 
 
 def extract_features() -> dict:
     """
     Extract feature flags from environment variables.
-    
+
     Raises:
         ValueError: If environment variables contain invalid values
     """
@@ -191,7 +209,7 @@ def extract_features() -> dict:
 def extract_server_config() -> dict:
     """
     Extract server configuration from environment variables.
-    
+
     Raises:
         ValueError: If environment variables contain invalid values
     """
@@ -204,23 +222,25 @@ def extract_server_config() -> dict:
             "flask_debug": get_bool_env("FLASK_DEBUG", "false"),
         }
     except ValueError as e:
-        raise ValueError(f"Error extracting server configuration from environment variables: {e}") from e
+        raise ValueError(
+            f"Error extracting server configuration from environment variables: {e}"
+        ) from e
 
 
 def extract_database_config() -> dict:
     """
     Extract database configuration from environment variables.
-    
+
     Raises:
         ValueError: If environment variables contain invalid values
     """
     try:
         db_type = os.getenv("DB_TYPE", "sqlite")
-        
+
         config = {
             "type": db_type,
         }
-        
+
         if db_type == "sqlite":
             config["path"] = os.getenv("DB_PATH", "data/index.db")
         elif db_type == "postgresql":
@@ -229,16 +249,18 @@ def extract_database_config() -> dict:
             config["database"] = os.getenv("DB_NAME", "ai_actuarial")
             config["username"] = os.getenv("DB_USER", "postgres")
             # Password remains in .env
-        
+
         return config
     except ValueError as e:
-        raise ValueError(f"Error extracting database configuration from environment variables: {e}") from e
+        raise ValueError(
+            f"Error extracting database configuration from environment variables: {e}"
+        ) from e
 
 
 def migrate(dry_run: bool = False, create_backup: bool = True) -> None:
     """
     Migrate configuration from .env to sites.yaml.
-    
+
     Args:
         dry_run: If True, show what would be done without making changes
         create_backup: If True, create backup before modifying
@@ -252,26 +274,26 @@ def migrate(dry_run: bool = False, create_backup: bool = True) -> None:
             "Refusing to modify an existing external CONFIG_PATH. "
             "Use `ai-actuarial --config <path> config-bootstrap` to create it once."
         )
-    
+
     # Determine sites.yaml path
     sites_path = Path(get_sites_config_path())
     if not sites_path.exists():
         print(f"❌ Error: {sites_path} not found")
         sys.exit(1)
-    
+
     # Load current sites.yaml
     config = load_sites_config(sites_path)
-    
+
     print("🔍 Analyzing current configuration...")
     print(f"   sites.yaml path: {sites_path.absolute()}")
-    
+
     # Check what's already in sites.yaml
     has_ai_config = "ai_config" in config
     has_rag_config = "rag_config" in config
     has_features = "features" in config
     has_server = "server" in config
     has_database = "database" in config
-    
+
     print("   Existing sections:")
     print(f"     - ai_config: {'✓' if has_ai_config else '✗'}")
     print(f"     - rag_config: {'✓' if has_rag_config else '✗'}")
@@ -279,71 +301,77 @@ def migrate(dry_run: bool = False, create_backup: bool = True) -> None:
     print(f"     - server: {'✓' if has_server else '✗'}")
     print(f"     - database: {'✓' if has_database else '✗'}")
     print()
-    
+
     # Extract configuration from environment
     print("📦 Extracting configuration from environment variables...")
-    
+
     new_sections = {}
-    
+
     if not has_ai_config:
         new_sections["ai_config"] = extract_ai_config()
         print("   ✓ ai_config extracted")
     else:
         print("   ⊘ ai_config already exists (skipping)")
-    
+
     if not has_rag_config:
         new_sections["rag_config"] = extract_rag_config()
         print("   ✓ rag_config extracted")
     else:
         print("   ⊘ rag_config already exists (skipping)")
-    
+
     if not has_features:
         new_sections["features"] = extract_features()
         print("   ✓ features extracted")
     else:
         print("   ⊘ features already exists (skipping)")
-    
+
     if not has_server:
         new_sections["server"] = extract_server_config()
         print("   ✓ server extracted")
     else:
         print("   ⊘ server already exists (skipping)")
-    
+
     if not has_database:
         new_sections["database"] = extract_database_config()
         print("   ✓ database extracted")
     else:
         print("   ⊘ database already exists (skipping)")
-    
+
     if not new_sections:
         print("\n✅ All configuration sections already exist in sites.yaml")
         print("   No migration needed!")
         return
-    
+
     print()
-    
+
     if dry_run:
         print("🔎 DRY RUN - Would add the following sections to sites.yaml:")
         print()
         for section, content in new_sections.items():
             print(f"  {section}:")
-            print(yaml.dump({section: content}, default_flow_style=False, allow_unicode=True, indent=2))
+            print(
+                yaml.dump(
+                    {section: content}, default_flow_style=False, allow_unicode=True, indent=2
+                )
+            )
         print("Run without --dry-run to apply changes")
         return
-    
+
     # Create backup if requested
     if create_backup:
-        backup_path = sites_path.with_suffix(f'.yaml.backup.{datetime.now().strftime("%Y%m%d_%H%M%S")}')
-        with open(backup_path, 'w', encoding='utf-8') as f:
+        backup_path = sites_path.with_suffix(
+            f'.yaml.backup.{datetime.now().strftime("%Y%m%d_%H%M%S")}'
+        )
+        with open(backup_path, "w", encoding="utf-8") as f:
             yaml.dump(config, f, default_flow_style=False, allow_unicode=True, indent=2)
         print(f"💾 Backup created: {backup_path}")
-    
+
     # Update configuration
     config.update(new_sections)
-    
+
     # Write back to the authoritative runtime config atomically.
     atomic_write_yaml(sites_path, config)
-    
+
     print("\n✅ Migration complete!")
     print(f"   Added {len(new_sections)} section(s) to {sites_path}")
     print()
@@ -372,33 +400,28 @@ Examples:
   
   # Migrate without backup
   python scripts/migrate_env_to_yaml.py --no-backup
-        """
+        """,
     )
     parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Show what would be migrated without making changes"
+        "--dry-run", action="store_true", help="Show what would be migrated without making changes"
     )
     parser.add_argument(
         "--backup",
         action="store_true",
         default=True,
-        help="Create backup of sites.yaml before modifying (default)"
+        help="Create backup of sites.yaml before modifying (default)",
     )
     parser.add_argument(
-        "--no-backup",
-        action="store_false",
-        dest="backup",
-        help="Skip backup creation"
+        "--no-backup", action="store_false", dest="backup", help="Skip backup creation"
     )
-    
+
     args = parser.parse_args()
-    
+
     print("=" * 70)
     print("Configuration Migration: .env → sites.yaml")
     print("=" * 70)
     print()
-    
+
     try:
         migrate(dry_run=args.dry_run, create_backup=args.backup)
     except KeyboardInterrupt:

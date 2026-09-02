@@ -1,19 +1,19 @@
 from __future__ import annotations
 
+import hashlib
+import html as html_lib
+import json
 import logging
 import os
 import re
-import json
-import hashlib
-import html as html_lib
 import string
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
+from .shared_runtime import get_categories_config_path
 from .storage import Storage
 from .utils import load_category_config
-from .shared_runtime import get_categories_config_path
 
 logger = logging.getLogger(__name__)
 
@@ -26,9 +26,9 @@ try:
     _category_config = load_category_config(get_categories_config_path())
     CATEGORY_RULES = _category_config.get("categories", {})
     AI_TERMS = _category_config.get("ai_filter_keywords", [])
-    AI_KEYWORDS = _category_config.get("ai_keywords", [])
 except FileNotFoundError as e:
     import logging
+
     logging.warning("Category config file not found, using default values: %s", e)
     # Fallback to hardcoded values if config load fails
     AI_TERMS = [
@@ -45,21 +45,7 @@ except FileNotFoundError as e:
         "transformer",
         "nlp",
     ]
-    
-    AI_KEYWORDS = [
-        "artificial intelligence",
-        "machine learning",
-        "deep learning",
-        "large language model",
-        "generative ai",
-        "llm",
-        "genai",
-        "chatgpt",
-        "transformer",
-        "neural network",
-        "nlp",
-    ]
-    
+
     CATEGORY_RULES: dict[str, list[str]] = {
         "AI": [
             "artificial intelligence",
@@ -258,7 +244,11 @@ def detect_kind(path: Path) -> str:
 
     stripped = head.lstrip()
     lowered = stripped[:256].lower()
-    if lowered.startswith(b"<!doctype") or lowered.startswith(b"<html") or lowered.startswith(b"<!doc"):
+    if (
+        lowered.startswith(b"<!doctype")
+        or lowered.startswith(b"<html")
+        or lowered.startswith(b"<!doc")
+    ):
         return "html"
 
     if head:
@@ -316,7 +306,9 @@ def _cache_key(path: Path, max_chars: int, extractor_version: str) -> str:
     # Keyed by absolute path + size + mtime + max_chars + extractor version
     try:
         st = path.stat()
-        payload = f"{path.resolve()}|{st.st_size}|{int(st.st_mtime)}|{max_chars}|{extractor_version}"
+        payload = (
+            f"{path.resolve()}|{st.st_size}|{int(st.st_mtime)}|{max_chars}|{extractor_version}"
+        )
     except Exception:
         payload = f"{path}|{max_chars}|{extractor_version}"
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
@@ -351,8 +343,9 @@ def _write_cache(key: str, text: str) -> None:
 
 
 def _read_pdf_fast(path: Path, max_chars: int, max_pages: int = 20) -> str:
-    from pypdf import PdfReader
     import logging
+
+    from pypdf import PdfReader
 
     # Silence noisy parser warnings; errors are handled by caller.
     logging.getLogger("pypdf").setLevel(logging.ERROR)
@@ -391,7 +384,9 @@ def _read_pdf_marker(path: Path, max_chars: int) -> str:
         # marker>=? sometimes exposes PdfConverter like this
         from marker.converters.pdf import PdfConverter  # type: ignore
 
+        # pylint: disable-next=no-value-for-parameter
         converter = PdfConverter()
+        # pylint: disable-next=no-member
         md = converter.convert(str(path))  # type: ignore
     except Exception:
         md = None
@@ -399,6 +394,8 @@ def _read_pdf_marker(path: Path, max_chars: int) -> str:
     if md is None:
         try:
             # Some installs may provide a simple convert function
+            # Optional marker versions expose different public entry points.
+            # pylint: disable-next=no-name-in-module
             from marker import convert  # type: ignore
 
             md = convert(str(path))  # type: ignore
@@ -517,9 +514,7 @@ def extract_text(path: Path, max_chars: int = 20000) -> str:
         try:
             return _read_pdf(path, max_chars)
         except Exception as e:
-            raise ValueError(
-                f"corrupt pdf ({kind}): {path} ({type(e).__name__}: {e})"
-            ) from e
+            raise ValueError(f"corrupt pdf ({kind}): {path} ({type(e).__name__}: {e})") from e
     if kind == "html":
         return _read_html(path, max_chars)
     if kind in {"jpeg", "png"}:
@@ -606,29 +601,6 @@ def summarize(text: str, keywords: list[str], max_sentences: int = 4) -> str:
     return " ".join(picked)
 
 
-def _ai_hit(title: str | None, keywords: list[str]) -> bool:
-    """Check if document has explicit AI/ML keywords - using word-boundary matching."""
-    hay = (title or "") + " " + " ".join(keywords)
-    hay = hay.lower()
-    words = set(re.findall(r'\b\w+\b', hay))
-    
-    # Only match full words/phrases to avoid false positives
-    ai_terms = ["artificial intelligence", "machine learning", "deep learning", 
-                "large language model", "llm", "generative ai", "neural network", "nlp"]
-    
-    for term in ai_terms:
-        if " " in term:
-            # Multi-word: check phrase in hay
-            if term in hay:
-                return True
-        else:
-            # Single word: check in word set
-            if term in words:
-                return True
-    
-    return False
-
-
 def is_ai_related(text: str, keywords: list[str], title: str | None = None) -> bool:
     # Keep broader AI detection for optional ai_only filtering
     hay = (title or "") + " " + text
@@ -712,11 +684,11 @@ def categorize(title: str | None, text: str, keywords: list[str]) -> str:
     """Categorize document using word-boundary matching for accuracy."""
     hay = (title or "") + " " + text + " " + " ".join(keywords)
     hay = hay.lower()
-    
+
     # Tokenize to word list for word-boundary matching
-    words = re.findall(r'\b\w+\b', hay)
+    words = re.findall(r"\b\w+\b", hay)
     word_set = set(words)
-    
+
     matches: list[tuple[str, int]] = []
     for cat, terms in CATEGORY_RULES.items():
         score = 0
@@ -729,42 +701,20 @@ def categorize(title: str | None, text: str, keywords: list[str]) -> str:
                     score += 1
             else:
                 # Multi-word term: check if sequence exists
-                pattern = r'\b' + r'\s+'.join(re.escape(w) for w in term_words) + r'\b'
+                pattern = r"\b" + r"\s+".join(re.escape(w) for w in term_words) + r"\b"
                 if re.search(pattern, hay):
                     score += 1
-        
+
         if score > 0:
             matches.append((cat, score))
-    
+
     if not matches:
         return "Other"
-    
+
     matches.sort(key=lambda x: x[1], reverse=True)
     cats = [c for c, _ in matches]
-    
-    # Only force AI to front if it was already in matches (don't artificially boost)
-    # if _ai_hit(title, keywords) and "AI" not in cats:
-    #     cats = ["AI"] + cats
-    
+
     return "; ".join(cats[:3])
-
-
-def _fallback_keywords(text: str, top_n: int) -> list[str]:
-    try:
-        from sklearn.feature_extraction.text import TfidfVectorizer
-
-        vectorizer = TfidfVectorizer(
-            stop_words="english",
-            ngram_range=(1, 2),
-            max_features=50,
-        )
-        tfidf = vectorizer.fit_transform([text])
-        scores = tfidf.toarray()[0]
-        terms = vectorizer.get_feature_names_out()
-        ranked = sorted(zip(terms, scores), key=lambda x: x[1], reverse=True)
-        return [t for t, _ in ranked[:top_n]]
-    except Exception:
-        return []
 
 
 # ---------------------------------------------------------------------------
@@ -826,58 +776,6 @@ def build_catalog(
     return items
 
 
-def build_catalog_batch(
-    storage: Storage,
-    site_filter: str | None,
-    row_limit: int,
-    ai_only: bool = False,
-    offset: int = 0,
-) -> tuple[list[CatalogItem], int]:
-    rows = storage.iter_files(
-        site_filter=site_filter,
-        limit=row_limit,
-        offset=offset,
-        require_local_path=True,
-    )
-    items: list[CatalogItem] = []
-    filters: list[str] = []
-    if site_filter:
-        filters = [s.strip().lower() for s in site_filter.split(",") if s.strip()]
-    for row in rows:
-        site = row.get("source_site")
-        if filters:
-            if not site or not any(f in site.lower() for f in filters):
-                continue
-        path = row.get("local_path")
-        if not path:
-            continue
-        try:
-            text = extract_text(Path(path))
-        except Exception:
-            continue
-        if not text:
-            continue
-        title = row.get("title")
-        keywords = extract_keywords(text, title=title)
-        if ai_only and not is_ai_related(text, keywords, title=title):
-            continue
-        summary = summarize(text, keywords)
-        category = categorize(title, text, keywords)
-        items.append(
-            CatalogItem(
-                source_site=site,
-                title=title,
-                original_filename=row.get("original_filename"),
-                url=row.get("url"),
-                local_path=path,
-                keywords=keywords,
-                summary=summary,
-                category=category,
-            )
-        )
-    return items, len(rows)
-
-
 def write_catalog_jsonl(path: Path, items: Iterable[dict]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "a", encoding="utf-8") as f:
@@ -915,7 +813,7 @@ def build_catalog_incremental(
     if batch_size <= 0:
         batch_size = len(rows) if rows else 1
     for start in range(0, len(rows), batch_size):
-        batch = rows[start:start + batch_size]
+        batch = rows[start : start + batch_size]
         with storage.transaction():
             for row in batch:
                 site = row.get("source_site")
@@ -973,9 +871,7 @@ def build_catalog_incremental(
                     errors += 1
                     continue
     if processed or skipped or errors:
-        logger.info(
-            f"catalog_incremental: processed={processed} skipped={skipped} errors={errors}"
-        )
+        logger.info(f"catalog_incremental: processed={processed} skipped={skipped} errors={errors}")
     return results
 
 

@@ -5,7 +5,7 @@ import {
 import { isChatKnowledgeBaseAvailable } from "@/lib/chat-knowledge-bases";
 import type { KnowledgeBase, RagMode } from "./types";
 
-export interface ChatRouteSelection {
+interface ChatRouteSelection {
   ragMode: RagMode;
   selectedKbs: [string];
 }

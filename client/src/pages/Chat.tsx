@@ -435,7 +435,6 @@ export default function Chat() {
     messages,
     setMessages,
     loadingConvs,
-    setLoadingConvs,
     resetSession,
     loadConversations,
     loadConversation: loadSessionConversation,

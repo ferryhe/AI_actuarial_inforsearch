@@ -21,27 +21,21 @@ from ai_actuarial.api.services.ops_write import OpsWriteError, update_ai_routing
 from ai_actuarial.api.services.rag_admin import RagAdminError, update_chunk_profile
 from ai_actuarial.embedding_service import UnsupportedOptionsError
 from ai_actuarial.manifest_ingest import ingest_manifest
-from ai_actuarial.pipeline_config import (
-    VERSIONED,
-    detect_versioned_change,
-    stage_mutability,
-    stage_option_keys,
-)
 from ai_actuarial.rag.knowledge_base import KnowledgeBaseManager
 from ai_actuarial.storage import Storage
 from ai_actuarial.task_runtime import NativeTaskRuntime
 
-
 # ---------------------------------------------------------------------------
 # A. embeddings immutable hard intercept (write entry)
 # ---------------------------------------------------------------------------
+
 
 def _patch_routing_io(monkeypatch: pytest.MonkeyPatch, config_data: dict) -> None:
     monkeypatch.setattr(ops_write, "_load_config_data", lambda: config_data)
     monkeypatch.setattr(ops_write, "_write_config_data", lambda data: None)
     monkeypatch.setattr(ops_write, "_notify_site_config_updated", lambda *a, **k: None)
     monkeypatch.setattr(ops_write, "_reload_runtime_caches", lambda: None)
-    monkeypatch.setattr(ops_write, "get_ai_routing", lambda **kw: {})
+    monkeypatch.setattr(ops_write, "get_ai_routing", lambda **_kw: {})
 
 
 def _make_kb_in_use(db_path: str, kb_id: str = "kb-1") -> None:
@@ -67,7 +61,9 @@ def _make_kb_in_use(db_path: str, kb_id: str = "kb-1") -> None:
 def test_embeddings_model_change_without_full_reindex_is_rejected(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    config = {"ai_config": {"embeddings": {"provider": "openai", "model": "text-embedding-3-large"}}}
+    config = {
+        "ai_config": {"embeddings": {"provider": "openai", "model": "text-embedding-3-large"}}
+    }
     _patch_routing_io(monkeypatch, config)
     db_path = str(tmp_path / "index.db")
     _make_kb_in_use(db_path)
@@ -75,7 +71,11 @@ def test_embeddings_model_change_without_full_reindex_is_rejected(
         update_ai_routing(
             {
                 "bindings": [
-                    {"function_name": "embeddings", "provider": "openai", "model": "text-embedding-3-small"}
+                    {
+                        "function_name": "embeddings",
+                        "provider": "openai",
+                        "model": "text-embedding-3-small",
+                    }
                 ]
             },
             db_path=db_path,
@@ -85,7 +85,9 @@ def test_embeddings_model_change_without_full_reindex_is_rejected(
 def test_embeddings_provider_change_without_full_reindex_is_rejected(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    config = {"ai_config": {"embeddings": {"provider": "openai", "model": "text-embedding-3-large"}}}
+    config = {
+        "ai_config": {"embeddings": {"provider": "openai", "model": "text-embedding-3-large"}}
+    }
     _patch_routing_io(monkeypatch, config)
     db_path = str(tmp_path / "index.db")
     _make_kb_in_use(db_path)
@@ -93,21 +95,33 @@ def test_embeddings_provider_change_without_full_reindex_is_rejected(
         update_ai_routing(
             {
                 "bindings": [
-                    {"function_name": "embeddings", "provider": "qwen", "model": "text-embedding-v3"}
+                    {
+                        "function_name": "embeddings",
+                        "provider": "qwen",
+                        "model": "text-embedding-v3",
+                    }
                 ]
             },
             db_path=db_path,
         )
 
 
-def test_embeddings_model_change_with_full_reindex_is_allowed(monkeypatch: pytest.MonkeyPatch) -> None:
-    config = {"ai_config": {"embeddings": {"provider": "openai", "model": "text-embedding-3-large"}}}
+def test_embeddings_model_change_with_full_reindex_is_allowed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = {
+        "ai_config": {"embeddings": {"provider": "openai", "model": "text-embedding-3-large"}}
+    }
     _patch_routing_io(monkeypatch, config)
     result = update_ai_routing(
         {
             "full_reindex": True,
             "bindings": [
-                {"function_name": "embeddings", "provider": "openai", "model": "text-embedding-3-small"}
+                {
+                    "function_name": "embeddings",
+                    "provider": "openai",
+                    "model": "text-embedding-3-small",
+                }
             ],
         },
         db_path=":memory:",
@@ -119,7 +133,9 @@ def test_embeddings_model_change_with_full_reindex_is_allowed(monkeypatch: pytes
 
 
 def test_embeddings_same_model_knob_update_is_not_blocked(monkeypatch: pytest.MonkeyPatch) -> None:
-    config = {"ai_config": {"embeddings": {"provider": "openai", "model": "text-embedding-3-large"}}}
+    config = {
+        "ai_config": {"embeddings": {"provider": "openai", "model": "text-embedding-3-large"}}
+    }
     _patch_routing_io(monkeypatch, config)
     result = update_ai_routing(
         {
@@ -140,6 +156,7 @@ def test_embeddings_same_model_knob_update_is_not_blocked(monkeypatch: pytest.Mo
 # ---------------------------------------------------------------------------
 # A.1 _has_indexed_knowledge_bases fail-closed semantics (#220 review)
 # ---------------------------------------------------------------------------
+
 
 class _RaisingConnection:
     """Stand-in for ``Storage._conn`` whose ``execute`` raises on demand."""
@@ -192,6 +209,7 @@ def test_has_indexed_knowledge_bases_allows_missing_table(
 # ---------------------------------------------------------------------------
 # B. chunk profile immutable intercept (write entry)
 # ---------------------------------------------------------------------------
+
 
 def _make_profile_in_use(storage: Storage, profile_id: str) -> None:
     storage.upsert_file(
@@ -391,6 +409,7 @@ def test_chunk_profile_update_rejects_non_integer_immutable_field(
 #    rag/indexing._ensure_incremental_embedding_compatible)
 # ---------------------------------------------------------------------------
 
+
 def test_kb_committed_chunk_profiles_returns_bound_profiles(tmp_path: Path) -> None:
     db_path = str(tmp_path / "index.db")
     storage = Storage(db_path)
@@ -424,7 +443,8 @@ def test_kb_committed_chunk_profiles_returns_bound_profiles(tmp_path: Path) -> N
             markdown_hash="hash",
         )
         storage._conn.execute(
-            "UPDATE file_chunk_sets SET chunk_count = 1 WHERE profile_id = ?", (profile["profile_id"],)
+            "UPDATE file_chunk_sets SET chunk_count = 1 WHERE profile_id = ?",
+            (profile["profile_id"],),
         )
         storage._conn.execute(
             "INSERT INTO kb_chunk_bindings (kb_id, file_url, chunk_set_id, bound_at) VALUES (?, ?, ?, ?)",
@@ -450,19 +470,47 @@ def _stub_storage(committed: list[dict]) -> object:
 
 def test_runtime_chunk_fail_closed_on_profile_mismatch() -> None:
     runtime = NativeTaskRuntime()
-    storage = _stub_storage([{"chunk_size": 800, "chunk_overlap": 100, "splitter": "semantic", "tokenizer": "cl100k_base"}])
+    storage = _stub_storage(
+        [
+            {
+                "chunk_size": 800,
+                "chunk_overlap": 100,
+                "splitter": "semantic",
+                "tokenizer": "cl100k_base",
+            }
+        ]
+    )
     with pytest.raises(RuntimeError, match="full_reindex"):
         runtime._ensure_chunk_config_compatible(
-            storage, "kb-1", chunk_size=300, chunk_overlap=50, splitter="semantic", tokenizer="cl100k_base"
+            storage,
+            "kb-1",
+            chunk_size=300,
+            chunk_overlap=50,
+            splitter="semantic",
+            tokenizer="cl100k_base",
         )
 
 
 def test_runtime_chunk_fail_closed_passes_on_matching_profile() -> None:
     runtime = NativeTaskRuntime()
-    storage = _stub_storage([{"chunk_size": 800, "chunk_overlap": 100, "splitter": "semantic", "tokenizer": "cl100k_base"}])
+    storage = _stub_storage(
+        [
+            {
+                "chunk_size": 800,
+                "chunk_overlap": 100,
+                "splitter": "semantic",
+                "tokenizer": "cl100k_base",
+            }
+        ]
+    )
     # Should not raise.
     runtime._ensure_chunk_config_compatible(
-        storage, "kb-1", chunk_size=800, chunk_overlap=100, splitter="semantic", tokenizer="cl100k_base"
+        storage,
+        "kb-1",
+        chunk_size=800,
+        chunk_overlap=100,
+        splitter="semantic",
+        tokenizer="cl100k_base",
     )
 
 
@@ -470,7 +518,12 @@ def test_runtime_chunk_fail_closed_passes_without_committed_chunks() -> None:
     runtime = NativeTaskRuntime()
     storage = _stub_storage([])
     runtime._ensure_chunk_config_compatible(
-        storage, "kb-1", chunk_size=300, chunk_overlap=50, splitter="semantic", tokenizer="cl100k_base"
+        storage,
+        "kb-1",
+        chunk_size=300,
+        chunk_overlap=50,
+        splitter="semantic",
+        tokenizer="cl100k_base",
     )
 
 
@@ -681,31 +734,8 @@ def test_runtime_chunk_generation_overwrite_noop_does_not_allow_legacy_kb_option
 
 
 # ---------------------------------------------------------------------------
-# D. versioned-stage minimal record + change detection
+# D. manifest schema version traceability
 # ---------------------------------------------------------------------------
-
-def test_manifest_ingestion_stage_is_versioned_and_records_schema_version() -> None:
-    assert stage_mutability("manifest_ingestion") == VERSIONED
-    assert stage_option_keys("manifest_ingestion") == ("schema_version",)
-
-
-def test_detect_versioned_change_records_old_to_new() -> None:
-    result = detect_versioned_change("manifest_ingestion", "v1", "v2")
-    assert result["changed"] is True
-    assert result["old_version"] == "v1"
-    assert result["new_version"] == "v2"
-    assert result["action"] == "migrate"
-
-
-def test_detect_versioned_change_noop_when_unchanged() -> None:
-    result = detect_versioned_change("manifest_ingestion", "v1", "v1")
-    assert result["changed"] is False
-    assert result["action"] == "noop"
-
-
-def test_detect_versioned_change_rejects_non_versioned_stage() -> None:
-    with pytest.raises(ValueError):
-        detect_versioned_change("chunk_generation", "v1", "v2")
 
 
 def test_manifest_schema_version_is_recorded_and_traceable(tmp_path: Path) -> None:
@@ -713,11 +743,23 @@ def test_manifest_schema_version_is_recorded_and_traceable(tmp_path: Path) -> No
     try:
         ingest_manifest(
             storage,
-            {"manifest_id": "m1", "schema_version": "v1", "run": {}, "source": {}, "downloaded_assets": []},
+            {
+                "manifest_id": "m1",
+                "schema_version": "v1",
+                "run": {},
+                "source": {},
+                "downloaded_assets": [],
+            },
         )
         ingest_manifest(
             storage,
-            {"manifest_id": "m2", "schema_version": "v2", "run": {}, "source": {}, "downloaded_assets": []},
+            {
+                "manifest_id": "m2",
+                "schema_version": "v2",
+                "run": {},
+                "source": {},
+                "downloaded_assets": [],
+            },
         )
         rows = storage._conn.execute(
             "SELECT manifest_id, schema_version FROM manifest_raw ORDER BY manifest_id"

@@ -13,11 +13,16 @@ from pathlib import Path, PureWindowsPath
 from types import SimpleNamespace
 from typing import Any, Callable, Iterable, Mapping
 
-from ai_actuarial.ai_runtime import build_embedding_fingerprint, infer_embedding_dimension, infer_embedding_provider, resolve_ai_function_runtime
 from ai_actuarial.agentic_rag.manifest_profiles import PROFILES
 from ai_actuarial.agentic_rag.staging_smoke import (
     STAGING_SMOKE_CONTRACT_VERSION,
     run_staging_smoke,
+)
+from ai_actuarial.ai_runtime import (
+    build_embedding_fingerprint,
+    infer_embedding_dimension,
+    infer_embedding_provider,
+    resolve_ai_function_runtime,
 )
 from ai_actuarial.config import settings
 from ai_actuarial.embedding_service import resolve_server_embedding_identity
@@ -28,7 +33,6 @@ from ai_actuarial.rag.kb_index import (
 )
 from ai_actuarial.shared_runtime import parse_int_clamped
 from ai_actuarial.storage import Storage, _split_visible_categories
-
 
 MAX_CATEGORY_STATS_CATEGORIES = 100
 READY_DATA_GC_POLICY_VERSION = "ready-data-retention-gc.v1"
@@ -73,7 +77,6 @@ def _staging_smoke_count(value: Any) -> int:
         return -1
 
 
-
 def _manager_and_storage(db_path: str):
     try:
         from ai_actuarial.rag.knowledge_base import KnowledgeBase, KnowledgeBaseManager
@@ -85,10 +88,8 @@ def _manager_and_storage(db_path: str):
     return KnowledgeBase, manager, storage
 
 
-
 def _norm(value: Any) -> str:
     return str(value or "").strip()
-
 
 
 def _list(value: Any, field: str) -> list[str]:
@@ -104,7 +105,6 @@ def _list(value: Any, field: str) -> list[str]:
     return out
 
 
-
 def _visible_category_list(raw_categories: list[Any]) -> list[str]:
     categories: set[str] = set()
     for raw_category in raw_categories:
@@ -113,18 +113,20 @@ def _visible_category_list(raw_categories: list[Any]) -> list[str]:
     return sorted(categories, key=lambda item: item.lower())
 
 
-
 def _category_filter(categories: list[str]) -> tuple[str, list[Any]]:
     conditions: list[str] = []
     params: list[Any] = []
     for category in categories:
-        conditions.append("(ci.category = ? OR ci.category LIKE ? OR ci.category LIKE ? OR ci.category LIKE ?)")
+        conditions.append(
+            "(ci.category = ? OR ci.category LIKE ? OR ci.category LIKE ? OR ci.category LIKE ?)"
+        )
         params.extend([category, f"{category};%", f"%; {category}", f"%; {category};%"])
     return " OR ".join(conditions), params
 
 
-
-def _latest_ready_chunk_set(storage: Storage, *, file_url: str, profile_id: str) -> dict[str, Any] | None:
+def _latest_ready_chunk_set(
+    storage: Storage, *, file_url: str, profile_id: str
+) -> dict[str, Any] | None:
     row = storage._conn.execute(
         """
         SELECT s.chunk_set_id, s.file_url, s.profile_id, p.name, s.chunk_count, s.updated_at
@@ -151,20 +153,8 @@ def _latest_ready_chunk_set(storage: Storage, *, file_url: str, profile_id: str)
     }
 
 
-
-def _unique_existing_chunk_file_urls(storage: Storage, *, file_urls: list[str], profile_id: str) -> list[str]:
-    out: list[str] = []
-    for file_url in file_urls:
-        if file_url in out:
-            continue
-        if _latest_ready_chunk_set(storage, file_url=file_url, profile_id=profile_id):
-            out.append(file_url)
-    return out
-
-
 def _all_eligible_file_urls(storage: Storage) -> list[str]:
-    rows = storage._conn.execute(
-        """
+    rows = storage._conn.execute("""
         SELECT DISTINCT f.url
         FROM files f
         JOIN catalog_items c ON c.file_url = f.url
@@ -173,8 +163,7 @@ def _all_eligible_file_urls(storage: Storage) -> list[str]:
           AND c.markdown_content IS NOT NULL
           AND c.markdown_content != ''
         ORDER BY f.url
-        """
-    ).fetchall()
+        """).fetchall()
     return [str(row[0]) for row in rows if row and row[0]]
 
 
@@ -184,7 +173,9 @@ def _require_complete_ready_chunk_sets(
     file_urls: list[str],
     profile_id: str,
 ) -> None:
-    selected = sorted({str(file_url or "").strip() for file_url in file_urls if str(file_url or "").strip()})
+    selected = sorted(
+        {str(file_url or "").strip() for file_url in file_urls if str(file_url or "").strip()}
+    )
     if not selected:
         return
     if not profile_id:
@@ -214,30 +205,6 @@ def _require_complete_kb_snapshot(storage: Storage, kb_id: str, file_urls: list[
         resolve_kb_bound_chunks(storage, kb_id)
     except KBIndexContractError as exc:
         raise RagAdminError(str(exc), status_code=400) from exc
-
-
-
-def _category_file_urls_with_existing_chunks(storage: Storage, *, categories: list[str], profile_id: str) -> list[str]:
-    where_sql, params = _category_filter(categories)
-    if not where_sql:
-        return []
-    rows = storage._conn.execute(
-        f"""
-        SELECT DISTINCT ci.file_url
-        FROM catalog_items ci
-        JOIN file_chunk_sets s ON s.file_url = ci.file_url
-        WHERE ({where_sql})
-          AND ci.status = 'ok'
-          AND ci.markdown_content IS NOT NULL
-          AND ci.markdown_content != ''
-          AND s.profile_id = ?
-          AND s.status = 'ready'
-          AND COALESCE(s.chunk_count, 0) > 0
-        """,
-        params + [profile_id],
-    ).fetchall()
-    return [row[0] for row in rows if row and row[0]]
-
 
 
 def _bind_existing_chunk_sets(
@@ -274,7 +241,6 @@ def _bind_existing_chunk_sets(
         "skipped_file_urls": skipped_without_chunks,
         "bindings": bindings,
     }
-
 
 
 def _add_and_bind_existing_profile_chunks(
@@ -345,7 +311,6 @@ def _sync_all_kb_files(
     return sync_result, binding_result
 
 
-
 def _kb_id(value: Any) -> str:
     kb_id = _norm(value)
     if not kb_id:
@@ -353,7 +318,6 @@ def _kb_id(value: Any) -> str:
     if not (2 <= len(kb_id) <= 64):
         raise RagAdminError("kb_id must be between 2 and 64 characters long")
     return kb_id
-
 
 
 def _serialize_kb(kb: Any) -> dict[str, Any]:
@@ -376,7 +340,6 @@ def _serialize_kb(kb: Any) -> dict[str, Any]:
         "created_at": kb.created_at,
         "updated_at": kb.updated_at,
     }
-
 
 
 def _decorate_kb_chunk_profile(storage: Storage, payload: dict[str, Any]) -> dict[str, Any]:
@@ -407,7 +370,6 @@ def _decorate_kb_chunk_profile(storage: Storage, payload: dict[str, Any]) -> dic
     if "chunk_profile_name" not in payload:
         payload["chunk_profile_name"] = ""
     return payload
-
 
 
 def _manifest_profile(value: Any) -> str:
@@ -468,7 +430,9 @@ def _resolve_agentic_output_dir(
     try:
         resolved.relative_to(base_dir)
     except ValueError as exc:
-        raise RagAdminError("output_dir must stay under the database agentic_ready_data directory", status_code=400) from exc
+        raise RagAdminError(
+            "output_dir must stay under the database agentic_ready_data directory", status_code=400
+        ) from exc
     return str(resolved)
 
 
@@ -518,20 +482,14 @@ def _recorded_ready_artifact_paths(
             entry_stat = cursor.lstat()
             if index < len(portable_parts) - 1:
                 if not stat.S_ISDIR(entry_stat.st_mode):
-                    raise ValueError(
-                        f"ready_data artifact parent is not a directory: {artifact}"
-                    )
+                    raise ValueError(f"ready_data artifact parent is not a directory: {artifact}")
             elif not stat.S_ISREG(entry_stat.st_mode):
-                raise ValueError(
-                    f"ready_data artifact is not a regular file: {artifact}"
-                )
+                raise ValueError(f"ready_data artifact is not a regular file: {artifact}")
         resolved_artifact = cursor.resolve(strict=True)
         try:
             resolved_artifact.relative_to(resolved_output)
         except ValueError as exc:
-            raise ValueError(
-                f"artifact path escapes output_dir: {artifact}"
-            ) from exc
+            raise ValueError(f"artifact path escapes output_dir: {artifact}") from exc
         artifacts[artifact] = resolved_artifact
     return sorted(artifacts.items())
 
@@ -556,9 +514,7 @@ def _preflight_recorded_ready_publication(
     try:
         relative_output = output_path.relative_to(allowed_path)
     except ValueError as exc:
-        raise ValueError(
-            "publication output escaped the allowed ready_data root"
-        ) from exc
+        raise ValueError("publication output escaped the allowed ready_data root") from exc
     current = allowed_path
     for part in relative_output.parts:
         current /= part
@@ -570,38 +526,44 @@ def _preflight_recorded_ready_publication(
     try:
         output_root.relative_to(allowed_root)
     except ValueError as exc:
-        raise ValueError(
-            "publication output escaped the allowed ready_data root"
-        ) from exc
+        raise ValueError("publication output escaped the allowed ready_data root") from exc
 
     artifact_files = publication.get("artifact_files")
     artifact_paths = _recorded_ready_artifact_paths(output_path, artifact_files)
     normalized_artifacts = [artifact for artifact, _path in artifact_paths]
     if "ready_data_manifest.json" not in normalized_artifacts:
-        raise ValueError(
-            "publication artifact list does not include ready_data_manifest.json"
-        )
+        raise ValueError("publication artifact list does not include ready_data_manifest.json")
     return output_root, normalized_artifacts
 
 
-def _agentic_staging_output_dir(base_output_dir: str, *, allowed_output_root: str) -> tuple[str, str]:
+def _agentic_staging_output_dir(
+    base_output_dir: str, *, allowed_output_root: str
+) -> tuple[str, str]:
     allowed_root = Path(allowed_output_root).resolve()
     base = Path(base_output_dir).resolve()
     try:
         base.relative_to(allowed_root)
     except ValueError as exc:
-        raise RagAdminError("ready_data output must stay under the allowed data root", status_code=400) from exc
+        raise RagAdminError(
+            "ready_data output must stay under the allowed data root", status_code=400
+        ) from exc
     staging_path = base / "staging"
     if _is_link_or_reparse(staging_path):
-        raise RagAdminError("ready_data staging root cannot be a link or reparse point", status_code=400)
+        raise RagAdminError(
+            "ready_data staging root cannot be a link or reparse point", status_code=400
+        )
     staging_path.mkdir(parents=True, exist_ok=True)
     if _is_link_or_reparse(staging_path):
-        raise RagAdminError("ready_data staging root cannot be a link or reparse point", status_code=400)
+        raise RagAdminError(
+            "ready_data staging root cannot be a link or reparse point", status_code=400
+        )
     staging_root = staging_path.resolve(strict=True)
     try:
         staging_root.relative_to(allowed_root)
     except ValueError as exc:
-        raise RagAdminError("ready_data staging root escaped the allowed data root", status_code=400) from exc
+        raise RagAdminError(
+            "ready_data staging root escaped the allowed data root", status_code=400
+        ) from exc
     candidate = staging_root / f"build-{uuid.uuid4().hex}"
     if candidate.parent != staging_root or _is_link_or_reparse(candidate):
         raise RagAdminError("invalid ready_data staging candidate", status_code=400)
@@ -877,6 +839,7 @@ def _rollback_agentic_ready_publication(
     previous = state.get("previous_publication")
     if not active_id or not previous_id or not previous:
         raise ValueError("no previous validated ready-data publication is available")
+
     def validate_previous(candidate: dict[str, Any]) -> bool:
         validation = _validate_recorded_ready_publication(
             candidate,
@@ -1101,9 +1064,7 @@ def _build_agentic_manifest_status(
                 ready_build_input = {
                     "contract_version": 1,
                     "index_version_id": index_version_id,
-                    "expected_source_snapshot_fingerprint": source[
-                        "source_snapshot_fingerprint"
-                    ],
+                    "expected_source_snapshot_fingerprint": source["source_snapshot_fingerprint"],
                 }
     manifest = storage.get_agentic_ready_manifest(kb_id=kb_id, profile=normalized_profile)
     if not manifest:
@@ -1121,23 +1082,15 @@ def _build_agentic_manifest_status(
             "stale_confirmed": bool(source_state["stale_confirmed"]),
             "stale_severity": source_state["stale_severity"],
             "event_generation": source_state["event_generation"],
-            "pending_evaluation_generation": source_state[
-                "pending_evaluation_generation"
-            ],
+            "pending_evaluation_generation": source_state["pending_evaluation_generation"],
             "evaluated_generation": source_state["evaluated_generation"],
-            "authoritative_source_version_kind": source_state[
-                "evaluated_source_version_kind"
-            ],
-            "authoritative_source_version_id": source_state[
-                "evaluated_source_version_id"
-            ],
+            "authoritative_source_version_kind": source_state["evaluated_source_version_kind"],
+            "authoritative_source_version_id": source_state["evaluated_source_version_id"],
             "automatic_build_enabled": source_state["automatic_build_enabled"],
             "automatic_publish_enabled": source_state["automatic_publish_enabled"],
             "automation": automation,
             "automation_state": automation["automation_state"],
-            "publication_revision": int(
-                publication_state.get("publication_revision") or 0
-            ),
+            "publication_revision": int(publication_state.get("publication_revision") or 0),
             "ready_build_input": ready_build_input,
         }
 
@@ -1145,8 +1098,7 @@ def _build_agentic_manifest_status(
     status = _norm(payload.get("status")).lower() or "missing"
     stale_reason = ""
     authoritative_state_available = bool(
-        source_state["has_source_state"]
-        and not source_state["legacy_heuristic_required"]
+        source_state["has_source_state"] and not source_state["legacy_heuristic_required"]
     )
     if status == "ready" and authoritative_state_available:
         if source_state["serving_stale"]:
@@ -1184,25 +1136,15 @@ def _build_agentic_manifest_status(
             "stale_confirmed": bool(source_state["stale_confirmed"]),
             "stale_severity": source_state["stale_severity"],
             "event_generation": source_state["event_generation"],
-            "pending_evaluation_generation": source_state[
-                "pending_evaluation_generation"
-            ],
+            "pending_evaluation_generation": source_state["pending_evaluation_generation"],
             "evaluated_generation": source_state["evaluated_generation"],
-            "authoritative_source_version_kind": source_state[
-                "evaluated_source_version_kind"
-            ],
-            "authoritative_source_version_id": source_state[
-                "evaluated_source_version_id"
-            ],
+            "authoritative_source_version_kind": source_state["evaluated_source_version_kind"],
+            "authoritative_source_version_id": source_state["evaluated_source_version_id"],
             "automatic_build_enabled": source_state["automatic_build_enabled"],
-            "automatic_publish_enabled": source_state[
-                "automatic_publish_enabled"
-            ],
+            "automatic_publish_enabled": source_state["automatic_publish_enabled"],
             "automation": automation,
             "automation_state": automation["automation_state"],
-            "publication_revision": int(
-                publication_state.get("publication_revision") or 0
-            ),
+            "publication_revision": int(publication_state.get("publication_revision") or 0),
             "ready_build_input": ready_build_input,
         }
     )
@@ -1241,11 +1183,15 @@ def _decorate_kb_agentic_manifest(
     payload["manifest_profile"] = profile
     payload["agentic_ready_manifest"] = manifest
     payload["agentic_ready_available"] = bool(payload["agentic_ready_manifest"].get("usable"))
-    payload["agentic_fallback_mode"] = payload["agentic_ready_manifest"].get("fallback_mode") or "standard"
+    payload["agentic_fallback_mode"] = (
+        payload["agentic_ready_manifest"].get("fallback_mode") or "standard"
+    )
     return payload
 
 
-def _embedding_metadata_matches(current: Mapping[str, Any], *, provider: Any, model: Any, dimension: Any) -> bool:
+def _embedding_metadata_matches(
+    current: Mapping[str, Any], *, provider: Any, model: Any, dimension: Any
+) -> bool:
     current_provider = str(current.get("provider") or "").strip().lower()
     current_model = str(current.get("model") or "").strip()
     current_dimension = current.get("dimension")
@@ -1267,15 +1213,12 @@ def _embedding_metadata_matches(current: Mapping[str, Any], *, provider: Any, mo
     return True
 
 
-
 def _current_embeddings_payload(*, storage: Storage | None) -> dict[str, Any]:
     runtime = resolve_ai_function_runtime("embeddings", storage=storage)
     identity_key = ""
     if storage is not None:
         try:
-            identity_key = resolve_server_embedding_identity(
-                storage
-            ).embedding_identity_key
+            identity_key = resolve_server_embedding_identity(storage).embedding_identity_key
         except ValueError:
             identity_key = ""
     return {
@@ -1293,7 +1236,6 @@ def _current_embeddings_payload(*, storage: Storage | None) -> dict[str, Any]:
     }
 
 
-
 def _build_kb_embedding_status(
     *,
     storage: Storage,
@@ -1302,7 +1244,11 @@ def _build_kb_embedding_status(
     deep: bool = False,
 ) -> dict[str, Any]:
     kb_id = str(kb_payload.get("kb_id") or "").strip()
-    effective_current_embeddings = dict(current_embeddings) if current_embeddings is not None else _current_embeddings_payload(storage=storage)
+    effective_current_embeddings = (
+        dict(current_embeddings)
+        if current_embeddings is not None
+        else _current_embeddings_payload(storage=storage)
+    )
     composition = storage.get_kb_composition_status(kb_id) if kb_id else {}
     latest_index = composition.get("latest_index") or {}
     has_index = bool(composition.get("has_index"))
@@ -1320,7 +1266,9 @@ def _build_kb_embedding_status(
         model=effective_index_model,
         dimension=effective_index_dimension,
     )
-    needs_reindex = bool(composition.get("needs_reindex")) or (has_index and not embedding_compatible)
+    needs_reindex = bool(composition.get("needs_reindex")) or (
+        has_index and not embedding_compatible
+    )
     coverage = {
         "bound_file_count": 0,
         "bound_chunk_count": 0,
@@ -1354,10 +1302,9 @@ def _build_kb_embedding_status(
                             identity=identity.as_dict(),
                         )
                         coverage["ready_embeddings"] = len(embedding_rows["valid"])
-                        coverage["missing_embeddings"] = (
-                            len(embedding_rows["missing_chunk_ids"])
-                            + len(embedding_rows["invalid_chunk_ids"])
-                        )
+                        coverage["missing_embeddings"] = len(
+                            embedding_rows["missing_chunk_ids"]
+                        ) + len(embedding_rows["invalid_chunk_ids"])
                     except ValueError as exc:
                         coverage["missing_embeddings"] = len(chunk_ids)
                         coverage["binding_error"] = str(exc)
@@ -1385,7 +1332,8 @@ def _build_kb_embedding_status(
         "index_embedding_provider": effective_index_provider,
         "index_embedding_model": effective_index_model,
         "index_embedding_dimension": effective_index_dimension,
-        "index_status": latest_index.get("status") or ("ready" if has_index and effective_index_model else None),
+        "index_status": latest_index.get("status")
+        or ("ready" if has_index and effective_index_model else None),
         "index_built_at": latest_index.get("built_at"),
         "needs_reindex": needs_reindex,
         "embedding_compatible": embedding_compatible,
@@ -1394,7 +1342,6 @@ def _build_kb_embedding_status(
         "current_embeddings": effective_current_embeddings,
         "index_coverage": coverage,
     }
-
 
 
 def _kb_embedding_metadata_coverage(
@@ -1446,9 +1393,7 @@ def _kb_embedding_metadata_coverage(
                 model=str(kb_payload.get("embedding_model") or ""),
                 dimension=int(kb_payload.get("embedding_dimension") or 0),
                 config_fingerprint="",
-                embedding_identity_key=str(
-                    kb_payload.get("embedding_identity_key") or ""
-                ),
+                embedding_identity_key=str(kb_payload.get("embedding_identity_key") or ""),
             )
             allow_ready = 0
             coverage["binding_error"] = str(exc)
@@ -1522,9 +1467,7 @@ def _kb_embedding_metadata_coverage(
     coverage["bound_file_count"] = int(row[0] or 0)
     coverage["bound_chunk_count"] = int(row[1] or 0)
     coverage["ready_embeddings"] = int(row[2] or 0)
-    coverage["missing_embeddings"] = (
-        coverage["bound_chunk_count"] - coverage["ready_embeddings"]
-    )
+    coverage["missing_embeddings"] = coverage["bound_chunk_count"] - coverage["ready_embeddings"]
     return coverage
 
 
@@ -1546,7 +1489,6 @@ def _require_config_write_token(headers: Mapping[str, str], auth: Any | None = N
         raise RagAdminError("Forbidden", status_code=403)
 
 
-
 def list_chunk_profiles(*, db_path: str) -> dict[str, Any]:
     storage = Storage(db_path)
     try:
@@ -1555,16 +1497,21 @@ def list_chunk_profiles(*, db_path: str) -> dict[str, Any]:
         storage.close()
 
 
-
-def create_chunk_profile(*, db_path: str, payload: dict[str, Any], headers: Mapping[str, str], auth: Any | None = None) -> dict[str, Any]:
+def create_chunk_profile(
+    *, db_path: str, payload: dict[str, Any], headers: Mapping[str, str], auth: Any | None = None
+) -> dict[str, Any]:
     _require_config_write_token(headers, auth)
     if not isinstance(payload, dict):
         raise RagAdminError("Invalid JSON body")
     name = _norm(payload.get("name"))
     if not name:
         raise RagAdminError("name is required")
-    chunk_size = parse_int_clamped(payload.get("chunk_size"), default=800, min_value=1, max_value=10000)
-    chunk_overlap = parse_int_clamped(payload.get("chunk_overlap"), default=100, min_value=0, max_value=10000)
+    chunk_size = parse_int_clamped(
+        payload.get("chunk_size"), default=800, min_value=1, max_value=10000
+    )
+    chunk_overlap = parse_int_clamped(
+        payload.get("chunk_overlap"), default=100, min_value=0, max_value=10000
+    )
     splitter = _norm(payload.get("splitter") or "semantic")
     tokenizer = _norm(payload.get("tokenizer") or "cl100k_base")
     version = _norm(payload.get("version") or "v1")
@@ -1587,8 +1534,9 @@ def create_chunk_profile(*, db_path: str, payload: dict[str, Any], headers: Mapp
         storage.close()
 
 
-
-def delete_chunk_profile(*, db_path: str, profile_id: str, headers: Mapping[str, str], auth: Any | None = None) -> dict[str, Any]:
+def delete_chunk_profile(
+    *, db_path: str, profile_id: str, headers: Mapping[str, str], auth: Any | None = None
+) -> dict[str, Any]:
     _require_config_write_token(headers, auth)
     normalized_profile_id = _norm(profile_id)
     if not normalized_profile_id:
@@ -1603,7 +1551,14 @@ def delete_chunk_profile(*, db_path: str, profile_id: str, headers: Mapping[str,
         storage.close()
 
 
-def update_chunk_profile(*, db_path: str, profile_id: str, payload: dict[str, Any], headers: Mapping[str, str], auth: Any | None = None) -> dict[str, Any]:
+def update_chunk_profile(
+    *,
+    db_path: str,
+    profile_id: str,
+    payload: dict[str, Any],
+    headers: Mapping[str, str],
+    auth: Any | None = None,
+) -> dict[str, Any]:
     _require_config_write_token(headers, auth)
     normalized_profile_id = _norm(profile_id)
     if not normalized_profile_id:
@@ -1627,12 +1582,19 @@ def update_chunk_profile(*, db_path: str, profile_id: str, payload: dict[str, An
             except (TypeError, ValueError):
                 raise RagAdminError(f"{field} must be an integer", status_code=400) from None
 
-        new_chunk_size = _strict_int(payload["chunk_size"], "chunk_size") if "chunk_size" in payload else profile["chunk_size"]
-        new_chunk_overlap = _strict_int(payload["chunk_overlap"], "chunk_overlap") if "chunk_overlap" in payload else profile["chunk_overlap"]
-        immutable_changed = (
-            ("chunk_size" in payload and new_chunk_size != profile["chunk_size"])
-            or ("chunk_overlap" in payload and new_chunk_overlap != profile["chunk_overlap"])
+        new_chunk_size = (
+            _strict_int(payload["chunk_size"], "chunk_size")
+            if "chunk_size" in payload
+            else profile["chunk_size"]
         )
+        new_chunk_overlap = (
+            _strict_int(payload["chunk_overlap"], "chunk_overlap")
+            if "chunk_overlap" in payload
+            else profile["chunk_overlap"]
+        )
+        immutable_changed = (
+            "chunk_size" in payload and new_chunk_size != profile["chunk_size"]
+        ) or ("chunk_overlap" in payload and new_chunk_overlap != profile["chunk_overlap"])
         if immutable_changed:
             in_use = (
                 storage._conn.execute(
@@ -1662,7 +1624,9 @@ def update_chunk_profile(*, db_path: str, profile_id: str, payload: dict[str, An
             config = json.loads(profile["config_json"] or "{}")
             config["chunk_size"] = new_chunk_size
             config["chunk_overlap"] = new_chunk_overlap
-            config_json = json.dumps(config, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+            config_json = json.dumps(
+                config, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+            )
             config_hash = hashlib.sha256(config_json.encode("utf-8")).hexdigest()
             # config_hash is UNIQUE; a recomputed hash colliding with another
             # profile would raise a raw sqlite3.IntegrityError (500). Surface a
@@ -1683,6 +1647,7 @@ def update_chunk_profile(*, db_path: str, profile_id: str, payload: dict[str, An
             values.append(config_hash)
         if updates:
             import time as time_module
+
             updates.append("updated_at = ?")
             values.append(time_module.time())
             values.append(normalized_profile_id)
@@ -1728,19 +1693,15 @@ def get_categories_mapping(*, db_path: str) -> dict[str, Any]:
         }
         raw_categories: list[Any] = []
         if "source_metadata" in table_names:
-            cursor = storage._conn.execute(
-                """
+            cursor = storage._conn.execute("""
                 SELECT DISTINCT category FROM source_metadata
                 WHERE category IS NOT NULL AND category != ''
-                """
-            )
+                """)
             raw_categories.extend(row[0] for row in cursor.fetchall() if row[0])
-        cursor = storage._conn.execute(
-            """
+        cursor = storage._conn.execute("""
             SELECT DISTINCT category FROM catalog_items
             WHERE category IS NOT NULL AND category != ''
-            """
-        )
+            """)
         raw_categories.extend(row[0] for row in cursor.fetchall() if row[0])
         mapped_categories = _visible_category_list(raw_categories)
         return {"categories": mapped_categories, "count": len(mapped_categories)}
@@ -1762,7 +1723,9 @@ def get_category_stats(*, db_path: str, payload: dict[str, Any]) -> dict[str, An
         if profile_id and not storage.get_chunk_profile(profile_id):
             raise RagAdminError("chunk profile not found", status_code=404)
         if kb_id:
-            row = storage._conn.execute("SELECT 1 FROM rag_knowledge_bases WHERE kb_id = ?", (kb_id,)).fetchone()
+            row = storage._conn.execute(
+                "SELECT 1 FROM rag_knowledge_bases WHERE kb_id = ?", (kb_id,)
+            ).fetchone()
             if not row:
                 raise RagAdminError(f"Knowledge base '{kb_id}' not found", status_code=404)
 
@@ -2126,18 +2089,23 @@ class _KBListStorageView:
         clause, kb_params = self._in_clause(kb_ids)
 
         if self._table_exists("chunk_profiles"):
-            for row in self._conn.execute(
-                """
+            for row in self._conn.execute("""
                 SELECT profile_id, name, chunk_size, chunk_overlap, splitter, tokenizer,
                        version, config_hash, config_json, created_at, updated_at
                 FROM chunk_profiles
-                """
-            ):
+                """):
                 self._chunk_profiles[str(row[0])] = {
-                    "profile_id": row[0], "name": row[1], "chunk_size": row[2],
-                    "chunk_overlap": row[3], "splitter": row[4], "tokenizer": row[5],
-                    "version": row[6], "config_hash": row[7], "config_json": row[8],
-                    "created_at": row[9], "updated_at": row[10],
+                    "profile_id": row[0],
+                    "name": row[1],
+                    "chunk_size": row[2],
+                    "chunk_overlap": row[3],
+                    "splitter": row[4],
+                    "tokenizer": row[5],
+                    "version": row[6],
+                    "config_hash": row[7],
+                    "config_json": row[8],
+                    "created_at": row[9],
+                    "updated_at": row[10],
                 }
         if (
             self._table_exists("kb_chunk_bindings")
@@ -2164,8 +2132,10 @@ class _KBListStorageView:
                 kb_params,
             ):
                 composition_parts[str(row[0])].update(
-                    binding_file_count=int(row[1] or 0), chunk_set_count=int(row[2] or 0),
-                    latest_binding_at=row[3], follow_latest_count=int(row[4] or 0),
+                    binding_file_count=int(row[1] or 0),
+                    chunk_set_count=int(row[2] or 0),
+                    latest_binding_at=row[3],
+                    follow_latest_count=int(row[4] or 0),
                     pin_count=int(row[5] or 0),
                 )
             if self._table_exists("file_chunk_sets"):
@@ -2237,50 +2207,100 @@ class _KBListStorageView:
             kb_row = kb_rows.get(kb_id)
             latest = latest_indexes.get(kb_id)
             rag_row = rag_stats.get(kb_id)
-            kb_provider = (kb_row[1] if kb_row else "") or infer_embedding_provider(kb_row[2] if kb_row else "", fallback="openai") or "openai"
+            kb_provider = (
+                (kb_row[1] if kb_row else "")
+                or infer_embedding_provider(kb_row[2] if kb_row else "", fallback="openai")
+                or "openai"
+            )
             kb_model = (kb_row[2] if kb_row else "") or ""
-            kb_dimension = (kb_row[3] if kb_row and kb_row[3] not in (None, "") else infer_embedding_dimension(kb_model))
+            kb_dimension = (
+                kb_row[3]
+                if kb_row and kb_row[3] not in (None, "")
+                else infer_embedding_dimension(kb_model)
+            )
             kb_chunk_count = int((kb_row[4] if kb_row else 0) or 0)
             kb_file_count = int((rag_row[1] if rag_row else (kb_row[5] if kb_row else 0)) or 0)
             kb_updated_at = kb_row[6] if kb_row else None
             index_dirty_at = kb_row[7] if kb_row else None
-            indexed_file_count = int((rag_row[2] if rag_row else (kb_file_count if kb_chunk_count > 0 else 0)) or 0)
+            indexed_file_count = int(
+                (rag_row[2] if rag_row else (kb_file_count if kb_chunk_count > 0 else 0)) or 0
+            )
             legacy_index_time = (rag_row[3] if rag_row else None) or kb_updated_at
             has_index = bool(latest) or indexed_file_count > 0 or kb_chunk_count > 0
-            latest_index_time = ((latest[7] or latest[8]) if latest else legacy_index_time) if has_index else None
+            latest_index_time = (
+                ((latest[7] or latest[8]) if latest else legacy_index_time) if has_index else None
+            )
             binding_file_count = int(part.get("binding_file_count") or 0)
             effective_file_count = max(binding_file_count, kb_file_count)
             outdated = int(part.get("outdated_binding_count") or 0)
             pending = pending_counts.get(kb_id, 0)
-            dirty_after_index = bool(index_dirty_at and (not latest_index_time or index_dirty_at > latest_index_time))
+            dirty_after_index = bool(
+                index_dirty_at and (not latest_index_time or index_dirty_at > latest_index_time)
+            )
             needs_reindex = bool(
-                (effective_file_count > 0 and (pending > 0 or outdated > 0 or not has_index or
-                 (part.get("latest_binding_at") and latest_index_time and part["latest_binding_at"] > latest_index_time)))
+                (
+                    effective_file_count > 0
+                    and (
+                        pending > 0
+                        or outdated > 0
+                        or not has_index
+                        or (
+                            part.get("latest_binding_at")
+                            and latest_index_time
+                            and part["latest_binding_at"] > latest_index_time
+                        )
+                    )
+                )
                 or (has_index and dirty_after_index)
             )
             latest_payload = None
             if latest:
                 latest_payload = {
-                    "embedding_provider": latest[1] or infer_embedding_provider(latest[2], fallback="openai") or "openai",
+                    "embedding_provider": latest[1]
+                    or infer_embedding_provider(latest[2], fallback="openai")
+                    or "openai",
                     "embedding_model": latest[2],
-                    "embedding_dimension": latest[3] if latest[3] not in (None, "") else infer_embedding_dimension(latest[2]),
-                    "index_type": latest[4], "status": latest[5], "chunk_count": latest[6] or 0,
+                    "embedding_dimension": (
+                        latest[3]
+                        if latest[3] not in (None, "")
+                        else infer_embedding_dimension(latest[2])
+                    ),
+                    "index_type": latest[4],
+                    "status": latest[5],
+                    "chunk_count": latest[6] or 0,
                     "built_at": latest[7] or latest[8],
                 }
             elif has_index:
-                latest_payload = {"embedding_provider": kb_provider, "embedding_model": kb_model,
-                                  "embedding_dimension": kb_dimension, "index_type": "Flat", "status": "ready",
-                                  "chunk_count": kb_chunk_count, "built_at": latest_index_time, "source": "legacy"}
+                latest_payload = {
+                    "embedding_provider": kb_provider,
+                    "embedding_model": kb_model,
+                    "embedding_dimension": kb_dimension,
+                    "index_type": "Flat",
+                    "status": "ready",
+                    "chunk_count": kb_chunk_count,
+                    "built_at": latest_index_time,
+                    "source": "legacy",
+                }
             self._composition[kb_id] = {
-                "kb_id": kb_id, "file_count": effective_file_count,
-                "binding_file_count": binding_file_count, "kb_file_count": kb_file_count,
-                "indexed_file_count": indexed_file_count, "pending_file_count": pending,
-                "chunk_set_count": int(part.get("chunk_set_count") or 0), "has_index": has_index,
-                "latest_binding_at": part.get("latest_binding_at"), "index_dirty_at": index_dirty_at,
+                "kb_id": kb_id,
+                "file_count": effective_file_count,
+                "binding_file_count": binding_file_count,
+                "kb_file_count": kb_file_count,
+                "indexed_file_count": indexed_file_count,
+                "pending_file_count": pending,
+                "chunk_set_count": int(part.get("chunk_set_count") or 0),
+                "has_index": has_index,
+                "latest_binding_at": part.get("latest_binding_at"),
+                "index_dirty_at": index_dirty_at,
                 "dirty_after_index": dirty_after_index,
-                "binding_mode_counts": {"follow_latest": int(part.get("follow_latest_count") or 0), "pin": int(part.get("pin_count") or 0)},
-                "outdated_binding_count": outdated, "new_chunk_versions_available": outdated > 0,
-                "needs_reindex": needs_reindex, "latest_index": latest_payload,
+                "binding_mode_counts": {
+                    "follow_latest": int(part.get("follow_latest_count") or 0),
+                    "pin": int(part.get("pin_count") or 0),
+                },
+                "outdated_binding_count": outdated,
+                "new_chunk_versions_available": outdated > 0,
+                "needs_reindex": needs_reindex,
+                "latest_index": latest_payload,
             }
 
         self._prepare_coverage(payloads, clause, kb_params)
@@ -2294,8 +2314,12 @@ class _KBListStorageView:
         kb_params: tuple[str, ...],
     ) -> None:
         defaults = {
-            "bound_file_count": 0, "bound_chunk_count": 0, "ready_embeddings": 0,
-            "missing_embeddings": 0, "invalid_bindings": 0, "binding_error": "",
+            "bound_file_count": 0,
+            "bound_chunk_count": 0,
+            "ready_embeddings": 0,
+            "missing_embeddings": 0,
+            "invalid_bindings": 0,
+            "binding_error": "",
         }
         self._coverage = {str(payload["kb_id"]): dict(defaults) for payload in payloads}
         required = ("rag_kb_files", "kb_chunk_bindings", "file_chunk_sets", "global_chunks")
@@ -2316,28 +2340,43 @@ class _KBListStorageView:
         for payload in payloads:
             kb_id = str(payload["kb_id"])
             requested_key = str(payload.get("embedding_identity_key") or "")
-            allow_ready = int(bool(identity and (not requested_key or requested_key == identity.embedding_identity_key)))
+            allow_ready = int(
+                bool(
+                    identity
+                    and (not requested_key or requested_key == identity.embedding_identity_key)
+                )
+            )
             if identity_error:
                 self._coverage[kb_id]["binding_error"] = identity_error
             elif identity and requested_key and not allow_ready:
-                self._coverage[kb_id]["binding_error"] = "embedding_identity_key is not allowed by the current server configuration"
+                self._coverage[kb_id][
+                    "binding_error"
+                ] = "embedding_identity_key is not allowed by the current server configuration"
             identity_rows.append(
-                (kb_id, str(payload.get("chunk_profile_id") or ""), allow_ready,
-                 identity.provider if identity else "", identity.model if identity else "",
-                 identity.dimension if identity else 0, identity.config_fingerprint if identity else "",
-                 identity.embedding_identity_key if identity else requested_key)
+                (
+                    kb_id,
+                    str(payload.get("chunk_profile_id") or ""),
+                    allow_ready,
+                    identity.provider if identity else "",
+                    identity.model if identity else "",
+                    identity.dimension if identity else 0,
+                    identity.config_fingerprint if identity else "",
+                    identity.embedding_identity_key if identity else requested_key,
+                )
             )
         values_sql = ",".join("(?,?,?,?,?,?,?,?)" for _ in identity_rows)
         params = tuple(value for row in identity_rows for value in row)
         embedding_join = (
             "LEFT JOIN chunk_embeddings e ON e.chunk_id = g.chunk_id AND e.embedding_identity_key = t.identity_key"
-            if has_embeddings else ""
+            if has_embeddings
+            else ""
         )
         ready_sql = (
             "COALESCE(SUM(CASE WHEN t.allow_ready = 1 AND e.embedding_provider = t.provider "
             "AND e.embedding_model = t.model AND e.dimension = t.dimension "
             "AND e.config_fingerprint = t.fingerprint AND e.status = 'ready' THEN 1 ELSE 0 END), 0)"
-            if has_embeddings else "0"
+            if has_embeddings
+            else "0"
         )
         for row in self._conn.execute(
             f"""WITH targets(kb_id, selected_profile_id, allow_ready, provider, model,
@@ -2370,11 +2409,19 @@ class _KBListStorageView:
             kb_id = str(row[0])
             coverage = self._coverage[kb_id]
             member_count, binding_count = int(row[4] or 0), int(row[5] or 0)
-            if member_count == 0 or int(row[1] or 0) != member_count or binding_count != member_count or bool(row[6]):
-                coverage.update(invalid_bindings=1, binding_error="KB chunk binding metadata is invalid")
+            if (
+                member_count == 0
+                or int(row[1] or 0) != member_count
+                or binding_count != member_count
+                or bool(row[6])
+            ):
+                coverage.update(
+                    invalid_bindings=1, binding_error="KB chunk binding metadata is invalid"
+                )
                 continue
             coverage.update(
-                bound_file_count=int(row[1] or 0), bound_chunk_count=int(row[2] or 0),
+                bound_file_count=int(row[1] or 0),
+                bound_chunk_count=int(row[2] or 0),
                 ready_embeddings=int(row[3] or 0),
                 missing_embeddings=int(row[2] or 0) - int(row[3] or 0),
             )
@@ -2438,8 +2485,11 @@ class _KBListStorageView:
             self._source_status[kb_id] = {
                 "current_doc_count": int(doc[1] or 0) if doc else 0,
                 "latest_source_at": _latest_iso(
-                    self, kb_row[6] if kb_row else None, rag[4] if rag else None,
-                    latest_chunk_at, *(doc[2:6] if doc else ()),
+                    self,
+                    kb_row[6] if kb_row else None,
+                    rag[4] if rag else None,
+                    latest_chunk_at,
+                    *(doc[2:6] if doc else ()),
                 ),
             }
 
@@ -2476,20 +2526,20 @@ class _KBListStorageView:
                 if key in key_set:
                     self._slots[key] = row[2:]
                     referenced_publication_ids.update(
-                        str(publication_id)
-                        for publication_id in row[2:4]
-                        if publication_id
+                        str(publication_id) for publication_id in row[2:4] if publication_id
                     )
         if self._table_exists("agentic_ready_publications"):
             publication_columns = self._agentic_ready_publication_columns()
-            attempt_sql = "p.attempt_disposition" if "attempt_disposition" in publication_columns else "''"
-            smoke_sql = "p.smoke_result_json" if "smoke_result_json" in publication_columns else "'{}'"
+            attempt_sql = (
+                "p.attempt_disposition" if "attempt_disposition" in publication_columns else "''"
+            )
+            smoke_sql = (
+                "p.smoke_result_json" if "smoke_result_json" in publication_columns else "'{}'"
+            )
             referenced_ids = tuple(sorted(referenced_publication_ids))
             referenced_clause = ", ".join("?" for _ in referenced_ids)
             referenced_sql = (
-                f"p.publication_id IN ({referenced_clause}) OR "
-                if referenced_ids
-                else ""
+                f"p.publication_id IN ({referenced_clause}) OR " if referenced_ids else ""
             )
             for row in self._conn.execute(
                 f"""SELECT p.publication_id, p.kb_id, p.index_version_id, p.profile,
@@ -2528,8 +2578,10 @@ class _KBListStorageView:
                     current_order = current.get("_order", ("", "", "")) if current else ("", "", "")
                     if candidate_order > current_order:
                         self._latest_build_attempts[key] = {
-                            "publication_id": row[0], "status": row[7],
-                            "error_message": row[16] or "", "updated_at": row[21],
+                            "publication_id": row[0],
+                            "status": row[7],
+                            "error_message": row[16] or "",
+                            "updated_at": row[21],
                             "_order": candidate_order,
                         }
         for key in keys:
@@ -2577,14 +2629,20 @@ class _KBListStorageView:
             ):
                 key = self._list_key(row[0], row[1])
                 if key in key_set:
-                    self._manual_operations[key] = {"kind": str(row[2]), "state": str(row[3]), "operation_at": str(row[4])}
+                    self._manual_operations[key] = {
+                        "kind": str(row[2]),
+                        "state": str(row[3]),
+                        "operation_at": str(row[4]),
+                    }
         if self._table_exists("kb_ready_index_state"):
             self._ready_index_ids.update(
-                {str(row[0]): (str(row[1]) if row[1] else None)
-                 for row in self._conn.execute(
-                     f"SELECT kb_id, index_version_id FROM kb_ready_index_state WHERE kb_id IN ({clause})",
-                     kb_params,
-                 )}
+                {
+                    str(row[0]): (str(row[1]) if row[1] else None)
+                    for row in self._conn.execute(
+                        f"SELECT kb_id, index_version_id FROM kb_ready_index_state WHERE kb_id IN ({clause})",
+                        kb_params,
+                    )
+                }
             )
         for kb_id, _profile in keys:
             self._ready_index_ids.setdefault(kb_id, None)
@@ -2595,7 +2653,9 @@ class _KBListStorageView:
     def get_ready_index_version_id(self, kb_id: str) -> str | None:
         return self._ready_index_ids.get(kb_id)
 
-    def get_agentic_ready_latest_build_attempt(self, kb_id: str, profile: str) -> dict[str, Any] | None:
+    def get_agentic_ready_latest_build_attempt(
+        self, kb_id: str, profile: str
+    ) -> dict[str, Any] | None:
         return self._latest_build_attempts.get(self._list_key(kb_id, profile))
 
     @contextmanager
@@ -2615,9 +2675,7 @@ class _KBListStorageView:
         if self._table_names_cache is None:
             self._table_names_cache = frozenset(
                 str(row[0])
-                for row in self._conn.execute(
-                    "SELECT name FROM sqlite_schema WHERE type = 'table'"
-                )
+                for row in self._conn.execute("SELECT name FROM sqlite_schema WHERE type = 'table'")
             )
         return table in self._table_names_cache
 
@@ -2882,12 +2940,12 @@ class _KBListStorageView:
         kb_updated_at = None
         index_dirty_at = None
         if kb_row:
-            kb_provider = kb_row[0] or infer_embedding_provider(kb_row[1], fallback="openai") or "openai"
+            kb_provider = (
+                kb_row[0] or infer_embedding_provider(kb_row[1], fallback="openai") or "openai"
+            )
             kb_model = kb_row[1] or ""
             kb_dimension = (
-                kb_row[2]
-                if kb_row[2] not in (None, "")
-                else infer_embedding_dimension(kb_row[1])
+                kb_row[2] if kb_row[2] not in (None, "") else infer_embedding_dimension(kb_row[1])
             )
             kb_chunk_count = int((kb_row[3] or 0) or 0)
             kb_file_count = int((kb_row[4] or 0) or 0)
@@ -2933,7 +2991,9 @@ class _KBListStorageView:
                     """,
                     (kb_id,),
                 ).fetchone()
-                pending_file_count = int((pending_file_count_row[0] if pending_file_count_row else 0) or 0)
+                pending_file_count = int(
+                    (pending_file_count_row[0] if pending_file_count_row else 0) or 0
+                )
 
         has_index = bool(latest)
         latest_index_time = (latest[6] or latest[7]) if latest else None
@@ -2942,11 +3002,7 @@ class _KBListStorageView:
             latest_index_time = legacy_index_time or kb_updated_at
         effective_file_count = max(binding_file_count, kb_file_count)
         dirty_after_index = bool(
-            index_dirty_at
-            and (
-                not latest_index_time
-                or index_dirty_at > latest_index_time
-            )
+            index_dirty_at and (not latest_index_time or index_dirty_at > latest_index_time)
         )
         needs_reindex = bool(
             (
@@ -2967,9 +3023,15 @@ class _KBListStorageView:
         latest_index_payload = None
         if latest:
             latest_index_payload = {
-                "embedding_provider": latest[0] or infer_embedding_provider(latest[1], fallback="openai") or "openai",
+                "embedding_provider": latest[0]
+                or infer_embedding_provider(latest[1], fallback="openai")
+                or "openai",
                 "embedding_model": latest[1],
-                "embedding_dimension": latest[2] if latest[2] not in (None, "") else infer_embedding_dimension(latest[1]),
+                "embedding_dimension": (
+                    latest[2]
+                    if latest[2] not in (None, "")
+                    else infer_embedding_dimension(latest[1])
+                ),
                 "index_type": latest[3],
                 "status": latest[4],
                 "chunk_count": latest[5] or 0,
@@ -3058,20 +3120,39 @@ class _KBListStorageView:
         except Exception:
             smoke_result = {}
         return {
-            "publication_id": row[0], "kb_id": row[1], "index_version_id": row[2],
-            "source_version_kind": row[5], "source_version_id": row[6], "profile": row[3],
-            "profile_version": row[4], "status": row[7], "output_dir": row[8] or "",
+            "publication_id": row[0],
+            "kb_id": row[1],
+            "index_version_id": row[2],
+            "source_version_kind": row[5],
+            "source_version_id": row[6],
+            "profile": row[3],
+            "profile_version": row[4],
+            "status": row[7],
+            "output_dir": row[8] or "",
             "artifact_files": artifact_files if isinstance(artifact_files, list) else [],
-            "doc_count": row[10] or 0, "section_count": row[11] or 0, "built_at": row[12],
-            "artifact_digest": row[13] or "", "source_db": row[14] or "",
+            "doc_count": row[10] or 0,
+            "section_count": row[11] or 0,
+            "built_at": row[12],
+            "artifact_digest": row[13] or "",
+            "source_db": row[14] or "",
             "schema_versions": schema_versions if isinstance(schema_versions, dict) else {},
             "smoke_result": smoke_result if isinstance(smoke_result, dict) else {},
-            "error_message": row[16] or "", "validated_at": row[17], "published_at": row[18],
-            "attempt_disposition": row[19] or "", "created_at": row[20], "updated_at": row[21],
-            "retention_class": row[22] or "", "gc_state": row[23] or "", "gc_marked_at": row[24],
-            "gc_claim_token": row[25] or "", "gc_quarantine_dir": row[26] or "",
-            "gc_claimed_at": row[27], "gc_lease_expires_at": row[28], "gc_deleted_at": row[29],
-            "gc_last_error": row[30] or "", "gc_updated_at": row[31],
+            "error_message": row[16] or "",
+            "validated_at": row[17],
+            "published_at": row[18],
+            "attempt_disposition": row[19] or "",
+            "created_at": row[20],
+            "updated_at": row[21],
+            "retention_class": row[22] or "",
+            "gc_state": row[23] or "",
+            "gc_marked_at": row[24],
+            "gc_claim_token": row[25] or "",
+            "gc_quarantine_dir": row[26] or "",
+            "gc_claimed_at": row[27],
+            "gc_lease_expires_at": row[28],
+            "gc_deleted_at": row[29],
+            "gc_last_error": row[30] or "",
+            "gc_updated_at": row[31],
         }
 
     def get_agentic_ready_publication(self, publication_id: str) -> dict[str, Any] | None:
@@ -3081,14 +3162,10 @@ class _KBListStorageView:
             return None
         publication_columns = self._agentic_ready_publication_columns()
         attempt_disposition_sql = (
-            "p.attempt_disposition"
-            if "attempt_disposition" in publication_columns
-            else "''"
+            "p.attempt_disposition" if "attempt_disposition" in publication_columns else "''"
         )
         smoke_result_sql = (
-            "p.smoke_result_json"
-            if "smoke_result_json" in publication_columns
-            else "'{}'"
+            "p.smoke_result_json" if "smoke_result_json" in publication_columns else "'{}'"
         )
         row = self._conn.execute(
             f"""
@@ -3145,8 +3222,12 @@ class _KBListStorageView:
             "automatic_publish_enabled": bool(row[3]) if row else False,
             "publication_revision": int(row[4] or 0) if row else 0,
             "updated_at": row[5] if row else None,
-            "active_publication": self.get_agentic_ready_publication(active_id) if active_id else None,
-            "previous_publication": self.get_agentic_ready_publication(previous_id) if previous_id else None,
+            "active_publication": (
+                self.get_agentic_ready_publication(active_id) if active_id else None
+            ),
+            "previous_publication": (
+                self.get_agentic_ready_publication(previous_id) if previous_id else None
+            ),
         }
 
     def get_agentic_ready_automation_state(
@@ -3183,8 +3264,11 @@ class _KBListStorageView:
         }
         if not self._prepared and not all(self._table_exists(table) for table in required_tables):
             return default
-        row = self._automation_rows.get(self._list_key(kb_id, normalized_profile)) if self._prepared else self._conn.execute(
-            """
+        row = (
+            self._automation_rows.get(self._list_key(kb_id, normalized_profile))
+            if self._prepared
+            else self._conn.execute(
+                """
             SELECT a.automation_state, a.running_generation,
                    a.last_attempted_generation, a.claim_token,
                    a.claimed_at, a.lease_expires_at,
@@ -3201,19 +3285,16 @@ class _KBListStorageView:
             WHERE s.kb_id = ? AND s.profile = ?
             LIMIT 1
             """,
-            (kb_id, normalized_profile),
-        ).fetchone()
+                (kb_id, normalized_profile),
+            ).fetchone()
+        )
         if not row:
             return default
         build_enabled = bool(row[10])
         pending_generation = int(row[13]) if row[13] is not None else None
         running_generation = int(row[1]) if row[1] is not None else None
         stored_state = str(row[0] or "")
-        if (
-            stored_state == "pending"
-            and pending_generation is None
-            and running_generation is None
-        ):
+        if stored_state == "pending" and pending_generation is None and running_generation is None:
             automation_state = "succeeded"
         elif stored_state:
             automation_state = stored_state
@@ -3250,7 +3331,11 @@ class _KBListStorageView:
         profile: str = "general",
     ) -> dict[str, Any]:
         normalized_profile = str(profile or "general").strip().lower() or "general"
-        row = self._source_rows.get(self._list_key(kb_id, normalized_profile)) if self._prepared else None
+        row = (
+            self._source_rows.get(self._list_key(kb_id, normalized_profile))
+            if self._prepared
+            else None
+        )
         if not self._prepared and self._table_exists("agentic_ready_source_state"):
             row = self._conn.execute(
                 """
@@ -3318,7 +3403,9 @@ class _KBListStorageView:
         pending_reasons = self._agentic_ready_json_list(row[4]) if pending_evaluation else []
         evaluated_kind = str(row[7] or "").strip().lower()
         evaluated_source_id = str(row[8] or "").strip()
-        has_serving_record = bool(serving_record and (serving_record or {}).get("status") in {"ready", "active"})
+        has_serving_record = bool(
+            serving_record and (serving_record or {}).get("status") in {"ready", "active"}
+        )
         confirmed_pending_content_change = bool(
             has_serving_record
             and pending_severity == "soft_stale"
@@ -3329,10 +3416,7 @@ class _KBListStorageView:
             and source_identity_comparable
             and evaluated_kind
             and evaluated_source_id
-            and (
-                active_kind != evaluated_kind
-                or active_source_id != evaluated_source_id
-            )
+            and (active_kind != evaluated_kind or active_source_id != evaluated_source_id)
         )
         evaluated_severity = str(row[5] or "none") if source_mismatch else "none"
         if source_mismatch and evaluated_severity == "none":
@@ -3345,14 +3429,15 @@ class _KBListStorageView:
         if legacy_hard_gate:
             evaluated_severity = "hard_stale"
         effective_severity = self._agentic_ready_severity_max(
-            pending_severity
-            if pending_severity == "hard_stale" or confirmed_pending_content_change
-            else "none",
+            (
+                pending_severity
+                if pending_severity == "hard_stale" or confirmed_pending_content_change
+                else "none"
+            ),
             evaluated_severity,
         )
         stale_confirmed = bool(
-            (source_mismatch and evaluated_severity != "none")
-            or confirmed_pending_content_change
+            (source_mismatch and evaluated_severity != "none") or confirmed_pending_content_change
         )
         serving_stale = effective_severity in {"soft_stale", "hard_stale"}
         state = (
@@ -3365,9 +3450,7 @@ class _KBListStorageView:
             )
         )
         reasons = (
-            self._agentic_ready_json_list(row[6])
-            if source_mismatch or legacy_hard_gate
-            else []
+            self._agentic_ready_json_list(row[6]) if source_mismatch or legacy_hard_gate else []
         )
         if source_mismatch and not reasons:
             reasons = ["source_version_changed"]
@@ -3403,18 +3486,6 @@ class _KBListStorageView:
         }
 
 
-def _kb_list_schema_ready(conn: Any) -> bool:
-    kb_columns = {
-        row[1] for row in conn.execute("PRAGMA table_info(rag_knowledge_bases)")
-    }
-    if not _KB_LIST_COLUMN_DEFINITIONS.keys() <= kb_columns:
-        return False
-    file_columns = {
-        row[1] for row in conn.execute("PRAGMA table_info(rag_kb_files)")
-    }
-    return _KB_LIST_FILE_COLUMN_DEFINITIONS.keys() <= file_columns
-
-
 def _kb_list_schema_object_type(conn: Any, name: str) -> str | None:
     try:
         row = conn.execute(
@@ -3433,9 +3504,7 @@ def _kb_list_table_columns(conn: Any, table: str) -> frozenset[str] | None:
     if object_type != "table":
         return None
     try:
-        return frozenset(
-            str(row[1]) for row in conn.execute(f"PRAGMA table_info({table})")
-        )
+        return frozenset(str(row[1]) for row in conn.execute(f"PRAGMA table_info({table})"))
     except sqlite3.Error:
         return None
 
@@ -3463,111 +3532,12 @@ def _kb_list_read_schema_problem(conn: Any) -> str | None:
             return "kb_schema_apply_required"
         if existing_columns and not required_columns <= existing_columns:
             return "kb_schema_apply_required"
-    if table_columns["agentic_ready_publications"] and not table_columns["agentic_ready_publication_gc"]:
+    if (
+        table_columns["agentic_ready_publications"]
+        and not table_columns["agentic_ready_publication_gc"]
+    ):
         return "kb_schema_apply_required"
     return None
-
-
-def _ensure_kb_list_schema_on_connection(conn: Any) -> None:
-    try:
-        if _kb_list_schema_ready(conn):
-            return
-        conn.execute("BEGIN IMMEDIATE")
-        if _kb_list_schema_ready(conn):
-            conn.commit()
-            return
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS rag_knowledge_bases (
-                kb_id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                description TEXT,
-                kb_mode TEXT DEFAULT 'category',
-                chunk_profile_id TEXT,
-                manifest_profile TEXT DEFAULT 'general',
-                embedding_provider TEXT DEFAULT 'openai',
-                embedding_model TEXT NOT NULL,
-                embedding_dimension INTEGER,
-                chunk_size INTEGER NOT NULL,
-                chunk_overlap INTEGER NOT NULL,
-                index_type TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                file_count INTEGER DEFAULT 0,
-                chunk_count INTEGER DEFAULT 0,
-                index_dirty_at TEXT
-            )
-            """
-        )
-        existing_kb_columns = {
-            row[1] for row in conn.execute("PRAGMA table_info(rag_knowledge_bases)")
-        }
-        for name, definition in _KB_LIST_COLUMN_DEFINITIONS.items():
-            if name not in existing_kb_columns:
-                conn.execute(f"ALTER TABLE rag_knowledge_bases ADD COLUMN {name} {definition}")
-        rows = conn.execute(
-            """
-            SELECT kb_id, embedding_provider, embedding_model, embedding_dimension
-            FROM rag_knowledge_bases
-            """
-        ).fetchall()
-        for kb_id, provider, model, dimension in rows:
-            resolved_provider = (
-                str(provider or "").strip().lower()
-                or infer_embedding_provider(model, fallback="openai")
-                or "openai"
-            )
-            resolved_dimension = (
-                int(dimension)
-                if dimension not in (None, "")
-                else infer_embedding_dimension(model)
-            )
-            if (
-                resolved_provider != str(provider or "").strip().lower()
-                or resolved_dimension != dimension
-            ):
-                conn.execute(
-                    """
-                    UPDATE rag_knowledge_bases
-                    SET embedding_provider = ?, embedding_dimension = ?
-                    WHERE kb_id = ?
-                    """,
-                    (resolved_provider, resolved_dimension, kb_id),
-                )
-
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS rag_kb_files (
-                kb_id TEXT NOT NULL,
-                file_url TEXT NOT NULL,
-                added_at TEXT NOT NULL,
-                chunk_count INTEGER DEFAULT 0,
-                indexed_at TEXT,
-                PRIMARY KEY (kb_id, file_url),
-                FOREIGN KEY (kb_id) REFERENCES rag_knowledge_bases(kb_id) ON DELETE CASCADE,
-                FOREIGN KEY (file_url) REFERENCES files(url) ON DELETE CASCADE
-            )
-            """
-        )
-        existing_file_columns = {
-            row[1] for row in conn.execute("PRAGMA table_info(rag_kb_files)")
-        }
-        for name, definition in _KB_LIST_FILE_COLUMN_DEFINITIONS.items():
-            if name not in existing_file_columns:
-                conn.execute(f"ALTER TABLE rag_kb_files ADD COLUMN {name} {definition}")
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-
-
-def _ensure_kb_list_schema(db_path: str) -> None:
-    Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(db_path)
-    try:
-        _ensure_kb_list_schema_on_connection(conn)
-    finally:
-        conn.close()
 
 
 def _kb_list_db_has_user_schema_objects(db_path: str) -> bool:
@@ -3582,14 +3552,12 @@ def _kb_list_db_has_user_schema_objects(db_path: str) -> bool:
             status_code=409,
         ) from exc
     try:
-        row = conn.execute(
-            """
+        row = conn.execute("""
             SELECT 1
             FROM sqlite_schema
             WHERE name NOT LIKE 'sqlite_%'
             LIMIT 1
-            """
-        ).fetchone()
+            """).fetchone()
         return row is not None
     except sqlite3.Error as exc:
         raise RagAdminError(
@@ -3608,13 +3576,11 @@ def _open_kb_list_read_only_connection(db_path: str) -> sqlite3.Connection:
     if immutable:
         immutable_conn = sqlite3.connect(f"{uri}&immutable=1", uri=True)
         immutable_conn.execute("PRAGMA query_only=ON")
-        ready_data_schema = immutable_conn.execute(
-            """
+        ready_data_schema = immutable_conn.execute("""
             SELECT 1 FROM sqlite_schema
             WHERE type = 'table' AND name = 'kb_ready_index_state'
             LIMIT 1
-            """
-        ).fetchone()
+            """).fetchone()
         if not ready_data_schema or _kb_list_read_schema_problem(immutable_conn) is not None:
             return immutable_conn
         immutable_conn.close()
@@ -3735,9 +3701,7 @@ def _list_knowledge_bases_customer(
         name = str(row[1] or "")
         description = str(row[2] or "")
         if search and not (
-            search in name.lower()
-            or search in description.lower()
-            or search in kb_id.lower()
+            search in name.lower() or search in description.lower() or search in kb_id.lower()
         ):
             continue
         payloads.append(
@@ -3784,14 +3748,12 @@ def list_knowledge_bases(
             if "embedding_identity_key" in kb_columns
             else "'' AS embedding_identity_key"
         )
-        rows = storage._conn.execute(
-            f"""
+        rows = storage._conn.execute(f"""
             SELECT kb_id, name, description, kb_mode, chunk_profile_id, manifest_profile, embedding_provider, embedding_model, embedding_dimension, {identity_column}, chunk_size, chunk_overlap,
                    index_type, created_at, updated_at, file_count, chunk_count
             FROM rag_knowledge_bases
             ORDER BY created_at DESC
-            """
-        ).fetchall()
+            """).fetchall()
         current_embeddings = _current_embeddings_payload(storage=storage)
         filtered_payloads = []
         for row in rows:
@@ -3825,8 +3787,9 @@ def list_knowledge_bases(
         storage.close()
 
 
-
-def create_knowledge_base(*, db_path: str, payload: dict[str, Any], headers: Mapping[str, str], auth: Any | None = None) -> dict[str, Any]:
+def create_knowledge_base(
+    *, db_path: str, payload: dict[str, Any], headers: Mapping[str, str], auth: Any | None = None
+) -> dict[str, Any]:
     _require_config_write_token(headers, auth)
     if not isinstance(payload, dict):
         raise RagAdminError("Invalid JSON body")
@@ -3856,8 +3819,12 @@ def create_knowledge_base(*, db_path: str, payload: dict[str, Any], headers: Map
             chunk_size = int(chunk_profile.get("chunk_size") or manager.config.max_chunk_tokens)
             chunk_overlap = int(chunk_profile.get("chunk_overlap") or 0)
         else:
-            chunk_size = parse_int_clamped(payload.get("chunk_size"), default=800, min_value=1, max_value=10000)
-            chunk_overlap = parse_int_clamped(payload.get("chunk_overlap"), default=100, min_value=0, max_value=10000)
+            chunk_size = parse_int_clamped(
+                payload.get("chunk_size"), default=800, min_value=1, max_value=10000
+            )
+            chunk_overlap = parse_int_clamped(
+                payload.get("chunk_overlap"), default=100, min_value=0, max_value=10000
+            )
         try:
             embedding_identity = resolve_server_embedding_identity(
                 storage,
@@ -3941,7 +3908,6 @@ def create_knowledge_base(*, db_path: str, payload: dict[str, Any], headers: Map
         storage.close()
 
 
-
 def get_knowledge_base(
     *,
     db_path: str,
@@ -3984,14 +3950,18 @@ def get_knowledge_base(
         storage.close()
 
 
-def get_agentic_ready_manifest(*, db_path: str, kb_id: str, query: Mapping[str, Any] | None = None) -> dict[str, Any]:
+def get_agentic_ready_manifest(
+    *, db_path: str, kb_id: str, query: Mapping[str, Any] | None = None
+) -> dict[str, Any]:
     kid = _kb_id(kb_id)
     _KnowledgeBase, manager, storage = _manager_and_storage(db_path)
     try:
         kb = manager.get_kb(kid)
         if not kb:
             raise RagAdminError(f"Knowledge base '{kid}' not found", status_code=404)
-        profile = _manifest_profile((query or {}).get("profile") or getattr(kb, "manifest_profile", "general"))
+        profile = _manifest_profile(
+            (query or {}).get("profile") or getattr(kb, "manifest_profile", "general")
+        )
         include_ready_build_input = _norm(
             (query or {}).get("include_ready_build_input")
         ).lower() in {"1", "true", "yes"}
@@ -4031,9 +4001,7 @@ def build_agentic_ready_manifest(
             or getattr(kb, "manifest_profile", "general")
         )
         index_version_id = _norm(payload.get("index_version_id"))
-        expected_source = _norm(
-            payload.get("expected_source_snapshot_fingerprint")
-        )
+        expected_source = _norm(payload.get("expected_source_snapshot_fingerprint"))
         if not index_version_id or not expected_source:
             raise RagAdminError(
                 "invalid_selector: Ready Data requires index_version_id and "
@@ -4067,9 +4035,7 @@ def build_agentic_ready_manifest(
                 "kb_id": kid,
                 "profile": profile,
                 "index_version_id": index_version_id,
-                "expected_source_snapshot_fingerprint": source[
-                    "source_snapshot_fingerprint"
-                ],
+                "expected_source_snapshot_fingerprint": source["source_snapshot_fingerprint"],
                 "name": f"Ready Data: {kb.name}",
             },
             task_name=f"Ready Data: {kb.name}",
@@ -4210,9 +4176,7 @@ def _build_agentic_ready_manifest_core(
                 str(current_source.get("source_snapshot_fingerprint") or "")
                 != expected_source_snapshot_fingerprint
             ):
-                raise ValueError(
-                    "stale_snapshot: Ready Data source changed before publication"
-                )
+                raise ValueError("stale_snapshot: Ready Data source changed before publication")
 
         initial_source_state = storage.get_agentic_ready_source_state(
             kb_id=kid,
@@ -4254,8 +4218,7 @@ def _build_agentic_ready_manifest_core(
             ).strip()
             if (
                 expected_source_snapshot_fingerprint
-                and observed_source_snapshot_fingerprint
-                != expected_source_snapshot_fingerprint
+                and observed_source_snapshot_fingerprint != expected_source_snapshot_fingerprint
             ):
                 raise ValueError("stale_snapshot: Ready Data source changed during build")
             if (
@@ -4270,6 +4233,12 @@ def _build_agentic_ready_manifest_core(
             validation = ready_data_builder.validate(candidate_output_dir)
             artifact_files = list(builder_manifest.get("artifact_files") or [])
             artifact_digest = _ready_data_artifact_digest(candidate_output_dir, artifact_files)
+            _require_generated_staging_candidate(
+                returned_output_dir=candidate_output_dir,
+                expected_output_dir=staging_output_dir,
+                staging_root=staging_root,
+                allowed_output_root=allowed_output_root,
+            )
             if artifact_digest != str(builder_manifest.get("artifact_digest") or ""):
                 raise ValueError("build_failure: Ready Data artifact digest mismatch")
             if validation.get("valid"):
@@ -4289,9 +4258,7 @@ def _build_agentic_ready_manifest_core(
                 except Exception:  # noqa: BLE001
                     smoke_result = _staging_smoke_failed("smoke_execution_failed")
                 smoke_status = str(smoke_result.get("status") or "")
-                smoke_contract = str(
-                    smoke_result.get("contract_version") or ""
-                )
+                smoke_contract = str(smoke_result.get("contract_version") or "")
                 smoke_catalog_doc_count = _staging_smoke_count(
                     smoke_result.get("catalog_doc_count")
                 )
@@ -4299,9 +4266,7 @@ def _build_agentic_ready_manifest_core(
                     str(smoke_result.get("matched_doc_id") or "").strip()
                     or str(smoke_result.get("matched_file_url") or "").strip()
                 )
-                smoke_contract_valid = (
-                    smoke_contract == STAGING_SMOKE_CONTRACT_VERSION
-                )
+                smoke_contract_valid = smoke_contract == STAGING_SMOKE_CONTRACT_VERSION
                 smoke_passed = (
                     smoke_contract_valid
                     and smoke_status == "passed"
@@ -4319,9 +4284,9 @@ def _build_agentic_ready_manifest_core(
                     elif smoke_status == "passed" and not smoke_has_catalog_reference:
                         failure_reason = "catalog_reference_missing"
                     elif smoke_status == "failed":
-                        failure_reason = str(
-                            smoke_result.get("failure_reason") or "smoke_failed"
-                        )[:160]
+                        failure_reason = str(smoke_result.get("failure_reason") or "smoke_failed")[
+                            :160
+                        ]
                     else:
                         failure_reason = "invalid_smoke_status"
                     if not failure_reason:
@@ -4338,9 +4303,7 @@ def _build_agentic_ready_manifest_core(
                         f"ready_data staging smoke failed: {failure_reason}"
                     )
             else:
-                smoke_result = _staging_smoke_not_run(
-                    "structural_validation_failed"
-                )
+                smoke_result = _staging_smoke_not_run("structural_validation_failed")
             if stop_requested():
                 return stopped_result()
             if validation.get("valid"):
@@ -4353,7 +4316,9 @@ def _build_agentic_ready_manifest_core(
                     source_version_kind=source_version_kind,
                     source_version_id=source_version_id,
                     profile=profile,
-                    profile_version=str(builder_manifest.get("profile_version") or profile_def.version),
+                    profile_version=str(
+                        builder_manifest.get("profile_version") or profile_def.version
+                    ),
                     status="failed",
                     output_dir="",
                     artifact_files=artifact_files,
@@ -4396,7 +4361,9 @@ def _build_agentic_ready_manifest_core(
                     source_version_kind=source_version_kind,
                     source_version_id=source_version_id,
                     profile=profile,
-                    profile_version=str(builder_manifest.get("profile_version") or profile_def.version),
+                    profile_version=str(
+                        builder_manifest.get("profile_version") or profile_def.version
+                    ),
                     status="validated",
                     output_dir=candidate_output_dir,
                     artifact_files=artifact_files,
@@ -4498,11 +4465,7 @@ def _build_agentic_ready_manifest_core(
                             candidate_publication,
                         )
                     )
-                    if (
-                        same_active_identity
-                        and active_validation
-                        and active_validation["valid"]
-                    ):
+                    if same_active_identity and active_validation and active_validation["valid"]:
                         duplicate_gc_marked = (
                             storage.mark_agentic_ready_publication_redundant_duplicate(
                                 recorded_publication_id,
@@ -4527,11 +4490,13 @@ def _build_agentic_ready_manifest_core(
                         # validation. Keep the candidate until a future governed GC pass.
                         _append_validation_warning(
                             validation,
-                            "validated duplicate retained; governed garbage collection is deferred "
-                            "before automatic publication"
-                            if duplicate_gc_marked
-                            else "validated duplicate retained as retryable because its garbage-collection "
-                            "classification lost the slot guard",
+                            (
+                                "validated duplicate retained; governed garbage collection is deferred "
+                                "before automatic publication"
+                                if duplicate_gc_marked
+                                else "validated duplicate retained as retryable because its garbage-collection "
+                                "classification lost the slot guard"
+                            ),
                         )
 
                 if not publication_state:
@@ -4587,7 +4552,9 @@ def _build_agentic_ready_manifest_core(
                     except Exception as digest_exc:  # noqa: BLE001
                         artifact_digest = hashlib.sha256(b"").hexdigest()
                         artifact_files = []
-                        _append_validation_warning(validation, f"staging digest failed: {digest_exc}")
+                        _append_validation_warning(
+                            validation, f"staging digest failed: {digest_exc}"
+                        )
                 candidate_publication = storage.record_agentic_ready_publication(
                     kb_id=kid,
                     index_version_id=observed_index_version_id,
@@ -4624,10 +4591,8 @@ def _build_agentic_ready_manifest_core(
         active_matches_builder = bool(
             active_publication
             and validation.get("valid")
-            and str(active_publication.get("source_version_kind") or "")
-            == source_version_kind
-            and str(active_publication.get("source_version_id") or "")
-            == source_version_id
+            and str(active_publication.get("source_version_kind") or "") == source_version_kind
+            and str(active_publication.get("source_version_id") or "") == source_version_id
         )
         if captured_evaluation_generation is not None and active_matches_builder:
             try:
@@ -4681,6 +4646,7 @@ def _ready_data_gc_tree_is_safe(path: Path) -> None:
         raise ValueError("ready_data GC path is a link or reparse point")
     if not path.is_dir():
         raise ValueError("ready_data GC path is not a directory")
+
     def raise_walk_error(error: OSError) -> None:
         raise error
 
@@ -4830,7 +4796,9 @@ def _build_ready_data_publication_gc_plan(
     minimum_marked_at = cutoff - timedelta(days=READY_DATA_GC_MINIMUM_AGE_DAYS)
     publications = storage.list_agentic_ready_publications_for_gc()
     slots = storage.list_agentic_ready_slots_for_gc()
-    active_ids = {str(item["active_publication_id"]) for item in slots if item["active_publication_id"]}
+    active_ids = {
+        str(item["active_publication_id"]) for item in slots if item["active_publication_id"]
+    }
     previous_ids = {
         str(item["previous_publication_id"]) for item in slots if item["previous_publication_id"]
     }
@@ -4859,9 +4827,9 @@ def _build_ready_data_publication_gc_plan(
             continue
         publication_id = str(publication["publication_id"])
         marked_times[publication_id] = parsed
-        grouped.setdefault(
-            (str(publication["kb_id"]), str(publication["profile"])), []
-        ).append(publication)
+        grouped.setdefault((str(publication["kb_id"]), str(publication["profile"])), []).append(
+            publication
+        )
     newest_ids: set[str] = set()
     for attempts in grouped.values():
         attempts.sort(
@@ -4918,9 +4886,7 @@ def _build_ready_data_publication_gc_plan(
         }:
             skipped.append(_ready_data_gc_item(publication, reason="invalid_gc_state"))
             continue
-        publication_path_keys = Storage._agentic_ready_path_keys(
-            str(publication["output_dir"])
-        )
+        publication_path_keys = Storage._agentic_ready_path_keys(str(publication["output_dir"]))
         if Storage._agentic_ready_path_key_sets_overlap(
             serving_path_keys,
             publication_path_keys,
@@ -4939,9 +4905,7 @@ def _build_ready_data_publication_gc_plan(
             continue
         recovering = publication["gc_state"] in {"claimed", "delete_failed"}
         if publication["gc_state"] == "claimed":
-            lease_expires_at = Storage._parse_iso_to_utc(
-                publication["gc_lease_expires_at"]
-            )
+            lease_expires_at = Storage._parse_iso_to_utc(publication["gc_lease_expires_at"])
             if lease_expires_at is None:
                 skipped.append(_ready_data_gc_item(publication, reason="invalid_claim_lease"))
                 continue
@@ -5124,14 +5088,23 @@ def execute_ready_data_publication_gc(
         storage.close()
 
 
-def update_knowledge_base(*, db_path: str, kb_id: str, payload: dict[str, Any], headers: Mapping[str, str], auth: Any | None = None) -> dict[str, Any]:
+def update_knowledge_base(
+    *,
+    db_path: str,
+    kb_id: str,
+    payload: dict[str, Any],
+    headers: Mapping[str, str],
+    auth: Any | None = None,
+) -> dict[str, Any]:
     _require_config_write_token(headers, auth)
     kid = _kb_id(kb_id)
     if not isinstance(payload, dict):
         raise RagAdminError("Invalid JSON body")
     name = _norm(payload["name"]) if "name" in payload else None
     description = _norm(payload["description"]) if "description" in payload else None
-    manifest_profile = _manifest_profile(payload["manifest_profile"]) if "manifest_profile" in payload else None
+    manifest_profile = (
+        _manifest_profile(payload["manifest_profile"]) if "manifest_profile" in payload else None
+    )
     chunk_profile_id = (
         _norm(payload.get("chunk_profile_id") or payload.get("profile_id"))
         if "chunk_profile_id" in payload or "profile_id" in payload
@@ -5196,9 +5169,7 @@ def update_knowledge_base(*, db_path: str, kb_id: str, payload: dict[str, Any], 
                 ),
             )
             if chunk_profile_id is not None:
-                storage._conn.execute(
-                    "DELETE FROM kb_chunk_bindings WHERE kb_id = ?", (kid,)
-                )
+                storage._conn.execute("DELETE FROM kb_chunk_bindings WHERE kb_id = ?", (kid,))
                 binding_result = _bind_existing_chunk_sets(
                     storage,
                     kb_id=kid,
@@ -5233,8 +5204,9 @@ def update_knowledge_base(*, db_path: str, kb_id: str, payload: dict[str, Any], 
         storage.close()
 
 
-
-def delete_knowledge_base(*, db_path: str, kb_id: str, headers: Mapping[str, str], auth: Any | None = None) -> dict[str, Any]:
+def delete_knowledge_base(
+    *, db_path: str, kb_id: str, headers: Mapping[str, str], auth: Any | None = None
+) -> dict[str, Any]:
     _require_config_write_token(headers, auth)
     kid = _kb_id(kb_id)
     _KnowledgeBase, manager, storage = _manager_and_storage(db_path)
@@ -5245,7 +5217,6 @@ def delete_knowledge_base(*, db_path: str, kb_id: str, headers: Mapping[str, str
         return {"success": True, "message": f"Knowledge base '{kid}' deleted successfully"}
     finally:
         storage.close()
-
 
 
 def get_knowledge_base_stats(
@@ -5267,7 +5238,6 @@ def get_knowledge_base_stats(
         storage.close()
 
 
-
 def list_knowledge_base_files(
     *,
     db_path: str,
@@ -5282,10 +5252,7 @@ def list_knowledge_base_files(
         if not manager.get_kb(kid):
             raise RagAdminError(f"Knowledge base '{kid}' not found", status_code=404)
         if not _can_view_kb_diagnostics(auth):
-            files = [
-                _kb_file_customer_projection(item)
-                for item in manager.get_kb_files(kid)
-            ]
+            files = [_kb_file_customer_projection(item) for item in manager.get_kb_files(kid)]
             return {
                 "kb_id": kid,
                 "total_files": len(files),
@@ -5300,7 +5267,9 @@ def list_knowledge_base_files(
             if not file_url or file_url in latest_binding_by_file:
                 continue
             latest_binding_by_file[file_url] = binding
-            profile_name = str(binding.get("profile_name") or binding.get("profile_id") or "").strip()
+            profile_name = str(
+                binding.get("profile_name") or binding.get("profile_id") or ""
+            ).strip()
             if profile_name:
                 profile_names.add(profile_name)
 
@@ -5337,7 +5306,8 @@ def list_knowledge_base_files(
                     "chunk_count": binding.get("chunk_count") or item.get("chunk_count") or 0,
                     "chunk_set_id": binding.get("chunk_set_id") or "",
                     "chunk_version_count": version_count_cache.get(cache_key, 0),
-                    "chunk_set_updated_at": binding.get("chunk_set_updated_at") or binding.get("bound_at"),
+                    "chunk_set_updated_at": binding.get("chunk_set_updated_at")
+                    or binding.get("bound_at"),
                     "bound_at": binding.get("bound_at"),
                     "chunk_profile": binding.get("profile_name") or binding.get("profile_id") or "",
                     "indexed": indexed,
@@ -5362,8 +5332,14 @@ def list_knowledge_base_files(
         storage.close()
 
 
-
-def add_knowledge_base_files(*, db_path: str, kb_id: str, payload: dict[str, Any], headers: Mapping[str, str], auth: Any | None = None) -> dict[str, Any]:
+def add_knowledge_base_files(
+    *,
+    db_path: str,
+    kb_id: str,
+    payload: dict[str, Any],
+    headers: Mapping[str, str],
+    auth: Any | None = None,
+) -> dict[str, Any]:
     _require_config_write_token(headers, auth)
     kid = _kb_id(kb_id)
     if not isinstance(payload, dict):
@@ -5378,13 +5354,13 @@ def add_knowledge_base_files(*, db_path: str, kb_id: str, payload: dict[str, Any
         if not kb:
             raise RagAdminError(f"Knowledge base '{kid}' not found", status_code=404)
         current_profile_id = _norm(getattr(kb, "chunk_profile_id", ""))
-        requested_profile_id = _norm(
-            payload.get("chunk_profile_id") or payload.get("profile_id")
-        )
-        if current_profile_id and requested_profile_id and requested_profile_id != current_profile_id:
-            raise RagAdminError(
-                "invalid_selector: chunk profile must match the knowledge base"
-            )
+        requested_profile_id = _norm(payload.get("chunk_profile_id") or payload.get("profile_id"))
+        if (
+            current_profile_id
+            and requested_profile_id
+            and requested_profile_id != current_profile_id
+        ):
+            raise RagAdminError("invalid_selector: chunk profile must match the knowledge base")
         chunk_profile_id = requested_profile_id or current_profile_id
         if chunk_profile_id and not storage.get_chunk_profile(chunk_profile_id):
             raise RagAdminError("chunk profile not found", status_code=404)
@@ -5417,9 +5393,7 @@ def add_knowledge_base_files(*, db_path: str, kb_id: str, payload: dict[str, Any
             "skipped_count": int(result.get("skipped_count") or 0)
             + int(binding_result.get("skipped_without_chunks") or 0),
             "total_files": int(
-                result.get("total_files")
-                or manager.get_kb_stats(kid).get("total_files")
-                or 0
+                result.get("total_files") or manager.get_kb_stats(kid).get("total_files") or 0
             ),
             "chunk_bindings": binding_result,
         }
@@ -5427,8 +5401,9 @@ def add_knowledge_base_files(*, db_path: str, kb_id: str, payload: dict[str, Any
         storage.close()
 
 
-
-def remove_knowledge_base_file(*, db_path: str, kb_id: str, file_url: str, headers: Mapping[str, str], auth: Any | None = None) -> dict[str, Any]:
+def remove_knowledge_base_file(
+    *, db_path: str, kb_id: str, file_url: str, headers: Mapping[str, str], auth: Any | None = None
+) -> dict[str, Any]:
     _require_config_write_token(headers, auth)
     kid = _kb_id(kb_id)
     normalized_file_url = _norm(file_url)
@@ -5447,7 +5422,6 @@ def remove_knowledge_base_file(*, db_path: str, kb_id: str, file_url: str, heade
         storage.close()
 
 
-
 def get_unmapped_categories(*, db_path: str) -> dict[str, Any]:
     _KnowledgeBase, manager, storage = _manager_and_storage(db_path)
     try:
@@ -5463,7 +5437,6 @@ def get_unmapped_categories(*, db_path: str) -> dict[str, Any]:
         storage.close()
 
 
-
 def list_selectable_files(*, db_path: str, query: Mapping[str, Any]) -> dict[str, Any]:
     q = _norm(query.get("query")).lower()
     category = _norm(query.get("category"))
@@ -5471,7 +5444,9 @@ def list_selectable_files(*, db_path: str, query: Mapping[str, Any]) -> dict[str
     kb_id_raw = _norm(query.get("kb_id"))
     kb_id = _kb_id(kb_id_raw) if kb_id_raw else ""
     limit = parse_int_clamped(query.get("limit") or 100, default=100, min_value=1, max_value=500)
-    offset = parse_int_clamped(query.get("offset") or 0, default=0, min_value=0, max_value=1_000_000)
+    offset = parse_int_clamped(
+        query.get("offset") or 0, default=0, min_value=0, max_value=1_000_000
+    )
 
     storage = Storage(db_path)
     try:
@@ -5525,17 +5500,25 @@ def list_selectable_files(*, db_path: str, query: Mapping[str, Any]) -> dict[str
         ]
         params: list[Any] = []
         if q:
-            where_parts.append("(LOWER(f.title) LIKE ? OR LOWER(f.original_filename) LIKE ? OR LOWER(f.url) LIKE ?)")
+            where_parts.append(
+                "(LOWER(f.title) LIKE ? OR LOWER(f.original_filename) LIKE ? OR LOWER(f.url) LIKE ?)"
+            )
             wildcard = f"%{q}%"
             params.extend([wildcard, wildcard, wildcard])
         if category:
-            where_parts.append("(c.category = ? OR c.category LIKE ? OR c.category LIKE ? OR c.category LIKE ?)")
+            where_parts.append(
+                "(c.category = ? OR c.category LIKE ? OR c.category LIKE ? OR c.category LIKE ?)"
+            )
             params.extend([category, f"{category};%", f"%; {category}", f"%; {category};%"])
         if kb_id:
-            row = conn.execute("SELECT 1 FROM rag_knowledge_bases WHERE kb_id = ?", [kb_id]).fetchone()
+            row = conn.execute(
+                "SELECT 1 FROM rag_knowledge_bases WHERE kb_id = ?", [kb_id]
+            ).fetchone()
             if not row:
                 raise RagAdminError(f"Knowledge base '{kb_id}' not found", status_code=404)
-            where_parts.append("NOT EXISTS (SELECT 1 FROM rag_kb_files kf WHERE kf.kb_id = ? AND kf.file_url = f.url)")
+            where_parts.append(
+                "NOT EXISTS (SELECT 1 FROM rag_kb_files kf WHERE kf.kb_id = ? AND kf.file_url = f.url)"
+            )
             params.append(kb_id)
         where_sql = " AND ".join(where_parts)
 
@@ -5595,10 +5578,15 @@ def list_selectable_files(*, db_path: str, query: Mapping[str, Any]) -> dict[str
                     }
                 )
             files.append(item)
-        return {"files": files, "total": total, "limit": limit, "offset": offset, "kb_id": kb_id or None}
+        return {
+            "files": files,
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+            "kb_id": kb_id or None,
+        }
     finally:
         storage.close()
-
 
 
 def get_knowledge_base_categories(*, db_path: str, kb_id: str) -> dict[str, Any]:
@@ -5613,8 +5601,14 @@ def get_knowledge_base_categories(*, db_path: str, kb_id: str) -> dict[str, Any]
         storage.close()
 
 
-
-def set_knowledge_base_categories(*, db_path: str, kb_id: str, payload: dict[str, Any], headers: Mapping[str, str], auth: Any | None = None) -> dict[str, Any]:
+def set_knowledge_base_categories(
+    *,
+    db_path: str,
+    kb_id: str,
+    payload: dict[str, Any],
+    headers: Mapping[str, str],
+    auth: Any | None = None,
+) -> dict[str, Any]:
     _require_config_write_token(headers, auth)
     kid = _kb_id(kb_id)
     if not isinstance(payload, dict):
@@ -5635,13 +5629,13 @@ def set_knowledge_base_categories(*, db_path: str, kb_id: str, payload: dict[str
         conn = storage._conn
         timestamp = _KnowledgeBase._get_timestamp()
         current_profile_id = _norm(getattr(kb, "chunk_profile_id", ""))
-        requested_profile_id = _norm(
-            payload.get("chunk_profile_id") or payload.get("profile_id")
-        )
-        if current_profile_id and requested_profile_id and requested_profile_id != current_profile_id:
-            raise RagAdminError(
-                "invalid_selector: chunk profile must match the knowledge base"
-            )
+        requested_profile_id = _norm(payload.get("chunk_profile_id") or payload.get("profile_id"))
+        if (
+            current_profile_id
+            and requested_profile_id
+            and requested_profile_id != current_profile_id
+        ):
+            raise RagAdminError("invalid_selector: chunk profile must match the knowledge base")
         chunk_profile_id = requested_profile_id or current_profile_id
         current_categories = manager.get_kb_categories(kid)
         if action == "add":
@@ -5649,16 +5643,12 @@ def set_knowledge_base_categories(*, db_path: str, kb_id: str, payload: dict[str
         elif action == "remove":
             removed_categories = set(categories)
             prospective_categories = [
-                category
-                for category in current_categories
-                if category not in removed_categories
+                category for category in current_categories if category not in removed_categories
             ]
         else:
             prospective_categories = list(categories)
         prospective_file_urls = (
-            manager._files_for_categories(prospective_categories)
-            if prospective_categories
-            else []
+            manager._files_for_categories(prospective_categories) if prospective_categories else []
         )
 
         if action == "add":
@@ -5683,7 +5673,12 @@ def set_knowledge_base_categories(*, db_path: str, kb_id: str, payload: dict[str
                 )
                 _require_complete_kb_snapshot(storage, kid, prospective_file_urls)
             after_n = int(manager.get_kb_stats(kid).get("total_files", 0))
-            response = {"kb_id": kid, "action": action, "linked_count": len(categories), "files_added": max(0, after_n - before_n)}
+            response = {
+                "kb_id": kid,
+                "action": action,
+                "linked_count": len(categories),
+                "files_added": max(0, after_n - before_n),
+            }
             if sync_result is not None:
                 response["category_sync"] = sync_result
             if binding_result is not None:
@@ -5750,7 +5745,13 @@ def set_knowledge_base_categories(*, db_path: str, kb_id: str, payload: dict[str
             )
             _require_complete_kb_snapshot(storage, kid, prospective_file_urls)
         after_n = int(manager.get_kb_stats(kid).get("total_files", 0))
-        response = {"kb_id": kid, "action": action, "linked_count": len(categories), "files_added": max(0, after_n - before_n), "categories": manager.get_kb_categories(kid)}
+        response = {
+            "kb_id": kid,
+            "action": action,
+            "linked_count": len(categories),
+            "files_added": max(0, after_n - before_n),
+            "categories": manager.get_kb_categories(kid),
+        }
         if sync_result is not None:
             response["category_sync"] = sync_result
         if binding_result is not None:
@@ -5758,7 +5759,6 @@ def set_knowledge_base_categories(*, db_path: str, kb_id: str, payload: dict[str
         return response
     finally:
         storage.close()
-
 
 
 def get_pending_files(*, db_path: str, kb_id: str) -> dict[str, Any]:
@@ -5787,8 +5787,14 @@ def get_pending_files(*, db_path: str, kb_id: str) -> dict[str, Any]:
         storage.close()
 
 
-
-def bind_chunk_sets(*, db_path: str, kb_id: str, payload: dict[str, Any], headers: Mapping[str, str], auth: Any | None = None) -> dict[str, Any]:
+def bind_chunk_sets(
+    *,
+    db_path: str,
+    kb_id: str,
+    payload: dict[str, Any],
+    headers: Mapping[str, str],
+    auth: Any | None = None,
+) -> dict[str, Any]:
     _require_config_write_token(headers, auth)
     kid = _kb_id(kb_id)
     if not isinstance(payload, dict):
@@ -5798,11 +5804,13 @@ def bind_chunk_sets(*, db_path: str, kb_id: str, payload: dict[str, Any], header
     if isinstance(payload.get("bindings"), list):
         items = payload.get("bindings") or []
     else:
-        items = [{
-            "file_url": payload.get("file_url"),
-            "chunk_set_id": payload.get("chunk_set_id"),
-            "binding_mode": payload.get("binding_mode") or "follow_latest",
-        }]
+        items = [
+            {
+                "file_url": payload.get("file_url"),
+                "chunk_set_id": payload.get("chunk_set_id"),
+                "binding_mode": payload.get("binding_mode") or "follow_latest",
+            }
+        ]
     parsed: list[tuple[str, str, str]] = []
     for item in items:
         if not isinstance(item, dict):
@@ -5849,13 +5857,9 @@ def bind_chunk_sets(*, db_path: str, kb_id: str, payload: dict[str, Any], header
             if not chunk_set:
                 raise RagAdminError("chunk_set_id not found", status_code=404)
             if str(chunk_set[0] or "") != file_url:
-                raise RagAdminError(
-                    "chunk_set_id does not belong to the specified file_url"
-                )
+                raise RagAdminError("chunk_set_id does not belong to the specified file_url")
             if str(chunk_set[1] or "") != selected_profile_id:
-                raise RagAdminError(
-                    f"binding uses the wrong chunk profile: {file_url}"
-                )
+                raise RagAdminError(f"binding uses the wrong chunk profile: {file_url}")
 
         created_n = 0
         out: list[dict[str, Any]] = []
@@ -5892,8 +5896,15 @@ def bind_chunk_sets(*, db_path: str, kb_id: str, payload: dict[str, Any], header
         storage.close()
 
 
-
-def create_index_task(*, db_path: str, kb_id: str, payload: dict[str, Any], headers: Mapping[str, str], bridge_state: Any, auth: Any | None = None) -> tuple[dict[str, Any], int]:
+def create_index_task(
+    *,
+    db_path: str,
+    kb_id: str,
+    payload: dict[str, Any],
+    headers: Mapping[str, str],
+    bridge_state: Any,
+    auth: Any | None = None,
+) -> tuple[dict[str, Any], int]:
     _require_config_write_token(headers, auth)
     kid = _kb_id(kb_id)
     if not isinstance(payload, dict):
@@ -5903,11 +5914,7 @@ def create_index_task(*, db_path: str, kb_id: str, payload: dict[str, Any], head
         or payload.get("force_reindex", False)
         or payload.get("reindex_all", False)
     )
-    requested = (
-        _list(payload.get("file_urls"), "file_urls")
-        if "file_urls" in payload
-        else None
-    )
+    requested = _list(payload.get("file_urls"), "file_urls") if "file_urls" in payload else None
 
     _KnowledgeBase, manager, storage = _manager_and_storage(db_path)
     try:
@@ -5933,9 +5940,7 @@ def create_index_task(*, db_path: str, kb_id: str, payload: dict[str, Any], head
         identity_key = _norm(payload.get("embedding_identity_key")) or _norm(
             getattr(kb, "embedding_identity_key", "")
         )
-        if not identity_key or identity_key != _norm(
-            getattr(kb, "embedding_identity_key", "")
-        ):
+        if not identity_key or identity_key != _norm(getattr(kb, "embedding_identity_key", "")):
             raise RagAdminError(
                 "invalid_selector: embedding identity must exactly match the knowledge base"
             )
@@ -5976,17 +5981,24 @@ def create_index_task(*, db_path: str, kb_id: str, payload: dict[str, Any], head
         storage.close()
 
 
-
-def cleanup_chunk_sets(*, db_path: str, payload: dict[str, Any], headers: Mapping[str, str], auth: Any | None = None) -> dict[str, Any]:
+def cleanup_chunk_sets(
+    *, db_path: str, payload: dict[str, Any], headers: Mapping[str, str], auth: Any | None = None
+) -> dict[str, Any]:
     _require_config_write_token(headers, auth)
     if not isinstance(payload, dict):
         raise RagAdminError("Invalid JSON body")
-    older_than_days = parse_int_clamped(payload.get("older_than_days") or 30, default=30, min_value=1, max_value=3650)
-    limit = parse_int_clamped(payload.get("limit") or 5000, default=5000, min_value=1, max_value=20000)
+    older_than_days = parse_int_clamped(
+        payload.get("older_than_days") or 30, default=30, min_value=1, max_value=3650
+    )
+    limit = parse_int_clamped(
+        payload.get("limit") or 5000, default=5000, min_value=1, max_value=20000
+    )
     dry_run = bool(payload.get("dry_run", False))
 
     storage = Storage(db_path)
     try:
-        return storage.cleanup_orphan_chunk_sets(older_than_days=older_than_days, limit=limit, dry_run=dry_run)
+        return storage.cleanup_orphan_chunk_sets(
+            older_than_days=older_than_days, limit=limit, dry_run=dry_run
+        )
     finally:
         storage.close()

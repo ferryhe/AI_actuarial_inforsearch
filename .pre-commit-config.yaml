@@ -1,4 +1,25 @@
 repos:
+  - repo: local
+    hooks:
+      - id: dead-code-files
+        name: dead-code file reachability
+        entry: python scripts/dead_code_gate.py files --report-dir reports/dead-code-files
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
+      - id: dead-code-symbols
+        name: dead-code symbol scan
+        entry: python scripts/dead_code_gate.py symbols --report-dir reports/dead-code-symbols
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
+      - id: unified-quality-gate
+        name: unified Python quality gate
+        entry: python scripts/quality_gate.py
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
+
   # General file checks
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.5.0

@@ -3,11 +3,9 @@ import os
 import subprocess
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1] / "client" / "src"
 FILE_DETAIL_TSX = ROOT / "pages" / "FileDetail.tsx"
 FILE_PREVIEW_TSX = ROOT / "pages" / "FilePreview.tsx"
-NATIVE_FILE_DETAIL_TSX = ROOT / "pages" / "NativeFileDetail.tsx"
 LATEST_REQUEST_HOOK_TS = ROOT / "hooks" / "use-latest-request.ts"
 REPO_ROOT = Path(__file__).resolve().parents[1]
 NPM_COMMAND = "npm.cmd" if os.name == "nt" else "npm"
@@ -22,7 +20,7 @@ def test_file_detail_ai_explain_passes_loaded_markdown_to_chat():
     assert "file_url: file.url" in src
     assert "filename," in src
     assert "title: file.title || filename" in src
-    assert "category: file.category || \"\"" in src
+    assert 'category: file.category || ""' in src
     assert "keywords: file.keywords || []" in src
     assert 'data-testid="button-ai-explain"' in src
     assert "disabled={!canExplain}" in src
@@ -34,7 +32,10 @@ def test_file_detail_renders_markdown_with_shared_renderer():
     assert 'import { MarkdownContent } from "@/components/MarkdownContent";' in src
     assert "function MarkdownRenderer" not in src
     assert "<MarkdownContent content={markdownContent}" in src
-    assert '<pre className="whitespace-pre-wrap text-sm font-sans">{markdown?.markdown_content}</pre>' not in src
+    assert (
+        '<pre className="whitespace-pre-wrap text-sm font-sans">{markdown?.markdown_content}</pre>'
+        not in src
+    )
 
 
 def test_file_detail_uses_permission_gates_for_mutating_actions():
@@ -89,15 +90,14 @@ def test_file_routes_parse_raw_browser_search_without_changing_encoded_url_ident
         "https://example.com/a+b.pdf",
     ]
     script = """
-import { buildFileDetailPath, buildFilePreviewPath, getRawSearchParams } from './client/src/lib/navigation.ts';
+import { buildFileDetailPath, buildFilePreviewPath } from './client/src/lib/navigation.ts';
 const fileUrls = JSON.parse(process.argv[1]);
 for (const fileUrl of fileUrls) {
   for (const [route, key] of [
     [buildFileDetailPath(fileUrl), 'url'],
     [buildFilePreviewPath(fileUrl), 'file_url'],
   ]) {
-    globalThis.window = { location: { search: route.slice(route.indexOf('?')) } };
-    const actual = getRawSearchParams().get(key);
+    const actual = new URLSearchParams(route.slice(route.indexOf('?'))).get(key);
     if (actual !== fileUrl) throw new Error(`${actual} !== ${fileUrl}`);
   }
 }
@@ -115,7 +115,7 @@ for (const fileUrl of fileUrls) {
 
 
 def test_file_detail_and_preview_pages_use_raw_browser_search():
-    for path in (FILE_DETAIL_TSX, FILE_PREVIEW_TSX, NATIVE_FILE_DETAIL_TSX):
+    for path in (FILE_DETAIL_TSX, FILE_PREVIEW_TSX):
         src = path.read_text(encoding="utf-8")
 
         assert "useRawSearchParams" in src
@@ -186,10 +186,9 @@ verifySamePathQueryNavigation('/file-preview', 'file_url');
     assert result.returncode == 0, result.stderr
 
 
-def test_query_navigation_reloads_detail_preview_and_native_detail():
+def test_query_navigation_reloads_detail_and_preview():
     detail_src = FILE_DETAIL_TSX.read_text(encoding="utf-8")
     preview_src = FILE_PREVIEW_TSX.read_text(encoding="utf-8")
-    native_src = NATIVE_FILE_DETAIL_TSX.read_text(encoding="utf-8")
 
     assert "const searchParams = useRawSearchParams();" in detail_src
     assert "}, [beginFileRequest, fileUrl]);" in detail_src
@@ -199,12 +198,12 @@ def test_query_navigation_reloads_detail_preview_and_native_detail():
     assert "`/api/files/detail?url=${encodeURIComponent(requestIdentity)}`" in detail_src
     assert "const searchParams = useRawSearchParams();" in preview_src
     assert "}, [beginPreviewRequest, fileUrl]);" in preview_src
-    assert "useEffect(() => { fetchPreview(initialChunkSetId); }, [fetchPreview, initialChunkSetId]);" in preview_src
+    assert (
+        "useEffect(() => { fetchPreview(initialChunkSetId); }, [fetchPreview, initialChunkSetId]);"
+        in preview_src
+    )
     assert "const params = new URLSearchParams({ file_url: requestIdentity });" in preview_src
     assert "`/api/rag/files/preview?${params}`" in preview_src
-    assert "const params = useRawSearchParams();" in native_src
-    assert "}, [fileUrl]);" in native_src
-    assert "`/api/files/detail?url=${encodeURIComponent(fileUrl)}`" in native_src
 
 
 def test_latest_request_guard_rejects_deferred_stale_success_error_and_finally():

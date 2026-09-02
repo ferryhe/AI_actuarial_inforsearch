@@ -8,7 +8,6 @@ from typing import Any, Mapping
 from ai_actuarial.shared_runtime import coerce_bool, parse_int_clamped
 from ai_actuarial.storage import Storage
 
-
 _RFC3339_RE = re.compile(
     r"^\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[Zz]|[+-]\d{2}:\d{2})$"
 )
@@ -71,9 +70,7 @@ def previous_utc_iso_week_period(now: datetime | None = None) -> tuple[str, str]
 def _parse_rfc3339(value: str, *, field: str) -> datetime:
     text = str(value or "").strip()
     if not _RFC3339_RE.fullmatch(text):
-        raise WeeklySnapshotValidationError(
-            f"{field} must be a timezone-aware RFC3339 timestamp"
-        )
+        raise WeeklySnapshotValidationError(f"{field} must be a timezone-aware RFC3339 timestamp")
     try:
         parsed = datetime.fromisoformat(
             text.replace("t", "T").replace("z", "+00:00").replace("Z", "+00:00")
@@ -83,9 +80,7 @@ def _parse_rfc3339(value: str, *, field: str) -> datetime:
             f"{field} must be a timezone-aware RFC3339 timestamp"
         ) from exc
     if parsed.tzinfo is None or parsed.utcoffset() is None:
-        raise WeeklySnapshotValidationError(
-            f"{field} must be a timezone-aware RFC3339 timestamp"
-        )
+        raise WeeklySnapshotValidationError(f"{field} must be a timezone-aware RFC3339 timestamp")
     return parsed.astimezone(timezone.utc)
 
 
@@ -106,9 +101,7 @@ def validate_weekly_snapshot_period(
         )
     if relative_text:
         if relative_text != "previous_week":
-            raise WeeklySnapshotValidationError(
-                "relative_period must be exactly 'previous_week'"
-            )
+            raise WeeklySnapshotValidationError("relative_period must be exactly 'previous_week'")
         start, end = previous_utc_iso_week_period(now)
         return WeeklySnapshotPeriod(start, end, "previous_week")
     if not start_text and not end_text:
@@ -116,9 +109,7 @@ def validate_weekly_snapshot_period(
             "Provide relative_period='previous_week' or both period_start and period_end"
         )
     if not start_text or not end_text:
-        raise WeeklySnapshotValidationError(
-            "period_start and period_end must be provided together"
-        )
+        raise WeeklySnapshotValidationError("period_start and period_end must be provided together")
     start = _parse_rfc3339(start_text, field="period_start")
     end = _parse_rfc3339(end_text, field="period_end")
     if start >= end:

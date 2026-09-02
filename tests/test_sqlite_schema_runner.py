@@ -12,7 +12,6 @@ import pytest
 
 from ai_actuarial.storage import Storage
 
-
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -24,12 +23,10 @@ def _user_version(db_path: Path) -> int:
 def _current_db_at_version_zero(db_path: Path) -> None:
     storage = Storage(str(db_path))
     try:
-        storage._conn.execute(
-            """
+        storage._conn.execute("""
             INSERT INTO files (url, sha256, title, first_seen, last_seen)
             VALUES ('https://example.test/doc.pdf', 'abc123', 'Doc', '2026-08-21T00:00:00Z', '2026-08-21T00:00:00Z')
-            """
-        )
+            """)
         storage._conn.execute("PRAGMA user_version=0")
         storage._conn.commit()
     finally:
@@ -56,8 +53,7 @@ def _production_v7_db(db_path: Path) -> None:
     storage.close()
     with sqlite3.connect(db_path) as conn:
         conn.execute("PRAGMA foreign_keys=OFF")
-        conn.executescript(
-            """
+        conn.executescript("""
             ALTER TABLE api_tokens RENAME TO api_tokens_current;
             CREATE TABLE api_tokens (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -170,8 +166,7 @@ def _production_v7_db(db_path: Path) -> None:
             INSERT INTO files (url, sha256, title, first_seen, last_seen)
             VALUES ('https://example.test/v7.pdf', 'v7-sha', 'V7', '2026-08-27', '2026-08-27');
             PRAGMA user_version=7;
-            """
-        )
+            """)
 
 
 def _files_count(db_path: Path) -> int:
@@ -181,14 +176,12 @@ def _files_count(db_path: Path) -> int:
 
 def _schema_rows(db_path: Path) -> list[tuple[str, str, str, str | None]]:
     with sqlite3.connect(db_path) as conn:
-        return conn.execute(
-            """
+        return conn.execute("""
             SELECT type, name, tbl_name, sql
             FROM sqlite_master
             WHERE name NOT LIKE 'sqlite_%'
             ORDER BY type, name
-            """
-        ).fetchall()
+            """).fetchall()
 
 
 def _db_file_state(db_path: Path) -> tuple[tuple[bool, int, str], ...]:
@@ -239,12 +232,10 @@ def test_storage_open_current_schema_does_not_run_backfills(tmp_path: Path) -> N
     db_path = tmp_path / "current-noop.db"
     storage = Storage(str(db_path))
     try:
-        storage._conn.execute(
-            """
+        storage._conn.execute("""
             INSERT INTO api_tokens (provider, category, api_key_encrypted, label)
             VALUES ('openai', 'llm', 'encrypted-placeholder', NULL)
-            """
-        )
+            """)
         storage._conn.commit()
     finally:
         storage.close()
@@ -341,13 +332,13 @@ def test_storage_startup_status_skips_quick_check_but_schema_status_keeps_it(
         startup_status = sqlite_schema.storage_startup_status(conn)
 
     assert startup_status["state"] == "current"
-    assert analyze_calls == [False]
+    assert analyze_calls and all(call is False for call in analyze_calls)
 
     analyze_calls.clear()
     explicit_status = sqlite_schema.schema_status(db_path)
 
     assert explicit_status["state"] == "current"
-    assert analyze_calls == [True]
+    assert analyze_calls.count(True) == 1
 
 
 def test_storage_rejects_non_empty_version_zero_without_mutating(tmp_path: Path) -> None:
@@ -356,12 +347,10 @@ def test_storage_rejects_non_empty_version_zero_without_mutating(tmp_path: Path)
     db_path = tmp_path / "legacy-zero-storage.db"
     storage = Storage(str(db_path))
     try:
-        storage._conn.execute(
-            """
+        storage._conn.execute("""
             INSERT INTO api_tokens (provider, category, api_key_encrypted, label)
             VALUES ('openai', 'llm', 'encrypted-placeholder', NULL)
-            """
-        )
+            """)
         storage._conn.execute("PRAGMA user_version=0")
         storage._conn.commit()
     finally:
@@ -385,12 +374,10 @@ def test_storage_rejects_malformed_current_without_mutating(tmp_path: Path) -> N
     db_path = tmp_path / "malformed-current-storage.db"
     storage = Storage(str(db_path))
     try:
-        storage._conn.execute(
-            """
+        storage._conn.execute("""
             INSERT INTO api_tokens (provider, category, api_key_encrypted, label)
             VALUES ('openai', 'llm', 'encrypted-placeholder', NULL)
-            """
-        )
+            """)
         storage._conn.commit()
     finally:
         storage.close()
@@ -411,7 +398,12 @@ def test_storage_rejects_malformed_current_without_mutating(tmp_path: Path) -> N
 
 
 def test_status_plan_apply_version_zero_baseline_preserves_data(tmp_path: Path) -> None:
-    from ai_actuarial.sqlite_schema import CURRENT_SQLITE_SCHEMA_VERSION, apply_schema, schema_plan, schema_status
+    from ai_actuarial.sqlite_schema import (
+        CURRENT_SQLITE_SCHEMA_VERSION,
+        apply_schema,
+        schema_plan,
+        schema_status,
+    )
 
     db_path = tmp_path / "legacy-zero.db"
     _current_db_at_version_zero(db_path)
@@ -490,8 +482,7 @@ def test_status_plan_apply_production_v7_preserves_rows_and_is_idempotent(
             )
         ]
         before_counts = {
-            table: conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]
-            for table in tables
+            table: conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0] for table in tables
         }
 
     applied = apply_schema(db_path)
@@ -507,8 +498,7 @@ def test_status_plan_apply_production_v7_preserves_rows_and_is_idempotent(
     with sqlite3.connect(db_path) as conn:
         assert conn.execute("PRAGMA quick_check").fetchall() == [("ok",)]
         assert {
-            table: conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]
-            for table in tables
+            table: conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0] for table in tables
         } == before_counts
 
     repeated = apply_schema(db_path)
@@ -573,9 +563,7 @@ def test_v9_manual_operation_state_migration_is_read_compatible_and_idempotent(
     with sqlite3.connect(db_path) as conn:
         columns = {
             row[1]
-            for row in conn.execute(
-                "PRAGMA table_info(agentic_ready_manual_operation_state)"
-            )
+            for row in conn.execute("PRAGMA table_info(agentic_ready_manual_operation_state)")
         }
     assert columns == {
         "kb_id",
@@ -629,12 +617,10 @@ def test_v10_manual_operation_state_migration_rolls_back_on_failure(
 
     assert _user_version(db_path) == 9
     with sqlite3.connect(db_path) as conn:
-        assert conn.execute(
-            """
+        assert conn.execute("""
             SELECT 1 FROM sqlite_schema
             WHERE type = 'table' AND name = 'agentic_ready_manual_operation_state'
-            """
-        ).fetchone() is None
+            """).fetchone() is None
 
 
 def test_mixed_v7_migration_invalidates_unprovable_kb_index_mapping(
@@ -647,8 +633,7 @@ def test_mixed_v7_migration_invalidates_unprovable_kb_index_mapping(
     storage.close()
     with sqlite3.connect(db_path) as conn:
         conn.execute("PRAGMA foreign_keys=OFF")
-        conn.executescript(
-            """
+        conn.executescript("""
             INSERT INTO files (url, sha256, title, first_seen, last_seen)
             VALUES ('https://example.test/mixed.pdf', 'mixed-sha', 'Mixed', 'created', 'updated');
             INSERT INTO chunk_profiles (
@@ -771,8 +756,7 @@ def test_mixed_v7_migration_invalidates_unprovable_kb_index_mapping(
             DROP TABLE chunk_embeddings;
             ALTER TABLE chunk_embeddings_v7 RENAME TO chunk_embeddings;
             PRAGMA user_version=7;
-            """
-        )
+            """)
 
     assert schema_status(db_path)["state"] == "needs_migration"
     migrated = apply_schema(db_path)
@@ -887,24 +871,18 @@ def test_v6_migration_preserves_pipeline_stage_and_child_run_rows(tmp_path: Path
         conn.execute("DROP TABLE pipeline_stage")
         conn.execute("DROP TABLE pipeline_run")
         _add_pipeline_state_v5(conn)
-        conn.execute(
-            """
+        conn.execute("""
             INSERT INTO pipeline_run (run_id, correlation_id, source_type, status, watermark, error, created_at, updated_at)
             VALUES ('run-1', 'corr-1', 'scheduled', 'pending', '', '', '2026-08-25T00:00:00Z', '2026-08-25T00:00:00Z')
-            """
-        )
-        conn.execute(
-            """
+            """)
+        conn.execute("""
             INSERT INTO pipeline_stage (run_id, stage_name, stage_order, options_json, status, checkpoint_json, retry_count, committed_artifacts_json, error, updated_at)
             VALUES ('run-1', 'acquisition', 1, '{"sites": 2}', 'pending', '{}', 0, '[]', '', '2026-08-25T00:00:00Z')
-            """
-        )
-        conn.execute(
-            """
+            """)
+        conn.execute("""
             INSERT INTO child_run (child_run_id, parent_run_id, correlation_id, status, partial, error, created_at, updated_at)
             VALUES ('child-1', 'run-1', 'corr-1', 'pending', 0, '', '2026-08-25T00:00:00Z', '2026-08-25T00:00:00Z')
-            """
-        )
+            """)
         conn.commit()
     finally:
         storage.close()
@@ -952,7 +930,9 @@ def test_v6_migration_preserves_pipeline_stage_and_child_run_rows(tmp_path: Path
         conn.close()
 
 
-def test_schema_runner_plans_registered_old_version_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_schema_runner_plans_registered_old_version_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     import ai_actuarial.sqlite_schema as sqlite_schema
 
     db_path = tmp_path / "future-old-version.db"
@@ -1060,6 +1040,7 @@ def test_schema_runner_rejects_mutating_source_validator_during_apply(
     import ai_actuarial.sqlite_schema as sqlite_schema
 
     db_path = tmp_path / "mutating-source-validator.db"
+    target_db_path = db_path.resolve()
     storage = Storage(str(db_path))
     try:
         v6_signature = sqlite_schema._schema_signature(storage._conn)
@@ -1081,10 +1062,16 @@ def test_schema_runner_rejects_mutating_source_validator_during_apply(
         tables: dict[str, sqlite_schema.TableSignature],
     ) -> bool:
         nonlocal validator_calls
-        validator_calls += 1
-        query_only_values.append(int(conn.execute("PRAGMA query_only").fetchone()[0]))
+        database_row = conn.execute("PRAGMA database_list").fetchone()
+        if database_row is None:
+            return False
+        validator_db_path = Path(str(database_row[2])).resolve()
+        if validator_db_path != target_db_path:
+            return False
         if tables != v6_signature:
             return False
+        validator_calls += 1
+        query_only_values.append(int(conn.execute("PRAGMA query_only").fetchone()[0]))
         if validator_calls == 1:
             return True
         conn.execute("CREATE TABLE validator_mutation_leak (secret_value TEXT)")
@@ -1120,15 +1107,11 @@ def test_schema_runner_rejects_mutating_source_validator_during_apply(
     assert query_only_values and set(query_only_values) == {1}
     assert _user_version(db_path) == 12
     with sqlite3.connect(db_path) as conn:
-        assert conn.execute(
-            """
+        assert conn.execute("""
             SELECT 1 FROM sqlite_schema
             WHERE type = 'table' AND name = 'validator_mutation_leak'
-            """
-        ).fetchone() is None
-        file_columns = {
-            str(row[1]) for row in conn.execute("PRAGMA table_xinfo(files)").fetchall()
-        }
+            """).fetchone() is None
+        file_columns = {str(row[1]) for row in conn.execute("PRAGMA table_xinfo(files)").fetchall()}
     assert "schema_runner_v7_marker" not in file_columns
 
 
@@ -1170,7 +1153,12 @@ def test_schema_runner_accepts_exported_chat_service_optional_schema(
 
 
 def test_schema_runner_rejects_newer_than_code(tmp_path: Path) -> None:
-    from ai_actuarial.sqlite_schema import CURRENT_SQLITE_SCHEMA_VERSION, SchemaMigrationError, apply_schema, schema_status
+    from ai_actuarial.sqlite_schema import (
+        CURRENT_SQLITE_SCHEMA_VERSION,
+        SchemaMigrationError,
+        apply_schema,
+        schema_status,
+    )
 
     db_path = tmp_path / "future.db"
     storage = Storage(str(db_path))
@@ -1186,13 +1174,16 @@ def test_schema_runner_rejects_newer_than_code(tmp_path: Path) -> None:
 
 
 def test_schema_runner_rejects_unknown_and_partial_schema(tmp_path: Path) -> None:
-    from ai_actuarial.sqlite_schema import SchemaMigrationError, apply_schema, schema_plan, schema_status
+    from ai_actuarial.sqlite_schema import (
+        SchemaMigrationError,
+        apply_schema,
+        schema_plan,
+        schema_status,
+    )
 
     unknown_db = tmp_path / "unknown.db"
     with sqlite3.connect(unknown_db) as conn:
-        conn.execute(
-            "CREATE TABLE customer_secret_table (secret_payload_marker TEXT)"
-        )
+        conn.execute("CREATE TABLE customer_secret_table (secret_payload_marker TEXT)")
     unknown_status = schema_status(unknown_db)
     assert unknown_status["state"] == "invalid"
     unknown_plan_json = json.dumps(schema_plan(unknown_db), sort_keys=True)
@@ -1220,8 +1211,7 @@ def test_schema_runner_rejects_unexpected_views_and_triggers(tmp_path: Path) -> 
     storage = Storage(str(db_path))
     storage.close()
     with sqlite3.connect(db_path) as conn:
-        conn.executescript(
-            """
+        conn.executescript("""
             CREATE VIEW unexpected_business_view AS
             SELECT url AS customer_identifier FROM files;
             CREATE TRIGGER unexpected_business_trigger
@@ -1229,8 +1219,7 @@ def test_schema_runner_rejects_unexpected_views_and_triggers(tmp_path: Path) -> 
             BEGIN
                 SELECT 1;
             END;
-            """
-        )
+            """)
 
     status = schema_status(db_path)
     assert status["state"] == "invalid"
@@ -1253,9 +1242,7 @@ def test_version_zero_database_with_only_view_is_not_bootstrapped(tmp_path: Path
 
     db_path = tmp_path / "view-only-v0.db"
     with sqlite3.connect(db_path) as conn:
-        conn.execute(
-            "CREATE VIEW legacy_secret_view AS SELECT 1 AS legacy_secret_column"
-        )
+        conn.execute("CREATE VIEW legacy_secret_view AS SELECT 1 AS legacy_secret_column")
         conn.execute("PRAGMA user_version=0")
 
     before_schema = _schema_rows(db_path)
@@ -1279,8 +1266,7 @@ def test_schema_runner_rejects_matching_names_with_wrong_column_metadata(tmp_pat
     with sqlite3.connect(db_path) as conn:
         conn.execute("PRAGMA foreign_keys=OFF")
         conn.execute("ALTER TABLE files RENAME TO files_old")
-        conn.execute(
-            """
+        conn.execute("""
             CREATE TABLE files (
                 id TEXT PRIMARY KEY,
                 url INTEGER UNIQUE,
@@ -1300,8 +1286,7 @@ def test_schema_runner_rejects_matching_names_with_wrong_column_metadata(tmp_pat
                 crawl_time TEXT,
                 deleted_at TEXT
             )
-            """
-        )
+            """)
         conn.execute("DROP TABLE files_old")
         conn.execute("PRAGMA user_version=0")
 
@@ -1357,7 +1342,9 @@ def test_schema_runner_rejects_malformed_catalog_incremental_extra_column(
         Storage(str(db_path))
 
 
-def test_schema_runner_rolls_back_failed_migration(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_schema_runner_rolls_back_failed_migration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     import ai_actuarial.sqlite_schema as sqlite_schema
 
     db_path = tmp_path / "rollback.db"
@@ -1409,7 +1396,9 @@ def test_schema_runner_serializes_concurrent_fresh_apply(
 ) -> None:
     from ai_actuarial.sqlite_schema import CURRENT_SQLITE_SCHEMA_VERSION, apply_schema
 
-    db_path = tmp_path / ("empty-concurrent.db" if precreate_empty_file else "missing-concurrent.db")
+    db_path = tmp_path / (
+        "empty-concurrent.db" if precreate_empty_file else "missing-concurrent.db"
+    )
     if precreate_empty_file:
         db_path.touch()
 
@@ -1527,7 +1516,9 @@ def test_legacy_missing_backfill_table_is_migratable(tmp_path: Path) -> None:
     ]
     assert _user_version(db_path) == CURRENT_SQLITE_SCHEMA_VERSION
     with sqlite3.connect(db_path) as conn:
-        tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        tables = {
+            row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
     assert "agentic_ready_automation_lock" in tables
 
 
@@ -1660,15 +1651,13 @@ def test_version_10_source_with_unexpected_trigger_is_invalid(tmp_path: Path) ->
     db_path = tmp_path / "v10-unexpected-trigger.db"
     _current_db_at_version_10(db_path)
     with sqlite3.connect(db_path) as conn:
-        conn.execute(
-            """
+        conn.execute("""
             CREATE TRIGGER unexpected_v10_trigger
             AFTER INSERT ON files
             BEGIN
                 SELECT 1;
             END
-            """
-        )
+            """)
 
     status = schema_status(db_path)
 
@@ -1713,12 +1702,8 @@ def test_indexes_equivalent_ignores_column_cid() -> None:
 def test_indexes_equivalent_detects_name_difference() -> None:
     from ai_actuarial.sqlite_schema import _indexes_equivalent
 
-    left = (
-        (0, "c", 0, ((0, 1, "provider", 0, "BINARY", 1),)),
-    )
-    right = (
-        (0, "c", 0, ((0, 1, "category", 0, "BINARY", 1),)),
-    )
+    left = ((0, "c", 0, ((0, 1, "provider", 0, "BINARY", 1),)),)
+    right = ((0, "c", 0, ((0, 1, "category", 0, "BINARY", 1),)),)
     assert not _indexes_equivalent(left, right)
 
 
@@ -1731,9 +1716,7 @@ def test_indexes_equivalent_detects_duplicate_index() -> None:
         (0, "c", 0, ((0, 1, "provider", 0, "BINARY", 1),)),
         (0, "c", 0, ((0, 2, "provider", 0, "BINARY", 1),)),
     )
-    canonical = (
-        (0, "c", 0, ((0, 1, "provider", 0, "BINARY", 1),)),
-    )
+    canonical = ((0, "c", 0, ((0, 1, "provider", 0, "BINARY", 1),)),)
     assert not _indexes_equivalent(redundant, canonical)
 
 

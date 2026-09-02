@@ -146,9 +146,7 @@ def _prepare_ready_source(storage: Storage, *, kb_id: str, file_url: str) -> Non
         embedding_model=kb.embedding_model,
         embedding_dimension=kb.embedding_dimension,
         embedding_identity_key=kb.embedding_identity_key,
-        binding_snapshot_fingerprint=str(
-            snapshot["binding_snapshot_fingerprint"]
-        ),
+        binding_snapshot_fingerprint=str(snapshot["binding_snapshot_fingerprint"]),
         index_type="faiss",
         chunk_count=len(chunk_ids),
         artifact_path="fixture-index.faiss",

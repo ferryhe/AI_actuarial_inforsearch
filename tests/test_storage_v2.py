@@ -1,32 +1,33 @@
 """Tests for storage_v2, storage_v2_rag, and storage_v2_auth modules."""
 
-import pytest
-import tempfile
 import os
 import sqlite3
+import tempfile
+
+import pytest
 
 
 class TestStorageV2Basic:
     """Test basic StorageV2 operations."""
-    
+
     def test_storage_v2_creation(self):
         """Test StorageV2 can be created with SQLite."""
         from ai_actuarial.storage_v2 import StorageV2
-        
+
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = os.path.join(tmpdir, "test.db")
             storage = StorageV2({"type": "sqlite", "path": db_path})
             assert storage is not None
             storage.close()
-    
+
     def test_file_operations(self):
         """Test file insert and retrieval."""
         from ai_actuarial.storage_v2 import StorageV2
-        
+
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = os.path.join(tmpdir, "test.db")
             storage = StorageV2({"type": "sqlite", "path": db_path})
-            
+
             storage.upsert_file(
                 url="https://example.com/test.pdf",
                 sha256="abc123",
@@ -41,7 +42,7 @@ class TestStorageV2Basic:
                 etag="abc",
                 published_time=None,
             )
-            
+
             file = storage.get_file_by_url("https://example.com/test.pdf")
             assert file is not None
             assert file["sha256"] == "abc123"
@@ -51,23 +52,23 @@ class TestStorageV2Basic:
 
 class TestStorageV2RAG:
     """Test StorageV2 RAG operations."""
-    
+
     def test_rag_methods_exist(self):
         """Test RAG methods exist."""
         from ai_actuarial.storage_v2_rag import StorageV2RAGMixin
-        
+
         class TestStorage(StorageV2RAGMixin):
             def __init__(self, db_config):
                 self.backend = None
                 self.db_path = db_config.get("path") if db_config.get("type") == "sqlite" else None
-        
+
         storage = TestStorage({})
-        assert hasattr(storage, 'create_chunk_profile')
-        assert hasattr(storage, 'list_chunk_profiles')
-        assert hasattr(storage, 'get_chunk_profile')
-        assert hasattr(storage, 'bind_chunk_set_to_kb')
-        assert hasattr(storage, 'get_kb_composition_status')
-        assert hasattr(storage, 'sync_follow_latest_bindings_for_chunk_set')
+        assert hasattr(storage, "create_chunk_profile")
+        assert hasattr(storage, "list_chunk_profiles")
+        assert hasattr(storage, "get_chunk_profile")
+        assert hasattr(storage, "bind_chunk_set_to_kb")
+        assert hasattr(storage, "get_kb_composition_status")
+        assert hasattr(storage, "sync_follow_latest_bindings_for_chunk_set")
 
     def test_storage_v2_full_chunk_sets_use_immutable_contract_lifecycle(self, tmp_path):
         from ai_actuarial.db_models import FileChunkSet, GlobalChunk
@@ -77,8 +78,15 @@ class TestStorageV2RAG:
         try:
             file_url = "https://example.test/fresh.pdf"
             storage.insert_file(
-                file_url, "hash", "Fresh", "test", None,
-                "fresh.pdf", "fresh.pdf", 10, "application/pdf",
+                file_url,
+                "hash",
+                "Fresh",
+                "test",
+                None,
+                "fresh.pdf",
+                "fresh.pdf",
+                10,
+                "application/pdf",
             )
             profile = storage.create_chunk_profile(
                 name="fresh-profile", chunk_size=100, chunk_overlap=10
@@ -100,9 +108,11 @@ class TestStorageV2RAG:
                 profile_id=profile["profile_id"],
                 markdown_hash="markdown-v1",
             )
-            before = storage._session.query(FileChunkSet).filter_by(
-                chunk_set_id=chunk_set["chunk_set_id"]
-            ).one()
+            before = (
+                storage._session.query(FileChunkSet)
+                .filter_by(chunk_set_id=chunk_set["chunk_set_id"])
+                .one()
+            )
             before_updated_at = before.updated_at
 
             no_op = storage.replace_global_chunks(
@@ -121,13 +131,19 @@ class TestStorageV2RAG:
             assert ready["status"] == "ready"
             assert no_op["replaced"] is False
             assert changed_contract["chunk_set_id"] != chunk_set["chunk_set_id"]
-            persisted = storage._session.query(GlobalChunk).filter_by(
-                chunk_set_id=chunk_set["chunk_set_id"]
-            ).one()
+            persisted = (
+                storage._session.query(GlobalChunk)
+                .filter_by(chunk_set_id=chunk_set["chunk_set_id"])
+                .one()
+            )
             assert persisted.content == "alpha"
-            assert storage._session.query(FileChunkSet).filter_by(
-                chunk_set_id=chunk_set["chunk_set_id"]
-            ).one().updated_at == before_updated_at
+            assert (
+                storage._session.query(FileChunkSet)
+                .filter_by(chunk_set_id=chunk_set["chunk_set_id"])
+                .one()
+                .updated_at
+                == before_updated_at
+            )
 
             ready_zero = storage.get_or_create_file_chunk_set(
                 file_url=file_url,
@@ -148,8 +164,7 @@ class TestStorageV2RAG:
 
         db_path = tmp_path / "legacy-v2.db"
         with sqlite3.connect(db_path) as conn:
-            conn.executescript(
-                """
+            conn.executescript("""
                 CREATE TABLE files (
                     id INTEGER PRIMARY KEY,
                     url TEXT NOT NULL UNIQUE,
@@ -225,8 +240,7 @@ class TestStorageV2RAG:
                     'cs-legacy:0', 'cs-legacy', 0, 'legacy child', 2,
                     'Root', 'content-hash', 'created'
                 );
-                """
-            )
+                """)
 
         storage = StorageV2Full({"type": "sqlite", "path": str(db_path)})
         try:
@@ -243,15 +257,19 @@ class TestStorageV2RAG:
                 chunks=[{"chunk_index": 0, "content": "must-not-overwrite"}],
             )
             assert no_op["replaced"] is False
-            assert storage._session.connection().exec_driver_sql(
-                "SELECT content FROM global_chunks WHERE chunk_id = 'cs-legacy:0'"
-            ).scalar_one() == "legacy child"
-            foreign_keys = storage._session.connection().exec_driver_sql(
-                "PRAGMA foreign_key_list(file_chunk_sets)"
-            ).fetchall()
+            assert (
+                storage._session.connection()
+                .exec_driver_sql("SELECT content FROM global_chunks WHERE chunk_id = 'cs-legacy:0'")
+                .scalar_one()
+                == "legacy child"
+            )
+            foreign_keys = (
+                storage._session.connection()
+                .exec_driver_sql("PRAGMA foreign_key_list(file_chunk_sets)")
+                .fetchall()
+            )
             assert {
-                (str(row[2]), str(row[3]), str(row[4]), str(row[6]))
-                for row in foreign_keys
+                (str(row[2]), str(row[3]), str(row[4]), str(row[6])) for row in foreign_keys
             } == {
                 ("files", "file_url", "url", "CASCADE"),
                 ("chunk_profiles", "profile_id", "profile_id", "CASCADE"),
@@ -275,75 +293,84 @@ class TestStorageV2RAG:
 
 class TestStorageV2Auth:
     """Test StorageV2 Auth operations."""
-    
+
     def test_auth_methods_exist(self):
         """Test auth methods exist."""
         from ai_actuarial.storage_v2_auth import StorageV2AuthMixin
-        
+
         class TestStorage(StorageV2AuthMixin):
             def __init__(self, db_config):
                 self.backend = None
                 self.db_path = db_config.get("path") if db_config.get("type") == "sqlite" else None
-        
+
         storage = TestStorage({})
-        assert hasattr(storage, 'get_auth_token_by_id')
-        assert hasattr(storage, 'create_auth_token')
-        assert hasattr(storage, 'revoke_auth_token')
-        assert hasattr(storage, 'upsert_llm_provider')
-        assert hasattr(storage, 'list_llm_providers')
+        assert hasattr(storage, "get_auth_token_by_id")
+        assert hasattr(storage, "create_auth_token")
+        assert hasattr(storage, "revoke_auth_token")
+        assert hasattr(storage, "upsert_llm_provider")
+        assert hasattr(storage, "list_llm_providers")
 
 
 class TestStorageFactory:
     """Test storage factory configuration."""
-    
+
     def test_create_storage_v1(self):
         """Test creating legacy Storage."""
         from ai_actuarial.storage_factory import create_storage_from_config
-        
+
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = os.path.join(tmpdir, "test.db")
             config = {"paths": {"db": db_path}}
             storage = create_storage_from_config(config)
             from ai_actuarial.storage import Storage
+
             assert isinstance(storage, Storage)
             storage.close()
-    
+
     def test_create_storage_v2(self):
         """Test creating StorageV2."""
         from ai_actuarial.storage_factory import create_storage_from_config
-        
+
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = os.path.join(tmpdir, "test.db")
             config = {"database": {"type": "sqlite", "path": db_path}, "storage_version": "v2"}
             storage = create_storage_from_config(config)
             from ai_actuarial.storage_v2 import StorageV2
+
             assert isinstance(storage, StorageV2)
             storage.close()
-    
+
     def test_create_storage_v2_full(self):
         """Test creating StorageV2Full."""
         from ai_actuarial.storage_factory import create_storage_from_config
-        
+
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = os.path.join(tmpdir, "test.db")
             config = {"database": {"type": "sqlite", "path": db_path}, "storage_version": "v2_full"}
             storage = create_storage_from_config(config)
             from ai_actuarial.storage_v2_full import StorageV2Full
+
             assert isinstance(storage, StorageV2Full)
             storage.close()
 
 
 class TestDBModels:
     """Test database models."""
-    
+
     def test_all_models_importable(self):
         """Test all models can be imported."""
         from ai_actuarial.db_models import (
-            File, Page, Blob, CatalogItem,
-            ChunkProfile, FileChunkSet, GlobalChunk,
             AuthToken,
+            Blob,
+            CatalogItem,
+            ChunkProfile,
+            File,
+            FileChunkSet,
+            GlobalChunk,
+            Page,
         )
         from ai_actuarial.models.api_token import ApiToken
+
         assert File.__tablename__ == "files"
         assert Page.__tablename__ == "pages"
         assert Blob.__tablename__ == "blobs"

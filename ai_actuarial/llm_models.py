@@ -62,7 +62,9 @@ DEFAULT_MODELS = {
         _model("deepseek-ai/DeepSeek-V3.1", "DeepSeek V3.1", "chatbot", "catalog"),
         _model("deepseek-ai/DeepSeek-V3", "DeepSeek V3", "chatbot", "catalog"),
         _model("deepseek-ai/DeepSeek-R1", "DeepSeek R1", "chatbot", "catalog"),
-        _model("Qwen/Qwen3-235B-A22B-Instruct-2507", "Qwen3 235B A22B Instruct", "chatbot", "catalog"),
+        _model(
+            "Qwen/Qwen3-235B-A22B-Instruct-2507", "Qwen3 235B A22B Instruct", "chatbot", "catalog"
+        ),
         _model("Qwen/Qwen3-30B-A3B", "Qwen3 30B A3B", "chatbot", "catalog"),
         _model("Qwen/Qwen2.5-72B-Instruct", "Qwen 2.5 72B Instruct", "chatbot", "catalog"),
         _model("THUDM/GLM-4.6", "GLM 4.6", "chatbot", "catalog"),
@@ -204,22 +206,67 @@ DEFAULT_MODELS = {
 }
 
 OPENAI_COMPATIBLE_DISCOVERY = {
-    "openrouter": ("OPENROUTER_API_KEY", "OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1", True),
+    "openrouter": (
+        "OPENROUTER_API_KEY",
+        "OPENROUTER_BASE_URL",
+        "https://openrouter.ai/api/v1",
+        True,
+    ),
     "deepseek": ("DEEPSEEK_API_KEY", "DEEPSEEK_BASE_URL", "https://api.deepseek.com", True),
-    "zhipuai": ("ZHIPUAI_API_KEY", "ZHIPUAI_BASE_URL", "https://open.bigmodel.cn/api/paas/v4", True),
+    "zhipuai": (
+        "ZHIPUAI_API_KEY",
+        "ZHIPUAI_BASE_URL",
+        "https://open.bigmodel.cn/api/paas/v4",
+        True,
+    ),
     "moonshot": ("MOONSHOT_API_KEY", "MOONSHOT_BASE_URL", "https://api.moonshot.cn/v1", True),
     "kimi": ("KIMI_API_KEY", "KIMI_BASE_URL", "https://api.moonshot.cn/v1", True),
-    "qwen": ("DASHSCOPE_API_KEY", "DASHSCOPE_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1", True),
+    "qwen": (
+        "DASHSCOPE_API_KEY",
+        "DASHSCOPE_BASE_URL",
+        "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        True,
+    ),
     "minimax": ("MINIMAX_API_KEY", "MINIMAX_BASE_URL", "https://api.minimax.chat/v1", True),
-    "volcengine": ("VOLCENGINE_API_KEY", "VOLCENGINE_BASE_URL", "https://ark.cn-beijing.volces.com/api/v3", True),
-    "tencent_cloud": ("TENCENT_CLOUD_API_KEY", "TENCENT_CLOUD_BASE_URL", "https://api.hunyuan.cloud.tencent.com/v1", True),
-    "baiduyiyan": ("BAIDUYIYAN_API_KEY", "BAIDUYIYAN_BASE_URL", "https://qianfan.baidubce.com/v2", True),
-    "xunfei_spark": ("XUNFEI_SPARK_API_KEY", "XUNFEI_SPARK_BASE_URL", "https://spark-api-open.xf-yun.com/v1", True),
-    "google_cloud": ("GOOGLE_CLOUD_API_KEY", "GOOGLE_CLOUD_BASE_URL", "https://aiplatform.googleapis.com/v1", True),
+    "volcengine": (
+        "VOLCENGINE_API_KEY",
+        "VOLCENGINE_BASE_URL",
+        "https://ark.cn-beijing.volces.com/api/v3",
+        True,
+    ),
+    "tencent_cloud": (
+        "TENCENT_CLOUD_API_KEY",
+        "TENCENT_CLOUD_BASE_URL",
+        "https://api.hunyuan.cloud.tencent.com/v1",
+        True,
+    ),
+    "baiduyiyan": (
+        "BAIDUYIYAN_API_KEY",
+        "BAIDUYIYAN_BASE_URL",
+        "https://qianfan.baidubce.com/v2",
+        True,
+    ),
+    "xunfei_spark": (
+        "XUNFEI_SPARK_API_KEY",
+        "XUNFEI_SPARK_BASE_URL",
+        "https://spark-api-open.xf-yun.com/v1",
+        True,
+    ),
+    "google_cloud": (
+        "GOOGLE_CLOUD_API_KEY",
+        "GOOGLE_CLOUD_BASE_URL",
+        "https://aiplatform.googleapis.com/v1",
+        True,
+    ),
     # Local OpenAI-compatible servers are queried only when their base URL is explicitly configured.
     "vllm": ("VLLM_API_KEY", "VLLM_BASE_URL", "http://localhost:8001/v1", False),
     "localai": ("LOCALAI_API_KEY", "LOCALAI_BASE_URL", "http://localhost:8080/v1", False),
-    "huggingface": ("HUGGINGFACE_API_KEY", "HUGGINGFACE_BASE_URL", "https://api-inference.huggingface.co/v1", True),
+    "huggingface": (
+        "HUGGINGFACE_API_KEY",
+        "HUGGINGFACE_BASE_URL",
+        "https://api-inference.huggingface.co/v1",
+        True,
+    ),
 }
 
 ProviderCredentialsMap = Mapping[str, Mapping[str, str | None]]
@@ -289,7 +336,11 @@ def _provider_api_key(
     api_key_env: str,
     provider_credentials: ProviderCredentialsMap | None = None,
 ) -> str | None:
-    return _credential_value(provider_credentials, provider, "api_key") or os.getenv(api_key_env) or None
+    return (
+        _credential_value(provider_credentials, provider, "api_key")
+        or os.getenv(api_key_env)
+        or None
+    )
 
 
 def _provider_base_url(
@@ -299,7 +350,11 @@ def _provider_base_url(
     provider_credentials: ProviderCredentialsMap | None = None,
 ) -> str | None:
     env_base_url = os.getenv(base_url_env) if base_url_env else None
-    return _credential_value(provider_credentials, provider, "base_url") or env_base_url or default_base_url
+    return (
+        _credential_value(provider_credentials, provider, "base_url")
+        or env_base_url
+        or default_base_url
+    )
 
 
 def _model_id(raw_model: Any) -> str | None:
@@ -386,7 +441,9 @@ def _has_exact_or_snapshot(model_id: str, available_model_ids: Set[str]) -> bool
     return any(mid == model_id or mid.startswith(f"{model_id}-") for mid in available_model_ids)
 
 
-def _build_models_from_ids(provider: str, available_model_ids: Set[str], fallback: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _build_models_from_ids(
+    provider: str, available_model_ids: Set[str], fallback: List[Dict[str, Any]]
+) -> List[Dict[str, Any]]:
     models: List[Dict[str, Any]] = []
     for model in fallback:
         name = str(model.get("name") or "").strip()
@@ -407,11 +464,11 @@ def _build_models_from_ids(provider: str, available_model_ids: Set[str], fallbac
 
 class ModelCache:
     """Thread-safe cache for discovered models."""
-    
+
     def __init__(self, refresh_interval_hours: int = 24):
         """
         Initialize model cache.
-        
+
         Args:
             refresh_interval_hours: How often to refresh models from APIs (default: 24 hours)
         """
@@ -420,7 +477,7 @@ class ModelCache:
         self._last_refresh: Optional[datetime] = None
         self._refresh_interval = timedelta(hours=refresh_interval_hours)
         self._initialized = False
-    
+
     def get_models(
         self,
         provider: Optional[str] = None,
@@ -429,10 +486,10 @@ class ModelCache:
     ) -> Dict[str, List[Dict]]:
         """
         Get cached models, refresh if needed.
-        
+
         Args:
             provider: Specific provider to get models for, or None for all
-            
+
         Returns:
             Dictionary of models by provider (deep copy to prevent mutation)
         """
@@ -441,13 +498,15 @@ class ModelCache:
         with self._lock:
             if not self._initialized:
                 needs_refresh = True
-            elif self._last_refresh and datetime.now() - self._last_refresh > self._refresh_interval:
+            elif (
+                self._last_refresh and datetime.now() - self._last_refresh > self._refresh_interval
+            ):
                 needs_refresh = True
-        
+
         # Perform refresh outside lock to avoid blocking
         if needs_refresh:
             self._perform_refresh(provider_credentials=provider_credentials)
-        
+
         # Return cached models (with lock for consistency)
         with self._lock:
             if provider:
@@ -456,23 +515,26 @@ class ModelCache:
                 return {provider: [model.copy() for model in provider_models]}
             # Deep copy all models to prevent mutation
             return {
-                prov: [model.copy() for model in models]
-                for prov, models in self._models.items()
+                prov: [model.copy() for model in models] for prov, models in self._models.items()
             }
-    
+
     def force_refresh(self, *, provider_credentials: ProviderCredentialsMap | None = None):
         """Force an immediate refresh of the model cache."""
         self._perform_refresh(provider_credentials=provider_credentials)
-    
+
     def _perform_refresh(self, *, provider_credentials: ProviderCredentialsMap | None = None):
         """Perform model refresh with minimal lock duration."""
         logger.info("Refreshing model cache from providers...")
-        
+
         # Fetch from all providers (without holding lock)
         new_models = {}
         new_models["openai"] = self._fetch_openai_models(provider_credentials=provider_credentials)
-        new_models["mistral"] = self._fetch_mistral_models(provider_credentials=provider_credentials)
-        new_models["siliconflow"] = self._fetch_siliconflow_models(provider_credentials=provider_credentials)
+        new_models["mistral"] = self._fetch_mistral_models(
+            provider_credentials=provider_credentials
+        )
+        new_models["siliconflow"] = self._fetch_siliconflow_models(
+            provider_credentials=provider_credentials
+        )
         for provider, discovery in OPENAI_COMPATIBLE_DISCOVERY.items():
             if provider in new_models:
                 continue
@@ -487,15 +549,15 @@ class ModelCache:
             )
         for provider, models in DEFAULT_MODELS.items():
             new_models.setdefault(provider, models)
-        
+
         # Atomically swap in the new cache (with lock)
         with self._lock:
             self._models = new_models
             self._last_refresh = datetime.now()
             self._initialized = True
-        
+
         logger.info(f"Model cache refreshed at {self._last_refresh}")
-    
+
     def _fetch_openai_models(
         self,
         *,
@@ -503,34 +565,34 @@ class ModelCache:
     ) -> List[Dict]:
         """
         Fetch available models from OpenAI API.
-        
+
         Returns:
             List of model dictionaries
         """
         try:
             from openai import OpenAI
-            
+
             api_key = _provider_api_key("openai", "OPENAI_API_KEY", provider_credentials)
             base_url = _provider_base_url("openai", "OPENAI_BASE_URL", None, provider_credentials)
             if not api_key:
                 logger.warning("OPENAI_API_KEY not set, using default models")
                 return _copy_models(DEFAULT_MODELS["openai"])
-            
+
             client_kwargs: Dict[str, Any] = {"api_key": api_key, "timeout": 10.0}
             if base_url:
                 client_kwargs["base_url"] = base_url
             client = OpenAI(**client_kwargs)
-            
+
             response = client.models.list()
             available_model_ids = _model_ids(response.data)
             models = _build_models_from_ids("openai", available_model_ids, DEFAULT_MODELS["openai"])
             logger.info(f"Fetched {len(models)} OpenAI models from API")
             return models
-            
+
         except Exception as e:
             logger.warning(f"Failed to fetch OpenAI models: {e}, using defaults")
             return _copy_models(DEFAULT_MODELS["openai"])
-    
+
     def _fetch_mistral_models(
         self,
         *,
@@ -538,30 +600,32 @@ class ModelCache:
     ) -> List[Dict]:
         """
         Fetch available models from Mistral API.
-        
+
         Returns:
             List of model dictionaries
         """
         try:
             from mistralai import Mistral
-            
+
             api_key = _provider_api_key("mistral", "MISTRAL_API_KEY", provider_credentials)
             if not api_key:
                 logger.warning("MISTRAL_API_KEY not set, using default models")
                 return _copy_models(DEFAULT_MODELS["mistral"])
-            
+
             client = Mistral(api_key=api_key, timeout_ms=10000)
-            
+
             response = client.models.list()
             available_model_ids = _model_ids(response.data)
-            models = _build_models_from_ids("mistral", available_model_ids, DEFAULT_MODELS["mistral"])
+            models = _build_models_from_ids(
+                "mistral", available_model_ids, DEFAULT_MODELS["mistral"]
+            )
             logger.info(f"Fetched {len(models)} Mistral models from API")
             return models
-            
+
         except Exception as e:
             logger.warning(f"Failed to fetch Mistral models: {e}, using defaults")
             return _copy_models(DEFAULT_MODELS["mistral"])
-    
+
     def _fetch_siliconflow_models(
         self,
         *,
@@ -569,15 +633,15 @@ class ModelCache:
     ) -> List[Dict]:
         """
         Fetch available models from SiliconFlow API.
-        
+
         Note: SiliconFlow uses OpenAI-compatible API
-        
+
         Returns:
             List of model dictionaries
         """
         try:
             from openai import OpenAI
-            
+
             api_key = _provider_api_key("siliconflow", "SILICONFLOW_API_KEY", provider_credentials)
             base_url = _provider_base_url(
                 "siliconflow",
@@ -585,23 +649,21 @@ class ModelCache:
                 "https://api.siliconflow.cn/v1",
                 provider_credentials,
             )
-            
+
             if not api_key:
                 logger.warning("SILICONFLOW_API_KEY not set, using default models")
                 return _copy_models(DEFAULT_MODELS["siliconflow"])
-            
-            client = OpenAI(
-                api_key=api_key,
-                base_url=base_url,
-                timeout=10.0
-            )
-            
+
+            client = OpenAI(api_key=api_key, base_url=base_url, timeout=10.0)
+
             response = client.models.list()
             available_model_ids = _model_ids(response.data)
-            models = _build_models_from_ids("siliconflow", available_model_ids, DEFAULT_MODELS["siliconflow"])
+            models = _build_models_from_ids(
+                "siliconflow", available_model_ids, DEFAULT_MODELS["siliconflow"]
+            )
             logger.info(f"Fetched {len(models)} SiliconFlow models from API")
             return models
-            
+
         except Exception as e:
             logger.warning(f"Failed to fetch SiliconFlow models: {e}, using defaults")
             return _copy_models(DEFAULT_MODELS["siliconflow"])
@@ -627,12 +689,18 @@ class ModelCache:
             from openai import OpenAI
 
             api_key = _provider_api_key(provider, api_key_env, provider_credentials)
-            base_url = _provider_base_url(provider, base_url_env, default_base_url, provider_credentials)
+            base_url = _provider_base_url(
+                provider, base_url_env, default_base_url, provider_credentials
+            )
             if api_key_required and not api_key:
                 logger.debug("%s not set, using default %s models", api_key_env, provider)
                 return _copy_models(fallback)
-            if not api_key_required and not _provider_base_url(provider, base_url_env, None, provider_credentials):
-                logger.debug("%s not set, skipping local model discovery for %s", base_url_env, provider)
+            if not api_key_required and not _provider_base_url(
+                provider, base_url_env, None, provider_credentials
+            ):
+                logger.debug(
+                    "%s not set, skipping local model discovery for %s", base_url_env, provider
+                )
                 return _copy_models(fallback)
 
             client = OpenAI(api_key=api_key or "not-needed", base_url=base_url, timeout=10.0)
@@ -653,12 +721,12 @@ _cache_lock = threading.Lock()
 def get_model_cache() -> ModelCache:
     """
     Get the global model cache instance.
-    
+
     Returns:
         The global ModelCache instance
     """
     global _model_cache
-    
+
     with _cache_lock:
         if _model_cache is None:
             _model_cache = ModelCache(refresh_interval_hours=24)
@@ -672,12 +740,12 @@ def get_available_models(
 ) -> Dict[str, List[Dict]]:
     """
     Get available models from cache.
-    
+
     This is the main public API for getting models.
-    
+
     Args:
         provider: Specific provider to get models for, or None for all
-        
+
     Returns:
         Dictionary of models by provider
     """
@@ -694,7 +762,7 @@ def refresh_models(*, provider_credentials: ProviderCredentialsMap | None = None
 def initialize_models():
     """
     Initialize model cache on application startup.
-    
+
     This should be called during application initialization to populate
     the cache before the first request.
     """

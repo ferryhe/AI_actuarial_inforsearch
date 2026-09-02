@@ -52,27 +52,6 @@ export interface SiteConfig {
   content_selector?: string;
 }
 
-export interface ScheduledTask {
-  name: string;
-  type: string;
-  interval: string;
-  enabled: boolean;
-  params: Record<string, unknown>;
-}
-
-export interface ScheduleJob {
-  tag: string;
-  interval: string;
-  next_run?: string;
-  last_run?: string;
-}
-
-export interface ScheduleStatus {
-  jobs: ScheduleJob[];
-  global_schedule?: string;
-  job_count?: number;
-}
-
 export interface HistoryTask {
   id?: string;
   name?: string;

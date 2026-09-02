@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from ai_actuarial.ai_runtime import OCRRuntime, apply_ocr_runtime_environment, resolve_ocr_runtime
 from ai_actuarial.markdown_conversion_config import (
     candidate_chain_for_path,
     get_markdown_conversion_options,
@@ -12,7 +13,6 @@ from ai_actuarial.markdown_conversion_config import (
     normalize_markdown_conversion_config,
     write_markdown_conversion_config,
 )
-from ai_actuarial.ai_runtime import OCRRuntime, apply_ocr_runtime_environment, resolve_ocr_runtime
 from doc_to_md.registry import pick_auto_engine
 
 
@@ -23,7 +23,12 @@ def test_default_config_uses_auto_and_local_only_auto_chains(monkeypatch, tmp_pa
     cfg = load_markdown_conversion_config()
 
     assert cfg["default_tool"] == "auto"
-    assert candidate_chain_for_path(Path("example.pdf"), cfg) == ["opendataloader", "markitdown", "docling", "local"]
+    assert candidate_chain_for_path(Path("example.pdf"), cfg) == [
+        "opendataloader",
+        "markitdown",
+        "docling",
+        "local",
+    ]
     assert candidate_chain_for_path(Path("example.png"), cfg) == ["local"]
     for api_tool in ("mistral", "deepseekocr", "mathpix"):
         assert cfg["tools"][api_tool]["paid_or_api"] is True
@@ -39,8 +44,16 @@ def test_configured_candidate_order_is_preserved_but_paid_tools_skip_auto_by_def
         }
     )
 
-    assert candidate_chain_for_path(Path("example.pdf"), cfg, auto_only=False) == ["mistral", "markitdown", "mathpix", "local"]
-    assert candidate_chain_for_path(Path("example.pdf"), cfg, auto_only=True) == ["markitdown", "local"]
+    assert candidate_chain_for_path(Path("example.pdf"), cfg, auto_only=False) == [
+        "mistral",
+        "markitdown",
+        "mathpix",
+        "local",
+    ]
+    assert candidate_chain_for_path(Path("example.pdf"), cfg, auto_only=True) == [
+        "markitdown",
+        "local",
+    ]
 
 
 def test_paid_tool_can_join_auto_only_when_explicitly_enabled():
@@ -134,14 +147,19 @@ def test_scan_count_limits_are_capped_to_safe_maximum():
 def test_resolve_ocr_runtime_auto_does_not_become_docling(monkeypatch):
     monkeypatch.delenv("DEFAULT_ENGINE", raising=False)
 
-    runtime = resolve_ocr_runtime(engine_override="auto", yaml_config={"ai_config": {"ocr": {"provider": "local", "model": "docling"}}})
+    runtime = resolve_ocr_runtime(
+        engine_override="auto",
+        yaml_config={"ai_config": {"ocr": {"provider": "local", "model": "docling"}}},
+    )
 
     assert runtime.engine == "auto"
 
 
 def test_apply_ocr_runtime_environment_reuses_markdown_config_cache(monkeypatch, tmp_path):
     target = tmp_path / "markdown_conversion.yaml"
-    target.write_text(yaml.safe_dump({"tools": {"markitdown": {"tuning": {"max_pages": 3}}}}), encoding="utf-8")
+    target.write_text(
+        yaml.safe_dump({"tools": {"markitdown": {"tuning": {"max_pages": 3}}}}), encoding="utf-8"
+    )
     monkeypatch.setenv("MARKDOWN_CONVERSION_CONFIG_PATH", str(target))
 
     import ai_actuarial.ai_runtime as ai_runtime

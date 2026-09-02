@@ -157,9 +157,7 @@ def catalog_with_openai(
         )
     if not resolved_api_key:
         env_var = get_provider_api_key_env_var(resolved_provider) or "API_KEY"
-        raise RuntimeError(
-            f"{env_var} missing for catalog provider '{resolved_provider}'"
-        )
+        raise RuntimeError(f"{env_var} missing for catalog provider '{resolved_provider}'")
 
     try:
         from openai import OpenAI  # type: ignore
@@ -198,7 +196,7 @@ def catalog_with_openai(
             "If the document is primarily in Chinese, write the title in Chinese. "
             "If the document is primarily in English, write the title in English.\n"
             "Rules: do not invent facts. "
-            "If content is insufficient, return categories=[\"Other\"] and keep summary short. "
+            'If content is insufficient, return categories=["Other"] and keep summary short. '
             "Output valid JSON only — no code fences, no extra text."
         )
 
@@ -314,9 +312,7 @@ def confirm_category_for_summary(
         )
     if not resolved_api_key:
         env_var = get_provider_api_key_env_var(resolved_provider) or "API_KEY"
-        raise RuntimeError(
-            f"{env_var} missing for catalog provider '{resolved_provider}'"
-        )
+        raise RuntimeError(f"{env_var} missing for catalog provider '{resolved_provider}'")
 
     try:
         from openai import OpenAI  # type: ignore

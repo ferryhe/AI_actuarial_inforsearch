@@ -19,8 +19,8 @@ from ai_actuarial.shared_runtime import (
 from ai_actuarial.storage import Storage
 from ai_actuarial.task_runtime import NativeTaskRuntime
 
-from .logging_config import configure_application_logging
 from .deps import _extract_presented_token, _session_allows_explicit_token
+from .logging_config import configure_application_logging
 from .middleware import RateLimitMiddleware
 from .route_inventory import (
     collect_fastapi_api_paths,
@@ -178,7 +178,9 @@ def create_app() -> FastAPI:
                 response.headers.setdefault("X-Content-Type-Options", "nosniff")
                 response.headers.setdefault("X-Frame-Options", "DENY")
                 response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
-                response.headers.setdefault("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+                response.headers.setdefault(
+                    "Permissions-Policy", "geolocation=(), microphone=(), camera=()"
+                )
                 csp = str(getattr(request.app.state, "content_security_policy", "") or "").strip()
                 if csp:
                     response.headers.setdefault("Content-Security-Policy", csp)
@@ -196,7 +198,9 @@ def create_app() -> FastAPI:
                 if serializer is None:
                     return JSONResponse(
                         status_code=503,
-                        content={"detail": "FastAPI session secret is required when CSRF protection is enabled"},
+                        content={
+                            "detail": "FastAPI session secret is required when CSRF protection is enabled"
+                        },
                     )
 
                 unsafe_method = request.method.upper() not in CSRF_SAFE_METHODS
@@ -222,9 +226,14 @@ def create_app() -> FastAPI:
                         key=CSRF_COOKIE_NAME,
                         value=_create_csrf_token(request),
                         path="/",
-                        secure=bool(getattr(request.app.state, "fastapi_session_cookie_secure", False)),
+                        secure=bool(
+                            getattr(request.app.state, "fastapi_session_cookie_secure", False)
+                        ),
                         httponly=False,
-                        samesite=getattr(request.app.state, "fastapi_session_cookie_samesite", "Lax") or "Lax",
+                        samesite=getattr(
+                            request.app.state, "fastapi_session_cookie_samesite", "Lax"
+                        )
+                        or "Lax",
                     )
             return response
 
@@ -253,7 +262,9 @@ def create_app() -> FastAPI:
     app.include_router(agentic_rag_router, prefix="/api", tags=["agentic-rag"])
     app.include_router(chat_router, prefix="/api", tags=["chat"])
 
-    app.state.fastapi_session_secret = os.getenv("FASTAPI_SESSION_SECRET", settings.FASTAPI_SESSION_SECRET)
+    app.state.fastapi_session_secret = os.getenv(
+        "FASTAPI_SESSION_SECRET", settings.FASTAPI_SESSION_SECRET
+    )
     app.state.fastapi_session_cookie_name = "session"
     app.state.fastapi_session_cookie_path = "/"
     app.state.fastapi_session_cookie_domain = None
@@ -301,6 +312,8 @@ def create_app() -> FastAPI:
                 f"Port /api/{retired_api_path} to ai_actuarial/api/routers before exposing it in React."
             ),
         )
+
+    block_retired_api_fallback  # reason: FastAPI registers this nested decorated route.
 
     try:
         app.state.init_scheduler()

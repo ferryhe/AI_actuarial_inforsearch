@@ -4,7 +4,6 @@ import re
 from collections.abc import Iterable
 from typing import Any
 
-
 _IGNORED_METHODS = {"HEAD", "OPTIONS"}
 
 
@@ -20,9 +19,13 @@ def _join_paths(prefix: str, path: str) -> str:
     return f"{prefix.rstrip('/')}/{path.lstrip('/')}"
 
 
-def _iter_routes(routes: Iterable[Any], prefix: str = "", parent_include_in_schema: bool = True) -> Iterable[tuple[Any, str | None, bool]]:
+def _iter_routes(
+    routes: Iterable[Any], prefix: str = "", parent_include_in_schema: bool = True
+) -> Iterable[tuple[Any, str | None, bool]]:
     for route in routes:
-        include_in_schema = parent_include_in_schema and bool(getattr(route, "include_in_schema", True))
+        include_in_schema = parent_include_in_schema and bool(
+            getattr(route, "include_in_schema", True)
+        )
         path = getattr(route, "path", None)
         if isinstance(path, str):
             yield route, _join_paths(prefix, path), include_in_schema
@@ -33,8 +36,12 @@ def _iter_routes(routes: Iterable[Any], prefix: str = "", parent_include_in_sche
 
         include_context = getattr(route, "include_context", None)
         nested_prefix = _join_paths(prefix, str(getattr(include_context, "prefix", "") or ""))
-        nested_include = include_in_schema and bool(getattr(include_context, "include_in_schema", True))
-        yield from _iter_routes(getattr(original_router, "routes", []), nested_prefix, nested_include)
+        nested_include = include_in_schema and bool(
+            getattr(include_context, "include_in_schema", True)
+        )
+        yield from _iter_routes(
+            getattr(original_router, "routes", []), nested_prefix, nested_include
+        )
 
 
 def normalize_route_signature(signature: str) -> str:
@@ -67,6 +74,3 @@ def collect_fastapi_route_signatures(app: Any) -> list[str]:
                 continue
             signatures.add(_signature(path, method))
     return sorted(signatures)
-
-
-

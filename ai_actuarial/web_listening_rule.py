@@ -142,10 +142,16 @@ class WebListeningAgentRuleV1(BaseModel):
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
             raise ValueError("acquisition_profile.website_url must be an absolute http(s) URL")
         if not _is_valid_schedule_interval(self.monitor_task.schedule_interval):
-            raise ValueError("monitor_task.schedule_interval must be daily, weekly, daily at HH:MM, or every N hours/minutes")
+            raise ValueError(
+                "monitor_task.schedule_interval must be daily, weekly, daily at HH:MM, or every N hours/minutes"
+            )
         tools = self.acquisition_profile.tools
+        # Pydantic replaces model fields dynamically after class construction.
+        # pylint: disable-next=no-member
         if tools is not None and "search" in tools and not self.monitor_scope.queries:
-            raise ValueError("monitor_scope.queries must be non-empty when search acquisition is selected")
+            raise ValueError(
+                "monitor_scope.queries must be non-empty when search acquisition is selected"
+            )
         return self
 
 
@@ -174,7 +180,9 @@ def rule_from_yaml_or_dict(value: str | dict[str, Any]) -> WebListeningAgentRule
         raise WebListeningRuleError(_validation_error_text(exc)) from exc
 
 
-def validate_rule(value: str | dict[str, Any], *, check_url_safety: bool = True) -> tuple[WebListeningAgentRuleV1 | None, list[str], list[str]]:
+def validate_rule(
+    value: str | dict[str, Any], *, check_url_safety: bool = True
+) -> tuple[WebListeningAgentRuleV1 | None, list[str], list[str]]:
     warnings: list[str] = []
     try:
         rule = rule_from_yaml_or_dict(value)
@@ -186,9 +194,13 @@ def validate_rule(value: str | dict[str, Any], *, check_url_safety: bool = True)
         except UnsafeUrlError as exc:
             return None, [f"Unsafe website URL: {exc}"], warnings
     if not rule.monitor_scope.keywords:
-        warnings.append("monitor_scope.keywords is empty; crawler will treat all pages as relevant.")
+        warnings.append(
+            "monitor_scope.keywords is empty; crawler will treat all pages as relevant."
+        )
     if not rule.section_selection.allow_url_patterns:
-        warnings.append("section_selection.allow_url_patterns is empty; crawl scope is domain-wide within max_depth.")
+        warnings.append(
+            "section_selection.allow_url_patterns is empty; crawl scope is domain-wide within max_depth."
+        )
     return rule, [], warnings
 
 
@@ -269,9 +281,7 @@ def materialize_rule(rule: WebListeningAgentRuleV1) -> MaterializedConfig:
     content_types = acquisition.content_types
     collect_linked_files = True if content_types is None else "file" in content_types
     collect_page_content = (
-        acquisition.collect_page_content
-        if content_types is None
-        else "webpage" in content_types
+        acquisition.collect_page_content if content_types is None else "webpage" in content_types
     )
     site: dict[str, Any] = {
         "name": acquisition.name,
@@ -323,7 +333,21 @@ def materialize_rule(rule: WebListeningAgentRuleV1) -> MaterializedConfig:
 
 
 def _keywords_from_goal(goal: str) -> list[str]:
-    stop = {"and", "the", "for", "from", "with", "about", "into", "latest", "updates", "update", "monitor", "track", "find"}
+    stop = {
+        "and",
+        "the",
+        "for",
+        "from",
+        "with",
+        "about",
+        "into",
+        "latest",
+        "updates",
+        "update",
+        "monitor",
+        "track",
+        "find",
+    }
     out: list[str] = []
     for match in _WORD_RE.finditer(goal.lower()):
         word = match.group(0).strip("-_")

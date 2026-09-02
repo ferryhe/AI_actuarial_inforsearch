@@ -5,7 +5,6 @@ import subprocess
 import textwrap
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 TSX = ROOT / "node_modules" / ".bin" / ("tsx.cmd" if os.name == "nt" else "tsx")
 
@@ -36,8 +35,7 @@ def _run_typescript(script: str) -> None:
 
 
 def test_publication_projection_is_authoritative_for_current_serving_state() -> None:
-    _run_typescript(
-        """
+    _run_typescript("""
         const assert = (await import("node:assert/strict")).default;
         const imported = await import("./client/src/lib/ready-data-ui-state.ts");
         const {
@@ -196,19 +194,17 @@ def test_publication_projection_is_authoritative_for_current_serving_state() -> 
           stale: false,
           source: "legacy_manifest",
         });
-        """
-    )
+        """)
 
 
 def test_delayed_ready_data_mutations_cannot_cross_route_epoch() -> None:
-    _run_typescript(
-        """
+    _run_typescript("""
         const assert = (await import("node:assert/strict")).default;
         const imported = await import("./client/src/lib/ready-data-ui-state.ts");
         const {
           captureReadyDataRoute,
           isReadyDataRouteCurrent,
-          runReadyDataRouteMutation,
+          runReadyDataRouteRequest,
           syncReadyDataRoute,
         } = imported.default || imported;
 
@@ -234,7 +230,7 @@ def test_delayed_ready_data_mutations_cannot_cross_route_epoch() -> None:
               followups: 0,
             };
             const pending = deferred();
-            const operation = runReadyDataRouteMutation({
+            const operation = runReadyDataRouteRequest({
               request: () => pending.promise,
               isCurrent: () => isReadyDataRouteCurrent(route, mounted, token),
               onSuccess: (result) => {
@@ -279,17 +275,15 @@ def test_delayed_ready_data_mutations_cannot_cross_route_epoch() -> None:
         strictMounted = true;
         strictRoute = syncReadyDataRoute(strictRoute, "A");
         assert.ok(captureReadyDataRoute(strictRoute, strictMounted, "A"));
-        """
-    )
+        """)
 
 
 def test_automation_confirmation_meta_fallback_and_bounded_polling() -> None:
-    _run_typescript(
-        """
+    _run_typescript("""
         const assert = (await import("node:assert/strict")).default;
         const imported = await import("./client/src/lib/ready-data-ui-state.ts");
         const {
-          mergeConfirmedReadyDataAutomation,
+          mergeConfirmedReadyDataAutomationForKb,
           readyDataManifestAfterLoad,
           scheduleReadyDataPoll,
           selectEffectiveReadyDataManifest,
@@ -305,7 +299,7 @@ def test_automation_confirmation_meta_fallback_and_bounded_polling() -> None:
           automatic_publish_enabled: false,
           automation_state: "idle",
         };
-        const confirmed = mergeConfirmedReadyDataAutomation(base, "A", "general", {
+        const confirmed = mergeConfirmedReadyDataAutomationForKb(base, base, "A", "general", {
           kb_id: "A",
           profile: "general",
           automation: {
@@ -379,7 +373,7 @@ def test_automation_confirmation_meta_fallback_and_bounded_polling() -> None:
           automation_state: "pending",
         }, 0, 12), true);
 
-        const disabled = mergeConfirmedReadyDataAutomation(confirmed, "A", "general", {
+        const disabled = mergeConfirmedReadyDataAutomationForKb(confirmed, confirmed, "A", "general", {
           automation: {
             automatic_build_enabled: false,
             automatic_publish_enabled: true,
@@ -409,13 +403,11 @@ def test_automation_confirmation_meta_fallback_and_bounded_polling() -> None:
           selectEffectiveReadyDataManifest("A", succeeded, "A", metaRunning),
           succeeded,
         );
-        """
-    )
+        """)
 
 
 def test_poll_cleanup_and_rollback_error_keys_are_executable() -> None:
-    _run_typescript(
-        """
+    _run_typescript("""
         const assert = (await import("node:assert/strict")).default;
         const imported = await import("./client/src/lib/ready-data-ui-state.ts");
         const { readyDataRollbackErrorKey, scheduleReadyDataPoll } = imported.default || imported;
@@ -439,13 +431,11 @@ def test_poll_cleanup_and_rollback_error_keys_are_executable() -> None:
         );
         assert.equal(readyDataRollbackErrorKey(422, false), "knowledge.ready_rollback_failed");
         assert.equal(readyDataRollbackErrorKey(500, false), "knowledge.ready_rollback_failed");
-        """
-    )
+        """)
 
 
 def test_delayed_detail_loads_and_stale_profile_cannot_cross_kb_route() -> None:
-    _run_typescript(
-        """
+    _run_typescript("""
         const assert = (await import("node:assert/strict")).default;
         const imported = await import("./client/src/lib/ready-data-ui-state.ts");
         const {
@@ -560,13 +550,11 @@ def test_delayed_detail_loads_and_stale_profile_cannot_cross_kb_route() -> None:
           selectReadyDataMutationProfile("B", null, "B", "stored-b"),
           "stored-b",
         );
-        """
-    )
+        """)
 
 
 def test_latest_same_kb_resource_request_and_load_episode_win() -> None:
-    _run_typescript(
-        """
+    _run_typescript("""
         const assert = (await import("node:assert/strict")).default;
         const imported = await import("./client/src/lib/ready-data-ui-state.ts");
         const {
@@ -701,13 +689,11 @@ def test_latest_same_kb_resource_request_and_load_episode_win() -> None:
         newEpisode.resolve("new-done");
         await newEpisodeRun;
         assert.equal(loading, false);
-        """
-    )
+        """)
 
 
 def test_delayed_automation_confirmation_merges_into_latest_same_kb_manifests() -> None:
-    _run_typescript(
-        """
+    _run_typescript("""
         const assert = (await import("node:assert/strict")).default;
         const imported = await import("./client/src/lib/ready-data-ui-state.ts");
         const {
@@ -716,7 +702,7 @@ def test_delayed_automation_confirmation_merges_into_latest_same_kb_manifests() 
           mergeConfirmedReadyDataAutomationForKb,
           readyDataManifestAfterLoad,
           resolveReadyDataManifestEpisode,
-          runReadyDataRouteMutation,
+          runReadyDataRouteRequest,
           selectReadyDataManifestEpisodeUpdate,
           shouldPollReadyDataManifest,
           syncReadyDataRoute,
@@ -872,7 +858,7 @@ def test_delayed_automation_confirmation_merges_into_latest_same_kb_manifests() 
         const token = captureReadyDataRoute(route, true, "same-kb");
         let routeWrites = 0;
         const pending = deferred();
-        const operation = runReadyDataRouteMutation({
+        const operation = runReadyDataRouteRequest({
           request: () => pending.promise,
           isCurrent: () => isReadyDataRouteCurrent(route, true, token),
           onSuccess: () => { routeWrites += 1; },
@@ -882,13 +868,11 @@ def test_delayed_automation_confirmation_merges_into_latest_same_kb_manifests() 
         pending.resolve(busyResponse);
         await operation;
         assert.equal(routeWrites, 0);
-        """
-    )
+        """)
 
 
 def test_publication_revision_orders_every_same_kb_manifest_write() -> None:
-    _run_typescript(
-        """
+    _run_typescript("""
         const assert = (await import("node:assert/strict")).default;
         const imported = await import("./client/src/lib/ready-data-ui-state.ts");
         const {
@@ -1043,13 +1027,11 @@ def test_publication_revision_orders_every_same_kb_manifest_write() -> None:
         assert.equal(withoutResponseTimePublication.publication_state, undefined);
         assert.equal(withoutResponseTimePublication.artifact_digest, undefined);
         assert.equal(withoutResponseTimePublication.automation_state, "running");
-        """
-    )
+        """)
 
 
 def test_knowledge_list_and_detail_build_snapshots_reject_stale_publication_writes() -> None:
-    _run_typescript(
-        """
+    _run_typescript("""
         const assert = (await import("node:assert/strict")).default;
         const imported = await import("./client/src/lib/ready-data-ui-state.ts");
         const {
@@ -1157,17 +1139,14 @@ def test_knowledge_list_and_detail_build_snapshots_reject_stale_publication_writ
         assert.equal(after503.publication_state.previous_publication_id, "previous-pub-detail-2");
         assert.ok(after503.publication_state.previous_publication);
         assert.equal(after503.artifact_digest, "digest-pub-detail-2");
-        """
-    )
+        """)
 
 
 def test_same_revision_dynamic_state_and_profile_scoped_list_ordering() -> None:
-    _run_typescript(
-        """
+    _run_typescript("""
         const assert = (await import("node:assert/strict")).default;
         const imported = await import("./client/src/lib/ready-data-ui-state.ts");
         const {
-          isReadyDataKnowledgeListManifestAuthoritative,
           mergeReadyDataKnowledgeList,
           mergeReadyDataKnowledgeManifest,
           resolveReadyDataOperationState,
@@ -1388,100 +1367,6 @@ def test_same_revision_dynamic_state_and_profile_scoped_list_ordering() -> None:
           "formula",
         );
 
-        const deferred = () => {
-          let resolve;
-          const promise = new Promise((yes) => { resolve = yes; });
-          return { promise, resolve };
-        };
-        let nextManifestVersion = 0;
-        let appliedManifestVersion = 0;
-        let view = [{
-          id: "A",
-          name: "A-current",
-          manifest_profile: "general",
-          agentic_ready_manifest: {
-            ...full,
-            kb_id: "A",
-          },
-        }];
-        const oldList = deferred();
-        const requestVersion = ++nextManifestVersion;
-        const oldListRun = oldList.promise.then((response) => {
-          const authoritative = isReadyDataKnowledgeListManifestAuthoritative(
-            requestVersion,
-            appliedManifestVersion,
-          );
-          if (authoritative) appliedManifestVersion = requestVersion;
-          view = mergeReadyDataKnowledgeList(
-            view,
-            response,
-            authoritative,
-          );
-        });
-        const buildVersion = ++nextManifestVersion;
-        const buildAuthoritative = isReadyDataKnowledgeListManifestAuthoritative(
-          buildVersion,
-          appliedManifestVersion,
-        );
-        if (buildAuthoritative) appliedManifestVersion = buildVersion;
-        view = mergeReadyDataKnowledgeManifest(view, "A", {
-          ...full,
-          kb_id: "A",
-          automation_state: "running",
-          automatic_build_enabled: true,
-        }, buildAuthoritative);
-        oldList.resolve([
-          { id: "B", name: "B-from-old-get" },
-          {
-            id: "A",
-            name: "A-from-old-get",
-            manifest_profile: "general",
-            agentic_ready_manifest: {
-              ...full,
-              kb_id: "A",
-              automation_state: "idle",
-            },
-          },
-        ]);
-        await oldListRun;
-        assert.deepEqual(view.map((item) => item.id), ["B", "A"]);
-        assert.equal(view[1].name, "A-from-old-get");
-        assert.equal(view[1].agentic_ready_manifest.automation_state, "running");
-
-        const newRequestVersion = ++nextManifestVersion;
-        const newRequestAuthoritative = isReadyDataKnowledgeListManifestAuthoritative(
-          newRequestVersion,
-          appliedManifestVersion,
-        );
-        if (newRequestAuthoritative) appliedManifestVersion = newRequestVersion;
-        view = mergeReadyDataKnowledgeList(view, [
-          {
-            id: "A",
-            name: "A-from-new-get",
-            manifest_profile: "general",
-            agentic_ready_manifest: {
-              ...full,
-              kb_id: "A",
-              automation_state: "succeeded",
-            },
-          },
-        ], newRequestAuthoritative);
-        assert.equal(view[0].agentic_ready_manifest.automation_state, "succeeded");
-        assert.equal(shouldPollReadyDataManifest(view[0].agentic_ready_manifest, 0, 12), false);
-
-        // A later request that fails never becomes applied authority, so it
-        // cannot suppress an earlier successful mutation response.
-        const nextBuildVersion = ++nextManifestVersion;
-        const failedGetVersion = ++nextManifestVersion;
-        assert.ok(failedGetVersion > nextBuildVersion);
-        assert.equal(
-          isReadyDataKnowledgeListManifestAuthoritative(
-            nextBuildVersion,
-            appliedManifestVersion,
-          ),
-          true,
-        );
-
         const profileList = mergeReadyDataKnowledgeList([
           {
             id: "A",
@@ -1501,13 +1386,11 @@ def test_same_revision_dynamic_state_and_profile_scoped_list_ordering() -> None:
         assert.deepEqual(profileList.map((item) => item.id), ["B", "A"]);
         assert.equal(profileList[1].manifest_profile, "formula");
         assert.equal(profileList[1].agentic_ready_manifest.profile, "formula");
-        """
-    )
+        """)
 
 
 def test_detail_manifest_episodes_order_cross_source_successes() -> None:
-    _run_typescript(
-        """
+    _run_typescript("""
         const assert = (await import("node:assert/strict")).default;
         const imported = await import("./client/src/lib/ready-data-ui-state.ts");
         const {
@@ -1630,13 +1513,11 @@ def test_detail_manifest_episodes_order_cross_source_successes() -> None:
           readyDataManifestAfterLoad(current, null, false, true),
           current,
         );
-        """
-    )
+        """)
 
 
 def test_knowledge_manifest_episodes_are_scoped_per_kb_and_profile() -> None:
-    _run_typescript(
-        """
+    _run_typescript("""
         const assert = (await import("node:assert/strict")).default;
         const imported = await import("./client/src/lib/ready-data-ui-state.ts");
         const {
@@ -1777,13 +1658,11 @@ def test_knowledge_manifest_episodes_are_scoped_per_kb_and_profile() -> None:
         assert.ok(failedVersion > appliedByKb.get("A").version);
         assert.equal(appliedByKb.get("A").version, newListVersion);
         assert.equal(appliedByKb.get("B").version, newListVersion);
-        """
-    )
+        """)
 
 
 def test_latest_build_episode_refreshes_equal_revision_full_snapshot() -> None:
-    _run_typescript(
-        """
+    _run_typescript("""
         const assert = (await import("node:assert/strict")).default;
         const imported = await import("./client/src/lib/ready-data-ui-state.ts");
         const {
@@ -1877,13 +1756,11 @@ def test_latest_build_episode_refreshes_equal_revision_full_snapshot() -> None:
         );
         assert.equal(current.current_ready_index_version_id, "current-newest");
         assert.equal(current.serving_stale, false);
-        """
-    )
+        """)
 
 
 def test_safe_build_snapshot_uses_server_monotonic_freshness_after_older_get() -> None:
-    _run_typescript(
-        """
+    _run_typescript("""
         const assert = (await import("node:assert/strict")).default;
         const imported = await import("./client/src/lib/ready-data-ui-state.ts");
         const {
@@ -2047,5 +1924,4 @@ def test_safe_build_snapshot_uses_server_monotonic_freshness_after_older_get() -
           assert.equal(selected.current_ready_index_version_id, newerCurrent.current_ready_index_version_id);
           assert.equal(selected.serving_stale, false);
         }
-        """
-    )
+        """)

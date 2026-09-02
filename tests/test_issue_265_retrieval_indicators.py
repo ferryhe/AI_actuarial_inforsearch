@@ -4,12 +4,6 @@ import math
 
 import pytest
 
-from ai_actuarial.retrieval_indicators import (
-    build_retrieval_indicators,
-    normalize_keyword_relevance,
-    normalize_retrieval_method,
-    normalize_semantic_relevance,
-)
 from ai_actuarial.agentic_rag import agentic_loop
 from ai_actuarial.agentic_rag.ready_data_tools import (
     _tokens,
@@ -22,6 +16,12 @@ from ai_actuarial.agentic_rag.ready_data_tools import (
     trace_relations,
 )
 from ai_actuarial.api.services import chat as chat_service
+from ai_actuarial.retrieval_indicators import (
+    build_retrieval_indicators,
+    normalize_keyword_relevance,
+    normalize_retrieval_method,
+    normalize_semantic_relevance,
+)
 
 
 @pytest.mark.parametrize(
@@ -37,9 +37,7 @@ from ai_actuarial.api.services import chat as chat_service
         ("not-a-score", None),
     ],
 )
-def test_semantic_relevance_normalizes_only_finite_similarity_scores(
-    raw, expected
-) -> None:
+def test_semantic_relevance_normalizes_only_finite_similarity_scores(raw, expected) -> None:
     assert normalize_semantic_relevance(raw) == expected
 
 
@@ -102,14 +100,10 @@ def test_seven_weighted_tools_normalize_zero_mid_max_and_over_max(
     assert normalize_keyword_relevance(0, theoretical_max) == 0, name
     assert normalize_keyword_relevance(theoretical_max / 2, theoretical_max) == 50, name
     assert normalize_keyword_relevance(theoretical_max, theoretical_max) == 100, name
-    assert normalize_keyword_relevance(theoretical_max * 2, theoretical_max) == 100, (
-        name
-    )
+    assert normalize_keyword_relevance(theoretical_max * 2, theoretical_max) == 100, name
 
 
-def test_keyword_relevance_needs_query_context_and_title_alias_keeps_native_scale() -> (
-    None
-):
+def test_keyword_relevance_needs_query_context_and_title_alias_keeps_native_scale() -> None:
     assert normalize_keyword_relevance(20, None) is None
     assert normalize_keyword_relevance(88.5, 100) == 88
     assert normalize_keyword_relevance(100, 100) == 100
@@ -139,9 +133,7 @@ def test_empty_query_does_not_fabricate_keyword_relevance(tool, tmp_path) -> Non
     assert tool("   ", output_dir=tmp_path) == []
 
 
-def test_shared_builder_returns_nullable_contract_without_mixing_raw_score_as_similarity() -> (
-    None
-):
+def test_shared_builder_returns_nullable_contract_without_mixing_raw_score_as_similarity() -> None:
     assert build_retrieval_indicators(
         similarity_score=None,
         keyword_score=16.5,
@@ -155,16 +147,22 @@ def test_shared_builder_returns_nullable_contract_without_mixing_raw_score_as_si
 
 
 def test_shared_builder_prefers_explicit_canonical_semantic_relevance() -> None:
-    assert build_retrieval_indicators(
-        similarity_score=0.2,
-        semantic_relevance_100=73,
-        source="vector",
-    )["semantic_relevance_100"] == 73
-    assert build_retrieval_indicators(
-        similarity_score=0.9,
-        semantic_relevance_100=math.nan,
-        source="vector",
-    )["semantic_relevance_100"] is None
+    assert (
+        build_retrieval_indicators(
+            similarity_score=0.2,
+            semantic_relevance_100=73,
+            source="vector",
+        )["semantic_relevance_100"]
+        == 73
+    )
+    assert (
+        build_retrieval_indicators(
+            similarity_score=0.9,
+            semantic_relevance_100=math.nan,
+            source="vector",
+        )["semantic_relevance_100"]
+        is None
+    )
 
 
 def test_standard_chat_serializer_preserves_only_canonical_semantic_relevance() -> None:
@@ -285,11 +283,7 @@ def test_history_backfill_preserves_only_canonical_semantic_relevance() -> None:
     messages = [
         {
             "citations": [{"semantic_relevance_100": 73, "source": "vector"}],
-            "metadata": {
-                "retrieved_blocks": [
-                    {"semantic_relevance_100": 73, "source": "vector"}
-                ]
-            },
+            "metadata": {"retrieved_blocks": [{"semantic_relevance_100": 73, "source": "vector"}]},
         }
     ]
 
@@ -445,9 +439,7 @@ def test_agentic_synthesis_chunks_do_not_relabel_raw_keyword_score_as_similarity
     assert "similarity_score" not in metadata
 
 
-def test_history_backfill_keeps_legacy_messages_open_without_inventing_keyword_score() -> (
-    None
-):
+def test_history_backfill_keeps_legacy_messages_open_without_inventing_keyword_score() -> None:
     messages = [
         {
             "citations": [

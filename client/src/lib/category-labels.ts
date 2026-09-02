@@ -27,7 +27,7 @@ const CATEGORY_LABELS_ZH: Record<string, string> = {
   "Underwriting & Claims": "核保与理赔",
 };
 
-export function categoryValue(category: string | CategoryLabelOption | null | undefined): string {
+function categoryValue(category: string | CategoryLabelOption | null | undefined): string {
   if (!category) return "";
   return typeof category === "string" ? category : category.name;
 }

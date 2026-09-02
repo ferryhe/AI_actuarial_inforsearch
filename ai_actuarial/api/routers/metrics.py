@@ -55,7 +55,9 @@ async def get_metrics(
         "rate_limits": {
             "enabled": bool(getattr(request.app.state, "enable_rate_limiting", False)),
             "defaults": str(getattr(request.app.state, "rate_limit_defaults", "") or ""),
-            "storage_uri": str(getattr(request.app.state, "rate_limit_storage_uri", "memory://") or "memory://"),
+            "storage_uri": str(
+                getattr(request.app.state, "rate_limit_storage_uri", "memory://") or "memory://"
+            ),
             "tiers": rate_limit_tiers,
         },
         "version": "0.1.0",

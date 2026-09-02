@@ -78,12 +78,13 @@ def test_chunk_launch_accepts_canonical_markdown_files_selector() -> None:
     )
 
     assert result["job_id"] == "real-job-id"
-    assert state.started == [
-        ("chunk_generation", {"type": "chunk_generation", "files": files})
-    ]
+    assert state.started == [("chunk_generation", {"type": "chunk_generation", "files": files})]
 
 
-@pytest.mark.parametrize("field", ["api_key", "endpoint", "api_base_url", "text", "texts", "provider", "model", "dimension"])
+@pytest.mark.parametrize(
+    "field",
+    ["api_key", "endpoint", "api_base_url", "text", "texts", "provider", "model", "dimension"],
+)
 def test_embedding_launch_rejects_client_injected_identity_or_text(field: str) -> None:
     state = _State()
     with pytest.raises(OpsWriteError) as exc_info:
@@ -112,9 +113,7 @@ def test_cli_exposes_thin_task_and_embedding_commands() -> None:
             "--json",
         ]
     )
-    coverage = parser.parse_args(
-        ["embedding", "coverage", "--chunk-set-id", "cs-1", "--json"]
-    )
+    coverage = parser.parse_args(["embedding", "coverage", "--chunk-set-id", "cs-1", "--json"])
 
     assert task.func is cmd_task_run
     assert task.wait is True
@@ -122,7 +121,9 @@ def test_cli_exposes_thin_task_and_embedding_commands() -> None:
     assert coverage.embedding_cmd == "coverage"
 
 
-def test_cli_wait_failure_returns_nonzero_and_json(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+def test_cli_wait_failure_returns_nonzero_and_json(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
     responses = iter(
         [
             {"success": True, "job_id": "job-1"},
@@ -130,7 +131,9 @@ def test_cli_wait_failure_returns_nonzero_and_json(monkeypatch: pytest.MonkeyPat
             {"tasks": [{"id": "job-1", "status": "error", "errors": ["safe"]}]},
         ]
     )
-    monkeypatch.setattr("ai_actuarial.cli._api_json_request", lambda *_args, **_kwargs: next(responses))
+    monkeypatch.setattr(
+        "ai_actuarial.cli._api_json_request", lambda *_args, **_kwargs: next(responses)
+    )
     args = Namespace(
         api_url="http://api.test",
         token=None,
@@ -238,7 +241,9 @@ def test_chunk_embedding_ui_removes_binding_and_overwrite_controls_and_uses_fixe
     file_detail = (root / "client/src/pages/FileDetail.tsx").read_text(encoding="utf-8")
     tasks = (root / "client/src/pages/Tasks.tsx").read_text(encoding="utf-8")
     pipeline = (root / "client/src/pages/tasks/PipelineBaton.tsx").read_text(encoding="utf-8")
-    schedules = (root / "client/src/pages/tasks/ScheduledTasksSection.tsx").read_text(encoding="utf-8")
+    schedules = (root / "client/src/pages/tasks/ScheduledTasksSection.tsx").read_text(
+        encoding="utf-8"
+    )
 
     for source in (chunk_form, file_detail, pipeline, schedules):
         assert "bind_to_kb" not in source
@@ -311,9 +316,12 @@ def test_managed_schedule_does_not_launch_embedding_after_chunk_failure(
 
     runtime = Runtime()
 
-    assert NativeTaskRuntime._complete_scheduled_chunk_embedding(
-        runtime, "chunk-task", "Nightly Chunk"
-    ) is None
+    assert (
+        NativeTaskRuntime._complete_scheduled_chunk_embedding(
+            runtime, "chunk-task", "Nightly Chunk"
+        )
+        is None
+    )
     assert runtime.started == []
 
 
@@ -516,9 +524,7 @@ def test_markdown_partial_failure_or_stop_is_not_success(
         lambda: {"default_tool": "auto", "tools": {}},
     )
 
-    result = runtime._run_markdown_conversion(
-        "markdown-task", storage, {}, str(tmp_path), {}
-    )
+    result = runtime._run_markdown_conversion("markdown-task", storage, {}, str(tmp_path), {})
 
     assert result.success is False
     assert result.metadata["stopped"] is stop_after_first
@@ -553,9 +559,7 @@ def test_markdown_stop_requested_during_only_file_preserves_output_as_stopped(
         lambda: {"default_tool": "auto", "tools": {}},
     )
 
-    result = runtime._run_markdown_conversion(
-        "markdown-task", storage, {}, str(tmp_path), {}
-    )
+    result = runtime._run_markdown_conversion("markdown-task", storage, {}, str(tmp_path), {})
 
     assert result.success is False
     assert result.metadata["stopped"] is True
@@ -582,6 +586,7 @@ def test_task_finalization_has_no_active_history_visibility_gap(
 
     monkeypatch.setattr("ai_actuarial.task_runtime.append_task_log", blocking_log)
     if error:
+
         def finalize() -> None:
             runtime._finalize_task_error("task-1", "safe")
 
@@ -609,8 +614,15 @@ def test_chunk_canonical_files_selector_fails_if_markdown_changed(tmp_path: Path
     storage = __import__("ai_actuarial.storage", fromlist=["Storage"]).Storage(str(db_path))
     try:
         storage.insert_file(
-            "https://example.test/a.pdf", "hash", "A", "test", None,
-            "a.pdf", "a.pdf", 10, "application/pdf",
+            "https://example.test/a.pdf",
+            "hash",
+            "A",
+            "test",
+            None,
+            "a.pdf",
+            "a.pdf",
+            10,
+            "application/pdf",
         )
         storage.update_file_markdown("https://example.test/a.pdf", "# changed", "manual")
         runtime = NativeTaskRuntime.__new__(NativeTaskRuntime)
@@ -650,9 +662,15 @@ def test_chunk_service_rechecks_each_expected_markdown_hash_at_generation_time(
     try:
         for file_url in file_urls:
             storage.insert_file(
-                file_url, f"hash-{file_url[-5]}", file_url, "test", None,
-                file_url.rsplit("/", 1)[-1], file_url.rsplit("/", 1)[-1],
-                10, "application/pdf",
+                file_url,
+                f"hash-{file_url[-5]}",
+                file_url,
+                "test",
+                None,
+                file_url.rsplit("/", 1)[-1],
+                file_url.rsplit("/", 1)[-1],
+                10,
+                "application/pdf",
             )
             storage.update_file_markdown(file_url, markdown_by_url[file_url], "manual")
 
@@ -662,12 +680,12 @@ def test_chunk_service_rechecks_each_expected_markdown_hash_at_generation_time(
         selectors = [
             {
                 "file_url": file_url,
-                "markdown_hash": __import__("hashlib").sha256(
-                    markdown_by_url[file_url].encode("utf-8")
-                ).hexdigest(),
-                "markdown_version": __import__("hashlib").sha256(
-                    markdown_by_url[file_url].encode("utf-8")
-                ).hexdigest(),
+                "markdown_hash": __import__("hashlib")
+                .sha256(markdown_by_url[file_url].encode("utf-8"))
+                .hexdigest(),
+                "markdown_version": __import__("hashlib")
+                .sha256(markdown_by_url[file_url].encode("utf-8"))
+                .hexdigest(),
             }
             for file_url in file_urls
         ]
@@ -707,10 +725,13 @@ def test_chunk_service_rechecks_each_expected_markdown_hash_at_generation_time(
             file_urls[0]
         ], result.errors
         assert any("Markdown changed" in error and file_urls[1] in error for error in result.errors)
-        assert storage._conn.execute(
-            "SELECT COUNT(*) FROM file_chunk_sets WHERE file_url = ?",
-            (file_urls[1],),
-        ).fetchone()[0] == 0
+        assert (
+            storage._conn.execute(
+                "SELECT COUNT(*) FROM file_chunk_sets WHERE file_url = ?",
+                (file_urls[1],),
+            ).fetchone()[0]
+            == 0
+        )
     finally:
         storage.close()
 
@@ -719,6 +740,7 @@ def test_tasks_ui_persistently_displays_ids_logs_and_chunk_embedding_results() -
     root = Path(__file__).resolve().parents[1] / "client/src/pages"
     types = (root / "tasks/Tasks.types.ts").read_text(encoding="utf-8")
     card = (root / "tasks/TaskCard.tsx").read_text(encoding="utf-8")
+    metrics = (root / "tasks/TaskMetrics.tsx").read_text(encoding="utf-8")
     table = (root / "tasks/TaskTable.tsx").read_text(encoding="utf-8")
     tasks = (root / "Tasks.tsx").read_text(encoding="utf-8")
 
@@ -735,9 +757,10 @@ def test_tasks_ui_persistently_displays_ids_logs_and_chunk_embedding_results() -
     ):
         assert field in types
     assert "task.id" in card and "onViewLog" in card
+    assert "TaskMetrics" in card
     assert "task.id" in table and "task.result" in table
-    assert "invalid_regenerated" in card
-    assert "provider" in card
+    assert "invalid_regenerated" in metrics
+    assert "provider" in metrics
     assert "TaskResultSummary" in table
     assert "onViewLog={viewTaskLog}" in tasks
 
@@ -753,7 +776,7 @@ def test_chunk_embedding_waiters_only_load_history_after_task_leaves_active() ->
         function = src[src.index(f"async function {function_name}") :]
         function = function[: function.index("\n}") + 2]
 
-        active_lookup = function.index('apiGet<{ tasks?:')
+        active_lookup = function.index("apiGet<{ tasks?:")
         active_match = function.index("activeTask")
         history_lookup = function.index('"/api/tasks/history?limit=200"')
         assert active_lookup < active_match < history_lookup

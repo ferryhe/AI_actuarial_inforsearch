@@ -1,17 +1,20 @@
 """
 Unit tests for permission system in shared_auth.py
 """
+
 from types import SimpleNamespace
 
+from starlette.datastructures import Headers
+
 from ai_actuarial.shared_auth import (
-    GUEST_PERMISSIONS,
-    REGISTERED_PERMISSIONS,
-    PREMIUM_PERMISSIONS,
-    OPERATOR_PERMISSIONS,
     ADMIN_PERMISSIONS,
     AI_CHAT_QUOTA,
-    permissions_for_group,
+    GUEST_PERMISSIONS,
+    OPERATOR_PERMISSIONS,
     PERMISSIONS,
+    PREMIUM_PERMISSIONS,
+    REGISTERED_PERMISSIONS,
+    permissions_for_group,
 )
 
 
@@ -63,28 +66,61 @@ class TestPermissionGroups:
 
     def test_guest_cannot_write(self):
         """Guest should not have any write permissions."""
-        write_perms = ["files.delete", "catalog.write", "markdown.write",
-                       "config.write", "sites.write", "schedule.write", "files.import.server", "tasks.run",
-                       "tasks.stop", "logs.system.read", "export.read",
-                       "tokens.manage", "users.manage"]
+        write_perms = [
+            "files.delete",
+            "catalog.write",
+            "markdown.write",
+            "config.write",
+            "sites.write",
+            "schedule.write",
+            "files.import.server",
+            "tasks.run",
+            "tasks.stop",
+            "logs.system.read",
+            "export.read",
+            "tokens.manage",
+            "users.manage",
+        ]
         for perm in write_perms:
             assert perm not in GUEST_PERMISSIONS, f"Guest should not have {perm}"
 
     def test_registered_cannot_write(self):
         """Registered should not have write permissions."""
-        write_perms = ["files.delete", "catalog.write", "markdown.write",
-                       "config.write", "sites.write", "schedule.write", "files.import.server", "tasks.run",
-                       "tasks.stop", "logs.system.read", "export.read",
-                       "tokens.manage", "users.manage"]
+        write_perms = [
+            "files.delete",
+            "catalog.write",
+            "markdown.write",
+            "config.write",
+            "sites.write",
+            "schedule.write",
+            "files.import.server",
+            "tasks.run",
+            "tasks.stop",
+            "logs.system.read",
+            "export.read",
+            "tokens.manage",
+            "users.manage",
+        ]
         for perm in write_perms:
             assert perm not in REGISTERED_PERMISSIONS, f"Registered should not have {perm}"
 
     def test_premium_cannot_write(self):
         """Premium should not have write permissions."""
-        write_perms = ["files.delete", "catalog.write", "markdown.write",
-                       "config.write", "sites.write", "schedule.write", "files.import.server", "tasks.run",
-                       "tasks.stop", "logs.system.read", "export.read",
-                       "tokens.manage", "users.manage"]
+        write_perms = [
+            "files.delete",
+            "catalog.write",
+            "markdown.write",
+            "config.write",
+            "sites.write",
+            "schedule.write",
+            "files.import.server",
+            "tasks.run",
+            "tasks.stop",
+            "logs.system.read",
+            "export.read",
+            "tokens.manage",
+            "users.manage",
+        ]
         for perm in write_perms:
             assert perm not in PREMIUM_PERMISSIONS, f"Premium should not have {perm}"
 
@@ -160,7 +196,7 @@ def test_public_permission_fast_path_skips_auth_lookup_for_anonymous_request(mon
 
     monkeypatch.setattr(deps, "Storage", FailingStorage)
     request = SimpleNamespace(
-        headers={},
+        headers=Headers(),
         cookies={},
         app=SimpleNamespace(state=SimpleNamespace(require_auth=True, db_path="unused")),
         state=SimpleNamespace(),

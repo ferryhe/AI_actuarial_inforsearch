@@ -1,6 +1,6 @@
 import { apiGet } from "./api";
 
-export const WEEKLY_PREVIEW_LIMIT = 8;
+const WEEKLY_PREVIEW_LIMIT = 8;
 
 export interface WeeklySnapshot {
   id: string;
@@ -12,18 +12,18 @@ export interface WeeklySnapshot {
   metadata: Record<string, unknown>;
 }
 
-export interface WeeklySnapshotDetail extends WeeklySnapshot {
+interface WeeklySnapshotDetail extends WeeklySnapshot {
   summary_markdown: string;
 }
 
-export interface WeeklySnapshotFile {
+interface WeeklySnapshotFile {
   url: string;
   title?: string | null;
   original_filename?: string | null;
   first_seen: string;
 }
 
-export interface WeeklyExplanation {
+interface WeeklyExplanation {
   snapshot_id: string;
   status: "missing" | "complete" | "failed";
   explanation_zh: string;
@@ -68,7 +68,7 @@ interface WeeklySnapshotDetailEnvelope {
 }
 
 export type GetJson = <T>(url: string) => Promise<T>;
-export type WeeklyExplanationState = "complete" | "missing" | "empty" | "unavailable" | "failed";
+type WeeklyExplanationState = "complete" | "missing" | "empty" | "unavailable" | "failed";
 
 export async function loadLatestWeeklyDashboard(
   get: GetJson = apiGet,

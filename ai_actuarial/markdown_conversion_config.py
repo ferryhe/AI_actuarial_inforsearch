@@ -30,7 +30,6 @@ ENGINE_PROVIDERS: dict[str, str] = {
 }
 
 PAID_OR_API_ENGINES = {"mistral", "deepseekocr", "mathpix"}
-LOCAL_ENGINES = {engine for engine, provider in ENGINE_PROVIDERS.items() if provider == "local"}
 HARD_MAX_SCAN_COUNT = 10000
 
 DEFAULT_MARKDOWN_CONVERSION_CONFIG: dict[str, Any] = {
@@ -217,13 +216,17 @@ def _normalize_tools(config: dict[str, Any]) -> None:
         raw_tool = raw_tools.get(name) if isinstance(raw_tools.get(name), dict) else {}
         tool = _deep_merge(default_tool, raw_tool)
         engine = str(name).strip().lower()
-        provider = str(tool.get("provider") or ENGINE_PROVIDERS.get(engine) or "local").strip().lower()
+        provider = (
+            str(tool.get("provider") or ENGINE_PROVIDERS.get(engine) or "local").strip().lower()
+        )
         tool["name"] = engine
         tool["provider"] = provider
         tool["enabled"] = _bool(tool.get("enabled"), True)
         tool["paid_or_api"] = _bool(tool.get("paid_or_api"), engine in PAID_OR_API_ENGINES)
         # Conservative default: paid/API tools never join auto mode unless explicitly enabled.
-        tool["auto_enabled"] = _bool(tool.get("auto_enabled"), False if tool["paid_or_api"] else bool(tool["enabled"]))
+        tool["auto_enabled"] = _bool(
+            tool.get("auto_enabled"), False if tool["paid_or_api"] else bool(tool["enabled"])
+        )
         tool["display_name"] = str(tool.get("display_name") or engine).strip() or engine
         if not isinstance(tool.get("tuning"), dict):
             tool["tuning"] = {}
@@ -234,7 +237,9 @@ def _normalize_tools(config: dict[str, Any]) -> None:
         engine = str(raw_name or "").strip().lower()
         if not engine or engine in tools or not isinstance(raw_tool, dict):
             continue
-        provider = str(raw_tool.get("provider") or ENGINE_PROVIDERS.get(engine) or "local").strip().lower()
+        provider = (
+            str(raw_tool.get("provider") or ENGINE_PROVIDERS.get(engine) or "local").strip().lower()
+        )
         paid_or_api = _bool(raw_tool.get("paid_or_api"), provider != "local")
         tools[engine] = {
             **deepcopy(raw_tool),
@@ -257,7 +262,9 @@ def _normalize_formats(config: dict[str, Any]) -> None:
         raw_fmt = raw_formats.get(fmt) if isinstance(raw_formats.get(fmt), dict) else {}
         entry = _deep_merge(default_fmt, raw_fmt)
         extensions = entry.get("extensions") if isinstance(entry.get("extensions"), list) else []
-        chain = entry.get("candidate_chain") if isinstance(entry.get("candidate_chain"), list) else []
+        chain = (
+            entry.get("candidate_chain") if isinstance(entry.get("candidate_chain"), list) else []
+        )
         entry["extensions"] = [str(ext).strip().lower() for ext in extensions if str(ext).strip()]
         entry["candidate_chain"] = [
             str(engine).strip().lower()
@@ -269,23 +276,37 @@ def _normalize_formats(config: dict[str, Any]) -> None:
     config["formats"] = formats
 
 
-def normalize_markdown_conversion_config(raw_config: Mapping[str, Any] | None = None) -> dict[str, Any]:
+def normalize_markdown_conversion_config(
+    raw_config: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     config = _deep_merge(DEFAULT_MARKDOWN_CONVERSION_CONFIG, raw_config or {})
     default_tool = str(config.get("default_tool") or "auto").strip().lower()
     config["default_tool"] = default_tool or "auto"
     _normalize_tools(config)
     tools_raw = config.get("tools")
     tools: dict[str, dict[str, Any]] = tools_raw if isinstance(tools_raw, dict) else {}
-    if config["default_tool"] not in tools or not tools[config["default_tool"]].get("enabled", True):
-        config["default_tool"] = "auto" if tools.get("auto", {}).get("enabled", True) else next(
-            (name for name, tool in tools.items() if isinstance(tool, dict) and tool.get("enabled", True)),
-            "auto",
+    if config["default_tool"] not in tools or not tools[config["default_tool"]].get(
+        "enabled", True
+    ):
+        config["default_tool"] = (
+            "auto"
+            if tools.get("auto", {}).get("enabled", True)
+            else next(
+                (
+                    name
+                    for name, tool in tools.items()
+                    if isinstance(tool, dict) and tool.get("enabled", True)
+                ),
+                "auto",
+            )
         )
     _normalize_formats(config)
     raw_limits = config.get("limits")
     limits: dict[str, Any] = raw_limits if isinstance(raw_limits, dict) else {}
     try:
-        limits["default_scan_count"] = min(HARD_MAX_SCAN_COUNT, max(1, int(limits.get("default_scan_count") or 50)))
+        limits["default_scan_count"] = min(
+            HARD_MAX_SCAN_COUNT, max(1, int(limits.get("default_scan_count") or 50))
+        )
     except Exception:
         limits["default_scan_count"] = 50
     try:
@@ -300,10 +321,14 @@ def normalize_markdown_conversion_config(raw_config: Mapping[str, Any] | None = 
 
 
 def load_markdown_conversion_config(path: str | None = None) -> dict[str, Any]:
-    return normalize_markdown_conversion_config(_read_yaml(path or get_markdown_conversion_config_path()))
+    return normalize_markdown_conversion_config(
+        _read_yaml(path or get_markdown_conversion_config_path())
+    )
 
 
-def write_markdown_conversion_config(config: Mapping[str, Any], path: str | None = None) -> dict[str, Any]:
+def write_markdown_conversion_config(
+    config: Mapping[str, Any], path: str | None = None
+) -> dict[str, Any]:
     normalized = normalize_markdown_conversion_config(config)
     target = Path(path or get_markdown_conversion_config_path())
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -312,7 +337,9 @@ def write_markdown_conversion_config(config: Mapping[str, Any], path: str | None
     if target.exists():
         backup.write_bytes(target.read_bytes())
 
-    fd, temp_name = tempfile.mkstemp(prefix=f".{target.name}.", suffix=".tmp", dir=str(target.parent))
+    fd, temp_name = tempfile.mkstemp(
+        prefix=f".{target.name}.", suffix=".tmp", dir=str(target.parent)
+    )
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             yaml.safe_dump(normalized, handle, sort_keys=False, allow_unicode=True)
@@ -329,7 +356,11 @@ def write_markdown_conversion_config(config: Mapping[str, Any], path: str | None
 
 
 def format_key_for_path(path: str | Path, config: Mapping[str, Any] | None = None) -> str:
-    cfg = normalize_markdown_conversion_config(config) if config is not None else load_markdown_conversion_config()
+    cfg = (
+        normalize_markdown_conversion_config(config)
+        if config is not None
+        else load_markdown_conversion_config()
+    )
     suffix = Path(path).suffix.lower()
     for name, fmt in (cfg.get("formats") or {}).items():
         if name == "default":
@@ -340,11 +371,21 @@ def format_key_for_path(path: str | Path, config: Mapping[str, Any] | None = Non
     return "default"
 
 
-def candidate_chain_for_path(path: str | Path, config: Mapping[str, Any] | None = None, *, auto_only: bool = True) -> list[str]:
-    cfg = normalize_markdown_conversion_config(config) if config is not None else load_markdown_conversion_config()
+def candidate_chain_for_path(
+    path: str | Path, config: Mapping[str, Any] | None = None, *, auto_only: bool = True
+) -> list[str]:
+    cfg = (
+        normalize_markdown_conversion_config(config)
+        if config is not None
+        else load_markdown_conversion_config()
+    )
     fmt = (cfg.get("formats") or {}).get(format_key_for_path(path, cfg), {})
     tools = cfg.get("tools") if isinstance(cfg.get("tools"), dict) else {}
-    chain = fmt.get("candidate_chain") if isinstance(fmt, dict) and isinstance(fmt.get("candidate_chain"), list) else []
+    chain = (
+        fmt.get("candidate_chain")
+        if isinstance(fmt, dict) and isinstance(fmt.get("candidate_chain"), list)
+        else []
+    )
     result: list[str] = []
     for raw_engine in chain:
         engine = str(raw_engine).strip().lower()
@@ -358,7 +399,11 @@ def candidate_chain_for_path(path: str | Path, config: Mapping[str, Any] | None 
 
 
 def list_conversion_tools(config: Mapping[str, Any] | None = None) -> list[dict[str, Any]]:
-    cfg = normalize_markdown_conversion_config(config) if config is not None else load_markdown_conversion_config()
+    cfg = (
+        normalize_markdown_conversion_config(config)
+        if config is not None
+        else load_markdown_conversion_config()
+    )
     tools = cfg.get("tools") if isinstance(cfg.get("tools"), dict) else {}
     ordered: list[str] = []
     default_tool = str(cfg.get("default_tool") or "auto").strip().lower()
@@ -376,7 +421,9 @@ def list_conversion_tools(config: Mapping[str, Any] | None = None) -> list[dict[
     return [
         {
             "name": engine,
-            "provider": str(tools[engine].get("provider") or ENGINE_PROVIDERS.get(engine) or "local"),
+            "provider": str(
+                tools[engine].get("provider") or ENGINE_PROVIDERS.get(engine) or "local"
+            ),
             "displayName": str(tools[engine].get("display_name") or engine),
             "display_name": str(tools[engine].get("display_name") or engine),
             "enabled": bool(tools[engine].get("enabled", True)),

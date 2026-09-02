@@ -7,6 +7,12 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from ..deps import AuthContext, require_permissions
+from ..services.weekly_explanations import (
+    generate_weekly_explanation,
+    get_latest_weekly_explanation,
+    get_weekly_explanation,
+    retry_weekly_explanation,
+)
 from ..services.weekly_updates import (
     WeeklySnapshotNotFoundError,
     get_latest_weekly_update_summary,
@@ -15,12 +21,6 @@ from ..services.weekly_updates import (
     list_weekly_update_summaries,
     parse_weekly_update_files_query,
     parse_weekly_update_list_query,
-)
-from ..services.weekly_explanations import (
-    generate_weekly_explanation,
-    get_latest_weekly_explanation,
-    get_weekly_explanation,
-    retry_weekly_explanation,
 )
 from .read import _get_db_path
 
@@ -118,9 +118,7 @@ def api_weekly_explanation_latest(
     request: Request,
     _auth: AuthContext = Depends(require_permissions("files.read")),
 ) -> dict[str, object]:
-    return {
-        "explanation": get_latest_weekly_explanation(db_path=_get_db_path(request))
-    }
+    return {"explanation": get_latest_weekly_explanation(db_path=_get_db_path(request))}
 
 
 @router.post(

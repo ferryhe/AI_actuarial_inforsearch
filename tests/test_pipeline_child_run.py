@@ -36,7 +36,9 @@ def _result(**kwargs: Any) -> CollectionResult:
 def test_enqueue_search_fallback_creates_child_run_linked_to_parent(monkeypatch, tmp_path) -> None:
     db = str(tmp_path / "pipeline.db")
     runtime = _make_runtime(monkeypatch, db)
-    monkeypatch.setattr(runtime, "_site_search_fallback_reason", lambda site_config, outcomes: "blocked")
+    monkeypatch.setattr(
+        runtime, "_site_search_fallback_reason", lambda site_config, outcomes: "blocked"
+    )
 
     seen_task_id: dict[str, str] = {}
 
@@ -49,7 +51,11 @@ def test_enqueue_search_fallback_creates_child_run_linked_to_parent(monkeypatch,
 
     monkeypatch.setattr(runtime, "start_background_task", fake_start_background_task)
 
-    site_configs = [SiteConfig(name="Anti Bot", url="https://anti.example", queries=["site:anti.example report"])]
+    site_configs = [
+        SiteConfig(
+            name="Anti Bot", url="https://anti.example", queries=["site:anti.example report"]
+        )
+    ]
     result = _result(success=False, metadata={"site_results": []})
 
     # child_run.parent_run_id is a FK to pipeline_run; create the parent run first.
@@ -58,7 +64,10 @@ def test_enqueue_search_fallback_creates_child_run_linked_to_parent(monkeypatch,
     storage.close()
 
     runtime._enqueue_site_query_search_fallbacks(
-        "task-parent", {"paths": {"db": db}, "search": {"enabled": True}}, result, site_configs,
+        "task-parent",
+        {"paths": {"db": db}, "search": {"enabled": True}},
+        result,
+        site_configs,
         {"_pipeline_run_id": "run-1"},
     )
 
@@ -78,10 +87,13 @@ def test_enqueue_search_fallback_creates_child_run_linked_to_parent(monkeypatch,
     finally:
         storage.close()
 
+
 def test_enqueue_search_fallback_without_parent_run_skips_child_run(monkeypatch, tmp_path) -> None:
     db = str(tmp_path / "pipeline.db")
     runtime = _make_runtime(monkeypatch, db)
-    monkeypatch.setattr(runtime, "_site_search_fallback_reason", lambda site_config, outcomes: "blocked")
+    monkeypatch.setattr(
+        runtime, "_site_search_fallback_reason", lambda site_config, outcomes: "blocked"
+    )
     monkeypatch.setattr(runtime, "start_background_task", lambda *a, **k: "child-1")
 
     site_configs = [SiteConfig(name="Anti Bot", url="https://anti.example", queries=["q"])]
@@ -145,9 +157,7 @@ def test_finalize_child_run_exception_marks_hard_fail(monkeypatch, tmp_path) -> 
     storage.create_child_run("child-1", "run-1")
     storage.close()
 
-    runtime._finalize_child_run(
-        {"child_run_id": "child-1", "parent_run_id": "run-1"}, error="boom"
-    )
+    runtime._finalize_child_run({"child_run_id": "child-1", "parent_run_id": "run-1"}, error="boom")
 
     storage = Storage(db)
     try:

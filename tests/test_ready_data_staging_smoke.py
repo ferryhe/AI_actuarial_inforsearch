@@ -137,9 +137,7 @@ def _create_kb(
         embedding_model="smoke-model",
         embedding_dimension=3,
         embedding_identity_key="emb-smoke-v1",
-        binding_snapshot_fingerprint=str(
-            snapshot["binding_snapshot_fingerprint"]
-        ),
+        binding_snapshot_fingerprint=str(snapshot["binding_snapshot_fingerprint"]),
         index_type="faiss",
         chunk_count=1,
         artifact_path=str(tmp_path / "indexes" / kb_id),
@@ -220,9 +218,7 @@ def _ready_input(db_path: Path, kb_id: str) -> dict[str, str]:
     )
     return {
         "index_version_id": index_version_id,
-        "expected_source_snapshot_fingerprint": source[
-            "source_snapshot_fingerprint"
-        ],
+        "expected_source_snapshot_fingerprint": source["source_snapshot_fingerprint"],
     }
 
 
@@ -453,9 +449,7 @@ def test_explicit_ready_publish_failure_preserves_active_pointer(
     assert exc_info.value.status_code in {409, 422}
     storage = Storage(str(db_path))
     try:
-        state = storage.get_agentic_ready_publication_state(
-            kb_id="kb-smoke", profile="general"
-        )
+        state = storage.get_agentic_ready_publication_state(kb_id="kb-smoke", profile="general")
         assert state["active_publication_id"] == active_id
     finally:
         storage.close()
@@ -507,9 +501,7 @@ def test_explicit_ready_publish_rechecks_source_inside_cas_transaction(
     assert str(exc_info.value).startswith("stale_snapshot:")
     storage = Storage(str(db_path))
     try:
-        state = storage.get_agentic_ready_publication_state(
-            kb_id="kb-smoke", profile="general"
-        )
+        state = storage.get_agentic_ready_publication_state(kb_id="kb-smoke", profile="general")
         assert state["active_publication_id"] == active_id
         assert storage.get_agentic_ready_publication(candidate_id)["status"] == "validated"
     finally:
@@ -593,9 +585,7 @@ def test_automatic_publish_rechecks_source_after_smoke(
     )
 
     assert raced["status"] == "failed"
-    assert raced["error"] == (
-        "stale_snapshot: Ready Data source changed before publication"
-    )
+    assert raced["error"] == ("stale_snapshot: Ready Data source changed before publication")
     storage = Storage(str(db_path))
     try:
         state = storage.get_agentic_ready_publication_state(
@@ -678,11 +668,11 @@ def test_ready_task_stop_preserves_active_publication(
             task_storage,
             str(db_path),
             {
-            "contract_version": 1,
-            "kb_id": "kb-smoke",
-            "profile": "general",
-            **ready_input,
-        },
+                "contract_version": 1,
+                "kb_id": "kb-smoke",
+                "profile": "general",
+                **ready_input,
+            },
         )
     finally:
         task_storage.close()
@@ -697,9 +687,7 @@ def test_ready_task_stop_preserves_active_publication(
         )
     finally:
         storage.close()
-    assert state["active_publication_id"] == active["publication_state"][
-        "active_publication_id"
-    ]
+    assert state["active_publication_id"] == active["publication_state"]["active_publication_id"]
 
 
 def test_builder_classifies_prebuild_source_change_as_stale_snapshot(
@@ -726,13 +714,7 @@ def test_smoke_failure_keeps_active_and_previous_unchanged_and_cleans_staging(
     db_path = _setup_db(tmp_path)
     first = _manual_build(db_path, "kb-smoke")
     staging_root = (
-        tmp_path
-        / "agentic_ready_data"
-        / "kbs"
-        / "kb-smoke"
-        / "general"
-        / "1"
-        / "staging"
+        tmp_path / "agentic_ready_data" / "kbs" / "kb-smoke" / "general" / "1" / "staging"
     )
     staging_before_failure = sorted(staging_root.glob("build-*"))
     storage = Storage(str(db_path))
@@ -770,9 +752,7 @@ def test_smoke_failure_keeps_active_and_previous_unchanged_and_cleans_staging(
     assert after["active_publication_id"] == before["active_publication_id"]
     assert after["previous_publication_id"] == before["previous_publication_id"]
     assert failed["validation"]["valid"] is False
-    assert failed["validation"]["errors"] == [
-        "ready_data staging smoke failed: no_evidence"
-    ]
+    assert failed["validation"]["errors"] == ["ready_data staging smoke failed: no_evidence"]
     assert persisted is not None
     assert persisted["status"] == "failed"
     assert persisted["smoke_result"]["failure_reason"] == "no_evidence"
@@ -902,9 +882,7 @@ def test_incomplete_passed_smoke_is_fail_closed(
 
     failed = _manual_build(db_path, "kb-smoke")
 
-    assert failed["validation"]["errors"] == [
-        f"ready_data staging smoke failed: {expected_reason}"
-    ]
+    assert failed["validation"]["errors"] == [f"ready_data staging smoke failed: {expected_reason}"]
     assert failed["candidate_publication"]["status"] == "failed"
     assert failed["publication_state"]["active_publication_id"] is None
 
@@ -1236,11 +1214,7 @@ def test_active_pointer_change_during_smoke_loses_expected_active_cas(
         nonlocal competitor_id
         if competitor_id:
             return _passed_smoke()
-        competitor_dir = (
-            tmp_path
-            / "agentic_ready_data"
-            / "competitor"
-        )
+        competitor_dir = tmp_path / "agentic_ready_data" / "competitor"
         manifest = ready_data_builder.build_l0(
             db_path=str(db_path),
             output_dir=str(competitor_dir),
@@ -1253,9 +1227,7 @@ def test_active_pointer_change_during_smoke_loses_expected_active_cas(
         try:
             competitor = storage.record_agentic_ready_publication(
                 kb_id="kb-smoke",
-                index_version_id=_ready_input(db_path, "kb-smoke")[
-                    "index_version_id"
-                ],
+                index_version_id=_ready_input(db_path, "kb-smoke")["index_version_id"],
                 source_version_kind=str(manifest["source_version_kind"]),
                 source_version_id=str(manifest["source_version_id"]),
                 profile="general",
@@ -1320,9 +1292,7 @@ def test_legacy_publication_without_smoke_column_is_readable_but_startup_fails_c
     import sqlite3
 
     connection = sqlite3.connect(db_path)
-    connection.execute(
-        "ALTER TABLE agentic_ready_publications DROP COLUMN smoke_result_json"
-    )
+    connection.execute("ALTER TABLE agentic_ready_publications DROP COLUMN smoke_result_json")
     connection.commit()
     connection.close()
 
@@ -1401,9 +1371,5 @@ def test_repeated_automatic_ready_task_returns_existing_active_publication(
 
     assert first.success is True
     assert second.success is True
-    assert second.metadata["result"]["publication_id"] == first.metadata["result"][
-        "publication_id"
-    ]
-    assert second.metadata["result"]["publication_id"] == state[
-        "active_publication_id"
-    ]
+    assert second.metadata["result"]["publication_id"] == first.metadata["result"]["publication_id"]
+    assert second.metadata["result"]["publication_id"] == state["active_publication_id"]

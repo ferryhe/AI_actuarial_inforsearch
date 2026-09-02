@@ -1,6 +1,7 @@
 """
 pytest configuration and fixtures for ai_actuarial tests.
 """
+
 import pytest
 
 
@@ -30,6 +31,7 @@ def sample_user():
 def guest_token():
     """Generate a deterministic mock guest token."""
     import hashlib
+
     token_data = "guest:test-fixture"
     return hashlib.sha256(token_data.encode()).hexdigest()
 
@@ -38,5 +40,6 @@ def guest_token():
 def admin_token():
     """Generate a deterministic mock admin token."""
     import hashlib
+
     token_data = "admin:test-fixture"
     return hashlib.sha256(token_data.encode()).hexdigest()

@@ -6,7 +6,6 @@ from fastapi import APIRouter, Depends, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 
 from ..deps import AuthContext, require_permissions
-from ..services.import_batches import ImportBatchError, create_import_batch
 from ..services.files_write import (
     FileWriteError,
     delete_file_record,
@@ -17,6 +16,7 @@ from ..services.files_write import (
     update_file_markdown_content,
     update_file_record,
 )
+from ..services.import_batches import ImportBatchError, create_import_batch
 from ..services.ops_write import BridgeState, OpsWriteError, start_collection
 from .read import _can_view_sensitive_file_fields
 
@@ -41,7 +41,7 @@ def _extract_encoded_file_url(request: Request, *, suffix: str) -> str | None:
     prefix = "/api/files/"
     if not raw_text.startswith(prefix) or not raw_text.endswith(suffix):
         return None
-    return raw_text[len(prefix):-len(suffix)]
+    return raw_text[len(prefix) : -len(suffix)]
 
 
 def _decode_file_url_path(request: Request, file_url: str, *, suffix: str) -> str:
@@ -66,7 +66,9 @@ async def api_files_import_batches(
     auth: AuthContext = Depends(require_permissions("tasks.run")),
 ):
     try:
-        result = await create_import_batch(files=files, relative_paths=relative_paths, auth_token=auth.token)
+        result = await create_import_batch(
+            files=files, relative_paths=relative_paths, auth_token=auth.token
+        )
         return JSONResponse(status_code=201, content=result)
     except ImportBatchError as exc:
         return JSONResponse(status_code=exc.status_code, content={"error": exc.message})
@@ -111,7 +113,9 @@ def api_files_update_markdown(
 ):
     decoded_url = _decode_file_url_path(request, file_url, suffix="/markdown")
     try:
-        return update_file_markdown_content(db_path=_db_path(request), url=decoded_url, payload=payload)
+        return update_file_markdown_content(
+            db_path=_db_path(request), url=decoded_url, payload=payload
+        )
     except FileWriteError as exc:
         return _json_error(exc)
 
@@ -136,8 +140,14 @@ def api_export(
 ):
     format_type = str(request.query_params.get("format", "csv") or "csv")
     try:
-        content, media_type, filename = export_catalog(db_path=_db_path(request), format_type=format_type)
-        return Response(content=content, media_type=media_type, headers={"Content-Disposition": f"attachment; filename={filename}"})
+        content, media_type, filename = export_catalog(
+            db_path=_db_path(request), format_type=format_type
+        )
+        return Response(
+            content=content,
+            media_type=media_type,
+            headers={"Content-Disposition": f"attachment; filename={filename}"},
+        )
     except FileWriteError as exc:
         return _json_error(exc)
 

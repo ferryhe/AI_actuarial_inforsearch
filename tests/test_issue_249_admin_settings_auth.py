@@ -11,8 +11,8 @@ from itsdangerous import URLSafeSerializer
 
 from ai_actuarial.shared_auth import hash_token
 from ai_actuarial.storage import Storage
+from tests.test_fastapi_chat_endpoints import _build_test_client as _build_chat_test_client
 from tests.test_fastapi_chat_endpoints import (
-    _build_test_client as _build_chat_test_client,
     _install_guest_chat_fakes,
 )
 from tests.test_fastapi_ops_read_endpoints import (
@@ -20,7 +20,6 @@ from tests.test_fastapi_ops_read_endpoints import (
     _make_session_cookie,
     _patch_available_models,
 )
-
 
 ROOT = Path(__file__).resolve().parents[1]
 SETTINGS_TSX = ROOT / "client" / "src" / "pages" / "Settings.tsx"
@@ -101,7 +100,9 @@ def test_admin_email_session_remains_authoritative_for_settings_write_and_readba
     assert after.json()["data"]["permissions"] == before_auth["permissions"]
 
 
-def test_invalid_present_session_does_not_fall_back_to_reader_header(tmp_path: Path, monkeypatch) -> None:
+def test_invalid_present_session_does_not_fall_back_to_reader_header(
+    tmp_path: Path, monkeypatch
+) -> None:
     _patch_available_models(monkeypatch)
     client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
     client.cookies.set(
@@ -123,7 +124,9 @@ def test_invalid_present_session_does_not_fall_back_to_reader_header(tmp_path: P
     assert response.json()["detail"] == "Unauthorized"
 
 
-def test_invalid_session_identity_does_not_fall_back_to_reader_header(tmp_path: Path, monkeypatch) -> None:
+def test_invalid_session_identity_does_not_fall_back_to_reader_header(
+    tmp_path: Path, monkeypatch
+) -> None:
     _patch_available_models(monkeypatch)
     client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
     client.cookies.set(
@@ -166,7 +169,9 @@ def test_duplicate_token_mode_reader_session_cannot_downgrade_email_admin(
     tmp_path: Path, monkeypatch
 ) -> None:
     _patch_available_models(monkeypatch)
-    monkeypatch.setenv("MARKDOWN_CONVERSION_CONFIG_PATH", str(tmp_path / "markdown_conversion.yaml"))
+    monkeypatch.setenv(
+        "MARKDOWN_CONVERSION_CONFIG_PATH", str(tmp_path / "markdown_conversion.yaml")
+    )
     client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
     cookie_name = app.state.fastapi_session_cookie_name
     token_login = client.post("/api/auth/login", json={"token": seed["reader_token"]})
@@ -200,7 +205,9 @@ def test_non_admin_email_and_active_admin_token_session_fail_closed(
     tmp_path: Path, monkeypatch, email_first: bool, with_admin_header: bool
 ) -> None:
     _patch_available_models(monkeypatch)
-    monkeypatch.setenv("MARKDOWN_CONVERSION_CONFIG_PATH", str(tmp_path / "markdown_conversion.yaml"))
+    monkeypatch.setenv(
+        "MARKDOWN_CONVERSION_CONFIG_PATH", str(tmp_path / "markdown_conversion.yaml")
+    )
     client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
     storage = Storage(app.state.db_path)
     try:
@@ -223,7 +230,9 @@ def test_non_admin_email_and_active_admin_token_session_fail_closed(
         if email_first
         else (admin_token_session, email_session)
     )
-    headers = {"Cookie": f"{cookie_name}={ordered_sessions[0]}; {cookie_name}={ordered_sessions[1]}"}
+    headers = {
+        "Cookie": f"{cookie_name}={ordered_sessions[0]}; {cookie_name}={ordered_sessions[1]}"
+    }
     if with_admin_header:
         headers["X-Auth-Token"] = str(seed["admin_token"])
 
@@ -246,7 +255,9 @@ def test_different_active_token_sessions_fail_closed_in_both_cookie_orders(
     tmp_path: Path, monkeypatch, reader_first: bool, with_admin_header: bool
 ) -> None:
     _patch_available_models(monkeypatch)
-    monkeypatch.setenv("MARKDOWN_CONVERSION_CONFIG_PATH", str(tmp_path / "markdown_conversion.yaml"))
+    monkeypatch.setenv(
+        "MARKDOWN_CONVERSION_CONFIG_PATH", str(tmp_path / "markdown_conversion.yaml")
+    )
     client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
     cookie_name = app.state.fastapi_session_cookie_name
     reader_session = _make_session_cookie(
@@ -255,8 +266,12 @@ def test_different_active_token_sessions_fail_closed_in_both_cookie_orders(
     admin_session = _make_session_cookie(
         app, {"auth_token_id": _seeded_token_id(app, seed["admin_token"])}
     )
-    ordered_sessions = (reader_session, admin_session) if reader_first else (admin_session, reader_session)
-    headers = {"Cookie": f"{cookie_name}={ordered_sessions[0]}; {cookie_name}={ordered_sessions[1]}"}
+    ordered_sessions = (
+        (reader_session, admin_session) if reader_first else (admin_session, reader_session)
+    )
+    headers = {
+        "Cookie": f"{cookie_name}={ordered_sessions[0]}; {cookie_name}={ordered_sessions[1]}"
+    }
     if with_admin_header:
         headers["X-Auth-Token"] = str(seed["admin_token"])
 
@@ -273,9 +288,13 @@ def test_different_active_token_sessions_fail_closed_in_both_cookie_orders(
     assert update.json()["detail"] == "Unauthorized"
 
 
-def test_duplicate_same_active_token_session_keeps_admin_identity(tmp_path: Path, monkeypatch) -> None:
+def test_duplicate_same_active_token_session_keeps_admin_identity(
+    tmp_path: Path, monkeypatch
+) -> None:
     _patch_available_models(monkeypatch)
-    monkeypatch.setenv("MARKDOWN_CONVERSION_CONFIG_PATH", str(tmp_path / "markdown_conversion.yaml"))
+    monkeypatch.setenv(
+        "MARKDOWN_CONVERSION_CONFIG_PATH", str(tmp_path / "markdown_conversion.yaml")
+    )
     client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
     cookie_name = app.state.fastapi_session_cookie_name
     admin_session = _make_session_cookie(
@@ -302,7 +321,9 @@ def test_unusable_token_session_does_not_mask_unique_active_admin_in_either_orde
     tmp_path: Path, monkeypatch, stale_kind: str
 ) -> None:
     _patch_available_models(monkeypatch)
-    monkeypatch.setenv("MARKDOWN_CONVERSION_CONFIG_PATH", str(tmp_path / "markdown_conversion.yaml"))
+    monkeypatch.setenv(
+        "MARKDOWN_CONVERSION_CONFIG_PATH", str(tmp_path / "markdown_conversion.yaml")
+    )
     client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
     storage = Storage(app.state.db_path)
     try:
@@ -650,7 +671,11 @@ def test_login_storage_transitions_remove_stale_auth_material() -> None:
     result = _run_tsx(script)
     assert result == {
         "email": {"session": None, "local": None},
-        "token": {"session": "current-session-token", "local": None, "resolved": "current-session-token"},
+        "token": {
+            "session": "current-session-token",
+            "local": None,
+            "resolved": "current-session-token",
+        },
     }
 
 

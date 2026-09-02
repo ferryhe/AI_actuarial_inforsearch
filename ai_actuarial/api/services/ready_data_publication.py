@@ -19,7 +19,6 @@ from .rag_admin import (
     _validate_recorded_ready_publication,
 )
 
-
 _PUBLIC_STATUS_MESSAGES = frozenset(
     {
         "ready_data manifest has not been built",
@@ -50,9 +49,7 @@ _PUBLIC_STALE_REASON_CODES = frozenset(
         "source_version_changed",
     }
 )
-_PUBLIC_SERVING_STATUSES = frozenset(
-    {"missing", "ready", "stale", "failed", "unavailable"}
-)
+_PUBLIC_SERVING_STATUSES = frozenset({"missing", "ready", "stale", "failed", "unavailable"})
 _PUBLIC_AUTOMATION_STATUSES = frozenset(
     {
         "idle",
@@ -74,12 +71,8 @@ _PUBLIC_BUILD_OPERATION_STATES = frozenset(
         "awaiting_manual_confirmation",
     }
 )
-_PUBLIC_PUBLICATION_STATUSES = frozenset(
-    {"failed", "validated", "active", "previous"}
-)
-_PUBLIC_SMOKE_STATUSES = frozenset(
-    {"not_run", "skipped_empty", "failed", "passed"}
-)
+_PUBLIC_PUBLICATION_STATUSES = frozenset({"failed", "validated", "active", "previous"})
+_PUBLIC_SMOKE_STATUSES = frozenset({"not_run", "skipped_empty", "failed", "passed"})
 _PUBLIC_SOURCE_STATES = frozenset(
     {"legacy_fallback", "pending_evaluation", "stale", "legacy_hard_gate", "fresh"}
 )
@@ -139,9 +132,7 @@ def _latest_build_attempt(
         return prefetched(kb_id, profile)
     columns = frozenset(
         str(row[1])
-        for row in storage._conn.execute(
-            "PRAGMA table_info(agentic_ready_publications)"
-        ).fetchall()
+        for row in storage._conn.execute("PRAGMA table_info(agentic_ready_publications)").fetchall()
     )
     required = {
         "publication_id",
@@ -189,16 +180,12 @@ def _public_latest_operation(
 ) -> dict[str, Any]:
     automation_at = automation.get("updated_at")
     published_at = (
-        active_publication.get("published_at")
-        if isinstance(active_publication, Mapping)
-        else None
+        active_publication.get("published_at") if isinstance(active_publication, Mapping) else None
     )
     parsed_automation_at = _public_timestamp(automation_at)
     parsed_published_at = _public_timestamp(published_at)
     manual_operation_at = (
-        manual_operation.get("operation_at")
-        if isinstance(manual_operation, Mapping)
-        else None
+        manual_operation.get("operation_at") if isinstance(manual_operation, Mapping) else None
     )
     parsed_manual_operation_at = _public_timestamp(manual_operation_at)
     build_attempt_at = (
@@ -207,23 +194,14 @@ def _public_latest_operation(
         else None
     )
     parsed_build_attempt_at = _public_timestamp(build_attempt_at)
-    has_build_attempt = bool(
-        isinstance(build_attempt_at, str) and build_attempt_at.strip()
-    )
+    has_build_attempt = bool(isinstance(build_attempt_at, str) and build_attempt_at.strip())
     manual_operation_is_latest = bool(
         manual_operation
         and parsed_manual_operation_at is not None
+        and (parsed_automation_at is None or parsed_manual_operation_at >= parsed_automation_at)
+        and (parsed_published_at is None or parsed_manual_operation_at >= parsed_published_at)
         and (
-            parsed_automation_at is None
-            or parsed_manual_operation_at >= parsed_automation_at
-        )
-        and (
-            parsed_published_at is None
-            or parsed_manual_operation_at >= parsed_published_at
-        )
-        and (
-            parsed_build_attempt_at is None
-            or parsed_manual_operation_at >= parsed_build_attempt_at
+            parsed_build_attempt_at is None or parsed_manual_operation_at >= parsed_build_attempt_at
         )
     )
     if manual_operation_is_latest:
@@ -267,9 +245,7 @@ def _public_latest_operation(
             "latest_operation_state": "failed" if build_failed else "succeeded",
             "latest_operation_at": build_attempt_at,
             "latest_operation_error": (
-                _public_error(latest_build_attempt.get("error_message"))
-                if build_failed
-                else ""
+                _public_error(latest_build_attempt.get("error_message")) if build_failed else ""
             ),
         }
     last_attempt_at = (
@@ -289,25 +265,19 @@ def _public_latest_operation(
         and isinstance(last_attempt_publication, Mapping)
         and not last_attempt_publication.get("published_at")
         and not str(last_attempt_publication.get("attempt_disposition") or "").strip()
-        and (
-            parsed_last_attempt_at is None
-            or parsed_automation_at >= parsed_last_attempt_at
-        )
+        and (parsed_last_attempt_at is None or parsed_automation_at >= parsed_last_attempt_at)
         and (
             not isinstance(published_at, str)
             or not published_at.strip()
-            or (
-                parsed_published_at is not None
-                and parsed_automation_at >= parsed_published_at
-            )
+            or (parsed_published_at is not None and parsed_automation_at >= parsed_published_at)
         )
     )
     terminal_failure_kind = (
         "build"
         if terminal_failure_is_latest and last_attempt_status == "failed"
-        else "publish"
-        if terminal_failure_is_latest and last_attempt_status == "validated"
-        else None
+        else (
+            "publish" if terminal_failure_is_latest and last_attempt_status == "validated" else None
+        )
     )
     if terminal_failure_kind is not None:
         return {
@@ -324,8 +294,7 @@ def _public_latest_operation(
     automation_confirms_publish = bool(
         automation_state == "succeeded"
         and active_publication_id
-        and str(automation.get("last_attempt_publication_id") or "")
-        == active_publication_id
+        and str(automation.get("last_attempt_publication_id") or "") == active_publication_id
         and parsed_automation_at is not None
         and parsed_published_at is not None
         and parsed_automation_at >= parsed_published_at
@@ -357,10 +326,7 @@ def _public_latest_operation(
         and (
             not isinstance(automation_at, str)
             or not automation_at.strip()
-            or (
-                parsed_automation_at is not None
-                and parsed_published_at > parsed_automation_at
-            )
+            or (parsed_automation_at is not None and parsed_published_at > parsed_automation_at)
         )
         and (
             not has_build_attempt
@@ -377,9 +343,9 @@ def _public_latest_operation(
             "latest_operation_at": published_at,
             "latest_operation_error": "",
         }
-    has_automation_operation = bool(
-        isinstance(automation_at, str) and automation_at.strip()
-    ) or automation_state != "idle"
+    has_automation_operation = (
+        bool(isinstance(automation_at, str) and automation_at.strip()) or automation_state != "idle"
+    )
     if not has_automation_operation and has_build_attempt:
         build_failed = latest_build_attempt.get("status") == "failed"
         return {
@@ -387,26 +353,19 @@ def _public_latest_operation(
             "latest_operation_state": "failed" if build_failed else "succeeded",
             "latest_operation_at": build_attempt_at,
             "latest_operation_error": (
-                _public_error(latest_build_attempt.get("error_message"))
-                if build_failed
-                else ""
+                _public_error(latest_build_attempt.get("error_message")) if build_failed else ""
             ),
         }
     return {
         "latest_operation_kind": (
             "build"
-            if has_automation_operation
-            and automation_state in _PUBLIC_BUILD_OPERATION_STATES
-            else "automation"
-            if has_automation_operation
-            else "none"
+            if has_automation_operation and automation_state in _PUBLIC_BUILD_OPERATION_STATES
+            else "automation" if has_automation_operation else "none"
         ),
         "latest_operation_state": automation_state if has_automation_operation else "idle",
         "latest_operation_at": automation_at if has_automation_operation else None,
         "latest_operation_error": (
-            automation_error
-            if has_automation_operation and automation_state == "failed"
-            else ""
+            automation_error if has_automation_operation and automation_state == "failed" else ""
         ),
     }
 
@@ -434,10 +393,7 @@ def _public_stale_severity(value: Any) -> str:
 def _has_unknown_stale_severity(value: Any) -> bool:
     if value is None or (isinstance(value, str) and not value.strip()):
         return False
-    return not (
-        isinstance(value, str)
-        and value.strip().lower() in _PUBLIC_STALE_SEVERITIES
-    )
+    return not (isinstance(value, str) and value.strip().lower() in _PUBLIC_STALE_SEVERITIES)
 
 
 def _current_ready_index_version_id(storage: Storage, *, kb_id: str) -> str | None:
@@ -508,53 +464,31 @@ def _public_source_state(source_state: Any) -> dict[str, Any] | None:
             fallback="legacy_fallback",
         ),
         "event_generation": int(source_state.get("event_generation") or 0),
-        "pending_evaluation_generation": source_state.get(
-            "pending_evaluation_generation"
-        ),
+        "pending_evaluation_generation": source_state.get("pending_evaluation_generation"),
         "evaluated_generation": int(source_state.get("evaluated_generation") or 0),
         "pending_evaluation": bool(source_state.get("pending_evaluation")),
-        "pending_severity": _public_stale_severity(
-            source_state.get("pending_severity")
-        ),
-        "pending_reasons": _public_stale_reasons(
-            source_state.get("pending_reasons")
-        ),
-        "evaluated_severity": _public_stale_severity(
-            source_state.get("evaluated_severity")
-        ),
-        "evaluated_reasons": _public_stale_reasons(
-            source_state.get("evaluated_reasons")
-        ),
+        "pending_severity": _public_stale_severity(source_state.get("pending_severity")),
+        "pending_reasons": _public_stale_reasons(source_state.get("pending_reasons")),
+        "evaluated_severity": _public_stale_severity(source_state.get("evaluated_severity")),
+        "evaluated_reasons": _public_stale_reasons(source_state.get("evaluated_reasons")),
         "evaluated_source_version_kind": _public_source_version_kind(
             source_state.get("evaluated_source_version_kind")
         ),
-        "evaluated_source_version_id": source_state.get(
-            "evaluated_source_version_id"
-        ),
+        "evaluated_source_version_id": source_state.get("evaluated_source_version_id"),
         "active_source_version_kind": _public_source_version_kind(
             source_state.get("active_source_version_kind")
         ),
         "active_source_version_id": source_state.get("active_source_version_id"),
-        "source_identity_comparable": bool(
-            source_state.get("source_identity_comparable")
-        ),
-        "legacy_heuristic_required": bool(
-            source_state.get("legacy_heuristic_required")
-        ),
+        "source_identity_comparable": bool(source_state.get("source_identity_comparable")),
+        "legacy_heuristic_required": bool(source_state.get("legacy_heuristic_required")),
         "legacy_hard_gate": bool(source_state.get("legacy_hard_gate")),
         "stale_confirmed": bool(source_state.get("stale_confirmed")),
-        "stale_severity": _public_stale_severity(
-            source_state.get("stale_severity")
-        ),
+        "stale_severity": _public_stale_severity(source_state.get("stale_severity")),
         "stale_reasons": _public_stale_reasons(source_state.get("stale_reasons")),
         "serving_stale": bool(source_state.get("serving_stale")),
         "serving_allowed": bool(source_state.get("serving_allowed", True)),
-        "automatic_build_enabled": bool(
-            source_state.get("automatic_build_enabled")
-        ),
-        "automatic_publish_enabled": bool(
-            source_state.get("automatic_publish_enabled")
-        ),
+        "automatic_build_enabled": bool(source_state.get("automatic_build_enabled")),
+        "automatic_publish_enabled": bool(source_state.get("automatic_publish_enabled")),
         "evaluated_at": source_state.get("evaluated_at"),
         "updated_at": source_state.get("updated_at"),
     }
@@ -710,11 +644,14 @@ def _public_ready_data_state_in_snapshot(
         profile=normalized_profile,
         current_ready_index_version_id=current_index_id,
     )
-    serving = dict(manifest or _build_agentic_manifest_status(
-        storage=storage,
-        kb_id=kb_id,
-        profile=normalized_profile,
-    ))
+    serving = dict(
+        manifest
+        or _build_agentic_manifest_status(
+            storage=storage,
+            kb_id=kb_id,
+            profile=normalized_profile,
+        )
+    )
     smoke_source = active_record
     smoke = _public_smoke(smoke_source)
     automation_state = _public_automation_state(automation.get("automation_state"))
@@ -729,9 +666,7 @@ def _public_ready_data_state_in_snapshot(
         else _public_error(raw_automation_error)
     )
     raw_serving_status = (
-        serving.get("status").strip().lower()
-        if isinstance(serving.get("status"), str)
-        else ""
+        serving.get("status").strip().lower() if isinstance(serving.get("status"), str) else ""
     )
     source_severity_invalid = any(
         _has_unknown_stale_severity(source_state.get(field))
@@ -802,18 +737,18 @@ def _public_ready_data_state_in_snapshot(
         "serving_usable": (
             False
             if corrupt_active_slot or source_severity_invalid
-            else bool(source_state.get("serving_allowed", True))
-            if has_active
-            else bool(serving.get("usable"))
+            else (
+                bool(source_state.get("serving_allowed", True))
+                if has_active
+                else bool(serving.get("usable"))
+            )
         ),
         "serving_stale": serving_stale,
         "stale_confirmed": bool(serving.get("stale_confirmed")) or serving_stale,
         "stale_severity": stale_severity,
         "stale_reasons": stale_reasons,
         "source_generation": int(source_state.get("event_generation") or 0),
-        "pending_evaluation_generation": source_state.get(
-            "pending_evaluation_generation"
-        ),
+        "pending_evaluation_generation": source_state.get("pending_evaluation_generation"),
         "evaluated_generation": int(source_state.get("evaluated_generation") or 0),
         "automation_state": automation_state,
         "automatic_build_enabled": bool(automation.get("automatic_build_enabled")),
@@ -833,22 +768,6 @@ def _public_ready_data_state_in_snapshot(
         "smoke_status": smoke["status"],
         "smoke_checked_at": smoke["checked_at"],
     }
-
-
-def public_ready_data_state(
-    storage: Storage,
-    *,
-    kb_id: str,
-    profile: str,
-    manifest: Mapping[str, Any] | None = None,
-) -> dict[str, Any]:
-    with storage.transaction():
-        return _public_ready_data_state_in_snapshot(
-            storage,
-            kb_id=kb_id,
-            profile=profile,
-            manifest=manifest,
-        )
 
 
 def public_ready_data_manifest(
@@ -871,18 +790,10 @@ def public_ready_data_manifest(
     if public_source_state is not None:
         public_source_state.update(
             {
-                "stale_confirmed": bool(
-                    publication_state.get("stale_confirmed")
-                ),
-                "stale_severity": _public_stale_severity(
-                    publication_state.get("stale_severity")
-                ),
-                "stale_reasons": list(
-                    publication_state.get("stale_reasons") or []
-                ),
-                "serving_stale": bool(
-                    publication_state.get("serving_stale")
-                ),
+                "stale_confirmed": bool(publication_state.get("stale_confirmed")),
+                "stale_severity": _public_stale_severity(publication_state.get("stale_severity")),
+                "stale_reasons": list(publication_state.get("stale_reasons") or []),
+                "serving_stale": bool(publication_state.get("serving_stale")),
                 "serving_allowed": serving_usable,
             }
         )
@@ -905,16 +816,10 @@ def public_ready_data_manifest(
         ),
         "usable": serving_usable,
         "fallback_mode": fallback_mode,
-        **(
-            {"output_dir": manifest.get("output_dir") or ""}
-            if include_legacy_output_dir
-            else {}
-        ),
+        **({"output_dir": manifest.get("output_dir") or ""} if include_legacy_output_dir else {}),
         "publication_id": manifest.get("publication_id"),
         "index_version_id": manifest.get("index_version_id"),
-        "source_version_kind": _public_source_version_kind(
-            manifest.get("source_version_kind")
-        ),
+        "source_version_kind": _public_source_version_kind(manifest.get("source_version_kind")),
         "source_version_id": manifest.get("source_version_id"),
         "artifact_digest": manifest.get("artifact_digest") or "",
         "doc_count": int(manifest.get("doc_count") or 0),
@@ -926,56 +831,31 @@ def public_ready_data_manifest(
         "stale_reason": _public_error(manifest.get("stale_reason")),
         "serving_stale": bool(publication_state.get("serving_stale")),
         "stale_confirmed": bool(publication_state.get("stale_confirmed")),
-        "stale_severity": _public_stale_severity(
-            publication_state.get("stale_severity")
-        ),
+        "stale_severity": _public_stale_severity(publication_state.get("stale_severity")),
         "stale_reasons": list(publication_state.get("stale_reasons") or []),
         "source_state": public_source_state,
         "event_generation": publication_state.get("source_generation"),
-        "pending_evaluation_generation": publication_state.get(
-            "pending_evaluation_generation"
-        ),
+        "pending_evaluation_generation": publication_state.get("pending_evaluation_generation"),
         "evaluated_generation": publication_state.get("evaluated_generation"),
-        "automation_state": _public_automation_state(
-            publication_state.get("automation_state")
-        ),
-        "automatic_build_enabled": bool(
-            publication_state.get("automatic_build_enabled")
-        ),
-        "automatic_publish_enabled": bool(
-            publication_state.get("automatic_publish_enabled")
-        ),
+        "automation_state": _public_automation_state(publication_state.get("automation_state")),
+        "automatic_build_enabled": bool(publication_state.get("automatic_build_enabled")),
+        "automatic_publish_enabled": bool(publication_state.get("automatic_publish_enabled")),
         "pending_generation": publication_state.get("pending_generation"),
         "running_generation": publication_state.get("running_generation"),
-        "last_attempt_publication_id": publication_state.get(
-            "last_attempt_publication_id"
-        ),
+        "last_attempt_publication_id": publication_state.get("last_attempt_publication_id"),
         "last_success_at": publication_state.get("last_success_at"),
         "last_error": publication_state.get("last_error") or "",
-        "latest_operation_kind": publication_state.get("latest_operation_kind")
-        or "none",
-        "latest_operation_state": publication_state.get("latest_operation_state")
-        or "idle",
+        "latest_operation_kind": publication_state.get("latest_operation_kind") or "none",
+        "latest_operation_state": publication_state.get("latest_operation_state") or "idle",
         "latest_operation_at": publication_state.get("latest_operation_at"),
-        "latest_operation_error": publication_state.get("latest_operation_error")
-        or "",
-        "publication_revision": int(
-            publication_state.get("publication_revision") or 0
-        ),
-        "authoritative_source_version_kind": active.get(
-            "authoritative_source_version_kind"
-        ),
-        "authoritative_source_version_id": active.get(
-            "authoritative_source_version_id"
-        ),
+        "latest_operation_error": publication_state.get("latest_operation_error") or "",
+        "publication_revision": int(publication_state.get("publication_revision") or 0),
+        "authoritative_source_version_kind": active.get("authoritative_source_version_kind"),
+        "authoritative_source_version_id": active.get("authoritative_source_version_id"),
         "observed_index_version_id": active.get("observed_index_version_id"),
-        "current_ready_index_version_id": publication_state.get(
-            "current_ready_index_version_id"
-        ),
+        "current_ready_index_version_id": publication_state.get("current_ready_index_version_id"),
         "index_consumed_by_builder": bool(active.get("observed_index_version_id")),
-        "ready_build_input": _public_ready_build_input(
-            manifest.get("ready_build_input")
-        ),
+        "ready_build_input": _public_ready_build_input(manifest.get("ready_build_input")),
         "smoke_status": publication_state.get("smoke_status"),
         "smoke_checked_at": publication_state.get("smoke_checked_at"),
         "publication_state": dict(publication_state),
@@ -1064,20 +944,19 @@ def publish_ready_data_publication(
             raise RagAdminError(f"Knowledge base '{kid}' not found", status_code=404)
         candidate = storage.get_agentic_ready_publication(publication_id)
         if not candidate:
-            raise RagAdminError("publish_failure: ready_data publication not found", status_code=404)
+            raise RagAdminError(
+                "publish_failure: ready_data publication not found", status_code=404
+            )
         state = storage.get_agentic_ready_publication_state(kb_id=kid, profile=profile)
         candidate_is_current = (
             candidate.get("status") == "active"
             and state.get("active_publication_id") == publication_id
         )
-        if (
-            not agentic_ready_publication_matches_scope(
-                candidate,
-                kb_id=kid,
-                profile=profile,
-            )
-            or (candidate.get("status") != "validated" and not candidate_is_current)
-        ):
+        if not agentic_ready_publication_matches_scope(
+            candidate,
+            kb_id=kid,
+            profile=profile,
+        ) or (candidate.get("status") != "validated" and not candidate_is_current):
             raise RagAdminError(
                 "publish_failure: ready_data publication is not eligible for publication",
                 status_code=422,
@@ -1104,9 +983,7 @@ def publish_ready_data_publication(
                 status_code=422,
             )
         index_version_id = str(candidate.get("index_version_id") or "").strip()
-        source_snapshot_fingerprint = str(
-            candidate.get("source_version_id") or ""
-        ).strip()
+        source_snapshot_fingerprint = str(candidate.get("source_version_id") or "").strip()
         if not index_version_id or not source_snapshot_fingerprint:
             record_failed_operation = True
             raise RagAdminError(
@@ -1260,9 +1137,7 @@ def rollback_ready_data_publication(
 
         from ai_actuarial.agentic_rag import ready_data_builder
 
-        allowed_output_root = str(
-            Path(db_path).resolve().parent / "agentic_ready_data"
-        )
+        allowed_output_root = str(Path(db_path).resolve().parent / "agentic_ready_data")
 
         def validate_previous(candidate: dict[str, Any]) -> bool:
             if (

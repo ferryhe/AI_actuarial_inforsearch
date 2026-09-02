@@ -10,6 +10,7 @@ Applies per-user rate limits based on user role:
 Applies to search, chat, collection mutation, and public auth credential
 submission endpoints by default.
 """
+
 from __future__ import annotations
 
 import logging
@@ -22,8 +23,7 @@ from typing import Callable
 
 from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.responses import JSONResponse
-from starlette.responses import Response
+from starlette.responses import JSONResponse, Response
 
 from ai_actuarial.api.client_ip import client_ip
 from ai_actuarial.api.deps import get_auth_context
@@ -60,6 +60,7 @@ RATE_LIMITED_PATHS = [
 @dataclass
 class RateLimitBucket:
     """Sliding window rate limit bucket."""
+
     timestamps: list[float] = field(default_factory=list)
 
     def prune(self, now: float, window_seconds: int) -> None:
@@ -120,6 +121,7 @@ class RateLimitStore:
     def _start_cleanup_thread(self) -> None:
         """Start background cleanup thread if not already running."""
         import threading
+
         if self._cleanup_thread_started:
             return
         self._cleanup_thread_started = True
@@ -194,7 +196,9 @@ def parse_rate_limit_rules(raw: str | None) -> list[RateLimitRule]:
         window_seconds = windows[match.group("window").lower()]
         if limit < 1:
             continue
-        rules.append(RateLimitRule(limit=limit, window_seconds=window_seconds, label=labels[window_seconds]))
+        rules.append(
+            RateLimitRule(limit=limit, window_seconds=window_seconds, label=labels[window_seconds])
+        )
     return rules
 
 
@@ -243,7 +247,10 @@ def _should_rate_limit(request: Request) -> bool:
 
 
 def _is_auth_mutation(request: Request) -> bool:
-    return request.method.upper() == "POST" and request.url.path in {"/api/auth/login", "/api/auth/register"}
+    return request.method.upper() == "POST" and request.url.path in {
+        "/api/auth/login",
+        "/api/auth/register",
+    }
 
 
 def _retry_after_seconds(bucket: RateLimitBucket, window_seconds: int, now: float) -> int:
@@ -287,7 +294,11 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         self.enabled = enabled
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
-        enabled = bool(getattr(request.app.state, "enable_rate_limiting", False)) if self.enabled is None else bool(self.enabled)
+        enabled = (
+            bool(getattr(request.app.state, "enable_rate_limiting", False))
+            if self.enabled is None
+            else bool(self.enabled)
+        )
         if not enabled:
             return await call_next(request)
 
@@ -302,16 +313,22 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         else:
             role_limit = ROLE_RATE_LIMITS.get(role, DEFAULT_RATE_LIMIT)
             rules = [RateLimitRule(limit=role_limit, window_seconds=60, label="minute")]
-            rules.extend(parse_rate_limit_rules(getattr(request.app.state, "rate_limit_defaults", "")))
+            rules.extend(
+                parse_rate_limit_rules(getattr(request.app.state, "rate_limit_defaults", ""))
+            )
             key = _get_rate_limit_key(request)
         store = self.store
         if store is None:
-            store = get_rate_limit_store(getattr(request.app.state, "rate_limit_storage_uri", "memory://"))
+            store = get_rate_limit_store(
+                getattr(request.app.state, "rate_limit_storage_uri", "memory://")
+            )
         now = time.time()
 
         buckets: list[tuple[RateLimitRule, RateLimitBucket]] = []
         for rule in rules:
-            bucket = store.get_bucket(f"{key}:{rule.window_seconds}:{rule.limit}", rule.window_seconds)
+            bucket = store.get_bucket(
+                f"{key}:{rule.window_seconds}:{rule.limit}", rule.window_seconds
+            )
             buckets.append((rule, bucket))
             if not bucket.is_allowed(rule.limit, rule.window_seconds, now=now):
                 logger.warning("Rate limit exceeded for %s (role: %s)", key, role)

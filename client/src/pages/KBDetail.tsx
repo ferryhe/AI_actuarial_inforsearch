@@ -8,7 +8,6 @@ import {
   Layers,
   Loader2,
   Save,
-  Trash2,
   Plus,
   RefreshCw,
   Link2,
@@ -40,7 +39,6 @@ import {
   resolveReadyDataManifestEpisode,
   resolveReadyDataSafeMutationManifestEpisode,
   resolveReadyDataServingState,
-  runReadyDataRouteMutation,
   runReadyDataRouteRequest,
   scheduleReadyDataPoll,
   selectEffectiveReadyDataManifest,
@@ -915,7 +913,7 @@ export default function KBDetail() {
     setManifestBuilding(true);
     setActionNotice(null);
     setActionError(null);
-    await runReadyDataRouteMutation({
+    await runReadyDataRouteRequest({
       request: async () => {
         const manifestResponse = await apiGet<{ manifest?: AgenticReadyManifest }>(
           `/api/rag/knowledge-bases/${encodeURIComponent(mutationKbId)}/agentic-ready-manifest?include_ready_build_input=true`
@@ -990,7 +988,7 @@ export default function KBDetail() {
     setAutomationSaving(true);
     setActionNotice(null);
     setActionError(null);
-    await runReadyDataRouteMutation({
+    await runReadyDataRouteRequest({
       request: () => apiPut<ReadyDataAutomationResponse>(
         `/api/rag/knowledge-bases/${encodeURIComponent(mutationKbId)}/agentic-ready-automation`,
         {
@@ -1116,7 +1114,7 @@ export default function KBDetail() {
     setRollbackRunning(true);
     setActionNotice(null);
     setActionError(null);
-    await runReadyDataRouteMutation({
+    await runReadyDataRouteRequest({
       request: () => apiPost<{ manifest?: AgenticReadyManifest }>(
         `/api/rag/knowledge-bases/${encodeURIComponent(mutationKbId)}/agentic-ready-manifest/rollback`,
         {

@@ -13,11 +13,11 @@ Key components:
 
 from ai_actuarial.rag.config import RAGConfig
 from ai_actuarial.rag.exceptions import (
-    RAGException,
     ChunkingException,
     EmbeddingException,
-    VectorStoreException,
     KnowledgeBaseException,
+    RAGException,
+    VectorStoreException,
 )
 
 __all__ = [

@@ -8,7 +8,6 @@ import pytest
 
 from ai_actuarial.pipeline_baton import PipelineBaton
 
-
 MARKDOWN_FILES = [
     {
         "file_url": "https://example.test/a.pdf",
@@ -293,7 +292,9 @@ def test_chunk_failure_never_launches_embedding(tmp_path: Path) -> None:
     ]
 
 
-def test_same_scheduled_task_is_consumed_once_and_active_round_is_not_replaced(tmp_path: Path) -> None:
+def test_same_scheduled_task_is_consumed_once_and_active_round_is_not_replaced(
+    tmp_path: Path,
+) -> None:
     tasks = FakeTasks()
     tasks.statuses.update({"scheduled-1": "running", "scheduled-2": "running"})
     baton = _service(tmp_path, tasks, [])
@@ -396,6 +397,4 @@ def test_legacy_chunk_override_is_sanitized_when_persisted_baton_executes(tmp_pa
         "chunk_generation",
         {"chunk_size": 456, "files": MARKDOWN_FILES},
     )
-    assert baton.status()["config"]["overrides"]["chunk_generation"] == {
-        "chunk_size": 456
-    }
+    assert baton.status()["config"]["overrides"]["chunk_generation"] == {"chunk_size": 456}

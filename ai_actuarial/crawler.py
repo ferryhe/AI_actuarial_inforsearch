@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import http.client
 import ipaddress
 import logging
@@ -11,25 +12,24 @@ import sqlite3
 import ssl
 import time
 import xml.etree.ElementTree as ET
-import hashlib
 from collections import Counter, deque
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urljoin, urlparse, urlsplit, urlunsplit
 
-from .security import SafeUrlResolution, UnsafeUrlError, resolve_safe_http_url
 from .search_acquisition import (
     SearchAcquisitionReport,
     make_acquisition_outcome,
     normalize_acquisition_url,
     safe_outcome_url,
 )
+from .security import SafeUrlResolution, UnsafeUrlError, resolve_safe_http_url
 from .storage import Storage
 from .utils import extract_metadata, html_to_text, normalize_url, same_domain
 
 try:
-    from curl_cffi import CurlOpt as _CurlOpt
     import curl_cffi.requests as _curl_requests
+    from curl_cffi import CurlOpt as _CurlOpt
 
     _CURL_CFFI_AVAILABLE = True
 except ImportError:  # pragma: no cover - requirements.txt installs curl_cffi
@@ -63,7 +63,9 @@ class _AcquisitionStopped(RuntimeError):
 
 
 class _PinnedHTTPResponse:
-    def __init__(self, conn: http.client.HTTPConnection, response: http.client.HTTPResponse, url: str) -> None:
+    def __init__(
+        self, conn: http.client.HTTPConnection, response: http.client.HTTPResponse, url: str
+    ) -> None:
         self._conn = conn
         self._response = response
         self._url = url
@@ -85,7 +87,7 @@ class _PinnedHTTPResponse:
     def __enter__(self):
         return self
 
-    def __exit__(self, exc_type, exc, tb) -> None:
+    def __exit__(self, _exc_type, _exc, _tb) -> None:
         self.close()
 
 
@@ -124,7 +126,7 @@ class _CurlHTTPResponse:
     def __enter__(self):
         return self
 
-    def __exit__(self, exc_type, exc, tb) -> None:
+    def __exit__(self, _exc_type, _exc, _tb) -> None:
         self.close()
 
 
@@ -143,10 +145,16 @@ class SiteConfig:
     collect_page_content: bool | None = None  # Also save text extracted from HTML pages
     acquisition_tools: list[str] | None = None  # Supported values: crawler, search
     content_selector: str | None = None  # CSS selector to narrow link extraction to content area
-    allow_url_patterns: list[str] | None = None  # Regex allow-list for sub-page URLs (Scrapy-style); if set, only matching sub-pages are queued
-    queries: list[str] | None = None  # Site-specific search queries to supplement or bypass direct crawling (useful for anti-bot-protected sites)
+    allow_url_patterns: list[str] | None = (
+        None  # Regex allow-list for sub-page URLs (Scrapy-style); if set, only matching sub-pages are queued
+    )
+    queries: list[str] | None = (
+        None  # Site-specific search queries to supplement or bypass direct crawling (useful for anti-bot-protected sites)
+    )
     check_database: bool = True
-    allowed_domain: str | None = None  # Search acquisition scope; None keeps legacy crawling behavior
+    allowed_domain: str | None = (
+        None  # Search acquisition scope; None keeps legacy crawling behavior
+    )
 
 
 class Crawler:
@@ -210,7 +218,9 @@ class Crawler:
                 delay_seconds=delay_seconds,
             ) as resp:
                 headers = {k.lower(): str(v) for k, v in resp.headers.items()}
-                redirect_target = self._redirect_target(current_url, self._response_code(resp), headers)
+                redirect_target = self._redirect_target(
+                    current_url, self._response_code(resp), headers
+                )
                 if redirect_target:
                     current_url = redirect_target
                     continue
@@ -250,7 +260,9 @@ class Crawler:
                     delay_seconds=delay_seconds,
                 ) as resp:
                     headers = {k.lower(): str(v) for k, v in resp.headers.items()}
-                    redirect_target = self._redirect_target(current_url, self._response_code(resp), headers)
+                    redirect_target = self._redirect_target(
+                        current_url, self._response_code(resp), headers
+                    )
                     if redirect_target:
                         current_url = redirect_target
                         continue
@@ -314,7 +326,9 @@ class Crawler:
         return f"{parsed.scheme.lower()}://{parsed.hostname or ''}:{port}"
 
     def _pace_request(self, url: str, delay_seconds: float | None) -> None:
-        delay = self.default_delay_seconds if delay_seconds is None else max(float(delay_seconds), 0.0)
+        delay = (
+            self.default_delay_seconds if delay_seconds is None else max(float(delay_seconds), 0.0)
+        )
         origin = self._origin_key(url)
         now = time.monotonic()
         next_request_at = self._next_request_at.get(origin, now)
@@ -450,7 +464,9 @@ class Crawler:
                 if ssl_context is not None:
                     sock = ssl_context.wrap_socket(sock, server_hostname=resolution.host)
                 conn.sock = sock
-                conn.request("GET", target, headers={"User-Agent": self.user_agent, "Host": host_header})
+                conn.request(
+                    "GET", target, headers={"User-Agent": self.user_agent, "Host": host_header}
+                )
                 response = conn.getresponse()
                 return _PinnedHTTPResponse(conn, response, url)
             except Exception as exc:
@@ -468,7 +484,9 @@ class Crawler:
         return int(code)
 
     @staticmethod
-    def _redirect_target(current_url: str, status_code: int | None, headers: dict[str, str]) -> str | None:
+    def _redirect_target(
+        current_url: str, status_code: int | None, headers: dict[str, str]
+    ) -> str | None:
         if status_code is None or int(status_code) not in _REDIRECT_STATUS_CODES:
             return None
         location = str(headers.get("location") or "").strip()
@@ -490,15 +508,17 @@ class Crawler:
         """Check if name starts with any excluded prefix."""
         name = name.lower()
         return any(name.startswith(p) for p in prefixes)
-    
-    def _should_exclude_url(self, url: str, exclude: list[str] | None, exclude_prefixes: list[str] | None) -> bool:
+
+    def _should_exclude_url(
+        self, url: str, exclude: list[str] | None, exclude_prefixes: list[str] | None
+    ) -> bool:
         """Consolidated check for URL exclusion based on keywords and prefixes.
-        
+
         Args:
             url: URL to check
             exclude: List of excluded keywords
             exclude_prefixes: List of excluded filename prefixes
-            
+
         Returns:
             True if URL should be excluded
         """
@@ -508,7 +528,9 @@ class Crawler:
             return True
         return False
 
-    def _extract_links(self, base_url: str, html: str, content_selector: str | None = None) -> list[tuple[str, str]]:
+    def _extract_links(
+        self, base_url: str, html: str, content_selector: str | None = None
+    ) -> list[tuple[str, str]]:
         # If a content_selector is given, narrow HTML to matching section(s)
         if content_selector:
             html = self._extract_content_html(html, content_selector) or html
@@ -605,9 +627,13 @@ class Crawler:
             }
             return []
 
-        logger.info("Starting crawl of site: %s (max_pages=%d, max_depth=%d)", 
-                   cfg.name, cfg.max_pages, cfg.max_depth)
-        
+        logger.info(
+            "Starting crawl of site: %s (max_pages=%d, max_depth=%d)",
+            cfg.name,
+            cfg.max_pages,
+            cfg.max_depth,
+        )
+
         if progress_callback:
             progress_callback(0, cfg.max_pages, f"Starting crawl of {cfg.name}")
 
@@ -618,13 +644,12 @@ class Crawler:
         # Compile allow_url_patterns to regex; if set, only matching URLs are queued / downloaded.
         # Invalid patterns are skipped with a warning rather than aborting the crawl.
         allow_patterns = []
-        for raw_pat in (cfg.allow_url_patterns or []):
+        for raw_pat in cfg.allow_url_patterns or []:
             try:
                 allow_patterns.append(re.compile(raw_pat))
             except re.error as exc:
                 logger.warning(
-                    "Skipping invalid allow_url_pattern %r for site %r: %s",
-                    raw_pat, cfg.name, exc
+                    "Skipping invalid allow_url_pattern %r for site %r: %s", raw_pat, cfg.name, exc
                 )
         new_items: list[dict] = []
 
@@ -633,10 +658,7 @@ class Crawler:
             # When allow_url_patterns is configured, only seed URLs that match at
             # least one pattern — otherwise the allow-list is bypassed for sitemaps.
             if allow_patterns:
-                sitemap_urls = [
-                    u for u in sitemap_urls
-                    if any(p.search(u) for p in allow_patterns)
-                ]
+                sitemap_urls = [u for u in sitemap_urls if any(p.search(u) for p in allow_patterns)]
             if sitemap_urls:
                 page_queue: deque[tuple[str, int]] = deque(
                     [(u, 0) for u in sitemap_urls[: cfg.max_pages]]
@@ -647,7 +669,8 @@ class Crawler:
                 logger.debug(
                     "Sitemap URLs all filtered by allow_url_patterns for %r; "
                     "falling back to seed URL %s",
-                    cfg.name, cfg.url,
+                    cfg.name,
+                    cfg.url,
                 )
                 page_queue = deque([(cfg.url, 0)])
         else:
@@ -677,7 +700,7 @@ class Crawler:
 
             seen_pages.add(url)
             pages_attempted += 1
-            
+
             if progress_callback:
                 progress_callback(pages_attempted, cfg.max_pages, f"Crawling: {url}")
 
@@ -748,7 +771,9 @@ class Crawler:
             for link, link_text in links:
                 if exclude and self._is_excluded(link, exclude):
                     continue
-                if exclude_prefixes and self._has_excluded_prefix(os.path.basename(link), exclude_prefixes):
+                if exclude_prefixes and self._has_excluded_prefix(
+                    os.path.basename(link), exclude_prefixes
+                ):
                     continue
                 if cfg.collect_linked_files is not False and self._is_file_url(link, exts):
                     # When allow_url_patterns is configured, enforce it on file links too
@@ -760,7 +785,9 @@ class Crawler:
                     # Both conditions were originally OR'd; dropping is_relevant caused
                     # generic filenames (e.g. bulletin.pdf) on relevant pages to be missed.
                     if not allow_patterns and keywords:
-                        if not (is_relevant or self._link_matches_keywords(link, link_text, keywords)):
+                        if not (
+                            is_relevant or self._link_matches_keywords(link, link_text, keywords)
+                        ):
                             continue
                     if cfg.check_database and self.storage.file_exists(link):
                         dedup_skips += 1
@@ -778,12 +805,13 @@ class Crawler:
                     except Exception as exc:
                         request_errors.append(f"{link}: {exc}")
                         continue
-                    
+
                     # Enhanced Exclusion Check:
                     # Use consolidated helper to check both URL and filename against
                     # exclude patterns and excluded prefixes.
-                    if self._should_exclude_url(ffinal, exclude, exclude_prefixes) or \
-                       self._should_exclude_url(tmp_path.name, exclude, exclude_prefixes):
+                    if self._should_exclude_url(
+                        ffinal, exclude, exclude_prefixes
+                    ) or self._should_exclude_url(tmp_path.name, exclude, exclude_prefixes):
                         logger.info(
                             "Excluding downloaded file based on exclude rules: url=%s, name=%s",
                             ffinal,
@@ -1026,7 +1054,7 @@ class Crawler:
             original_filename = filename_match.group(1).strip()
         if not original_filename:
             original_filename = os.path.basename(parsed.path) or None
-        
+
         # Security check: Ensure filename doesn't contain excluded keywords
         # This is a second line of defense after URL checking
         if cfg.exclude_keywords:
@@ -1036,7 +1064,7 @@ class Crawler:
                 if tmp_path.exists():
                     tmp_path.unlink()
                 return None
-        
+
         safe_name = self._sanitize_filename(original_filename or f"{sha256}{ext}")
         if not safe_name.lower().endswith(ext):
             safe_name = f"{safe_name}{ext}"
@@ -1106,7 +1134,12 @@ class Crawler:
                     site_name = (cfg.name or "").strip().lower()
                     if not (site_name and page_title.strip().lower() == site_name):
                         useful_page_title = page_title
-                title = clean_link_text or useful_page_title or original_filename or os.path.basename(parsed.path)
+                title = (
+                    clean_link_text
+                    or useful_page_title
+                    or original_filename
+                    or os.path.basename(parsed.path)
+                )
                 content_type = headers.get("content-type")
                 last_modified = headers.get("last-modified")
                 etag = headers.get("etag")
@@ -1223,7 +1256,11 @@ class Crawler:
                 reason=f"HTTP {status} access blocked",
                 failed=1,
             )
-        if isinstance(exc, (TimeoutError, socket.timeout)) or "timed out" in text or "timeout" in text:
+        if (
+            isinstance(exc, (TimeoutError, socket.timeout))
+            or "timed out" in text
+            or "timeout" in text
+        ):
             return make_acquisition_outcome(
                 "stopped_or_timeout",
                 url=url,
@@ -1511,7 +1548,9 @@ class Crawler:
                 ),
             )
 
-        if requested_file and (not final_is_file or self._content_type_mismatch(final_url, headers)):
+        if requested_file and (
+            not final_is_file or self._content_type_mismatch(final_url, headers)
+        ):
             subreason = "redirect" if not final_is_file else "content_type"
             return SearchAcquisitionReport(
                 items=[],
@@ -1734,7 +1773,9 @@ class Crawler:
                     ),
                 )
             duplicate_reason = self._existing_url_subreason(ffinal) if cfg.check_database else None
-            if duplicate_reason or (cfg.check_database and self.storage.file_exists_by_hash(sha256)):
+            if duplicate_reason or (
+                cfg.check_database and self.storage.file_exists_by_hash(sha256)
+            ):
                 return SearchAcquisitionReport(
                     items=[],
                     outcome=make_acquisition_outcome(
@@ -1819,7 +1860,9 @@ class Crawler:
                 except Exception as exc:  # noqa: BLE001
                     if legacy_exceptions:
                         raise
-                    failures.append(self._failure_outcome(url, exc, final_url=final_url, phase="storage"))
+                    failures.append(
+                        self._failure_outcome(url, exc, final_url=final_url, phase="storage")
+                    )
                 else:
                     if page_item:
                         new_items.append(page_item)
@@ -1849,7 +1892,9 @@ class Crawler:
             if filter_subreason:
                 filters[filter_subreason] += 1
                 continue
-            if keywords and not (page_relevant or self._link_matches_keywords(link, link_text, keywords)):
+            if keywords and not (
+                page_relevant or self._link_matches_keywords(link, link_text, keywords)
+            ):
                 filters["keyword"] += 1
                 continue
             if cfg.check_database:
@@ -1858,7 +1903,9 @@ class Crawler:
                 except (OSError, sqlite3.Error) as exc:
                     if legacy_exceptions:
                         raise
-                    failures.append(self._failure_outcome(url, exc, final_url=link, phase="storage"))
+                    failures.append(
+                        self._failure_outcome(url, exc, final_url=link, phase="storage")
+                    )
                     continue
                 if duplicate_reason:
                     duplicates[duplicate_reason] += 1
@@ -1949,7 +1996,9 @@ class Crawler:
                     self._remove_temp_file(tmp_path)
                     if legacy_exceptions:
                         raise
-                    failures.append(self._failure_outcome(url, exc, final_url=ffinal, phase="storage"))
+                    failures.append(
+                        self._failure_outcome(url, exc, final_url=ffinal, phase="storage")
+                    )
                     continue
                 if hash_exists:
                     self._remove_temp_file(tmp_path)
@@ -1998,7 +2047,9 @@ class Crawler:
                     self._remove_temp_file(tmp_path)
                     if legacy_exceptions:
                         raise
-                    failures.append(self._failure_outcome(url, exc, final_url=ffinal, phase="storage"))
+                    failures.append(
+                        self._failure_outcome(url, exc, final_url=ffinal, phase="storage")
+                    )
                     continue
                 if duplicate_reason:
                     duplicates[duplicate_reason] += 1
@@ -2009,7 +2060,8 @@ class Crawler:
             (
                 row
                 for row in failures
-                if row.get("disposition") == "stopped_or_timeout" and row.get("subreason") == "stopped"
+                if row.get("disposition") == "stopped_or_timeout"
+                and row.get("subreason") == "stopped"
             ),
             None,
         )
@@ -2034,7 +2086,12 @@ class Crawler:
             "stopped_or_timeout",
         )
         selected_failure = (
-            next(row for disposition in priority for row in failures if row.get("disposition") == disposition)
+            next(
+                row
+                for disposition in priority
+                for row in failures
+                if row.get("disposition") == disposition
+            )
             if failures
             else None
         )

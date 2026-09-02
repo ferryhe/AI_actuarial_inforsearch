@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from sqlalchemy import Column, ForeignKey, Integer, Text, Index, UniqueConstraint
+
+from sqlalchemy import Column, ForeignKey, Index, Integer, Text, UniqueConstraint
 from sqlalchemy.ext.declarative import declarative_base
 
 Base = declarative_base()
@@ -11,9 +12,9 @@ Base = declarative_base()
 
 class File(Base):
     """File metadata table."""
-    
+
     __tablename__ = "files"
-    
+
     id = Column(Integer, primary_key=True)
     url = Column(Text, unique=True, nullable=False)
     sha256 = Column(Text)
@@ -34,9 +35,9 @@ class File(Base):
 
 class Page(Base):
     """Page tracking table."""
-    
+
     __tablename__ = "pages"
-    
+
     id = Column(Integer, primary_key=True)
     url = Column(Text, unique=True, nullable=False)
     last_seen = Column(Text)
@@ -44,9 +45,9 @@ class Page(Base):
 
 class Blob(Base):
     """Blob storage tracking table."""
-    
+
     __tablename__ = "blobs"
-    
+
     sha256 = Column(Text, primary_key=True)
     canonical_path = Column(Text)
     bytes = Column(Integer)
@@ -57,9 +58,9 @@ class Blob(Base):
 
 class CatalogItem(Base):
     """Catalog items table for processed files."""
-    
+
     __tablename__ = "catalog_items"
-    
+
     file_url = Column(Text, primary_key=True)
     sha256 = Column(Text, nullable=False)
     pipeline_version = Column(Text, nullable=False)
@@ -70,19 +71,18 @@ class CatalogItem(Base):
     summary = Column(Text)
     category = Column(Text)
     updated_at = Column(Text)
-    
-    __table_args__ = (
-        Index("idx_catalog_items_status", "status"),
-    )
+
+    __table_args__ = (Index("idx_catalog_items_status", "status"),)
 
 
 # ============== RAG Models ==============
 
+
 class ChunkProfile(Base):
     """Chunk configuration profiles."""
-    
+
     __tablename__ = "chunk_profiles"
-    
+
     profile_id = Column(Text, primary_key=True)
     name = Column(Text, nullable=False)
     config_hash = Column(Text, unique=True, nullable=False)
@@ -98,9 +98,9 @@ class ChunkProfile(Base):
 
 class FileChunkSet(Base):
     """Chunk sets for files."""
-    
+
     __tablename__ = "file_chunk_sets"
-    
+
     chunk_set_id = Column(Text, primary_key=True)
     file_url = Column(Text, ForeignKey("files.url", ondelete="CASCADE"), nullable=False)
     profile_id = Column(
@@ -114,25 +114,25 @@ class FileChunkSet(Base):
     chunk_count = Column(Integer, nullable=False, default=0)
     created_at = Column(Text, nullable=False)
     updated_at = Column(Text, nullable=False)
-    
+
     __table_args__ = (
         UniqueConstraint(
-            'file_url',
-            'markdown_hash',
-            'profile_id',
-            'profile_config_hash',
-            name='uq_file_markdown_profile_contract',
+            "file_url",
+            "markdown_hash",
+            "profile_id",
+            "profile_config_hash",
+            name="uq_file_markdown_profile_contract",
         ),
-        Index('idx_file_chunk_sets_file_url', 'file_url'),
-        Index('idx_file_chunk_sets_profile_id', 'profile_id'),
+        Index("idx_file_chunk_sets_file_url", "file_url"),
+        Index("idx_file_chunk_sets_profile_id", "profile_id"),
     )
 
 
 class GlobalChunk(Base):
     """Global chunks for KB composition."""
-    
+
     __tablename__ = "global_chunks"
-    
+
     chunk_id = Column(Text, primary_key=True)
     chunk_set_id = Column(Text, nullable=False)
     chunk_index = Column(Integer, nullable=False)
@@ -141,18 +141,18 @@ class GlobalChunk(Base):
     section_hierarchy = Column(Text)
     content_hash = Column(Text)
     created_at = Column(Text, nullable=False)
-    
+
     __table_args__ = (
-        UniqueConstraint('chunk_set_id', 'chunk_index', name='uq_chunk_set_index'),
-        Index('idx_global_chunks_chunk_set_id', 'chunk_set_id'),
+        UniqueConstraint("chunk_set_id", "chunk_index", name="uq_chunk_set_index"),
+        Index("idx_global_chunks_chunk_set_id", "chunk_set_id"),
     )
 
 
 class ChunkEmbedding(Base):
     """Chunk embeddings for vector search."""
-    
+
     __tablename__ = "chunk_embeddings"
-    
+
     chunk_id = Column(Text, primary_key=True)
     embedding_identity_key = Column(Text, primary_key=True)
     embedding_provider = Column(Text, nullable=False)
@@ -166,16 +166,14 @@ class ChunkEmbedding(Base):
     validated_at = Column(Text)
     failure_reason = Column(Text)
 
-    __table_args__ = (
-        Index('idx_chunk_embeddings_identity', 'embedding_identity_key'),
-    )
+    __table_args__ = (Index("idx_chunk_embeddings_identity", "embedding_identity_key"),)
 
 
 class KBChunkBinding(Base):
     """KB-Chunk bindings for RAG."""
-    
+
     __tablename__ = "kb_chunk_bindings"
-    
+
     kb_id = Column(Text, primary_key=True)
     file_url = Column(Text, primary_key=True)
     chunk_set_id = Column(Text, primary_key=True)
@@ -183,19 +181,19 @@ class KBChunkBinding(Base):
     bound_by = Column(Text)
     binding_mode = Column(Text, nullable=False, default="pin")
     target_profile_id = Column(Text)
-    
+
     __table_args__ = (
-        Index('idx_kb_chunk_bindings_kb_id', 'kb_id'),
-        Index('idx_kb_chunk_bindings_file_url', 'file_url'),
-        Index('idx_kb_chunk_bindings_target_profile_id', 'target_profile_id'),
+        Index("idx_kb_chunk_bindings_kb_id", "kb_id"),
+        Index("idx_kb_chunk_bindings_file_url", "file_url"),
+        Index("idx_kb_chunk_bindings_target_profile_id", "target_profile_id"),
     )
 
 
 class KBIndexVersion(Base):
     """KB index versions."""
-    
+
     __tablename__ = "kb_index_versions"
-    
+
     index_version_id = Column(Text, primary_key=True)
     kb_id = Column(Text, nullable=False)
     embedding_provider = Column(Text, nullable=False, default="openai")
@@ -210,33 +208,32 @@ class KBIndexVersion(Base):
     chunk_count = Column(Integer, nullable=False, default=0)
     built_at = Column(Text)
     created_at = Column(Text, nullable=False)
-    
-    __table_args__ = (
-        Index('idx_kb_index_versions_kb_id', 'kb_id'),
-    )
+
+    __table_args__ = (Index("idx_kb_index_versions_kb_id", "kb_id"),)
 
 
 class KBIndexItem(Base):
     """KB index items (chunk references)."""
-    
+
     __tablename__ = "kb_index_items"
-    
+
     index_version_id = Column(Text, primary_key=True)
     chunk_id = Column(Text, primary_key=True)
     vector_ordinal = Column(Integer, nullable=False)
 
     __table_args__ = (
-        UniqueConstraint('index_version_id', 'vector_ordinal', name='uq_kb_index_vector_ordinal'),
+        UniqueConstraint("index_version_id", "vector_ordinal", name="uq_kb_index_vector_ordinal"),
     )
 
 
 # ============== Auth Models ==============
 
+
 class AuthToken(Base):
     """Authentication tokens."""
-    
+
     __tablename__ = "auth_tokens"
-    
+
     id = Column(Integer, primary_key=True, autoincrement=True)
     subject = Column(Text, nullable=False)
     group_name = Column(Text, nullable=False)
@@ -254,6 +251,7 @@ class AuthToken(Base):
 
 
 # ============== User Management Models ==============
+
 
 class User(Base):
     """Email-based registered user accounts."""

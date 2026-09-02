@@ -11,83 +11,79 @@ Supports:
 
 import pickle
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import Any, Dict, List, Optional
+
 import numpy as np
 
 try:
     import faiss
 except ImportError:
-    raise ImportError(
-        "faiss-cpu not installed. Install with: pip install faiss-cpu"
-    )
+    raise ImportError("faiss-cpu not installed. Install with: pip install faiss-cpu")
 
 from ai_actuarial.rag.config import RAGConfig
 from ai_actuarial.rag.exceptions import VectorStoreException
-
 
 # ============================================================
 # Safe Unpickler - Security hardening against malicious .pkl files
 # ============================================================
 
+
 class SafeUnpickler(pickle.Unpickler):
     """
     Safe unpickler that only allows explicitly approved globals.
-    
+
     Prevents code execution attacks via malicious pickle files.
     Only specific builtins and minimal numpy globals needed for
     persisted vector-store data are allowed.
-    
+
     Security: Uses exact (module, name) whitelist instead of module prefixes
     to prevent bypasses via dangerous callables like eval/exec/__import__.
     """
-    
+
     # Exact whitelist of allowed pickle globals.
     # Avoid broad module-level allowlists such as `builtins` because they
     # would permit dangerous callables like `eval`, `exec`, and `__import__`.
     SAFE_GLOBALS: set[tuple[str, str]] = {
         # Safe builtins commonly used by pickled metadata structures
-        ('builtins', 'dict'),
-        ('builtins', 'list'),
-        ('builtins', 'set'),
-        ('builtins', 'frozenset'),
-        ('builtins', 'tuple'),
-        ('builtins', 'str'),
-        ('builtins', 'int'),
-        ('builtins', 'float'),
-        ('builtins', 'bool'),
-        ('builtins', 'bytes'),
-        ('builtins', 'bytearray'),
-        ('builtins', 'complex'),
-        ('builtins', 'slice'),
-        ('builtins', 'type'),
-        
+        ("builtins", "dict"),
+        ("builtins", "list"),
+        ("builtins", "set"),
+        ("builtins", "frozenset"),
+        ("builtins", "tuple"),
+        ("builtins", "str"),
+        ("builtins", "int"),
+        ("builtins", "float"),
+        ("builtins", "bool"),
+        ("builtins", "bytes"),
+        ("builtins", "bytearray"),
+        ("builtins", "complex"),
+        ("builtins", "slice"),
+        ("builtins", "type"),
         # Safe stdlib container helpers
-        ('collections', 'OrderedDict'),
-        ('collections', 'defaultdict'),
-        ('collections', 'deque'),
-        ('collections', 'Counter'),
-        
+        ("collections", "OrderedDict"),
+        ("collections", "defaultdict"),
+        ("collections", "deque"),
+        ("collections", "Counter"),
         # Safe datetime types
-        ('datetime', 'date'),
-        ('datetime', 'datetime'),
-        ('datetime', 'time'),
-        ('datetime', 'timedelta'),
-        ('datetime', 'timezone'),
-        
+        ("datetime", "date"),
+        ("datetime", "datetime"),
+        ("datetime", "time"),
+        ("datetime", "timedelta"),
+        ("datetime", "timezone"),
         # Minimal numpy globals commonly required to unpickle ndarrays/scalars
-        ('numpy', 'dtype'),
-        ('numpy', 'ndarray'),
-        ('numpy.core.multiarray', '_reconstruct'),
-        ('numpy.core.multiarray', 'scalar'),
-        ('numpy', 'integer'),
-        ('numpy', 'floating'),
+        ("numpy", "dtype"),
+        ("numpy", "ndarray"),
+        ("numpy.core.multiarray", "_reconstruct"),
+        ("numpy.core.multiarray", "scalar"),
+        ("numpy", "integer"),
+        ("numpy", "floating"),
     }
-    
+
     def find_class(self, module: str, name: str) -> Any:
         """Override to restrict which globals can be loaded."""
         if (module, name) in self.SAFE_GLOBALS:
             return super().find_class(module, name)
-        
+
         raise pickle.UnpicklingError(
             f"Disallowed global: {module}.{name}. "
             f"Only explicitly allowlisted safe types are allowed."
@@ -97,38 +93,35 @@ class SafeUnpickler(pickle.Unpickler):
 def safe_pickle_load(filepath: Path | str) -> Any:
     """
     Safely load a pickle file, rejecting malicious content.
-    
+
     Args:
         filepath: Path to the pickle file
-        
+
     Returns:
         Unpickled Python object
-        
+
     Raises:
         pickle.UnpicklingError: If the file contains disallowed content
     """
-    with open(filepath, 'rb') as f:
+    with open(filepath, "rb") as f:
         return SafeUnpickler(f).load()
 
 
 class VectorStore:
     """
     FAISS-based vector store with incremental update support.
-    
+
     Critical feature: Supports adding new vectors without full rebuild.
     """
 
     MAX_DELETED_OVERFETCH = 256
-    
+
     def __init__(
-        self,
-        dimension: int,
-        config: Optional[RAGConfig] = None,
-        index_path: Optional[str] = None
+        self, dimension: int, config: Optional[RAGConfig] = None, index_path: Optional[str] = None
     ):
         """
         Initialize vector store.
-        
+
         Args:
             dimension: Embedding vector dimension
             config: RAG configuration
@@ -137,7 +130,7 @@ class VectorStore:
         self.dimension = dimension
         self.config = config or RAGConfig.from_config()
         self.index_path = Path(index_path) if index_path else None
-        
+
         # Create or load FAISS index
         if self.index_path and self.index_path.exists():
             self.index = self.load_index()
@@ -147,11 +140,11 @@ class VectorStore:
             self.metadata = []
         self._deleted_count = self._count_deleted_metadata()
         self._deleted_count_metadata_len = len(self.metadata)
-    
+
     def _create_index(self) -> faiss.Index:
         """
         Create a new FAISS index.
-        
+
         Uses IndexFlatL2 for exact search (can be upgraded to IVF/HNSW for scale).
         """
         if self.config.index_type == "Flat":
@@ -167,24 +160,20 @@ class VectorStore:
             index = faiss.IndexHNSWFlat(self.dimension, 32)
         else:
             raise VectorStoreException(f"Unknown index type: {self.config.index_type}")
-        
+
         return index
-    
-    def add_vectors(
-        self,
-        vectors: np.ndarray,
-        metadata: List[Dict[str, Any]]
-    ) -> None:
+
+    def add_vectors(self, vectors: np.ndarray, metadata: List[Dict[str, Any]]) -> None:
         """
         Add vectors to the index (INCREMENTAL OPERATION).
-        
+
         This is a high-priority feature that enables adding new documents
         without rebuilding the entire index.
-        
+
         Args:
             vectors: Numpy array of shape (n_vectors, dimension)
             metadata: List of metadata dicts (one per vector)
-            
+
         Raises:
             VectorStoreException: If add operation fails
         """
@@ -192,45 +181,42 @@ class VectorStore:
             raise VectorStoreException(
                 f"Vectors and metadata length mismatch: {len(vectors)} != {len(metadata)}"
             )
-        
+
         if vectors.shape[1] != self.dimension:
             raise VectorStoreException(
                 f"Vector dimension mismatch: {vectors.shape[1]} != {self.dimension}"
             )
-        
+
         try:
             # Convert to float32 (FAISS requirement)
-            vectors = vectors.astype('float32')
-            
+            vectors = vectors.astype("float32")
+
             # Train index if needed (for IVF)
-            if hasattr(self.index, 'is_trained') and not self.index.is_trained:
+            if hasattr(self.index, "is_trained") and not self.index.is_trained:
                 self.index.train(vectors)
-            
+
             # Add vectors to index (incremental operation)
             self.index.add(vectors)
-            
+
             # Store metadata
             self.metadata.extend(metadata)
-            self._deleted_count += sum(1 for item in metadata if item.get('_deleted', False))
+            self._deleted_count += sum(1 for item in metadata if item.get("_deleted", False))
             self._deleted_count_metadata_len = len(self.metadata)
-            
+
         except Exception as e:
             raise VectorStoreException(f"Failed to add vectors: {e}")
-    
+
     def search(
-        self,
-        query_vector: np.ndarray,
-        k: int = 10,
-        similarity_threshold: Optional[float] = None
+        self, query_vector: np.ndarray, k: int = 10, similarity_threshold: Optional[float] = None
     ) -> List[Dict[str, Any]]:
         """
         Search for similar vectors.
-        
+
         Args:
             query_vector: Query embedding vector
             k: Number of results to return
             similarity_threshold: Optional threshold to filter results (0-1)
-            
+
         Returns:
             List of results with metadata and scores
         """
@@ -240,12 +226,12 @@ class VectorStore:
             )
         if k <= 0:
             return []
-        
+
         try:
             # Reshape for FAISS
-            query_vector = query_vector.reshape(1, -1).astype('float32')
-            
-            total_vectors = int(getattr(self.index, 'ntotal', 0) or 0)
+            query_vector = query_vector.reshape(1, -1).astype("float32")
+
+            total_vectors = int(getattr(self.index, "ntotal", 0) or 0)
             if total_vectors <= 0:
                 return []
 
@@ -260,12 +246,12 @@ class VectorStore:
             # Search. Over-fetch when soft-deleted vectors exist so active
             # neighbors just below deleted hits can still be returned.
             distances, indices = self.index.search(query_vector, search_k)
-            
+
             # Convert L2 distances to cosine similarity (unit-normalized vectors).
             # For unit vectors: cos(u,v) = 1 - ||u-v||^2 / 2
             # OpenAI / text-embedding-* outputs are L2-normalized.
-            similarities = 1.0 - (distances ** 2 / 2.0)
-            
+            similarities = 1.0 - (distances**2 / 2.0)
+
             # Build results
             results = []
             for pos, (idx, score) in enumerate(zip(indices[0], similarities[0])):
@@ -274,30 +260,30 @@ class VectorStore:
                 if not (0 <= idx < len(self.metadata)):
                     continue
                 metadata = self.metadata[idx]
-                if metadata.get('_deleted', False):
+                if metadata.get("_deleted", False):
                     continue
                 # Apply threshold if specified
                 if similarity_threshold is None or score >= similarity_threshold:
                     result = {
-                        'metadata': metadata,
-                        'score': float(score),
-                        'distance': float(distances[0][pos]),
-                        'index': int(idx)
+                        "metadata": metadata,
+                        "score": float(score),
+                        "distance": float(distances[0][pos]),
+                        "index": int(idx),
                     }
                     results.append(result)
-            
+
             return results
-            
+
         except Exception as e:
             raise VectorStoreException(f"Search failed: {e}")
-    
+
     def remove_vectors(self, indices: List[int]) -> int:
         """
         Remove vectors from index.
-        
+
         Note: FAISS doesn't support efficient deletion. This marks metadata as deleted
         and requires index rebuild for actual removal.
-        
+
         Args:
             indices: List of vector indices to remove
         """
@@ -305,9 +291,9 @@ class VectorStore:
         for idx in sorted(set(indices)):
             if not (0 <= idx < len(self.metadata)):
                 continue
-            if self.metadata[idx].get('_deleted', False):
+            if self.metadata[idx].get("_deleted", False):
                 continue
-            self.metadata[idx]['_deleted'] = True
+            self.metadata[idx]["_deleted"] = True
             removed += 1
         if removed:
             self._deleted_count += removed
@@ -315,7 +301,7 @@ class VectorStore:
         return removed
 
     def _count_deleted_metadata(self) -> int:
-        return sum(1 for meta in self.metadata if meta.get('_deleted', False))
+        return sum(1 for meta in self.metadata if meta.get("_deleted", False))
 
     def _get_deleted_count(self) -> int:
         """Return cached soft-delete count, refreshing if metadata length changed."""
@@ -337,128 +323,86 @@ class VectorStore:
         """Return vector metadata indices matching all criteria."""
         matches: List[int] = []
         for idx, metadata in enumerate(self.metadata):
-            if not include_deleted and metadata.get('_deleted', False):
+            if not include_deleted and metadata.get("_deleted", False):
                 continue
             if all(metadata.get(key) == value for key, value in criteria.items()):
                 matches.append(idx)
         return matches
-    
-    def rebuild_without_deleted(self) -> None:
-        """
-        Rebuild index excluding deleted vectors.
-        
-        This is needed periodically to reclaim space from deleted vectors.
-        """
-        # Collect non-deleted vectors and metadata
-        valid_indices = [
-            i for i, meta in enumerate(self.metadata)
-            if not meta.get('_deleted', False)
-        ]
-        
-        if not valid_indices:
-            # All deleted, create fresh index
-            self.index = self._create_index()
-            self.metadata = []
-            self._deleted_count = 0
-            self._deleted_count_metadata_len = 0
-            return
-        
-        # Extract vectors (reconstruct from index if possible)
-        # For IndexFlat, can use reconstruct()
-        if hasattr(self.index, 'reconstruct'):
-            vectors = np.array([
-                self.index.reconstruct(i) for i in valid_indices
-            ])
-            new_metadata = [self.metadata[i] for i in valid_indices]
-            
-            # Create new index
-            self.index = self._create_index()
-            self.metadata = []
-            
-            # Add valid vectors
-            self.add_vectors(vectors, new_metadata)
-            self._deleted_count = 0
-            self._deleted_count_metadata_len = len(self.metadata)
-        else:
-            raise VectorStoreException(
-                "Index type doesn't support reconstruction. "
-                "Manual rebuild required."
-            )
-    
+
     def save_index(self, path: Optional[Path] = None) -> None:
         """
         Save FAISS index to disk.
-        
+
         Args:
             path: Path to save index (defaults to self.index_path)
         """
         save_path = path or self.index_path
         if not save_path:
             raise VectorStoreException("No index path specified for saving")
-        
+
         save_path = Path(save_path)
         save_path.parent.mkdir(parents=True, exist_ok=True)
-        
+
         try:
             # Save FAISS index
             faiss.write_index(self.index, str(save_path))
-            
+
             # Save metadata separately
-            metadata_path = save_path.with_suffix('.meta.pkl')
-            with open(metadata_path, 'wb') as f:
+            metadata_path = save_path.with_suffix(".meta.pkl")
+            with open(metadata_path, "wb") as f:
                 pickle.dump(self.metadata, f)
-                
+
         except Exception as e:
             raise VectorStoreException(f"Failed to save index: {e}")
-    
+
     def load_index(self, path: Optional[Path] = None) -> faiss.Index:
         """
         Load FAISS index from disk.
-        
+
         Args:
             path: Path to load index from (defaults to self.index_path)
-            
+
         Returns:
             Loaded FAISS index
         """
         load_path = path or self.index_path
         if not load_path:
             raise VectorStoreException("No index path specified for loading")
-        
+
         load_path = Path(load_path)
         if not load_path.exists():
             raise VectorStoreException(f"Index file not found: {load_path}")
-        
+
         try:
             index = faiss.read_index(str(load_path))
             return index
         except Exception as e:
             raise VectorStoreException(f"Failed to load index: {e}")
-    
+
     def load_metadata(self, path: Optional[Path] = None) -> List[Dict[str, Any]]:
         """
         Load metadata from disk.
-        
+
         Args:
             path: Path to load metadata from (defaults to index_path.meta.pkl)
-            
+
         Returns:
             List of metadata dicts
         """
         if path:
             metadata_path = Path(path)
         elif self.index_path:
-            metadata_path = self.index_path.with_suffix('.meta.pkl')
+            metadata_path = self.index_path.with_suffix(".meta.pkl")
         else:
             raise VectorStoreException("No metadata path specified")
-        
+
         if not metadata_path.exists():
             return []
-        
+
         try:
             # Use safe loader to prevent code execution from malicious .pkl files
             metadata = safe_pickle_load(metadata_path)
-            
+
             # Validate metadata format
             if not isinstance(metadata, list):
                 raise VectorStoreException(
@@ -468,58 +412,11 @@ class VectorStore:
                 raise VectorStoreException(
                     "Invalid metadata format: expected all metadata entries to be dicts"
                 )
-            
+
             return metadata
         except pickle.UnpicklingError as e:
-            raise VectorStoreException(
-                f"Failed to load metadata (security check failed): {e}"
-            )
+            raise VectorStoreException(f"Failed to load metadata (security check failed): {e}")
         except VectorStoreException:
             raise  # Re-raise our own exceptions
         except Exception as e:
             raise VectorStoreException(f"Failed to load metadata: {e}")
-    
-    def get_stats(self) -> Dict[str, Any]:
-        """
-        Get vector store statistics.
-        
-        Returns:
-            Dict with statistics
-        """
-        active_count = sum(
-            1 for meta in self.metadata
-            if not meta.get('_deleted', False)
-        )
-        
-        return {
-            'total_vectors': self.index.ntotal,
-            'active_vectors': active_count,
-            'deleted_vectors': len(self.metadata) - active_count,
-            'dimension': self.dimension,
-            'index_type': self.config.index_type,
-            'is_trained': getattr(self.index, 'is_trained', True)
-        }
-    
-    def clear(self) -> None:
-        """Clear all vectors and metadata."""
-        self.index = self._create_index()
-        self.metadata = []
-
-
-def create_vector_store(
-    dimension: int,
-    index_path: str,
-    config: Optional[RAGConfig] = None
-) -> VectorStore:
-    """
-    Factory function to create a vector store.
-    
-    Args:
-        dimension: Embedding dimension
-        index_path: Path for index storage
-        config: Optional RAG configuration
-        
-    Returns:
-        VectorStore instance
-    """
-    return VectorStore(dimension, config, index_path)

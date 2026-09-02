@@ -7,7 +7,6 @@ from ..deps import AuthContext, require_permissions
 from ..services.rag_admin import RagAdminError
 from ..services.ready_data_automation import set_ready_data_automation
 
-
 router = APIRouter()
 
 

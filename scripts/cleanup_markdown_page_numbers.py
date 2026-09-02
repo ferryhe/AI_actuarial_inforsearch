@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-
 LINE_PATTERNS = [
     re.compile(r"^\s*#{1,6}\s*page\s+\d+(?:\s+of\s+\d+)?\s*$", re.IGNORECASE),
     re.compile(r"^\s*page\s+\d+(?:\s+of\s+\d+)?\s*$", re.IGNORECASE),
@@ -57,8 +56,12 @@ def ensure_backup(conn: sqlite3.Connection, backup_path: Path) -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Remove page number lines from markdown_content in catalog_items.")
-    parser.add_argument("--db", default="data/index.db", help="SQLite database path (default: data/index.db)")
+    parser = argparse.ArgumentParser(
+        description="Remove page number lines from markdown_content in catalog_items."
+    )
+    parser.add_argument(
+        "--db", default="data/index.db", help="SQLite database path (default: data/index.db)"
+    )
     parser.add_argument(
         "--source-like",
         default="%",
@@ -103,7 +106,14 @@ def main() -> int:
             if result.changed and result.removed_lines > 0:
                 candidates += 1
                 removed_lines_total += result.removed_lines
-                changed_rows.append((row["file_url"], row["markdown_source"] or "", result.markdown, result.removed_lines))
+                changed_rows.append(
+                    (
+                        row["file_url"],
+                        row["markdown_source"] or "",
+                        result.markdown,
+                        result.removed_lines,
+                    )
+                )
 
         print(f"Scanned rows: {len(rows)}")
         print(f"Rows that would change: {candidates}")

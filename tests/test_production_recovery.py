@@ -9,9 +9,8 @@ from pathlib import Path
 
 import pytest
 
-from scripts import production_recovery
 from ai_actuarial.sqlite_schema import CURRENT_SQLITE_SCHEMA_VERSION
-
+from scripts import production_recovery
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -79,7 +78,10 @@ def test_online_database_backup_is_repeatable_and_records_success(tmp_path: Path
     assert manifest["database"]["schema_user_version"] == CURRENT_SQLITE_SCHEMA_VERSION
     assert manifest["included_data_directories"] == []
 
-    events = [json.loads(line) for line in (backup_root / "backup-events.jsonl").read_text(encoding="utf-8").splitlines()]
+    events = [
+        json.loads(line)
+        for line in (backup_root / "backup-events.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
     assert [event["status"] for event in events] == ["success", "success"]
 
 
@@ -191,13 +193,17 @@ def test_prune_does_not_delete_excluded_backup(tmp_path: Path) -> None:
         now=lambda: clock,
     )
 
-    removed = production_recovery.prune_old_backups(backup_root, 0, now=lambda: clock, exclude=fresh)
+    removed = production_recovery.prune_old_backups(
+        backup_root, 0, now=lambda: clock, exclude=fresh
+    )
 
     assert removed == []
     assert fresh.exists()
 
 
-def test_legacy_snapshot_with_files_remains_verifiable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_legacy_snapshot_with_files_remains_verifiable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     data_dir, config_path = _seed_data_dir(tmp_path)
     backup_root = tmp_path / "backups"
 
@@ -265,7 +271,10 @@ def test_failed_backup_writes_failure_event_without_publishing_snapshot(tmp_path
             now=lambda: datetime(2026, 8, 16, 12, 0, tzinfo=timezone.utc),
         )
 
-    events = [json.loads(line) for line in (backup_root / "backup-events.jsonl").read_text(encoding="utf-8").splitlines()]
+    events = [
+        json.loads(line)
+        for line in (backup_root / "backup-events.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
     assert events[-1]["status"] == "failed"
     assert not list(backup_root.glob("*.tmp"))
     assert not list(backup_root.glob("backup-*/manifest.json"))
@@ -344,7 +353,9 @@ def test_docker_build_and_runbook_expose_recovery_contract() -> None:
 
 def test_scheduled_backup_and_deploy_gate_use_named_volume_recovery_tool() -> None:
     backup_wrapper = (ROOT / "scripts" / "production_backup.sh").read_text(encoding="utf-8")
-    service = (ROOT / "ops" / "systemd" / "aiinforsearch-backup.service").read_text(encoding="utf-8")
+    service = (ROOT / "ops" / "systemd" / "aiinforsearch-backup.service").read_text(
+        encoding="utf-8"
+    )
     timer = (ROOT / "ops" / "systemd" / "aiinforsearch-backup.timer").read_text(encoding="utf-8")
     deploy_path = ROOT / "scripts" / "deploy_update.sh"
     deploy = deploy_path.read_text(encoding="utf-8")
@@ -356,8 +367,11 @@ def test_scheduled_backup_and_deploy_gate_use_named_volume_recovery_tool() -> No
     assert "/var/backups/aiinforsearch" not in backup_wrapper
     assert 'stat -c %d "$DATA_DIR"' in backup_wrapper
     assert 'stat -c %d "$BACKUP_ROOT"' in backup_wrapper
-    assert 'flock -n 9' in backup_wrapper
-    assert "ExecStart=/usr/bin/bash /opt/ai_actuarial_inforsearch/scripts/production_backup.sh" in service
+    assert "flock -n 9" in backup_wrapper
+    assert (
+        "ExecStart=/usr/bin/bash /opt/ai_actuarial_inforsearch/scripts/production_backup.sh"
+        in service
+    )
     assert "EnvironmentFile=/etc/aiinforsearch/backup.conf" in service
     assert "EnvironmentFile=-" not in service
     assert "OnCalendar=" in timer
@@ -370,7 +384,7 @@ def test_scheduled_backup_and_deploy_gate_use_named_volume_recovery_tool() -> No
     assert "/var/backups/aiinforsearch" not in deploy
     assert 'stat -c %d "$DATA_DIR"' in deploy
     assert 'stat -c %d "$BACKUP_ROOT"' in deploy
-    assert 'flock -n 9' in deploy
+    assert "flock -n 9" in deploy
     assert "--include-data" in deploy
     assert "--quiesced" in deploy
     assert "BUILD_GIT_SHA" in deploy

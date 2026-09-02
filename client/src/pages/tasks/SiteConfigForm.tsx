@@ -1,7 +1,7 @@
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef } from "react";
 import {
   FileUp, Download, Plus, Pencil, Trash2, Save, Loader2,
-  Globe, ExternalLink, ChevronDown, ChevronUp, RefreshCw, FolderOpen, X,
+  Globe, ExternalLink, ChevronDown, ChevronUp, RefreshCw,
 } from "lucide-react";
 import { useTranslation } from "@/components/Layout";
 import { apiGet, apiPost } from "@/lib/api";
@@ -51,7 +51,6 @@ export function SiteConfigForm({ sites, onSubmit, submitting, onSitesChanged }: 
 }) {
   const { t } = useTranslation();
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [importFile, setImportFile] = useState<File | null>(null);
   const [importMode, setImportMode] = useState<"merge" | "overwrite">("merge");
   const [importPreview, setImportPreview] = useState<{ count: number; names: string[] } | null>(null);
   const [importing, setImporting] = useState(false);
@@ -209,7 +208,6 @@ export function SiteConfigForm({ sites, onSubmit, submitting, onSitesChanged }: 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    setImportFile(file);
     const reader = new FileReader();
     reader.onload = async (ev) => {
       const yamlText = ev.target?.result as string;
@@ -230,7 +228,6 @@ export function SiteConfigForm({ sites, onSubmit, submitting, onSitesChanged }: 
       setImportResult(t("tasks.sites.import_result").replace("{imported}", String(res.imported || 0)).replace("{skipped}", String(res.skipped || 0)));
       onSitesChanged();
       setImportPreview(null);
-      setImportFile(null);
       setImportYamlText("");
       setTimeout(() => setImportResult(null), 4000);
     } catch { /* ignore */ }
@@ -351,7 +348,7 @@ export function SiteConfigForm({ sites, onSubmit, submitting, onSitesChanged }: 
               {importing && <Loader2 className="w-3 h-3 animate-spin" />}
               {t("tasks.sites.import_confirm")}
             </button>
-            <button onClick={() => { setImportPreview(null); setImportFile(null); setImportYamlText(""); }}
+            <button onClick={() => { setImportPreview(null); setImportYamlText(""); }}
               className="text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors"
               data-testid="button-cancel-import">{t("tasks.sched.cancel")}</button>
           </div>

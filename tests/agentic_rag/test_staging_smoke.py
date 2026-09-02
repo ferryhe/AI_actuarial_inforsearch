@@ -23,8 +23,7 @@ from ai_actuarial.agentic_rag.staging_smoke import (
 def _build_source_db(tmp_path: Path) -> Path:
     db_path = tmp_path / "source.db"
     conn = sqlite3.connect(db_path)
-    conn.executescript(
-        """
+    conn.executescript("""
         CREATE TABLE files (
             url TEXT PRIMARY KEY,
             title TEXT,
@@ -54,8 +53,7 @@ def _build_source_db(tmp_path: Path) -> Path:
             token_count INTEGER DEFAULT 0,
             section_hierarchy TEXT
         );
-        """
-    )
+        """)
     conn.execute(
         "INSERT INTO files(url, title, source_site, published_time) VALUES (?, ?, ?, ?)",
         (
@@ -134,9 +132,7 @@ def test_non_empty_profiles_pass_real_catalog_backed_offline_smoke(
     assert result["failure_reason"] == ""
     assert result["query_source"] == "title"
     assert result["query"] == "Deterministic Valuation Rule"
-    assert result["query_sha256"] == hashlib.sha256(
-        result["query"].encode("utf-8")
-    ).hexdigest()
+    assert result["query_sha256"] == hashlib.sha256(result["query"].encode("utf-8")).hexdigest()
     assert result["matched_doc_id"] == "https://example.com/valuation-rule"
     assert result["matched_file_url"] == "https://example.com/valuation-rule"
     assert result["elapsed_ms"] >= 0
@@ -294,9 +290,7 @@ def test_reference_outside_staging_catalog_fails_closed() -> None:
         {
             "status": "ok",
             "evidence_count": 1,
-            "references": [
-                {"doc_id": "foreign-doc", "file_url": "https://foreign.example/doc"}
-            ],
+            "references": [{"doc_id": "foreign-doc", "file_url": "https://foreign.example/doc"}],
         },
     )
 
@@ -326,9 +320,7 @@ def test_long_reference_prefix_collision_does_not_match_catalog(tmp_path: Path) 
         {
             "status": "ok",
             "evidence_count": 1,
-            "references": [
-                {"doc_id": shared_prefix + "-foreign", "file_url": ""}
-            ],
+            "references": [{"doc_id": shared_prefix + "-foreign", "file_url": ""}],
         },
     )
 

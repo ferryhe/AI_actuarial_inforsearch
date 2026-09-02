@@ -63,10 +63,22 @@ def import_batch_root() -> Path:
 
 def _safe_relative_path(raw_path: str, fallback_name: str) -> str:
     raw = (raw_path or fallback_name or "uploaded-file").replace("\\", "/").strip()
-    if raw in {"", "."} or raw.startswith("/") or raw.startswith("../") or raw == ".." or "/../" in raw:
+    if (
+        raw in {"", "."}
+        or raw.startswith("/")
+        or raw.startswith("../")
+        or raw == ".."
+        or "/../" in raw
+    ):
         raise ImportBatchError("Invalid relative path")
     raw = posixpath.normpath(raw)
-    if raw in {"", "."} or raw.startswith("/") or raw.startswith("../") or raw == ".." or "/../" in raw:
+    if (
+        raw in {"", "."}
+        or raw.startswith("/")
+        or raw.startswith("../")
+        or raw == ".."
+        or "/../" in raw
+    ):
         raise ImportBatchError("Invalid relative path")
     parts = [part for part in raw.split("/") if part]
     if not parts or len(parts) > MAX_RELATIVE_PATH_DEPTH:
@@ -101,7 +113,9 @@ def _manifest_path(batch_id: str) -> Path:
 
 def _write_manifest(batch_dir: Path, manifest: dict[str, Any]) -> None:
     batch_dir.mkdir(parents=True, exist_ok=True)
-    (batch_dir / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    (batch_dir / "manifest.json").write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
 
 
 def _response_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
@@ -127,7 +141,9 @@ def _response_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-async def create_import_batch(*, files: list[UploadFile], relative_paths: list[str], auth_token: dict[str, Any] | None) -> dict[str, Any]:
+async def create_import_batch(
+    *, files: list[UploadFile], relative_paths: list[str], auth_token: dict[str, Any] | None
+) -> dict[str, Any]:
     if not files:
         raise ImportBatchError("No files uploaded")
     if len(files) > MAX_FILES_PER_BATCH:
@@ -148,7 +164,9 @@ async def create_import_batch(*, files: list[UploadFile], relative_paths: list[s
         files_dir.mkdir(parents=True, exist_ok=True)
         for index, upload in enumerate(files):
             raw_relative_path = relative_paths[index] if index < len(relative_paths) else ""
-            relative_path = _safe_relative_path(raw_relative_path, upload.filename or f"file-{index}")
+            relative_path = _safe_relative_path(
+                raw_relative_path, upload.filename or f"file-{index}"
+            )
             if relative_path in seen_relative_paths:
                 raise ImportBatchError("Duplicate relative path")
             seen_relative_paths.add(relative_path)
@@ -204,7 +222,11 @@ async def create_import_batch(*, files: list[UploadFile], relative_paths: list[s
 
 def load_import_batch(batch_id: str, *, auth_token: dict[str, Any] | None = None) -> dict[str, Any]:
     clean_id = str(batch_id or "").strip()
-    if not clean_id or any(ch not in "0123456789abcdef" for ch in clean_id.lower()) or len(clean_id) != 32:
+    if (
+        not clean_id
+        or any(ch not in "0123456789abcdef" for ch in clean_id.lower())
+        or len(clean_id) != 32
+    ):
         raise ImportBatchError("Invalid upload batch")
     path = _manifest_path(clean_id)
     if not path.exists():

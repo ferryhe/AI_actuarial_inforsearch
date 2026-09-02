@@ -25,7 +25,6 @@ from ai_actuarial.ai_runtime import (  # noqa: E402
 from ai_actuarial.shared_runtime import get_sites_config_path, load_yaml  # noqa: E402
 from ai_actuarial.storage import Storage  # noqa: E402
 
-
 AUTH_SECRET_KEYS = (
     "FASTAPI_SESSION_SECRET",
     "TOKEN_ENCRYPTION_KEY",
@@ -105,7 +104,9 @@ def _provider_env_status(env_values: dict[str, str]) -> dict[str, Any]:
     }
 
 
-def _db_report(db_path: Path) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]], str | None]:
+def _db_report(
+    db_path: Path,
+) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]], str | None]:
     if not db_path.exists():
         return (
             {"path": str(db_path), "exists": False, "credential_count": 0, "usable_count": 0},
@@ -190,7 +191,9 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
     }
     duplicated_provider_keys = []
     for provider, (key_env, _) in sorted(PROVIDER_STARTUP_ENV_MAP.items()):
-        category = "search" if provider in {"brave_search", "serpapi", "serper", "tavily"} else "llm"
+        category = (
+            "search" if provider in {"brave_search", "serpapi", "serper", "tavily"} else "llm"
+        )
         if env_values.get(key_env) and (provider, category) in db_provider_pairs:
             duplicated_provider_keys.append(
                 {"provider_id": provider, "category": category, "api_key_env": key_env}
@@ -198,7 +201,9 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
 
     warnings: list[str] = []
     if not env_values.get("FASTAPI_SESSION_SECRET"):
-        warnings.append("FASTAPI_SESSION_SECRET is missing; email registration/login cannot set sessions.")
+        warnings.append(
+            "FASTAPI_SESSION_SECRET is missing; email registration/login cannot set sessions."
+        )
     if not env_values.get("TOKEN_ENCRYPTION_KEY"):
         warnings.append("TOKEN_ENCRYPTION_KEY is missing; DB credentials cannot be decrypted.")
     elif not _valid_fernet_key(env_values["TOKEN_ENCRYPTION_KEY"]):
@@ -206,7 +211,9 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
     if db_error:
         warnings.append(db_error)
     if any(row.get("decrypt_ok") is False or row.get("last_error") for row in credentials):
-        warnings.append("At least one DB credential is not decryptable with the current TOKEN_ENCRYPTION_KEY.")
+        warnings.append(
+            "At least one DB credential is not decryptable with the current TOKEN_ENCRYPTION_KEY."
+        )
     if duplicated_provider_keys:
         warnings.append(
             "Some provider API keys exist in both .env and encrypted DB credentials; runtime prefers DB and treats env as fallback."
@@ -214,7 +221,9 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
     if env_values.get("CONFIG_WRITE_AUTH_TOKEN") and (
         env_values.get("BOOTSTRAP_ADMIN_TOKEN") != env_values.get("CONFIG_WRITE_AUTH_TOKEN")
     ):
-        warnings.append("BOOTSTRAP_ADMIN_TOKEN and CONFIG_WRITE_AUTH_TOKEN differ; token login may not satisfy legacy write-token checks.")
+        warnings.append(
+            "BOOTSTRAP_ADMIN_TOKEN and CONFIG_WRITE_AUTH_TOKEN differ; token login may not satisfy legacy write-token checks."
+        )
     if not warnings:
         warnings.append("Secret and credential state looks consistent.")
 
@@ -228,7 +237,8 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
         },
         "auth_token_alignment": {
             "bootstrap_matches_config_write": bool(env_values.get("BOOTSTRAP_ADMIN_TOKEN"))
-            and env_values.get("BOOTSTRAP_ADMIN_TOKEN") == env_values.get("CONFIG_WRITE_AUTH_TOKEN"),
+            and env_values.get("BOOTSTRAP_ADMIN_TOKEN")
+            == env_values.get("CONFIG_WRITE_AUTH_TOKEN"),
         },
         "provider_env_keys": _provider_env_status(env_values),
         "database": db_summary,
@@ -242,8 +252,12 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--env", default=".env", help="Path to the dotenv file to inspect.")
-    parser.add_argument("--config", help="Path to sites.yaml. Defaults to the active project config.")
-    parser.add_argument("--db", help="Path to SQLite database. Defaults to sites.yaml paths.db/database.path.")
+    parser.add_argument(
+        "--config", help="Path to sites.yaml. Defaults to the active project config."
+    )
+    parser.add_argument(
+        "--db", help="Path to SQLite database. Defaults to sites.yaml paths.db/database.path."
+    )
     parser.add_argument("--json", action="store_true", help="Print JSON output.")
     args = parser.parse_args(argv)
 

@@ -7,7 +7,6 @@ for different chatbot personas/modes.
 
 from typing import Dict
 
-
 # Base instruction that applies to all modes
 BASE_INSTRUCTIONS = """You are an AI assistant specialized in actuarial science, insurance regulations, and related topics.
 
@@ -48,7 +47,6 @@ RESPONSE STYLE:
 - Highlight edge cases and operational implications.
 - Use actuarial terminology, but explain uncommon terms briefly.
 """,
-
     "summary": """
 SUMMARY MODE - Concise and High-Level
 
@@ -62,7 +60,6 @@ RESPONSE STYLE:
 - Avoid deep technical detail unless essential.
 - Prefer 1-3 high-value citations.
 """,
-
     "tutorial": """
 TUTORIAL MODE - Educational and Step-by-Step
 
@@ -76,7 +73,6 @@ RESPONSE STYLE:
 - Use a simple-to-complex progression.
 - End with a short recap and optional next question.
 """,
-
     "comparison": """
 COMPARISON MODE - Analytical and Side-by-Side
 
@@ -90,7 +86,7 @@ RESPONSE STYLE:
 - Call out practical impact (cost, risk, governance, implementation).
 - Note conflicts or gaps in source evidence explicitly.
 - Keep tone objective and balanced.
-"""
+""",
 }
 
 
@@ -118,7 +114,9 @@ def get_system_prompt(
         ValueError: If mode is not recognized
     """
     if mode not in MODE_PROMPTS:
-        raise ValueError(f"Unknown chatbot mode: {mode}. Available modes: {list(MODE_PROMPTS.keys())}")
+        raise ValueError(
+            f"Unknown chatbot mode: {mode}. Available modes: {list(MODE_PROMPTS.keys())}"
+        )
 
     overrides = prompts_override or {}
     base = (overrides.get("base") or "").strip() or BASE_INSTRUCTIONS
@@ -161,7 +159,9 @@ def format_context_prompt(retrieved_chunks: list, conversation_history: list = N
             score = metadata.get("similarity_score", 0.0)
 
             kb_suffix = f" ({kb_name})" if kb_name else ""
-            prompt_parts.append(f"[Document {i}] (filename: {filename}{kb_suffix}, relevance: {score:.2f})")
+            prompt_parts.append(
+                f"[Document {i}] (filename: {filename}{kb_suffix}, relevance: {score:.2f})"
+            )
             prompt_parts.append(content)
             prompt_parts.append("")  # Blank line between chunks
 
@@ -229,7 +229,7 @@ def build_full_prompt(
     # Combine into OpenAI message format
     messages = [
         {"role": "system", "content": system_prompt},
-        {"role": "user", "content": context_prompt + query_prompt}
+        {"role": "user", "content": context_prompt + query_prompt},
     ]
 
     return messages

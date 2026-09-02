@@ -4,20 +4,19 @@ from __future__ import annotations
 
 import hashlib
 import os
+
+# Ensure the project root is on the path (mirrors other test files)
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
-
-# Ensure the project root is on the path (mirrors other test files)
-import sys
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from ai_actuarial.collectors import CollectionConfig, WebPageCollector
 from ai_actuarial.security import UnsafeUrlError
 from ai_actuarial.storage import Storage
-
 
 # ---------------------------------------------------------------------------
 # Shared HTML fixture
@@ -87,9 +86,7 @@ class TestWebPageCollectorBasics(unittest.TestCase):
 
     def test_should_download_new_url(self):
         """should_download returns True for a URL not yet in the database."""
-        self.assertTrue(
-            self.collector.should_download("https://example.com/page")
-        )
+        self.assertTrue(self.collector.should_download("https://example.com/page"))
 
     def test_should_download_existing_url(self):
         """should_download returns False when the URL is already stored."""
@@ -117,9 +114,7 @@ class TestWebPageCollectorBasics(unittest.TestCase):
         )
         self.storage._conn.commit()
 
-        self.assertFalse(
-            self.collector.should_download("https://example.com/other", sha256)
-        )
+        self.assertFalse(self.collector.should_download("https://example.com/other", sha256))
 
     # ------------------------------------------------------------------
     # _extract_text
@@ -147,9 +142,7 @@ class TestWebPageCollectorBasics(unittest.TestCase):
     def test_save_content_creates_file(self):
         """_save_content should create a Markdown file on disk."""
         content = "# Hello\n\nThis is test content for the web page collector."
-        path = self.collector._save_content(
-            "https://example.com/article", content, "Example Site"
-        )
+        path = self.collector._save_content("https://example.com/article", content, "Example Site")
         self.assertTrue(path.exists())
         self.assertEqual(path.suffix, ".md")
         self.assertEqual(path.read_text(encoding="utf-8"), content)
@@ -199,9 +192,7 @@ class TestWebPageCollectorBasics(unittest.TestCase):
         self.assertIn("sha256", result)
 
         # Should be in the database
-        self.assertTrue(
-            self.storage.file_exists("https://example.com/article")
-        )
+        self.assertTrue(self.storage.file_exists("https://example.com/article"))
 
     def test_collect_page_skips_non_html(self):
         """_collect_page should skip responses with non-HTML content-type."""
@@ -415,9 +406,7 @@ class TestCrawlerHandlePageContent(unittest.TestCase):
         self.assertIsNotNone(result)
         assert result is not None
         self.assertEqual(result["content_type"], "text/markdown")
-        self.assertTrue(
-            self.storage.file_exists("https://example.com/article")
-        )
+        self.assertTrue(self.storage.file_exists("https://example.com/article"))
 
     def test_handle_page_content_dedup_by_url(self):
         """_handle_page_content is a no-op when URL is already stored."""

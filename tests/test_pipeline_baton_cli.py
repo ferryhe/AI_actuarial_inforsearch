@@ -10,7 +10,9 @@ import pytest
 from ai_actuarial import cli
 
 
-def test_pipeline_cli_status_start_tick_and_config_use_same_http_contract(monkeypatch, capsys) -> None:
+def test_pipeline_cli_status_start_tick_and_config_use_same_http_contract(
+    monkeypatch, capsys
+) -> None:
     calls: list[tuple[str, str]] = []
 
     def request(api_url: str, action: str, *, method: str, token: str | None):
@@ -64,9 +66,9 @@ def test_pipeline_api_request_preserves_bearer_token_and_uses_finite_timeout(
 
     monkeypatch.setattr(cli.urllib.request, "urlopen", urlopen)
 
-    assert cli.pipeline_api_request(
-        "https://api.example", "status", method="GET", token=token
-    ) == {"success": True}
+    assert cli.pipeline_api_request("https://api.example", "status", method="GET", token=token) == {
+        "success": True
+    }
     request = captured["request"]
     assert request.get_header("Authorization") == f"Bearer {token}"
     assert isinstance(captured["timeout"], (int, float))

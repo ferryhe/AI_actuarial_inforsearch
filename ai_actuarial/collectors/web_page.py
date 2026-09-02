@@ -15,10 +15,10 @@ import time
 from pathlib import Path
 from urllib.parse import urlparse
 
-from .base import BaseCollector, CollectionConfig, CollectionResult
 from ..crawler import Crawler
 from ..storage import Storage
 from ..utils import extract_metadata
+from .base import BaseCollector, CollectionConfig, CollectionResult
 
 logger = logging.getLogger(__name__)
 
@@ -62,9 +62,7 @@ class WebPageCollector(BaseCollector):
     # BaseCollector interface
     # ------------------------------------------------------------------
 
-    def collect(
-        self, config: CollectionConfig, progress_callback=None
-    ) -> CollectionResult:
+    def collect(self, config: CollectionConfig, progress_callback=None) -> CollectionResult:
         """Extract and store text content from a list of web page URLs.
 
         Expected ``config.metadata`` keys:
@@ -97,9 +95,7 @@ class WebPageCollector(BaseCollector):
 
                 try:
                     if config.check_database and not self.should_download(url):
-                        logger.info(
-                            "Skipping already-collected web page: %s", url
-                        )
+                        logger.info("Skipping already-collected web page: %s", url)
                         items_skipped += 1
                         continue
 
@@ -212,17 +208,13 @@ class WebPageCollector(BaseCollector):
             )
             return text or None
         except ImportError:
-            logger.warning(
-                "trafilatura not installed; falling back to basic text extraction"
-            )
+            logger.warning("trafilatura not installed; falling back to basic text extraction")
             # Simple fallback: strip tags
             from ..utils import html_to_text
 
             return html_to_text(html) or None
 
-    def _save_content(
-        self, url: str, content: str, source_site: str
-    ) -> Path:
+    def _save_content(self, url: str, content: str, source_site: str) -> Path:
         """Persist *content* to a ``.md`` file under ``download_dir``.
 
         The file is placed in a sub-directory named after the URL's hostname
@@ -251,9 +243,7 @@ class WebPageCollector(BaseCollector):
         target_path.write_text(content, encoding="utf-8")
         return target_path
 
-    def _collect_page(
-        self, url: str, config: CollectionConfig
-    ) -> dict | None:
+    def _collect_page(self, url: str, config: CollectionConfig) -> dict | None:
         """Fetch, extract, and store content for a single web page URL.
 
         Args:
@@ -353,6 +343,7 @@ class WebPageCollector(BaseCollector):
 # ---------------------------------------------------------------------------
 # Module-level filename helpers (mirrors patterns in FileCollector / Crawler)
 # ---------------------------------------------------------------------------
+
 
 def _sanitize_filename(name: str) -> str:
     """Replace characters that are unsafe in filenames."""

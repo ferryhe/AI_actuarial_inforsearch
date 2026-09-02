@@ -13,7 +13,6 @@ from ai_actuarial.api.middleware import rate_limit
 from ai_actuarial.shared_auth import hash_password
 from ai_actuarial.storage import Storage
 
-
 PDF_BYTES = b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n"
 
 
@@ -109,7 +108,9 @@ def _seed_storage(db_path: Path, files_dir: Path) -> SeedData:
     return {"user_id": user_id, "admin_token": admin_token, "guest_token": guest_token}
 
 
-def _build_test_client(tmp_path: Path, monkeypatch, *, require_auth: bool = True) -> tuple[TestClient, object, SeedData]:
+def _build_test_client(
+    tmp_path: Path, monkeypatch, *, require_auth: bool = True
+) -> tuple[TestClient, object, SeedData]:
     db_path, config_path, categories_path, files_dir = _write_config_files(tmp_path)
     seed = _seed_storage(db_path, files_dir)
     monkeypatch.setenv("CONFIG_PATH", str(config_path))
@@ -151,7 +152,9 @@ def test_fastapi_auth_session_cookie_secure_can_be_enabled(tmp_path: Path, monke
     assert "Secure" in register.headers.get("set-cookie", "")
 
 
-def test_fastapi_auth_session_cookie_secure_defaults_to_secure_for_production_auth(tmp_path: Path, monkeypatch) -> None:
+def test_fastapi_auth_session_cookie_secure_defaults_to_secure_for_production_auth(
+    tmp_path: Path, monkeypatch
+) -> None:
     monkeypatch.delenv("FASTAPI_SESSION_COOKIE_SECURE", raising=False)
     monkeypatch.setenv("FASTAPI_ENV", "production")
     _client, app, _seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
@@ -159,7 +162,9 @@ def test_fastapi_auth_session_cookie_secure_defaults_to_secure_for_production_au
     assert app.state.fastapi_session_cookie_secure is True
 
 
-def test_fastapi_auth_session_cookie_secure_uses_yaml_fastapi_env(tmp_path: Path, monkeypatch) -> None:
+def test_fastapi_auth_session_cookie_secure_uses_yaml_fastapi_env(
+    tmp_path: Path, monkeypatch
+) -> None:
     db_path, config_path, categories_path, files_dir = _write_config_files(tmp_path)
     _seed_storage(db_path, files_dir)
     config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
@@ -229,7 +234,9 @@ def test_bootstrap_admin_token_supports_x_auth_token_header(tmp_path: Path, monk
 
     scheduled_tasks = client.get("/api/scheduled-tasks", headers={"X-Auth-Token": bootstrap_token})
     assert scheduled_tasks.status_code == 200, scheduled_tasks.text
-    assert any(task["name"] == "Bootstrap Smoke Schedule" for task in scheduled_tasks.json()["tasks"])
+    assert any(
+        task["name"] == "Bootstrap Smoke Schedule" for task in scheduled_tasks.json()["tasks"]
+    )
 
     delete = client.post(
         "/api/scheduled-tasks/delete",
@@ -239,7 +246,9 @@ def test_bootstrap_admin_token_supports_x_auth_token_header(tmp_path: Path, monk
     assert delete.status_code == 200, delete.text
 
 
-def test_csrf_protection_rejects_cookie_mutations_without_matching_token(tmp_path: Path, monkeypatch) -> None:
+def test_csrf_protection_rejects_cookie_mutations_without_matching_token(
+    tmp_path: Path, monkeypatch
+) -> None:
     client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
     app.state.enable_csrf = True
     session_cookie = _make_session_cookie(app, {"email_user_id": seed["user_id"]})
@@ -282,7 +291,9 @@ def test_csrf_protection_exempts_api_token_mutations(tmp_path: Path, monkeypatch
     assert add.status_code == 200, add.text
 
 
-def test_auth_me_allows_anonymous_database_and_chat_browse_when_auth_required(tmp_path: Path, monkeypatch) -> None:
+def test_auth_me_allows_anonymous_database_and_chat_browse_when_auth_required(
+    tmp_path: Path, monkeypatch
+) -> None:
     client, _app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
 
     auth_me = client.get("/api/auth/me")
@@ -359,7 +370,11 @@ def test_fastapi_auth_register_login_logout_and_profile_flow(tmp_path: Path, mon
 
     profile_update = client.patch(
         "/api/user/profile",
-        json={"display_name": "Renamed User", "current_password": "password123", "new_password": "password456"},
+        json={
+            "display_name": "Renamed User",
+            "current_password": "password123",
+            "new_password": "password456",
+        },
     )
     assert profile_update.status_code == 200, profile_update.text
 
@@ -368,7 +383,9 @@ def test_fastapi_auth_register_login_logout_and_profile_flow(tmp_path: Path, mon
     assert refreshed_user.json()["user"]["display_name"] == "Renamed User"
 
 
-def test_fastapi_auth_login_is_rate_limited_before_session_mutation(tmp_path: Path, monkeypatch) -> None:
+def test_fastapi_auth_login_is_rate_limited_before_session_mutation(
+    tmp_path: Path, monkeypatch
+) -> None:
     _reset_rate_limit_store_buckets()
     monkeypatch.setattr(
         rate_limit,
@@ -396,7 +413,9 @@ def test_fastapi_auth_login_is_rate_limited_before_session_mutation(tmp_path: Pa
     assert limited.headers["Access-Control-Allow-Credentials"] == "true"
 
 
-def test_fastapi_auth_register_is_rate_limited_separately_from_login(tmp_path: Path, monkeypatch) -> None:
+def test_fastapi_auth_register_is_rate_limited_separately_from_login(
+    tmp_path: Path, monkeypatch
+) -> None:
     _reset_rate_limit_store_buckets()
     monkeypatch.setattr(
         rate_limit,
@@ -406,16 +425,26 @@ def test_fastapi_auth_register_is_rate_limited_separately_from_login(tmp_path: P
     client, app, _seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
     app.state.enable_rate_limiting = True
 
-    login = client.post("/api/auth/login", json={"email": "member@example.com", "password": "wrong-password"})
+    login = client.post(
+        "/api/auth/login", json={"email": "member@example.com", "password": "wrong-password"}
+    )
     assert login.status_code == 401, login.text
 
     first_register = client.post(
         "/api/auth/register",
-        json={"email": "limit-one@example.com", "password": "password123", "display_name": "Limit One"},
+        json={
+            "email": "limit-one@example.com",
+            "password": "password123",
+            "display_name": "Limit One",
+        },
     )
     second_register = client.post(
         "/api/auth/register",
-        json={"email": "limit-two@example.com", "password": "password123", "display_name": "Limit Two"},
+        json={
+            "email": "limit-two@example.com",
+            "password": "password123",
+            "display_name": "Limit Two",
+        },
     )
 
     assert first_register.status_code == 201, first_register.text
@@ -457,16 +486,24 @@ def test_fastapi_auth_rate_limit_uses_trusted_forwarded_ip(tmp_path: Path, monke
     app.state.enable_rate_limiting = True
     payload = {"email": "member@example.com", "password": "wrong-password"}
 
-    first_ip = client.post("/api/auth/login", json=payload, headers={"X-Forwarded-For": "203.0.113.10"})
-    second_ip = client.post("/api/auth/login", json=payload, headers={"X-Forwarded-For": "203.0.113.11"})
-    limited_first_ip = client.post("/api/auth/login", json=payload, headers={"X-Forwarded-For": "203.0.113.10"})
+    first_ip = client.post(
+        "/api/auth/login", json=payload, headers={"X-Forwarded-For": "203.0.113.10"}
+    )
+    second_ip = client.post(
+        "/api/auth/login", json=payload, headers={"X-Forwarded-For": "203.0.113.11"}
+    )
+    limited_first_ip = client.post(
+        "/api/auth/login", json=payload, headers={"X-Forwarded-For": "203.0.113.10"}
+    )
 
     assert first_ip.status_code == 401, first_ip.text
     assert second_ip.status_code == 401, second_ip.text
     assert limited_first_ip.status_code == 429, limited_first_ip.text
 
 
-def test_fastapi_non_auth_rate_limit_keeps_human_readable_error(tmp_path: Path, monkeypatch) -> None:
+def test_fastapi_non_auth_rate_limit_keeps_human_readable_error(
+    tmp_path: Path, monkeypatch
+) -> None:
     _reset_rate_limit_store_buckets()
     client, app, _seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
     app.state.enable_rate_limiting = True
@@ -483,8 +520,9 @@ def test_fastapi_non_auth_rate_limit_keeps_human_readable_error(tmp_path: Path, 
     assert "error" not in body
 
 
-
-def test_fastapi_auth_session_persists_with_fastapi_native_session(tmp_path: Path, monkeypatch) -> None:
+def test_fastapi_auth_session_persists_with_fastapi_native_session(
+    tmp_path: Path, monkeypatch
+) -> None:
     client, app, _seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
 
     register = client.post(
@@ -507,8 +545,9 @@ def test_fastapi_auth_session_persists_with_fastapi_native_session(tmp_path: Pat
     assert client.get("/api/auth/me").json()["data"]["authenticated"] is False
 
 
-
-def test_fastapi_auth_logout_clears_cookie_with_configured_domain(tmp_path: Path, monkeypatch) -> None:
+def test_fastapi_auth_logout_clears_cookie_with_configured_domain(
+    tmp_path: Path, monkeypatch
+) -> None:
     client, app, _seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
     app.state.fastapi_session_cookie_domain = "example.com"
 
@@ -529,8 +568,9 @@ def test_fastapi_auth_logout_clears_cookie_with_configured_domain(tmp_path: Path
     assert 'session=""' in set_cookie
 
 
-
-def test_fastapi_auth_no_flask_runtime_register_login_logout_roundtrip(tmp_path: Path, monkeypatch) -> None:
+def test_fastapi_auth_no_flask_runtime_register_login_logout_roundtrip(
+    tmp_path: Path, monkeypatch
+) -> None:
     client, app, _seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
 
     register = client.post(
@@ -559,8 +599,9 @@ def test_fastapi_auth_no_flask_runtime_register_login_logout_roundtrip(tmp_path:
     assert auth_me.json()["data"]["user"]["email"] == "runtime@example.com"
 
 
-
-def test_fastapi_auth_register_and_login_fail_closed_without_session_secret(tmp_path: Path, monkeypatch) -> None:
+def test_fastapi_auth_register_and_login_fail_closed_without_session_secret(
+    tmp_path: Path, monkeypatch
+) -> None:
     client, app, _seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
     app.state.fastapi_session_secret = ""
 
@@ -583,7 +624,6 @@ def test_fastapi_auth_register_and_login_fail_closed_without_session_secret(tmp_
     assert login.json()["error"] == "FastAPI session secret is not configured"
 
 
-
 def test_fastapi_admin_user_and_token_management_surfaces_work(tmp_path: Path, monkeypatch) -> None:
     client, _app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
     headers = {"Authorization": f"Bearer {seed['admin_token']}"}
@@ -593,7 +633,9 @@ def test_fastapi_admin_user_and_token_management_surfaces_work(tmp_path: Path, m
     user_rows = users.json()["users"]
     assert all("password_hash" not in row for row in user_rows)
 
-    role = client.post(f"/api/admin/users/{seed['user_id']}/role", json={"role": "premium"}, headers=headers)
+    role = client.post(
+        f"/api/admin/users/{seed['user_id']}/role", json={"role": "premium"}, headers=headers
+    )
     assert role.status_code == 200, role.text
     assert role.json()["role"] == "premium"
 

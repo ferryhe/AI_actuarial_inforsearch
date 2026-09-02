@@ -11,7 +11,6 @@ from ..services.ready_data_publication import (
 )
 from .rag_admin import require_rag_task_run
 
-
 router = APIRouter()
 
 

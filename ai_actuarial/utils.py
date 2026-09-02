@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import re
-import time
 from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
@@ -111,12 +109,6 @@ def extract_metadata(html: str, url: str | None = None) -> tuple[str | None, str
     return extract_title(html), extract_published_time(html)
 
 
-def sha256_bytes(data: bytes) -> str:
-    h = hashlib.sha256()
-    h.update(data)
-    return h.hexdigest()
-
-
 def same_domain(url_a: str, url_b: str) -> bool:
     return urlparse(url_a).netloc.lower() == urlparse(url_b).netloc.lower()
 
@@ -132,21 +124,15 @@ def normalize_url(base: str, link: str) -> str | None:
     return urljoin(base, link)
 
 
-def sleep_with_jitter(seconds: float) -> None:
-    if seconds <= 0:
-        return
-    time.sleep(seconds)
-
-
 def load_category_config(config_path: str = "config/categories.yaml") -> dict:
     """Load category configuration from YAML file.
-    
+
     Args:
         config_path: Path to categories.yaml file
-        
+
     Returns:
         Dictionary with categories, ai_filter_keywords, and ai_keywords
-        
+
     Raises:
         FileNotFoundError: If config file doesn't exist
         yaml.YAMLError: If YAML parsing fails
@@ -155,11 +141,11 @@ def load_category_config(config_path: str = "config/categories.yaml") -> dict:
         import yaml
     except ImportError:
         raise ImportError("PyYAML is required to load category configuration")
-    
+
     path = Path(config_path)
     if not path.exists():
         raise FileNotFoundError(f"Category config not found: {config_path}")
-    
+
     try:
         with open(path, "r", encoding="utf-8") as f:
             return yaml.safe_load(f)

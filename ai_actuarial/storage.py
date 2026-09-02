@@ -18,10 +18,7 @@ from ai_actuarial.sqlite_schema import (
     storage_startup_status,
 )
 
-
-AGENTIC_READY_PUBLICATION_PROFILES = frozenset(
-    {"general", "regulation", "formula"}
-)
+AGENTIC_READY_PUBLICATION_PROFILES = frozenset({"general", "regulation", "formula"})
 
 MAX_EMBEDDING_VECTOR_JSON_BYTES = 2_000_000
 
@@ -62,9 +59,7 @@ def _split_visible_categories(raw_category: str | None) -> list[str]:
 
 
 class Storage:
-    AGENTIC_READY_RESERVED_ATTEMPT_DISPOSITIONS = frozenset(
-        {"superseded_generation"}
-    )
+    AGENTIC_READY_RESERVED_ATTEMPT_DISPOSITIONS = frozenset({"superseded_generation"})
     AGENTIC_READY_FUTURE_EXECUTION_POLICY = {
         "quiet_debounce_seconds": 60,
         "polling_seconds": 15,
@@ -225,8 +220,7 @@ class Storage:
             return True, int(details.st_size), int(details.st_mtime_ns), digest.hexdigest()
 
         return tuple(
-            file_state(candidate)
-            for candidate in (path, Path(f"{path}-wal"), Path(f"{path}-shm"))
+            file_state(candidate) for candidate in (path, Path(f"{path}-wal"), Path(f"{path}-shm"))
         )
 
     def assert_read_only_snapshot_unchanged(self) -> None:
@@ -240,8 +234,7 @@ class Storage:
             )
 
     def _init_schema(self) -> None:
-        self._conn.execute(
-            """
+        self._conn.execute("""
             CREATE TABLE IF NOT EXISTS files (
                 id INTEGER PRIMARY KEY,
                 url TEXT UNIQUE,
@@ -261,16 +254,14 @@ class Storage:
                 crawl_time TEXT,
                 content_kind TEXT DEFAULT 'file'
             )
-            """
-        )
+            """)
         # Migrate: Check if deleted_at exists, if not add it
         try:
             self._conn.execute("SELECT deleted_at FROM files LIMIT 1")
         except sqlite3.OperationalError:
-             self._conn.execute("ALTER TABLE files ADD COLUMN deleted_at TEXT")
+            self._conn.execute("ALTER TABLE files ADD COLUMN deleted_at TEXT")
 
-        self._conn.execute(
-            """
+        self._conn.execute("""
             CREATE TABLE IF NOT EXISTS manifest_raw (
                 manifest_id TEXT PRIMARY KEY,
                 schema_version TEXT,
@@ -279,20 +270,16 @@ class Storage:
                 manifest_json TEXT,
                 ingested_at TEXT
             )
-            """
-        )
+            """)
 
-        self._conn.execute(
-            """
+        self._conn.execute("""
             CREATE TABLE IF NOT EXISTS pages (
                 id INTEGER PRIMARY KEY,
                 url TEXT UNIQUE,
                 last_seen TEXT
             )
-            """
-        )
-        self._conn.execute(
-            """
+            """)
+        self._conn.execute("""
             CREATE TABLE IF NOT EXISTS blobs (
                 sha256 TEXT PRIMARY KEY,
                 canonical_path TEXT,
@@ -301,11 +288,9 @@ class Storage:
                 first_seen TEXT,
                 last_seen TEXT
             )
-            """
-        )
+            """)
         # catalog_items: incremental catalog state tracking
-        self._conn.execute(
-            """
+        self._conn.execute("""
             CREATE TABLE IF NOT EXISTS catalog_items (
                 file_url TEXT PRIMARY KEY,
                 sha256 TEXT NOT NULL,
@@ -318,29 +303,23 @@ class Storage:
                 category TEXT,
                 updated_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
-            """
-        )
-        self._conn.execute(
-            """
+            """)
+        self._conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_catalog_items_status ON catalog_items(status)
-            """
-        )
+            """)
 
         # taxonomy_state: single-row marker of the last applied categories.yaml hash
-        self._conn.execute(
-            """
+        self._conn.execute("""
             CREATE TABLE IF NOT EXISTS taxonomy_state (
                 id INTEGER PRIMARY KEY CHECK (id = 1),
                 applied_hash TEXT NOT NULL,
                 applied_categories TEXT,
                 applied_at TEXT
             )
-            """
-        )
+            """)
 
         # auth_tokens: token-based authentication for public deployments
-        self._conn.execute(
-            """
+        self._conn.execute("""
             CREATE TABLE IF NOT EXISTS auth_tokens (
                 id INTEGER PRIMARY KEY,
                 subject TEXT NOT NULL,
@@ -352,17 +331,13 @@ class Storage:
                 revoked_at TEXT,
                 expires_at TEXT
             )
-            """
-        )
-        self._conn.execute(
-            """
+            """)
+        self._conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_auth_tokens_active ON auth_tokens(is_active)
-            """
-        )
+            """)
 
         # audit_events: security/audit log for sensitive operations (optional)
-        self._conn.execute(
-            """
+        self._conn.execute("""
             CREATE TABLE IF NOT EXISTS audit_events (
                 id INTEGER PRIMARY KEY,
                 token_id INTEGER,
@@ -372,17 +347,13 @@ class Storage:
                 ip TEXT,
                 created_at TEXT
             )
-            """
-        )
-        self._conn.execute(
-            """
+            """)
+        self._conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_audit_events_created_at ON audit_events(created_at)
-            """
-        )
+            """)
 
         # api_tokens: encrypted API keys for LLM and other external service providers
-        self._conn.execute(
-            """
+        self._conn.execute("""
             CREATE TABLE IF NOT EXISTS api_tokens (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 provider TEXT NOT NULL,
@@ -397,8 +368,7 @@ class Storage:
                 updated_at TEXT,
                 notes TEXT
             )
-            """
-        )
+            """)
         self._ensure_columns(
             "api_tokens",
             {
@@ -407,24 +377,22 @@ class Storage:
                 "is_default": "INTEGER DEFAULT 1",
             },
         )
-        self._conn.execute("UPDATE api_tokens SET instance_id = 'default' WHERE instance_id IS NULL OR instance_id = ''")
+        self._conn.execute(
+            "UPDATE api_tokens SET instance_id = 'default' WHERE instance_id IS NULL OR instance_id = ''"
+        )
         self._conn.execute(
             "UPDATE api_tokens SET label = provider || ' (' || category || ')' WHERE label IS NULL OR label = ''"
         )
         self._conn.execute("UPDATE api_tokens SET is_default = 1 WHERE is_default IS NULL")
         self._conn.execute("DROP INDEX IF EXISTS idx_api_tokens_provider_category")
-        self._conn.execute(
-            """
+        self._conn.execute("""
             CREATE UNIQUE INDEX IF NOT EXISTS idx_api_tokens_provider_category_instance
             ON api_tokens(provider, category, instance_id)
-            """
-        )
-        self._conn.execute(
-            """
+            """)
+        self._conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_api_tokens_provider_category_default
             ON api_tokens(provider, category, is_default)
-            """
-        )
+            """)
         self._schema_commit()
         self._ensure_columns(
             "files",
@@ -494,8 +462,7 @@ class Storage:
 
     def _init_user_management_schema(self) -> None:
         """Initialize schema for email-based user management with quotas."""
-        self._conn.execute(
-            """
+        self._conn.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 email TEXT NOT NULL UNIQUE,
@@ -509,14 +476,10 @@ class Storage:
                 last_login_at TEXT,
                 email_verified_at TEXT
             )
-            """
-        )
+            """)
         # email has UNIQUE constraint above which already creates an index.
-        self._conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_users_role ON users(role)"
-        )
-        self._conn.execute(
-            """
+        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_users_role ON users(role)")
+        self._conn.execute("""
             CREATE TABLE IF NOT EXISTS user_quotas (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER,
@@ -526,24 +489,19 @@ class Storage:
                 created_at TEXT,
                 updated_at TEXT
             )
-            """
-        )
+            """)
         # Partial unique indexes allow INSERT OR IGNORE / ON CONFLICT semantics
         # while tolerating NULLs in the non-keyed column.
-        self._conn.execute(
-            """
+        self._conn.execute("""
             CREATE UNIQUE INDEX IF NOT EXISTS idx_uq_user_quotas_user
             ON user_quotas(user_id, quota_date)
             WHERE user_id IS NOT NULL
-            """
-        )
-        self._conn.execute(
-            """
+            """)
+        self._conn.execute("""
             CREATE UNIQUE INDEX IF NOT EXISTS idx_uq_user_quotas_ip
             ON user_quotas(ip_address, quota_date)
             WHERE ip_address IS NOT NULL
-            """
-        )
+            """)
         # Plain composite indexes (kept for query planner on NULL-keyed lookups)
         self._conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_user_quotas_user_date ON user_quotas(user_id, quota_date)"
@@ -551,8 +509,7 @@ class Storage:
         self._conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_user_quotas_ip_date ON user_quotas(ip_address, quota_date)"
         )
-        self._conn.execute(
-            """
+        self._conn.execute("""
             CREATE TABLE IF NOT EXISTS user_activity_logs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER,
@@ -562,8 +519,7 @@ class Storage:
                 detail TEXT,
                 created_at TEXT
             )
-            """
-        )
+            """)
         self._conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_user_activity_user ON user_activity_logs(user_id)"
         )
@@ -574,8 +530,7 @@ class Storage:
 
     def _init_global_chunk_schema(self) -> None:
         """Initialize schema for global chunk generation and KB composition."""
-        self._conn.execute(
-            """
+        self._conn.execute("""
             CREATE TABLE IF NOT EXISTS chunk_profiles (
                 profile_id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
@@ -589,10 +544,8 @@ class Storage:
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             )
-            """
-        )
-        self._conn.execute(
-            """
+            """)
+        self._conn.execute("""
             CREATE TABLE IF NOT EXISTS file_chunk_sets (
                 chunk_set_id TEXT PRIMARY KEY,
                 file_url TEXT NOT NULL,
@@ -607,10 +560,8 @@ class Storage:
                 FOREIGN KEY(file_url) REFERENCES files(url) ON DELETE CASCADE,
                 FOREIGN KEY(profile_id) REFERENCES chunk_profiles(profile_id) ON DELETE CASCADE
             )
-            """
-        )
-        self._conn.execute(
-            """
+            """)
+        self._conn.execute("""
             CREATE TABLE IF NOT EXISTS global_chunks (
                 chunk_id TEXT PRIMARY KEY,
                 chunk_set_id TEXT NOT NULL,
@@ -623,10 +574,8 @@ class Storage:
                 UNIQUE(chunk_set_id, chunk_index),
                 FOREIGN KEY(chunk_set_id) REFERENCES file_chunk_sets(chunk_set_id) ON DELETE CASCADE
             )
-            """
-        )
-        self._conn.execute(
-            """
+            """)
+        self._conn.execute("""
             CREATE TABLE IF NOT EXISTS chunk_embeddings (
                 chunk_id TEXT NOT NULL,
                 embedding_identity_key TEXT NOT NULL,
@@ -643,10 +592,8 @@ class Storage:
                 PRIMARY KEY (chunk_id, embedding_identity_key),
                 FOREIGN KEY(chunk_id) REFERENCES global_chunks(chunk_id) ON DELETE CASCADE
             )
-            """
-        )
-        self._conn.execute(
-            """
+            """)
+        self._conn.execute("""
             CREATE TABLE IF NOT EXISTS kb_chunk_bindings (
                 kb_id TEXT NOT NULL,
                 file_url TEXT NOT NULL,
@@ -659,10 +606,8 @@ class Storage:
                 FOREIGN KEY(file_url) REFERENCES files(url) ON DELETE CASCADE,
                 FOREIGN KEY(chunk_set_id) REFERENCES file_chunk_sets(chunk_set_id) ON DELETE CASCADE
             )
-            """
-        )
-        self._conn.execute(
-            """
+            """)
+        self._conn.execute("""
             CREATE TABLE IF NOT EXISTS kb_index_versions (
                 index_version_id TEXT PRIMARY KEY,
                 kb_id TEXT NOT NULL,
@@ -679,10 +624,8 @@ class Storage:
                 built_at TEXT,
                 created_at TEXT NOT NULL
             )
-            """
-        )
-        self._conn.execute(
-            """
+            """)
+        self._conn.execute("""
             CREATE TABLE IF NOT EXISTS kb_ready_index_state (
                 kb_id TEXT PRIMARY KEY,
                 index_version_id TEXT NOT NULL,
@@ -696,10 +639,8 @@ class Storage:
                 updated_at TEXT NOT NULL,
                 FOREIGN KEY(kb_id) REFERENCES rag_knowledge_bases(kb_id) ON DELETE CASCADE
             )
-            """
-        )
-        self._conn.execute(
-            """
+            """)
+        self._conn.execute("""
             CREATE TABLE IF NOT EXISTS kb_index_items (
                 index_version_id TEXT NOT NULL,
                 chunk_id TEXT NOT NULL,
@@ -709,10 +650,8 @@ class Storage:
                 FOREIGN KEY(index_version_id) REFERENCES kb_index_versions(index_version_id) ON DELETE CASCADE,
                 FOREIGN KEY(chunk_id) REFERENCES global_chunks(chunk_id) ON DELETE CASCADE
             )
-            """
-        )
-        self._conn.execute(
-            """
+            """)
+        self._conn.execute("""
             CREATE TABLE IF NOT EXISTS agentic_ready_manifests (
                 manifest_id TEXT PRIMARY KEY,
                 kb_id TEXT NOT NULL,
@@ -732,10 +671,8 @@ class Storage:
                 UNIQUE(kb_id, profile),
                 FOREIGN KEY(kb_id) REFERENCES rag_knowledge_bases(kb_id) ON DELETE CASCADE
             )
-            """
-        )
-        self._conn.execute(
-            """
+            """)
+        self._conn.execute("""
             CREATE TABLE IF NOT EXISTS agentic_ready_publications (
                 publication_id TEXT PRIMARY KEY,
                 kb_id TEXT NOT NULL,
@@ -762,10 +699,8 @@ class Storage:
                 updated_at TEXT NOT NULL,
                 FOREIGN KEY(kb_id) REFERENCES rag_knowledge_bases(kb_id) ON DELETE CASCADE
             )
-            """
-        )
-        self._conn.execute(
-            """
+            """)
+        self._conn.execute("""
             CREATE TABLE IF NOT EXISTS agentic_ready_slots (
                 kb_id TEXT NOT NULL,
                 profile TEXT NOT NULL,
@@ -780,10 +715,8 @@ class Storage:
                 FOREIGN KEY(active_publication_id) REFERENCES agentic_ready_publications(publication_id),
                 FOREIGN KEY(previous_publication_id) REFERENCES agentic_ready_publications(publication_id)
             )
-            """
-        )
-        self._conn.execute(
-            """
+            """)
+        self._conn.execute("""
             CREATE TABLE IF NOT EXISTS agentic_ready_source_state (
                 kb_id TEXT NOT NULL,
                 profile TEXT NOT NULL,
@@ -804,10 +737,8 @@ class Storage:
                 CHECK(evaluated_severity IN ('none', 'soft_stale', 'hard_stale')),
                 FOREIGN KEY(kb_id) REFERENCES rag_knowledge_bases(kb_id) ON DELETE CASCADE
             )
-            """
-        )
-        self._conn.execute(
-            """
+            """)
+        self._conn.execute("""
             CREATE TABLE IF NOT EXISTS agentic_ready_automation (
                 kb_id TEXT NOT NULL,
                 profile TEXT NOT NULL,
@@ -830,10 +761,8 @@ class Storage:
                 FOREIGN KEY(last_attempt_publication_id)
                     REFERENCES agentic_ready_publications(publication_id) ON DELETE SET NULL
             )
-            """
-        )
-        self._conn.execute(
-            """
+            """)
+        self._conn.execute("""
             CREATE TABLE IF NOT EXISTS agentic_ready_manual_operation_state (
                 kb_id TEXT NOT NULL,
                 profile TEXT NOT NULL,
@@ -845,10 +774,8 @@ class Storage:
                 CHECK(operation_state IN ('succeeded', 'failed')),
                 FOREIGN KEY(kb_id) REFERENCES rag_knowledge_bases(kb_id) ON DELETE CASCADE
             )
-            """
-        )
-        self._conn.execute(
-            """
+            """)
+        self._conn.execute("""
             CREATE TABLE IF NOT EXISTS agentic_ready_automation_lock (
                 lock_name TEXT PRIMARY KEY,
                 claim_token TEXT,
@@ -856,10 +783,8 @@ class Storage:
                 lease_expires_at TEXT,
                 updated_at TEXT NOT NULL
             )
-            """
-        )
-        self._conn.execute(
-            """
+            """)
+        self._conn.execute("""
             CREATE TABLE IF NOT EXISTS agentic_ready_publication_gc (
                 publication_id TEXT PRIMARY KEY,
                 retention_class TEXT NOT NULL,
@@ -877,10 +802,8 @@ class Storage:
                 FOREIGN KEY(publication_id)
                     REFERENCES agentic_ready_publications(publication_id) ON DELETE CASCADE
             )
-            """
-        )
-        self._conn.execute(
-            """
+            """)
+        self._conn.execute("""
             CREATE TABLE IF NOT EXISTS weekly_update_summaries (
                 id TEXT PRIMARY KEY,
                 period_start TEXT NOT NULL,
@@ -892,10 +815,8 @@ class Storage:
                 metadata_json TEXT NOT NULL DEFAULT '{}',
                 UNIQUE(period_start, period_end)
             )
-            """
-        )
-        self._conn.execute(
-            """
+            """)
+        self._conn.execute("""
             CREATE TABLE IF NOT EXISTS weekly_snapshots (
                 id TEXT PRIMARY KEY,
                 period_start TEXT NOT NULL,
@@ -907,10 +828,8 @@ class Storage:
                 metadata_json TEXT NOT NULL DEFAULT '{}',
                 CHECK(status IN ('published', 'superseded', 'failed'))
             )
-            """
-        )
-        self._conn.execute(
-            """
+            """)
+        self._conn.execute("""
             CREATE TABLE IF NOT EXISTS weekly_snapshot_members (
                 snapshot_id TEXT NOT NULL,
                 file_url TEXT NOT NULL,
@@ -920,10 +839,8 @@ class Storage:
                 PRIMARY KEY(snapshot_id, file_url),
                 FOREIGN KEY(snapshot_id) REFERENCES weekly_snapshots(id) ON DELETE CASCADE
             )
-            """
-        )
-        self._conn.execute(
-            """
+            """)
+        self._conn.execute("""
             CREATE TABLE IF NOT EXISTS weekly_explanations (
                 snapshot_id TEXT PRIMARY KEY,
                 input_fingerprint TEXT NOT NULL,
@@ -942,10 +859,8 @@ class Storage:
                 CHECK(status IN ('complete', 'failed')),
                 FOREIGN KEY(snapshot_id) REFERENCES weekly_snapshots(id) ON DELETE CASCADE
             )
-            """
-        )
-        self._conn.execute(
-            """
+            """)
+        self._conn.execute("""
             CREATE TABLE IF NOT EXISTS pipeline_run (
                 run_id TEXT PRIMARY KEY,
                 correlation_id TEXT NOT NULL DEFAULT '',
@@ -960,10 +875,8 @@ class Storage:
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             )
-            """
-        )
-        self._conn.execute(
-            """
+            """)
+        self._conn.execute("""
             CREATE TABLE IF NOT EXISTS pipeline_stage (
                 run_id TEXT NOT NULL,
                 stage_name TEXT NOT NULL,
@@ -980,10 +893,8 @@ class Storage:
                 PRIMARY KEY(run_id, stage_name),
                 FOREIGN KEY(run_id) REFERENCES pipeline_run(run_id)
             )
-            """
-        )
-        self._conn.execute(
-            """
+            """)
+        self._conn.execute("""
             CREATE TABLE IF NOT EXISTS child_run (
                 child_run_id TEXT PRIMARY KEY,
                 parent_run_id TEXT NOT NULL,
@@ -995,68 +906,47 @@ class Storage:
                 updated_at TEXT NOT NULL,
                 FOREIGN KEY(parent_run_id) REFERENCES pipeline_run(run_id)
             )
-            """
-        )
-        self._conn.execute(
-            """
+            """)
+        self._conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_pipeline_run_status
             ON pipeline_run(status)
-            """
-        )
-        self._conn.execute(
-            """
+            """)
+        self._conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_child_run_parent_run_id
             ON child_run(parent_run_id)
-            """
-        )
-        self._conn.execute(
-            """
+            """)
+        self._conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_file_chunk_sets_file_url
             ON file_chunk_sets(file_url)
-            """
-        )
-        self._conn.execute(
-            """
+            """)
+        self._conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_file_chunk_sets_profile_id
             ON file_chunk_sets(profile_id)
-            """
-        )
-        self._conn.execute(
-            """
+            """)
+        self._conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_global_chunks_chunk_set_id
             ON global_chunks(chunk_set_id)
-            """
-        )
-        self._conn.execute(
-            """
+            """)
+        self._conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_chunk_embeddings_identity
             ON chunk_embeddings(embedding_identity_key)
-            """
-        )
-        self._conn.execute(
-            """
+            """)
+        self._conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_kb_chunk_bindings_kb_id
             ON kb_chunk_bindings(kb_id)
-            """
-        )
-        self._conn.execute(
-            """
+            """)
+        self._conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_kb_chunk_bindings_file_url
             ON kb_chunk_bindings(file_url)
-            """
-        )
-        self._conn.execute(
-            """
+            """)
+        self._conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_kb_index_versions_kb_id
             ON kb_index_versions(kb_id)
-            """
-        )
-        self._conn.execute(
-            """
+            """)
+        self._conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_agentic_ready_manifests_kb_profile
             ON agentic_ready_manifests(kb_id, profile)
-            """
-        )
+            """)
         self._migrate_agentic_ready_publication_attempt_schema()
         self._ensure_columns(
             "agentic_ready_publications",
@@ -1072,66 +962,48 @@ class Storage:
                 "publication_revision": "INTEGER NOT NULL DEFAULT 0",
             },
         )
-        self._conn.execute(
-            """
+        self._conn.execute("""
             UPDATE agentic_ready_slots
             SET automatic_build_enabled = 1
             WHERE automatic_publish_enabled = 1
               AND automatic_build_enabled = 0
-            """
-        )
-        self._conn.execute(
-            """
+            """)
+        self._conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_agentic_ready_publications_kb_profile
             ON agentic_ready_publications(kb_id, profile, created_at DESC)
-            """
-        )
-        self._conn.execute(
-            """
+            """)
+        self._conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_agentic_ready_publications_identity
             ON agentic_ready_publications(
                 kb_id, source_version_kind, source_version_id, profile,
                 artifact_digest, created_at DESC
             )
-            """
-        )
-        self._conn.execute(
-            """
+            """)
+        self._conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_agentic_ready_publication_gc_retention
             ON agentic_ready_publication_gc(retention_class, state, marked_at, publication_id)
-            """
-        )
-        self._conn.execute(
-            """
+            """)
+        self._conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_agentic_ready_automation_candidate
             ON agentic_ready_automation(automation_state, lease_expires_at, updated_at)
-            """
-        )
-        self._conn.execute(
-            """
+            """)
+        self._conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_weekly_update_summaries_period
             ON weekly_update_summaries(period_start, period_end)
-            """
-        )
-        self._conn.execute(
-            """
+            """)
+        self._conn.execute("""
             CREATE UNIQUE INDEX IF NOT EXISTS idx_weekly_snapshots_published_period
             ON weekly_snapshots(period_start, period_end)
             WHERE status = 'published'
-            """
-        )
-        self._conn.execute(
-            """
+            """)
+        self._conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_weekly_snapshots_list
             ON weekly_snapshots(status, period_end DESC, generated_at DESC)
-            """
-        )
-        self._conn.execute(
-            """
+            """)
+        self._conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_weekly_snapshot_members_page
             ON weekly_snapshot_members(snapshot_id, ordinal)
-            """
-        )
+            """)
         self._ensure_columns(
             "kb_index_versions",
             {
@@ -1151,12 +1023,10 @@ class Storage:
                 "artifact_digest": "TEXT NOT NULL DEFAULT ''",
             },
         )
-        rows = self._conn.execute(
-            """
+        rows = self._conn.execute("""
             SELECT index_version_id, embedding_provider, embedding_model, embedding_dimension
             FROM kb_index_versions
-            """
-        ).fetchall()
+            """).fetchall()
         for row in rows:
             index_version_id, provider, model, dimension = row
             resolved_provider = (
@@ -1165,11 +1035,12 @@ class Storage:
                 or "openai"
             )
             resolved_dimension = (
-                int(dimension)
-                if dimension not in (None, "")
-                else infer_embedding_dimension(model)
+                int(dimension) if dimension not in (None, "") else infer_embedding_dimension(model)
             )
-            if resolved_provider != str(provider or "").strip().lower() or resolved_dimension != dimension:
+            if (
+                resolved_provider != str(provider or "").strip().lower()
+                or resolved_dimension != dimension
+            ):
                 self._conn.execute(
                     """
                     UPDATE kb_index_versions
@@ -1179,25 +1050,20 @@ class Storage:
                     (resolved_provider, resolved_dimension, index_version_id),
                 )
         if self._table_exists("rag_knowledge_bases"):
-            self._conn.execute(
-                """
+            self._conn.execute("""
                 DELETE FROM kb_ready_index_state
                 WHERE NOT EXISTS (
                     SELECT 1
                     FROM rag_knowledge_bases AS kb
                     WHERE kb.kb_id = kb_ready_index_state.kb_id
                 )
-                """
-            )
+                """)
             kb_has_created_at = "created_at" in {
                 str(row[1])
-                for row in self._conn.execute(
-                    "PRAGMA table_info(rag_knowledge_bases)"
-                ).fetchall()
+                for row in self._conn.execute("PRAGMA table_info(rag_knowledge_bases)").fetchall()
             }
             if kb_has_created_at:
-                self._conn.execute(
-                    """
+                self._conn.execute("""
                     DELETE FROM kb_ready_index_state
                     WHERE EXISTS (
                     SELECT 1
@@ -1206,15 +1072,13 @@ class Storage:
                       AND julianday(kb_ready_index_state.updated_at)
                           < julianday(kb.created_at)
                     )
-                    """
-                )
+                    """)
             lifecycle_predicate = (
                 "AND julianday(current.created_at) >= julianday(kb.created_at)"
                 if kb_has_created_at
                 else ""
             )
-            self._conn.execute(
-                f"""
+            self._conn.execute(f"""
                 INSERT OR IGNORE INTO kb_ready_index_state (
                     kb_id, index_version_id, embedding_provider,
                     embedding_model, embedding_dimension, updated_at
@@ -1243,8 +1107,7 @@ class Storage:
                             )
                         )
                   )
-                """
-            )
+                """)
         self._ensure_columns(
             "kb_chunk_bindings",
             {
@@ -1275,9 +1138,7 @@ class Storage:
             "artifact_digest",
         }
         has_identity_unique = False
-        for row in self._conn.execute(
-            "PRAGMA index_list(agentic_ready_publications)"
-        ).fetchall():
+        for row in self._conn.execute("PRAGMA index_list(agentic_ready_publications)").fetchall():
             if not bool(row[2]):
                 continue
             columns = {
@@ -1294,15 +1155,12 @@ class Storage:
 
         replacement = "agentic_ready_publications_attempts_new"
         self._schema_commit()
-        foreign_keys_enabled = bool(
-            self._conn.execute("PRAGMA foreign_keys").fetchone()[0]
-        )
+        foreign_keys_enabled = bool(self._conn.execute("PRAGMA foreign_keys").fetchone()[0])
         self._conn.execute("PRAGMA foreign_keys=OFF")
         try:
             self._conn.execute("BEGIN IMMEDIATE")
             self._conn.execute(f"DROP TABLE IF EXISTS {replacement}")
-            self._conn.execute(
-                f"""
+            self._conn.execute(f"""
                 CREATE TABLE {replacement} (
                     publication_id TEXT PRIMARY KEY,
                     kb_id TEXT NOT NULL,
@@ -1327,8 +1185,7 @@ class Storage:
                     updated_at TEXT NOT NULL,
                     FOREIGN KEY(kb_id) REFERENCES rag_knowledge_bases(kb_id) ON DELETE CASCADE
                 )
-                """
-            )
+                """)
             columns = (
                 "publication_id, kb_id, index_version_id, source_version_kind, "
                 "source_version_id, profile, profile_version, status, output_dir, "
@@ -1341,18 +1198,14 @@ class Storage:
                 f"SELECT {columns} FROM agentic_ready_publications"
             )
             self._conn.execute("DROP TABLE agentic_ready_publications")
-            self._conn.execute(
-                f"ALTER TABLE {replacement} RENAME TO agentic_ready_publications"
-            )
+            self._conn.execute(f"ALTER TABLE {replacement} RENAME TO agentic_ready_publications")
             violations = []
             for table in (
                 "agentic_ready_publications",
                 "agentic_ready_slots",
             ):
                 violations.extend(
-                    self._conn.execute(
-                        f"PRAGMA foreign_key_check({table})"
-                    ).fetchall()
+                    self._conn.execute(f"PRAGMA foreign_key_check({table})").fetchall()
                 )
             if violations:
                 raise RuntimeError(
@@ -1363,12 +1216,8 @@ class Storage:
             self._conn.rollback()
             raise
         finally:
-            self._conn.execute(
-                f"PRAGMA foreign_keys={'ON' if foreign_keys_enabled else 'OFF'}"
-            )
-            restored = bool(
-                self._conn.execute("PRAGMA foreign_keys").fetchone()[0]
-            )
+            self._conn.execute(f"PRAGMA foreign_keys={'ON' if foreign_keys_enabled else 'OFF'}")
+            restored = bool(self._conn.execute("PRAGMA foreign_keys").fetchone()[0])
             if restored != foreign_keys_enabled:
                 raise RuntimeError(
                     "ready-data publication migration could not restore foreign-key mode"
@@ -1381,9 +1230,7 @@ class Storage:
         existing = {row[1] for row in cur.fetchall()}
         for name, col_type in columns.items():
             if name not in existing:
-                self._conn.execute(
-                    f"ALTER TABLE {table} ADD COLUMN {name} {col_type}"
-                )
+                self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {col_type}")
         self._schema_commit()
 
     def _ensure_rag_kb_embedding_columns(self) -> None:
@@ -1393,13 +1240,19 @@ class Storage:
             return
         changed = False
         if "embedding_provider" not in existing:
-            self._conn.execute("ALTER TABLE rag_knowledge_bases ADD COLUMN embedding_provider TEXT NOT NULL DEFAULT 'openai'")
+            self._conn.execute(
+                "ALTER TABLE rag_knowledge_bases ADD COLUMN embedding_provider TEXT NOT NULL DEFAULT 'openai'"
+            )
             changed = True
         if "embedding_dimension" not in existing:
-            self._conn.execute("ALTER TABLE rag_knowledge_bases ADD COLUMN embedding_dimension INTEGER")
+            self._conn.execute(
+                "ALTER TABLE rag_knowledge_bases ADD COLUMN embedding_dimension INTEGER"
+            )
             changed = True
         if "embedding_identity_key" not in existing:
-            self._conn.execute("ALTER TABLE rag_knowledge_bases ADD COLUMN embedding_identity_key TEXT NOT NULL DEFAULT ''")
+            self._conn.execute(
+                "ALTER TABLE rag_knowledge_bases ADD COLUMN embedding_identity_key TEXT NOT NULL DEFAULT ''"
+            )
             changed = True
         if "chunk_profile_id" not in existing:
             self._conn.execute("ALTER TABLE rag_knowledge_bases ADD COLUMN chunk_profile_id TEXT")
@@ -1407,12 +1260,10 @@ class Storage:
         if "index_dirty_at" not in existing:
             self._conn.execute("ALTER TABLE rag_knowledge_bases ADD COLUMN index_dirty_at TEXT")
             changed = True
-        rows = self._conn.execute(
-            """
+        rows = self._conn.execute("""
             SELECT kb_id, embedding_provider, embedding_model, embedding_dimension
             FROM rag_knowledge_bases
-            """
-        ).fetchall()
+            """).fetchall()
         for kb_id, provider, model, dimension in rows:
             resolved_provider = (
                 str(provider or "").strip().lower()
@@ -1420,11 +1271,12 @@ class Storage:
                 or "openai"
             )
             resolved_dimension = (
-                int(dimension)
-                if dimension not in (None, "")
-                else infer_embedding_dimension(model)
+                int(dimension) if dimension not in (None, "") else infer_embedding_dimension(model)
             )
-            if resolved_provider != str(provider or "").strip().lower() or resolved_dimension != dimension:
+            if (
+                resolved_provider != str(provider or "").strip().lower()
+                or resolved_dimension != dimension
+            ):
                 self._conn.execute(
                     """
                     UPDATE rag_knowledge_bases
@@ -1485,40 +1337,32 @@ class Storage:
 
         # Map legacy columns into the unified schema without dropping data.
         if "sha256" in existing and "file_sha256" in existing:
-            self._conn.execute(
-                """
+            self._conn.execute("""
                 UPDATE catalog_items
                 SET sha256 = file_sha256
                 WHERE (sha256 IS NULL OR sha256 = '') AND file_sha256 IS NOT NULL
-                """
-            )
+                """)
         if "pipeline_version" in existing:
             if "extractor_version" in existing:
-                self._conn.execute(
-                    """
+                self._conn.execute("""
                     UPDATE catalog_items
                     SET pipeline_version = extractor_version
                     WHERE (pipeline_version IS NULL OR pipeline_version = '')
                       AND extractor_version IS NOT NULL
-                    """
-                )
+                    """)
             if "catalog_version" in existing:
-                self._conn.execute(
-                    """
+                self._conn.execute("""
                     UPDATE catalog_items
                     SET pipeline_version = catalog_version
                     WHERE (pipeline_version IS NULL OR pipeline_version = '')
                       AND catalog_version IS NOT NULL
-                    """
-                )
+                    """)
         if "keywords" in existing and "keywords_json" in existing:
-            self._conn.execute(
-                """
+            self._conn.execute("""
                 UPDATE catalog_items
                 SET keywords = keywords_json
                 WHERE (keywords IS NULL OR keywords = '') AND keywords_json IS NOT NULL
-                """
-            )
+                """)
         self._schema_commit()
 
     def close(self) -> None:
@@ -1575,13 +1419,11 @@ class Storage:
         }
 
     def list_auth_tokens(self) -> list[dict]:
-        cur = self._conn.execute(
-            """
+        cur = self._conn.execute("""
             SELECT id, subject, group_name, is_active, created_at, last_used_at, revoked_at, expires_at
             FROM auth_tokens
             ORDER BY id DESC
-            """
-        )
+            """)
         out: list[dict] = []
         for row in cur.fetchall():
             out.append(
@@ -1671,8 +1513,18 @@ class Storage:
     # ---------------------------------------------------------------------------
 
     _LLM_TOKEN_COLS = (
-        "id", "provider", "category", "instance_id", "label", "is_default", "api_key_encrypted",
-        "api_base_url", "status", "created_at", "updated_at", "notes",
+        "id",
+        "provider",
+        "category",
+        "instance_id",
+        "label",
+        "is_default",
+        "api_key_encrypted",
+        "api_base_url",
+        "status",
+        "created_at",
+        "updated_at",
+        "notes",
     )
 
     def upsert_llm_provider(
@@ -1710,7 +1562,18 @@ class Storage:
                 updated_at = excluded.updated_at,
                 status = excluded.status
             """,
-            (provider, category, normalized_instance, normalized_label, 1 if is_default else 0, api_key_encrypted, base_url, ts, ts, notes),
+            (
+                provider,
+                category,
+                normalized_instance,
+                normalized_label,
+                1 if is_default else 0,
+                api_key_encrypted,
+                base_url,
+                ts,
+                ts,
+                notes,
+            ),
         )
         row = self._conn.execute(
             "SELECT id FROM api_tokens WHERE provider=? AND category=? AND instance_id=?",
@@ -1751,7 +1614,9 @@ class Storage:
         )
         return [dict(zip(self._LLM_TOKEN_COLS, row)) for row in cur.fetchall()]
 
-    def delete_llm_provider(self, provider: str, category: str = "llm", instance_id: str | None = None) -> bool:
+    def delete_llm_provider(
+        self, provider: str, category: str = "llm", instance_id: str | None = None
+    ) -> bool:
         """Delete an LLM provider record."""
         if instance_id:
             cur = self._conn.execute(
@@ -1768,23 +1633,19 @@ class Storage:
 
     def file_exists_by_hash(self, sha256: str) -> bool:
         """Check if a file with the given hash already exists in the database.
-        
+
         Args:
             sha256: The SHA256 hash of the file content.
-            
+
         Returns:
             True if a file with this hash exists, False otherwise.
         """
-        cur = self._conn.execute(
-            "SELECT 1 FROM blobs WHERE sha256 = ?", (sha256,)
-        )
+        cur = self._conn.execute("SELECT 1 FROM blobs WHERE sha256 = ?", (sha256,))
         if cur.fetchone():
             return True
-            
+
         # Also check files table as fallback
-        cur = self._conn.execute(
-            "SELECT 1 FROM files WHERE sha256 = ?", (sha256,)
-        )
+        cur = self._conn.execute("SELECT 1 FROM files WHERE sha256 = ?", (sha256,))
         return cur.fetchone() is not None
 
     def now(self) -> str:
@@ -1796,39 +1657,35 @@ class Storage:
 
     def get_file_by_url(self, url: str) -> dict | None:
         """Get file record by URL.
-        
+
         Args:
             url: File URL
-            
+
         Returns:
             File record dict or None if not found
         """
-        cur = self._conn.execute(
-            "SELECT * FROM files WHERE url = ? LIMIT 1", (url,)
-        )
+        cur = self._conn.execute("SELECT * FROM files WHERE url = ? LIMIT 1", (url,))
         row = cur.fetchone()
         if not row:
             return None
-        
+
         columns = [desc[0] for desc in cur.description]
         return dict(zip(columns, row))
-    
+
     def get_file_by_sha256(self, sha256: str) -> dict | None:
         """Get file record by SHA256 hash.
-        
+
         Args:
             sha256: File SHA256 hash
-            
+
         Returns:
             File record dict or None if not found
         """
-        cur = self._conn.execute(
-            "SELECT * FROM files WHERE sha256 = ? LIMIT 1", (sha256,)
-        )
+        cur = self._conn.execute("SELECT * FROM files WHERE sha256 = ? LIMIT 1", (sha256,))
         row = cur.fetchone()
         if not row:
             return None
-        
+
         columns = [desc[0] for desc in cur.description]
         return dict(zip(columns, row))
 
@@ -1881,9 +1738,7 @@ class Storage:
         )
 
     def _ready_data_metadata_affected_kb_ids(self, file_url: str) -> tuple[str, ...]:
-        if not self._table_exists("rag_knowledge_bases") or not self._table_exists(
-            "rag_kb_files"
-        ):
+        if not self._table_exists("rag_knowledge_bases") or not self._table_exists("rag_kb_files"):
             return ()
         rows = self._conn.execute(
             """
@@ -1922,7 +1777,7 @@ class Storage:
         for kb_id in kb_ids:
             self.mark_agentic_ready_source_event_for_kb(kb_id=kb_id, reason=reason)
         return kb_ids
-    
+
     def insert_file(
         self,
         url: str,
@@ -1939,7 +1794,7 @@ class Storage:
         published_time: str | None = None,
     ) -> None:
         """Insert a new file record (raises error if URL exists).
-        
+
         Args:
             url: File URL
             sha256: SHA256 hash
@@ -2130,9 +1985,7 @@ class Storage:
         only produce one row update. Returns True on a successful claim.
         """
         now = self.now()
-        expires_at = (
-            datetime.now(timezone.utc) + timedelta(seconds=lease_ttl_seconds)
-        ).isoformat()
+        expires_at = (datetime.now(timezone.utc) + timedelta(seconds=lease_ttl_seconds)).isoformat()
         cursor = self._conn.execute(
             """
             UPDATE pipeline_run
@@ -2160,33 +2013,6 @@ class Storage:
             (self.now(), run_id, lease_owner),
         )
         self._maybe_commit()
-
-    def renew_pipeline_lease(
-        self,
-        run_id: str,
-        *,
-        lease_owner: str,
-        lease_ttl_seconds: int = 3600,
-    ) -> bool:
-        """Extend the run-level lease, only if still held by ``lease_owner``.
-
-        Returns True when the lease was still ours and was extended; False when
-        another worker took it (so the caller should stop rather than run
-        concurrently).
-        """
-        expires_at = (
-            datetime.now(timezone.utc) + timedelta(seconds=lease_ttl_seconds)
-        ).isoformat()
-        cursor = self._conn.execute(
-            """
-            UPDATE pipeline_run
-            SET lease_expires_at = ?, updated_at = ?
-            WHERE run_id = ? AND lease_owner = ?
-            """,
-            (expires_at, self.now(), run_id, lease_owner),
-        )
-        self._maybe_commit()
-        return cursor.rowcount == 1
 
     def update_pipeline_run(
         self,
@@ -2217,9 +2043,7 @@ class Storage:
         fields.append("updated_at = ?")
         values.append(self.now())
         values.append(run_id)
-        self._conn.execute(
-            f"UPDATE pipeline_run SET {', '.join(fields)} WHERE run_id = ?", values
-        )
+        self._conn.execute(f"UPDATE pipeline_run SET {', '.join(fields)} WHERE run_id = ?", values)
         self._maybe_commit()
 
     def get_pipeline_run(self, run_id: str) -> dict[str, Any] | None:
@@ -2252,16 +2076,14 @@ class Storage:
 
     def list_unfinished_pipeline_runs(self) -> list[dict[str, Any]]:
         """Return runs that have not reached a terminal state (for resume)."""
-        rows = self._conn.execute(
-            """
+        rows = self._conn.execute("""
             SELECT run_id, correlation_id, source_type, status, watermark,
                    lease_owner, lease_expires_at, started_at, finished_at, error,
                    created_at, updated_at
             FROM pipeline_run
             WHERE status IN ('pending', 'running')
             ORDER BY created_at
-            """
-        ).fetchall()
+            """).fetchall()
         keys = (
             "run_id",
             "correlation_id",
@@ -2277,75 +2099,6 @@ class Storage:
             "updated_at",
         )
         return [dict(zip(keys, row)) for row in rows]
-
-    def list_pipeline_runs(self, limit: int = 100) -> list[dict[str, Any]]:
-        """Return the most recent pipeline runs across all statuses, newest first."""
-        limit = min(500, max(1, int(limit)))
-        rows = self._conn.execute(
-            """
-            SELECT run_id, correlation_id, source_type, status, watermark,
-                   lease_owner, lease_expires_at, started_at, finished_at, error,
-                   created_at, updated_at
-            FROM pipeline_run
-            ORDER BY created_at DESC, run_id DESC
-            LIMIT ?
-            """,
-            (limit,),
-        ).fetchall()
-        keys = (
-            "run_id",
-            "correlation_id",
-            "source_type",
-            "status",
-            "watermark",
-            "lease_owner",
-            "lease_expires_at",
-            "started_at",
-            "finished_at",
-            "error",
-            "created_at",
-            "updated_at",
-        )
-        return [dict(zip(keys, row)) for row in rows]
-
-    def get_pipeline_run_by_correlation(self, correlation_id: str) -> dict[str, Any] | None:
-        """Return the most recent resumable run for a correlation.
-
-        A run is resumable until it reaches the terminal 'succeeded' state, so a
-        'pending', 'running', or 'failed' run for the same correlation is reused
-        (its committed stages are skipped on resume).
-        """
-        if not correlation_id:
-            return None
-        row = self._conn.execute(
-            """
-            SELECT run_id, correlation_id, source_type, status, watermark,
-                   lease_owner, lease_expires_at, started_at, finished_at, error,
-                   created_at, updated_at
-            FROM pipeline_run
-            WHERE correlation_id = ? AND status != 'succeeded'
-            ORDER BY created_at DESC
-            LIMIT 1
-            """,
-            (correlation_id,),
-        ).fetchone()
-        if row is None:
-            return None
-        keys = (
-            "run_id",
-            "correlation_id",
-            "source_type",
-            "status",
-            "watermark",
-            "lease_owner",
-            "lease_expires_at",
-            "started_at",
-            "finished_at",
-            "error",
-            "created_at",
-            "updated_at",
-        )
-        return dict(zip(keys, row))
 
     def upsert_pipeline_stage(
         self,
@@ -2426,8 +2179,7 @@ class Storage:
         values.append(self.now())
         values.extend((run_id, stage_name))
         self._conn.execute(
-            f"UPDATE pipeline_stage SET {', '.join(fields)} "
-            "WHERE run_id = ? AND stage_name = ?",
+            f"UPDATE pipeline_stage SET {', '.join(fields)} " "WHERE run_id = ? AND stage_name = ?",
             values,
         )
         self._maybe_commit()
@@ -2542,15 +2294,13 @@ class Storage:
         self._maybe_commit()
 
     def export_files(self) -> list[dict]:
-        cur = self._conn.execute(
-            """
+        cur = self._conn.execute("""
             SELECT url, sha256, title, source_site, source_page_url, original_filename,
                    local_path, bytes, content_type, last_modified, etag, published_time,
                    first_seen, last_seen, crawl_time
             FROM files
             ORDER BY last_seen DESC
-            """
-        )
+            """)
         rows = cur.fetchall()
         keys = [
             "url",
@@ -2572,22 +2322,32 @@ class Storage:
         return [dict(zip(keys, row)) for row in rows]
 
     # Allowed columns for ORDER BY to prevent SQL injection
-    _ALLOWED_ORDER_COLUMNS = frozenset([
-        "id", "url", "sha256", "title", "source_site", "local_path",
-        "bytes", "first_seen", "last_seen", "crawl_time"
-    ])
-    
+    _ALLOWED_ORDER_COLUMNS = frozenset(
+        [
+            "id",
+            "url",
+            "sha256",
+            "title",
+            "source_site",
+            "local_path",
+            "bytes",
+            "first_seen",
+            "last_seen",
+            "crawl_time",
+        ]
+    )
+
     # Allowed column mapping for query_files_with_catalog ORDER BY
     # Maps user-facing column names to actual SQL column references with table prefix
     _QUERY_ORDER_COLUMN_MAP = {
-        'id': 'f.id',
-        'url': 'f.url',
-        'title': 'f.title',
-        'source_site': 'f.source_site',
-        'bytes': 'f.bytes',
-        'first_seen': 'f.first_seen',
-        'last_seen': 'f.last_seen',
-        'crawl_time': 'f.crawl_time',
+        "id": "f.id",
+        "url": "f.url",
+        "title": "f.title",
+        "source_site": "f.source_site",
+        "bytes": "f.bytes",
+        "first_seen": "f.first_seen",
+        "last_seen": "f.last_seen",
+        "crawl_time": "f.crawl_time",
     }
 
     def iter_files(
@@ -2603,8 +2363,10 @@ class Storage:
     ) -> list[dict]:
         # Validate order_by to prevent SQL injection
         if order_by not in self._ALLOWED_ORDER_COLUMNS:
-            raise ValueError(f"Invalid order_by column: {order_by}. Allowed: {self._ALLOWED_ORDER_COLUMNS}")
-        
+            raise ValueError(
+                f"Invalid order_by column: {order_by}. Allowed: {self._ALLOWED_ORDER_COLUMNS}"
+            )
+
         filters: list[str] = []
         params: list[object] = []
         if require_local_path:
@@ -2716,23 +2478,6 @@ class Storage:
         )
         self._maybe_commit()
 
-    def catalog_item_fresh(
-        self,
-        url: str,
-        sha256: str,
-        pipeline_version: str | None = None,
-        extractor_version: str | None = None,
-    ) -> bool:
-        effective_pipeline_version = pipeline_version or extractor_version or ""
-        cur = self._conn.execute(
-            """
-            SELECT 1 FROM catalog_items
-            WHERE file_url = ? AND sha256 = ? AND pipeline_version = ? AND status = 'ok'
-            """,
-            (url, sha256, effective_pipeline_version),
-        )
-        return cur.fetchone() is not None
-
     def upsert_catalog_item(
         self,
         item: dict,
@@ -2789,13 +2534,13 @@ class Storage:
         Path(os.path.dirname(output_path)).mkdir(parents=True, exist_ok=True)
         with open(output_path, "w", encoding="utf-8") as f:
             json.dump(list(items), f, ensure_ascii=False, indent=2)
-    
+
     def get_file_count(self, require_local: bool = True) -> int:
         """Get count of files in the database.
-        
+
         Args:
             require_local: Only count files with local_path set
-            
+
         Returns:
             Number of files
         """
@@ -2806,30 +2551,28 @@ class Storage:
         else:
             cur = self._conn.execute("SELECT COUNT(*) FROM files")
         return cur.fetchone()[0]
-    
+
     def get_cataloged_count(self) -> int:
         """Get count of successfully cataloged items.
-        
+
         Returns:
             Number of cataloged items with status='ok'
         """
-        cur = self._conn.execute(
-            "SELECT COUNT(*) FROM catalog_items WHERE status = 'ok'"
-        )
+        cur = self._conn.execute("SELECT COUNT(*) FROM catalog_items WHERE status = 'ok'")
         return cur.fetchone()[0]
-    
+
     def get_sources_count(self) -> int:
         """Get count of unique source sites.
-        
+
         Returns:
             Number of unique sources
         """
         cur = self._conn.execute("SELECT COUNT(DISTINCT source_site) FROM files")
         return cur.fetchone()[0]
-    
+
     def get_unique_sources(self) -> list[str]:
         """Get list of unique source sites.
-        
+
         Returns:
             List of source site names
         """
@@ -2840,10 +2583,10 @@ class Storage:
             ORDER BY source_site
         """)
         return [row[0] for row in cur.fetchall()]
-    
+
     def get_unique_categories(self) -> list[str]:
         """Get list of unique categories from catalog.
-        
+
         Returns:
             List of category names
         """
@@ -2867,15 +2610,13 @@ class Storage:
         and ``title`` (from ``files`` when present). Intended for the recategory
         task, which only touches category and never re-generates summary/keywords.
         """
-        rows = self._conn.execute(
-            """
+        rows = self._conn.execute("""
             SELECT c.file_url, c.summary, c.keywords, c.category, f.title
             FROM catalog_items c
             LEFT JOIN files f ON f.url = c.file_url
             WHERE c.status = 'ok'
             ORDER BY c.file_url
-            """
-        ).fetchall()
+            """).fetchall()
         items: list[dict] = []
         for row in rows:
             keywords_raw = row[2] or ""
@@ -2911,9 +2652,7 @@ class Storage:
 
     def get_applied_taxonomy_hash(self) -> str | None:
         """Return the last applied categories.yaml hash, or None if never applied."""
-        row = self._conn.execute(
-            "SELECT applied_hash FROM taxonomy_state WHERE id = 1"
-        ).fetchone()
+        row = self._conn.execute("SELECT applied_hash FROM taxonomy_state WHERE id = 1").fetchone()
         return None if row is None else row[0]
 
     def get_applied_taxonomy_categories(self) -> list[str] | None:
@@ -3005,9 +2744,7 @@ class Storage:
             return
         current_categories = self.current_taxonomy_categories()
         if self.get_applied_taxonomy_hash() is None:
-            self.set_applied_taxonomy_hash(
-                self.current_taxonomy_hash(), current_categories
-            )
+            self.set_applied_taxonomy_hash(self.current_taxonomy_hash(), current_categories)
             return
         if self.get_applied_taxonomy_categories() is None:
             applied_hash = self.get_applied_taxonomy_hash()
@@ -3027,17 +2764,17 @@ class Storage:
         *,
         limit: int = 20,
         offset: int = 0,
-        order_by: str = 'last_seen',
-        order_dir: str = 'desc',
-        query: str = '',
-        source: str = '',
-        category: str = '',
+        order_by: str = "last_seen",
+        order_dir: str = "desc",
+        query: str = "",
+        source: str = "",
+        category: str = "",
         include_deleted: bool = False,
         first_seen_from: str | None = None,
         first_seen_before: str | None = None,
     ) -> tuple[list[dict], int]:
         """Query files with catalog information, filtering and pagination.
-        
+
         Args:
             limit: Maximum number of results
             offset: Offset for pagination
@@ -3049,30 +2786,30 @@ class Storage:
             include_deleted: Whether to include deleted files
             first_seen_from: Inclusive first-seen RFC3339 boundary
             first_seen_before: Exclusive first-seen RFC3339 boundary
-            
+
         Returns:
             Tuple of (list of file dicts, total count)
         """
         # Validate and map order_by column using class-level mapping
         if order_by not in self._QUERY_ORDER_COLUMN_MAP:
-            order_by = 'last_seen'  # default
+            order_by = "last_seen"  # default
         order_column = self._QUERY_ORDER_COLUMN_MAP[order_by]
-        
+
         # Validate order_dir to prevent SQL injection
-        if order_dir.lower() not in ['asc', 'desc']:
-            order_dir = 'desc'
-        
+        if order_dir.lower() not in ["asc", "desc"]:
+            order_dir = "desc"
+
         # Build query
         filters = []
-        
+
         # When not including deleted files, only show files with valid local_path
         # When including deleted files, show all (deleted files have local_path cleared)
         if not include_deleted:
             filters.append("f.local_path IS NOT NULL AND f.local_path != ''")
             filters.append("f.deleted_at IS NULL")
-        
+
         params = []
-        
+
         # Join with catalog_items when query/category filters need catalog fields,
         # and later for result projection even without filters.
         catalog_join_clause = "LEFT JOIN catalog_items c ON c.file_url = f.url"
@@ -3091,14 +2828,14 @@ class Storage:
             )
             search_term = f"%{query.lower()}%"
             params.extend([search_term] * 7)
-        
+
         if source:
             filters.append("LOWER(f.source_site) LIKE ?")
             params.append(f"%{source.lower()}%")
-        
+
         if category:
             join_clause = catalog_join_clause
-            if category == '__uncategorized__':
+            if category == "__uncategorized__":
                 filters.append(
                     "("
                     "c.file_url IS NULL "
@@ -3111,7 +2848,9 @@ class Storage:
                 # Precise matching for semicolon-separated categories
                 # Category format: "AI; Risk & Capital; Pricing"
                 # Match exact string, OR start of list, OR end of list, OR middle of list
-                filters.append("(c.category = ? OR c.category LIKE ? OR c.category LIKE ? OR c.category LIKE ?)")
+                filters.append(
+                    "(c.category = ? OR c.category LIKE ? OR c.category LIKE ? OR c.category LIKE ?)"
+                )
                 params.extend([category, f"{category};%", f"%; {category}", f"%; {category};%"])
 
         if first_seen_from is not None:
@@ -3120,10 +2859,10 @@ class Storage:
         if first_seen_before is not None:
             filters.append("f.first_seen IS NOT NULL AND julianday(f.first_seen) < julianday(?)")
             params.append(first_seen_before)
-        
+
         # Avoid empty WHERE which causes SQLite "incomplete input"
         where_clause = " AND ".join(filters) if filters else "1=1"
-        
+
         # Get total count
         count_query = f"""
             SELECT COUNT(*)
@@ -3133,12 +2872,12 @@ class Storage:
         """
         cur = self._conn.execute(count_query, tuple(params))
         total = cur.fetchone()[0]
-        
+
         # Get files with catalog data using validated column mapping
         # Always use LEFT JOIN to return category columns even if not filtering
         if not join_clause:
             join_clause = catalog_join_clause
-        
+
         order_clause = f"{order_column} {order_dir.upper()}"
         query_sql = f"""
             SELECT f.url, f.sha256, f.title, f.source_site, f.source_page_url,
@@ -3161,7 +2900,7 @@ class Storage:
         """
         params.extend([limit, offset])
         cur = self._conn.execute(query_sql, tuple(params))
-        
+
         files = []
         for row in cur.fetchall():
             file_dict = {
@@ -3188,12 +2927,12 @@ class Storage:
                 "markdown_source": row[20],
                 "markdown_updated_at": row[21],
                 "rag_chunk_count": row[22] or 0,
-                "rag_indexed_at": row[23]
+                "rag_indexed_at": row[23],
             }
             files.append(file_dict)
-        
+
         return files, total
-    
+
     def count_files_first_seen_between(
         self,
         *,
@@ -3575,9 +3314,7 @@ class Storage:
             raise ValueError("snapshot_id, input_fingerprint, and prompt_version are required")
         lease_ttl = max(0.1, float(lease_ttl_seconds))
         now = datetime.now(timezone.utc)
-        claim_expires_at = (now + timedelta(seconds=lease_ttl)).isoformat(
-            timespec="microseconds"
-        )
+        claim_expires_at = (now + timedelta(seconds=lease_ttl)).isoformat(timespec="microseconds")
         now_text = now.isoformat(timespec="microseconds")
         generated_at = str(explanation.get("generated_at") or now_text)
         coverage = dict(explanation.get("coverage") or {})
@@ -3657,7 +3394,12 @@ class Storage:
         prompt_version = str(explanation.get("prompt_version") or "").strip()
         normalized_claim_token = str(claim_token or "").strip()
         status = str(explanation.get("status") or "").strip()
-        if not snapshot_id or not input_fingerprint or not prompt_version or not normalized_claim_token:
+        if (
+            not snapshot_id
+            or not input_fingerprint
+            or not prompt_version
+            or not normalized_claim_token
+        ):
             raise ValueError(
                 "snapshot_id, input_fingerprint, prompt_version, and claim_token are required"
             )
@@ -3741,7 +3483,9 @@ class Storage:
             )
         return material
 
-    def _decode_weekly_update_summary_row(self, row: sqlite3.Row | tuple[Any, ...] | None) -> dict[str, Any] | None:
+    def _decode_weekly_update_summary_row(
+        self, row: sqlite3.Row | tuple[Any, ...] | None
+    ) -> dict[str, Any] | None:
         if row is None:
             return None
         keys = [
@@ -3764,71 +3508,6 @@ class Storage:
             except json.JSONDecodeError:
                 data[output_field] = default
         return data
-
-    def upsert_weekly_update_summary(self, summary: dict[str, Any]) -> dict[str, Any]:
-        period_start = str(summary.get("period_start") or "").strip()
-        period_end = str(summary.get("period_end") or "").strip()
-        if not period_start or not period_end:
-            raise ValueError("period_start and period_end are required")
-        generated_at = self.now()
-        summary_id = str(summary.get("id") or f"weekly-{period_start}-{period_end}")
-        files = list(summary.get("files") or [])
-        metadata = dict(summary.get("metadata") or {})
-        file_count = int(summary.get("file_count", len(files)) or 0)
-        summary_markdown = str(summary.get("summary_markdown") or "")
-        self._conn.execute(
-            """
-            INSERT INTO weekly_update_summaries (
-                id, period_start, period_end, generated_at, file_count,
-                files_json, summary_markdown, metadata_json
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(period_start, period_end) DO UPDATE SET
-                generated_at=excluded.generated_at,
-                file_count=excluded.file_count,
-                files_json=excluded.files_json,
-                summary_markdown=excluded.summary_markdown,
-                metadata_json=excluded.metadata_json
-            """,
-            (
-                summary_id,
-                period_start,
-                period_end,
-                generated_at,
-                file_count,
-                json.dumps(files, ensure_ascii=False, sort_keys=True),
-                summary_markdown,
-                json.dumps(metadata, ensure_ascii=False, sort_keys=True),
-            ),
-        )
-        self._maybe_commit()
-        return self.get_weekly_update_summary(period_start=period_start, period_end=period_end) or {}
-
-    def get_weekly_update_summary(self, *, period_start: str, period_end: str) -> dict[str, Any] | None:
-        snapshot = self.get_published_weekly_snapshot_for_period(
-            period_start=period_start,
-            period_end=period_end,
-            include_detail=True,
-        )
-        if snapshot is not None:
-            files, _total = self.list_weekly_snapshot_files(
-                snapshot_id=str(snapshot["id"]),
-                limit=500,
-                offset=0,
-            )
-            snapshot["files"] = files
-            return snapshot
-        cur = self._conn.execute(
-            """
-            SELECT id, period_start, period_end, generated_at, file_count,
-                   files_json, summary_markdown, metadata_json
-            FROM weekly_update_summaries
-            WHERE period_start = ? AND period_end = ?
-            LIMIT 1
-            """,
-            (period_start, period_end),
-        )
-        return self._decode_weekly_update_summary_row(cur.fetchone())
 
     def get_latest_weekly_update_summary(self) -> dict[str, Any] | None:
         snapshot = self.get_latest_weekly_snapshot(
@@ -3856,7 +3535,9 @@ class Storage:
         )
         return self._decode_weekly_update_summary_row(cur.fetchone())
 
-    def list_weekly_update_summaries(self, *, limit: int = 20, offset: int = 0) -> tuple[list[dict[str, Any]], int]:
+    def list_weekly_update_summaries(
+        self, *, limit: int = 20, offset: int = 0
+    ) -> tuple[list[dict[str, Any]], int]:
         safe_limit = max(1, min(int(limit or 20), 100))
         safe_offset = max(0, int(offset or 0))
         legacy_not_published = """
@@ -3873,9 +3554,7 @@ class Storage:
                   )
             )
         """
-        total = int(
-            self._conn.execute(
-                f"""
+        total = int(self._conn.execute(f"""
                 SELECT COUNT(*)
                 FROM (
                     SELECT id
@@ -3886,9 +3565,7 @@ class Storage:
                     FROM weekly_update_summaries AS legacy
                     WHERE {legacy_not_published}
                 )
-                """
-            ).fetchone()[0]
-        )
+                """).fetchone()[0])
         cur = self._conn.execute(
             f"""
             SELECT source, id, period_start, period_end, generated_at, file_count,
@@ -3947,13 +3624,13 @@ class Storage:
                 before=before,
                 explicit_deletion=True,
             )
-    
+
     def get_file_with_catalog(self, url: str) -> dict | None:
         """Get file details with catalog information.
-        
+
         Args:
             url: File URL
-            
+
         Returns:
             Combined file and catalog dict or None if not found
         """
@@ -3972,10 +3649,10 @@ class Storage:
         """
         cur = self._conn.execute(query, (url,))
         row = cur.fetchone()
-        
+
         if not row:
             return None
-        
+
         return {
             "url": row[0],
             "sha256": row[1],
@@ -4007,49 +3684,6 @@ class Storage:
             "rag_indexed_at": row[27],
         }
 
-    def get_file_rag_kb_entries(self, file_url: str) -> list[dict]:
-        """Return KB-level RAG metadata for a specific file.
-
-        Each entry contains KB identity, embedding model, and file index status.
-        Returns an empty list when RAG tables are not present.
-        """
-        try:
-            cur = self._conn.execute(
-                """
-                SELECT
-                    kf.kb_id,
-                    kb.name,
-                    kb.embedding_model,
-                    kf.chunk_count,
-                    kf.indexed_at,
-                    kf.added_at
-                FROM rag_kb_files kf
-                LEFT JOIN rag_knowledge_bases kb ON kb.kb_id = kf.kb_id
-                WHERE kf.file_url = ?
-                ORDER BY
-                    CASE WHEN kf.indexed_at IS NULL OR kf.indexed_at = '' THEN 1 ELSE 0 END,
-                    kf.indexed_at DESC,
-                    kf.added_at DESC
-                """,
-                (file_url,),
-            )
-        except sqlite3.OperationalError:
-            return []
-
-        out: list[dict] = []
-        for row in cur.fetchall():
-            out.append(
-                {
-                    "kb_id": row[0],
-                    "kb_name": row[1] or row[0],
-                    "embedding_model": row[2] or "",
-                    "chunk_count": row[3] or 0,
-                    "indexed_at": row[4],
-                    "added_at": row[5],
-                }
-            )
-        return out
-    
     def update_file_metadata(
         self,
         url: str,
@@ -4069,9 +3703,7 @@ class Storage:
             if not file_exists:
                 return (False, "file_not_found")
 
-            catalog_updates = any(
-                value is not None for value in (category, summary, keywords)
-            )
+            catalog_updates = any(value is not None for value in (category, summary, keywords))
             if title is None and not catalog_updates:
                 return (False, "no_updates")
 
@@ -4114,15 +3746,17 @@ class Storage:
             )
             return (True, None)
 
-    def update_file_catalog(self, url: str, category: str = None, summary: str = None, keywords: list = None) -> tuple[bool, str | None]:
+    def update_file_catalog(
+        self, url: str, category: str = None, summary: str = None, keywords: list = None
+    ) -> tuple[bool, str | None]:
         """Update catalog information for a file.
-        
+
         Args:
             url: File URL
             category: New category value (optional)
             summary: New summary value (optional)
             keywords: New keywords list (optional)
-            
+
         Returns:
             Tuple of (success: bool, error_reason: str | None)
             - (True, None) if update succeeded
@@ -4135,15 +3769,17 @@ class Storage:
             summary=summary,
             keywords=keywords,
         )
-    
-    def update_file_markdown(self, url: str, markdown_content: str, markdown_source: str = "manual") -> tuple[bool, str | None]:
+
+    def update_file_markdown(
+        self, url: str, markdown_content: str, markdown_source: str = "manual"
+    ) -> tuple[bool, str | None]:
         """Update markdown content for a file.
-        
+
         Args:
             url: File URL
             markdown_content: Markdown content to save
             markdown_source: Source of the markdown (manual/converted/original)
-            
+
         Returns:
             Tuple of (success: bool, error_reason: str | None)
             - (True, None) if update succeeded
@@ -4181,13 +3817,13 @@ class Storage:
                 before=before,
             )
             return (True, None)
-    
+
     def get_file_markdown(self, url: str) -> dict | None:
         """Get markdown content for a file.
-        
+
         Args:
             url: File URL
-            
+
         Returns:
             Dict with markdown_content, markdown_updated_at, markdown_source or None
         """
@@ -4197,13 +3833,13 @@ class Storage:
             FROM catalog_items
             WHERE file_url = ?
             """,
-            (url,)
+            (url,),
         )
         row = cur.fetchone()
-        
+
         if not row:
             return None
-        
+
         return {
             "markdown_content": row[0],
             "markdown_updated_at": row[1],
@@ -4347,14 +3983,12 @@ class Storage:
         }
 
     def list_chunk_profiles(self) -> list[dict[str, Any]]:
-        cur = self._conn.execute(
-            """
+        cur = self._conn.execute("""
             SELECT profile_id, name, chunk_size, chunk_overlap, splitter, tokenizer, version,
                    config_hash, config_json, created_at, updated_at
             FROM chunk_profiles
             ORDER BY updated_at DESC, created_at DESC
-            """
-        )
+            """)
         rows = []
         for row in cur.fetchall():
             rows.append(
@@ -4557,9 +4191,7 @@ class Storage:
             current_n = len(current_chunks)
             if str(parent[0] or "") == "ready":
                 if current_n == 0:
-                    raise ValueError(
-                        "ready chunk set has no persisted chunks and is immutable"
-                    )
+                    raise ValueError("ready chunk set has no persisted chunks and is immutable")
                 return {
                     "chunk_set_id": chunk_set_id,
                     "chunk_count": current_n,
@@ -4598,8 +4230,7 @@ class Storage:
                     section_hierarchy,
                 )
             final_chunks = tuple(
-                final_chunks_by_index[chunk_index]
-                for chunk_index in sorted(final_chunks_by_index)
+                final_chunks_by_index[chunk_index] for chunk_index in sorted(final_chunks_by_index)
             )
             if final_chunks == current_chunks:
                 return {
@@ -4613,7 +4244,9 @@ class Storage:
                 chunk_set_id=chunk_set_id,
             )
             if current_n > 0:
-                self._conn.execute("DELETE FROM global_chunks WHERE chunk_set_id = ?", (chunk_set_id,))
+                self._conn.execute(
+                    "DELETE FROM global_chunks WHERE chunk_set_id = ?", (chunk_set_id,)
+                )
 
             now = self._utcnow_iso()
             for chunk_index, chunk_id, content, token_count, section_hierarchy in final_chunks:
@@ -4649,7 +4282,11 @@ class Storage:
                 (inserted, now, chunk_set_id),
             )
 
-            reason = "source_invalidated" if current_n > 0 and not final_chunks else "chunk_content_updated"
+            reason = (
+                "source_invalidated"
+                if current_n > 0 and not final_chunks
+                else "chunk_content_updated"
+            )
             for kb_id in affected_kb_ids:
                 self.mark_agentic_ready_source_event_for_kb(
                     kb_id=kb_id,
@@ -4779,7 +4416,9 @@ class Storage:
         self,
         chunk_set_ids: Iterable[str],
     ) -> list[dict[str, Any]]:
-        ids = list(dict.fromkeys(str(value).strip() for value in chunk_set_ids if str(value).strip()))
+        ids = list(
+            dict.fromkeys(str(value).strip() for value in chunk_set_ids if str(value).strip())
+        )
         if not ids:
             return []
         rows = self._conn.execute(
@@ -4973,7 +4612,13 @@ class Storage:
             file_url = str(chunk["file_url"])
             row = per_file.setdefault(
                 file_url,
-                {"file_url": file_url, "expected_count": 0, "ready_count": 0, "missing": 0, "invalid": 0},
+                {
+                    "file_url": file_url,
+                    "expected_count": 0,
+                    "ready_count": 0,
+                    "missing": 0,
+                    "invalid": 0,
+                },
             )
             row["expected_count"] += 1
             chunk_id = str(chunk["chunk_id"])
@@ -5153,13 +4798,11 @@ class Storage:
             if not target:
                 raise ValueError("chunk_set_id not found")
             if (target[0] or "") != file_url or (target[1] or "") != profile_id:
-                raise ValueError("chunk_set_id does not belong to the specified file_url/profile_id")
+                raise ValueError(
+                    "chunk_set_id does not belong to the specified file_url/profile_id"
+                )
 
-            candidate_kb_ids = {
-                str(row[0] or "")
-                for row in rows
-                if str(row[0] or "")
-            }
+            candidate_kb_ids = {str(row[0] or "") for row in rows if str(row[0] or "")}
             before_has_selections = {
                 kb_id: self._has_ready_data_bound_chunk_selection(kb_id)
                 for kb_id in candidate_kb_ids
@@ -5267,9 +4910,7 @@ class Storage:
             params,
         ).fetchall()
         return frozenset(
-            (str(row[0] or ""), str(row[1] or ""))
-            for row in rows
-            if row[0] and row[1]
+            (str(row[0] or ""), str(row[1] or "")) for row in rows if row[0] and row[1]
         )
 
     def _has_ready_data_bound_chunk_selection(self, kb_id: str) -> bool:
@@ -5313,69 +4954,6 @@ class Storage:
             else "chunk_binding_updated"
         )
         self.mark_agentic_ready_source_event_for_kb(kb_id=kb_id, reason=reason)
-
-    def list_file_index_status(self, file_url: str) -> list[dict[str, Any]]:
-        cur = self._conn.execute(
-            """
-            SELECT
-                b.kb_id,
-                COUNT(DISTINCT b.chunk_set_id) AS chunk_set_count,
-                COALESCE((
-                    SELECT iv.embedding_provider
-                    FROM kb_index_versions iv
-                    WHERE iv.kb_id = b.kb_id
-                    ORDER BY COALESCE(iv.built_at, iv.created_at) DESC
-                    LIMIT 1
-                ), '') AS embedding_provider,
-                COALESCE((
-                    SELECT iv.embedding_model
-                    FROM kb_index_versions iv
-                    WHERE iv.kb_id = b.kb_id
-                    ORDER BY COALESCE(iv.built_at, iv.created_at) DESC
-                    LIMIT 1
-                ), '') AS embedding_model,
-                (
-                    SELECT iv.embedding_dimension
-                    FROM kb_index_versions iv
-                    WHERE iv.kb_id = b.kb_id
-                    ORDER BY COALESCE(iv.built_at, iv.created_at) DESC
-                    LIMIT 1
-                ) AS embedding_dimension,
-                (
-                    SELECT COALESCE(iv.built_at, iv.created_at)
-                    FROM kb_index_versions iv
-                    WHERE iv.kb_id = b.kb_id
-                    ORDER BY COALESCE(iv.built_at, iv.created_at) DESC
-                    LIMIT 1
-                ) AS indexed_at,
-                COALESCE((
-                    SELECT iv.chunk_count
-                    FROM kb_index_versions iv
-                    WHERE iv.kb_id = b.kb_id
-                    ORDER BY COALESCE(iv.built_at, iv.created_at) DESC
-                    LIMIT 1
-                ), 0) AS indexed_chunk_count
-            FROM kb_chunk_bindings b
-            WHERE b.file_url = ?
-            GROUP BY b.kb_id
-            ORDER BY indexed_at DESC
-            """,
-            (file_url,),
-        )
-        out: list[dict[str, Any]] = []
-        for row in cur.fetchall():
-            out.append(
-                {
-                    "kb_id": row[0],
-                    "chunk_set_count": row[1] or 0,
-                    "embedding_provider": row[2] or "",
-                    "embedding_model": row[3] or "",
-                    "embedding_dimension": row[4],
-                    "indexed_at": row[5],
-                    "indexed_chunk_count": row[6] or 0,
-                }
-            )
-        return out
 
     def get_kb_composition_status(self, kb_id: str) -> dict[str, Any]:
         self._ensure_rag_kb_embedding_columns()
@@ -5460,9 +5038,13 @@ class Storage:
         kb_updated_at = None
         index_dirty_at = None
         if kb_row:
-            kb_provider = kb_row[0] or infer_embedding_provider(kb_row[1], fallback="openai") or "openai"
+            kb_provider = (
+                kb_row[0] or infer_embedding_provider(kb_row[1], fallback="openai") or "openai"
+            )
             kb_model = kb_row[1] or ""
-            kb_dimension = kb_row[2] if kb_row[2] not in (None, "") else infer_embedding_dimension(kb_row[1])
+            kb_dimension = (
+                kb_row[2] if kb_row[2] not in (None, "") else infer_embedding_dimension(kb_row[1])
+            )
             kb_chunk_count = int((kb_row[3] or 0) or 0)
             kb_file_count = int((kb_row[4] or 0) or 0)
             kb_updated_at = kb_row[5]
@@ -5505,7 +5087,9 @@ class Storage:
                 """,
                 (kb_id,),
             ).fetchone()
-            pending_file_count = int((pending_file_count_row[0] if pending_file_count_row else 0) or 0)
+            pending_file_count = int(
+                (pending_file_count_row[0] if pending_file_count_row else 0) or 0
+            )
         else:
             indexed_file_count = kb_file_count if kb_chunk_count > 0 else 0
             legacy_index_time = kb_updated_at
@@ -5519,11 +5103,7 @@ class Storage:
 
         effective_file_count = max(binding_file_count, kb_file_count)
         dirty_after_index = bool(
-            index_dirty_at
-            and (
-                not latest_index_time
-                or index_dirty_at > latest_index_time
-            )
+            index_dirty_at and (not latest_index_time or index_dirty_at > latest_index_time)
         )
         needs_reindex = bool(
             (
@@ -5532,20 +5112,27 @@ class Storage:
                     pending_file_count > 0
                     or outdated_binding_count > 0
                     or not has_index
-                    or (latest_binding_at and latest_index_time and latest_binding_at > latest_index_time)
+                    or (
+                        latest_binding_at
+                        and latest_index_time
+                        and latest_binding_at > latest_index_time
+                    )
                 )
             )
-            or (
-                has_index
-                and dirty_after_index
-            )
+            or (has_index and dirty_after_index)
         )
         latest_index_payload = None
         if latest:
             latest_index_payload = {
-                "embedding_provider": latest[0] or infer_embedding_provider(latest[1], fallback="openai") or "openai",
+                "embedding_provider": latest[0]
+                or infer_embedding_provider(latest[1], fallback="openai")
+                or "openai",
                 "embedding_model": latest[1],
-                "embedding_dimension": latest[2] if latest[2] not in (None, "") else infer_embedding_dimension(latest[1]),
+                "embedding_dimension": (
+                    latest[2]
+                    if latest[2] not in (None, "")
+                    else infer_embedding_dimension(latest[1])
+                ),
                 "index_type": latest[3],
                 "status": latest[4],
                 "chunk_count": latest[5] or 0,
@@ -5774,7 +5361,9 @@ class Storage:
         self._maybe_commit()
         return self.get_agentic_ready_manifest(kb_id=kb_id, profile=normalized_profile) or {}
 
-    def get_agentic_ready_manifest(self, *, kb_id: str, profile: str = "general") -> dict[str, Any] | None:
+    def get_agentic_ready_manifest(
+        self, *, kb_id: str, profile: str = "general"
+    ) -> dict[str, Any] | None:
         normalized_profile = str(profile or "general").strip().lower() or "general"
         row = self._conn.execute(
             """
@@ -5792,22 +5381,6 @@ class Storage:
         if not row:
             return None
         return self._agentic_manifest_row_to_dict(row)
-
-    def list_agentic_ready_manifests(self, kb_id: str) -> list[dict[str, Any]]:
-        rows = self._conn.execute(
-            """
-            SELECT manifest_id, kb_id, profile, profile_version, status, output_dir,
-                   artifact_files_json, doc_count, section_count, built_at, source_db,
-                   schema_versions_json, error_message, created_at, updated_at,
-                   publication_id, index_version_id, source_version_kind,
-                   source_version_id, artifact_digest
-            FROM agentic_ready_manifests
-            WHERE kb_id = ?
-            ORDER BY updated_at DESC
-            """,
-            (kb_id,),
-        ).fetchall()
-        return [self._agentic_manifest_row_to_dict(row) for row in rows]
 
     def _agentic_manifest_row_to_dict(self, row: Any) -> dict[str, Any]:
         try:
@@ -5849,9 +5422,7 @@ class Storage:
         absolute = Path(os.path.abspath(raw))
         keys = {os.path.normcase(os.path.normpath(str(absolute)))}
         try:
-            keys.add(
-                os.path.normcase(os.path.normpath(str(absolute.resolve(strict=False))))
-            )
+            keys.add(os.path.normcase(os.path.normpath(str(absolute.resolve(strict=False)))))
         except OSError:
             pass
         return keys
@@ -5959,9 +5530,7 @@ class Storage:
         normalized_digest = str(artifact_digest or "").strip()
         if not normalized_digest:
             raise ValueError("artifact_digest is required")
-        normalized_smoke_result = self._bounded_agentic_ready_smoke_result(
-            smoke_result
-        )
+        normalized_smoke_result = self._bounded_agentic_ready_smoke_result(smoke_result)
 
         now = self._utcnow_iso()
         publication_id = f"arp_{uuid.uuid4().hex}"
@@ -6178,8 +5747,7 @@ class Storage:
             if (
                 not current
                 or current["status"] != "validated"
-                or current["attempt_disposition"]
-                not in {"", "superseded_generation"}
+                or current["attempt_disposition"] not in {"", "superseded_generation"}
                 or self._conn.execute(
                     """
                     SELECT 1 FROM agentic_ready_slots
@@ -6221,9 +5789,7 @@ class Storage:
                 (now, publication_id),
             )
             if result.rowcount != 1:
-                raise RuntimeError(
-                    "ready-data superseded-generation disposition lost its guard"
-                )
+                raise RuntimeError("ready-data superseded-generation disposition lost its guard")
         return True
 
     def _agentic_ready_publication_columns(self) -> frozenset[str]:
@@ -6241,14 +5807,10 @@ class Storage:
     def get_agentic_ready_publication(self, publication_id: str) -> dict[str, Any] | None:
         publication_columns = self._agentic_ready_publication_columns()
         attempt_disposition_sql = (
-            "p.attempt_disposition"
-            if "attempt_disposition" in publication_columns
-            else "''"
+            "p.attempt_disposition" if "attempt_disposition" in publication_columns else "''"
         )
         smoke_result_sql = (
-            "p.smoke_result_json"
-            if "smoke_result_json" in publication_columns
-            else "'{}'"
+            "p.smoke_result_json" if "smoke_result_json" in publication_columns else "'{}'"
         )
         row = self._conn.execute(
             f"""
@@ -6321,13 +5883,11 @@ class Storage:
         }
 
     def list_agentic_ready_publications_for_gc(self) -> list[dict[str, Any]]:
-        rows = self._conn.execute(
-            """
+        rows = self._conn.execute("""
             SELECT publication_id
             FROM agentic_ready_publications
             ORDER BY kb_id, profile, publication_id
-            """
-        ).fetchall()
+            """).fetchall()
         return [
             publication
             for row in rows
@@ -6335,13 +5895,11 @@ class Storage:
         ]
 
     def list_agentic_ready_slots_for_gc(self) -> list[dict[str, Any]]:
-        rows = self._conn.execute(
-            """
+        rows = self._conn.execute("""
             SELECT kb_id, profile, active_publication_id, previous_publication_id, updated_at
             FROM agentic_ready_slots
             ORDER BY kb_id, profile
-            """
-        ).fetchall()
+            """).fetchall()
         return [
             {
                 "kb_id": row[0],
@@ -6546,7 +6104,12 @@ class Storage:
                         last_error = ?, updated_at = ?
                     WHERE publication_id = ? AND state = 'claimed' AND claim_token = ?
                     """,
-                    (str(error_message or "ready_data deletion failed"), now, publication_id, claim_token),
+                    (
+                        str(error_message or "ready_data deletion failed"),
+                        now,
+                        publication_id,
+                        claim_token,
+                    ),
                 )
                 if result.rowcount != 1:
                     raise RuntimeError("ready-data GC failure finalization lost its claim")
@@ -6681,9 +6244,7 @@ class Storage:
                 and str(prior[2]) != publication_id
                 and int(prior[1] or 0) < generation
             ):
-                self.mark_agentic_ready_publication_superseded_generation(
-                    str(prior[2])
-                )
+                self.mark_agentic_ready_publication_superseded_generation(str(prior[2]))
             automation_state = "succeeded" if published else "awaiting_publish"
             self._conn.execute(
                 """
@@ -6843,11 +6404,7 @@ class Storage:
         pending_generation = int(row[13]) if row[13] is not None else None
         running_generation = int(row[1]) if row[1] is not None else None
         stored_state = str(row[0] or "")
-        if (
-            stored_state == "pending"
-            and pending_generation is None
-            and running_generation is None
-        ):
+        if stored_state == "pending" and pending_generation is None and running_generation is None:
             automation_state = "succeeded"
         elif stored_state:
             automation_state = stored_state
@@ -7062,17 +6619,14 @@ class Storage:
                 and str(candidate[9] or "") == "validated"
                 and not str(candidate[10] or "")
             ):
-                self.mark_agentic_ready_publication_superseded_generation(
-                    prior_publication_id
-                )
+                self.mark_agentic_ready_publication_superseded_generation(prior_publication_id)
             reusable_publication = bool(
                 prior_publication_id
                 and prior_generation == generation
                 and bool(candidate[3])
                 and str(candidate[9] or "") == "validated"
                 and not str(candidate[10] or "")
-                and str(candidate[11] or "")
-                not in {"claimed", "delete_failed", "deleted"}
+                and str(candidate[11] or "") not in {"claimed", "delete_failed", "deleted"}
                 and prior_state in {"awaiting_publish", "running"}
             )
             mode = "publish" if reusable_publication else "build"
@@ -7179,8 +6733,8 @@ class Storage:
         )
         if not owns_claim:
             reason = "claim_lost"
-        elif int(row[8] or 0) != int(generation) or row[9] is None or int(row[9]) != int(
-            generation
+        elif (
+            int(row[8] or 0) != int(generation) or row[9] is None or int(row[9]) != int(generation)
         ):
             reason = "generation_superseded"
         elif not bool(row[6]):
@@ -7236,19 +6790,16 @@ class Storage:
                     )
                     return {
                         **fence,
-                        "action": "superseded"
-                        if reason == "generation_superseded"
-                        else "pending",
+                        "action": "superseded" if reason == "generation_superseded" else "pending",
                         "reason": reason,
                         "claim_owned": bool(finished),
                     }
                 return {**fence, "action": "claim_lost", "reason": reason}
 
-            flags_match = (
-                bool(fence["automatic_build_enabled"])
-                == bool(expected_automatic_build_enabled)
-                and bool(fence["automatic_publish_enabled"])
-                == bool(expected_automatic_publish_enabled)
+            flags_match = bool(fence["automatic_build_enabled"]) == bool(
+                expected_automatic_build_enabled
+            ) and bool(fence["automatic_publish_enabled"]) == bool(
+                expected_automatic_publish_enabled
             )
             if not flags_match:
                 finished = self.finish_agentic_ready_automation_claim(
@@ -7461,12 +7012,10 @@ class Storage:
         normalized_profile = str(profile or "general").strip().lower() or "general"
         now_iso = self._agentic_ready_automation_timestamp(now)
         with self.transaction(immediate=True):
-            lock_row = self._conn.execute(
-                """
+            lock_row = self._conn.execute("""
                 SELECT claim_token FROM agentic_ready_automation_lock
                 WHERE lock_name = 'global'
-                """
-            ).fetchone()
+                """).fetchone()
             if not lock_row or str(lock_row[0] or "") != claim_token:
                 return False
             result = self._conn.execute(
@@ -7543,9 +7092,7 @@ class Storage:
                     now=now,
                 )
                 if not finished:
-                    raise RuntimeError(
-                        "ready-data superseded build lost its automation claim"
-                    )
+                    raise RuntimeError("ready-data superseded build lost its automation claim")
                 return {"action": "superseded", "reason": reason, **fence}
             if not fence.get("claim_owned"):
                 return {"action": "claim_lost", "reason": reason, **fence}
@@ -7563,17 +7110,13 @@ class Storage:
                     now=now,
                 )
                 if not finished:
-                    raise RuntimeError(
-                        "empty ready-data build lost its automation claim"
-                    )
+                    raise RuntimeError("empty ready-data build lost its automation claim")
                 return {
                     "action": "awaiting_manual_confirmation",
                     "reason": "empty_kb_requires_manual_publish_confirmation",
                     **fence,
                 }
-            if reason == "automatic_build_disabled" or not fence.get(
-                "automatic_publish_enabled"
-            ):
+            if reason == "automatic_build_disabled" or not fence.get("automatic_publish_enabled"):
                 finished = self.finish_agentic_ready_automation_claim(
                     kb_id=kb_id,
                     profile=normalized_profile,
@@ -7585,9 +7128,7 @@ class Storage:
                     now=now,
                 )
                 if not finished:
-                    raise RuntimeError(
-                        "ready-data validated build lost its automation claim"
-                    )
+                    raise RuntimeError("ready-data validated build lost its automation claim")
                 return {"action": "awaiting_publish", "reason": reason, **fence}
             return {"action": "publish", "reason": "ok", **fence}
 
@@ -7692,9 +7233,7 @@ class Storage:
                 (kb_id, kb_id, kb_id, kb_id, kb_id),
             ).fetchall()
             profiles = {
-                normalized
-                for row in rows
-                if (normalized := str(row[0] or "").strip().lower())
+                normalized for row in rows if (normalized := str(row[0] or "").strip().lower())
             }
             if not profiles:
                 profiles = {"general"}
@@ -7753,17 +7292,18 @@ class Storage:
                 profile=normalized_profile,
             )
             serving_record = active or manifest
-            active_kind = str((serving_record or {}).get("source_version_kind") or "").strip().lower()
+            active_kind = (
+                str((serving_record or {}).get("source_version_kind") or "").strip().lower()
+            )
             active_source_id = str((serving_record or {}).get("source_version_id") or "").strip()
-            has_serving_record = bool(serving_record and (serving_record or {}).get("status") in {"ready", "active"})
+            has_serving_record = bool(
+                serving_record and (serving_record or {}).get("status") in {"ready", "active"}
+            )
             source_identity_comparable = bool(active_kind and active_source_id)
             source_mismatch = bool(
                 has_serving_record
                 and source_identity_comparable
-                and (
-                    active_kind != normalized_kind
-                    or active_source_id != normalized_source_id
-                )
+                and (active_kind != normalized_kind or active_source_id != normalized_source_id)
             )
             pending_reasons = self._agentic_ready_json_list(row[3])
             previous_severity = str(row[4] or "none")
@@ -7774,17 +7314,10 @@ class Storage:
                 has_serving_record
                 and previous_kind
                 and previous_source_id
-                and (
-                    active_kind != previous_kind
-                    or active_source_id != previous_source_id
-                )
+                and (active_kind != previous_kind or active_source_id != previous_source_id)
             )
-            inherited_severity = (
-                previous_severity if previous_authority_unresolved else "none"
-            )
-            inherited_reasons = (
-                previous_reasons if previous_authority_unresolved else []
-            )
+            inherited_severity = previous_severity if previous_authority_unresolved else "none"
+            inherited_reasons = previous_reasons if previous_authority_unresolved else []
             source_matches = bool(
                 has_serving_record
                 and source_identity_comparable
@@ -7801,16 +7334,12 @@ class Storage:
                 )
                 if evaluated_severity == "none":
                     evaluated_severity = "soft_stale"
-                evaluated_reasons = list(
-                    dict.fromkeys([*inherited_reasons, *pending_reasons])
-                )
+                evaluated_reasons = list(dict.fromkeys([*inherited_reasons, *pending_reasons]))
                 if not evaluated_reasons:
                     evaluated_reasons = ["source_version_changed"]
             else:
                 evaluated_severity = self._agentic_ready_severity_max(
-                    inherited_severity
-                    if inherited_severity == "hard_stale"
-                    else "none",
+                    inherited_severity if inherited_severity == "hard_stale" else "none",
                     str(row[2] or "none") if str(row[2] or "none") == "hard_stale" else "none",
                 )
                 evaluated_reasons = (
@@ -7937,7 +7466,9 @@ class Storage:
         pending_reasons = self._agentic_ready_json_list(row[4]) if pending_evaluation else []
         evaluated_kind = str(row[7] or "").strip().lower()
         evaluated_source_id = str(row[8] or "").strip()
-        has_serving_record = bool(serving_record and (serving_record or {}).get("status") in {"ready", "active"})
+        has_serving_record = bool(
+            serving_record and (serving_record or {}).get("status") in {"ready", "active"}
+        )
         confirmed_pending_content_change = bool(
             has_serving_record
             and pending_severity == "soft_stale"
@@ -7948,10 +7479,7 @@ class Storage:
             and source_identity_comparable
             and evaluated_kind
             and evaluated_source_id
-            and (
-                active_kind != evaluated_kind
-                or active_source_id != evaluated_source_id
-            )
+            and (active_kind != evaluated_kind or active_source_id != evaluated_source_id)
         )
         evaluated_severity = str(row[5] or "none") if source_mismatch else "none"
         if source_mismatch and evaluated_severity == "none":
@@ -7964,14 +7492,15 @@ class Storage:
         if legacy_hard_gate:
             evaluated_severity = "hard_stale"
         effective_severity = self._agentic_ready_severity_max(
-            pending_severity
-            if pending_severity == "hard_stale" or confirmed_pending_content_change
-            else "none",
+            (
+                pending_severity
+                if pending_severity == "hard_stale" or confirmed_pending_content_change
+                else "none"
+            ),
             evaluated_severity,
         )
         stale_confirmed = bool(
-            (source_mismatch and evaluated_severity != "none")
-            or confirmed_pending_content_change
+            (source_mismatch and evaluated_severity != "none") or confirmed_pending_content_change
         )
         serving_stale = effective_severity in {"soft_stale", "hard_stale"}
         state = (
@@ -7984,9 +7513,7 @@ class Storage:
             )
         )
         reasons = (
-            self._agentic_ready_json_list(row[6])
-            if source_mismatch or legacy_hard_gate
-            else []
+            self._agentic_ready_json_list(row[6]) if source_mismatch or legacy_hard_gate else []
         )
         if source_mismatch and not reasons:
             reasons = ["source_version_changed"]
@@ -8050,8 +7577,12 @@ class Storage:
             "automatic_publish_enabled": bool(row[3]) if row else False,
             "publication_revision": int(row[4] or 0) if row else 0,
             "updated_at": row[5] if row else None,
-            "active_publication": self.get_agentic_ready_publication(active_id) if active_id else None,
-            "previous_publication": self.get_agentic_ready_publication(previous_id) if previous_id else None,
+            "active_publication": (
+                self.get_agentic_ready_publication(active_id) if active_id else None
+            ),
+            "previous_publication": (
+                self.get_agentic_ready_publication(previous_id) if previous_id else None
+            ),
         }
 
     def _publish_agentic_ready_manifest_row(self, publication: dict[str, Any]) -> None:
@@ -8100,17 +7631,13 @@ class Storage:
             if not publication:
                 raise ValueError("ready-data publication not found")
             if publication["attempt_disposition"]:
-                raise ValueError(
-                    "ready-data publication attempt disposition prevents publication"
-                )
+                raise ValueError("ready-data publication attempt disposition prevents publication")
             if publication["gc_state"] in {"claimed", "delete_failed", "deleted"}:
                 raise ValueError("ready-data publication is already under garbage collection")
             if self._agentic_ready_paths_conflict(
                 publication_id,
                 str(publication["output_dir"]),
-                include_manifests=not str(publication["source_version_kind"]).startswith(
-                    "legacy"
-                ),
+                include_manifests=not str(publication["source_version_kind"]).startswith("legacy"),
             ):
                 raise ValueError("ready-data publication output path is already reserved")
             kb_id = str(publication["kb_id"])
@@ -8146,9 +7673,7 @@ class Storage:
 
             previous_active_id = expected_active_publication_id
             old_previous_id = current["previous_publication_id"]
-            next_previous_id = (
-                previous_active_id if preserve_expected_active_as_previous else None
-            )
+            next_previous_id = previous_active_id if preserve_expected_active_as_previous else None
             slot_update = self._conn.execute(
                 """
                 UPDATE agentic_ready_slots
@@ -8322,7 +7847,9 @@ class Storage:
                 """,
                 (kb_id, normalized_profile),
             )
-            current = self.get_agentic_ready_publication_state(kb_id=kb_id, profile=normalized_profile)
+            current = self.get_agentic_ready_publication_state(
+                kb_id=kb_id, profile=normalized_profile
+            )
             active_id = current["active_publication_id"]
             previous_id = current["previous_publication_id"]
             if not active_id or not previous_id:
@@ -8356,13 +7883,10 @@ class Storage:
                 or previous.get("status") != "previous"
             ):
                 raise ValueError("previous ready-data publication is not validated")
-            if (
-                validate_previous_publication is not None
-                and not validate_previous_publication(previous)
+            if validate_previous_publication is not None and not validate_previous_publication(
+                previous
             ):
-                raise ValueError(
-                    "previous ready-data publication failed integrity validation"
-                )
+                raise ValueError("previous ready-data publication failed integrity validation")
             if previous["gc_state"] in {"claimed", "delete_failed", "deleted"}:
                 raise ValueError("previous ready-data publication is under garbage collection")
             if self._agentic_ready_paths_conflict(
@@ -8519,9 +8043,7 @@ class Storage:
                     (
                         str(previous_ready[0] or "openai").strip().lower() or "openai",
                         str(previous_ready[1] or "").strip(),
-                        int(previous_ready[2])
-                        if previous_ready[2] not in (None, "")
-                        else None,
+                        int(previous_ready[2]) if previous_ready[2] not in (None, "") else None,
                     )
                     if previous_ready
                     else None
@@ -8533,8 +8055,7 @@ class Storage:
                 )
                 reason = (
                     "embedding_index_committed"
-                    if previous_embedding is not None
-                    and previous_embedding != current_embedding
+                    if previous_embedding is not None and previous_embedding != current_embedding
                     else "index_committed"
                 )
                 self.mark_agentic_ready_source_event_for_kb(kb_id=kb_id, reason=reason)
@@ -8659,8 +8180,12 @@ class Storage:
                     """,
                     (chunk_set_id,),
                 )
-                self._conn.execute("DELETE FROM global_chunks WHERE chunk_set_id = ?", (chunk_set_id,))
-                self._conn.execute("DELETE FROM file_chunk_sets WHERE chunk_set_id = ?", (chunk_set_id,))
+                self._conn.execute(
+                    "DELETE FROM global_chunks WHERE chunk_set_id = ?", (chunk_set_id,)
+                )
+                self._conn.execute(
+                    "DELETE FROM file_chunk_sets WHERE chunk_set_id = ?", (chunk_set_id,)
+                )
 
         return {
             "older_than_days": days,
@@ -8670,17 +8195,14 @@ class Storage:
             "candidates": len(candidates),
             "candidate_chunk_sets": candidates[:50],
         }
-    
+
     def clear_local_path(self, url: str) -> None:
         """Clear the local_path for a file (for deletion tracking).
-        
+
         Args:
             url: File URL
         """
-        self._conn.execute(
-            "UPDATE files SET local_path = NULL WHERE url = ?",
-            (url,)
-        )
+        self._conn.execute("UPDATE files SET local_path = NULL WHERE url = ?", (url,))
         self._maybe_commit()
 
     # =========================================================================
@@ -8735,9 +8257,7 @@ class Storage:
 
     def get_user_by_id(self, user_id: int) -> dict | None:
         """Return user record by id, or None."""
-        cur = self._conn.execute(
-            "SELECT * FROM users WHERE id = ?", (user_id,)
-        )
+        cur = self._conn.execute("SELECT * FROM users WHERE id = ?", (user_id,))
         row = cur.fetchone()
         if row is None:
             return None
@@ -8791,9 +8311,7 @@ class Storage:
             params.append(password_hash)
         if not updates:
             # nothing to do; return True if user exists
-            row = self._conn.execute(
-                "SELECT id FROM users WHERE id = ?", (user_id,)
-            ).fetchone()
+            row = self._conn.execute("SELECT id FROM users WHERE id = ?", (user_id,)).fetchone()
             return row is not None
         params.append(user_id)
         cur = self._conn.execute(
@@ -8820,9 +8338,7 @@ class Storage:
             filters.append("(email LIKE ? OR display_name LIKE ?)")
             params.extend([f"%{search}%", f"%{search}%"])
         where = ("WHERE " + " AND ".join(filters)) if filters else ""
-        total = self._conn.execute(
-            f"SELECT COUNT(*) FROM users {where}", params
-        ).fetchone()[0]
+        total = self._conn.execute(f"SELECT COUNT(*) FROM users {where}", params).fetchone()[0]
         offset = (page - 1) * per_page
         rows = self._conn.execute(
             f"SELECT * FROM users {where} ORDER BY created_at DESC LIMIT ? OFFSET ?",
@@ -8907,9 +8423,7 @@ class Storage:
                 """,
                 (user_id, quota_date, now, now),
             )
-            if self._conn.execute(
-                "SELECT changes()"
-            ).fetchone()[0] > 0:
+            if self._conn.execute("SELECT changes()").fetchone()[0] > 0:
                 # Insert succeeded — we are at count=1.
                 self._maybe_commit()
                 return True, 1
@@ -8967,9 +8481,7 @@ class Storage:
                 """,
                 (ip_address, quota_date, now, now),
             )
-            if self._conn.execute(
-                "SELECT changes()"
-            ).fetchone()[0] > 0:
+            if self._conn.execute("SELECT changes()").fetchone()[0] > 0:
                 self._maybe_commit()
                 return True, 1
             cur2 = self._conn.execute(

@@ -2,7 +2,6 @@ from pathlib import Path
 
 from packaging.version import Version
 
-
 ROOT = Path(__file__).resolve().parents[1]
 
 

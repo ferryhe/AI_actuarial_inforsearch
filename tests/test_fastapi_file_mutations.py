@@ -14,7 +14,6 @@ from ai_actuarial.rag.kb_index import build_kb_index, resolve_kb_bound_chunks
 from ai_actuarial.rag.knowledge_base import KnowledgeBaseManager
 from ai_actuarial.storage import Storage
 
-
 PDF_BYTES = b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n"
 
 
@@ -50,7 +49,6 @@ def _write_config_files(base_dir: Path) -> tuple[Path, Path, Path, Path]:
     config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
     categories_path.write_text(yaml.safe_dump(categories, sort_keys=False), encoding="utf-8")
     return db_path, config_path, categories_path, files_dir
-
 
 
 def _seed_storage(db_path: Path, files_dir: Path) -> dict[str, object]:
@@ -144,7 +142,6 @@ def _seed_storage(db_path: Path, files_dir: Path) -> dict[str, object]:
     }
 
 
-
 def _build_test_client(tmp_path: Path, monkeypatch) -> tuple[TestClient, object, dict[str, object]]:
     db_path, config_path, categories_path, files_dir = _write_config_files(tmp_path)
     seed = _seed_storage(db_path, files_dir)
@@ -162,8 +159,9 @@ def _make_session_cookie(app, payload: dict[str, object]) -> str:
     return serializer.dumps(payload)
 
 
-
-def test_fastapi_file_mutation_routes_are_listed_in_native_inventory(tmp_path: Path, monkeypatch) -> None:
+def test_fastapi_file_mutation_routes_are_listed_in_native_inventory(
+    tmp_path: Path, monkeypatch
+) -> None:
     client, _app, _seed = _build_test_client(tmp_path, monkeypatch)
 
     migration = client.get("/api/migration/status")
@@ -174,7 +172,6 @@ def test_fastapi_file_mutation_routes_are_listed_in_native_inventory(tmp_path: P
     assert "/api/files/{file_url:path}/markdown" in body["native_paths"]
     assert "/api/download" in body["native_paths"]
     assert "/api/export" in body["native_paths"]
-
 
 
 def test_fastapi_file_mutations_download_and_export_work(tmp_path: Path, monkeypatch) -> None:
@@ -203,20 +200,28 @@ def test_fastapi_file_mutations_download_and_export_work(tmp_path: Path, monkeyp
     assert markdown_response.status_code == 200, markdown_response.text
     assert markdown_response.json()["markdown"]["markdown_content"].startswith("# Updated")
 
-    download_response = client.get("/api/download", params={"url": seed["alpha_url"]}, headers=headers)
+    download_response = client.get(
+        "/api/download", params={"url": seed["alpha_url"]}, headers=headers
+    )
     assert download_response.status_code == 200, download_response.text
     assert download_response.content == PDF_BYTES
 
     export_response = client.get("/api/export", params={"format": "csv"}, headers=headers)
     assert export_response.status_code == 200, export_response.text
-    assert "attachment; filename=catalog_export.csv" in export_response.headers.get("content-disposition", "")
+    assert "attachment; filename=catalog_export.csv" in export_response.headers.get(
+        "content-disposition", ""
+    )
     assert "Alpha Document Updated" in export_response.content.decode("utf-8-sig")
 
-    delete_response = client.post("/api/files/delete", json={"url": seed["beta_url"], "confirm": "DELETE"}, headers=headers)
+    delete_response = client.post(
+        "/api/files/delete", json={"url": seed["beta_url"], "confirm": "DELETE"}, headers=headers
+    )
     assert delete_response.status_code == 200, delete_response.text
 
     files_after_delete = client.get("/api/files?include_deleted=true", headers=headers)
-    deleted = next(item for item in files_after_delete.json()["files"] if item["url"] == seed["beta_url"])
+    deleted = next(
+        item for item in files_after_delete.json()["files"] if item["url"] == seed["beta_url"]
+    )
     assert deleted["deleted_at"]
 
 
@@ -309,9 +314,7 @@ def test_global_file_delete_reconciles_kbs_and_reindexes_only_complete_nonempty_
             built = build_kb_index(
                 storage=storage,
                 kb_id=kb_id,
-                expected_binding_snapshot_fingerprint=str(
-                    snapshot["binding_snapshot_fingerprint"]
-                ),
+                expected_binding_snapshot_fingerprint=str(snapshot["binding_snapshot_fingerprint"]),
                 embedding_identity_key=identity.embedding_identity_key,
                 config=manager.config,
             )
@@ -340,25 +343,37 @@ def test_global_file_delete_reconciles_kbs_and_reindexes_only_complete_nonempty_
     assert launched[0][0] == "rag_indexing"
     storage = Storage(str(db_path))
     try:
-        assert storage._conn.execute(
-            "SELECT COUNT(*) FROM rag_kb_files WHERE file_url = ?",
-            (seed["beta_url"],),
-        ).fetchone()[0] == 0
-        assert storage._conn.execute(
-            "SELECT COUNT(*) FROM kb_chunk_bindings WHERE file_url = ?",
-            (seed["beta_url"],),
-        ).fetchone()[0] == 0
+        assert (
+            storage._conn.execute(
+                "SELECT COUNT(*) FROM rag_kb_files WHERE file_url = ?",
+                (seed["beta_url"],),
+            ).fetchone()[0]
+            == 0
+        )
+        assert (
+            storage._conn.execute(
+                "SELECT COUNT(*) FROM kb_chunk_bindings WHERE file_url = ?",
+                (seed["beta_url"],),
+            ).fetchone()[0]
+            == 0
+        )
         assert storage._conn.execute(
             "SELECT index_dirty_at FROM rag_knowledge_bases WHERE kb_id = ?",
             ("kb-delete-two",),
         ).fetchone()[0]
-        assert storage.get_agentic_ready_source_state(
-            kb_id="kb-delete-two", profile="general"
-        )["pending_evaluation_generation"] is not None
-        assert storage._conn.execute(
-            "SELECT index_version_id FROM kb_ready_index_state WHERE kb_id = ?",
-            ("kb-delete-empty",),
-        ).fetchone()[0] == old_versions["kb-delete-empty"]
+        assert (
+            storage.get_agentic_ready_source_state(kb_id="kb-delete-two", profile="general")[
+                "pending_evaluation_generation"
+            ]
+            is not None
+        )
+        assert (
+            storage._conn.execute(
+                "SELECT index_version_id FROM kb_ready_index_state WHERE kb_id = ?",
+                ("kb-delete-empty",),
+            ).fetchone()[0]
+            == old_versions["kb-delete-empty"]
+        )
 
         remaining = resolve_kb_bound_chunks(storage, "kb-delete-two")
         assert [row["chunk_id"] for row in remaining["chunks"]] == [
@@ -367,17 +382,18 @@ def test_global_file_delete_reconciles_kbs_and_reindexes_only_complete_nonempty_
         rebuilt = build_kb_index(
             storage=storage,
             kb_id="kb-delete-two",
-            expected_binding_snapshot_fingerprint=str(
-                remaining["binding_snapshot_fingerprint"]
-            ),
+            expected_binding_snapshot_fingerprint=str(remaining["binding_snapshot_fingerprint"]),
             embedding_identity_key=str(launched[0][1]["embedding_identity_key"]),
             config=KnowledgeBaseManager(storage).config,
         )
         assert rebuilt["chunk_count"] == 1
-        assert storage._conn.execute(
-            "SELECT COUNT(*) FROM kb_index_items WHERE index_version_id = ?",
-            (old_versions["kb-delete-two"],),
-        ).fetchone()[0] == 2
+        assert (
+            storage._conn.execute(
+                "SELECT COUNT(*) FROM kb_index_items WHERE index_version_id = ?",
+                (old_versions["kb-delete-two"],),
+            ).fetchone()[0]
+            == 2
+        )
         with pytest.raises(Exception, match="invalid_selector"):
             resolve_kb_bound_chunks(storage, "kb-delete-empty")
     finally:
@@ -410,7 +426,9 @@ def test_fastapi_file_delete_ignores_legacy_service_token(
     assert response.status_code == 200, response.text
 
 
-def test_fastapi_file_delete_keeps_permission_feature_and_confirmation_checks(tmp_path: Path, monkeypatch) -> None:
+def test_fastapi_file_delete_keeps_permission_feature_and_confirmation_checks(
+    tmp_path: Path, monkeypatch
+) -> None:
     client, _app, seed = _build_test_client(tmp_path, monkeypatch)
     payload = {"url": seed["beta_url"], "confirm": "DELETE"}
 

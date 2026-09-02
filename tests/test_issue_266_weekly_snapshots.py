@@ -11,9 +11,9 @@ import pytest
 import yaml
 from fastapi.testclient import TestClient
 
-from ai_actuarial import cli
-from ai_actuarial import task_runtime
+from ai_actuarial import cli, task_runtime
 from ai_actuarial.api.app import create_app
+from ai_actuarial.api.route_inventory import _iter_routes
 from ai_actuarial.api.services import weekly_updates
 from ai_actuarial.sqlite_schema import (
     CURRENT_SQLITE_SCHEMA_VERSION,
@@ -25,12 +25,13 @@ from ai_actuarial.sqlite_schema import (
 from ai_actuarial.storage import Storage
 from ai_actuarial.task_runtime import NativeTaskRuntime
 
-
 PERIOD_START = "2026-03-09T00:00:00+00:00"
 PERIOD_END = "2026-03-16T00:00:00+00:00"
 
 
-def _write_config(tmp_path: Path, *, scheduled_tasks: list[dict[str, object]] | None = None) -> tuple[Path, Path]:
+def _write_config(
+    tmp_path: Path, *, scheduled_tasks: list[dict[str, object]] | None = None
+) -> tuple[Path, Path]:
     db_path = tmp_path / "index.db"
     config_path = tmp_path / "sites.yaml"
     config_path.write_text(
@@ -53,7 +54,9 @@ def _write_config(tmp_path: Path, *, scheduled_tasks: list[dict[str, object]] | 
     return db_path, config_path
 
 
-def _seed_files(db_path: Path, count: int, *, first_seen: str = "2026-03-10T08:00:00+00:00") -> None:
+def _seed_files(
+    db_path: Path, count: int, *, first_seen: str = "2026-03-10T08:00:00+00:00"
+) -> None:
     with sqlite3.connect(db_path) as conn:
         conn.executemany(
             """
@@ -269,15 +272,13 @@ def test_replay_force_and_failed_force_preserve_publication_contract(
 
     failing_storage = Storage(str(db_path))
     try:
-        failing_storage._conn.execute(
-            """
+        failing_storage._conn.execute("""
             CREATE TRIGGER fail_weekly_member_insert
             BEFORE INSERT ON weekly_snapshot_members
             BEGIN
                 SELECT RAISE(ABORT, 'simulated publication failure');
             END
-            """
-        )
+            """)
         failing_storage._conn.commit()
         with pytest.raises(sqlite3.IntegrityError, match="simulated publication failure"):
             weekly_updates.generate_weekly_update_summary(
@@ -394,7 +395,9 @@ def test_api_list_latest_detail_and_files_are_typed_and_lightweight(
     detail = client.get(f"/api/weekly-updates/{current['id']}")
     files = client.get(f"/api/weekly-updates/{current['id']}/files?limit=1&offset=0")
 
-    assert listing.status_code == latest.status_code == detail.status_code == files.status_code == 200
+    assert (
+        listing.status_code == latest.status_code == detail.status_code == files.status_code == 200
+    )
     assert all("files" not in summary for summary in listing.json()["summaries"])
     assert "files" not in latest.json()["summary"]
     assert "files" not in detail.json()["summary"]
@@ -409,7 +412,9 @@ def test_api_list_latest_detail_and_files_are_typed_and_lightweight(
         "/api/weekly-updates/{snapshot_id}",
         "/api/weekly-updates/{snapshot_id}/files",
     }
-    routes = {getattr(route, "path", ""): route for route in app.routes}
+    routes = {
+        path: route for route, path, _include_in_schema in _iter_routes(app.router.routes) if path
+    }
     assert all(routes[path].response_model is not None for path in typed_paths)
 
 
@@ -695,9 +700,7 @@ def test_real_scheduler_registration_invokes_previous_week_snapshot_to_persisten
     runtime.start_background_task = run_now  # type: ignore[method-assign]
     runtime.init_scheduler()
     weekly_job = next(
-        job
-        for job in runtime.scheduler.jobs
-        if job.unit == "weeks" and job.start_day == "monday"
+        job for job in runtime.scheduler.jobs if job.unit == "weeks" and job.start_day == "monday"
     )
     weekly_job.job_func()
     weekly_job.job_func()
@@ -710,9 +713,12 @@ def test_real_scheduler_registration_invokes_previous_week_snapshot_to_persisten
     assert (latest["period_start"], latest["period_end"]) != one_week_early
     assert latest["file_count"] == 1
     with sqlite3.connect(db_path) as conn:
-        assert conn.execute(
-            "SELECT COUNT(*) FROM weekly_snapshots WHERE status = 'published'"
-        ).fetchone()[0] == 1
+        assert (
+            conn.execute(
+                "SELECT COUNT(*) FROM weekly_snapshots WHERE status = 'published'"
+            ).fetchone()[0]
+            == 1
+        )
 
 
 def test_v11_migration_backfills_legacy_weekly_rows_and_runner_agrees(tmp_path: Path) -> None:
@@ -852,16 +858,12 @@ def test_v11_migration_resolves_normalized_period_collisions_deterministically(
 
     assert apply_schema(db_path)["state"] == "current"
     with sqlite3.connect(db_path) as conn:
-        published = conn.execute(
-            """
+        published = conn.execute("""
             SELECT id, period_start, period_end, generated_at
             FROM weekly_snapshots
             WHERE status = 'published'
-            """
-        ).fetchall()
-        legacy_count = conn.execute(
-            "SELECT COUNT(*) FROM weekly_update_summaries"
-        ).fetchone()[0]
+            """).fetchall()
+        legacy_count = conn.execute("SELECT COUNT(*) FROM weekly_update_summaries").fetchone()[0]
 
     assert published == [
         (

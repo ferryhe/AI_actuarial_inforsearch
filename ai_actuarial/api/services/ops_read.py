@@ -74,7 +74,9 @@ def get_backend_settings() -> dict[str, Any]:
         if "config_path" in runtime:
             runtime["config_path_set"] = bool(runtime.pop("config_path", None))
         if "categories_config_path" in runtime:
-            runtime["categories_config_path_set"] = bool(runtime.pop("categories_config_path", None))
+            runtime["categories_config_path_set"] = bool(
+                runtime.pop("categories_config_path", None)
+            )
     return settings
 
 
@@ -138,7 +140,9 @@ def get_config_sites() -> dict[str, object]:
                 "file_exts": site.get("file_exts", site_defaults.get("file_exts", [])),
                 "acquisition_tools": site.get("acquisition_tools", []),
                 "collect_linked_files": coerce_bool(site.get("collect_linked_files"), default=True),
-                "collect_page_content": coerce_bool(site.get("collect_page_content"), default=False),
+                "collect_page_content": coerce_bool(
+                    site.get("collect_page_content"), default=False
+                ),
                 "web_listening_goal": str(site.get("web_listening_goal") or ""),
             }
         )
@@ -242,19 +246,25 @@ def _build_task_display_summary(task_data: dict[str, Any]) -> dict[str, Any]:
     error_count = _task_error_count(task_data)
 
     if task_type == "catalog":
-        primary = _task_metric("tasks.metric_cataloged", "Cataloged", task_data.get("catalog_ok", items_processed))
+        primary = _task_metric(
+            "tasks.metric_cataloged", "Cataloged", task_data.get("catalog_ok", items_processed)
+        )
         secondary = [
             _task_metric("tasks.metric_errors", "Errors", error_count),
             _task_metric("tasks.metric_skipped", "Skipped", items_skipped),
         ]
     elif task_type in {"markdown", "markdown_conversion"}:
-        primary = _task_metric("tasks.metric_converted", "Converted", items_downloaded or items_processed)
+        primary = _task_metric(
+            "tasks.metric_converted", "Converted", items_downloaded or items_processed
+        )
         secondary = [
             _task_metric("tasks.metric_errors", "Errors", error_count),
             _task_metric("tasks.metric_skipped", "Skipped", items_skipped),
         ]
     elif task_type in {"chunk", "chunk_generation"}:
-        primary = _task_metric("tasks.metric_chunked", "Chunked", items_downloaded or items_processed)
+        primary = _task_metric(
+            "tasks.metric_chunked", "Chunked", items_downloaded or items_processed
+        )
         secondary = [
             _task_metric("tasks.metric_errors", "Errors", error_count),
             _task_metric("tasks.metric_skipped", "Skipped", items_skipped),
@@ -283,7 +293,9 @@ def _serialize_task_for_api(task_data: dict[str, Any]) -> dict[str, Any]:
     return row
 
 
-def list_active_tasks(active_tasks_ref: dict[str, dict[str, Any]], task_lock: Any) -> dict[str, list[dict[str, Any]]]:
+def list_active_tasks(
+    active_tasks_ref: dict[str, dict[str, Any]], task_lock: Any
+) -> dict[str, list[dict[str, Any]]]:
     if task_lock is None:
         tasks = [_serialize_task_for_api(task) for task in active_tasks_ref.values()]
     else:
@@ -292,10 +304,14 @@ def list_active_tasks(active_tasks_ref: dict[str, dict[str, Any]], task_lock: An
     return {"tasks": tasks}
 
 
-def list_task_history(task_history_ref: list[dict[str, Any]], limit: int) -> dict[str, list[dict[str, Any]]]:
+def list_task_history(
+    task_history_ref: list[dict[str, Any]], limit: int
+) -> dict[str, list[dict[str, Any]]]:
     tasks = [
         _serialize_task_for_api(task)
-        for task in sorted(task_history_ref, key=lambda x: x.get("started_at", ""), reverse=True)[:limit]
+        for task in sorted(task_history_ref, key=lambda x: x.get("started_at", ""), reverse=True)[
+            :limit
+        ]
     ]
     return {"tasks": tasks}
 
@@ -399,7 +415,9 @@ def get_ai_models(*, refresh: bool = False, storage: Storage | None = None) -> d
         "weekly_explanation": {
             "prompt_version": weekly_cfg.get("prompt_version", weekly_defaults["prompt_version"]),
             "prompt": weekly_cfg.get("prompt", weekly_defaults["prompt"]),
-            "timeout_seconds": weekly_cfg.get("timeout_seconds", weekly_defaults["timeout_seconds"]),
+            "timeout_seconds": weekly_cfg.get(
+                "timeout_seconds", weekly_defaults["timeout_seconds"]
+            ),
             "temperature": weekly_cfg.get("temperature", weekly_defaults["temperature"]),
             "max_tokens": weekly_cfg.get("max_tokens", weekly_defaults["max_tokens"]),
             "routing_source": "chatbot",
@@ -409,7 +427,10 @@ def get_ai_models(*, refresh: bool = False, storage: Storage | None = None) -> d
             "model": ai_config.get("ocr", {}).get("model", "docling"),
         },
     }
-    return {"current": current_config, "available": llm_models.get_available_models(provider_credentials=provider_credentials)}
+    return {
+        "current": current_config,
+        "available": llm_models.get_available_models(provider_credentials=provider_credentials),
+    }
 
 
 def parse_task_history_limit(raw_value: str | None) -> int:

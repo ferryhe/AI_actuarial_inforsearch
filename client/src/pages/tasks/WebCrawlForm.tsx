@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useTranslation } from "@/components/Layout";
 import TagSelect, { PRESET_FILE_EXTENSIONS } from "@/components/TagSelect";
-import { FormField, InputField, SelectField, CheckboxField, RunButton } from "@/components/FormFields";
+import { FormField, InputField, CheckboxField, RunButton } from "@/components/FormFields";
 import { ScheduleFromTaskButton } from "./ScheduleFromTaskButton";
 
 export function WebCrawlForm({ onSubmit, submitting }: { onSubmit: (d: Record<string, unknown>) => void; submitting: boolean }) {

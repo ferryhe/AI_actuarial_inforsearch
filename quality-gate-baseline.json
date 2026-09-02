@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "policy": "exact-shrink-only",
+  "tools": {
+    "black": [],
+    "isort": [],
+    "pylint": []
+  }
+}

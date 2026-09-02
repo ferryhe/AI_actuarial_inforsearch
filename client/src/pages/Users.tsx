@@ -147,7 +147,7 @@ export default function UsersPage() {
       );
       const entries = Array.isArray(data) ? data : data.activity || [];
       setActivityModal({ user, entries });
-    } catch (e: any) {
+    } catch (_e: any) {
       setActivityModal({ user, entries: [] });
     } finally {
       setActivityLoading(false);

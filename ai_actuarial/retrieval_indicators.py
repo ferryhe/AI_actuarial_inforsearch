@@ -3,7 +3,6 @@ from __future__ import annotations
 import math
 from typing import Any
 
-
 RETRIEVAL_METHODS = {
     "vector",
     "summaries",
@@ -76,9 +75,7 @@ def normalize_percentage(value: Any) -> int | None:
     return int(round(max(0.0, min(score, 100.0))))
 
 
-def normalize_retrieval_method(
-    *, source: Any = None, tool: Any = None, method: Any = None
-) -> str:
+def normalize_retrieval_method(*, source: Any = None, tool: Any = None, method: Any = None) -> str:
     method_text = str(method or "").strip().lower()
     if method_text:
         return method_text if method_text in RETRIEVAL_METHODS else "other"

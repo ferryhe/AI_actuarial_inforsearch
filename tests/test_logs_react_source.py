@@ -20,7 +20,7 @@ def test_logs_page_classifies_load_failures_without_calling_every_error_disabled
     source = LOGS_TSX.read_text(encoding="utf-8")
     translations = I18N_TS.read_text(encoding="utf-8")
 
-    assert 'status === 401' in source
+    assert "status === 401" in source
     assert 'status === 403 && msg === "GLOBAL_LOGS_API_DISABLED"' in source
     assert '? "forbidden"' in source
     assert ': "failed"' in source

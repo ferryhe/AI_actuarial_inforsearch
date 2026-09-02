@@ -52,4 +52,28 @@ exclude = [
 exclude_dirs = ["tests", "test_*.py", ".venv", "venv"]
 skips = ["B101", "B601"]  # Skip assert warnings and shell injection warnings for safe usage
 
+[tool.vulture]
+paths = ["ai_actuarial", "scripts", "tests", "config/dead_code_whitelist.py"]
+min_confidence = 60
+
+[tool.dead_code]
+source_roots = ["ai_actuarial", "scripts"]
+production_entries = [
+    "ai_actuarial.__main__",
+    "ai_actuarial.cli",
+    "ai_actuarial.api.app",
+    "ai_actuarial.agentic_rag.eval",
+]
+script_entry_globs = ["scripts/*.py"]
+test_entry_globs = ["tests/**/*.py"]
+dynamic_imports = [
+    { module = "ai_actuarial.chatbot.config", reason = "Lazy chat runtime import" },
+    { module = "ai_actuarial.chatbot.conversation", reason = "Lazy chat runtime import" },
+    { module = "ai_actuarial.chatbot.exceptions", reason = "Lazy chat runtime import" },
+    { module = "ai_actuarial.chatbot.llm", reason = "Lazy chat runtime import" },
+    { module = "ai_actuarial.chatbot.retrieval", reason = "Lazy chat runtime import" },
+    { module = "ai_actuarial.chatbot.router", reason = "Lazy chat runtime import" },
+    { module = "ai_actuarial.rag.knowledge_base", reason = "Lazy chat runtime import" },
+]
+
 # Pytest configuration is in pytest.ini to avoid duplication and confusion
