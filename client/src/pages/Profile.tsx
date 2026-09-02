@@ -259,14 +259,6 @@ export default function ProfilePage() {
           <p className="text-xs text-muted-foreground mt-1">
             {quota.remaining} {t("profile.quota_remaining")}
           </p>
-          {user.role === "registered" && (
-            <a
-              href="/upgrade"
-              className="mt-3 inline-block text-xs text-primary hover:underline"
-            >
-              {t("profile.upgrade")}
-            </a>
-          )}
         </div>
 
         {/* Recent Activity */}

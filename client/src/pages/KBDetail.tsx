@@ -712,7 +712,7 @@ export default function KBDetail() {
       },
       onError: () => setCategories([]),
     });
-    if (!isCurrent()) return;
+    if (!canManageKnowledge || !isCurrent()) return;
     const unmappedRequestId = ++unmappedRequestSequence.current;
     const unmappedRequest = captureReadyDataRequest(
       readyDataRoute.current,
@@ -737,7 +737,7 @@ export default function KBDetail() {
       ),
       onError: () => setUnmappedCategories([]),
     });
-  }, [kbId]);
+  }, [canManageKnowledge, kbId]);
 
   const loadAll = useCallback(async () => {
     if (!kbId) return;
@@ -806,6 +806,7 @@ export default function KBDetail() {
   );
 
   useEffect(() => {
+    if (!canRunKnowledgeTasks) return;
     if (!isReadyDataAutomationBusy(effectiveManifest)) {
       manifestPollAttempts.current = 0;
       return;
@@ -819,7 +820,7 @@ export default function KBDetail() {
         }
       });
     }, 3000, window.setTimeout.bind(window), window.clearTimeout.bind(window));
-  }, [effectiveManifest, loadAgenticManifest, manifestPollVersion]);
+  }, [canRunKnowledgeTasks, effectiveManifest, loadAgenticManifest, manifestPollVersion]);
 
   const handleSave = async () => {
     if (!kbId) return;
@@ -1461,6 +1462,7 @@ export default function KBDetail() {
             </div>
           </div>
 
+          {canRunKnowledgeTasks && (
           <div className="flex flex-wrap items-center gap-3 mt-4 pt-4 border-t border-border text-xs text-muted-foreground">
             <span className="flex items-center gap-1">
               <StatusDot status={meta.status} />
@@ -1484,7 +1486,9 @@ export default function KBDetail() {
               </span>
             )}
           </div>
+          )}
 
+          {canRunKnowledgeTasks && (
           <div
             className="mt-4 rounded-lg border border-border bg-muted/20 p-4"
             data-testid="panel-agentic-manifest"
@@ -1617,6 +1621,7 @@ export default function KBDetail() {
               </div>
             )}
           </div>
+          )}
         </div>
       </motion.div>
 
@@ -1633,7 +1638,7 @@ export default function KBDetail() {
         </div>
       )}
 
-      {meta.index_coverage && (
+      {canRunKnowledgeTasks && meta.index_coverage && (
         <div className="grid grid-cols-2 gap-2 rounded-xl border border-border bg-card p-4 text-xs text-muted-foreground sm:grid-cols-5" data-testid="kb-index-coverage">
           <span>{t("knowledge.bound_files")}: {meta.index_coverage.bound_file_count ?? 0}</span>
           <span>{t("knowledge.bound_chunks")}: {meta.index_coverage.bound_chunk_count ?? 0}</span>
@@ -1712,7 +1717,8 @@ export default function KBDetail() {
         </motion.div>
       )}
 
-      <motion.div
+      {canRunKnowledgeTasks && (
+        <motion.div
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.1, duration: 0.4 }}
@@ -1732,7 +1738,8 @@ export default function KBDetail() {
             <p className="text-2xl font-bold tabular-nums">{s.value}</p>
           </div>
         ))}
-      </motion.div>
+        </motion.div>
+      )}
 
       {canRunKnowledgeTasks && (
         <motion.div
@@ -1997,13 +2004,13 @@ export default function KBDetail() {
                           {file.category}
                         </span>
                       )}
-                      {(file.profile_name || file.chunk_profile) && (
+                      {canRunKnowledgeTasks && (file.profile_name || file.chunk_profile) && (
                         <span className="font-mono">{file.profile_name || file.chunk_profile}</span>
                       )}
-                      {file.chunk_count != null && (
+                      {canRunKnowledgeTasks && file.chunk_count != null && (
                         <span>{file.chunk_count} chunks</span>
                       )}
-                      {file.binding_mode && (
+                      {canRunKnowledgeTasks && file.binding_mode && (
                         <span className={cn(
                           "flex items-center gap-0.5 px-1.5 py-0.5 rounded-full",
                           file.binding_mode === "follow_latest"

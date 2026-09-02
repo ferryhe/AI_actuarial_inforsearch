@@ -217,7 +217,7 @@ function providerUsable(provider: string | { status?: string; decrypt_ok?: boole
   return true;
 }
 
-export function useTaskOptions(): TaskOptions {
+export function useTaskOptions(enabled = true): TaskOptions {
   const [engines, setEngines] = useState<SearchEngine[]>(cache.engines || FALLBACK_ENGINES);
   const [providers, setProviders] = useState<string[]>(cache.providers || []);
   const [categories, setCategories] = useState<string[]>(cache.categories || []);
@@ -374,11 +374,12 @@ export function useTaskOptions(): TaskOptions {
   }, []);
 
   useEffect(() => {
+    if (!enabled) return;
     if (!fetchedRef.current) {
       fetchedRef.current = true;
       fetchOptions();
     }
-  }, [fetchOptions]);
+  }, [enabled, fetchOptions]);
 
   const refresh = useCallback(() => {
     fetchOptions(true);

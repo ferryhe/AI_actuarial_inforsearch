@@ -7,6 +7,7 @@ ROOT = Path(__file__).resolve().parents[1] / "client" / "src"
 FILE_DETAIL_TSX = ROOT / "pages" / "FileDetail.tsx"
 FILE_PREVIEW_TSX = ROOT / "pages" / "FilePreview.tsx"
 LATEST_REQUEST_HOOK_TS = ROOT / "hooks" / "use-latest-request.ts"
+TASK_OPTIONS_HOOK_TS = ROOT / "hooks" / "use-task-options.ts"
 REPO_ROOT = Path(__file__).resolve().parents[1]
 NPM_COMMAND = "npm.cmd" if os.name == "nt" else "npm"
 
@@ -51,6 +52,25 @@ def test_file_detail_uses_permission_gates_for_mutating_actions():
     assert 'permissions.includes("markdown.write")' in src
     assert 'permissions.includes("tasks.run")' in src
     assert 'permissions.includes("rag.write")' not in src
+
+
+def test_file_detail_gates_protected_option_and_diagnostic_fetches():
+    src = FILE_DETAIL_TSX.read_text(encoding="utf-8")
+    hook_src = TASK_OPTIONS_HOOK_TS.read_text(encoding="utf-8")
+
+    assert "export function useTaskOptions(enabled = true): TaskOptions" in hook_src
+    assert "if (!enabled) return;" in hook_src
+    assert "}, [enabled, fetchOptions]);" in hook_src
+    assert 'const canReadConfig = permissions.includes("config.read");' in src
+    assert 'const canRunTasks = permissions.includes("tasks.run");' in src
+    assert "const taskOptions = useTaskOptions(canReadConfig);" in src
+    assert "if (!canRunTasks) return;\n    apiGet<{ profiles?: ChunkProfile[]" in src
+    assert "if (!canReadConfig) return;\n    apiGet<CategoriesConfig>" in src
+    coverage_block = src.split("const refreshChunks = useCallback", 1)[1].split(
+        "const conversionPoller", 1
+    )[0]
+    assert "if (canRunTasks && query)" in coverage_block
+    assert "}, [beginChunksRequest, canRunTasks, fileUrl]);" in coverage_block
 
 
 def test_file_detail_chunk_modal_runs_fixed_chunk_embedding_pair_without_kb_options():
@@ -193,7 +213,7 @@ def test_query_navigation_reloads_detail_and_preview():
     assert "const searchParams = useRawSearchParams();" in detail_src
     assert "}, [beginFileRequest, fileUrl]);" in detail_src
     assert "}, [beginMarkdownRequest, fileUrl]);" in detail_src
-    assert "}, [beginChunksRequest, fileUrl]);" in detail_src
+    assert "}, [beginChunksRequest, canRunTasks, fileUrl]);" in detail_src
     assert "useEffect(() => { fetchFile(); }, [fetchFile]);" in detail_src
     assert "`/api/files/detail?url=${encodeURIComponent(requestIdentity)}`" in detail_src
     assert "const searchParams = useRawSearchParams();" in preview_src
