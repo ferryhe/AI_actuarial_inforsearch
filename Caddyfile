@@ -1,3 +1,7 @@
+{
+	auto_https disable_redirects
+}
+
 (json_access_log) {
 	log {
 		output file /data/access.log {
@@ -24,9 +28,18 @@
 	}
 }
 
-http://localhost:80 {
-	bind 127.0.0.1 [::1]
-	respond "ok" 200
+http://:80 {
+	@health host localhost
+	handle @health {
+		respond "ok" 200
+	}
+
+	@app_hosts host aiinforsearch.com www.aiinforsearch.com
+	handle @app_hosts {
+		redir https://www.aiinforsearch.com{uri} permanent
+	}
+
+	respond "" 421
 }
 
 {$CADDY_APP_SITE_HOSTS:http://localhost:8080} {

@@ -1,8 +1,8 @@
 # Production Security Configuration
 
-This repository keeps public deployment files generic. Real hostnames, host-only
-upstream addresses, and production-only security policy values should be set on
-the server through environment variables or a private `.env` file.
+This repository keeps server-local upstream addresses and production-only
+security policy values generic. Set them on the server through environment
+variables or a private `.env` file.
 
 ## Server-local values
 
@@ -34,8 +34,12 @@ Agentic RAG does not require new production secrets. It does create and read rea
 
 ## Why this shape
 
-- The committed `Caddyfile` uses placeholder local hostnames and Caddy
-  environment placeholders instead of real production domains.
+- The committed `Caddyfile` fixes public HTTP redirects for `aiinforsearch.com`
+  and `www.aiinforsearch.com` to the canonical HTTPS `www` origin while preserving
+  the path and query. Other public HTTP hostnames are rejected; the `localhost`
+  health endpoint remains available to the Caddy container.
+- HTTPS app and secondary-site hostnames and the secondary upstream continue to
+  use Caddy environment placeholders.
 - Docker Compose uses `host.docker.internal:host-gateway` for host-side
   upstreams instead of publishing a fixed bridge subnet or gateway.
 - `config/sites.yaml` keeps safe public defaults for CSRF, CSP, and loopback
