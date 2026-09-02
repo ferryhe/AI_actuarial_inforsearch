@@ -6,8 +6,9 @@
 - Branch: `codex/issue-331-http-https-redirect`
 - Baseline: `origin/main@114108dd4426bdeb5b7bd93bda9b2498ebc06986`
 - Issue: `#331 ops: restore public HTTP-to-HTTPS redirects for app hostnames`
+- PR: `https://github.com/ferryhe/AI_actuarial_inforsearch/pull/332`
 - State file: `C:\Users\ferry\.codex\issue-to-merge-state\AI_actuarial_inforsearch\issue-331.json`
-- Delivery stage: local review and final current-diff validation complete; preparing Draft PR
+- Delivery stage: Draft PR #332 created; preparing the reviewed head for Ready
 - Progress heartbeat: id `issue-331-delivery-progress`, status `ACTIVE`, 15-minute cadence
 
 ## Issue #331 acceptance criteria
@@ -115,8 +116,8 @@
 
 ## Issue #331 recommended next action
 
-- Commit the locally reviewed current diff, push the task branch, and create the required Draft PR
-  with `Closes #331` before moving it to Ready and starting the single feedback window.
+- Push this Draft PR status update, verify the PR head and exact `Closes #331` reference, then move
+  PR #332 to Ready and start the single full feedback window.
 
 # Project Status — Issue #322 Markdown terminal preflight
 
