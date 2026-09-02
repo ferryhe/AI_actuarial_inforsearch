@@ -145,6 +145,7 @@ class GlobalChunk(Base):
     __table_args__ = (
         UniqueConstraint("chunk_set_id", "chunk_index", name="uq_chunk_set_index"),
         Index("idx_global_chunks_chunk_set_id", "chunk_set_id"),
+        Index("idx_global_chunks_stats_metadata", "chunk_set_id", "chunk_id"),
     )
 
 
@@ -166,7 +167,19 @@ class ChunkEmbedding(Base):
     validated_at = Column(Text)
     failure_reason = Column(Text)
 
-    __table_args__ = (Index("idx_chunk_embeddings_identity", "embedding_identity_key"),)
+    __table_args__ = (
+        Index("idx_chunk_embeddings_identity", "embedding_identity_key"),
+        Index(
+            "idx_chunk_embeddings_stats_metadata",
+            "embedding_identity_key",
+            "chunk_id",
+            "embedding_provider",
+            "embedding_model",
+            "dimension",
+            "config_fingerprint",
+            "status",
+        ),
+    )
 
 
 class KBChunkBinding(Base):

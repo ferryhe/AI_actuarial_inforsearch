@@ -11,7 +11,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable
 
-CURRENT_SQLITE_SCHEMA_VERSION = 12
+CURRENT_SQLITE_SCHEMA_VERSION = 13
 
 _AWARE_RFC3339_RE = re.compile(
     r"^\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[Zz]|[+-]\d{2}:\d{2})$"
@@ -87,6 +87,56 @@ class TableSignature:
 
 
 SchemaSourceValidator = Callable[[sqlite3.Connection, dict[str, TableSignature]], bool]
+
+_CHUNK_STATS_METADATA_INDEX_COLUMNS: dict[str, tuple[str, ...]] = {
+    "global_chunks": ("chunk_set_id", "chunk_id"),
+    "chunk_embeddings": (
+        "embedding_identity_key",
+        "chunk_id",
+        "embedding_provider",
+        "embedding_model",
+        "dimension",
+        "config_fingerprint",
+        "status",
+    ),
+}
+
+
+def _without_index_columns(
+    signature: TableSignature,
+    columns: tuple[str, ...],
+) -> TableSignature:
+    indexes = tuple(
+        index
+        for index in signature.indexes
+        if tuple(
+            str(column[2]) for column in index[3] if int(column[5]) == 1 and column[2] is not None
+        )
+        != columns
+    )
+    return TableSignature(
+        columns=signature.columns,
+        indexes=indexes,
+        foreign_keys=signature.foreign_keys,
+    )
+
+
+def _normalize_pre_v13_stats_indexes(
+    tables: dict[str, TableSignature],
+) -> dict[str, TableSignature]:
+    """Normalize only the two indexes that did not exist before schema v13."""
+    expected = _current_storage_signature()
+    adjusted = dict(tables)
+    for table, columns in _CHUNK_STATS_METADATA_INDEX_COLUMNS.items():
+        actual = tables.get(table)
+        current = expected.get(table)
+        if (
+            actual is not None
+            and current is not None
+            and actual == _without_index_columns(current, columns)
+        ):
+            adjusted[table] = current
+    return adjusted
 
 
 _OPTIONAL_TABLE_ALLOWED_COLUMNS: dict[str, frozenset[str]] = {
@@ -262,7 +312,9 @@ def _accept_version_1_source(
     tables: dict[str, TableSignature],
 ) -> bool:
     """Accept a version-1 source: current schema minus the taxonomy_state table."""
-    valid, _, _ = _schema_validation(tables, tolerate_backfill=True)
+    valid, _, _ = _schema_validation(
+        _normalize_pre_v13_stats_indexes(tables), tolerate_backfill=True
+    )
     return valid
 
 
@@ -280,7 +332,9 @@ def _accept_version_2_source(
     """Accept a version-2 source: taxonomy_state present but lacking applied_categories."""
     if "taxonomy_state" not in tables:
         return False
-    valid, _, _ = _schema_validation(tables, tolerate_backfill=True)
+    valid, _, _ = _schema_validation(
+        _normalize_pre_v13_stats_indexes(tables), tolerate_backfill=True
+    )
     return valid
 
 
@@ -310,7 +364,9 @@ def _accept_version_3_source(
     tables: dict[str, TableSignature],
 ) -> bool:
     """Accept a version-3 source: files lacking content_kind and/or manifest_raw."""
-    valid, _, _ = _schema_validation(tables, tolerate_backfill=True)
+    valid, _, _ = _schema_validation(
+        _normalize_pre_v13_stats_indexes(tables), tolerate_backfill=True
+    )
     return valid
 
 
@@ -367,7 +423,9 @@ def _accept_version_4_source(
     tables: dict[str, TableSignature],
 ) -> bool:
     """Accept a version-4 source: missing the pipeline state-machine tables."""
-    valid, _, _ = _schema_validation(tables, tolerate_backfill=True)
+    valid, _, _ = _schema_validation(
+        _normalize_pre_v13_stats_indexes(tables), tolerate_backfill=True
+    )
     return valid
 
 
@@ -380,7 +438,9 @@ def _accept_version_5_source(
     if any(t not in tables for t in pipeline_tables):
         return False
     filtered = {k: v for k, v in tables.items() if k not in pipeline_tables}
-    valid, _, _ = _schema_validation(filtered, tolerate_backfill=True)
+    valid, _, _ = _schema_validation(
+        _normalize_pre_v13_stats_indexes(filtered), tolerate_backfill=True
+    )
     return valid
 
 
@@ -472,7 +532,9 @@ def _accept_version_6_source(
     if "pipeline_run" not in tables:
         return False
     filtered = {k: v for k, v in tables.items() if k != "pipeline_run"}
-    valid, _, _ = _schema_validation(filtered, tolerate_backfill=True)
+    valid, _, _ = _schema_validation(
+        _normalize_pre_v13_stats_indexes(filtered), tolerate_backfill=True
+    )
     return valid
 
 
@@ -843,7 +905,9 @@ def _accept_version_7_source(
     adjusted = dict(tables)
     for table in v7_tables:
         adjusted[table] = expected[table]
-    valid, _, _ = _schema_validation(adjusted, tolerate_backfill=True)
+    valid, _, _ = _schema_validation(
+        _normalize_pre_v13_stats_indexes(adjusted), tolerate_backfill=True
+    )
     return valid
 
 
@@ -943,7 +1007,9 @@ def _accept_version_9_source(
     _conn: sqlite3.Connection,
     tables: dict[str, TableSignature],
 ) -> bool:
-    valid, _, _ = _schema_validation(tables, tolerate_backfill=True)
+    valid, _, _ = _schema_validation(
+        _normalize_pre_v13_stats_indexes(tables), tolerate_backfill=True
+    )
     return valid
 
 
@@ -1086,7 +1152,7 @@ def _accept_version_10_source(
         if table not in adjusted and table in expected:
             adjusted[table] = expected[table]
     valid, _, _ = _schema_validation(
-        adjusted,
+        _normalize_pre_v13_stats_indexes(adjusted),
         unexpected_schema_objects=_unexpected_schema_object_counts(conn, tables),
     )
     return valid
@@ -1129,6 +1195,43 @@ def _accept_version_11_source(
     adjusted = dict(tables)
     if explanation_table in expected:
         adjusted[explanation_table] = expected[explanation_table]
+    valid, _, _ = _schema_validation(
+        _normalize_pre_v13_stats_indexes(adjusted),
+        unexpected_schema_objects=_unexpected_schema_object_counts(conn, tables),
+    )
+    return valid
+
+
+def _add_chunk_stats_metadata_indexes_v13(conn: sqlite3.Connection) -> None:
+    """Add covering indexes for metadata-only Chunk & Embedding stats."""
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_global_chunks_stats_metadata
+        ON global_chunks(chunk_set_id, chunk_id)
+        """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_chunk_embeddings_stats_metadata
+        ON chunk_embeddings(
+            embedding_identity_key, chunk_id, embedding_provider,
+            embedding_model, dimension, config_fingerprint, status
+        )
+        """)
+    _set_user_version(conn, 13)
+
+
+def _accept_version_12_source(
+    conn: sqlite3.Connection,
+    tables: dict[str, TableSignature],
+) -> bool:
+    """Accept the exact current schema before the stats covering indexes existed."""
+
+    expected = _current_storage_signature()
+    adjusted = dict(tables)
+    for table, columns in _CHUNK_STATS_METADATA_INDEX_COLUMNS.items():
+        actual = tables.get(table)
+        current = expected.get(table)
+        if actual is None or current is None or actual != _without_index_columns(current, columns):
+            return False
+        adjusted[table] = current
     valid, _, _ = _schema_validation(
         adjusted,
         unexpected_schema_objects=_unexpected_schema_object_counts(conn, tables),
@@ -1207,6 +1310,12 @@ SQLITE_SCHEMA_MIGRATIONS: tuple[SQLiteSchemaMigration, ...] = (
         migration_id="add_weekly_explanations_v12",
         apply=_add_weekly_explanations_v12,
         source_validator=_accept_version_11_source,
+    ),
+    SQLiteSchemaMigration(
+        version=13,
+        migration_id="add_chunk_stats_metadata_indexes_v13",
+        apply=_add_chunk_stats_metadata_indexes_v13,
+        source_validator=_accept_version_12_source,
     ),
 )
 
@@ -2015,7 +2124,7 @@ def _analyze_connection(
     if not valid:
         if version == 0 and _migration_path_from(0) is not None:
             tolerant_valid, _, _ = _schema_validation(
-                tables,
+                _normalize_pre_v13_stats_indexes(tables),
                 unexpected_schema_objects=unexpected_schema_objects,
                 tolerate_backfill=True,
             )

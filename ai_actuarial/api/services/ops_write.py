@@ -2658,25 +2658,43 @@ def get_chunk_generation_stats(*, db_path: str, category: str | None = None) -> 
         except Exception:
             first_without_chunks = None
 
-        chunk_set_rows = conn.execute(
+        identity = resolve_server_embedding_identity(storage)
+        embedding_row = conn.execute(
             f"""
-            SELECT s.chunk_set_id
+            SELECT
+                COUNT(g.chunk_id) AS expected_count,
+                COALESCE(SUM(CASE
+                    WHEN e.chunk_id IS NOT NULL
+                     AND e.embedding_provider = ?
+                     AND e.embedding_model = ?
+                     AND e.dimension = ?
+                     AND e.config_fingerprint = ?
+                     AND e.status = 'ready'
+                    THEN 1 ELSE 0 END), 0) AS ready_count,
+                COALESCE(SUM(CASE WHEN e.chunk_id IS NULL THEN 1 ELSE 0 END), 0)
+                    AS missing_count
             FROM file_chunk_sets s
             JOIN files f ON f.url = s.file_url
             JOIN catalog_items c ON c.file_url = f.url
+            JOIN global_chunks g INDEXED BY idx_global_chunks_stats_metadata
+              ON g.chunk_set_id = s.chunk_set_id
+            LEFT JOIN chunk_embeddings e INDEXED BY idx_chunk_embeddings_stats_metadata
+              ON e.embedding_identity_key = ? AND e.chunk_id = g.chunk_id
             WHERE {where} AND s.status = 'ready'
             """,
-            tuple(params),
-        ).fetchall()
-        identity = resolve_server_embedding_identity(storage)
-        embedding_stats = (
-            storage.embedding_coverage(
-                chunk_set_ids=[str(row[0]) for row in chunk_set_rows],
-                identity=identity.as_dict(),
-            )
-            if chunk_set_rows
-            else {"expected_count": 0, "ready_count": 0, "missing": 0, "invalid": 0}
-        )
+            (
+                identity.provider,
+                identity.model,
+                identity.dimension,
+                identity.config_fingerprint,
+                identity.embedding_identity_key,
+                *params,
+            ),
+        ).fetchone()
+        expected_count = int(embedding_row[0] or 0)
+        ready_count = int(embedding_row[1] or 0)
+        missing_count = int(embedding_row[2] or 0)
+        invalid_count = expected_count - ready_count - missing_count
 
         return {
             "success": True,
@@ -2684,10 +2702,10 @@ def get_chunk_generation_stats(*, db_path: str, category: str | None = None) -> 
             "category": category_filter or "",
             "total_with_markdown": int(total_with_markdown),
             "total_with_chunks": int(total_with_chunks),
-            "chunks_ready": int(embedding_stats["expected_count"]),
-            "embeddings_ready": int(embedding_stats["ready_count"]),
-            "embeddings_missing": int(embedding_stats["missing"]),
-            "embeddings_invalid": int(embedding_stats["invalid"]),
+            "chunks_ready": expected_count,
+            "embeddings_ready": ready_count,
+            "embeddings_missing": missing_count,
+            "embeddings_invalid": invalid_count,
             "embedding_provider": identity.provider,
             "embedding_model": identity.model,
             "embedding_dimension": identity.dimension,

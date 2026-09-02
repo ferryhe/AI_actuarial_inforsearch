@@ -928,8 +928,19 @@ class Storage:
             ON global_chunks(chunk_set_id)
             """)
         self._conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_global_chunks_stats_metadata
+            ON global_chunks(chunk_set_id, chunk_id)
+            """)
+        self._conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_chunk_embeddings_identity
             ON chunk_embeddings(embedding_identity_key)
+            """)
+        self._conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_chunk_embeddings_stats_metadata
+            ON chunk_embeddings(
+                embedding_identity_key, chunk_id, embedding_provider,
+                embedding_model, dimension, config_fingerprint, status
+            )
             """)
         self._conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_kb_chunk_bindings_kb_id
