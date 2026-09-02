@@ -763,6 +763,7 @@ def test_v11_migration_backfills_legacy_weekly_rows_and_runner_agrees(tmp_path: 
     assert [action["id"] for action in plan["plan"]["actions"]] == [
         "add_weekly_snapshots_v11",
         "add_weekly_explanations_v12",
+        "add_chunk_stats_metadata_indexes_v13",
     ]
 
     applied = apply_schema(db_path)
@@ -770,6 +771,7 @@ def test_v11_migration_backfills_legacy_weekly_rows_and_runner_agrees(tmp_path: 
     assert applied["applied_migrations"] == [
         "add_weekly_snapshots_v11",
         "add_weekly_explanations_v12",
+        "add_chunk_stats_metadata_indexes_v13",
     ]
     with sqlite3.connect(db_path) as conn:
         legacy = conn.execute(

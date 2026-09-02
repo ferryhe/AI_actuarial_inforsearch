@@ -4,72 +4,53 @@
 - Repository: `AI_actuarial_inforsearch`
 - Checkout: `C:\Project\AI_actuarial_inforsearch\.codex-worktrees\pr-324`
 - Branch: `fix/guest-ui-permission-noise`
+- Baseline merged: `origin/main@0fe3101`
 - PR: `https://github.com/ferryhe/AI_actuarial_inforsearch/pull/324`
 - Task: review PR #324, fix its failing test gate, and evaluate Copilot feedback
 
 ## Scope and boundaries
 
-- This repository is the only writable workspace; sibling repositories remain off-limits.
-- The review covers the eight PR files plus the narrow hook/test correction and this status file.
-- Unrelated changes in the primary checkout on `codex/issue-317-dead-code-detection`
-  remain user-owned and untouched.
+- This repository is the only writable project workspace; sibling repositories are off-limits.
+- Scope is limited to the guest UI permission behavior, the failed formatting gate, and the
+  Copilot review comment on `useTaskOptions`.
+- The primary checkout has unrelated user-owned changes and remains untouched. Work is isolated
+  in this task worktree.
 
-## Findings and fixes
+## Findings and implementation
 
-- The failed `quality-gate` job had 1,880 passing pytest cases; it failed only
-  because `tests/test_knowledge_react_source.py` was not Black-formatted.
-- Copilot's one comment was confirmed. `useTaskOptions(false)` returned
-  module-cached provider, category, catalog, OCR, and conversion configuration
-  from a prior authorized view, and reported `loading=true` when that cache had
-  expired.
-- Disabled hook consumers now receive stable public fallbacks, empty protected
-  option arrays, `loading=false`, and `error=null`. Disabled refreshes do not
-  issue protected requests, and valid cache hits explicitly finish loading and
-  clear stale errors.
-- Added a runtime TypeScript regression that warms the operator cache, expires
-  it, mounts a guest hook, verifies no cached operator data is returned, and
-  verifies disabled refresh is request-free.
-- Black-formatted the CI-reported Knowledge source test.
-- The remaining PR diff was reviewed against the permission-gating goal. No
-  additional reproducible, in-scope finding was accepted.
+- The original remote run passed all 1,880 pytest tests but failed the quality gate because
+  `tests/test_knowledge_react_source.py` was not Black-formatted.
+- Copilot's comment was confirmed: a disabled `useTaskOptions` consumer could expose module-level
+  cached operator data and could retain a stale loading state.
+- Disabled consumers now receive stable fallback/empty values, `loading=false`, `error=null`, and
+  a request-free `refresh` function.
+- A runtime TypeScript/React hook regression warms the authorized cache, expires it, mounts a
+  disabled guest consumer, and verifies that no operator data or new requests escape.
+- Black reformatted the original failing test file.
+- The Copilot thread was answered with the fix and regression evidence.
+- Latest `origin/main` was merged after it advanced through PR #323; its sole textual conflict in
+  this status file was resolved in favor of the current PR #324 record.
 
-## Verification
+## Local verification before latest-main merge
 
-- Focused React source/runtime suite: 78 passed.
-- Full unified quality gate: 1,861 passed, 10 skipped; Black, isort, and Pylint passed.
-- Frontend ESLint with `--quiet`: passed with zero errors.
-- TypeScript no-emit check: passed.
-- Frontend production build: passed; Vite emitted only the existing large-chunk advisory.
-- Dead-code file and symbol gates: passed with zero baseline findings.
-- `git diff --check`: passed; Git only reported expected Windows line-ending notices.
-- Browser smoke: the guest File Detail shell rendered guest navigation and no
-  operator diagnostics or console errors. The standalone backend was not
-  started, so read APIs returned the expected Vite proxy 500 response.
+- New runtime regression: demonstrated the stale-data/loading failure before the hook fix and
+  passed after the fix.
+- Focused React source suite: 78 passed.
+- Black check for the four relevant React source test files: passed.
+- Frontend lint: passed with 0 errors.
+- Frontend type-check: passed.
+- Frontend production build: passed; only the existing Vite large-chunk advisory remained.
+- Four-layer dead-code gate: passed with zero baseline findings.
+- Unified quality gate: passed with 1,861 tests passed and 10 skipped; Black, isort, and Pylint
+  passed.
+- `git diff --check`: passed apart from informational CRLF conversion notices.
+- Browser shell smoke as a signed-out user showed no operator diagnostics or console errors. The
+  backend was not running, so proxied API requests returned connection-refused/500 responses;
+  the runtime regression is the authoritative guest-cache check.
 
-## Files changed by this review
+## Delivery state
 
-- `client/src/hooks/use-task-options.ts`
-- `tests/test_file_detail_react_source.py`
-- `tests/test_knowledge_react_source.py`
-- `.hermes/project-status.md`
-
-## Working tree notes
-
-- `npm ci` installed ignored dependencies in the isolated worktree for local gates.
-- The untracked task-local `.codex-black-cache-pr324/` cache remains excluded from the commit.
-- No unrelated tracked or untracked file was changed in the isolated PR worktree.
-
-## Remote state
-
-- Local fixes and verification are complete.
-- The fix commit, Copilot reply, and refreshed GitHub checks are pending publication.
-
-## Blockers or decisions needed
-
-- No implementation blocker.
-- Merge was not requested and remains outside this run.
-
-## Recommended next action
-
-- Push the fix to PR #324, reply to the confirmed Copilot thread, and wait for all
-  required GitHub checks to pass.
+- Fix commit `1d61054` is pushed to the PR branch.
+- The Copilot reply is published at discussion comment `3910583670`.
+- Post-merge local validation and the new remote CI run are the remaining checks at this snapshot.
+- Local task cache `.codex-black-cache-pr324/` is untracked and excluded from commits.

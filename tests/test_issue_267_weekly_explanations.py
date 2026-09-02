@@ -168,7 +168,7 @@ def _weekly_explanations_module():
     return weekly_explanations
 
 
-def test_v12_is_the_exact_next_migration_and_preserves_v11_data(tmp_path: Path) -> None:
+def test_v12_then_v13_migrations_preserve_v11_data(tmp_path: Path) -> None:
     db_path, _config_path, _config = _write_config(tmp_path)
     _seed_files(db_path, count=1)
     snapshot = _snapshot(db_path)
@@ -176,16 +176,22 @@ def test_v12_is_the_exact_next_migration_and_preserves_v11_data(tmp_path: Path) 
         conn.execute("DROP TABLE IF EXISTS weekly_explanations")
         conn.execute("PRAGMA user_version=11")
 
-    assert CURRENT_SQLITE_SCHEMA_VERSION == 12
+    assert CURRENT_SQLITE_SCHEMA_VERSION == 13
     status = schema_status(db_path)
     plan = schema_plan(db_path)
     assert status["state"] == "needs_migration"
     assert status["database"]["user_version"] == 11
-    assert plan["plan"]["actions"][-1]["id"] == "add_weekly_explanations_v12"
+    assert [action["id"] for action in plan["plan"]["actions"]] == [
+        "add_weekly_explanations_v12",
+        "add_chunk_stats_metadata_indexes_v13",
+    ]
 
     applied = apply_schema(db_path)
     assert applied["state"] == "current"
-    assert applied["applied_migrations"] == ["add_weekly_explanations_v12"]
+    assert applied["applied_migrations"] == [
+        "add_weekly_explanations_v12",
+        "add_chunk_stats_metadata_indexes_v13",
+    ]
     with sqlite3.connect(db_path) as conn:
         assert conn.execute("SELECT id FROM weekly_snapshots").fetchone()[0] == snapshot["id"]
         columns = [row[1] for row in conn.execute("PRAGMA table_info(weekly_explanations)")]

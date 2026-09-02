@@ -968,6 +968,7 @@ def test_v7_embedding_schema_migrates_empty_and_nonempty_tables_without_reusing_
         "add_agentic_ready_manual_operation_state_v10",
         "add_weekly_snapshots_v11",
         "add_weekly_explanations_v12",
+        "add_chunk_stats_metadata_indexes_v13",
     ]
     with sqlite3.connect(db_path) as conn:
         assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
