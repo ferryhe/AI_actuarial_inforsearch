@@ -2402,9 +2402,22 @@ def start_collection(
                     "guidance": exc.guidance,
                 },
             ) from exc
-        if bool(data.get("chunk_set_ids")) == bool(data.get("file_urls")):
+        incremental = coerce_bool(data.get("incremental"), default=False)
+        if "incremental" in data:
+            data["incremental"] = incremental
+        selection_modes = sum(
+            (bool(data.get("chunk_set_ids")), bool(data.get("file_urls")), incremental)
+        )
+        if selection_modes != 1:
             _reject_request(
-                "Provide exactly one embedding selector: chunk_set_ids or file_urls",
+                "Provide one embedding selection mode: chunk_set_ids, file_urls, or incremental",
+                collection_type=collection_type,
+                data=data,
+                bridge=bridge,
+            )
+        if incremental and str(data.get("profile_id") or "").strip():
+            _reject_request(
+                "profile_id cannot be combined with incremental embedding selection",
                 collection_type=collection_type,
                 data=data,
                 bridge=bridge,

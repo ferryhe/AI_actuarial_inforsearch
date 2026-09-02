@@ -71,7 +71,7 @@ def _service(tmp_path: Path, tasks: FakeTasks, kbs: list[str]) -> PipelineBaton:
     )
 
 
-def test_fixed_baton_runs_embedding_for_exact_chunk_result_before_rag(tmp_path: Path) -> None:
+def test_fixed_baton_runs_selector_free_incremental_stages_before_rag(tmp_path: Path) -> None:
     tasks = FakeTasks()
     tasks.statuses["scheduled-1"] = "pending"
     baton = _service(tmp_path, tasks, ["kb-z", "kb-a"])
@@ -90,6 +90,7 @@ def test_fixed_baton_runs_embedding_for_exact_chunk_result_before_rag(tmp_path: 
     assert tasks.started == []
 
     tasks.statuses["scheduled-1"] = "completed"
+    tasks.results["scheduled-1"] = {"items_downloaded": 1}
     assert baton.tick()["state"]["current_step"] == "markdown_conversion"
     assert tasks.started[-1][:2] == ("markdown_conversion", {"scan_count": 17})
 
@@ -100,28 +101,34 @@ def test_fixed_baton_runs_embedding_for_exact_chunk_result_before_rag(tmp_path: 
     assert len(tasks.started) == 1
 
     tasks.statuses["task-1"] = "completed"
-    tasks.results["task-1"] = {"result": {"contract_version": 1, "files": MARKDOWN_FILES}}
+    tasks.results["task-1"] = {
+        "items_downloaded": 1,
+        "result": {"contract_version": 1, "files": MARKDOWN_FILES},
+    }
     baton.tick()
     assert tasks.started[-1][:2] == (
         "catalog",
-        {"scan_count": 23, "file_urls": ["https://example.test/a.pdf"]},
+        {"scan_count": 23},
     )
     tasks.statuses["task-2"] = "completed"
+    tasks.results["task-2"] = {"items_downloaded": 1}
     baton.tick()
     assert tasks.started[-1][:2] == (
         "chunk_generation",
-        {"chunk_size": 700, "files": MARKDOWN_FILES},
+        {"chunk_size": 700},
     )
     tasks.results["task-3"] = {
-        "result": {"chunk_sets": [{"chunk_set_id": "cs-a"}, {"chunk_set_id": "cs-z"}]}
+        "items_downloaded": 1,
+        "result": {"chunk_sets": [{"chunk_set_id": "cs-a"}, {"chunk_set_id": "cs-z"}]},
     }
     tasks.statuses["task-3"] = "completed"
     baton.tick()
     assert tasks.started[-1][:2] == (
         "embedding_generation",
-        {"chunk_set_ids": ["cs-a", "cs-z"]},
+        {"incremental": True},
     )
     tasks.statuses["task-4"] = "completed"
+    tasks.results["task-4"] = {"items_downloaded": 1}
     baton.tick()
     assert tasks.started[-1][:2] == (
         "rag_indexing",
@@ -150,21 +157,22 @@ def test_fixed_baton_runs_embedding_for_exact_chunk_result_before_rag(tmp_path: 
     assert len(tasks.started) == 6
 
 
-def test_untouched_catalog_only_adds_exact_markdown_selector(tmp_path: Path) -> None:
+def test_untouched_catalog_uses_its_incremental_backlog_without_selector(tmp_path: Path) -> None:
     tasks = FakeTasks()
     tasks.statuses["scheduled-1"] = "completed"
+    tasks.results["scheduled-1"] = {"items_downloaded": 1}
     baton = _service(tmp_path, tasks, [])
     baton.start("scheduled-1")
     baton.tick()
     tasks.statuses["task-1"] = "completed"
-    tasks.results["task-1"] = {"result": {"contract_version": 1, "files": MARKDOWN_FILES}}
+    tasks.results["task-1"] = {
+        "items_downloaded": 1,
+        "result": {"contract_version": 1, "files": MARKDOWN_FILES},
+    }
 
     baton.tick()
 
-    assert tasks.started[-1][:2] == (
-        "catalog",
-        {"file_urls": ["https://example.test/a.pdf"]},
-    )
+    assert tasks.started[-1][:2] == ("catalog", {})
 
 
 @pytest.mark.parametrize("field", ["kb_id", "force_reindex", "incremental"])
@@ -244,20 +252,29 @@ def test_scheduled_error_without_downloaded_files_still_aborts(tmp_path: Path) -
 def test_zero_category_kbs_completes_after_chunk(tmp_path: Path) -> None:
     tasks = FakeTasks()
     tasks.statuses["scheduled-1"] = "completed"
+    tasks.results["scheduled-1"] = {"items_downloaded": 1}
     baton = _service(tmp_path, tasks, [])
     baton.start("scheduled-1")
     baton.tick()
     tasks.statuses["task-1"] = "completed"
-    tasks.results["task-1"] = {"result": {"contract_version": 1, "files": MARKDOWN_FILES}}
+    tasks.results["task-1"] = {
+        "items_downloaded": 1,
+        "result": {"contract_version": 1, "files": MARKDOWN_FILES},
+    }
     baton.tick()
     tasks.statuses["task-2"] = "completed"
+    tasks.results["task-2"] = {"items_downloaded": 1}
     baton.tick()
     tasks.statuses["task-3"] = "completed"
-    tasks.results["task-3"] = {"result": {"chunk_sets": [{"chunk_set_id": "cs-1"}]}}
+    tasks.results["task-3"] = {
+        "items_downloaded": 1,
+        "result": {"chunk_sets": [{"chunk_set_id": "cs-1"}]},
+    }
 
     state = baton.tick()["state"]
     assert state["chunk_embedding_phase"] == "embedding"
     tasks.statuses["task-4"] = "completed"
+    tasks.results["task-4"] = {"items_downloaded": 1}
     state = baton.tick()["state"]
 
     assert state["round_status"] == "completed"
@@ -272,13 +289,18 @@ def test_zero_category_kbs_completes_after_chunk(tmp_path: Path) -> None:
 def test_chunk_failure_never_launches_embedding(tmp_path: Path) -> None:
     tasks = FakeTasks()
     tasks.statuses["scheduled-1"] = "completed"
+    tasks.results["scheduled-1"] = {"items_downloaded": 1}
     baton = _service(tmp_path, tasks, [])
     baton.start("scheduled-1")
     baton.tick()
     tasks.statuses["task-1"] = "completed"
-    tasks.results["task-1"] = {"result": {"contract_version": 1, "files": MARKDOWN_FILES}}
+    tasks.results["task-1"] = {
+        "items_downloaded": 1,
+        "result": {"contract_version": 1, "files": MARKDOWN_FILES},
+    }
     baton.tick()
     tasks.statuses["task-2"] = "completed"
+    tasks.results["task-2"] = {"items_downloaded": 1}
     baton.tick()
     tasks.statuses["task-3"] = "error"
 
@@ -331,7 +353,6 @@ def test_persisted_document_contains_only_config_and_minimal_baton_state(tmp_pat
         "chunk_embedding_phase",
         "chunk_task_id",
         "embedding_task_id",
-        "markdown_files",
         "kb_index_ready_phase",
         "kb_index_task_id",
         "ready_data_task_id",
@@ -341,24 +362,29 @@ def test_persisted_document_contains_only_config_and_minimal_baton_state(tmp_pat
     assert "markdown_content" not in json.dumps(document)
 
 
-def test_baton_fails_closed_when_markdown_task_has_no_canonical_files(tmp_path: Path) -> None:
+def test_baton_completes_cleanly_when_markdown_reports_zero_successes(tmp_path: Path) -> None:
     tasks = FakeTasks()
     tasks.statuses["scheduled-1"] = "completed"
+    tasks.results["scheduled-1"] = {"items_downloaded": 1}
     baton = _service(tmp_path, tasks, [])
     baton.start("scheduled-1")
     baton.tick()
     tasks.statuses["task-1"] = "completed"
-    tasks.results["task-1"] = {"result": {"contract_version": 1, "files": []}}
+    tasks.results["task-1"] = {
+        "items_downloaded": 0,
+        "result": {"contract_version": 1, "files": []},
+    }
 
     state = baton.tick()["state"]
 
-    assert state["round_status"] == "error"
+    assert state["round_status"] == "completed"
     assert [kind for kind, _, _ in tasks.started] == ["markdown_conversion"]
 
 
 def test_legacy_chunk_override_is_sanitized_when_persisted_baton_executes(tmp_path: Path) -> None:
     tasks = FakeTasks()
     tasks.statuses["scheduled-1"] = "completed"
+    tasks.results["scheduled-1"] = {"items_downloaded": 1}
     state_path = tmp_path / "pipeline-baton.json"
     state_path.write_text(
         json.dumps(
@@ -387,14 +413,18 @@ def test_legacy_chunk_override_is_sanitized_when_persisted_baton_executes(tmp_pa
     baton.start("scheduled-1")
     baton.tick()
     tasks.statuses["task-1"] = "completed"
-    tasks.results["task-1"] = {"result": {"contract_version": 1, "files": MARKDOWN_FILES}}
+    tasks.results["task-1"] = {
+        "items_downloaded": 1,
+        "result": {"contract_version": 1, "files": MARKDOWN_FILES},
+    }
     baton.tick()
     tasks.statuses["task-2"] = "completed"
+    tasks.results["task-2"] = {"items_downloaded": 1}
 
     baton.tick()
 
     assert tasks.started[-1][:2] == (
         "chunk_generation",
-        {"chunk_size": 456, "files": MARKDOWN_FILES},
+        {"chunk_size": 456},
     )
     assert baton.status()["config"]["overrides"]["chunk_generation"] == {"chunk_size": 456}

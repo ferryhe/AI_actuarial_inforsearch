@@ -251,14 +251,23 @@ def test_chunk_embedding_ui_removes_binding_and_overwrite_controls_and_uses_fixe
         assert "overwrite_same_profile" not in source
     assert 'type: "embedding_generation"' in tasks
     assert 'type: "embedding_generation"' in file_detail
-    assert "chunk_set_ids" in tasks
+    assert "chunk_sets?: Array<{ chunk_set_id?: string }>;" in tasks
+    assert '.map((item) => String(item.chunk_set_id || "").trim())' in tasks
+    empty_guard = 'if (chunk_set_ids.length === 0) throw new Error("Chunk task returned no stable chunk_set_ids");'
+    embedding_request = "const embedding = await apiPost<{ job_id?: string; error?: string }>"
+    assert tasks.index(empty_guard) < tasks.index(embedding_request)
+    embedding_payload = tasks[
+        tasks.index(embedding_request) : tasks.index("});", tasks.index(embedding_request))
+    ]
+    assert "incremental: true" in embedding_payload
+    assert "chunk_set_ids" not in embedding_payload
     assert "chunk_set_ids" in file_detail
     assert "const identity = embeddingTask.result;" in tasks
     assert 'label: "Chunk & Embedding"' in pipeline
     assert "{task.status} · {task.task_id}" in pipeline
 
 
-def test_managed_schedule_launches_embedding_only_from_successful_chunk_result() -> None:
+def test_managed_schedule_launches_incremental_embedding_for_reused_chunk_sets() -> None:
     class Runtime:
         started: list[tuple[str, dict[str, object], str]] = []
 
@@ -267,12 +276,14 @@ def test_managed_schedule_launches_embedding_only_from_successful_chunk_result()
 
         def _pipeline_task_result(self, _task_id: str) -> dict[str, object]:
             return {
+                "items_downloaded": 0,
+                "items_skipped": 2,
                 "result": {
                     "chunk_sets": [
                         {"chunk_set_id": "cs-1"},
                         {"chunk_set_id": "cs-2"},
                     ]
-                }
+                },
             }
 
         def start_background_task(
@@ -294,10 +305,42 @@ def test_managed_schedule_launches_embedding_only_from_successful_chunk_result()
     assert runtime.started == [
         (
             "embedding_generation",
-            {"chunk_set_ids": ["cs-1", "cs-2"]},
+            {"incremental": True},
             "Scheduled: Nightly Chunk (Embedding)",
         )
     ]
+
+
+def test_managed_schedule_does_not_launch_embedding_for_empty_chunk_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Runtime:
+        started: list[object] = []
+
+        def _pipeline_task_status(self, _task_id: str) -> str:
+            return "completed"
+
+        def _pipeline_task_result(self, _task_id: str) -> dict[str, object]:
+            return {
+                "items_downloaded": 0,
+                "items_skipped": 0,
+                "result": {"contract_version": 1, "chunk_sets": []},
+            }
+
+        def start_background_task(self, *_args: object, **_kwargs: object) -> str:
+            self.started.append((_args, _kwargs))
+            return "unexpected"
+
+    monkeypatch.setattr("ai_actuarial.task_runtime.append_task_log", lambda *_args: None)
+    runtime = Runtime()
+
+    assert (
+        NativeTaskRuntime._complete_scheduled_chunk_embedding(
+            runtime, "chunk-task", "Nightly Chunk"
+        )
+        is None
+    )
+    assert runtime.started == []
 
 
 @pytest.mark.parametrize("terminal", ["error", "stopped"])

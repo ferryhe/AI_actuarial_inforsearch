@@ -788,12 +788,11 @@ class NativeTaskRuntime:
         task = self._pipeline_task_result(chunk_task_id) or {}
         result = task.get("result") if isinstance(task, dict) else None
         chunk_sets = result.get("chunk_sets") if isinstance(result, dict) else None
-        chunk_set_ids = [
-            str(row.get("chunk_set_id") or "")
+        has_stable_chunk_set = any(
+            isinstance(row, dict) and str(row.get("chunk_set_id") or "").strip()
             for row in chunk_sets or []
-            if isinstance(row, dict) and str(row.get("chunk_set_id") or "")
-        ]
-        if not chunk_set_ids:
+        )
+        if not has_stable_chunk_set:
             append_task_log(
                 chunk_task_id,
                 "ERROR",
@@ -802,7 +801,7 @@ class NativeTaskRuntime:
             return None
         return self.start_background_task(
             "embedding_generation",
-            {"chunk_set_ids": chunk_set_ids},
+            {"incremental": True},
             task_name=f"Scheduled: {scheduled_name} (Embedding)",
         )
 
@@ -2182,15 +2181,17 @@ class NativeTaskRuntime:
         data: dict[str, Any],
     ) -> CollectionResult:
         validate_embedding_generation_payload(data)
+        identity = resolve_server_embedding_identity(
+            storage,
+            str(data.get("embedding_identity_key") or "").strip() or None,
+        )
         selection = resolve_embedding_selection(
             storage,
             chunk_set_ids=self._coerce_list(data.get("chunk_set_ids")),
             file_urls=self._coerce_list(data.get("file_urls")),
             profile_id=str(data.get("profile_id") or "").strip() or None,
-        )
-        identity = resolve_server_embedding_identity(
-            storage,
-            str(data.get("embedding_identity_key") or "").strip() or None,
+            incremental=coerce_bool(data.get("incremental"), default=False),
+            identity=identity,
         )
         progress = self._progress_callback(task_id)
         chunks = list(selection["chunks"])

@@ -159,12 +159,14 @@ def test_runtime_sequences_all_supported_kb_modes_in_stable_order(monkeypatch, t
         "id": "scheduled-source",
         "status": "completed",
         "type": "scheduled",
+        "items_downloaded": 1,
     }
     runtime._pipeline_baton.start("scheduled-source")
 
     runtime._pipeline_baton.tick()
     runtime.active_tasks["runtime-task-1"].update(
         status="completed",
+        items_downloaded=1,
         result={
             "contract_version": 1,
             "files": [
@@ -178,14 +180,15 @@ def test_runtime_sequences_all_supported_kb_modes_in_stable_order(monkeypatch, t
         },
     )
     runtime._pipeline_baton.tick()
-    runtime.active_tasks["runtime-task-2"]["status"] = "completed"
+    runtime.active_tasks["runtime-task-2"].update(status="completed", items_downloaded=1)
     runtime._pipeline_baton.tick()
     runtime.active_tasks["runtime-task-3"].update(
         status="completed",
+        items_downloaded=1,
         result={"chunk_sets": [{"chunk_set_id": "cs-a"}]},
     )
     runtime._pipeline_baton.tick()
-    runtime.active_tasks["runtime-task-4"]["status"] = "completed"
+    runtime.active_tasks["runtime-task-4"].update(status="completed", items_downloaded=1)
     runtime._pipeline_baton.tick()
 
     for offset, kb_id in enumerate(

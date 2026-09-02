@@ -66,7 +66,6 @@ class PipelineBaton:
                 "chunk_embedding_phase": None,
                 "chunk_task_id": None,
                 "embedding_task_id": None,
-                "markdown_files": [],
                 "kb_index_ready_phase": None,
                 "kb_index_task_id": None,
                 "ready_data_task_id": None,
@@ -160,7 +159,6 @@ class PipelineBaton:
                 "chunk_embedding_phase": None,
                 "chunk_task_id": None,
                 "embedding_task_id": None,
-                "markdown_files": [],
                 "kb_index_ready_phase": None,
                 "kb_index_task_id": None,
                 "ready_data_task_id": None,
@@ -189,94 +187,47 @@ class PipelineBaton:
                 self._save(document)
                 return self._view(document)
 
-            task_status = self._task_status(str(state["current_task_id"] or ""))
-            if task_status in {None, "pending", "running"}:
+            try:
+                task_status = self._task_status(str(state["current_task_id"] or ""))
+            except Exception:  # noqa: BLE001 - a broken task read is terminal for this round
+                state["round_status"] = "error"
                 self._save(document)
                 return self._view(document)
-            if task_status in {"error", "stopped"}:
-                if current_step == "rag_indexing":
-                    self._record_current_kb(document, succeeded=False, status=task_status)
-                    self._start_next_rag_or_complete(document)
-                elif (
-                    current_step == "scheduled"
-                    and task_status == "error"
-                    and self._scheduled_task_downloaded_files(document)
-                ):
-                    # Partial collection success: some sites failed but files
-                    # were still downloaded. Continue the pipeline so the
-                    # collected files flow through markdown -> catalog -> chunk
-                    # -> embed -> index instead of aborting the whole round.
-                    self._start_step(document, "markdown_conversion")
-                else:
-                    state["round_status"] = task_status
+            if task_status is None:
+                state["round_status"] = "error"
                 self._save(document)
                 return self._view(document)
-            if task_status != "completed":
+            if task_status in {"pending", "running"}:
+                self._save(document)
+                return self._view(document)
+            if task_status not in {"completed", "error", "stopped"}:
+                state["round_status"] = "error"
                 self._save(document)
                 return self._view(document)
 
-            if current_step == "scheduled":
-                self._start_step(document, "markdown_conversion")
-            elif current_step == "markdown_conversion":
-                markdown_files = self._canonical_markdown_files(
-                    self._task_result(str(state["current_task_id"] or ""))
-                )
-                if not markdown_files:
-                    state["round_status"] = "error"
+            if current_step == "rag_indexing":
+                if task_status == "stopped":
+                    state["round_status"] = "stopped"
                 else:
-                    state["markdown_files"] = markdown_files
-                    self._start_step(document, "catalog")
-            elif current_step == "catalog":
-                self._start_step(document, "chunk_generation")
-            elif current_step == "chunk_generation":
-                if state.get("chunk_embedding_phase") == "embedding":
-                    self._start_next_rag_or_complete(document)
-                else:
-                    chunk_task_id = str(
-                        state.get("chunk_task_id") or state["current_task_id"] or ""
-                    )
-                    task_result = self._task_result(chunk_task_id) or {}
-                    result = task_result.get("result") if isinstance(task_result, dict) else None
-                    chunk_sets = (
-                        (result or {}).get("chunk_sets") if isinstance(result, dict) else None
-                    )
-                    chunk_set_ids = [
-                        str(row.get("chunk_set_id") or "")
-                        for row in chunk_sets or []
-                        if str(row.get("chunk_set_id") or "")
-                    ]
-                    if not chunk_set_ids:
+                    try:
+                        self._advance_rag_step(document, task_status)
+                    except Exception:  # noqa: BLE001 - hard orchestration failure
                         state["round_status"] = "error"
-                    else:
-                        self._start_embedding_step(document, chunk_set_ids)
-            elif current_step == "rag_indexing":
-                if state.get("kb_index_ready_phase") == "ready_data":
-                    self._record_current_kb(document, succeeded=True, status="completed")
-                    self._start_next_rag_or_complete(document)
-                elif self._ready_data_input is None:
-                    # Compatibility for callers that use the baton without the
-                    # product runtime's Ready Data input resolver.
-                    self._record_current_kb(document, succeeded=True, status="completed")
-                    self._start_next_rag_or_complete(document)
+                self._save(document)
+                return self._view(document)
+
+            if task_status == "stopped":
+                state["round_status"] = "stopped"
+                self._save(document)
+                return self._view(document)
+            try:
+                successful_outputs = self._successful_output_count(document)
+                if successful_outputs <= 0:
+                    state["round_status"] = "completed" if task_status == "completed" else "error"
                 else:
-                    task = self._task_result(str(state["current_task_id"] or "")) or {}
-                    result = task.get("result") if isinstance(task, dict) else None
-                    if not isinstance(result, dict):
-                        self._record_current_kb(
-                            document, succeeded=False, status="invalid_index_result"
-                        )
-                        self._start_next_rag_or_complete(document)
-                    else:
-                        try:
-                            ready_payload = self._ready_data_input(
-                                str(state.get("current_rag_kb") or ""), result
-                            )
-                            self._start_ready_data_step(document, ready_payload)
-                        except (RuntimeError, ValueError):
-                            self._record_current_kb(
-                                document, succeeded=False, status="ready_launch_failed"
-                            )
-                            self._start_next_rag_or_complete(document)
+                    self._advance_non_kb_step(document, current_step)
+            except Exception:  # noqa: BLE001 - hard orchestration failure
+                state["round_status"] = "error"
             self._save(document)
             return self._view(document)
 
@@ -287,12 +238,8 @@ class PipelineBaton:
     def _start_step(self, document: dict[str, Any], step: str, *, kb_id: str | None = None) -> None:
         overrides = document["config"]["overrides"]
         payload = dict(overrides.get(step) or {})
-        markdown_files = list(document["state"].get("markdown_files") or [])
-        if step == "catalog":
-            payload["file_urls"] = [str(row["file_url"]) for row in markdown_files]
-        elif step == "chunk_generation":
+        if step == "chunk_generation":
             payload = sanitize_legacy_chunk_generation_payload(payload)
-            payload["files"] = [dict(row) for row in markdown_files]
         if step == "rag_indexing":
             if self._kb_index_input is not None:
                 payload = dict(self._kb_index_input(str(kb_id or "")))
@@ -333,61 +280,60 @@ class PipelineBaton:
                 ready_data_task_id=None,
             )
 
-    def _scheduled_task_downloaded_files(self, document: dict[str, Any]) -> bool:
-        """Return True when a partially-failed collection still downloaded files.
-
-        A scheduled collection that ends with status ``error`` may still have
-        collected files (per-site failures are aggregated, not fatal). In that
-        case the downstream pipeline should continue. Only a hard exception or
-        a run that collected nothing leaves ``items_downloaded`` at zero.
-        """
+    def _successful_output_count(self, document: dict[str, Any]) -> int:
         task = self._task_result(str(document["state"].get("current_task_id") or ""))
         if not isinstance(task, dict):
-            return False
-        return int(task.get("items_downloaded") or 0) > 0
+            raise RuntimeError("pipeline task was not found")
+        try:
+            return max(0, int(task.get("items_downloaded") or 0))
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError("pipeline task has an invalid items_downloaded count") from exc
 
-    @staticmethod
-    def _canonical_markdown_files(task: dict[str, Any] | None) -> list[dict[str, Any]]:
-        result = task.get("result") if isinstance(task, dict) else None
-        files = result.get("files") if isinstance(result, dict) else None
-        if not isinstance(files, list):
-            return []
-        canonical: list[dict[str, Any]] = []
-        seen: set[str] = set()
-        for raw in files:
-            if not isinstance(raw, dict):
-                return []
-            file_url = str(raw.get("file_url") or "").strip()
-            markdown_hash = str(raw.get("markdown_hash") or "").strip()
-            markdown_version = str(raw.get("markdown_version") or "").strip()
-            if (
-                not file_url
-                or not markdown_hash
-                or markdown_version != markdown_hash
-                or str(raw.get("status") or "") != "ready"
-                or file_url in seen
-            ):
-                return []
-            seen.add(file_url)
-            canonical.append(
-                {
-                    "file_url": file_url,
-                    "markdown_hash": markdown_hash,
-                    "markdown_version": markdown_version,
-                    "status": "ready",
-                }
-            )
-        return canonical
+    def _advance_non_kb_step(self, document: dict[str, Any], current_step: str) -> None:
+        if current_step == "scheduled":
+            self._start_step(document, "markdown_conversion")
+        elif current_step == "markdown_conversion":
+            self._start_step(document, "catalog")
+        elif current_step == "catalog":
+            self._start_step(document, "chunk_generation")
+        elif current_step == "chunk_generation":
+            if document["state"].get("chunk_embedding_phase") == "embedding":
+                self._start_next_rag_or_complete(document)
+            else:
+                self._start_embedding_step(document)
 
-    def _start_embedding_step(
-        self,
-        document: dict[str, Any],
-        chunk_set_ids: list[str],
-    ) -> None:
+    def _advance_rag_step(self, document: dict[str, Any], task_status: str) -> None:
+        state = document["state"]
+        if task_status == "error":
+            self._record_current_kb(document, succeeded=False, status="error")
+            self._start_next_rag_or_complete(document)
+        elif state.get("kb_index_ready_phase") == "ready_data":
+            self._record_current_kb(document, succeeded=True, status="completed")
+            self._start_next_rag_or_complete(document)
+        elif self._ready_data_input is None:
+            self._record_current_kb(document, succeeded=True, status="completed")
+            self._start_next_rag_or_complete(document)
+        else:
+            task = self._task_result(str(state["current_task_id"] or "")) or {}
+            result = task.get("result") if isinstance(task, dict) else None
+            if not isinstance(result, dict):
+                self._record_current_kb(document, succeeded=False, status="invalid_index_result")
+                self._start_next_rag_or_complete(document)
+                return
+            try:
+                ready_payload = self._ready_data_input(
+                    str(state.get("current_rag_kb") or ""), result
+                )
+                self._start_ready_data_step(document, ready_payload)
+            except (RuntimeError, ValueError):
+                self._record_current_kb(document, succeeded=False, status="ready_launch_failed")
+                self._start_next_rag_or_complete(document)
+
+    def _start_embedding_step(self, document: dict[str, Any]) -> None:
         source_task_id = str(document["state"]["consumed_scheduled_task_id"])
         task_id = self._start_task(
             "embedding_generation",
-            {"chunk_set_ids": chunk_set_ids},
+            {"incremental": True},
             task_name="Pipeline: Embedding Generation",
             extra_fields={
                 "pipeline_baton_step": "chunk_generation",
