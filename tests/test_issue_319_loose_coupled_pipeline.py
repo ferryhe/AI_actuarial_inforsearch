@@ -7,8 +7,13 @@ from typing import Any
 
 import pytest
 
-from ai_actuarial.api.services.ops_write import BridgeState, start_collection
+from ai_actuarial.api.services.ops_write import (
+    BridgeState,
+    OpsWriteError,
+    start_collection,
+)
 from ai_actuarial.embedding_service import (
+    EmbeddingSelectionError,
     compute_embedding_identity,
     resolve_embedding_selection,
 )
@@ -458,6 +463,30 @@ def test_selector_free_embedding_backlog_uses_real_storage_eligibility_and_is_id
         storage.close()
 
 
+def test_selector_free_embedding_rejects_profile_filter_at_selection_boundary(
+    tmp_path: Path,
+) -> None:
+    storage = Storage(str(tmp_path / "embedding-profile-filter.db"))
+    try:
+        identity = compute_embedding_identity(
+            RAGConfig(embedding_provider="local", embedding_model="issue-319-model"),
+            dimension=3,
+        )
+
+        with pytest.raises(
+            EmbeddingSelectionError,
+            match="profile_id cannot be combined with incremental embedding selection",
+        ):
+            resolve_embedding_selection(
+                storage,
+                profile_id="profile-1",
+                incremental=True,
+                identity=identity,
+            )
+    finally:
+        storage.close()
+
+
 class _Bridge:
     def __init__(self) -> None:
         self.active_tasks_ref: dict[str, dict[str, Any]] = {}
@@ -469,6 +498,25 @@ class _Bridge:
     def start(self, task_type: str, payload: dict[str, Any], **_kwargs: Any) -> str:
         self.started.append((task_type, dict(payload)))
         return "embedding-job"
+
+
+def test_manual_api_rejects_profile_filter_with_selector_free_embedding() -> None:
+    bridge = _Bridge()
+
+    with pytest.raises(
+        OpsWriteError,
+        match="profile_id cannot be combined with incremental embedding selection",
+    ):
+        start_collection(
+            {
+                "type": "embedding_generation",
+                "incremental": True,
+                "profile_id": "profile-1",
+            },
+            bridge=BridgeState(bridge),
+        )
+
+    assert bridge.started == []
 
 
 def test_manual_api_and_baton_use_the_same_selector_free_embedding_mode(tmp_path: Path) -> None:

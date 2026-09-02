@@ -2415,6 +2415,13 @@ def start_collection(
                 data=data,
                 bridge=bridge,
             )
+        if incremental and str(data.get("profile_id") or "").strip():
+            _reject_request(
+                "profile_id cannot be combined with incremental embedding selection",
+                collection_type=collection_type,
+                data=data,
+                bridge=bridge,
+            )
         if data.get("file_urls") and not str(data.get("profile_id") or "").strip():
             _reject_request(
                 "profile_id is required with file_urls",

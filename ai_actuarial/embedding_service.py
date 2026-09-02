@@ -215,6 +215,10 @@ def resolve_embedding_selection(
         raise EmbeddingSelectionError(
             "provide one selection mode: chunk_set_ids, file_urls, or incremental"
         )
+    if incremental and requested_profile:
+        raise EmbeddingSelectionError(
+            "profile_id cannot be combined with incremental embedding selection"
+        )
     if incremental and identity is None:
         raise EmbeddingSelectionError("embedding identity is required for incremental selection")
     selected_rows: list[tuple[Any, ...]] = []

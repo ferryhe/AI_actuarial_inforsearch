@@ -946,7 +946,7 @@
 - Baseline: `origin/main@ae3e4e689c1bcdbd0c80982f8abaafa7e0af73e9`
 - Issue: `#319 fix(pipeline): continue loose-coupled incremental stages after partial success`
 - State file: `C:\Users\ferry\.codex\issue-to-merge-state\AI_actuarial_inforsearch\issue-319.json`
-- Delivery stage: implementation complete; local review and required gates passed; publication pending
+- Delivery stage: remote feedback assessed; one confirmed contract fix validated; follow-up push pending
 
 ## Issue #319 acceptance criteria
 
@@ -1073,6 +1073,22 @@
 - After final fetch, `HEAD`, `origin/main`, and their merge-base remain
   `ae3e4e689c1bcdbd0c80982f8abaafa7e0af73e9`.
 
+## Issue #319 remote feedback
+
+- PR #327 was marked Ready at head `02a085339a64ddd9b7d131e897c0b33ff3f2497b`. The single
+  feedback window ran for 680.49 seconds before one complete snapshot was fetched.
+- All five required remote checks passed. No human review, PR comment, or Issue comment was
+  present. Copilot left two inline comments.
+- The first Copilot comment was confirmed: selector-free `incremental` accepted and echoed a
+  `profile_id` that it did not apply. The minimal fix rejects `incremental + profile_id` at both
+  the API launch boundary and the Embedding selection boundary; it does not add profile-filter
+  semantics or change Baton's `{incremental: true}` payload.
+- The second Copilot comment was rejected under the repository review policy. It proposed loading
+  chunk IDs before content as a performance optimization but provided no reproducible functional,
+  workflow, data-contract, or error-handling failure mapped to #319.
+- The confirmed fix failed two new tests before implementation, then passed them. Manager reran the
+  final Embedding/API/Baton/UI combination with 169 passes; the focused #319 file now has 35 passes.
+
 ## Issue #319 working tree notes
 
 - Scoped production changes are limited to Pipeline Baton, Embedding selection/runtime/API wiring,
@@ -1090,5 +1106,6 @@
 
 ## Issue #319 recommended next action
 
-- Commit the reviewed diff, push the task branch, create a Draft PR that closes #319, mark it Ready,
-  then perform the single required 600-second remote feedback window before merge.
+- Commit and push the confirmed remote contract fix, allow required checks to rerun, reply to both
+  captured Copilot threads with the accepted/rejected disposition, then merge once the updated head
+  is green.
