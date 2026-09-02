@@ -73,6 +73,124 @@ def test_file_detail_gates_protected_option_and_diagnostic_fetches():
     assert "}, [beginChunksRequest, canRunTasks, fileUrl]);" in coverage_block
 
 
+def test_disabled_task_options_hide_stale_operator_cache_and_finish_loading():
+    script = """
+(async () => {
+const React = await import('react');
+const internals = React.__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE;
+const taskOptionsModule = await import('./client/src/hooks/use-task-options.ts');
+const { useTaskOptions } = taskOptionsModule.default || taskOptionsModule;
+
+let now = 1_000;
+Date.now = () => now;
+const responses = {
+  '/api/config/search-engines': { engines: [{ name: 'Secret Search', id: 'secret', configured: true }] },
+  '/api/config/llm-providers': {
+    providers: [{ name: 'secret-provider' }],
+    known: { 'secret-provider': { display_name: 'Secret Provider' } },
+  },
+  '/api/categories?mode=used': { categories: ['secret-category'] },
+  '/api/config/ai-models': {
+    current: { catalog: { provider: 'secret-provider', model: 'secret-model' } },
+    available: { 'secret-provider': [{ name: 'secret-model', types: ['catalog', 'chat'] }] },
+  },
+  '/api/config/markdown-conversion': {
+    tools: [{ name: 'secret-ocr', provider: 'secret-provider', display_name: 'Secret OCR' }],
+    default_tool: 'secret-ocr',
+    limits: { default_scan_count: 7, max_scan_count: 9 },
+  },
+};
+let requestCount = 0;
+globalThis.fetch = async (url) => {
+  requestCount += 1;
+  const body = responses[String(url)];
+  if (!body) throw new Error(`unexpected request: ${url}`);
+  return {
+    ok: true,
+    status: 200,
+    headers: { get: () => 'application/json' },
+    json: async () => body,
+  };
+};
+
+function createHookHarness() {
+  const slots = [];
+  let hookIndex = 0;
+  let pendingEffects = [];
+  const dispatcher = {
+    useState(initialValue) {
+      const index = hookIndex++;
+      if (!slots[index]) {
+        slots[index] = { value: typeof initialValue === 'function' ? initialValue() : initialValue };
+      }
+      return [slots[index].value, (nextValue) => {
+        slots[index].value = typeof nextValue === 'function' ? nextValue(slots[index].value) : nextValue;
+      }];
+    },
+    useRef(initialValue) {
+      const index = hookIndex++;
+      slots[index] ||= { current: initialValue };
+      return slots[index];
+    },
+    useCallback(callback) {
+      hookIndex += 1;
+      return callback;
+    },
+    useEffect(effect) {
+      hookIndex += 1;
+      pendingEffects.push(effect);
+    },
+  };
+  return {
+    render(enabled) {
+      hookIndex = 0;
+      pendingEffects = [];
+      internals.H = dispatcher;
+      const result = useTaskOptions(enabled);
+      for (const effect of pendingEffects) effect();
+      return result;
+    },
+  };
+}
+
+const operator = createHookHarness();
+operator.render(true);
+await new Promise((resolve) => setTimeout(resolve, 0));
+const operatorOptions = operator.render(true);
+if (!operatorOptions.providers.includes('secret-provider')) {
+  throw new Error(`operator cache was not warmed: ${JSON.stringify(operatorOptions)}`);
+}
+
+now += 61_000;
+const guest = createHookHarness();
+const guestOptions = guest.render(false);
+if (guestOptions.providers.length || guestOptions.categories.length || guestOptions.catalogProviders.length) {
+  throw new Error(`guest received cached operator data: ${JSON.stringify(guestOptions)}`);
+}
+if (guestOptions.conversionToolsInfo.some((tool) => tool.name === 'secret-ocr')) {
+  throw new Error(`guest received cached conversion config: ${JSON.stringify(guestOptions)}`);
+}
+if (guestOptions.defaultConversionTool !== 'auto' || guestOptions.loading || guestOptions.error) {
+  throw new Error(`guest received an unsafe disabled state: ${JSON.stringify(guestOptions)}`);
+}
+guestOptions.refresh();
+await new Promise((resolve) => setTimeout(resolve, 0));
+if (requestCount !== 5) throw new Error(`disabled refresh made a protected request: ${requestCount}`);
+})().catch((error) => { console.error(error); process.exitCode = 1; });
+"""
+    script = " ".join(line.strip() for line in script.splitlines())
+
+    result = subprocess.run(
+        [NPM_COMMAND, "exec", "--", "tsx", "-e", script],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
 def test_file_detail_chunk_modal_runs_fixed_chunk_embedding_pair_without_kb_options():
     src = FILE_DETAIL_TSX.read_text(encoding="utf-8")
 

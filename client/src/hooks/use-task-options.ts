@@ -97,6 +97,7 @@ const FALLBACK_CONVERSION_TOOLS_INFO: ConversionTool[] = [
   { name: "docling", provider: "local", displayName: "Docling" },
   { name: "local", provider: "local", displayName: "Local (Basic)" },
 ];
+const EMPTY_OPTIONS: string[] = [];
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === "object" && !Array.isArray(value);
@@ -242,6 +243,8 @@ export function useTaskOptions(enabled = true): TaskOptions {
       setDefaultConversionTool(cache.defaultConversionTool || "auto");
       setMarkdownConversionLimits(cache.markdownConversionLimits || FALLBACK_MARKDOWN_CONVERSION_LIMITS);
       setCatalogProviders(cache.catalogProviders || []);
+      setLoading(false);
+      setError(null);
       return;
     }
 
@@ -382,8 +385,21 @@ export function useTaskOptions(enabled = true): TaskOptions {
   }, [enabled, fetchOptions]);
 
   const refresh = useCallback(() => {
+    if (!enabled) return;
     fetchOptions(true);
-  }, [fetchOptions]);
+  }, [enabled, fetchOptions]);
 
-  return { engines, providers, categories, conversionTools, conversionToolsInfo, defaultConversionTool, markdownConversionLimits, catalogProviders, loading, error, refresh };
+  return {
+    engines: enabled ? engines : FALLBACK_ENGINES,
+    providers: enabled ? providers : EMPTY_OPTIONS,
+    categories: enabled ? categories : EMPTY_OPTIONS,
+    conversionTools: enabled ? conversionTools : FALLBACK_CONVERSION_TOOLS,
+    conversionToolsInfo: enabled ? conversionToolsInfo : FALLBACK_CONVERSION_TOOLS_INFO,
+    defaultConversionTool: enabled ? defaultConversionTool : "auto",
+    markdownConversionLimits: enabled ? markdownConversionLimits : FALLBACK_MARKDOWN_CONVERSION_LIMITS,
+    catalogProviders: enabled ? catalogProviders : EMPTY_OPTIONS,
+    loading: enabled && loading,
+    error: enabled ? error : null,
+    refresh,
+  };
 }
