@@ -398,8 +398,12 @@ export default function Knowledge() {
     if (showLoading) setLoading(true);
     const request = Promise.all([
       apiGet<Record<string, unknown>>("/api/rag/knowledge-bases").catch(() => null),
-      apiGet<Record<string, unknown>>("/api/chunk/profiles").catch(() => null),
-      apiGet<Record<string, unknown>>("/api/rag/categories/mapping").catch(() => null),
+      canRunKnowledgeTasks
+        ? apiGet<Record<string, unknown>>("/api/chunk/profiles").catch(() => null)
+        : Promise.resolve(null),
+      canManageKnowledge
+        ? apiGet<Record<string, unknown>>("/api/rag/categories/mapping").catch(() => null)
+        : Promise.resolve(null),
       apiGet<Record<string, unknown>>("/api/categories?mode=used").catch(() => null),
       canAskAi
         ? fetchChatKnowledgeBases().catch(() => [] as ChatKnowledgeBase[])
@@ -449,8 +453,10 @@ export default function Knowledge() {
           setProfiles(pList);
         }
 
-        if (ragCategoriesResp && usedCategoriesResp) {
-          const ragCategories = normalizeCategoryNames((ragCategoriesResp as { categories?: unknown[] }).categories);
+        if (usedCategoriesResp) {
+          const ragCategories = ragCategoriesResp
+            ? normalizeCategoryNames((ragCategoriesResp as { categories?: unknown[] }).categories)
+            : [];
           const usedCategories = normalizeCategoryNames((usedCategoriesResp as { categories?: unknown[] }).categories);
           setCategoryOptions(Array.from(new Set([...ragCategories, ...usedCategories])).sort((a, b) => a.localeCompare(b)));
         }
@@ -462,7 +468,7 @@ export default function Knowledge() {
       loadDataInFlight.current = null;
     });
     return loadDataInFlight.current;
-  }, [applyReadyDataListManifestEpisode, canAskAi]);
+  }, [applyReadyDataListManifestEpisode, canAskAi, canManageKnowledge, canRunKnowledgeTasks]);
 
   const readyDataListBusy = kbs.some((kb) => (
     isReadyDataAutomationBusy(kb.agentic_ready_manifest)
@@ -486,7 +492,18 @@ export default function Knowledge() {
   }, [kbForm.chunk_profile_id]);
 
   useEffect(() => {
-    void loadData();
+    const existingLoad = loadDataInFlight.current;
+    let cancelled = false;
+    if (existingLoad) {
+      void existingLoad.finally(() => {
+        if (!cancelled) void loadData();
+      });
+    } else {
+      void loadData();
+    }
+    return () => {
+      cancelled = true;
+    };
   }, [loadData]);
 
   useEffect(() => {
@@ -1264,10 +1281,12 @@ export default function Knowledge() {
                     <div className="w-10 h-10 rounded-lg bg-violet-500/10 text-violet-600 dark:text-violet-400 flex items-center justify-center shrink-0">
                       <BookOpen className="w-5 h-5" strokeWidth={1.8} />
                     </div>
-                    <div className="flex items-center gap-1.5">
-                      <ModeBadge mode={kb.kb_mode} />
-                      <StatusBadge status={status} />
-                    </div>
+                    {canRunKnowledgeTasks && (
+                      <div className="flex items-center gap-1.5">
+                        <ModeBadge mode={kb.kb_mode} />
+                        <StatusBadge status={status} />
+                      </div>
+                    )}
                   </div>
                   <h3 className="font-semibold text-sm mb-1" data-testid={`text-kb-name-${kbId}`}>
                     {kb.name}
@@ -1281,11 +1300,12 @@ export default function Knowledge() {
                       {t("knowledge.no_description")}
                     </p>
                   )}
-                  {kb.embedding_model && (
+                  {canRunKnowledgeTasks && kb.embedding_model && (
                     <p className="text-[10px] text-muted-foreground/70 mb-2 font-mono truncate">
                       {kb.embedding_model}
                     </p>
                   )}
+                  {canRunKnowledgeTasks && (
                   <div className="mt-3 rounded-lg border border-border bg-muted/20 p-3">
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
@@ -1347,6 +1367,7 @@ export default function Knowledge() {
                       )}
                     </div>
                   </div>
+                  )}
                   {canRunKnowledgeTasks && needsReembed && (
                     <div
                       className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3"
@@ -1374,7 +1395,7 @@ export default function Knowledge() {
                       </button>
                     </div>
                   )}
-                  {kb.index_coverage && (
+                  {canRunKnowledgeTasks && kb.index_coverage && (
                     <div className="mb-3 grid grid-cols-2 gap-1 rounded-lg bg-muted/40 p-2 text-[10px] text-muted-foreground" data-testid={`kb-index-coverage-${kbId}`}>
                       <span>{t("knowledge.bound_files")}: {kb.index_coverage.bound_file_count ?? 0}</span>
                       <span>{t("knowledge.bound_chunks")}: {kb.index_coverage.bound_chunk_count ?? 0}</span>
@@ -1388,10 +1409,12 @@ export default function Knowledge() {
                       <FileText className="w-3.5 h-3.5" />
                       {kb.file_count ?? kb.document_count ?? 0} {t("knowledge.documents")}
                     </span>
-                    <span className="flex items-center gap-1" data-testid={`text-kb-chunks-${kbId}`}>
-                      <Layers className="w-3.5 h-3.5" />
-                      {kb.chunk_count ?? 0} {t("knowledge.chunks")}
-                    </span>
+                    {canRunKnowledgeTasks && (
+                      <span className="flex items-center gap-1" data-testid={`text-kb-chunks-${kbId}`}>
+                        <Layers className="w-3.5 h-3.5" />
+                        {kb.chunk_count ?? 0} {t("knowledge.chunks")}
+                      </span>
+                    )}
                   </div>
                   {kb.categories && kb.categories.length > 0 && (
                     <div className="flex flex-wrap gap-1 mt-2">
@@ -1462,7 +1485,8 @@ export default function Knowledge() {
         </div>
       )}
 
-      <div>
+      {canRunKnowledgeTasks && (
+        <div>
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
             <Settings2 className="w-5 h-5 text-muted-foreground" />
@@ -1737,7 +1761,8 @@ export default function Knowledge() {
             </AnimatePresence>
           </>
         )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }

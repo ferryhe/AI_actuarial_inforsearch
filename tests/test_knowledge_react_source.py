@@ -50,6 +50,55 @@ def test_knowledge_create_supports_document_and_category_multiselects():
     assert "`/api/rag/knowledge-bases/${encodeURIComponent(finalKbId)}/index`" in src
 
 
+def test_public_knowledge_pages_gate_operator_fetches_and_diagnostics():
+    knowledge_src = KNOWLEDGE_TSX.read_text(encoding="utf-8")
+    detail_src = KB_DETAIL_TSX.read_text(encoding="utf-8")
+
+    list_loader = knowledge_src.split("const loadData = useCallback", 1)[1].split(
+        "const loadSelectableFiles", 1
+    )[0]
+    assert (
+        'canRunKnowledgeTasks\n        ? apiGet<Record<string, unknown>>("/api/chunk/profiles")'
+        in list_loader
+    )
+    assert (
+        'canManageKnowledge\n        ? apiGet<Record<string, unknown>>("/api/rag/categories/mapping")'
+        in list_loader
+    )
+    assert (
+        '{canRunKnowledgeTasks && (\n                  <div className="mt-3 rounded-lg border'
+        in knowledge_src
+    )
+    assert "{canRunKnowledgeTasks && kb.index_coverage && (" in knowledge_src
+    assert "{canRunKnowledgeTasks && kb.embedding_model && (" in knowledge_src
+    card_footer = knowledge_src.split("data-testid={`text-kb-docs-${kbId}`}", 1)[1].split(
+        "{kb.categories", 1
+    )[0]
+    assert "{canRunKnowledgeTasks && (" in card_footer
+    assert "data-testid={`text-kb-chunks-${kbId}`}" in card_footer
+    profiles_section = knowledge_src.split('t("knowledge.chunk_profiles")', 1)[0].rsplit(
+        "{canRunKnowledgeTasks && (", 1
+    )[1]
+    assert '<div className="flex items-center justify-between mb-4">' in profiles_section
+
+    category_loader = detail_src.split("const loadCategories = useCallback", 1)[1].split(
+        "const loadAll", 1
+    )[0]
+    assert "if (!canManageKnowledge || !isCurrent()) return;" in category_loader
+    assert "}, [canManageKnowledge, kbId]);" in category_loader
+    assert (
+        '{canRunKnowledgeTasks && (\n          <div\n            className="mt-4 rounded-lg'
+        in detail_src
+    )
+    assert "{canRunKnowledgeTasks && meta.index_coverage && (" in detail_src
+    assert "if (!canRunKnowledgeTasks) return;\n    if (!isReadyDataAutomationBusy" in detail_src
+    assert "{canRunKnowledgeTasks && (file.profile_name || file.chunk_profile) && (" in detail_src
+    assert (
+        "{canRunKnowledgeTasks && (\n        <motion.div\n          initial={{ opacity: 0, y: 8 }}\n          animate={{ opacity: 1, y: 0 }}\n          transition={{ delay: 0.1"
+        in detail_src
+    )
+
+
 def test_knowledge_create_supports_select_all_and_all_mode():
     src = KNOWLEDGE_TSX.read_text(encoding="utf-8")
 
@@ -356,8 +405,24 @@ def test_knowledge_list_bounds_busy_automation_polling_and_deduplicates_loads():
     assert "if (!isReadyDataAutomationBusy(effectiveManifest))" in detail_src
     assert "if (kbPayload)" in src
     assert "if (profilePayload)" in src
-    assert "if (ragCategoriesResp && usedCategoriesResp)" in src
+    assert "if (usedCategoriesResp)" in src
     assert "void loadAgenticManifest({ preserveCurrentOnError: true }).finally" in detail_src
+
+
+def test_knowledge_queues_permission_reload_after_existing_load_settles():
+    src = KNOWLEDGE_TSX.read_text(encoding="utf-8")
+    effect_start = src.index(
+        "useEffect(() => {\n    const existingLoad = loadDataInFlight.current;"
+    )
+    effect_end = src.index("}, [loadData]);", effect_start)
+    effect_src = src[effect_start:effect_end]
+
+    assert "let cancelled = false;" in effect_src
+    assert "if (existingLoad)" in effect_src
+    assert "void existingLoad.finally(() => {" in effect_src
+    assert "if (!cancelled) void loadData();" in effect_src
+    assert "} else {\n      void loadData();\n    }" in effect_src
+    assert "return () => {\n      cancelled = true;\n    };" in effect_src
 
 
 def test_kb_detail_starts_a_fresh_poll_episode_for_each_kb():

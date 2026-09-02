@@ -52,6 +52,7 @@ def test_auth_react_shell_restores_native_auth_routes_and_contracts():
     assert 't("auth.back_home")' in register_src
     assert 'href="/"' in register_src
     assert 'href="/login"' in profile_src
+    assert 'href="/upgrade"' not in profile_src
     assert "button-logout" in layout_src
     assert 'permission: "tasks.view"' in layout_src
     assert 'permission: "config.write"' in layout_src

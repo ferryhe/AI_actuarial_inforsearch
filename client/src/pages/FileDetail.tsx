@@ -318,6 +318,8 @@ function TaskStatusBadge({ status, t }: { status: TaskStatus; t: (k: string) => 
 export default function FileDetail() {
   const { t } = useTranslation();
   const { permissions } = useAuth();
+  const canReadConfig = permissions.includes("config.read");
+  const canRunTasks = permissions.includes("tasks.run");
   const [, navigate] = useLocation();
   const searchParams = useRawSearchParams();
   const fileUrl = searchParams.get("url") || "";
@@ -387,7 +389,7 @@ export default function FileDetail() {
   const [catalogOutputLanguage, setCatalogOutputLanguage] = useState("auto");
   const [catalogSubmitting, setCatalogSubmitting] = useState(false);
 
-  const taskOptions = useTaskOptions();
+  const taskOptions = useTaskOptions(canReadConfig);
 
   const [showChunkModal, setShowChunkModal] = useState(false);
   const [chunkSubmitting, setChunkSubmitting] = useState(false);
@@ -454,7 +456,7 @@ export default function FileDetail() {
         .filter((chunkSet) => chunkSet.status === "ready" && Number(chunkSet.chunk_count || 0) > 0)
         .map((chunkSet) => `chunk_set_id=${encodeURIComponent(chunkSet.chunk_set_id)}`)
         .join("&");
-      if (query) {
+      if (canRunTasks && query) {
         const coverage = await apiGet<EmbeddingCoverage>(`/api/embeddings/coverage?${query}`).catch(() => null);
         if (isLatest()) setEmbeddingCoverage(coverage);
       } else {
@@ -465,7 +467,7 @@ export default function FileDetail() {
     } finally {
       if (isLatest()) setChunkSetsLoading(false);
     }
-  }, [beginChunksRequest, fileUrl]);
+  }, [beginChunksRequest, canRunTasks, fileUrl]);
 
   const conversionPoller = useTaskPoller(refreshMarkdown);
   const catalogPoller = useTaskPoller(fetchFile);
@@ -500,21 +502,23 @@ export default function FileDetail() {
   }, [fileUrl, refreshChunks]);
 
   useEffect(() => {
+    if (!canRunTasks) return;
     apiGet<{ profiles?: ChunkProfile[]; data?: { profiles?: ChunkProfile[] } }>("/api/chunk/profiles").catch(() => null).then((profileRes) => {
       const profiles = profileRes?.profiles || profileRes?.data?.profiles || [];
       setChunkProfiles(profiles);
       setChunkProfileId((current) => current || profiles[0]?.profile_id || "");
     });
-  }, []);
+  }, [canRunTasks]);
 
   useEffect(() => {
+    if (!canReadConfig) return;
     apiGet<CategoriesConfig>("/api/config/categories")
       .then((res) => {
         const cats = res.categories || {};
         setAllCategories(Object.keys(cats));
       })
       .catch(() => {});
-  }, []);
+  }, [canReadConfig]);
 
   function startEdit() {
     if (!file) return;
@@ -726,8 +730,6 @@ export default function FileDetail() {
   const canDeleteFile = permissions.includes("files.delete");
   const canCatalogWrite = permissions.includes("catalog.write");
   const canMarkdownWrite = permissions.includes("markdown.write");
-  const canRunTasks = permissions.includes("tasks.run");
-
   const canEdit = canCatalogWrite && !anyTaskRunning && !mdEditMode;
   const canCatalog = canCatalogWrite && !isDeleted && !anyTaskRunning && !editing && !mdEditMode;
   const canExplain = hasMarkdown && !isDeleted && !mdEditMode;

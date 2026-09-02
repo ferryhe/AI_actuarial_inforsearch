@@ -7,6 +7,7 @@ ROOT = Path(__file__).resolve().parents[1] / "client" / "src"
 FILE_DETAIL_TSX = ROOT / "pages" / "FileDetail.tsx"
 FILE_PREVIEW_TSX = ROOT / "pages" / "FilePreview.tsx"
 LATEST_REQUEST_HOOK_TS = ROOT / "hooks" / "use-latest-request.ts"
+TASK_OPTIONS_HOOK_TS = ROOT / "hooks" / "use-task-options.ts"
 REPO_ROOT = Path(__file__).resolve().parents[1]
 NPM_COMMAND = "npm.cmd" if os.name == "nt" else "npm"
 
@@ -51,6 +52,143 @@ def test_file_detail_uses_permission_gates_for_mutating_actions():
     assert 'permissions.includes("markdown.write")' in src
     assert 'permissions.includes("tasks.run")' in src
     assert 'permissions.includes("rag.write")' not in src
+
+
+def test_file_detail_gates_protected_option_and_diagnostic_fetches():
+    src = FILE_DETAIL_TSX.read_text(encoding="utf-8")
+    hook_src = TASK_OPTIONS_HOOK_TS.read_text(encoding="utf-8")
+
+    assert "export function useTaskOptions(enabled = true): TaskOptions" in hook_src
+    assert "if (!enabled) return;" in hook_src
+    assert "}, [enabled, fetchOptions]);" in hook_src
+    assert 'const canReadConfig = permissions.includes("config.read");' in src
+    assert 'const canRunTasks = permissions.includes("tasks.run");' in src
+    assert "const taskOptions = useTaskOptions(canReadConfig);" in src
+    assert "if (!canRunTasks) return;\n    apiGet<{ profiles?: ChunkProfile[]" in src
+    assert "if (!canReadConfig) return;\n    apiGet<CategoriesConfig>" in src
+    coverage_block = src.split("const refreshChunks = useCallback", 1)[1].split(
+        "const conversionPoller", 1
+    )[0]
+    assert "if (canRunTasks && query)" in coverage_block
+    assert "}, [beginChunksRequest, canRunTasks, fileUrl]);" in coverage_block
+
+
+def test_disabled_task_options_hide_stale_operator_cache_and_finish_loading():
+    script = """
+(async () => {
+const React = await import('react');
+const internals = React.__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE;
+const taskOptionsModule = await import('./client/src/hooks/use-task-options.ts');
+const { useTaskOptions } = taskOptionsModule.default || taskOptionsModule;
+
+let now = 1_000;
+Date.now = () => now;
+const responses = {
+  '/api/config/search-engines': { engines: [{ name: 'Secret Search', id: 'secret', configured: true }] },
+  '/api/config/llm-providers': {
+    providers: [{ name: 'secret-provider' }],
+    known: { 'secret-provider': { display_name: 'Secret Provider' } },
+  },
+  '/api/categories?mode=used': { categories: ['secret-category'] },
+  '/api/config/ai-models': {
+    current: { catalog: { provider: 'secret-provider', model: 'secret-model' } },
+    available: { 'secret-provider': [{ name: 'secret-model', types: ['catalog', 'chat'] }] },
+  },
+  '/api/config/markdown-conversion': {
+    tools: [{ name: 'secret-ocr', provider: 'secret-provider', display_name: 'Secret OCR' }],
+    default_tool: 'secret-ocr',
+    limits: { default_scan_count: 7, max_scan_count: 9 },
+  },
+};
+let requestCount = 0;
+globalThis.fetch = async (url) => {
+  requestCount += 1;
+  const body = responses[String(url)];
+  if (!body) throw new Error(`unexpected request: ${url}`);
+  return {
+    ok: true,
+    status: 200,
+    headers: { get: () => 'application/json' },
+    json: async () => body,
+  };
+};
+
+function createHookHarness() {
+  const slots = [];
+  let hookIndex = 0;
+  let pendingEffects = [];
+  const dispatcher = {
+    useState(initialValue) {
+      const index = hookIndex++;
+      if (!slots[index]) {
+        slots[index] = { value: typeof initialValue === 'function' ? initialValue() : initialValue };
+      }
+      return [slots[index].value, (nextValue) => {
+        slots[index].value = typeof nextValue === 'function' ? nextValue(slots[index].value) : nextValue;
+      }];
+    },
+    useRef(initialValue) {
+      const index = hookIndex++;
+      slots[index] ||= { current: initialValue };
+      return slots[index];
+    },
+    useCallback(callback) {
+      hookIndex += 1;
+      return callback;
+    },
+    useEffect(effect) {
+      hookIndex += 1;
+      pendingEffects.push(effect);
+    },
+  };
+  return {
+    render(enabled) {
+      hookIndex = 0;
+      pendingEffects = [];
+      internals.H = dispatcher;
+      const result = useTaskOptions(enabled);
+      for (const effect of pendingEffects) effect();
+      return result;
+    },
+  };
+}
+
+const operator = createHookHarness();
+operator.render(true);
+await new Promise((resolve) => setTimeout(resolve, 0));
+const operatorOptions = operator.render(true);
+if (!operatorOptions.providers.includes('secret-provider')) {
+  throw new Error(`operator cache was not warmed: ${JSON.stringify(operatorOptions)}`);
+}
+
+now += 61_000;
+const guest = createHookHarness();
+const guestOptions = guest.render(false);
+if (guestOptions.providers.length || guestOptions.categories.length || guestOptions.catalogProviders.length) {
+  throw new Error(`guest received cached operator data: ${JSON.stringify(guestOptions)}`);
+}
+if (guestOptions.conversionToolsInfo.some((tool) => tool.name === 'secret-ocr')) {
+  throw new Error(`guest received cached conversion config: ${JSON.stringify(guestOptions)}`);
+}
+if (guestOptions.defaultConversionTool !== 'auto' || guestOptions.loading || guestOptions.error) {
+  throw new Error(`guest received an unsafe disabled state: ${JSON.stringify(guestOptions)}`);
+}
+guestOptions.refresh();
+await new Promise((resolve) => setTimeout(resolve, 0));
+if (requestCount !== 5) throw new Error(`disabled refresh made a protected request: ${requestCount}`);
+})().catch((error) => { console.error(error); process.exitCode = 1; });
+"""
+    script = " ".join(line.strip() for line in script.splitlines())
+
+    result = subprocess.run(
+        [NPM_COMMAND, "exec", "--", "tsx", "-e", script],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
 def test_file_detail_chunk_modal_runs_fixed_chunk_embedding_pair_without_kb_options():
@@ -193,7 +331,7 @@ def test_query_navigation_reloads_detail_and_preview():
     assert "const searchParams = useRawSearchParams();" in detail_src
     assert "}, [beginFileRequest, fileUrl]);" in detail_src
     assert "}, [beginMarkdownRequest, fileUrl]);" in detail_src
-    assert "}, [beginChunksRequest, fileUrl]);" in detail_src
+    assert "}, [beginChunksRequest, canRunTasks, fileUrl]);" in detail_src
     assert "useEffect(() => { fetchFile(); }, [fetchFile]);" in detail_src
     assert "`/api/files/detail?url=${encodeURIComponent(requestIdentity)}`" in detail_src
     assert "const searchParams = useRawSearchParams();" in preview_src
