@@ -37,7 +37,13 @@ import {
   type SortDir,
   type SortField,
 } from "@/lib/database-query";
-import { formatWeeklyDateTime } from "@/lib/weekly-dashboard";
+import {
+  formatWeeklyDateTime,
+  normalizePublicCategory,
+  normalizePublicKeywords,
+  normalizePublicMetadataText,
+  resolveCachedListLoadState,
+} from "@/lib/weekly-dashboard";
 import { getCanonicalDisplayName, getChatValidName } from "./chat/displayName";
 
 interface FileItem {
@@ -49,6 +55,7 @@ interface FileItem {
   first_seen: string;
   last_seen: string;
   category: string | null;
+  keywords: unknown;
   summary: string | null;
   has_markdown: boolean;
   markdown_source: string | null;
@@ -81,26 +88,6 @@ const fadeUp = {
   }),
 };
 
-function contentTypeLabel(ct: string): string {
-  if (!ct) return "-";
-  if (ct.includes("pdf")) return "PDF";
-  if (ct.includes("word") || ct.includes("document")) return "DOCX";
-  if (ct.includes("presentation") || ct.includes("powerpoint")) return "PPTX";
-  if (ct.includes("spreadsheet") || ct.includes("excel")) return "XLSX";
-  if (ct.includes("html")) return "HTML";
-  return ct.split("/").pop()?.toUpperCase() || ct;
-}
-
-function contentTypeBadgeColor(ct: string): string {
-  if (!ct) return "bg-gray-500/10 text-gray-600 dark:text-gray-400";
-  if (ct.includes("pdf")) return "bg-red-500/10 text-red-600 dark:text-red-400";
-  if (ct.includes("word") || ct.includes("document")) return "bg-blue-500/10 text-blue-600 dark:text-blue-400";
-  if (ct.includes("presentation") || ct.includes("powerpoint")) return "bg-orange-500/10 text-orange-600 dark:text-orange-400";
-  if (ct.includes("spreadsheet") || ct.includes("excel")) return "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400";
-  if (ct.includes("html")) return "bg-violet-500/10 text-violet-600 dark:text-violet-400";
-  return "bg-gray-500/10 text-gray-600 dark:text-gray-400";
-}
-
 function formatDate(dateStr: string, lang: string): string {
   if (!dateStr) return "-";
   const d = new Date(dateStr);
@@ -110,14 +97,6 @@ function formatDate(dateStr: string, lang: string): string {
     day: "numeric",
     year: "numeric",
   }).format(d);
-}
-
-function formatSize(bytes: number | null | undefined): string {
-  if (!bytes && bytes !== 0) return "-";
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
 }
 
 interface CachedFilesEntry {
@@ -276,6 +255,7 @@ export default function DatabasePage() {
   const [files, setFiles] = useState<FileItem[]>(initialCachedFiles?.files || []);
   const [total, setTotal] = useState(initialCachedFiles?.total ?? 0);
   const [loading, setLoading] = useState(!initialCachedFiles);
+  const [loadError, setLoadError] = useState(false);
   const [offset, setOffset] = useState(initialState.offset);
 
   const [query, setQuery] = useState(initialState.query);
@@ -382,10 +362,12 @@ export default function DatabasePage() {
         firstSeenBefore: initialState.firstSeenBefore,
       };
       const targetKey = buildFilesParams(targetState).toString();
-      const cached = forceNetwork ? null : getCachedFiles(targetKey);
+      const availableCached = getCachedFiles(targetKey);
+      const cached = forceNetwork ? null : availableCached;
       const isCurrentRequest = targetOffset === offset;
 
       if (isCurrentRequest) {
+        setLoadError(false);
         if (cached) {
           setFiles(cached.files || []);
           setTotal(cached.total ?? 0);
@@ -404,15 +386,19 @@ export default function DatabasePage() {
         setCachedFiles(targetKey, data);
 
         if (isCurrentRequest && requestId === fetchSeqRef.current) {
-          setFiles(data.files || []);
-          setTotal(data.total ?? 0);
+          const next = resolveCachedListLoadState<FileItem>(data, null);
+          setFiles(next.files);
+          setTotal(next.total);
+          setLoadError(next.loadError);
         }
 
         return data;
       } catch {
-        if (isCurrentRequest && requestId === fetchSeqRef.current && !cached) {
-          setFiles([]);
-          setTotal(0);
+        if (isCurrentRequest && requestId === fetchSeqRef.current) {
+          const next = resolveCachedListLoadState<FileItem>(null, availableCached);
+          setFiles(next.files);
+          setTotal(next.total);
+          setLoadError(next.loadError);
         }
         return null;
       } finally {
@@ -674,6 +660,8 @@ export default function DatabasePage() {
               onClick={() => setQuery("")}
               className="absolute right-3 top-1/2 -translate-y-1/2 p-0.5 rounded hover:bg-muted"
               data-testid="button-clear-search"
+              aria-label={t("db.clear_search")}
+              title={t("db.clear_search")}
             >
               <X className="w-3.5 h-3.5 text-muted-foreground" />
             </button>
@@ -795,6 +783,13 @@ export default function DatabasePage() {
             <div key={i} className="h-14 rounded-lg bg-muted animate-pulse" />
           ))}
         </div>
+      ) : loadError ? (
+        <div
+          className="rounded-xl border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive"
+          data-testid="database-load-error"
+        >
+          {t("db.load_error")}
+        </div>
       ) : files.length === 0 ? (
         <motion.div
           initial={{ opacity: 0 }}
@@ -808,13 +803,15 @@ export default function DatabasePage() {
         </motion.div>
       ) : (
         <div className="rounded-xl border border-border bg-card overflow-hidden">
-          <div className={cn("hidden lg:grid gap-3 px-4 py-2.5 bg-muted/50 text-xs font-medium text-muted-foreground uppercase tracking-wider", canDeleteFiles ? "grid-cols-[36px_1fr_110px_120px_50px_70px_90px_176px]" : "grid-cols-[1fr_110px_120px_50px_70px_90px_136px]")}>
+          <div className={cn("hidden lg:grid gap-3 px-4 py-2.5 bg-muted/50 text-xs font-medium text-muted-foreground uppercase tracking-wider", canDeleteFiles ? "grid-cols-[36px_minmax(0,1fr)_minmax(90px,140px)_110px_176px]" : "grid-cols-[minmax(0,1fr)_minmax(90px,140px)_110px_136px]")}>
             {canDeleteFiles && (
               <button
                 type="button"
                 onClick={toggleSelectAllVisible}
                 className="flex items-center justify-center hover:text-foreground transition-colors"
                 data-testid="checkbox-select-all-header"
+                aria-label={t(allVisibleSelected ? "db.deselect_all" : "db.select_all")}
+                title={t(allVisibleSelected ? "db.deselect_all" : "db.select_all")}
               >
                 {allVisibleSelected ? <CheckSquare className="w-4 h-4" /> : <Square className="w-4 h-4 opacity-70" />}
               </button>
@@ -825,13 +822,8 @@ export default function DatabasePage() {
             <button onClick={() => handleSort("source_site")} className="flex items-center gap-1 hover:text-foreground transition-colors text-left" data-testid="sort-source_site">
               {t("table.source")} <SortIcon field="source_site" />
             </button>
-            <span>{t("table.category")}</span>
-            <span>{t("table.md")}</span>
-            <button onClick={() => handleSort("bytes")} className="flex items-center gap-1 hover:text-foreground transition-colors text-left" data-testid="sort-bytes">
-              {t("table.size")} <SortIcon field="bytes" />
-            </button>
-            <button onClick={() => handleSort(orderBy === "first_seen" ? "first_seen" : "last_seen")} className="flex items-center gap-1 hover:text-foreground transition-colors text-left" data-testid="sort-date">
-              {orderBy === "first_seen" ? t("db.first_seen") : t("table.date")} <SortIcon field={orderBy === "first_seen" ? "first_seen" : "last_seen"} />
+            <button onClick={() => handleSort("first_seen")} className="flex items-center gap-1 hover:text-foreground transition-colors text-left" data-testid="sort-first-seen">
+              {t("db.first_seen")} <SortIcon field="first_seen" />
             </button>
             <span>{t("table.actions")}</span>
           </div>
@@ -841,8 +833,12 @@ export default function DatabasePage() {
             const isDeleted = !!file.deleted_at;
             const isSelected = selectedUrls.includes(file.url);
             const displayName = getCanonicalDisplayName(file, t("dashboard.untitled_material"));
-            const originalName = getChatValidName(file.original_filename);
-            const displayDate = orderBy === "first_seen" ? file.first_seen : file.last_seen;
+            const displayDate = file.first_seen;
+            const categoryText = normalizePublicCategory(file.category);
+            const keywordText = normalizePublicKeywords(file.keywords).join(", ");
+            const summaryText = normalizePublicMetadataText(file.summary);
+            const selectionLabel = t(isSelected ? "db.deselect_file" : "db.select_file");
+            const explainLabel = t(hasMd ? "db.explain_with_ai" : "db.explain_unavailable");
 
             return (
               <motion.div
@@ -852,8 +848,8 @@ export default function DatabasePage() {
                 initial="hidden"
                 animate="visible"
                 className={cn(
-                  "grid gap-1 lg:gap-3 px-4 py-3 border-t border-border hover:bg-muted/30 transition-colors cursor-pointer",
-                  canDeleteFiles ? "lg:grid-cols-[36px_1fr_110px_120px_50px_70px_90px_176px]" : "lg:grid-cols-[1fr_110px_120px_50px_70px_90px_136px]",
+                  "grid min-w-0 gap-1 lg:gap-3 px-4 py-3 border-t border-border hover:bg-muted/30 transition-colors cursor-pointer",
+                  canDeleteFiles ? "lg:grid-cols-[36px_minmax(0,1fr)_minmax(90px,140px)_110px_176px]" : "lg:grid-cols-[minmax(0,1fr)_minmax(90px,140px)_110px_136px]",
                   isDeleted && "opacity-50"
                 )}
                 onClick={() => navigateToFile(file)}
@@ -871,6 +867,8 @@ export default function DatabasePage() {
                       disabled={isDeleted}
                       className="text-muted-foreground hover:text-foreground disabled:opacity-40 disabled:cursor-not-allowed"
                       data-testid={`checkbox-select-${i}`}
+                      aria-label={selectionLabel}
+                      title={selectionLabel}
                     >
                       {isSelected ? <CheckSquare className="w-4 h-4" /> : <Square className="w-4 h-4" />}
                     </button>
@@ -880,55 +878,42 @@ export default function DatabasePage() {
                 <div className="min-w-0">
                   <div className="flex items-center gap-2 min-w-0">
                     <FileIcon className="w-4 h-4 text-muted-foreground shrink-0" strokeWidth={1.5} />
-                    <span className="text-sm font-medium truncate" title={displayName} data-testid={`text-title-${i}`}>
+                    <span className="text-sm font-medium break-words [overflow-wrap:anywhere]" title={displayName} data-testid={`text-title-${i}`}>
                       {displayName}
                     </span>
-                    {file.content_type && (
-                      <span className={cn("hidden sm:inline-block lg:hidden text-[10px] font-semibold px-2 py-0.5 rounded-full shrink-0", contentTypeBadgeColor(file.content_type))}>
-                        {contentTypeLabel(file.content_type)}
-                      </span>
-                    )}
                     {isDeleted && (
                       <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-red-500/10 text-red-600 dark:text-red-400 shrink-0">
                         {t("db.deleted_label")}
                       </span>
                     )}
                   </div>
-                  {originalName && originalName !== displayName && (
-                    <p className="text-xs text-muted-foreground/50 mt-0.5 truncate pl-6" data-testid={`text-filename-${i}`}>
-                      {originalName}
+                  {categoryText ? (
+                    <p className="mt-1 min-w-0 pl-6 text-xs text-muted-foreground" data-testid={`text-category-${i}`}>
+                      <span className="font-medium text-foreground/70">{t("db.category")}: </span>
+                      <span className="break-words [overflow-wrap:anywhere]">{categoryText}</span>
                     </p>
-                  )}
-                  {file.summary && (
-                    <p className="text-xs text-muted-foreground/70 mt-0.5 truncate pl-6" data-testid={`text-summary-${i}`}>
-                      {file.summary.length > 120 ? file.summary.slice(0, 120) + "…" : file.summary}
+                  ) : null}
+                  {keywordText ? (
+                    <p className="mt-1 min-w-0 pl-6 text-xs text-muted-foreground" data-testid={`text-keywords-${i}`}>
+                      <span className="font-medium text-foreground/70">{t("db.keywords")}: </span>
+                      <span className="line-clamp-2 break-words [overflow-wrap:anywhere]">{keywordText}</span>
                     </p>
-                  )}
+                  ) : null}
+                  {summaryText ? (
+                    <p className="mt-1 min-w-0 pl-6 text-xs leading-relaxed text-muted-foreground/80" data-testid={`text-summary-${i}`}>
+                      <span className="font-medium text-foreground/70">{t("db.summary")}: </span>
+                      <span className="line-clamp-3 whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{summaryText}</span>
+                    </p>
+                  ) : null}
                 </div>
 
                 <span className="text-xs text-muted-foreground truncate hidden lg:flex items-center" data-testid={`text-source-${i}`}>
                   {file.source_site || "-"}
                 </span>
 
-                <span className="text-xs text-muted-foreground truncate hidden lg:flex items-center" data-testid={`text-category-${i}`}>
-                  {categoryDisplayName(file.category, lang)}
-                </span>
-
-                <span className="hidden lg:flex items-center" data-testid={`text-md-${i}`}>
-                  {hasMd ? (
-                    <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">Y</span>
-                  ) : (
-                    <span className="text-xs text-muted-foreground/40">-</span>
-                  )}
-                </span>
-
-                <span className="text-xs text-muted-foreground tabular-nums hidden lg:flex items-center" data-testid={`text-size-${i}`}>
-                  {formatSize(file.bytes)}
-                </span>
-
-                <span className="text-xs text-muted-foreground hidden lg:flex items-center" data-testid={`text-date-${i}`}>
+                <time className="text-xs text-muted-foreground hidden lg:flex items-center" dateTime={file.first_seen} title={file.first_seen} data-testid={`text-date-${i}`}>
                   {formatDate(displayDate, lang)}
-                </span>
+                </time>
 
                 <div className="hidden lg:flex items-center gap-1.5 justify-end">
                   <button
@@ -941,7 +926,8 @@ export default function DatabasePage() {
                     disabled={!hasMd || isDeleted}
                     className="inline-flex items-center justify-center rounded-md border border-border p-2 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-muted-foreground"
                     data-testid={`button-ai-explain-${i}`}
-                    title={hasMd ? t("db.explain_with_ai") : t("db.explain_unavailable")}
+                    aria-label={explainLabel}
+                    title={explainLabel}
                   >
                     <Sparkles className="w-4 h-4" />
                   </button>
@@ -953,6 +939,7 @@ export default function DatabasePage() {
                     }}
                     className="inline-flex items-center justify-center rounded-md border border-border p-2 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
                     data-testid={`button-preview-${i}`}
+                    aria-label={t("db.preview")}
                     title={t("db.preview")}
                   >
                     <Eye className="w-4 h-4" />
@@ -966,6 +953,7 @@ export default function DatabasePage() {
                       }}
                       className="inline-flex items-center justify-center rounded-md border border-border p-2 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
                       data-testid={`button-download-${i}`}
+                      aria-label={t("db.download")}
                       title={t("db.download")}
                     >
                       <Download className="w-4 h-4" />
@@ -973,7 +961,7 @@ export default function DatabasePage() {
                   )}
                 </div>
 
-                <div className="flex items-center gap-2 sm:hidden mt-1">
+                <div className="flex items-center gap-2 lg:hidden mt-1">
                   {canDeleteFiles && (
                     <button
                       type="button"
@@ -985,17 +973,20 @@ export default function DatabasePage() {
                       disabled={isDeleted}
                       className="text-muted-foreground hover:text-foreground disabled:opacity-40 disabled:cursor-not-allowed"
                       data-testid={`checkbox-select-mobile-${i}`}
+                      aria-label={selectionLabel}
+                      title={selectionLabel}
                     >
                       {isSelected ? <CheckSquare className="w-4 h-4" /> : <Square className="w-4 h-4" />}
                     </button>
                   )}
-                  <span className={cn("text-[10px] font-semibold px-2 py-0.5 rounded-full", contentTypeBadgeColor(file.content_type))}>
-                    {contentTypeLabel(file.content_type)}
+                  <span className="min-w-0 truncate text-xs text-muted-foreground" data-testid={`text-source-mobile-${i}`}>
+                    {file.source_site || "-"}
                   </span>
-                  <span className="text-xs text-muted-foreground">{formatDate(displayDate, lang)}</span>
-                  <span className="text-xs text-muted-foreground">{formatSize(file.bytes)}</span>
+                  <time className="shrink-0 text-xs text-muted-foreground" dateTime={file.first_seen} title={file.first_seen}>
+                    {formatDate(displayDate, lang)}
+                  </time>
                 </div>
-                <div className="flex items-center gap-2 sm:hidden mt-2 pl-6">
+                <div className="flex flex-wrap items-center gap-2 lg:hidden mt-2 pl-6">
                   <button
                     type="button"
                     onClick={(e) => {
@@ -1006,6 +997,7 @@ export default function DatabasePage() {
                     disabled={!hasMd || isDeleted}
                     className="inline-flex items-center gap-1 rounded-md border border-border px-2.5 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-muted-foreground"
                     data-testid={`button-ai-explain-mobile-${i}`}
+                    title={explainLabel}
                   >
                     <Sparkles className="w-3.5 h-3.5" />
                     {t("db.explain_with_ai")}
@@ -1018,6 +1010,7 @@ export default function DatabasePage() {
                     }}
                     className="inline-flex items-center gap-1 rounded-md border border-border px-2.5 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
                     data-testid={`button-preview-mobile-${i}`}
+                    title={t("db.preview")}
                   >
                     <Eye className="w-3.5 h-3.5" />
                     {t("db.preview")}
@@ -1031,6 +1024,7 @@ export default function DatabasePage() {
                       }}
                       className="inline-flex items-center gap-1 rounded-md border border-border px-2.5 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
                       data-testid={`button-download-mobile-${i}`}
+                      title={t("db.download")}
                     >
                       <Download className="w-3.5 h-3.5" />
                       {t("db.download")}

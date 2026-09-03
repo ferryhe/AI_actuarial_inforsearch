@@ -1,6 +1,7 @@
 import { apiGet } from "./api";
 
-const WEEKLY_PREVIEW_LIMIT = 8;
+const WEEKLY_HOME_PREVIEW_LIMIT = 6;
+const WEEKLY_FILES_PAGE_LIMIT = 500;
 
 export interface WeeklySnapshot {
   id: string;
@@ -16,11 +17,14 @@ interface WeeklySnapshotDetail extends WeeklySnapshot {
   summary_markdown: string;
 }
 
-interface WeeklySnapshotFile {
+export interface WeeklySnapshotFile {
   url: string;
   title?: string | null;
   original_filename?: string | null;
   first_seen: string;
+  category?: string | null;
+  keywords?: unknown;
+  summary?: string | null;
 }
 
 interface WeeklyExplanation {
@@ -50,6 +54,8 @@ interface WeeklySnapshotFilesResponse {
   total: number;
   limit: number;
   offset: number;
+  included_count?: number;
+  truncated?: boolean;
 }
 
 interface WeeklyExplanationResponse {
@@ -69,6 +75,16 @@ interface WeeklySnapshotDetailEnvelope {
 
 export type GetJson = <T>(url: string) => Promise<T>;
 type WeeklyExplanationState = "complete" | "missing" | "empty" | "unavailable" | "failed";
+
+export function resolveCachedListLoadState<T>(
+  response: { files?: T[]; total?: number } | null,
+  cached: { files?: T[]; total?: number } | null,
+): { files: T[]; total: number; loadError: boolean } {
+  const available = response ?? cached;
+  return available
+    ? { files: available.files || [], total: available.total ?? 0, loadError: false }
+    : { files: [], total: 0, loadError: true };
+}
 
 export async function loadLatestWeeklyDashboard(
   get: GetJson = apiGet,
@@ -102,7 +118,7 @@ export async function loadLatestWeeklyDashboard(
   const snapshotId = encodeURIComponent(snapshot.id);
   const [filesResult, explanationResult] = await Promise.allSettled([
     get<WeeklySnapshotFilesResponse>(
-      `/api/weekly-updates/${snapshotId}/files?limit=${WEEKLY_PREVIEW_LIMIT}&offset=0`,
+      `/api/weekly-updates/${snapshotId}/files?limit=${WEEKLY_HOME_PREVIEW_LIMIT}&offset=0`,
     ),
     get<WeeklyExplanationResponse>(`/api/weekly-updates/${snapshotId}/explanation`),
   ]);
@@ -111,7 +127,7 @@ export async function loadLatestWeeklyDashboard(
     status: "ready",
     snapshot,
     files: filesResult.status === "fulfilled"
-      ? (filesResult.value.files || []).slice(0, WEEKLY_PREVIEW_LIMIT)
+      ? (filesResult.value.files || []).slice(0, WEEKLY_HOME_PREVIEW_LIMIT)
       : [],
     filesUnavailable: filesResult.status === "rejected",
     explanation: explanationResult.status === "fulfilled"
@@ -119,6 +135,32 @@ export async function loadLatestWeeklyDashboard(
       : null,
     explanationUnavailable: explanationResult.status === "rejected",
   };
+}
+
+async function loadAllWeeklySnapshotFiles(
+  snapshotId: string,
+  get: GetJson,
+): Promise<WeeklySnapshotFile[]> {
+  const files: WeeklySnapshotFile[] = [];
+  let offset = 0;
+  let total: number | null = null;
+
+  while (total === null || offset < total) {
+    const page = await get<WeeklySnapshotFilesResponse>(
+      `/api/weekly-updates/${snapshotId}/files?limit=${WEEKLY_FILES_PAGE_LIMIT}&offset=${offset}`,
+    );
+    const pageFiles = Array.isArray(page.files) ? page.files : [];
+    files.push(...pageFiles);
+
+    const responseTotal = Number(page.total);
+    total = Number.isSafeInteger(responseTotal) && responseTotal >= 0
+      ? responseTotal
+      : offset + pageFiles.length;
+    if (pageFiles.length === 0) break;
+    offset += pageFiles.length;
+  }
+
+  return files;
 }
 
 export async function loadWeeklyUpdateList(
@@ -142,18 +184,17 @@ export async function loadWeeklyUpdateDetail(
   const snapshotId = encodeURIComponent(id);
   const [detailResult, filesResult, explanationResult] = await Promise.allSettled([
     get<WeeklySnapshotDetailEnvelope>(`/api/weekly-updates/${snapshotId}`),
-    get<WeeklySnapshotFilesResponse>(
-      `/api/weekly-updates/${snapshotId}/files?limit=${WEEKLY_PREVIEW_LIMIT}&offset=0`,
-    ),
+    loadAllWeeklySnapshotFiles(snapshotId, get),
     get<WeeklyExplanationResponse>(`/api/weekly-updates/${snapshotId}/explanation`),
   ]);
 
-  const snapshot = detailResult.status === "fulfilled" ? detailResult.value.summary : null;
+  if (detailResult.status === "rejected") throw detailResult.reason;
+  const snapshot = detailResult.value.summary;
   return {
     status: snapshot ? "ready" : "unavailable",
     snapshot,
     files: filesResult.status === "fulfilled"
-      ? (filesResult.value.files || []).slice(0, WEEKLY_PREVIEW_LIMIT)
+      ? filesResult.value
       : [],
     filesUnavailable: filesResult.status === "rejected",
     explanation: explanationResult.status === "fulfilled"
@@ -187,6 +228,72 @@ export function formatWeeklyDateTime(value: string | null | undefined, lang: str
     timeZone: "UTC",
     timeZoneName: "short",
   }).format(parsed);
+}
+
+export function formatWeeklyShortDate(value: string | null | undefined, lang: string): string {
+  if (!value) return "—";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return new Intl.DateTimeFormat(lang === "zh" ? "zh-CN" : "en-US", {
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  }).format(parsed);
+}
+
+export function normalizePublicMetadataText(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+export function normalizePublicCategory(value: unknown): string {
+  const category = normalizePublicMetadataText(value);
+  return category.split(";").some((part) => Boolean(part.trim())) ? category : "";
+}
+
+export function normalizePublicKeywords(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value
+      .filter((item): item is string => typeof item === "string")
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+  if (typeof value !== "string" || !value.trim()) return [];
+
+  const text = value.trim();
+  if (text.startsWith("[")) {
+    try {
+      return normalizePublicKeywords(JSON.parse(text));
+    } catch {
+      return [];
+    }
+  }
+  if (text.startsWith("{")) return [];
+  return text.split(/[,;]/).map((item) => item.trim()).filter(Boolean);
+}
+
+export interface WeeklyFileGroup {
+  key: string;
+  label: string;
+  files: WeeklySnapshotFile[];
+}
+
+export function groupWeeklyFiles(
+  files: WeeklySnapshotFile[],
+  uncategorizedLabel: string,
+): WeeklyFileGroup[] {
+  const groups = new Map<string, WeeklyFileGroup>();
+  for (const file of files) {
+    const category = normalizePublicCategory(file.category);
+    const primaryCategory = category.split(";").map((part) => part.trim()).find(Boolean);
+    const label = primaryCategory || uncategorizedLabel;
+    const existing = groups.get(label);
+    if (existing) {
+      existing.files.push(file);
+    } else {
+      groups.set(label, { key: label, label, files: [file] });
+    }
+  }
+  return [...groups.values()];
 }
 
 function formatWeeklyDate(value: string | null | undefined, lang: string): string {
@@ -250,7 +357,7 @@ export function buildWeeklyDashboardView(
 
   return {
     snapshot: data.snapshot,
-    files: data.files.slice(0, WEEKLY_PREVIEW_LIMIT),
+    files: data.files,
     fileCount: data.snapshot?.file_count ?? 0,
     filesUnavailable: data.filesUnavailable,
     explanationState,

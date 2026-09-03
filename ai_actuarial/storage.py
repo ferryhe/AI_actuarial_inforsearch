@@ -2944,7 +2944,7 @@ class Storage:
                 "deleted_at": row[15],
                 "category": row[16],
                 "summary": row[17],
-                "keywords": json.loads(row[18]) if row[18] else [],
+                "keywords": self._decode_public_keywords(row[18]),
                 "has_markdown": bool(row[19]),
                 "markdown_source": row[20],
                 "markdown_updated_at": row[21],
@@ -2954,6 +2954,25 @@ class Storage:
             files.append(file_dict)
 
         return files, total
+
+    @staticmethod
+    def _decode_public_keywords(raw: object) -> list[str]:
+        """Return usable public keyword strings without trusting stored JSON shape."""
+        if isinstance(raw, (list, tuple)):
+            values = raw
+        else:
+            text = str(raw or "").strip()
+            if not text:
+                return []
+            try:
+                decoded = json.loads(text)
+            except (TypeError, ValueError):
+                values = text.split(",")
+            else:
+                if not isinstance(decoded, list):
+                    return []
+                values = decoded
+        return [value.strip() for value in values if isinstance(value, str) and value.strip()]
 
     def count_files_first_seen_between(
         self,
@@ -3259,9 +3278,13 @@ class Storage:
                 COALESCE(NULLIF(TRIM(f.title), ''),
                          NULLIF(TRIM(m.original_filename), ''), '') AS title,
                 m.original_filename,
-                m.first_seen
+                m.first_seen,
+                ci.category,
+                ci.keywords,
+                ci.summary
             FROM weekly_snapshot_members m
             LEFT JOIN files f ON f.url = m.file_url
+            LEFT JOIN catalog_items ci ON ci.file_url = m.file_url
             WHERE m.snapshot_id = ?
             ORDER BY m.ordinal
             LIMIT ? OFFSET ?
@@ -3274,6 +3297,9 @@ class Storage:
                 "title": str(row[1]),
                 "original_filename": row[2],
                 "first_seen": str(row[3]),
+                "category": row[4],
+                "keywords": self._decode_public_keywords(row[5]),
+                "summary": row[6],
             }
             for row in cur.fetchall()
         ]

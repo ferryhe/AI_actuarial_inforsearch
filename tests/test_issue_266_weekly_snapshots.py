@@ -353,7 +353,15 @@ def test_snapshot_member_title_is_resolved_live_with_safe_fallbacks(tmp_path: Pa
     )
     assert page["files"][0]["title"] == "Edited Canonical Title"
     assert page["files"][0]["first_seen"] == "2026-03-10T08:00:00+00:00"
-    assert set(page["files"][0]) == {"url", "title", "original_filename", "first_seen"}
+    assert set(page["files"][0]) == {
+        "url",
+        "title",
+        "original_filename",
+        "first_seen",
+        "category",
+        "keywords",
+        "summary",
+    }
 
     with sqlite3.connect(db_path) as conn:
         conn.execute(

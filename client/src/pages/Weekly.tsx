@@ -107,8 +107,8 @@ export default function Weekly() {
           <p className="text-xs text-muted-foreground/70 mt-1">{t("weekly.no_highlights_desc")}</p>
         </div>
       ) : (
-        <div className="grid lg:grid-cols-[320px_1fr] gap-4 items-start">
-          <aside className="rounded-xl border border-border bg-card overflow-hidden" data-testid="weekly-list">
+        <div className="grid min-w-0 lg:grid-cols-[320px_minmax(0,1fr)] gap-4 items-start">
+          <aside className="min-w-0 rounded-xl border border-border bg-card overflow-hidden" data-testid="weekly-list">
             <ul>
               {summaries.map((item) => {
                 const active = item.id === selectedId;
@@ -148,11 +148,13 @@ export default function Weekly() {
                   {formatWeeklyPeriodLabel(detail.snapshot.period_start, detail.snapshot.period_end, lang)}
                 </h2>
                 <WeeklyHighlightCard
+                  key={detail.snapshot.id}
                   view={buildWeeklyDashboardView(detail, lang, t)}
                   lang={lang}
                   t={t}
                   onOpenFile={(url) => navigate(buildFileDetailPath(url, "/weekly"))}
                   databasePath={buildWeeklyDatabasePath(detail.snapshot)}
+                  grouped
                 />
               </div>
             ) : (

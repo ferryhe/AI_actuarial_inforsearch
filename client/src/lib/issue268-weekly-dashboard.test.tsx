@@ -71,11 +71,11 @@ const fakeGet = async <T,>(url: string): Promise<T> => {
 async function main(): Promise<void> {
 const loaded = await loadLatestWeeklyDashboard(fakeGet);
 assert.equal(loaded.status, "ready");
-assert.equal(loaded.files.length, 8);
+assert.equal(loaded.files.length, 6);
 assert.equal(loaded.snapshot?.file_count, 12);
 assert.deepEqual(calls, [
   "/api/weekly-updates/latest",
-  "/api/weekly-updates/snapshot%20%2F%20268/files?limit=8&offset=0",
+  "/api/weekly-updates/snapshot%20%2F%20268/files?limit=6&offset=0",
   "/api/weekly-updates/snapshot%20%2F%20268/explanation",
 ]);
 assert.ok(calls.every((url) => !/generate|retry/i.test(url)));
@@ -116,7 +116,7 @@ for (const [data, lang, expectedState, expectedText] of [
   assert.equal(view.explanationState, expectedState);
   assert.equal(view.explanationText, expectedText);
   assert.equal(view.fileCount, 12);
-  assert.equal(view.files.length, 8);
+  assert.equal(view.files.length, 6);
 }
 
 const longTitle = "L".repeat(600);
@@ -192,7 +192,7 @@ const markup = renderToStaticMarkup(
     onOpenFile={() => undefined}
   />,
 );
-assert.equal((markup.match(/data-testid="weekly-file-row-/g) || []).length, 8);
+assert.equal((markup.match(/data-testid="weekly-file-row-/g) || []).length, 6);
 assert.match(markup, /12 new materials/);
 assert.match(markup, /English explanation/);
 assert.match(markup, /break-words/);
@@ -232,7 +232,7 @@ const failedMarkup = renderToStaticMarkup(
 );
 assert.match(failedMarkup, /生成失败/);
 assert.match(failedMarkup, /新增 12 份材料/);
-assert.equal((failedMarkup.match(/data-testid="weekly-file-row-/g) || []).length, 8);
+assert.equal((failedMarkup.match(/data-testid="weekly-file-row-/g) || []).length, 6);
 
 console.log("Issue #268 weekly dashboard executable assertions passed");
 }

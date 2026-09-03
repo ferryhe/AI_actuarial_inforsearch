@@ -4,8 +4,10 @@ ROOT = Path(__file__).resolve().parents[1] / "client" / "src"
 APP_TSX = ROOT / "App.tsx"
 SECTION_TSX = ROOT / "components" / "WeeklyDashboardSection.tsx"
 CARD_TSX = ROOT / "components" / "WeeklyHighlightCard.tsx"
+DISCLOSURE_TSX = ROOT / "components" / "WeeklyGroupDisclosure.tsx"
 WEEKLY_TSX = ROOT / "pages" / "Weekly.tsx"
 LIB_TS = ROOT / "lib" / "weekly-dashboard.ts"
+I18N_TS = ROOT / "hooks" / "use-i18n.ts"
 
 
 def test_weekly_card_drops_backend_metadata_fields():
@@ -56,6 +58,11 @@ def test_weekly_lib_loads_list_and_detail_without_write_ops():
     assert "get<WeeklySnapshotDetailEnvelope>(`/api/weekly-updates/${snapshotId}`)" in lib
     assert "/files?limit=" in lib
     assert "/explanation" in lib
+    assert "loadAllWeeklySnapshotFiles" in lib
+    assert "offset += pageFiles.length" in lib
+    assert "WEEKLY_HOME_PREVIEW_LIMIT = 6" in lib
+    assert 'detailResult.status === "rejected"' in lib
+    assert "throw detailResult.reason" in lib
 
     # Never triggers the generate / retry write endpoints.
     assert "explanation/generate" not in lib
@@ -82,6 +89,8 @@ def test_weekly_page_master_detail_read_only():
     assert "loadWeeklyUpdateList()" in src
     # Detail fetched on demand for the selected item.
     assert "loadWeeklyUpdateDetail(selectedId)" in src
+    assert "setDetailError(true)" in src
+    assert 'detailError ? t("weekly.detail_error")' in src
 
     # Master-detail layout with default selection of the most recent item.
     assert 'data-testid="weekly-list"' in src
@@ -95,3 +104,30 @@ def test_weekly_page_master_detail_read_only():
     # Reuses the shared card and database filter path for the detail pane.
     assert "<WeeklyHighlightCard" in src
     assert "buildWeeklyDatabasePath(detail.snapshot)" in src
+    assert "grouped" in src
+
+
+def test_weekly_groups_are_native_disclosures_with_content_metadata():
+    card = CARD_TSX.read_text(encoding="utf-8")
+    disclosure = DISCLOSURE_TSX.read_text(encoding="utf-8")
+    lib = LIB_TS.read_text(encoding="utf-8")
+    i18n = I18N_TS.read_text(encoding="utf-8")
+
+    assert "groupWeeklyFiles" in lib
+    assert 'category.split(";")' in lib
+    assert 't("weekly.uncategorized")' in card
+    assert "aria-expanded={!collapsed}" in disclosure
+    assert "aria-controls={groupId}" in disclosure
+    assert "hidden={collapsed}" in disclosure
+    assert "toggleGroup(group.key)" in card
+    assert "normalizePublicCategory(file.category)" in card
+    assert "normalizePublicCategory(file.category)" in lib
+    for field in ("category", "keywords", "summary"):
+        assert f"weekly.{field}" in card
+        assert i18n.count(f'"weekly.{field}"') == 2
+    for key in ("weekly.uncategorized", "weekly.group_count"):
+        assert i18n.count(f'"{key}"') == 2
+    assert '"weekly.group_count": "Articles: {count}"' in i18n
+    assert '"weekly.group_count": "{count} 篇文章"' in i18n
+    assert "formatWeeklyShortDate" in card
+    assert "[overflow-wrap:anywhere]" in card
