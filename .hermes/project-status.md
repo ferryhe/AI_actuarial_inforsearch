@@ -1553,6 +1553,9 @@
   the long removed category with impact 1, all 15 added categories with impact 0, bounded vertical
   scrolling, zero horizontal overflow, and zero result buttons. A page refresh preserved the same
   history result. The previously verified no-change result showed the explicit empty state.
+- The first post-feedback CI run passed four jobs and all 2,025 tests except one older source
+  assertion that expected the now-replaced hard-coded RAG filter label. The same worker updated only
+  that assertion to the localized option; the exact test and the Issue suite passed locally.
 - Disposable local browser servers were stopped after validation. No production operation ran.
 
 ## Issue #334 recommended next action
