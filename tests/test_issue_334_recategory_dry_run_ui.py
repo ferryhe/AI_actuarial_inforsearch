@@ -47,6 +47,19 @@ def test_recategory_precedes_catalog_in_every_task_type_selector() -> None:
     filter_recategory = history_filter.index('<option value="recategory">')
     filter_catalog = history_filter.index('<option value="catalog">')
     assert filter_recategory < filter_catalog
+    for value, translation_key in (
+        ("scheduled", "tasks.type.site_config"),
+        ("quick_check", "tasks.type.web_crawl"),
+        ("url", "tasks.type.adhoc_url"),
+        ("file", "tasks.type.file_import"),
+        ("search", "tasks.type.web_search"),
+        ("recategory", "tasks.type.recategory"),
+        ("catalog", "tasks.type.catalog"),
+        ("markdown_conversion", "tasks.type.markdown"),
+        ("chunk_generation", "tasks.type.chunk"),
+        ("rag_indexing", "tasks.type.rag_index"),
+    ):
+        assert f'<option value="{value}">{{t("{translation_key}")}}</option>' in history_filter
     assert "recategory" not in pipeline
 
 

@@ -1458,7 +1458,9 @@
 - Baseline: `origin/main@73215789cc6202add89d808ab35d5c430fa1ef0a`
 - Issue: `#334 bug(ui): show Recategory dry-run results and place it before Catalog`
 - Review state: `C:\Project\AI_actuarial_inforsearch\.git\codex-issue-to-merge\issue-334.json`
-- Delivery stage: Local review and all required validation passed; preparing the Draft PR
+- Delivery stage: PR #335 is Ready; the single remote-feedback snapshot was assessed and its one
+  valid localization fix passed focused validation; preparing the follow-up commit and current-head
+  checks before merge
 - Progress heartbeat: id `issue-334-delivery-progress`, status `ACTIVE`, 15-minute cadence
 
 ## Issue #334 acceptance criteria
@@ -1523,6 +1525,8 @@
   the filter includes the previously missing option. Pipeline definitions remain unchanged.
 - English and Chinese result copy is complete. Long names wrap, long lists are vertically bounded,
   and the result contains no Apply button or other mutation control.
+- The Task History type filter now uses the existing English/Chinese task-type translations for
+  every concrete option, eliminating the mixed-language dropdown identified during remote review.
 - TDD reproduced three expected pre-fix failures, then the Issue suite passed all three tests.
   The worker inspected all same-shaped user-facing selectors plus desktop/mobile history paths;
   Logs, task-specific forms, and Pipeline were explicitly excluded with acceptance-mapped reasons.
@@ -1553,5 +1557,5 @@
 
 ## Issue #334 recommended next action
 
-- Commit the reviewed diff, push the assigned branch, create the Draft PR with `Closes #334`, then
-  mark it Ready and begin the single remote-feedback window.
+- Commit and push the validated remote-feedback fix to PR #335, require all checks to pass on that
+  exact head, then merge and complete Issue, branch, worktree, and heartbeat cleanup.

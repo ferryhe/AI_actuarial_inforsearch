@@ -49,16 +49,16 @@ export function FilterBar({
         className="px-3 py-2 text-sm rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-ring"
       >
         <option value="">All Types</option>
-        <option value="scheduled">Site Config</option>
-        <option value="quick_check">Web Crawl</option>
-        <option value="url">URL</option>
-        <option value="file">File Import</option>
-        <option value="search">Search</option>
+        <option value="scheduled">{t("tasks.type.site_config")}</option>
+        <option value="quick_check">{t("tasks.type.web_crawl")}</option>
+        <option value="url">{t("tasks.type.adhoc_url")}</option>
+        <option value="file">{t("tasks.type.file_import")}</option>
+        <option value="search">{t("tasks.type.web_search")}</option>
         <option value="recategory">{t("tasks.type.recategory")}</option>
-        <option value="catalog">Catalog</option>
-        <option value="markdown_conversion">Markdown</option>
-        <option value="chunk_generation">Chunk &amp; Embedding</option>
-        <option value="rag_indexing">RAG Indexing</option>
+        <option value="catalog">{t("tasks.type.catalog")}</option>
+        <option value="markdown_conversion">{t("tasks.type.markdown")}</option>
+        <option value="chunk_generation">{t("tasks.type.chunk")}</option>
+        <option value="rag_indexing">{t("tasks.type.rag_index")}</option>
       </select>
     </div>
   );
