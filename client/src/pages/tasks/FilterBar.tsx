@@ -1,4 +1,5 @@
 import { Search } from "lucide-react";
+import { useTranslation } from "@/components/Layout";
 
 interface FilterBarProps {
   searchQuery: string;
@@ -17,6 +18,8 @@ export function FilterBar({
   typeFilter,
   onTypeChange,
 }: FilterBarProps) {
+  const { t } = useTranslation();
+
   return (
     <div className="flex flex-wrap gap-3 items-center">
       <div className="relative flex-1 min-w-[200px]">
@@ -51,6 +54,7 @@ export function FilterBar({
         <option value="url">URL</option>
         <option value="file">File Import</option>
         <option value="search">Search</option>
+        <option value="recategory">{t("tasks.type.recategory")}</option>
         <option value="catalog">Catalog</option>
         <option value="markdown_conversion">Markdown</option>
         <option value="chunk_generation">Chunk &amp; Embedding</option>

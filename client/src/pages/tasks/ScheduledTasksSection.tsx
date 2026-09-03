@@ -284,11 +284,11 @@ export function ScheduledTasksSection({
   const taskTypeOptions = [
     { value: "scheduled", label: t("tasks.type.scheduled") },
     { value: "quick_check", label: t("tasks.type.web_crawl") },
+    { value: "recategory", label: t("tasks.type.recategory") },
     { value: "catalog", label: t("tasks.type.catalog") },
     { value: "markdown_conversion", label: t("tasks.type.markdown") },
     { value: "chunk_generation", label: t("tasks.type.chunk") },
     { value: "rag_indexing", label: t("tasks.type.rag_index") },
-    { value: "recategory", label: t("tasks.type.recategory") },
     { value: "weekly_summary", label: t("tasks.type.weekly_summary") },
     { value: "search", label: t("tasks.type.web_search") },
     { value: "url", label: t("tasks.type.adhoc_url") },

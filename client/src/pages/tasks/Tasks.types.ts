@@ -76,6 +76,7 @@ export interface HistoryTask {
   catalog_errors?: number;
   errors?: string[];
   result?: TaskContractResult;
+  metadata?: unknown;
 }
 
 export interface LogModal {
