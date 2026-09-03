@@ -30,6 +30,7 @@ import { TaskCard, statusBadge, formatDate } from "./tasks/TaskCard";
 import { TaskTable } from "./tasks/TaskTable";
 import { TaskMetrics } from "./tasks/TaskMetrics";
 import { Pagination } from "./tasks/Pagination";
+import { RecategoryDryRunResult } from "./tasks/RecategoryDryRunResult";
 import type { Task, SiteConfig, HistoryTask, LogModal } from "./tasks/Tasks.types";
 
 // Task type definitions
@@ -41,11 +42,11 @@ const taskTypes = [
   { type: "web_search", apiType: "search", icon: Search, color: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" },
   { type: "web_listening", apiType: "web_listening", icon: Globe, color: "bg-sky-500/10 text-sky-600 dark:text-sky-400" },
   { type: "markdown", apiType: "markdown_conversion", icon: FileText, color: "bg-pink-500/10 text-pink-600 dark:text-pink-400" },
+  { type: "recategory", apiType: "recategory", icon: RefreshCw, color: "bg-rose-500/10 text-rose-600 dark:text-rose-400" },
   { type: "catalog", apiType: "catalog", icon: BookOpen, color: "bg-amber-500/10 text-amber-600 dark:text-amber-400" },
   { type: "chunk", apiType: "chunk_generation", icon: Layers, color: "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400" },
   { type: "create_kb", apiType: "create_kb", route: "/knowledge?open=create", icon: FolderOpen, color: "bg-teal-500/10 text-teal-600 dark:text-teal-400" },
   { type: "rag_index", apiType: "rag_indexing", icon: Zap, color: "bg-purple-500/10 text-purple-600 dark:text-purple-400" },
-  { type: "recategory", apiType: "recategory", icon: RefreshCw, color: "bg-rose-500/10 text-rose-600 dark:text-rose-400" },
 ];
 
 const fadeUp = {
@@ -588,6 +589,10 @@ export default function Tasks() {
                       <TaskMetrics task={logModal.task} t={t} className="contents" labelClassName="text-muted-foreground" />
                     </div>
                   </div>
+                )}
+
+                {logModal.task && (
+                  <RecategoryDryRunResult task={logModal.task} t={t} />
                 )}
 
                 {/* Box 2: Error details */}

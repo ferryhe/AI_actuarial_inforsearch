@@ -1449,3 +1449,116 @@
 - Commit and push the confirmed remote contract fix, allow required checks to rerun, reply to both
   captured Copilot threads with the accepted/rejected disposition, then merge once the updated head
   is green.
+# Project Status — Issue #334 Recategory dry-run UI
+
+- Updated: 2026-09-03 EDT
+- Repository: `AI_actuarial_inforsearch`
+- Worktree: `C:\Users\ferry\.codex\worktrees\3632\AI_actuarial_inforsearch`
+- Branch: `codex/issue-334-recategory-dry-run-ui`
+- Baseline: `origin/main@73215789cc6202add89d808ab35d5c430fa1ef0a`
+- Issue: `#334 bug(ui): show Recategory dry-run results and place it before Catalog`
+- Review state: `C:\Project\AI_actuarial_inforsearch\.git\codex-issue-to-merge\issue-334.json`
+- Delivery stage: PR #335 is Ready; the single remote-feedback snapshot was assessed and its one
+  valid localization fix passed focused validation; preparing the follow-up commit and current-head
+  checks before merge
+- Progress heartbeat: id `issue-334-delivery-progress`, status `ACTIVE`, 15-minute cadence
+
+## Issue #334 acceptance criteria
+
+- AC-1: A completed `recategory` history task whose `metadata.dry_run` is exactly true shows a
+  human-readable Dry Run Result in the Task History detail/log dialog, sourced from the history
+  task metadata so the same result remains visible after refresh.
+- AC-2: When changes exist, the result accurately shows whether recategorization is needed and
+  lists every removed and added category with its corresponding `removed_impact` or
+  `added_impact` article count in a quickly scannable layout.
+- AC-3: When `needs_recategory` is false and no category changes exist, the result shows an
+  explicit localized no-changes state instead of an empty block.
+- AC-4: Missing, incomplete, legacy, or wrong-shaped metadata degrades safely: ineligible tasks
+  do not show the result, incomplete eligible results render only safe values, and no `null`,
+  `undefined`, or task-detail crash reaches the user.
+- AC-5: The result is read-only and offers no implicit Apply action or data mutation; the existing
+  Recategory Plan/Apply algorithms and task execution contracts remain unchanged.
+- AC-6: Re-categorize appears before Catalog in the Run Task cards and Scheduled Task type list;
+  the Task History type filter gains Re-categorize before Catalog. Recategory remains independent
+  and is not added to the automatic Pipeline.
+- AC-7: All added user-facing copy is complete in English and Chinese, and category names, counts,
+  lists, and the empty state fit without horizontal overflow at desktop and 320px widths.
+- AC-8: Focused frontend regression tests cover change, no-change, missing/incomplete metadata,
+  eligibility, and all three ordering contracts; the frontend checks, repository quality/dead-code
+  gates, Python smoke gates, and desktop plus 320px browser smoke pass.
+
+## Issue #334 scope, baseline evidence, and non-goals
+
+- Code-change delivery is required. A baseline reproduction failed all five probes: the Run Task
+  order and Scheduled Task order put Re-categorize after Catalog, Task History omits the filter
+  option, `HistoryTask` has no metadata field, and the detail dialog has no dry-run rendering.
+- The clean worktree started detached at the supplied baseline; `HEAD`, `origin/main`, and their
+  merge-base all matched `73215789cc6202add89d808ab35d5c430fa1ef0a` before switching to the
+  pre-created assigned branch at that same commit.
+- PR #202 added the Recategory backend and appended basic Run/Scheduled UI entries. Its body and
+  commit history describe task wiring but no dry-run history result UI or intended ordering.
+  PR #201 only added taxonomy-state support, so neither is equivalent to Issue #334.
+- Worker-owned files are limited to the Tasks history/detail and task-type ordering surfaces,
+  bilingual task copy, and directly corresponding frontend tests. A small dedicated result
+  component is allowed if it is the narrowest complete implementation. This manager owns this
+  project-status record.
+- Non-goals: backend result storage or API changes, `plan_recategory()` or Apply algorithm changes,
+  taxonomy/Catalog/KB sync changes, Pipeline execution or dependency changes, automatic Plan-to-
+  Apply behavior, sibling repositories, dependency upgrades, security frameworks, or speculative
+  abstractions.
+- Review-policy override: none; the default scoped review policy applies unchanged.
+
+## Issue #334 blockers or decisions needed
+
+- None.
+
+## Issue #334 implementation and local review
+
+- The Task History detail/log dialog now renders a dedicated read-only Dry Run Result only for
+  completed Recategory plans with `metadata.dry_run === true`. It shows the plan decision,
+  removed/added categories, safe per-category impact counts, the explicit no-change state, and an
+  unavailable state for incomplete eligible metadata.
+- Runtime guards accept only plain-object metadata, non-empty category strings, and non-negative
+  integer counts. Missing, legacy, wrong-shaped, or ineligible metadata cannot render `null` or
+  `undefined` and cannot break the rest of the task detail.
+- Re-categorize now precedes Catalog in Run Task, Scheduled Task, and Task History filter order;
+  the filter includes the previously missing option. Pipeline definitions remain unchanged.
+- English and Chinese result copy is complete. Long names wrap, long lists are vertically bounded,
+  and the result contains no Apply button or other mutation control.
+- The Task History type filter now uses the existing English/Chinese task-type translations for
+  every concrete option, eliminating the mixed-language dropdown identified during remote review.
+- TDD reproduced three expected pre-fix failures, then the Issue suite passed all three tests.
+  The worker inspected all same-shaped user-facing selectors plus desktop/mobile history paths;
+  Logs, task-specific forms, and Pipeline were explicitly excluded with acceptance-mapped reasons.
+- Fresh read-only review round 1 independently inspected the complete diff and tests and passed
+  with no valid findings. Its only residual was the required changed-result browser evidence, which
+  was completed after review without a code change.
+- The first unified quality-gate invocation passed all 2,025 tests but stopped on Black/isort
+  formatting of the new Python test. The same worker made only the formatter-required test-layout
+  change; focused tests and formatter checks passed. The state record explains why this mechanical,
+  behavior-neutral edit did not reopen local review.
+
+## Issue #334 final local validation
+
+- Focused Issue/task-history regression: 36 passed. Recategory/API regression: 34 passed. Scheduled
+  Tasks and Task Metrics React runtime assertions passed. `git diff --check` passed.
+- Unified quality gate passed on the complete post-format diff: 2,015 passed and 10 skipped; Black,
+  isort, and error-only Pylint passed.
+- Both dead-code gates passed with zero findings. Frontend lint passed with zero errors and five
+  existing unrelated Hook warnings; TypeScript and the production build passed, with only the
+  existing large-chunk advisory.
+- Python smoke passed 13 FastAPI tests, 31 Agentic evaluation tests, and all 3 CLI evaluation cases;
+  evidence, citation, and refusal rates were 1.0 and unsupported-answer rate was 0.
+- Live browser smoke used disposable local data. Desktop and 320px both showed the changed result,
+  the long removed category with impact 1, all 15 added categories with impact 0, bounded vertical
+  scrolling, zero horizontal overflow, and zero result buttons. A page refresh preserved the same
+  history result. The previously verified no-change result showed the explicit empty state.
+- The first post-feedback CI run passed four jobs and all 2,025 tests except one older source
+  assertion that expected the now-replaced hard-coded RAG filter label. The same worker updated only
+  that assertion to the localized option; the exact test and the Issue suite passed locally.
+- Disposable local browser servers were stopped after validation. No production operation ran.
+
+## Issue #334 recommended next action
+
+- Commit and push the validated remote-feedback fix to PR #335, require all checks to pass on that
+  exact head, then merge and complete Issue, branch, worktree, and heartbeat cleanup.
