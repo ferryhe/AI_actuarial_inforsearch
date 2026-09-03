@@ -46,6 +46,9 @@ class WeeklySnapshotFileModel(BaseModel):
     title: str
     original_filename: str | None
     first_seen: str
+    category: str | None
+    keywords: list[str]
+    summary: str | None
 
 
 class WeeklySnapshotListModel(BaseModel):

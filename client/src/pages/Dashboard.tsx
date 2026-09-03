@@ -52,22 +52,17 @@ function StatCard({
   value,
   color,
   index,
+  href,
 }: {
   icon: typeof FileText;
   label: string;
   value: number | string;
   color: string;
   index: number;
+  href?: string;
 }) {
-  return (
-    <motion.div
-      custom={index}
-      variants={fadeUp}
-      initial="hidden"
-      animate="visible"
-      className="stat-glow rounded-xl bg-card p-5 flex items-start gap-4"
-      data-testid={`stat-${label.toLowerCase().replace(/\s+/g, "-")}`}
-    >
+  const content = (
+    <>
       <div className={cn("w-11 h-11 rounded-xl flex items-center justify-center shrink-0", color)}>
         <Icon className="w-5 h-5" strokeWidth={1.8} />
       </div>
@@ -75,6 +70,33 @@ function StatCard({
         <p className="text-2xl font-bold tracking-tight font-serif">{value}</p>
         <p className="text-sm text-muted-foreground mt-0.5">{label}</p>
       </div>
+    </>
+  );
+
+  return (
+    <motion.div
+      custom={index}
+      variants={fadeUp}
+      initial="hidden"
+      animate="visible"
+      className="rounded-xl"
+    >
+      {href ? (
+        <Link
+          href={href}
+          className="stat-glow flex items-start gap-4 rounded-xl bg-card p-5 transition-all hover:bg-muted/30 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+          data-testid={`stat-${label.toLowerCase().replace(/\s+/g, "-")}`}
+        >
+          {content}
+        </Link>
+      ) : (
+        <div
+          className="stat-glow rounded-xl bg-card p-5 flex items-start gap-4"
+          data-testid={`stat-${label.toLowerCase().replace(/\s+/g, "-")}`}
+        >
+          {content}
+        </div>
+      )}
     </motion.div>
   );
 }
@@ -188,10 +210,10 @@ export default function Dashboard() {
   }, []);
 
   const statCards = useMemo(() => [
-    { icon: FileText, label: t("dashboard.materials"), value: stats?.total_files ?? "-", color: "bg-blue-500/10 text-blue-600 dark:text-blue-400" },
-    { icon: Building2, label: t("dashboard.sources"), value: stats?.total_sources ?? "-", color: "bg-violet-500/10 text-violet-600 dark:text-violet-400" },
-    { icon: Tags, label: t("dashboard.categories"), value: loading ? "-" : categories.length, color: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" },
-    { icon: CalendarPlus, label: t("dashboard.this_week_count"), value: loading ? "-" : (weekly?.snapshot?.file_count ?? "-"), color: "bg-amber-500/10 text-amber-600 dark:text-amber-400" },
+    { icon: FileText, label: t("dashboard.materials"), value: stats?.total_files ?? "-", color: "bg-blue-500/10 text-blue-600 dark:text-blue-400", href: "/database" },
+    { icon: Building2, label: t("dashboard.sources"), value: stats?.total_sources ?? "-", color: "bg-violet-500/10 text-violet-600 dark:text-violet-400", href: undefined },
+    { icon: Tags, label: t("dashboard.categories"), value: loading ? "-" : categories.length, color: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400", href: "/categories" },
+    { icon: CalendarPlus, label: t("dashboard.this_week_count"), value: loading ? "-" : (weekly?.snapshot?.file_count ?? "-"), color: "bg-amber-500/10 text-amber-600 dark:text-amber-400", href: "/weekly" },
   ], [categories.length, loading, stats?.total_files, stats?.total_sources, t, weekly?.snapshot?.file_count]);
 
   const quickActions = [

@@ -1,3 +1,117 @@
+# Project Status — Issue #333 content-first article lists
+
+- Updated: 2026-09-03 EDT
+- Repository: `AI_actuarial_inforsearch`
+- Worktree: `C:\Users\ferry\.codex\worktrees\44b9\AI_actuarial_inforsearch`
+- Branch: `codex/issue-333-content-first-lists`
+- Baseline: `origin/main@e3f028d1f67910a98e38ae5dfb4045c8d75e6f30`
+- Issue: `#333 feat(ui): make Home, Weekly, and Database article lists content-first`
+- Review state: `C:\Project\AI_actuarial_inforsearch\.git\codex-issue-to-merge\issue-333.json`
+- Delivery stage: local review and final validation complete; ready to create the Draft PR
+
+## Issue #333 acceptance criteria
+
+- AC-1: The full Home Materials, Categories, and Weekly Updates stat cards are links to
+  `/database`, `/categories`, and `/weekly`, with visible hover and keyboard-focus states; Sources
+  remains unchanged.
+- AC-2: Home keeps the deterministic snapshot `file_count`, requests/renders at most the newest six
+  preview files, and each file card shows its title, available full Category, Keywords, Summary,
+  and a localized month/day date only. The original timestamp remains in semantic `time` metadata
+  or a tooltip, file cards open File Detail, and missing metadata adds no empty label or placeholder.
+- AC-3: The selected Weekly detail retains the existing historical master-detail flow, retrieves
+  every snapshot member without a six/eight-item loss, and groups articles by the first trimmed
+  non-empty semicolon-delimited Category. Unclassified items use localized Uncategorized, group
+  counts are exact, and the complete original Category remains visible on each card.
+- AC-4: Every Weekly category group has a keyboard-operable expand/collapse control with correct
+  expanded/collapsed semantics, and every selected-week article remains reachable after grouping.
+- AC-5: The Database desktop list uses a wide article-content area for title plus available
+  Category, Keywords, and a bounded wrapping Summary. Outside that area it retains only Source,
+  First seen, Actions, and the existing selection control; it removes the standalone Category,
+  Markdown, Size, and Last seen/Date displays, and displayed dates always use `first_seen`.
+- AC-6: Database filters, sorting, pagination, row navigation, preview, download, AI Explain,
+  deletion/recovery paths, bulk selection, and permission behavior remain usable. Action and
+  selection controls do not trigger row navigation; icon-only actions have localized accessible
+  names and tooltips.
+- AC-7: The Weekly files read response adds only public `category`, `keywords`, and `summary` via a
+  lightweight Catalog join and does not read Markdown/body content or expose sensitive fields.
+  Database declares and renders its existing public `keywords` field. Missing or malformed public
+  metadata degrades without `null`, `undefined`, crashes, or visual noise.
+- AC-8: Loading, empty, partial-data, and error states remain clear; added English/Chinese copy and
+  short-date formats are correct; 320, 768, 1024, and 1440px layouts have no horizontal overflow,
+  including long titles, keywords, summaries, and category names.
+- AC-9: Focused Dashboard, Weekly, Database, Weekly API/service/storage, permissions/data-contract,
+  and responsive accessibility tests pass, together with frontend lint/type-check/build, both
+  dead-code gates, Python smoke, the unified quality gate, browser smoke, and desktop plus 320px
+  before/after screenshots.
+
+## Issue #333 scope, evidence, and non-goals
+
+- Worker-owned components are the Home stat/Weekly surfaces, shared Weekly read/view helpers and
+  card UI, Weekly selected-detail grouping/loading, Database article rows and `FileItem` metadata,
+  the minimal Weekly public file response/service/storage projection, bilingual copy, and directly
+  corresponding tests. This manager owns this status record and browser evidence.
+- Non-goals: changing Category/Keywords/Summary generation or storage, database schema cleanup,
+  File Detail redesign, Weekly snapshot/count/report generation, the historical-week selector,
+  global layout/max-width or design-system changes, pagination/filter redesign, permission-policy
+  changes, sibling repositories, dependency upgrades, security frameworks, or speculative
+  abstractions.
+- The worktree was clean and detached at the assigned baseline. After fetch, `HEAD`, `origin/main`,
+  and merge-base all matched `e3f028d1f67910a98e38ae5dfb4045c8d75e6f30`; the pre-created
+  assigned branch was then attached at that commit.
+- No open/closed PR, remote branch, or matching commit references #333, its URL, or the distinctive
+  content-first Home/Weekly/Database wording. The only other remote branch is the unrelated
+  `archive/flask-only-system`, whose relevant diff removes the React Dashboard and Database pages.
+- Baseline browser evidence with 15 disposable files and a 12-file latest snapshot showed inert
+  stat cards, eight Home/Weekly rows with full year/time/time-zone dates, four selected-week files
+  unreachable in Weekly, and Database desktop columns Title/Source/Category/MD/Size/Date/Actions.
+  The Database date is selected from `first_seen` or `last_seen` according to the active sort.
+- The Weekly service's field allowlist already names Category/Keywords/Summary, but its storage
+  member query and public Pydantic model return only URL/title/original filename/first seen.
+  `/api/files` already projects Category/Summary/Keywords publicly without sensitive fields.
+- Review-policy override: none; only realistically reproducible findings mapped to an AC above are
+  accepted.
+
+## Issue #333 validation and artifacts
+
+- The persistent worker implemented the content-first Home, Weekly, and Database views plus the
+  narrow Weekly public metadata projection. No lifecycle actions have run yet.
+- Local review round 1 accepted and fixed two AC-8 defects: a failed Weekly detail request and an
+  uncached Database list failure were incorrectly rendered as empty states. Live browser failure
+  injection now shows distinct localized error states while cached/partial behavior is preserved.
+- Local review round 2 accepted and fixed three scoped defects: collapsed Weekly groups now retain
+  their `aria-controls` target via `hidden`; the Database icon-only search-clear action has localized
+  `aria-label` and `title`; and semicolon-only malformed categories no longer create visual noise.
+- Local review round 3 accepted and fixed one AC-3/AC-8 copy defect: the English group count now
+  uses plural-safe noun-first wording (`Articles: {count}`), with one-item and multi-item assertions.
+- Manager-focused verification after round 2 passed: 57 Python tests, executable Issue #333 TSX
+  assertions, TypeScript typecheck, and `git diff --check`. Browser verification at 1024px confirmed
+  stable disclosure targets across collapse/reopen, the search-clear accessible name/tooltip, and
+  no horizontal overflow.
+- Fresh local review round 4 inspected the complete tracked/untracked candidate and passed with no
+  findings. The local review cycle is closed after four rounds.
+- Final candidate validation passed: unified quality gate (`2024 passed, 10 skipped`), frontend
+  ESLint (0 errors; 5 existing warnings), TypeScript typecheck, production build, both dead-code
+  gates (0 findings), FastAPI smoke (`13 passed`), Agentic RAG eval tests (`31 passed`), and the
+  deterministic Agentic RAG smoke (`3/3 passed`). `git diff --check` also passed.
+- Final live browser checks passed at 320, 768, 1024, and 1440px with exact viewport/scroll widths,
+  disclosure collapse/reopen semantics, the localized search-clear accessible name/tooltip, and
+  normal Home/Weekly/Database content. Final desktop and 320px screenshots were refreshed.
+- Final gates are `git diff --check`, both dead-code commands, frontend ESLint/TypeScript/build,
+  the three CI Python smoke commands, `python scripts/quality_gate.py`, and live browser checks at
+  320, 768, 1024, and 1440px.
+- Baseline screenshots are stored outside the checkout under
+  `C:\Users\ferry\.codex\visualizations\2026\09\03\01a06897-4cf9-7ff2-90ed-a0b13f4104cc\issue-333-screenshots\before`.
+- Current after screenshots are stored beside them under `issue-333-screenshots\after`; final
+  captures will be refreshed after the candidate passes the last local review.
+
+## Issue #333 blockers or decisions needed
+
+- None.
+
+## Issue #333 recommended next action
+
+- Commit the reviewed candidate, push the task branch, and create the required Draft PR.
+
 # Project Status — Issue #331 public HTTP redirect
 
 - Updated: 2026-09-02 EDT

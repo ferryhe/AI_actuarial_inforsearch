@@ -30,6 +30,17 @@ def test_dashboard_uses_customer_facing_entries_not_backend_ops_statuses():
         assert term not in src
 
 
+def test_dashboard_stat_cards_link_only_the_three_content_entries():
+    src = DASHBOARD_TSX.read_text(encoding="utf-8")
+
+    assert 'label: t("dashboard.materials")' in src and 'href: "/database"' in src
+    assert 'label: t("dashboard.categories")' in src and 'href: "/categories"' in src
+    assert 'label: t("dashboard.this_week_count")' in src and 'href: "/weekly"' in src
+    assert 'label: t("dashboard.sources")' in src and "href: undefined" in src
+    assert "focus-visible:ring-2" in src
+    assert "focus-visible:ring-primary" in src
+
+
 def test_dashboard_i18n_has_customer_facing_en_and_zh_labels():
     src = I18N_TS.read_text(encoding="utf-8")
 
@@ -86,19 +97,17 @@ def test_dashboard_weekly_card_drops_backend_metadata_keys():
     assert "本周摘要正在生成中" in src
 
 
-def test_dashboard_has_single_categories_link_in_preview_header():
+def test_dashboard_keeps_categories_preview_header_link_and_adds_stat_link():
     src = DASHBOARD_TSX.read_text(encoding="utf-8")
     i18n_src = I18N_TS.read_text(encoding="utf-8")
 
-    # The duplicate Start Here quick action was removed: no more
-    # `href: "/categories"` (object-shorthand) nor its i18n label.
-    assert 'href: "/categories"' not in src
+    # The duplicate Start Here quick action remains removed.
     assert 't("dashboard.browse_categories")' not in src
 
-    # The Categories preview header keeps exactly one /categories link.
-    # Match the JSX `href=` attribute (not the object-shorthand `href:`)
-    # so the assertion stays robust to extra attributes on the Link.
+    # The preview header remains the sole direct JSX link; the stat card
+    # destination is supplied through its data object.
     assert src.count('href="/categories"') == 1
+    assert src.count('href: "/categories"') == 1
 
     # i18n: view_all_categories defined once in English and once in Chinese.
     assert i18n_src.count('"dashboard.view_all_categories"') == 2
