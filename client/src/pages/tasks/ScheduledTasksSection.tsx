@@ -5,11 +5,22 @@ import { useTranslation } from "@/components/Layout";
 import { useAuth } from "@/context/AuthContext";
 import { apiGet, apiPost, formatApiErrorDetail } from "@/lib/api";
 import { FormField, InputField, SelectField } from "@/components/FormFields";
+import {
+  SchedulePresetFields,
+  buildScheduleFields,
+  defaultSchedulePreset,
+  isSchedulePresetComplete,
+  parseSchedulePreset,
+  shanghaiEquivalent,
+  type SchedulePresetValue,
+  weeklySummaryPreset,
+} from "./SchedulePresetFields";
 
 interface ScheduledTask {
   name: string;
   type: string;
   interval: string;
+  timezone?: string;
   enabled: boolean;
   params: Record<string, unknown>;
 }
@@ -24,6 +35,8 @@ interface ScheduleJob {
   interval: string;
   next_run: string | null;
   last_run: string | null;
+  timezone?: string | null;
+  utc_offset?: string | null;
   managed: boolean;
   deletable: boolean;
 }
@@ -90,8 +103,6 @@ const scheduledParamFields: Record<string, ParamField[]> = {
   ],
   weekly_summary: [
     { key: "max_files", labelKey: "tasks.sched.param.max_files", type: "number" },
-    { key: "period_start", labelKey: "tasks.sched.param.period_start", placeholder: "2026-03-09T00:00:00+00:00" },
-    { key: "period_end", labelKey: "tasks.sched.param.period_end", placeholder: "2026-03-16T00:00:00+00:00" },
   ],
 };
 
@@ -103,6 +114,76 @@ const parseParamsObject = (value: string): Record<string, unknown> | null => {
     return null;
   }
 };
+
+function applyTaskTypeScheduleTransition(
+  schedule: SchedulePresetValue,
+  editingTaskType: string | undefined,
+  nextType: string,
+): { schedule: SchedulePresetValue; scheduleChanged: boolean } {
+  return {
+    schedule: nextType === "weekly_summary" ? weeklySummaryPreset(schedule) : schedule,
+    scheduleChanged: editingTaskType !== undefined
+      && (editingTaskType === "weekly_summary") !== (nextType === "weekly_summary"),
+  };
+}
+
+function getTaskScheduleEditState(
+  taskType: string,
+  interval: string,
+  timezone?: string,
+): {
+  schedule: SchedulePresetValue;
+  legacySchedule: boolean;
+  legacySummaryMigration: boolean;
+  legacyProcessLocal: boolean;
+} {
+  const parsed = parseSchedulePreset(interval, timezone);
+  const fixedWithoutTimezone = (parsed.value.frequency === "daily"
+    || parsed.value.frequency === "weekly") && !timezone;
+  if (taskType !== "weekly_summary") {
+    return {
+      schedule: parsed.value,
+      legacySchedule: parsed.isLegacy,
+      legacySummaryMigration: false,
+      legacyProcessLocal: fixedWithoutTimezone,
+    };
+  }
+
+  const normalizedInterval = String(interval || "").trim().toLowerCase();
+  const legacyWeeklyUtc = normalizedInterval === "weekly"
+    && (!timezone || timezone === "UTC");
+  const canonicalWeeklyUtc = !parsed.isLegacy
+    && parsed.value.frequency === "weekly"
+    && timezone === "UTC";
+  const legacySummaryMigration = !legacyWeeklyUtc && !canonicalWeeklyUtc;
+  return {
+    schedule: legacySummaryMigration ? parsed.value : weeklySummaryPreset(parsed.value),
+    legacySchedule: legacySummaryMigration,
+    legacySummaryMigration,
+    legacyProcessLocal: legacySummaryMigration && fixedWithoutTimezone,
+  };
+}
+
+function buildEditScheduleFields(
+  schedule: SchedulePresetValue,
+  scheduleChanged: boolean,
+): ReturnType<typeof buildScheduleFields> | Record<string, never> {
+  return scheduleChanged ? buildScheduleFields(schedule) : {};
+}
+
+function migrateLegacyWeeklySummarySchedule(
+  schedule: SchedulePresetValue,
+): {
+  schedule: SchedulePresetValue;
+  scheduleChanged: true;
+  legacySummaryMigration: false;
+} {
+  return {
+    schedule: weeklySummaryPreset(schedule),
+    scheduleChanged: true,
+    legacySummaryMigration: false,
+  };
+}
 
 export function ScheduledTasksSection({
   initialScheduleStatus = null,
@@ -125,7 +206,11 @@ export function ScheduledTasksSection({
 
   const [formName, setFormName] = useState("");
   const [formType, setFormType] = useState("catalog");
-  const [formInterval, setFormInterval] = useState("daily");
+  const [formSchedule, setFormSchedule] = useState<SchedulePresetValue>({ ...defaultSchedulePreset });
+  const [formScheduleChanged, setFormScheduleChanged] = useState(false);
+  const [formLegacySchedule, setFormLegacySchedule] = useState(false);
+  const [formLegacySummaryMigration, setFormLegacySummaryMigration] = useState(false);
+  const [formLegacyProcessLocal, setFormLegacyProcessLocal] = useState(false);
   const [formEnabled, setFormEnabled] = useState(true);
   const [formParams, setFormParams] = useState("{}");
 
@@ -188,7 +273,11 @@ export function ScheduledTasksSection({
   const resetForm = () => {
     setFormName("");
     setFormType("catalog");
-    setFormInterval("daily");
+    setFormSchedule({ ...defaultSchedulePreset });
+    setFormScheduleChanged(false);
+    setFormLegacySchedule(false);
+    setFormLegacySummaryMigration(false);
+    setFormLegacyProcessLocal(false);
     setFormEnabled(true);
     setFormParams("{}");
     setShowAddForm(false);
@@ -208,14 +297,19 @@ export function ScheduledTasksSection({
     setEditingTask(task);
     setFormName(task.name);
     setFormType(task.type);
-    setFormInterval(task.interval);
+    const editState = getTaskScheduleEditState(task.type, task.interval, task.timezone);
+    setFormSchedule(editState.schedule);
+    setFormScheduleChanged(false);
+    setFormLegacySchedule(editState.legacySchedule);
+    setFormLegacySummaryMigration(editState.legacySummaryMigration);
+    setFormLegacyProcessLocal(editState.legacyProcessLocal);
     setFormEnabled(task.enabled);
     setFormParams(JSON.stringify(task.params || {}, null, 2));
     setShowAddForm(true);
   };
 
   const handleSave = async () => {
-    if (!formName.trim() || !formType || !formInterval.trim()) return;
+    if (!formName.trim() || !formType || !isSchedulePresetComplete(formSchedule)) return;
     if (!canManageSchedule) {
       setErrorMsg(t("tasks.sched.write_access_required"));
       return;
@@ -227,14 +321,15 @@ export function ScheduledTasksSection({
       try { params = JSON.parse(formParams); } catch { throw new Error(t("tasks.sched.invalid_params")); }
 
       if (editingTask) {
+        const scheduleFields = buildEditScheduleFields(formSchedule, formScheduleChanged);
         await apiPost("/api/scheduled-tasks/update", {
           original_name: editingTask.name, name: formName.trim(), type: formType,
-          interval: formInterval.trim(), enabled: formEnabled, params,
+          enabled: formEnabled, params, ...scheduleFields,
         });
       } else {
         await apiPost("/api/scheduled-tasks/add", {
-          name: formName.trim(), type: formType, interval: formInterval.trim(),
-          enabled: formEnabled, params,
+          name: formName.trim(), type: formType,
+          ...buildScheduleFields(formSchedule), enabled: formEnabled, params,
         });
       }
       resetForm();
@@ -281,7 +376,7 @@ export function ScheduledTasksSection({
     setTimeout(() => setReinitMsg(null), 3000);
   };
 
-  const taskTypeOptions = [
+  const supportedTaskTypeOptions = [
     { value: "scheduled", label: t("tasks.type.scheduled") },
     { value: "quick_check", label: t("tasks.type.web_crawl") },
     { value: "recategory", label: t("tasks.type.recategory") },
@@ -293,8 +388,19 @@ export function ScheduledTasksSection({
     { value: "search", label: t("tasks.type.web_search") },
     { value: "url", label: t("tasks.type.adhoc_url") },
   ];
+  const editingLegacyTaskType = editingTask?.type === formType
+    && !supportedTaskTypeOptions.some((option) => option.value === formType);
+  const taskTypeOptions = editingLegacyTaskType
+    ? [{ value: formType, label: formType }, ...supportedTaskTypeOptions]
+    : supportedTaskTypeOptions;
   const jobCount = scheduleStatus ? (scheduleStatus.job_count ?? scheduleStatus.count ?? scheduleStatus.jobs?.length ?? 0) : 0;
   const typedParamFields = scheduledParamFields[formType] || [];
+  const weeklySummaryWallTime = (source: string) => {
+    const task = scheduledTasks.find((candidate) => candidate.name === source && candidate.type === "weekly_summary");
+    if (!task) return null;
+    const preset = parseSchedulePreset(task.interval, task.timezone).value;
+    return preset.frequency === "weekly" ? shanghaiEquivalent(preset.time) : null;
+  };
 
   return (
     <div className="space-y-5">
@@ -360,20 +466,37 @@ export function ScheduledTasksSection({
               )}
               {scheduleStatus.jobs && scheduleStatus.jobs.length > 0 && (
                 <div className="space-y-1.5 max-h-[200px] overflow-y-auto">
-                  {scheduleStatus.jobs.map((job) => (
-                    <div key={job.job_key} className="flex items-center justify-between text-xs px-2.5 py-2 rounded bg-background border border-border"
-                      data-testid={`row-effective-job-${job.job_key}`}>
-                      <div className="min-w-0 flex-1">
-                        <div className="font-medium truncate">{job.display_name}</div>
-                        <div className="text-[10px] text-muted-foreground truncate">{job.kind} · {job.source}</div>
+                  {scheduleStatus.jobs.map((job) => {
+                    const equivalent = weeklySummaryWallTime(job.source);
+                    return (
+                      <div key={job.job_key} className="flex items-center justify-between text-xs px-2.5 py-2 rounded bg-background border border-border"
+                        data-testid={`row-effective-job-${job.job_key}`}>
+                        <div className="min-w-0 flex-1">
+                          <div className="font-medium truncate">{job.display_name}</div>
+                          <div className="text-[10px] text-muted-foreground truncate">{job.kind} · {job.source}</div>
+                        </div>
+                        <div className="flex items-center gap-3 shrink-0 text-muted-foreground">
+                          <span>{job.interval}</span>
+                          {job.last_run && <span>{t("tasks.sched.last_run")}: {job.last_run}</span>}
+                          {job.next_run && <span>{t("tasks.sched.next_run")}: {job.next_run}</span>}
+                          {job.timezone && (
+                            <span>
+                              {t("tasks.sched.timezone")}: {job.timezone === "process-local"
+                                ? t("tasks.sched.timezone.process_local")
+                                : job.timezone}{job.utc_offset ? ` (UTC${job.utc_offset})` : ""}
+                            </span>
+                          )}
+                          {equivalent && (
+                            <span data-testid={`text-effective-shanghai-${job.job_key}`}>
+                              {t("tasks.sched.shanghai_equivalent")
+                                .replace("{day}", t(`tasks.sched.weekday.${equivalent.dayKey}`))
+                                .replace("{time}", equivalent.time)}
+                            </span>
+                          )}
+                        </div>
                       </div>
-                      <div className="flex items-center gap-3 shrink-0 text-muted-foreground">
-                        <span>{job.interval}</span>
-                        {job.last_run && <span>{t("tasks.sched.last_run")}: {job.last_run}</span>}
-                        {job.next_run && <span>{t("tasks.sched.next_run")}: {job.next_run}</span>}
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -400,13 +523,46 @@ export function ScheduledTasksSection({
                     <InputField value={formName} onChange={setFormName} placeholder="Daily Catalog" testId="input-sched-name" />
                   </FormField>
                   <FormField label={t("tasks.sched.task_type")}>
-                    <SelectField value={formType} onChange={setFormType} options={taskTypeOptions} testId="select-sched-type" />
+                    <SelectField value={formType} onChange={(nextType) => {
+                      const transition = applyTaskTypeScheduleTransition(
+                        formSchedule,
+                        editingTask?.type,
+                        nextType,
+                      );
+                      setFormType(nextType);
+                      setFormSchedule(transition.schedule);
+                      if (transition.scheduleChanged) {
+                        setFormScheduleChanged(true);
+                        setFormLegacySchedule(false);
+                        setFormLegacySummaryMigration(false);
+                        setFormLegacyProcessLocal(false);
+                      }
+                    }} options={taskTypeOptions} testId="select-sched-type" />
                   </FormField>
                 </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <FormField label={t("tasks.sched.schedule_interval")} hint={t("tasks.sched.interval_hint")}>
-                    <InputField value={formInterval} onChange={setFormInterval} placeholder="daily at 02:00" testId="input-sched-interval" />
-                  </FormField>
+                <SchedulePresetFields
+                  value={formSchedule}
+                  onChange={(nextSchedule) => {
+                    setFormSchedule(formType === "weekly_summary" ? weeklySummaryPreset(nextSchedule) : nextSchedule);
+                    setFormScheduleChanged(true);
+                    setFormLegacySchedule(false);
+                    setFormLegacyProcessLocal(false);
+                  }}
+                  taskType={formType}
+                  testIdPrefix="sched"
+                  legacy={formLegacySchedule && !formScheduleChanged}
+                  legacySummaryReadOnly={formLegacySummaryMigration}
+                  legacyProcessLocal={formLegacyProcessLocal}
+                  onMigrateLegacySummary={() => {
+                    const migration = migrateLegacyWeeklySummarySchedule(formSchedule);
+                    setFormSchedule(migration.schedule);
+                    setFormScheduleChanged(migration.scheduleChanged);
+                    setFormLegacySchedule(false);
+                    setFormLegacySummaryMigration(migration.legacySummaryMigration);
+                    setFormLegacyProcessLocal(false);
+                  }}
+                />
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <FormField label={t("tasks.sched.enabled")}>
                     <button type="button" onClick={() => setFormEnabled(!formEnabled)}
                       className="flex items-center gap-2 px-3 py-2 text-sm rounded-lg border border-border bg-background w-full"
@@ -462,7 +618,7 @@ export function ScheduledTasksSection({
                   <button onClick={resetForm}
                     className="text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors"
                     data-testid="button-cancel-sched">{t("tasks.sched.cancel")}</button>
-                  <button onClick={handleSave} disabled={saving || !formName.trim()}
+                  <button onClick={handleSave} disabled={saving || !formName.trim() || !isSchedulePresetComplete(formSchedule)}
                     className="text-xs px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-1.5"
                     data-testid="button-save-sched">
                     {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
@@ -496,6 +652,7 @@ export function ScheduledTasksSection({
                       </div>
                       <div className="flex items-center gap-3 mt-0.5 text-[11px] text-muted-foreground">
                         <span>{t("tasks.sched.interval")}: {task.interval}</span>
+                        {task.timezone && <span>{t("tasks.sched.timezone")}: {task.timezone}</span>}
                         <span>{task.enabled ? t("tasks.sched.enabled") : t("tasks.sched.disabled")}</span>
                       </div>
                     </div>

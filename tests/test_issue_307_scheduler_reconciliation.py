@@ -91,6 +91,8 @@ def test_scheduler_status_has_stable_sanitized_identity_for_every_job_kind(
             "interval",
             "last_run",
             "next_run",
+            "timezone",
+            "utc_offset",
             "managed",
             "deletable",
         }
@@ -357,7 +359,9 @@ def test_scheduled_task_api_rolls_back_yaml_and_runtime_on_registration_failure(
     assert client.get("/api/schedule/status", headers=headers).json() == previous_status
 
 
-def test_scheduled_task_api_matches_single_digit_daily_hour(tmp_path: Path, monkeypatch) -> None:
+def test_scheduled_task_api_rejects_noncanonical_single_digit_daily_hour(
+    tmp_path: Path, monkeypatch
+) -> None:
     _patch_available_models(monkeypatch)
     client, _app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
     headers = {"Authorization": f"Bearer {seed['operator_token']}"}
@@ -374,10 +378,11 @@ def test_scheduled_task_api_matches_single_digit_daily_hour(tmp_path: Path, monk
         headers=headers,
     )
 
-    assert response.status_code == 200, response.text
-    status = client.get("/api/schedule/status", headers=headers).json()
-    configured = next(job for job in status["jobs"] if job["source"] == "Single Digit Daily Hour")
-    assert configured["interval"] == "daily at 09:00"
+    assert response.status_code == 400, response.text
+    assert all(
+        task["name"] != "Single Digit Daily Hour"
+        for task in client.get("/api/scheduled-tasks", headers=headers).json()["tasks"]
+    )
 
 
 def test_scheduled_task_update_rejects_duplicate_effective_identity(
@@ -391,7 +396,7 @@ def test_scheduled_task_update_rejects_duplicate_effective_identity(
         json={
             "name": "Duplicate Target",
             "type": "catalog",
-            "interval": "daily",
+            "interval": "every 1 hours",
             "enabled": True,
             "params": {},
         },
@@ -405,7 +410,7 @@ def test_scheduled_task_update_rejects_duplicate_effective_identity(
             "original_name": "Nightly Catalog",
             "name": "Duplicate Target",
             "type": "catalog",
-            "interval": "daily",
+            "interval": "every 1 hours",
             "enabled": True,
             "params": {},
         },
@@ -430,7 +435,7 @@ def test_scheduled_task_update_rejects_stale_effective_interval(
         json={
             "name": "Stale Interval",
             "type": "catalog",
-            "interval": "daily",
+            "interval": "every 1 hours",
             "enabled": True,
             "params": {},
         },

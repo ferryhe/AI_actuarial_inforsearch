@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { ScheduledTasksSection } from "./ScheduledTasksSection";
 
 const status = {
-  count: 2,
+  count: 3,
   jobs: [
     {
       job_key: "configured-307",
@@ -27,6 +27,19 @@ const status = {
       managed: false,
       deletable: false,
     },
+    {
+      job_key: "weekly-summary-312",
+      kind: "configured_task" as const,
+      source: "Weekly Update Summary",
+      display_name: "Weekly Update Summary",
+      interval: "weekly on monday at 20:30",
+      last_run: "2026-08-24T20:30:00+00:00",
+      next_run: "2026-08-31T20:30:00+00:00",
+      timezone: "UTC",
+      utc_offset: "+00:00",
+      managed: true,
+      deletable: true,
+    },
   ],
 };
 const tasks = [
@@ -36,6 +49,14 @@ const tasks = [
     interval: "every 2 hours",
     enabled: true,
     params: {},
+  },
+  {
+    name: "Weekly Update Summary",
+    type: "weekly_summary",
+    interval: "weekly at 20:30",
+    timezone: "UTC",
+    enabled: true,
+    params: { relative_period: "previous_week" },
   },
 ];
 
@@ -51,6 +72,8 @@ assert.match(readerMarkup, /tasks\.sched\.effective_scheduler_jobs/);
 assert.match(readerMarkup, /tasks\.sched\.configured_recurring_tasks/);
 assert.match(readerMarkup, /Pricing Catalog/);
 assert.match(readerMarkup, /Pipeline Baton/);
+assert.match(readerMarkup, /text-effective-shanghai-weekly-summary-312/);
+assert.match(readerMarkup, /UTC\+00:00/);
 assert.match(readerMarkup, /tasks\.sched\.effective/);
 assert.doesNotMatch(readerMarkup, /button-add-scheduled-task/);
 assert.doesNotMatch(readerMarkup, /button-reinit-scheduler/);

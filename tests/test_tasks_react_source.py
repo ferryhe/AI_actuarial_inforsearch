@@ -96,6 +96,15 @@ def test_scheduled_tasks_section_does_not_offer_old_full_pipeline_type():
     assert '{ key: "query", labelKey: "tasks.sched.param.query" }' in src
 
 
+def test_scheduled_tasks_section_retains_the_current_legacy_task_type_option():
+    src = SCHEDULED_TASKS_TSX.read_text(encoding="utf-8")
+
+    assert "const supportedTaskTypeOptions = [" in src
+    assert "editingTask?.type === formType" in src
+    assert "!supportedTaskTypeOptions.some((option) => option.value === formType)" in src
+    assert "[{ value: formType, label: formType }, ...supportedTaskTypeOptions]" in src
+
+
 def test_add_to_schedule_error_dismiss_button_is_accessible():
     src = SCHEDULE_FROM_TASK_TSX.read_text(encoding="utf-8")
 
@@ -130,8 +139,39 @@ def test_add_to_schedule_uses_current_task_payload_without_manual_params_field()
     assert "delete params.type" in src
     assert 'data-testid="button-add-to-schedule"' in src
     assert 'testId="input-schedule-task-name"' in src
-    assert 'testId="input-schedule-interval"' in src
+    assert "SchedulePresetFields" in src
+    assert "buildScheduleFields" in src
+    assert 'testId="input-schedule-interval"' not in src
     assert "input-sched-params" not in src
+
+
+def test_scheduled_task_create_and_edit_use_structured_schedule_presets():
+    section_src = SCHEDULED_TASKS_TSX.read_text(encoding="utf-8")
+    direct_src = SCHEDULE_FROM_TASK_TSX.read_text(encoding="utf-8")
+
+    for src in (section_src, direct_src):
+        assert "SchedulePresetFields" in src
+        assert "buildScheduleFields" in src
+    assert 'testId="input-sched-interval"' not in section_src
+    assert 'testId="input-schedule-interval"' not in direct_src
+    assert "buildEditScheduleFields(formSchedule, formScheduleChanged)" in section_src
+    assert "text-effective-shanghai" in section_src
+    assert "getTaskScheduleEditState" in section_src
+    assert "legacySummaryReadOnly={formLegacySummaryMigration}" in section_src
+    assert "migrateLegacyWeeklySummarySchedule" in section_src
+    assert "legacyProcessLocal={formLegacyProcessLocal}" in section_src
+    assert "setFormLegacyProcessLocal(false)" in section_src
+    for helper in (
+        "applyTaskTypeScheduleTransition",
+        "buildEditScheduleFields",
+        "getTaskScheduleEditState",
+        "migrateLegacyWeeklySummarySchedule",
+    ):
+        assert f"function {helper}(" in section_src
+        assert f"export function {helper}(" not in section_src
+    assert "return scheduleChanged ? buildScheduleFields(schedule) : {};" in section_src
+    assert 'const legacyWeeklyUtc = normalizedInterval === "weekly"' in section_src
+    assert "legacyProcessLocal: legacySummaryMigration && fixedWithoutTimezone" in section_src
 
 
 def test_legacy_collection_forms_expose_add_to_schedule_control():
@@ -359,7 +399,8 @@ def test_tasks_page_exposes_fixed_collapsible_pipeline_baton():
     assert 'testId="checkbox-pipeline-scheduled-enabled"' in form_src
     assert 'setScheduledInterval(source?.interval || "")' in form_src
     assert "setScheduledEnabled(source?.enabled ?? true)" in form_src
-    assert "interval: scheduledInterval.trim()" in form_src
+    assert "const scheduleChanged = nextInterval !== scheduledTask.interval" in form_src
+    assert "...(scheduleChanged ? {" in form_src
     assert "enabled: scheduledEnabled" in form_src
     assert 'label: "Chunk & Embedding"' in form_src
     assert "task.label || step.label" in form_src

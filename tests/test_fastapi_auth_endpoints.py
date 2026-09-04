@@ -224,7 +224,7 @@ def test_bootstrap_admin_token_supports_x_auth_token_header(tmp_path: Path, monk
         json={
             "name": "Bootstrap Smoke Schedule",
             "type": "catalog",
-            "interval": "daily",
+            "interval": "every 1 hours",
             "enabled": True,
             "params": {},
         },
@@ -282,7 +282,7 @@ def test_csrf_protection_exempts_api_token_mutations(tmp_path: Path, monkeypatch
         json={
             "name": "Token CSRF Exempt Schedule",
             "type": "catalog",
-            "interval": "daily",
+            "interval": "every 1 hours",
             "enabled": True,
             "params": {},
         },

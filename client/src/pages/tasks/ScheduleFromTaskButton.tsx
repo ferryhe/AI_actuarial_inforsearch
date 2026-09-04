@@ -4,6 +4,14 @@ import { useTranslation } from "@/components/Layout";
 import { useAuth } from "@/context/AuthContext";
 import { apiPost, formatApiErrorDetail } from "@/lib/api";
 import { FormField, InputField } from "@/components/FormFields";
+import {
+  SchedulePresetFields,
+  buildScheduleFields,
+  defaultSchedulePreset,
+  isSchedulePresetComplete,
+  type SchedulePresetValue,
+  weeklySummaryPreset,
+} from "./SchedulePresetFields";
 
 interface ScheduleFromTaskButtonProps {
   buildTask: () => Record<string, unknown> | null;
@@ -22,7 +30,8 @@ export function ScheduleFromTaskButton({ buildTask, disabled = false }: Schedule
   const canManageSchedule = permissions.includes("schedule.write");
   const [expanded, setExpanded] = useState(false);
   const [taskName, setTaskName] = useState("");
-  const [interval, setInterval] = useState("daily");
+  const [taskType, setTaskType] = useState("");
+  const [schedulePreset, setSchedulePreset] = useState<SchedulePresetValue>({ ...defaultSchedulePreset });
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
@@ -42,14 +51,18 @@ export function ScheduleFromTaskButton({ buildTask, disabled = false }: Schedule
       return;
     }
     setTaskName(String(task.name || ""));
-    setInterval("daily");
+    const type = String(task.type || "");
+    setTaskType(type);
+    setSchedulePreset(type === "weekly_summary"
+      ? weeklySummaryPreset({ ...defaultSchedulePreset })
+      : { ...defaultSchedulePreset });
     setErrorMsg(null);
     setSuccessMsg(null);
     setExpanded(true);
   };
 
   const saveSchedule = async () => {
-    if (!taskName.trim() || !interval.trim()) return;
+    if (!taskName.trim() || !isSchedulePresetComplete(schedulePreset)) return;
     if (!canManageSchedule) {
       setErrorMsg(t("tasks.sched.write_access_required"));
       return;
@@ -71,7 +84,7 @@ export function ScheduleFromTaskButton({ buildTask, disabled = false }: Schedule
       await apiPost("/api/scheduled-tasks/add", {
         name: taskName.trim(),
         type,
-        interval: interval.trim(),
+        ...buildScheduleFields(taskType === "weekly_summary" ? weeklySummaryPreset(schedulePreset) : schedulePreset),
         enabled: true,
         params: taskParamsFromPayload(task),
       });
@@ -127,9 +140,14 @@ export function ScheduleFromTaskButton({ buildTask, disabled = false }: Schedule
           <FormField label={t("tasks.sched.task_name")}>
             <InputField value={taskName} onChange={setTaskName} placeholder="Daily Catalog" testId="input-schedule-task-name" />
           </FormField>
-          <FormField label={t("tasks.sched.schedule_interval")} hint={t("tasks.sched.interval_hint")}>
-            <InputField value={interval} onChange={setInterval} placeholder="daily at 02:00" testId="input-schedule-interval" />
-          </FormField>
+          <SchedulePresetFields
+            value={schedulePreset}
+            onChange={(nextSchedule) => setSchedulePreset(taskType === "weekly_summary"
+              ? weeklySummaryPreset(nextSchedule)
+              : nextSchedule)}
+            taskType={taskType}
+            testIdPrefix="schedule"
+          />
           <div className="flex items-center gap-2 justify-end">
             <button
               type="button"
@@ -145,7 +163,7 @@ export function ScheduleFromTaskButton({ buildTask, disabled = false }: Schedule
             <button
               type="button"
               onClick={saveSchedule}
-              disabled={saving || !taskName.trim() || !interval.trim()}
+              disabled={saving || !taskName.trim() || !isSchedulePresetComplete(schedulePreset)}
               className="text-xs px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-1.5"
               data-testid="button-confirm-add-schedule"
             >
