@@ -84,6 +84,9 @@ def _downgrade_to_v10(db_path: Path) -> None:
         conn.execute("DROP TABLE weekly_explanations")
         conn.execute("DROP TABLE weekly_snapshot_members")
         conn.execute("DROP TABLE weekly_snapshots")
+        conn.execute("DROP INDEX idx_global_chunks_stats_metadata")
+        conn.execute("DROP INDEX idx_chunk_embeddings_stats_metadata")
+        conn.execute("DROP TABLE markdown_terminal_source_state")
         conn.execute("PRAGMA user_version=10")
 
 
@@ -744,6 +747,9 @@ def test_v11_migration_backfills_legacy_weekly_rows_and_runner_agrees(tmp_path: 
         conn.execute("DROP TABLE IF EXISTS weekly_explanations")
         conn.execute("DROP TABLE IF EXISTS weekly_snapshot_members")
         conn.execute("DROP TABLE IF EXISTS weekly_snapshots")
+        conn.execute("DROP INDEX idx_global_chunks_stats_metadata")
+        conn.execute("DROP INDEX idx_chunk_embeddings_stats_metadata")
+        conn.execute("DROP TABLE markdown_terminal_source_state")
         conn.execute(
             """
             INSERT INTO weekly_update_summaries (

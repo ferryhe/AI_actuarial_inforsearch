@@ -1,3 +1,119 @@
+# Project Status — Issue #338 schema v12 migration source validation
+
+- Updated: 2026-09-03 EDT
+- Repository: `AI_actuarial_inforsearch`
+- Worktree: `C:\Project\AI_actuarial_inforsearch-issue-338`
+- Branch: `codex/issue-338-schema-v12-migration`
+- Baseline: `origin/main@411b0d477e68b8dd1748f44139e0ad07e9cbc729`
+- Issue: `#338 fix(schema): v12→v13 source validator rejects a legitimate v12 DB as invalid`
+- Review state: `C:\Users\ferry\.codex\issue-to-merge\AI_actuarial_inforsearch\issue-338\review-state.json`
+- Delivery stage: implementation, one-round local review, and final local validation complete;
+  ready to publish the Draft PR
+- Progress heartbeat: id `issue-338`, status `ACTIVE`, 15-minute cadence
+
+## Issue #338 acceptance criteria
+
+- AC-1: `_accept_version_12_source` accepts the exact genuine v12 source shape: no v13 stats
+  covering indexes, no v14 `markdown_terminal_source_state` table, and the supported legacy
+  `api_tokens` physical column order; it remains strict about unrelated future or malformed schema.
+- AC-2: `schema_status` classifies that source as `needs_migration`, with `can_apply=true` and
+  `blocked=false`, and `schema_plan` exposes the exact v12→v13→v14 migration chain.
+- AC-3: `apply_schema` on an isolated genuine-v12 fixture reaches current schema v14, applies the
+  v13 and v14 migrations exactly once, preserves seeded business rows and table counts, passes
+  `PRAGMA foreign_key_check`, and is a no-op when repeated.
+- AC-4: The same v14-signature regression is repaired for genuine v10 and v11 source shapes;
+  v1–v9 and v13 remain unaffected, invalid/future-object shapes stay fail-closed, and the focused
+  SQLite schema-runner suite plus repository-required checks remain green.
+
+## Issue #338 scope, baseline evidence, and non-goals
+
+- Worker-owned files are limited to `ai_actuarial/sqlite_schema.py`,
+  `tests/test_sqlite_schema_runner.py`, the incorrect historical fixtures in
+  `tests/test_issue_306_metadata_only_chunk_stats.py`,
+  `tests/test_issue_266_weekly_snapshots.py`, and
+  `tests/test_issue_267_weekly_explanations.py` that otherwise retain later v13/v14 objects. This
+  manager owns this status record.
+- Non-goals: production schema apply or deployment; server/database access; rebuilding
+  `api_tokens`; per-version signature refactoring; schema registry redesign; dependency upgrades;
+  sibling repositories; security frameworks; or speculative abstractions.
+- The assigned worktree is clean. `HEAD`, `origin/main`, and merge-base all match the supplied
+  baseline `411b0d477e68b8dd1748f44139e0ad07e9cbc729` on the assigned branch. The controller checkout
+  with unrelated Issue #317 work and every sibling repository remain off-limits.
+- Duplicate search found no equivalent active or closed-unmerged implementation. PR #330 is the
+  v14 regression source and PR #323 is the v13 migration dependency; neither fixes #338. Remote
+  heads are only `main` and unrelated `archive/flask-only-system`.
+- An isolated current-schema database was converted to the genuine v12 shape, including legacy
+  `api_tokens` order. Baseline `_accept_version_12_source` returned false and `schema_status`
+  returned `invalid`, `blocked=true`, and `can_apply=false`, with one missing required table and
+  two normalized future-index signature differences. `PRAGMA foreign_key_check` was clean.
+- Blame and function history trace `_accept_version_12_source` to PR #323. PR #330 added the v14
+  table and the correct v13 source validator but did not update the v12 validator to normalize that
+  later table. The premise is current and delivery is classified `code-change`.
+- The worker reproduced the identical PR #330 regression on genuine v10 and v11 sources: their
+  validators normalize their own later weekly tables and the v13 indexes but not the v14 table.
+  They are included as same-shaped AC-4 siblings; v1–v9 already tolerate the allowlisted backfill
+  table and v13 already handles the v14 absence explicitly.
+- Review-policy override: none; findings must be realistically reproducible and map directly to an
+  acceptance criterion above. Required checks remain separate merge gates.
+
+## Issue #338 required validation
+
+- New regression test must show expected failure before the source fix and pass afterward.
+- Focused: `python -m pytest -q tests/test_sqlite_schema_runner.py`.
+- Final: `python scripts/quality_gate.py`, `npm run dead-code:files`,
+  `npm run dead-code:symbols`, and `git diff --check`.
+- Remote merge gates: `dead-code-files`, `dead-code-symbols`, `quality-gate`, `frontend-check`, and
+  `python-smoke` on the exact PR head.
+
+## Issue #338 implementation and local review
+
+- The v12 validator now treats `markdown_terminal_source_state` as a later table, normalizes its
+  legitimate absence together with the two v13 stats indexes, and rejects the table or indexes when
+  they appear ahead of the recorded version. The valid-signature fast path now also checks v12.
+- The same PR #330 regression was repaired explicitly for v10 and v11. No validator uses a broader
+  `tolerate_backfill` path, and v1–v9/v13 behavior is unchanged.
+- The regression fixture reproduces the supported legacy `api_tokens` physical order, seeds a file
+  and API token, and removes exactly the v13/v14 objects from a fresh current schema. It verifies
+  classification, exact plan/apply results, all pre-existing table counts, seeded rows, foreign
+  keys, idempotency, and future/malformed fail-closed cases.
+- TDD first failed because the genuine v12 status was `invalid` instead of `needs_migration`; the
+  complete-future signature test also first failed because it bypassed source validation. Direct
+  v10/v11 probes returned false before their sibling fix and true afterward.
+- Fresh read-only review round 1 independently inspected the complete diff and history, ran the
+  genuine v10–v13 status matrix and 78 related tests, and returned PASS with no valid finding.
+- The first full quality gate exposed seven older v10/v11 migration tests whose setup still kept
+  v13 indexes and the v14 table. The same worker changed only nine fixture-setup lines; no product
+  assertion or explicit future-object invalid case changed. The two affected files then passed all
+  59 tests, and the five-file schema combination passed all 137 tests. Because the state script had
+  closed local review after PASS and the repair was setup-only, the decision log records why no new
+  review round was opened.
+
+## Issue #338 local validation so far
+
+- Worker and manager independently ran the schema-runner, Issue #306, and Issue #322 combination:
+  78 passed with only three existing SWIG deprecation warnings.
+- Full `tests/test_sqlite_schema_runner.py`: 57 passed. Black/isort and `git diff --check` passed.
+- The first complete quality-gate pytest run produced 2,074 passes, 10 skips, and 30 failures:
+  23 frontend runtime tests lacked `node_modules` in the fresh worktree, and seven historical schema
+  fixtures retained future objects. `npm ci` installed the lockfile dependencies without tracked
+  changes, and the seven fixture failures were corrected as described above. A clean full rerun is
+  the final evidence below; npm's existing audit notices are out of scope and caused no dependency
+  change.
+- The clean full `python scripts/quality_gate.py` rerun passed: 2,104 tests passed, 10 skipped, and
+  Black, isort, and Pylint all passed. `npm run dead-code:files` and
+  `npm run dead-code:symbols` each passed with zero baseline findings; final
+  `git diff --check` passed. The five-file historical schema combination remained green at
+  137 passed after the fixture correction.
+
+## Issue #338 blockers or decisions needed
+
+- None.
+
+## Issue #338 recommended next action
+
+- Commit and push the validated candidate, then publish the required Draft PR with exact
+  `Closes #338`, mark it Ready, and begin the bounded remote-feedback window.
+
 # Project Status — Issue #333 content-first article lists
 
 - Updated: 2026-09-03 EDT

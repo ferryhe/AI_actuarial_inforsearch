@@ -1139,11 +1139,12 @@ def _accept_version_10_source(
     conn: sqlite3.Connection,
     tables: dict[str, TableSignature],
 ) -> bool:
-    """Accept the v10 schema before weekly snapshot tables existed."""
+    """Accept the v10 schema before later weekly and Markdown tables existed."""
     future_tables = {
         "weekly_snapshots",
         "weekly_snapshot_members",
         "weekly_explanations",
+        "markdown_terminal_source_state",
     }
     if future_tables.intersection(tables):
         return False
@@ -1188,14 +1189,18 @@ def _accept_version_11_source(
     conn: sqlite3.Connection,
     tables: dict[str, TableSignature],
 ) -> bool:
-    """Accept only the exact v11 schema before explanations existed."""
-    explanation_table = "weekly_explanations"
-    if explanation_table in tables:
+    """Accept only the exact v11 schema before later tables existed."""
+    future_tables = {
+        "weekly_explanations",
+        "markdown_terminal_source_state",
+    }
+    if future_tables.intersection(tables):
         return False
     expected = _current_storage_signature()
     adjusted = dict(tables)
-    if explanation_table in expected:
-        adjusted[explanation_table] = expected[explanation_table]
+    for table in future_tables:
+        if table in expected:
+            adjusted[table] = expected[table]
     valid, _, _ = _schema_validation(
         _normalize_pre_v13_stats_indexes(adjusted),
         unexpected_schema_objects=_unexpected_schema_object_counts(conn, tables),
@@ -1225,8 +1230,13 @@ def _accept_version_12_source(
 ) -> bool:
     """Accept the exact current schema before the stats covering indexes existed."""
 
+    future_table = "markdown_terminal_source_state"
+    if future_table in tables:
+        return False
     expected = _current_storage_signature()
     adjusted = dict(tables)
+    if future_table in expected:
+        adjusted[future_table] = expected[future_table]
     for table, columns in _CHUNK_STATS_METADATA_INDEX_COLUMNS.items():
         actual = tables.get(table)
         current = expected.get(table)
@@ -2149,7 +2159,7 @@ def _analyze_connection(
     )
     if (
         valid
-        and version in {10, 11}
+        and version in {10, 11, 12}
         and version < CURRENT_SQLITE_SCHEMA_VERSION
         and not _migration_accepts_source(conn, tables, start_version=version)
     ):

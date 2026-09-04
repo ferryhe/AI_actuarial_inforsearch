@@ -42,10 +42,80 @@ def _current_db_at_version_10(
     storage.close()
     with sqlite3.connect(db_path) as conn:
         conn.execute("DROP TABLE weekly_explanations")
+        conn.execute("DROP TABLE markdown_terminal_source_state")
+        conn.execute("DROP INDEX idx_global_chunks_stats_metadata")
+        conn.execute("DROP INDEX idx_chunk_embeddings_stats_metadata")
         for table in ("weekly_snapshot_members", "weekly_snapshots"):
             if table not in snapshot_tables:
                 conn.execute(f"DROP TABLE {table}")
         conn.execute("PRAGMA user_version=10")
+
+
+def _genuine_v12_db(db_path: Path) -> None:
+    storage = Storage(str(db_path))
+    try:
+        storage._conn.execute("""
+            INSERT INTO files (url, sha256, title, first_seen, last_seen)
+            VALUES (
+                'https://example.test/v12.pdf',
+                'v12-sha',
+                'V12 document',
+                '2026-09-03T00:00:00Z',
+                '2026-09-03T00:00:00Z'
+            )
+            """)
+        storage._conn.execute("""
+            INSERT INTO api_tokens (
+                provider, category, instance_id, label, is_default,
+                api_key_encrypted, status, notes
+            ) VALUES (
+                'openai', 'llm', 'legacy-default', 'Legacy token', 1,
+                'encrypted-placeholder', 'active', 'v12 fixture'
+            )
+            """)
+        storage._conn.commit()
+    finally:
+        storage.close()
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("PRAGMA foreign_keys=OFF")
+        conn.executescript("""
+            ALTER TABLE api_tokens RENAME TO api_tokens_current;
+            CREATE TABLE api_tokens (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                provider TEXT NOT NULL,
+                category TEXT NOT NULL DEFAULT 'llm',
+                api_key_encrypted TEXT NOT NULL,
+                api_base_url TEXT,
+                status TEXT NOT NULL DEFAULT 'active',
+                created_at TEXT,
+                updated_at TEXT,
+                notes TEXT,
+                instance_id TEXT DEFAULT 'default',
+                label TEXT,
+                is_default INTEGER DEFAULT 1
+            );
+            INSERT INTO api_tokens (
+                id, provider, category, api_key_encrypted, api_base_url,
+                status, created_at, updated_at, notes, instance_id, label,
+                is_default
+            )
+            SELECT
+                id, provider, category, api_key_encrypted, api_base_url,
+                status, created_at, updated_at, notes, instance_id, label,
+                is_default
+            FROM api_tokens_current;
+            DROP TABLE api_tokens_current;
+            CREATE UNIQUE INDEX idx_api_tokens_provider_category_instance
+                ON api_tokens(provider, category, instance_id);
+            CREATE INDEX idx_api_tokens_provider_category_default
+                ON api_tokens(provider, category, is_default);
+
+            DROP INDEX idx_global_chunks_stats_metadata;
+            DROP INDEX idx_chunk_embeddings_stats_metadata;
+            DROP TABLE markdown_terminal_source_state;
+            PRAGMA user_version=12;
+            """)
 
 
 def _production_v7_db(db_path: Path) -> None:
@@ -512,6 +582,208 @@ def test_status_plan_apply_production_v7_preserves_rows_and_is_idempotent(
     repeated = apply_schema(db_path)
     assert repeated["state"] == "current"
     assert repeated["applied_migrations"] == []
+
+
+def test_status_plan_apply_genuine_v12_preserves_rows_and_is_idempotent(
+    tmp_path: Path,
+) -> None:
+    from ai_actuarial.sqlite_schema import (
+        CURRENT_SQLITE_SCHEMA_VERSION,
+        apply_schema,
+        schema_plan,
+        schema_status,
+    )
+
+    db_path = tmp_path / "genuine-v12.db"
+    _genuine_v12_db(db_path)
+
+    with sqlite3.connect(db_path) as conn:
+        table_names = [
+            str(row[0])
+            for row in conn.execute(
+                "SELECT name FROM sqlite_schema "
+                "WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
+            )
+        ]
+        before_counts = {
+            table: int(conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0])
+            for table in table_names
+        }
+        api_token_columns = [str(row[1]) for row in conn.execute("PRAGMA table_info(api_tokens)")]
+        index_names = {
+            str(row[0]) for row in conn.execute("SELECT name FROM sqlite_schema WHERE type='index'")
+        }
+        seeded_file = conn.execute(
+            "SELECT url, sha256, title FROM files WHERE url = ?",
+            ("https://example.test/v12.pdf",),
+        ).fetchone()
+        seeded_token = conn.execute("""
+            SELECT provider, category, instance_id, label, is_default,
+                   api_key_encrypted, status, notes
+            FROM api_tokens
+            WHERE instance_id = 'legacy-default'
+            """).fetchone()
+        assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+
+    assert _user_version(db_path) == 12
+    assert "markdown_terminal_source_state" not in table_names
+    assert "idx_global_chunks_stats_metadata" not in index_names
+    assert "idx_chunk_embeddings_stats_metadata" not in index_names
+    assert api_token_columns == [
+        "id",
+        "provider",
+        "category",
+        "api_key_encrypted",
+        "api_base_url",
+        "status",
+        "created_at",
+        "updated_at",
+        "notes",
+        "instance_id",
+        "label",
+        "is_default",
+    ]
+    assert seeded_file == (
+        "https://example.test/v12.pdf",
+        "v12-sha",
+        "V12 document",
+    )
+    assert seeded_token == (
+        "openai",
+        "llm",
+        "legacy-default",
+        "Legacy token",
+        1,
+        "encrypted-placeholder",
+        "active",
+        "v12 fixture",
+    )
+
+    status = schema_status(db_path)
+    assert status["state"] == "needs_migration"
+    assert status["can_apply"] is True
+    assert status["blocked"] is False
+    assert status["database"]["user_version"] == 12
+    assert schema_plan(db_path)["plan"]["actions"] == [
+        {
+            "id": "add_chunk_stats_metadata_indexes_v13",
+            "from_version": 12,
+            "to_version": 13,
+        },
+        {
+            "id": "add_markdown_terminal_source_state_v14",
+            "from_version": 13,
+            "to_version": 14,
+        },
+    ]
+
+    applied = apply_schema(db_path)
+    assert applied["state"] == "current"
+    assert applied["applied_migrations"] == [
+        "add_chunk_stats_metadata_indexes_v13",
+        "add_markdown_terminal_source_state_v14",
+    ]
+    assert _user_version(db_path) == CURRENT_SQLITE_SCHEMA_VERSION
+
+    with sqlite3.connect(db_path) as conn:
+        assert {
+            table: int(conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0])
+            for table in table_names
+        } == before_counts
+        assert (
+            conn.execute(
+                "SELECT url, sha256, title FROM files WHERE url = ?",
+                ("https://example.test/v12.pdf",),
+            ).fetchone()
+            == seeded_file
+        )
+        assert conn.execute("""
+            SELECT provider, category, instance_id, label, is_default,
+                   api_key_encrypted, status, notes
+            FROM api_tokens
+            WHERE instance_id = 'legacy-default'
+            """).fetchone() == seeded_token
+        current_objects = {
+            str(row[0])
+            for row in conn.execute(
+                "SELECT name FROM sqlite_schema WHERE type IN ('table', 'index')"
+            )
+        }
+        assert "idx_global_chunks_stats_metadata" in current_objects
+        assert "idx_chunk_embeddings_stats_metadata" in current_objects
+        assert "markdown_terminal_source_state" in current_objects
+        assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+
+    repeated = apply_schema(db_path)
+    assert repeated["state"] == "current"
+    assert repeated["applied_migrations"] == []
+
+
+@pytest.mark.parametrize(
+    ("drift", "case_name"),
+    [
+        (
+            """
+            CREATE INDEX idx_global_chunks_stats_metadata
+            ON global_chunks(chunk_set_id, chunk_id)
+            """,
+            "partial-v13-index",
+        ),
+        (
+            """
+            CREATE TABLE markdown_terminal_source_state (
+                file_url TEXT PRIMARY KEY,
+                terminal_code TEXT NOT NULL,
+                source_fingerprint TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(file_url) REFERENCES files(url) ON DELETE CASCADE
+            )
+            """,
+            "future-v14-table",
+        ),
+        (
+            "ALTER TABLE files ADD COLUMN unexpected_v12_contract TEXT",
+            "malformed-column",
+        ),
+        (
+            """
+            CREATE INDEX idx_global_chunks_stats_metadata
+            ON global_chunks(chunk_set_id, chunk_id);
+            CREATE INDEX idx_chunk_embeddings_stats_metadata
+            ON chunk_embeddings(
+                embedding_identity_key, chunk_id, embedding_provider,
+                embedding_model, dimension, config_fingerprint, status
+            );
+            CREATE TABLE markdown_terminal_source_state (
+                file_url TEXT PRIMARY KEY,
+                terminal_code TEXT NOT NULL,
+                source_fingerprint TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(file_url) REFERENCES files(url) ON DELETE CASCADE
+            );
+            """,
+            "all-future-objects",
+        ),
+    ],
+)
+def test_version_12_source_with_future_or_malformed_schema_is_invalid(
+    tmp_path: Path,
+    drift: str,
+    case_name: str,
+) -> None:
+    from ai_actuarial.sqlite_schema import schema_plan, schema_status
+
+    db_path = tmp_path / f"v12-{case_name}.db"
+    _genuine_v12_db(db_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.executescript(drift)
+
+    status = schema_status(db_path)
+
+    assert status["state"] == "invalid"
+    assert status["can_apply"] is False
+    assert status["blocked"] is True
+    assert schema_plan(db_path)["blocked"] is True
 
 
 def test_v9_manual_operation_state_migration_is_read_compatible_and_idempotent(

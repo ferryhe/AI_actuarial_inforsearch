@@ -428,7 +428,12 @@ def test_stats_work_is_independent_of_vector_dimension_and_bytes(
     [
         (
             10,
-            ("weekly_explanations", "weekly_snapshot_members", "weekly_snapshots"),
+            (
+                "weekly_explanations",
+                "weekly_snapshot_members",
+                "weekly_snapshots",
+                "markdown_terminal_source_state",
+            ),
             [
                 "add_weekly_snapshots_v11",
                 "add_weekly_explanations_v12",
@@ -438,7 +443,7 @@ def test_stats_work_is_independent_of_vector_dimension_and_bytes(
         ),
         (
             11,
-            ("weekly_explanations",),
+            ("weekly_explanations", "markdown_terminal_source_state"),
             [
                 "add_weekly_explanations_v12",
                 "add_chunk_stats_metadata_indexes_v13",
@@ -447,7 +452,7 @@ def test_stats_work_is_independent_of_vector_dimension_and_bytes(
         ),
         (
             12,
-            (),
+            ("markdown_terminal_source_state",),
             [
                 "add_chunk_stats_metadata_indexes_v13",
                 "add_markdown_terminal_source_state_v14",
@@ -560,6 +565,7 @@ def test_schema_v13_adds_stats_covering_indexes_for_fresh_and_v12_databases(
     with sqlite3.connect(db_path) as conn:
         conn.execute("DROP INDEX IF EXISTS idx_global_chunks_stats_metadata")
         conn.execute("DROP INDEX IF EXISTS idx_chunk_embeddings_stats_metadata")
+        conn.execute("DROP TABLE markdown_terminal_source_state")
         conn.execute("PRAGMA user_version=12")
 
     status = schema_status(db_path)
