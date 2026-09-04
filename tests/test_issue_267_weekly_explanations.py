@@ -174,6 +174,9 @@ def test_v12_then_v13_migrations_preserve_v11_data(tmp_path: Path) -> None:
     snapshot = _snapshot(db_path)
     with sqlite3.connect(db_path) as conn:
         conn.execute("DROP TABLE IF EXISTS weekly_explanations")
+        conn.execute("DROP INDEX idx_global_chunks_stats_metadata")
+        conn.execute("DROP INDEX idx_chunk_embeddings_stats_metadata")
+        conn.execute("DROP TABLE markdown_terminal_source_state")
         conn.execute("PRAGMA user_version=11")
 
     assert CURRENT_SQLITE_SCHEMA_VERSION == 14
