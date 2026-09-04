@@ -29,6 +29,7 @@ interface ScheduledTask {
   name: string;
   type: string;
   interval: string;
+  timezone?: string;
   enabled: boolean;
   params: Record<string, unknown>;
 }
@@ -128,10 +129,18 @@ export function PipelineBaton({ onViewLog }: { onViewLog: (taskId: string, taskN
           params[key] = numericValue;
         }
       }
+      const nextInterval = scheduledInterval.trim();
+      const scheduleChanged = nextInterval !== scheduledTask.interval;
       await apiPost("/api/scheduled-tasks/update", {
         original_name: scheduledTask.name,
-        ...scheduledTask,
-        interval: scheduledInterval.trim(),
+        name: scheduledTask.name,
+        type: scheduledTask.type,
+        ...(scheduleChanged ? {
+          interval: nextInterval,
+          ...(!nextInterval.startsWith("every ") && scheduledTask.timezone
+            ? { timezone: scheduledTask.timezone }
+            : {}),
+        } : {}),
         enabled: scheduledEnabled,
         params,
       });

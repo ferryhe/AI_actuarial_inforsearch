@@ -3,7 +3,9 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+from datetime import datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import ai_actuarial.llm_models as llm_models
 from ai_actuarial.ai_runtime import (
@@ -154,8 +156,10 @@ def get_config_sites() -> dict[str, object]:
 def get_schedule_status(schedule_ref: Any) -> dict[str, object]:
     jobs = []
     for index, job in enumerate(list(getattr(schedule_ref, "jobs", []) or [])):
-        next_run = job.next_run.isoformat() if getattr(job, "next_run", None) else None
-        last_run = job.last_run.isoformat() if getattr(job, "last_run", None) else None
+        raw_next_run = getattr(job, "next_run", None)
+        raw_last_run = getattr(job, "last_run", None)
+        next_run = _runtime_datetime_iso(raw_next_run)
+        last_run = _runtime_datetime_iso(raw_last_run)
         unit = getattr(job, "unit", None) or ""
         interval = getattr(job, "interval", None)
         at_time = getattr(job, "at_time", None)
@@ -182,6 +186,15 @@ def get_schedule_status(schedule_ref: Any) -> dict[str, object]:
                 "deletable": False,
             }
             setattr(job, "_ops_metadata", metadata)
+        timezone_name: str | None = None
+        utc_offset: str | None = None
+        if at_time is not None:
+            configured_timezone = str(metadata.get("timezone") or "").strip()
+            timezone_name = configured_timezone or "process-local"
+            utc_offset = _schedule_utc_offset(
+                configured_timezone or None,
+                raw_next_run or raw_last_run,
+            )
         jobs.append(
             {
                 "job_key": str(metadata.get("job_key") or ""),
@@ -191,11 +204,43 @@ def get_schedule_status(schedule_ref: Any) -> dict[str, object]:
                 "interval": label,
                 "last_run": last_run,
                 "next_run": next_run,
+                "timezone": timezone_name,
+                "utc_offset": utc_offset,
                 "managed": bool(metadata.get("managed")),
                 "deletable": bool(metadata.get("deletable")),
             }
         )
     return {"jobs": jobs, "count": len(jobs)}
+
+
+def _aware_runtime_datetime(value: datetime) -> datetime:
+    if value.tzinfo is None or value.utcoffset() is None:
+        return value.astimezone()
+    return value
+
+
+def _runtime_datetime_iso(value: object) -> str | None:
+    if not isinstance(value, datetime):
+        return None
+    return _aware_runtime_datetime(value).isoformat()
+
+
+def _format_utc_offset(value: datetime) -> str:
+    offset = value.utcoffset()
+    total_minutes = int((offset.total_seconds() if offset is not None else 0) // 60)
+    sign = "+" if total_minutes >= 0 else "-"
+    hours, minutes = divmod(abs(total_minutes), 60)
+    return f"{sign}{hours:02d}:{minutes:02d}"
+
+
+def _schedule_utc_offset(timezone_name: str | None, reference: object) -> str:
+    if isinstance(reference, datetime):
+        aware_reference = _aware_runtime_datetime(reference)
+    else:
+        aware_reference = datetime.now().astimezone()
+    if timezone_name:
+        aware_reference = aware_reference.astimezone(ZoneInfo(timezone_name))
+    return _format_utc_offset(aware_reference)
 
 
 def get_scheduled_tasks() -> dict[str, list[dict[str, Any]]]:

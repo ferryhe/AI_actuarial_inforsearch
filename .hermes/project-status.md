@@ -1676,3 +1676,123 @@
 
 - Commit and push the validated remote-feedback fix to PR #335, require all checks to pass on that
   exact head, then merge and complete Issue, branch, worktree, and heartbeat cleanup.
+# Project Status — Issue #312 schedule presets
+
+- Updated: 2026-09-03 EDT
+- Repository: `AI_actuarial_inforsearch`
+- Worktree: `C:\Users\ferry\.codex\worktrees\257d\AI_actuarial_inforsearch`
+- Branch: `codex/issue-312-schedule-presets`
+- Baseline: `origin/main@146028ac8258550f54953c9343b0fd01062c4de3`
+- Issue: `#312 feat(schedule): add frequency, run-time, and timezone presets`
+- State file: `C:\Project\AI_actuarial_inforsearch\.git\codex-issue-to-merge\issue-312.json`
+- Delivery stage: implementation and six-round local review complete; final local gates pass and
+  the branch is ready for commit, push, and draft PR publication
+
+## Issue #312 acceptance criteria
+
+- AC-1: Scheduled-task create/edit UI exposes only Every N minutes, Every N hours, Daily at
+  `HH:MM`, and Weekly on Monday at `HH:MM`, showing only the quantity, run-time, and timezone
+  fields relevant to the selected form.
+- AC-2: Add/update APIs accept only the four canonical structured forms; invalid or non-positive N,
+  invalid/non-canonical `HH:MM`, extra tokens, unknown timezones, and unsupported interval/timezone
+  combinations return 400 without changing configured or effective scheduler state.
+- AC-3: Rolling minute/hour schedules have no timezone and reject a supplied timezone. Newly saved
+  daily/weekly fixed-time schedules require exactly `UTC` or `Asia/Shanghai`, persist a canonical
+  interval plus timezone, and round-trip through reads and the UI.
+- AC-4: `weekly at HH:MM` registers an effective Monday job at the selected timezone through the
+  existing #307 reconciliation path; no second apply or scheduler mutation mechanism is added.
+- AC-5: Existing `daily`, `weekly`, and fixed-time tasks without a timezone retain their prior
+  process-local behavior and stored shape across read, edit-without-schedule-change, restart, and
+  reinitialize until a structured schedule is explicitly saved.
+- AC-6: UTC and Asia/Shanghai fixed-time schedules preserve their wall-clock meaning and are tested
+  across UTC/CST cross-day and Monday boundaries.
+- AC-7: `weekly_summary` remains locked to the previous complete UTC ISO week and its fixed-time
+  schedule remains UTC; the UI/status also shows the equivalent Asia/Shanghai wall time.
+- AC-8: Effective fixed-time job status includes unambiguous timezone/offset information and
+  serialized last/next timestamps carry an offset; naive runtime values are never labeled UTC.
+- AC-9: English/Chinese copy, focused backend/frontend/runtime tests, create/edit round trips,
+  frontend lint/typecheck/build, browser smoke, dead-code gates, Python smoke, and the repository
+  quality gate pass.
+
+## Issue #312 scope, evidence, and non-goals
+
+- Owned production scope is the narrow shared scheduled-task expression contract, scheduled-task
+  add/update persistence and #307 reconciliation comparison, runtime registration/status, the
+  Scheduled Tasks create/edit UI and same-shaped direct scheduled-task creation UI where required,
+  bilingual copy, and directly corresponding tests. This manager owns this status record.
+- Dependency #307 is closed by merged PR #325. Its desired/effective reconciliation, rollback,
+  job identity, and RBAC implementation are reused and must not be duplicated.
+- Non-goals: cron or a generic builder; arbitrary weekdays; monthly/yearly/holiday rules;
+  distributed scheduling, catch-up, or misfire policy; site/default schedule redesign; Pipeline
+  Baton frequency changes; reconciliation/RBAC redesign; dependency upgrades; sibling repositories;
+  security frameworks; or speculative abstractions.
+- The isolated worktree was clean and detached at startup. After fetch, `HEAD`, `origin/main`, the
+  assigned branch, and their merge-base all matched the supplied baseline exactly; the branch was
+  then attached without changing tracked files.
+- A fresh audit found no open/closed PR, remote branch, or commit matching #312, schedule/timezone
+  presets, `weekly at`, or `Asia/Shanghai`; duplicate-work-audit is recorded as `proceed`.
+- Baseline source and runtime probes confirm a free-text interval field, no `weekly at` validation
+  or registration, ignored daily `at_timezone`, non-canonical single-digit time acceptance, no
+  persisted timezone, and naive-looking status timestamps. Delivery shape is `code-change`.
+- Review-policy override: none. Only realistically reproducible functionality, workflow,
+  data-contract, or error-handling findings mapped directly to an AC above are accepted.
+
+## Issue #312 required validation
+
+- Parser/API matrix for every accepted and rejected interval/timezone combination, including
+  state-preserving 400 failures and canonical persisted output.
+- Legacy fixtures for read, edit without schedule fields, restart, reinitialize, and process-local
+  `daily`/`weekly`/no-timezone behavior.
+- Real and fallback scheduler registration, #307 add/update reconciliation and rollback regression,
+  Monday semantics, UTC/Asia-Shanghai cross-day boundaries, offset-bearing status, and Weekly
+  Summary previous-complete-UTC-week/CST-equivalent tests.
+- Scheduled Tasks and direct-create UI create/edit round trips, conditional field visibility,
+  weekly-summary locking, bilingual copy, and desktop plus 320px browser smoke.
+- Focused backend/frontend suites, `git diff --check`, frontend lint/typecheck/build, both dead-code
+  gates, all three Python CI smoke commands, and `python scripts/quality_gate.py`.
+
+## Issue #312 implementation and local review
+
+- Added one shared schedule-preset contract for strict structured writes and bounded legacy runtime
+  parsing. Rolling schedules omit timezone; fixed schedules persist only `UTC` or `Asia/Shanghai`.
+- Scheduled-task writes validate before mutation, preserve unchanged legacy schedule fields, and use
+  the existing #307 reconciliation/rollback path for effective jobs.
+- Runtime registration supports Monday weekly-at schedules, selected fixed timezones, offset-bearing
+  status, process-local legacy status, and the previous-complete-UTC-week Weekly Summary contract.
+- Scheduled Tasks and direct-create UI now expose the four structured forms with bilingual copy.
+  Legacy fixed/no-timezone tasks show process-local state until explicit conversion; legacy
+  non-weekly Weekly Summary schedules show their real cadence read-only with an explicit Weekly UTC
+  migration action.
+- Six fresh read-only review rounds were completed. Accepted findings covered legacy task-type edits,
+  invalid equivalent-time display, baseline-valid legacy whitespace/leading zeros, Weekly Summary
+  timezone compatibility/type transitions, legacy Weekly Summary UI truthfulness, and ordinary
+  legacy process-local UI truthfulness. The same persistent worker fixed each accepted finding.
+  Round 6 returned full PASS with no valid Issue #312 findings.
+- Post-review isort normalization and removal of four test-only helper exports were behavior-neutral
+  gate cleanups by the same worker; state decisions record why functional review did not reopen.
+
+## Issue #312 final local validation
+
+- Unified quality gate: PASS on the final code, with 2,099 passed, 10 skipped, plus Black, isort, and
+  error-only Pylint.
+- Focused schedule/API/runtime/UI regression: 161 passed. Final React-source/Issue suite: 104 passed.
+  Both executable TSX component suites and TypeScript typecheck passed.
+- Frontend lint passed with zero errors and five pre-existing unrelated Hook warnings. Production
+  build passed with only the existing large-chunk advisory.
+- File and symbol dead-code gates passed with zero baseline findings. `git diff --check` passed.
+- CI smoke passed 13 FastAPI tests, 31 Agentic evaluation tests, and all 3 CLI evaluation cases;
+  evidence, citation, and refusal rates were 1.0 and unsupported-answer rate was 0.
+- Disposable browser smoke passed in English and Chinese at desktop and 320px. It verified explicit
+  process-local legacy display, direct canonical UTC conversion, offset/timezone status, read-only
+  legacy Weekly Summary cadence, explicit Weekly UTC conversion, and Shanghai-equivalent copy.
+  Browser services and temporary data were stopped and removed afterward.
+
+## Issue #312 blockers or decisions needed
+
+- None.
+
+## Issue #312 recommended next action
+
+- Commit and push the validated branch, create a draft PR with `Closes #312`, mark it ready, observe
+  the full remote-feedback window, assess the single feedback snapshot, require checks on the exact
+  head, then merge and complete Issue/branch/worktree cleanup.

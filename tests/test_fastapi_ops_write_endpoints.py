@@ -127,6 +127,7 @@ class _BridgeRecorder:
             unit = "days"
             at_time = None
             start_day = None
+            timezone_name = str(task.get("timezone") or "").strip() or None
             if schedule_interval == "daily":
                 at_time = datetime.strptime("00:30", "%H:%M").time()
             elif schedule_interval == "weekly":
@@ -136,6 +137,12 @@ class _BridgeRecorder:
             elif schedule_interval.startswith("daily at "):
                 at_time = datetime.strptime(
                     schedule_interval.removeprefix("daily at "), "%H:%M"
+                ).time()
+            elif schedule_interval.startswith("weekly at "):
+                unit = "weeks"
+                start_day = "monday"
+                at_time = datetime.strptime(
+                    schedule_interval.removeprefix("weekly at "), "%H:%M"
                 ).time()
             elif schedule_interval.startswith("every "):
                 parts = schedule_interval.split()
@@ -156,6 +163,7 @@ class _BridgeRecorder:
                         "display_name": name,
                         "managed": True,
                         "deletable": True,
+                        **({"timezone": timezone_name} if timezone_name else {}),
                     },
                 )
             )
@@ -668,6 +676,7 @@ def test_scheduled_tasks_write_and_schedule_reinit_roundtrip(tmp_path: Path, mon
             "name": "Weekly Chunk",
             "type": "chunk_generation",
             "interval": "daily at 02:00",
+            "timezone": "UTC",
             "enabled": True,
             "params": {"category": "AI"},
         },
@@ -678,6 +687,7 @@ def test_scheduled_tasks_write_and_schedule_reinit_roundtrip(tmp_path: Path, mon
         task for task in _read_scheduled_tasks(config_path) if task["name"] == "Weekly Chunk"
     )
     assert written_task["interval"] == "daily at 02:00"
+    assert written_task["timezone"] == "UTC"
     assert written_task["composition"] == "chunk_embedding"
 
     removed_option_response = client.post(
@@ -685,7 +695,7 @@ def test_scheduled_tasks_write_and_schedule_reinit_roundtrip(tmp_path: Path, mon
         json={
             "name": "Invalid Chunk Binding",
             "type": "chunk_generation",
-            "interval": "daily",
+            "interval": "every 1 hours",
             "enabled": True,
             "params": {"kb_id": "kb-old"},
         },
@@ -699,7 +709,8 @@ def test_scheduled_tasks_write_and_schedule_reinit_roundtrip(tmp_path: Path, mon
         json={
             "name": "Weekly Update Summary",
             "type": "weekly_summary",
-            "interval": "weekly",
+            "interval": "weekly at 00:30",
+            "timezone": "UTC",
             "enabled": True,
             "params": {"max_files": 50},
         },
@@ -762,7 +773,7 @@ def test_scheduled_tasks_write_and_schedule_reinit_roundtrip(tmp_path: Path, mon
             "original_name": "Weekly Chunk",
             "name": "Weekly Chunk",
             "type": "chunk_generation",
-            "interval": "daily",
+            "interval": "every 1 hours",
             "enabled": False,
             "params": {"category": "Pricing"},
         },
@@ -772,7 +783,8 @@ def test_scheduled_tasks_write_and_schedule_reinit_roundtrip(tmp_path: Path, mon
     updated_task = next(
         task for task in _read_scheduled_tasks(config_path) if task["name"] == "Weekly Chunk"
     )
-    assert updated_task["interval"] == "daily"
+    assert updated_task["interval"] == "every 1 hours"
+    assert "timezone" not in updated_task
     assert updated_task["enabled"] is False
 
     reinit_response = client.post("/api/schedule/reinit", headers=headers)

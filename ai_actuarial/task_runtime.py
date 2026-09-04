@@ -52,6 +52,11 @@ from ai_actuarial.rag.kb_index import (
     resolve_kb_bound_chunks,
 )
 from ai_actuarial.rag.knowledge_base import KnowledgeBaseManager
+from ai_actuarial.schedule_presets import (
+    SchedulePresetError,
+    effective_task_timezone,
+    parse_runtime_schedule,
+)
 from ai_actuarial.search import search_all
 from ai_actuarial.search_acquisition import (
     format_acquisition_outcome,
@@ -276,9 +281,10 @@ def _scheduler_job_metadata(
     display_name: str,
     managed: bool,
     deletable: bool,
+    timezone_name: str | None = None,
 ) -> dict[str, Any]:
     identity = f"{kind}\0{source}".encode("utf-8")
-    return {
+    metadata = {
         "job_key": f"job_{hashlib.sha256(identity).hexdigest()[:20]}",
         "kind": kind,
         "source": source,
@@ -286,6 +292,9 @@ def _scheduler_job_metadata(
         "managed": managed,
         "deletable": deletable,
     }
+    if timezone_name:
+        metadata["timezone"] = timezone_name
+    return metadata
 
 
 def _tag_scheduler_job(
@@ -296,6 +305,7 @@ def _tag_scheduler_job(
     display_name: str,
     managed: bool,
     deletable: bool,
+    timezone_name: str | None = None,
 ) -> Any:
     job._ops_metadata = _scheduler_job_metadata(
         kind=kind,
@@ -303,6 +313,7 @@ def _tag_scheduler_job(
         display_name=display_name,
         managed=managed,
         deletable=deletable,
+        timezone_name=timezone_name,
     )
     return job
 
@@ -705,6 +716,10 @@ class NativeTaskRuntime:
                 task_type = str(task_cfg.get("type") or "catalog")
                 if task_type == "chunk_generation":
                     params = sanitize_legacy_chunk_generation_payload(params)
+                elif task_type == "weekly_summary":
+                    params.pop("period_start", None)
+                    params.pop("period_end", None)
+                    params["relative_period"] = "previous_week"
                 is_pipeline_source = (
                     task_name == "Scheduled Collection" and task_type == "scheduled"
                 )
@@ -765,11 +780,14 @@ class NativeTaskRuntime:
             interval = str(task_cfg.get("interval") or "").strip()
             if interval:
                 task_name = str(task_cfg.get("name") or "Generic Task")
+                timezone_name = effective_task_timezone(
+                    task_cfg.get("type"), interval, task_cfg.get("timezone")
+                )
                 _tag_scheduler_job(
                     self._register_schedule(
                         interval,
                         make_generic_task_job(task_cfg),
-                        at_timezone=("UTC" if task_cfg.get("type") == "weekly_summary" else None),
+                        at_timezone=timezone_name,
                         scheduler_ref=staged_scheduler,
                     ),
                     kind="configured_task",
@@ -777,6 +795,7 @@ class NativeTaskRuntime:
                     display_name=task_name,
                     managed=True,
                     deletable=True,
+                    timezone_name=timezone_name,
                 )
         if not configured_only:
             _tag_scheduler_job(
@@ -895,30 +914,24 @@ class NativeTaskRuntime:
         scheduler_ref: Any | None = None,
     ) -> Any:
         scheduler = scheduler_ref or self.scheduler
-        interval = str(interval_str or "").strip().lower()
-        if interval == "daily":
-            return scheduler.every().day.at("00:30").do(job_func)
-        if interval == "weekly":
+        try:
+            preset = parse_runtime_schedule(interval_str, at_timezone)
+        except SchedulePresetError as exc:
+            raise ValueError(str(exc)) from exc
+        if preset.frequency == "daily":
+            daily_job = scheduler.every().day
+            if preset.timezone:
+                return daily_job.at(preset.at_time, preset.timezone).do(job_func)
+            return daily_job.at(preset.at_time).do(job_func)
+        if preset.frequency == "weekly":
             weekly_job = scheduler.every().monday
-            if at_timezone:
-                return weekly_job.at("00:30", at_timezone).do(job_func)
-            return weekly_job.at("00:30").do(job_func)
-        if interval.startswith("daily at "):
-            at_value = interval.replace("daily at ", "", 1).strip()
-            daily_at = re.fullmatch(r"(\d{1,2}):(\d{1,2})", at_value)
-            if daily_at:
-                hour, minute = daily_at.groups()
-                at_value = f"{int(hour):02d}:{int(minute):02d}"
-            return scheduler.every().day.at(at_value).do(job_func)
-        if interval.startswith("every "):
-            parts = interval.split()
-            if len(parts) == 3:
-                qty = int(parts[1])
-                unit = parts[2]
-                if unit in {"hour", "hours"}:
-                    return scheduler.every(qty).hours.do(job_func)
-                if unit in {"minute", "minutes"}:
-                    return scheduler.every(qty).minutes.do(job_func)
+            if preset.timezone:
+                return weekly_job.at(preset.at_time, preset.timezone).do(job_func)
+            return weekly_job.at(preset.at_time).do(job_func)
+        if preset.frequency == "hours":
+            return scheduler.every(preset.quantity).hours.do(job_func)
+        if preset.frequency == "minutes":
+            return scheduler.every(preset.quantity).minutes.do(job_func)
         raise ValueError(f"Unsupported schedule interval: {interval_str}")
 
     def _execute_collection_task(

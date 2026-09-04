@@ -60,6 +60,13 @@ from ai_actuarial.markdown_conversion_config import (
     write_markdown_conversion_config,
 )
 from ai_actuarial.rag.defaults import get_embedding_model_defaults
+from ai_actuarial.schedule_presets import (
+    SchedulePreset,
+    SchedulePresetError,
+    effective_task_timezone,
+    parse_runtime_schedule,
+    parse_structured_schedule,
+)
 from ai_actuarial.security import UnsafeUrlError, ensure_safe_http_url
 from ai_actuarial.shared_runtime import (
     append_task_log,
@@ -99,8 +106,6 @@ _VALID_SCHEDULED_TASK_TYPES = [
     "recategory",
 ]
 
-_VALID_INTERVALS = ["daily", "weekly", "daily at HH:MM", "every N hours", "every N minutes"]
-
 _BINDING_MODEL_TYPE = {
     "chat": "chatbot",
     "catalog": "catalog",
@@ -127,30 +132,24 @@ _VALID_COLLECTION_TYPES = {
 }
 
 
-def _is_valid_schedule_interval(interval: str) -> bool:
-    normalized = str(interval or "").strip().lower()
-    if normalized in {"daily", "weekly"}:
-        return True
-    if normalized.startswith("daily at "):
-        parts = normalized.replace("daily at ", "", 1).strip().split(":", 1)
-        if len(parts) != 2:
-            return False
-        try:
-            hour = int(parts[0])
-            minute = int(parts[1])
-        except ValueError:
-            return False
-        return 0 <= hour <= 23 and 0 <= minute <= 59
-    if normalized.startswith("every "):
-        parts = normalized.split()
-        if len(parts) != 3:
-            return False
-        try:
-            qty = int(parts[1])
-        except ValueError:
-            return False
-        return qty > 0 and parts[2] in {"hour", "hours", "minute", "minutes"}
-    return False
+def _validate_scheduled_task_schedule(data: dict[str, Any], *, task_type: str) -> SchedulePreset:
+    try:
+        preset = parse_structured_schedule(data.get("interval"), data.get("timezone"))
+    except SchedulePresetError as exc:
+        raise OpsWriteError(f"Invalid schedule interval: {data.get('interval')}. {exc}") from exc
+    if preset.frequency in {"minutes", "hours"} and "timezone" in data:
+        raise OpsWriteError("Invalid schedule interval: rolling schedules omit timezone")
+    if task_type == "weekly_summary" and (preset.frequency != "weekly" or preset.timezone != "UTC"):
+        raise OpsWriteError("Weekly Summary requires a weekly fixed-time schedule in UTC")
+    return preset
+
+
+def _locked_weekly_summary_params(params: dict[str, Any]) -> dict[str, Any]:
+    locked = dict(params)
+    locked.pop("period_start", None)
+    locked.pop("period_end", None)
+    locked["relative_period"] = "previous_week"
+    return locked
 
 
 def _validate_ai_routing_model(binding_name: str, provider: str, model: str) -> None:
@@ -267,30 +266,21 @@ def _notify_site_config_updated(bridge: BridgeState | None, config_data: dict[st
         setter(config_data)
 
 
-def _effective_interval(interval: str) -> str:
-    normalized = str(interval or "").strip().lower()
-    if normalized == "daily":
-        return "daily at 00:30"
-    if normalized == "weekly":
-        return "weekly on monday at 00:30"
-    daily_at = re.fullmatch(r"daily at (\d{1,2}):(\d{1,2})", normalized)
-    if daily_at:
-        hour, minute = daily_at.groups()
-        return f"daily at {int(hour):02d}:{int(minute):02d}"
-    if normalized.startswith("every "):
-        parts = normalized.split()
-        if len(parts) == 3:
-            unit = "hours" if "hour" in parts[2] else "minutes"
-            return f"every {parts[1]} {unit}"
-    return normalized
+def _configured_task_spec(task: dict[str, Any]) -> tuple[str, str, str]:
+    interval = str(task.get("interval") or "")
+    timezone_name = effective_task_timezone(task.get("type"), interval, task.get("timezone"))
+    preset = parse_runtime_schedule(interval, timezone_name)
+    status_timezone = (timezone_name or "process-local") if preset.at_time else ""
+    return (
+        str(task.get("name") or ""),
+        preset.effective_label,
+        status_timezone,
+    )
 
 
-def _configured_task_specs(config_data: dict[str, Any]) -> list[tuple[str, str]]:
+def _configured_task_specs(config_data: dict[str, Any]) -> list[tuple[str, str, str]]:
     return sorted(
-        (
-            str(task.get("name") or ""),
-            _effective_interval(str(task.get("interval") or "")),
-        )
+        _configured_task_spec(task)
         for task in list(config_data.get("scheduled_tasks") or [])
         if task.get("enabled", True)
         and str(task.get("interval") or "").strip()
@@ -307,6 +297,7 @@ def _assert_scheduler_matches_config(config_data: dict[str, Any], bridge: Bridge
         (
             str(job.get("source") or ""),
             str(job.get("interval") or "").strip().lower(),
+            str(job.get("timezone") or ""),
         )
         for job in jobs
         if isinstance(job, dict) and job.get("kind") == "configured_task"
@@ -2040,17 +2031,13 @@ def add_scheduled_task(
 ) -> dict[str, Any]:
     name = str(data.get("name") or "").strip()
     task_type = str(data.get("type") or "").strip()
-    interval = str(data.get("interval") or "").strip()
     if not name:
         raise OpsWriteError("Task name is required")
     if task_type not in _VALID_SCHEDULED_TASK_TYPES:
         raise OpsWriteError(f"Invalid task type: {task_type}")
-    if not interval:
+    if "interval" not in data or not data.get("interval"):
         raise OpsWriteError("Schedule interval is required")
-    if not _is_valid_schedule_interval(interval):
-        raise OpsWriteError(
-            f"Invalid schedule interval: {interval}. Valid values: {', '.join(_VALID_INTERVALS)}"
-        )
+    preset = _validate_scheduled_task_schedule(data, task_type=task_type)
 
     config_data = _load_config_data()
     previous_config = deepcopy(config_data)
@@ -2058,6 +2045,8 @@ def add_scheduled_task(
     if any(str(task.get("name") or "") == name for task in tasks):
         raise OpsWriteError("Task name already exists")
     params = dict(data.get("params") or {})
+    if task_type == "weekly_summary":
+        params = _locked_weekly_summary_params(params)
     if task_type == "chunk_generation":
         try:
             validate_chunk_generation_payload(params)
@@ -2075,7 +2064,8 @@ def add_scheduled_task(
         {
             "name": name,
             "type": task_type,
-            "interval": interval,
+            "interval": preset.interval,
+            **({"timezone": preset.timezone} if preset.timezone else {}),
             "enabled": bool(data.get("enabled", True)),
             "params": params,
             **({"composition": "chunk_embedding"} if task_type == "chunk_generation" else {}),
@@ -2103,50 +2093,66 @@ def update_scheduled_task(
     tasks = list(config_data.get("scheduled_tasks") or [])
     if original_name != name and any(str(task.get("name") or "") == name for task in tasks):
         raise OpsWriteError("Task name already exists")
-    found = False
-    for task in tasks:
+    found_index: int | None = None
+    for index, task in enumerate(tasks):
         if str(task.get("name") or "") != original_name:
             continue
-        task["name"] = name
-        if "type" in data:
-            previous_type = str(task.get("type") or "")
-            new_type = str(data.get("type") or "").strip()
-            if new_type not in _VALID_SCHEDULED_TASK_TYPES:
-                raise OpsWriteError(f"Invalid task type: {new_type}")
-            task["type"] = new_type
-            if previous_type != "chunk_generation" and new_type == "chunk_generation":
-                task["composition"] = "chunk_embedding"
-            elif new_type != "chunk_generation":
-                task.pop("composition", None)
-        if "interval" in data:
-            new_interval = str(data.get("interval") or "").strip()
-            if not _is_valid_schedule_interval(new_interval):
-                raise OpsWriteError(
-                    f"Invalid schedule interval: {new_interval}. Valid values: {', '.join(_VALID_INTERVALS)}"
-                )
-            task["interval"] = new_interval
-        if "enabled" in data:
-            task["enabled"] = bool(data.get("enabled"))
-        if "params" in data:
-            params = dict(data.get("params") or {})
-            if str(task.get("type") or "") == "chunk_generation":
-                try:
-                    validate_chunk_generation_payload(params)
-                except UnsupportedOptionsError as exc:
-                    raise OpsWriteError(
-                        str(exc),
-                        code="unsupported_option",
-                        details={
-                            "unsupported_options": exc.options,
-                            "guidance": exc.guidance,
-                        },
-                    ) from exc
-                params.pop("overwrite_same_profile", None)
-            task["params"] = params
-        found = True
+        found_index = index
         break
-    if not found:
+    if found_index is None:
         raise OpsWriteError("Task not found", status_code=404)
+
+    current = tasks[found_index]
+    updated = dict(current)
+    updated["name"] = name
+    previous_type = str(current.get("type") or "")
+    new_type = str(data.get("type") or "").strip() if "type" in data else previous_type
+    if new_type not in _VALID_SCHEDULED_TASK_TYPES and new_type != previous_type:
+        raise OpsWriteError(f"Invalid task type: {new_type}")
+    updated["type"] = new_type
+
+    schedule_fields_supplied = "interval" in data or "timezone" in data
+    crosses_weekly_summary_boundary = (previous_type == "weekly_summary") != (
+        new_type == "weekly_summary"
+    )
+    if crosses_weekly_summary_boundary and not schedule_fields_supplied:
+        raise OpsWriteError("Changing to or from Weekly Summary requires a structured schedule")
+    if schedule_fields_supplied:
+        if "interval" not in data:
+            raise OpsWriteError("Schedule interval is required when changing timezone")
+        preset = _validate_scheduled_task_schedule(data, task_type=new_type)
+        updated["interval"] = preset.interval
+        if preset.timezone:
+            updated["timezone"] = preset.timezone
+        else:
+            updated.pop("timezone", None)
+    if previous_type != "chunk_generation" and new_type == "chunk_generation":
+        updated["composition"] = "chunk_embedding"
+    elif new_type != "chunk_generation":
+        updated.pop("composition", None)
+    if "enabled" in data:
+        updated["enabled"] = bool(data.get("enabled"))
+    if "params" in data:
+        params = dict(data.get("params") or {})
+        if new_type == "weekly_summary":
+            params = _locked_weekly_summary_params(params)
+        if new_type == "chunk_generation":
+            try:
+                validate_chunk_generation_payload(params)
+            except UnsupportedOptionsError as exc:
+                raise OpsWriteError(
+                    str(exc),
+                    code="unsupported_option",
+                    details={
+                        "unsupported_options": exc.options,
+                        "guidance": exc.guidance,
+                    },
+                ) from exc
+            params.pop("overwrite_same_profile", None)
+        updated["params"] = params
+    elif previous_type != "weekly_summary" and new_type == "weekly_summary":
+        updated["params"] = _locked_weekly_summary_params(dict(updated.get("params") or {}))
+    tasks[found_index] = updated
 
     config_data["scheduled_tasks"] = tasks
     _write_config_and_reconcile_scheduler(
