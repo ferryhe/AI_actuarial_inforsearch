@@ -7,8 +7,8 @@
 - Baseline: `origin/main@411b0d477e68b8dd1748f44139e0ad07e9cbc729`
 - Issue: `#338 fix(schema): v12→v13 source validator rejects a legitimate v12 DB as invalid`
 - Review state: `C:\Users\ferry\.codex\issue-to-merge\AI_actuarial_inforsearch\issue-338\review-state.json`
-- Delivery stage: implementation, one-round local review, and final local validation complete;
-  ready to publish the Draft PR
+- Delivery stage: Draft PR #339 is Ready; the single remote-feedback window is assessed and one
+  documentation-only AC-1 fix is locally validated; ready to push the final candidate
 - Progress heartbeat: id `issue-338`, status `ACTIVE`, 15-minute cadence
 
 ## Issue #338 acceptance criteria
@@ -105,14 +105,30 @@
   `git diff --check` passed. The five-file historical schema combination remained green at
   137 passed after the fixture correction.
 
+## Issue #338 remote feedback and checks
+
+- Draft PR `#339` was published from `e0a330009f9dbc4d8fecbca8edca9ef822551fc7` with exact
+  `Closes #338`, then marked Ready. The single remote snapshot was fetched after 694 seconds.
+- There were no human reviews, PR conversation comments, or Issue #338 comments. Copilot left two
+  inline threads. The same persistent worker and manager rejected the machine-path suggestion as
+  outside AC-1–AC-4: this project requires the status record and the same file already uses this
+  path convention. No path content changed.
+- The v12 validator docstring omitted its v14-table fail-closed contract. This maps directly to
+  AC-1 and was handled with a one-line documentation-only correction; no behavior changed. The
+  focused v12 selection passed 5 tests with 52 deselected, Black passed, and `git diff --check`
+  passed.
+- On the pre-feedback-fix head, all five remote merge gates completed successfully:
+  `dead-code-files`, `dead-code-symbols`, `quality-gate`, `frontend-check`, and `python-smoke`.
+  The same gates must complete successfully again on the final documentation-only head.
+
 ## Issue #338 blockers or decisions needed
 
 - None.
 
 ## Issue #338 recommended next action
 
-- Commit and push the validated candidate, then publish the required Draft PR with exact
-  `Closes #338`, mark it Ready, and begin the bounded remote-feedback window.
+- Commit and push the one-line remote documentation fix plus this final status update, verify all
+  five required checks on the exact final head, then merge PR #339 and verify Issue #338 closure.
 
 # Project Status — Issue #333 content-first article lists
 

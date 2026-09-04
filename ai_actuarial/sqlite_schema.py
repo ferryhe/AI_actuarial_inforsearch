@@ -1228,7 +1228,7 @@ def _accept_version_12_source(
     conn: sqlite3.Connection,
     tables: dict[str, TableSignature],
 ) -> bool:
-    """Accept the exact current schema before the stats covering indexes existed."""
+    """Accept the exact v12 schema before v13 indexes and v14 Markdown state."""
 
     future_table = "markdown_terminal_source_state"
     if future_table in tables:
