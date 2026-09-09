@@ -799,7 +799,7 @@ class NativeTaskRuntime:
                 )
         if not configured_only:
             _tag_scheduler_job(
-                staged_scheduler.every(30).minutes.do(self._scheduled_pipeline_baton_tick),
+                staged_scheduler.every(1).hours.do(self._scheduled_pipeline_baton_tick),
                 kind="pipeline_baton",
                 source="pipeline_baton",
                 display_name="Pipeline Baton",
