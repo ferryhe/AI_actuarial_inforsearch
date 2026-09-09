@@ -55,7 +55,7 @@ def _runtime(monkeypatch, tmp_path):
     return runtime, started
 
 
-def test_scheduled_collection_job_begins_baton_and_registers_30_minute_tick(
+def test_scheduled_collection_job_begins_baton_and_registers_one_hour_tick(
     monkeypatch, tmp_path
 ) -> None:
     runtime, started = _runtime(monkeypatch, tmp_path)
@@ -77,7 +77,7 @@ def test_scheduled_collection_job_begins_baton_and_registers_30_minute_tick(
     assert (
         runtime.pipeline_baton_status()["state"]["consumed_scheduled_task_id"] == "runtime-task-1"
     )
-    assert any(job.unit == "minutes" and job.interval == 30 for job in runtime.scheduler.jobs)
+    assert any(job.unit == "hours" and job.interval == 1 for job in runtime.scheduler.jobs)
 
 
 def test_scheduled_tick_logs_errors_without_hiding_direct_api_failure(
@@ -91,7 +91,7 @@ def test_scheduled_tick_logs_errors_without_hiding_direct_api_failure(
     monkeypatch.setattr(runtime, "tick_pipeline_baton", fail_tick)
     runtime.init_scheduler()
     tick_job = next(
-        job for job in runtime.scheduler.jobs if job.unit == "minutes" and job.interval == 30
+        job for job in runtime.scheduler.jobs if job.unit == "hours" and job.interval == 1
     )
 
     tick_job.job_func()
