@@ -214,7 +214,7 @@ def test_same_target_unmarked_file_handler_is_replaced_without_duplicate_writes(
         handler
         for handler in root.handlers
         if isinstance(handler, logging.FileHandler)
-        and Path(handler.baseFilename).resolve() == log_file.resolve()
+        and Path(getattr(handler, "baseFilename")).resolve() == log_file.resolve()
     ]
     assert len(matching) == 1
     assert isinstance(matching[0], RotatingFileHandler)
