@@ -1,3 +1,29 @@
+# Latest work — Issue #357 user self-protection
+
+- Updated: 2026-09-14 Asia/Shanghai.
+- Repository: `AI_actuarial_inforsearch`; branch: `fix/357-user-self-protection`.
+- Scope: guard user role and active-state mutations, user-management UI affordances,
+  focused regression coverage, and this status record only. Sibling repositories and
+  production data were not accessed.
+- Implementation: `Storage.update_user_with_admin_protection` uses one `BEGIN IMMEDIATE`
+  transaction for target lookup, active email-admin count, state update, and audit writes.
+  It prevents an email-session admin from removing their own active-admin status and
+  prevents every principal type from removing the last active email admin. Inactive
+  admins do not count. The service turns blocked requests into HTTP 409 responses.
+- Audit: both blocked and successful changes are written to `audit_events` and the
+  target user's activity history. `detail` is a compact JSON object with operator kind
+  and stable ID, target user ID, operation, result, and reason; it contains no
+  credential, password, or session value.
+- UI: unsafe self/last-admin role choices and disable actions are disabled with an
+  explanatory visible reason in English and Chinese. Backend enforcement remains authoritative.
+- Validation: `python -m pytest -q tests/test_user_self_protection.py` passed (5);
+  `python -m py_compile ai_actuarial/storage.py ai_actuarial/api/services/auth.py
+  tests/test_user_self_protection.py` passed; `git diff --check` passed. `npm run build`
+  could not run because the worktree lacks locally installed `vite` and related frontend
+  dependencies. An attempted existing auth-endpoint selection did not complete within
+  the 30-second sandbox command window and was not used as validation evidence.
+- Delivery: per task instruction, do not commit, push, or create a PR in this sandbox.
+
 # Latest work — PR #344 quality-gate repair
 
 - Updated: 2026-09-09 EDT.
