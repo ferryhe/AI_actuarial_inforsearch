@@ -90,8 +90,8 @@ function PdfViewer({ fileUrl }: { fileUrl: string }) {
       setPdfError(null);
       try {
         const pdfjsLib = await loadPdfjsLib();
-        const downloadUrl = `/api/download?url=${encodeURIComponent(fileUrl)}`;
-        const doc = await pdfjsLib.getDocument(downloadUrl).promise;
+        const previewUrl = `/api/rag/files/preview/raw?file_url=${encodeURIComponent(fileUrl)}`;
+        const doc = await pdfjsLib.getDocument(previewUrl).promise;
         if (cancelled) return;
         setPdfDoc(doc);
         setTotalPages(doc.numPages);
@@ -188,7 +188,7 @@ function loadPdfjsLib(): Promise<any> {
 function ImageViewer({ fileUrl }: { fileUrl: string }) {
   return (
     <div className="overflow-auto rounded-lg border border-border bg-white dark:bg-gray-900 p-2">
-      <img src={`/api/download?url=${encodeURIComponent(fileUrl)}`} alt="File preview"
+      <img src={`/api/rag/files/preview/raw?file_url=${encodeURIComponent(fileUrl)}`} alt="File preview"
         className="max-w-full mx-auto" data-testid="img-preview" />
     </div>
   );
