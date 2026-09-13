@@ -1,3 +1,28 @@
+# Latest work — Issue #349 KB re-embedding hint / Ask AI serving gate
+
+- Updated: 2026-09-14 Asia/Shanghai.
+- Repository: `AI_actuarial_inforsearch`; branch: `fix/349-kb-reembed-hint`.
+- Scope: KB status serialization in RAG admin/chat, Knowledge/KB Detail/Chat presentation,
+  focused status tests, and this record only. Sibling repositories were not accessed.
+- Implemented a structured `reason` contract: `embedding_incompatible`, `content_dirty`,
+  `binding_dirty`, `index_missing`, `index_building`, `publish_failed`, `serving_disabled`,
+  and `healthy`. `needs_reembed` is true only for `embedding_incompatible`; the legacy
+  `needs_reindex` remains an operations/backward-compatibility signal.
+- Completed compatible indexes now return `serving=true`, `usable=true`, and `availability=ready`
+  during content/binding maintenance. Ask AI gates on this serving state, not generic reindex work.
+  The UI maps every reason in English/Chinese and keeps the existing Ready Data serving/operation
+  display separate from KB Ask AI availability.
+- Added `tests/test_kb_status_reason.py` covering every reason, re-embed and serving decisions,
+  frontend mapping source contracts, and the all/regulation/ai generic-reindex regression.
+- Verification: `python -m py_compile ai_actuarial/kb_status.py ai_actuarial/api/services/rag_admin.py ai_actuarial/api/services/chat.py` passed; `git diff --check` passed;
+  `python -m pytest -q tests/test_kb_status_reason.py tests/test_knowledge_react_source.py` passed
+  (46 tests). Broader focused endpoint runs were started but could not complete within this session's
+  30-second command window. Existing TSX runtime and `npm run typecheck` are blocked because this
+  worktree lacks `node_modules` (including `node_modules/.bin/tsx`, React, and type packages).
+- Delivery: per task instruction, do not commit, push, or open a PR in this sandbox session.
+- Next action: install the lockfile frontend dependencies in an authorized environment, then rerun
+  the complete focused endpoint/frontend suite and review the uncommitted diff before delivery.
+
 # Latest work — PR #344 quality-gate repair
 
 - Updated: 2026-09-09 EDT.

@@ -58,6 +58,7 @@ import { useTranslation } from "@/components/Layout";
 import { ApiError, apiGet, apiPost, apiPut, apiDelete, formatApiErrorDetail } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { isChatKnowledgeBaseAvailable } from "@/lib/chat-knowledge-bases";
+import { isAskAiAvailable, needsReembed } from "@/lib/kb-status";
 import { buildAskAiChatPath } from "@/lib/navigation";
 import { fetchKnowledgeBases as fetchChatKnowledgeBases } from "./chat/api";
 
@@ -76,6 +77,9 @@ interface KBMeta {
   index_embedding_model?: string;
   index_embedding_dimension?: number;
   needs_reindex?: boolean;
+  needs_reembed?: boolean;
+  reason?: string;
+  serving?: boolean;
   embedding_compatible?: boolean;
   current_embeddings?: {
     provider?: string;
@@ -1307,7 +1311,7 @@ export default function KBDetail() {
   });
 
   const pendingCount = stats?.pending_count ?? stats?.pending_files ?? 0;
-  const needsEmbeddingRebuild = meta.needs_reindex || meta.embedding_compatible === false;
+  const needsEmbeddingRebuild = needsReembed(meta);
   const isManualMode = meta.kb_mode === "manual";
   const isCategoryMode = meta.kb_mode === "category";
   const manifest = effectiveManifest;
@@ -1343,7 +1347,7 @@ export default function KBDetail() {
     meta.index_embedding_provider || meta.embedding_provider,
     meta.index_embedding_model || meta.embedding_model,
   ].filter(Boolean).join(" / ");
-  const askAiAvailable = canAskAi && chatKbAvailable;
+  const askAiAvailable = canAskAi && chatKbAvailable && isAskAiAvailable(meta);
   const askAiPath = buildAskAiChatPath(kbId);
 
   return (
@@ -1682,6 +1686,12 @@ export default function KBDetail() {
             </button>
           </div>
         </motion.div>
+      )}
+
+      {canRunKnowledgeTasks && meta.reason && meta.reason !== "healthy" && !needsEmbeddingRebuild && (
+        <p className="text-xs text-muted-foreground" data-testid="message-kb-status-detail">
+          {t(`knowledge.kb_status.${meta.reason}`)}
+        </p>
       )}
 
       {canRunKnowledgeTasks && isCategoryMode && pendingCount > 0 && !needsEmbeddingRebuild && (
