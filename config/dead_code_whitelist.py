@@ -442,6 +442,7 @@ _TextExtractor.handle_data  # reason: HTMLParser invokes this protocol callback 
 from tests.agentic_rag.test_ready_data_builder import test_db_path
 from tests.conftest import admin_token, guest_token, sample_task, sample_user
 from tests.test_api_logging import restore_logging_state
+from tests.test_client_ip import proxy_config
 from tests.test_fastapi_entrypoint import _hermetic_fastapi_env
 from tests.test_recategory import env
 
@@ -451,5 +452,6 @@ guest_token  # reason: Pytest injects this fixture by name.
 sample_task  # reason: Pytest injects this fixture by name.
 sample_user  # reason: Pytest injects this fixture by name.
 restore_logging_state  # reason: Pytest injects this fixture by name.
+proxy_config  # reason: Pytest injects this autouse fixture by name.
 _hermetic_fastapi_env  # reason: Pytest injects this fixture by name.
 env  # reason: Pytest injects this fixture by name.
