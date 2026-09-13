@@ -1,3 +1,35 @@
+# Latest work — Issue #358 compatibility test repairs
+
+- Updated: 2026-09-14; repository `AI_actuarial_inforsearch`, branch
+  `fix/358-agentic-rag-perm-quota` tracking `origin/main`.
+- Follow-up scope: fix the two reported compatibility test failures. The public
+  permission fast path now enforces `chat.query` for authenticated tokens before
+  calling Chat. Anonymous public Chat behavior is preserved.
+- The permission fixture now supplies a test-only catalog/view role: `reader`
+  is actually an alias of `registered`, which includes `chat.query`. Both paths
+  reject this restricted role with 403 even for missing required payload fields.
+- Rate-limit assertions now verify the canonical `detail`/`retry_after` body and
+  `Retry-After` header on both paths; the production response contract is unchanged.
+- Validation: requested normal pytest execution hangs in TestClient during KB
+  fixture setup; a minimal FastAPI TestClient reproduces the same hang. A temporary
+  `/tmp/issue358_pytest_runner.py` schedules periodic asyncio wakeups without
+  changing project code or HTTP assertions. Command:
+  `PYTHONPATH=. python /tmp/issue358_pytest_runner.py tests/test_agentic_rag_chat_query.py tests/unit/test_permissions.py -q --no-cov`
+  passed all 26 tests (6 compatibility, 20 permissions). Python compilation of all
+  five changed Python files and `git diff --check` passed.
+- Existing worktree edits from the earlier implementation remain in the Agentic
+  router, rate limiter, migration docs, and old Agentic endpoint tests. This
+  follow-up changed only the dependency, new regression tests, and this record.
+- Inventory: no product client or CLI caller found. The legacy endpoint test file
+  still exercises the deprecated route at lines 627, 680, 703, 717, 748, 770;
+  the new compatibility suite intentionally exercises it via a path constant.
+  React uses `client/src/pages/chat/api.ts:82` (`apiPost` to `/api/chat/query`).
+  External consumers have not been verified; no live production data was accessed.
+- No commit/push/PR attempted. Sibling repositories remain off-limits. Parent
+  should rerun normal pytest outside this TestClient runtime limitation and review
+  the complete issue acceptance criteria before publishing; this follow-up does
+  not claim full-suite or complete issue acceptance verification.
+
 # Latest work — PR #344 quality-gate repair
 
 - Updated: 2026-09-09 EDT.
