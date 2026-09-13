@@ -234,8 +234,7 @@ def _get_rate_limit_key(request: Request) -> str:
         pass
 
     # Fall back to IP address
-    client_host = request.client.host if request.client else "unknown"
-    return f"ip:{client_host}"
+    return f"ip:{client_ip(request)}"
 
 
 def _should_rate_limit(request: Request) -> bool:
