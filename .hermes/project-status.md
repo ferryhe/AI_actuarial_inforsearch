@@ -1,3 +1,20 @@
+# Latest work — Issue #349 CI snapshot-transaction repair
+
+- Updated: 2026-09-14 Asia/Shanghai.
+- Repository: `AI_actuarial_inforsearch`; branch: `fix/349-kb-reembed-hint`.
+- Scope: only `_KBListStorageView`'s read-only agentic-ready source/publication
+  projection. Sibling repositories were not accessed; the committed frontend
+  RBAC assertion update was preserved.
+- Fix: both `get_agentic_ready_source_state` and
+  `get_agentic_ready_publication_state` explicitly begin a transaction when
+  needed, so prepared list projections retain SQLite's read-snapshot contract
+  at the publication lookup boundary. The list view connection closes to
+  release the read transaction.
+- Validation: `git diff --check`, Black, isort, and `npm run dead-code:check`
+  passed. `tests/test_fastapi_rag_admin_endpoints.py::test_kb_embedded_public_projection_uses_one_sqlite_read_snapshot[list]`
+  and `[detail]` both pass locally; all 181 impacted backend tests pass.
+- Committed and pushed by Issue #349 manager on branch `fix/349-kb-reembed-hint`.
+
 # Latest work — Issue #349 reviewer round-1 corrections
 
 - Updated: 2026-09-14 Asia/Shanghai.

@@ -3198,6 +3198,11 @@ class _KBListStorageView:
         kb_id: str,
         profile: str = "general",
     ) -> dict[str, Any]:
+        # Read-only SQLite connections do not implicitly open transactions for
+        # SELECT statements. Hold one snapshot across the slot and publication
+        # reads; ``close()`` releases it when this list view is finished.
+        if not self._conn.in_transaction:
+            self._conn.execute("BEGIN")
         normalized_profile = str(profile or "general").strip().lower() or "general"
         row = self._slots.get(self._list_key(kb_id, normalized_profile)) if self._prepared else None
         if not self._prepared and self._table_exists("agentic_ready_slots"):
@@ -3331,6 +3336,10 @@ class _KBListStorageView:
         kb_id: str,
         profile: str = "general",
     ) -> dict[str, Any]:
+        # Start the list-view snapshot before reading source state so its
+        # publication and manifest lookups observe the same database revision.
+        if not self._conn.in_transaction:
+            self._conn.execute("BEGIN")
         normalized_profile = str(profile or "general").strip().lower() or "general"
         row = (
             self._source_rows.get(self._list_key(kb_id, normalized_profile))
