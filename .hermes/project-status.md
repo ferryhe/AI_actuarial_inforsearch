@@ -1,3 +1,46 @@
+# Latest work — Issue #358 round-1 review follow-up
+
+- Updated: 2026-09-14; repository `AI_actuarial_inforsearch`, branch
+  `fix/358-agentic-rag-perm-quota` (worktree
+  `/root/.hermes/projects/ai_actuarial/worktrees/fix-358-agentic-rag-perm-quota`),
+  HEAD (short `0e200b4`, see `git log -1 fix/358-agentic-rag-perm-quota`), parent `7e4b104`.
+- Follow-up scope: address the three findings in
+  `/root/.hermes/issue-to-merge/issue-358/evidence/round1-review.md`
+  (A1 KB-readiness regression, A2 dead constant, A3 missing 410 after sunset).
+- All three fixes live in `ai_actuarial/api/routers/agentic_rag.py`
+  (single file, +60 / -3 lines).
+  - A1: shim now calls the legacy `_resolve_ready_output_dir` helper against
+    the original payload BEFORE `query_chat`, translating any
+    `AgenticRagError` into `ChatApiError(status_code=503)` so missing or
+    non-ready KB manifests return the legacy `503 {"success": False}` body
+    instead of crashing inside the embedding generator with an
+    EmbeddingException -> 500. A small `_validate_chat_message` helper
+    mirrors the empty-message check that lives inside `query_chat`, so
+    callers that never had a chance to succeed (empty `query`) keep
+    getting `400 "Message is required"` instead of `503`.
+  - A2: deleted unused module-level `DEPRECATED_AGENTIC_CHAT_PATH` constant.
+  - A3: top of `api_agentic_rag_chat` parses the `Sunset` header with
+    `email.utils.parsedate_to_datetime` and short-circuits with
+    `JSONResponse(status_code=410, content={"success": False, "error": "Endpoint retired; use /api/chat/query"})`
+    when `datetime.now(timezone.utc) >= sunset` (2026-10-14).
+- Validation:
+  - `python -m pytest tests/test_agentic_rag_chat_query.py
+    tests/test_fastapi_chat_endpoints.py
+    tests/test_fastapi_agentic_rag_endpoints.py -q --no-cov`:
+    68 passed.
+  - `python -m pytest tests/test_fastapi_auth_endpoints.py -q --no-cov`:
+    19 passed.
+  - `python -m py_compile ai_actuarial/api/routers/agentic_rag.py`: ok.
+  - `git diff --check`: clean (run on the pre-commit diff).
+- Per scope constraints the test files `tests/test_agentic_rag_chat_query.py`
+  and `tests/test_fastapi_agentic_rag_endpoints.py` were NOT modified; only
+  production code in the Agentic RAG router changed. No new branch, worktree
+  or PR was created; manager will review and push the single commit on `fix/358-agentic-rag-perm-quota` (currently 1 ahead of
+  `origin/fix/358-agentic-rag-perm-quota`).
+  Verify with `git log -1 fix/358-agentic-rag-perm-quota`.
+- No commit/push attempted by the worker. Sibling repositories remain
+  off-limits.
+
 # Latest work — Issue #358 compatibility test repairs
 
 - Updated: 2026-09-14; repository `AI_actuarial_inforsearch`, branch
