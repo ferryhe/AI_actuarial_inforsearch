@@ -125,6 +125,14 @@ class FileChunkSet(Base):
         ),
         Index("idx_file_chunk_sets_file_url", "file_url"),
         Index("idx_file_chunk_sets_profile_id", "profile_id"),
+        Index(
+            "idx_file_chunk_sets_latest",
+            file_url,
+            profile_id,
+            updated_at.desc(),
+            created_at.desc(),
+            chunk_set_id.desc(),
+        ),
     )
 
 

@@ -86,6 +86,7 @@ def _downgrade_to_v10(db_path: Path) -> None:
         conn.execute("DROP TABLE weekly_snapshots")
         conn.execute("DROP INDEX idx_global_chunks_stats_metadata")
         conn.execute("DROP INDEX idx_chunk_embeddings_stats_metadata")
+        conn.execute("DROP INDEX idx_file_chunk_sets_latest")
         conn.execute("DROP TABLE markdown_terminal_source_state")
         conn.execute("PRAGMA user_version=10")
 
@@ -749,6 +750,7 @@ def test_v11_migration_backfills_legacy_weekly_rows_and_runner_agrees(tmp_path: 
         conn.execute("DROP TABLE IF EXISTS weekly_snapshots")
         conn.execute("DROP INDEX idx_global_chunks_stats_metadata")
         conn.execute("DROP INDEX idx_chunk_embeddings_stats_metadata")
+        conn.execute("DROP INDEX idx_file_chunk_sets_latest")
         conn.execute("DROP TABLE markdown_terminal_source_state")
         conn.execute(
             """
@@ -779,6 +781,7 @@ def test_v11_migration_backfills_legacy_weekly_rows_and_runner_agrees(tmp_path: 
         "add_weekly_explanations_v12",
         "add_chunk_stats_metadata_indexes_v13",
         "add_markdown_terminal_source_state_v14",
+        "add_file_chunk_sets_latest_index_v15",
     ]
 
     applied = apply_schema(db_path)
@@ -788,6 +791,7 @@ def test_v11_migration_backfills_legacy_weekly_rows_and_runner_agrees(tmp_path: 
         "add_weekly_explanations_v12",
         "add_chunk_stats_metadata_indexes_v13",
         "add_markdown_terminal_source_state_v14",
+        "add_file_chunk_sets_latest_index_v15",
     ]
     with sqlite3.connect(db_path) as conn:
         legacy = conn.execute(

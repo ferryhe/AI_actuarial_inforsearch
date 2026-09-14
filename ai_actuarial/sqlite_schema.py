@@ -11,7 +11,23 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable
 
-CURRENT_SQLITE_SCHEMA_VERSION = 14
+CURRENT_SQLITE_SCHEMA_VERSION = 15
+
+_LATEST_CHUNK_SET_INDEX_NAME = "idx_file_chunk_sets_latest"
+_LATEST_CHUNK_SET_INDEX_COLUMNS = (
+    "file_url",
+    "profile_id",
+    "updated_at",
+    "created_at",
+    "chunk_set_id",
+)
+_LATEST_CHUNK_SET_INDEX_SIGNATURE = (
+    ("file_url", 0),
+    ("profile_id", 0),
+    ("updated_at", 1),
+    ("created_at", 1),
+    ("chunk_set_id", 1),
+)
 
 _AWARE_RFC3339_RE = re.compile(
     r"^\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[Zz]|[+-]\d{2}:\d{2})$"
@@ -137,6 +153,24 @@ def _normalize_pre_v13_stats_indexes(
             and actual == _without_index_columns(current, columns)
         ):
             adjusted[table] = current
+    return adjusted
+
+
+def _normalize_pre_v15_latest_chunk_set_index(
+    tables: dict[str, TableSignature],
+) -> dict[str, TableSignature]:
+    """Normalize the exact file_chunk_sets shape before the v15 index."""
+    expected = _current_storage_signature()
+    actual = tables.get("file_chunk_sets")
+    current = expected.get("file_chunk_sets")
+    if (
+        actual is None
+        or current is None
+        or actual != _without_index_columns(current, _LATEST_CHUNK_SET_INDEX_COLUMNS)
+    ):
+        return tables
+    adjusted = dict(tables)
+    adjusted["file_chunk_sets"] = current
     return adjusted
 
 
@@ -1283,6 +1317,29 @@ def _accept_version_13_source(
     return valid
 
 
+def _add_file_chunk_sets_latest_index_v15(conn: sqlite3.Connection) -> None:
+    """Add the covering index for deterministic correlated latest lookups."""
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_file_chunk_sets_latest
+        ON file_chunk_sets(
+            file_url, profile_id, updated_at DESC, created_at DESC, chunk_set_id DESC
+        )
+        """)
+    _set_user_version(conn, 15)
+
+
+def _accept_version_14_source(
+    conn: sqlite3.Connection,
+    tables: dict[str, TableSignature],
+) -> bool:
+    """Accept only the exact v14 schema before the v15 covering index."""
+    valid, _, _ = _schema_validation(
+        tables,
+        unexpected_schema_objects=_unexpected_schema_object_counts(conn, tables),
+    )
+    return valid
+
+
 SQLITE_SCHEMA_MIGRATIONS: tuple[SQLiteSchemaMigration, ...] = (
     SQLiteSchemaMigration(
         version=1,
@@ -1366,6 +1423,12 @@ SQLITE_SCHEMA_MIGRATIONS: tuple[SQLiteSchemaMigration, ...] = (
         migration_id="add_markdown_terminal_source_state_v14",
         apply=_add_markdown_terminal_source_state_v14,
         source_validator=_accept_version_13_source,
+    ),
+    SQLiteSchemaMigration(
+        version=15,
+        migration_id="add_file_chunk_sets_latest_index_v15",
+        apply=_add_file_chunk_sets_latest_index_v15,
+        source_validator=_accept_version_14_source,
     ),
 )
 
@@ -1522,6 +1585,30 @@ def _captured_index_names(
         rows = conn.execute(f"PRAGMA index_list({_quote_identifier(table)})").fetchall()
         names.update(str(row[1]) for row in rows)
     return frozenset(names)
+
+
+def _latest_chunk_set_index_contract_valid(
+    conn: sqlite3.Connection,
+    *,
+    required: bool,
+) -> bool:
+    rows = conn.execute("SELECT name, tbl_name FROM sqlite_schema WHERE type = 'index'").fetchall()
+    named_match = False
+    for raw_name, raw_table in rows:
+        name = str(raw_name)
+        table = str(raw_table)
+        key_signature = tuple(
+            (str(row[2]), int(row[3]))
+            for row in conn.execute(f"PRAGMA index_xinfo({_quote_identifier(name)})")
+            if int(row[5]) == 1
+        )
+        if name == _LATEST_CHUNK_SET_INDEX_NAME:
+            if table != "file_chunk_sets" or key_signature != _LATEST_CHUNK_SET_INDEX_SIGNATURE:
+                return False
+            named_match = True
+        elif table == "file_chunk_sets" and key_signature == _LATEST_CHUNK_SET_INDEX_SIGNATURE:
+            return False
+    return named_match if required else not named_match
 
 
 def _unexpected_schema_object_counts(
@@ -2092,6 +2179,10 @@ def _migration_accepts_source(
     first_migration = path[0]
     if first_migration.source_validator is None:
         return False
+    if start_version < 15:
+        if not _latest_chunk_set_index_contract_valid(conn, required=False):
+            return False
+        tables = _normalize_pre_v15_latest_chunk_set_index(tables)
     previous_query_only = int(conn.execute("PRAGMA query_only").fetchone()[0])
     restore_value = "ON" if previous_query_only else "OFF"
     try:
@@ -2153,14 +2244,25 @@ def _analyze_connection(
         )
 
     unexpected_schema_objects = _unexpected_schema_object_counts(conn, tables)
+    if version == CURRENT_SQLITE_SCHEMA_VERSION and not _latest_chunk_set_index_contract_valid(
+        conn,
+        required=True,
+    ):
+        return _base_payload(
+            state="invalid",
+            user_version=version,
+            schema="unrecognized",
+            can_apply=False,
+            blocked=True,
+            problems=["latest_chunk_set_index_mismatch"],
+        )
     valid, problems, details = _schema_validation(
         tables,
         unexpected_schema_objects=unexpected_schema_objects,
     )
     if (
         valid
-        and version in {10, 11, 12}
-        and version < CURRENT_SQLITE_SCHEMA_VERSION
+        and version in {10, 11, 12, 14}
         and not _migration_accepts_source(conn, tables, start_version=version)
     ):
         return _base_payload(
@@ -2174,7 +2276,7 @@ def _analyze_connection(
     if not valid:
         if version == 0 and _migration_path_from(0) is not None:
             tolerant_valid, _, _ = _schema_validation(
-                _normalize_pre_v13_stats_indexes(tables),
+                _normalize_pre_v15_latest_chunk_set_index(_normalize_pre_v13_stats_indexes(tables)),
                 unexpected_schema_objects=unexpected_schema_objects,
                 tolerate_backfill=True,
             )

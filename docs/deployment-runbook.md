@@ -408,6 +408,14 @@ ai-actuarial schema plan --db "$DATA_DIR/index.db" --json
 ai-actuarial schema apply --db "$DATA_DIR/index.db" --json
 ```
 
+Schema v15 adds `idx_file_chunk_sets_latest`, a covering index on
+`(file_url, profile_id, updated_at DESC, created_at DESC, chunk_set_id DESC)`.
+Deployments from v14 must apply this migration before application startup. A
+rollback to v14 is a paired operation: deploy the previous application image
+and restore its verified pre-migration database backup. Do not roll back either
+component alone, and do not only decrement `PRAGMA user_version` while leaving
+the v15 index in place.
+
 Do not treat the application's historical startup-time `CREATE/ALTER` behavior
 as a sufficient production migration plan.
 

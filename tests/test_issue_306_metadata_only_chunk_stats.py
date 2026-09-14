@@ -439,6 +439,7 @@ def test_stats_work_is_independent_of_vector_dimension_and_bytes(
                 "add_weekly_explanations_v12",
                 "add_chunk_stats_metadata_indexes_v13",
                 "add_markdown_terminal_source_state_v14",
+                "add_file_chunk_sets_latest_index_v15",
             ],
         ),
         (
@@ -448,6 +449,7 @@ def test_stats_work_is_independent_of_vector_dimension_and_bytes(
                 "add_weekly_explanations_v12",
                 "add_chunk_stats_metadata_indexes_v13",
                 "add_markdown_terminal_source_state_v14",
+                "add_file_chunk_sets_latest_index_v15",
             ],
         ),
         (
@@ -456,6 +458,7 @@ def test_stats_work_is_independent_of_vector_dimension_and_bytes(
             [
                 "add_chunk_stats_metadata_indexes_v13",
                 "add_markdown_terminal_source_state_v14",
+                "add_file_chunk_sets_latest_index_v15",
             ],
         ),
     ],
@@ -474,6 +477,7 @@ def test_schema_v13_migrates_recent_sources_without_future_indexes(
     with sqlite3.connect(db_path) as conn:
         conn.execute("DROP INDEX idx_global_chunks_stats_metadata")
         conn.execute("DROP INDEX idx_chunk_embeddings_stats_metadata")
+        conn.execute("DROP INDEX idx_file_chunk_sets_latest")
         for table in future_tables:
             conn.execute(f"DROP TABLE {table}")
         conn.execute(f"PRAGMA user_version={source_version}")
@@ -550,7 +554,7 @@ def test_schema_v13_adds_stats_covering_indexes_for_fresh_and_v12_databases(
         schema_status,
     )
 
-    assert CURRENT_SQLITE_SCHEMA_VERSION == 14
+    assert CURRENT_SQLITE_SCHEMA_VERSION == 15
     db_path = tmp_path / "schema.db"
     storage = Storage(str(db_path))
     try:
@@ -565,6 +569,7 @@ def test_schema_v13_adds_stats_covering_indexes_for_fresh_and_v12_databases(
     with sqlite3.connect(db_path) as conn:
         conn.execute("DROP INDEX IF EXISTS idx_global_chunks_stats_metadata")
         conn.execute("DROP INDEX IF EXISTS idx_chunk_embeddings_stats_metadata")
+        conn.execute("DROP INDEX IF EXISTS idx_file_chunk_sets_latest")
         conn.execute("DROP TABLE markdown_terminal_source_state")
         conn.execute("PRAGMA user_version=12")
 
@@ -582,15 +587,21 @@ def test_schema_v13_adds_stats_covering_indexes_for_fresh_and_v12_databases(
             "from_version": 13,
             "to_version": 14,
         },
+        {
+            "id": "add_file_chunk_sets_latest_index_v15",
+            "from_version": 14,
+            "to_version": 15,
+        },
     ]
     applied = apply_schema(db_path)
     assert applied["state"] == "current"
     assert applied["applied_migrations"] == [
         "add_chunk_stats_metadata_indexes_v13",
         "add_markdown_terminal_source_state_v14",
+        "add_file_chunk_sets_latest_index_v15",
     ]
     with sqlite3.connect(db_path) as conn:
-        assert int(conn.execute("PRAGMA user_version").fetchone()[0]) == 14
+        assert int(conn.execute("PRAGMA user_version").fetchone()[0]) == 15
         assert [
             str(row[2])
             for row in conn.execute("PRAGMA index_info(idx_global_chunks_stats_metadata)")

@@ -1,3 +1,58 @@
+# Latest work — Issue #376 deterministic latest chunk-set lookup
+
+- Updated: 2026-09-14 EDT.
+- Repository: `AI_actuarial_inforsearch`; branch: `agent/issue-376-kb-latest-index`;
+  baseline: `origin/main@80fb03a`. Sibling repositories were not accessed.
+- Added formal SQLite schema v15 migration `add_file_chunk_sets_latest_index_v15` and
+  covering index `idx_file_chunk_sets_latest` on `(file_url, profile_id, updated_at DESC,
+  created_at DESC, chunk_set_id DESC)`. Fresh schema, strict v14 validation, ORM metadata,
+  and the legacy SQLite chunk-contract rebuild path are synchronized.
+- Correlated `LIMIT 1` selectors in `Storage`, `_KBListStorageView` batch/fallback paths,
+  and `StorageV2RAGMixin` now use `chunk_set_id DESC` as the final tie-breaker. Existing
+  latest-any-status, dirty, and orphan semantics are unchanged; no new `ROW_NUMBER` query
+  was introduced.
+- Manager independently proved TDD red for all 8/8 focused Issue #376 cases. After all
+  implementation and review corrections, the final full quality gate passed 2,195 tests plus
+  Black, isort, and Pylint. Under Node 20.19, both dead-code files/symbols checks passed, and
+  lint/typecheck/build passed with five existing hook warnings and the existing chunk advisory.
+  Python smoke passed 13 + 31 + 3/3 tests.
+- Manager endpoint confirmation now passes 1/1 in 2.92s. The post-review full quality gate
+  passed 2,194 tests before the version-zero correction below.
+- Review corrections: v15 validation now requires the named index on `file_chunk_sets` with the
+  complete ordered ASC/DESC key signature, while pre-v15 sources reject both a premature named
+  index and an identically shaped wrong-name impostor. Renamed-current and renamed-v14 cases were
+  red before this correction; renamed, wrong-order, wrong-column, and unknown-index cases are
+  green afterward. Compact coverage now includes current/stale/empty composition, multi-profile,
+  multi-KB, orphan/cross-file exclusion, latest-any-status failed/building/empty rows, and the four
+  required KB HTTP projections. The endpoint fixture aligns its current embedding runtime and its
+  explicit 1,536-dimensional KB/index identity so list, detail, chat, and bindings isolate
+  `binding_dirty`; narrow wrappers preserve each complete original source-state payload on both
+  `Storage` and `_KBListStorageView` paths and override only `serving_stale=false`, so the
+  independent published-stale classification cannot mask binding dirtiness.
+  Final Codex review found that a legitimate `user_version=0` database with the otherwise
+  current pre-v15 schema was rejected solely because it lacked the v15 latest-chunk-set index.
+  The version-zero tolerant validation path now applies the exact pre-v15 index normalization
+  after its pre-v13 stats-index normalization. Regression coverage proves status/plan/apply,
+  seeded-data preservation, and idempotency; the existing premature named and wrong-name
+  v15-shaped index cases remain invalid. The expanded Issue/schema suite passes 72 tests.
+- Query-level synthetic benchmark (not a production HTTP SLA): SQLite 3.53.1 with 2,595
+  `file_chunk_sets`, 1,101 bindings, and one profile, using 3 warmups plus 20 samples. Baseline
+  median/p90 was 311.270/356.089 ms; candidate median/p90 was 1.009/1.071 ms. Both returned the
+  identical 1,101-row result, for a 308.5x median speedup.
+- Same-shaped exclusions: `Storage.list_file_chunk_sets` and the SQLAlchemy equivalent list
+  all versions rather than select one latest row; embedding-service scans are chronological
+  ready-set iteration; the pre-existing profile-filter `ROW_NUMBER` selector already has the
+  required ID tie-breaker. The ready-only helper was updated because it is a true latest
+  selector, while latest-any-status composition behavior remains unchanged.
+- Validation: focused pytest uses `-o addopts=''`; repository `pytest-cov` is available. The
+  manager's latest four-surface endpoint run passes 1/1 in 2.92s with the contract-preserving
+  wrappers. The post-review quality gate passed 2,194 tests before the version-zero correction;
+  after that correction, the 72-test Issue/schema suite passed. Black, isort, and
+  `git diff --check` also pass; the final focused correction rerun passes 5 tests.
+- Delivery: per Issue #376 instruction, no commit, push, PR operation, merge, or production
+  modification was performed.
+- Next action: manager review of the formatted, uncommitted diff and final benchmark/status copy.
+
 # Latest work — Issue #349 CI snapshot-transaction repair
 
 - Updated: 2026-09-14 Asia/Shanghai.

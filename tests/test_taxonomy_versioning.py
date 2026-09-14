@@ -108,6 +108,7 @@ def test_migration_v1_to_v2_creates_taxonomy_state(tmp_path: Path) -> None:
     db_path = tmp_path / "v1.db"
     storage = Storage(str(db_path))
     try:
+        storage._conn.execute("DROP INDEX idx_file_chunk_sets_latest")
         storage._conn.execute("DROP TABLE taxonomy_state")
         storage._conn.execute("PRAGMA user_version=1")
         storage._conn.commit()
@@ -134,6 +135,7 @@ def test_migration_v1_to_v2_creates_taxonomy_state(tmp_path: Path) -> None:
         "add_weekly_explanations_v12",
         "add_chunk_stats_metadata_indexes_v13",
         "add_markdown_terminal_source_state_v14",
+        "add_file_chunk_sets_latest_index_v15",
     ]
 
     with sqlite3.connect(db_path) as conn:

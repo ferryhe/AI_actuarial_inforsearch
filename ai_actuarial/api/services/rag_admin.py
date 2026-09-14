@@ -137,7 +137,7 @@ def _latest_ready_chunk_set(
           AND s.profile_id = ?
           AND s.status = 'ready'
           AND COALESCE(s.chunk_count, 0) > 0
-        ORDER BY s.updated_at DESC, s.created_at DESC
+        ORDER BY s.updated_at DESC, s.created_at DESC, s.chunk_set_id DESC
         LIMIT 1
         """,
         (file_url, profile_id),
@@ -2148,7 +2148,8 @@ class _KBListStorageView:
                           AND b.chunk_set_id != (
                             SELECT s2.chunk_set_id FROM file_chunk_sets s2
                             WHERE s2.file_url = b.file_url AND s2.profile_id = s.profile_id
-                            ORDER BY s2.updated_at DESC, s2.created_at DESC LIMIT 1)
+                            ORDER BY s2.updated_at DESC, s2.created_at DESC,
+                                     s2.chunk_set_id DESC LIMIT 1)
                         GROUP BY b.kb_id""",
                     kb_params,
                 ):
@@ -2814,7 +2815,7 @@ class _KBListStorageView:
                     FROM file_chunk_sets s2
                     WHERE s2.file_url = b.file_url
                       AND s2.profile_id = s.profile_id
-                    ORDER BY s2.updated_at DESC, s2.created_at DESC
+                    ORDER BY s2.updated_at DESC, s2.created_at DESC, s2.chunk_set_id DESC
                     LIMIT 1
                 ) AS latest_chunk_set_id
             FROM kb_chunk_bindings b
@@ -2901,7 +2902,8 @@ class _KBListStorageView:
                             FROM file_chunk_sets s2
                             WHERE s2.file_url = b.file_url
                               AND s2.profile_id = s.profile_id
-                            ORDER BY s2.updated_at DESC, s2.created_at DESC
+                            ORDER BY s2.updated_at DESC, s2.created_at DESC,
+                                     s2.chunk_set_id DESC
                             LIMIT 1
                           )
                         """,
