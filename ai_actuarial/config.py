@@ -75,6 +75,7 @@ class Settings:
     TOKEN_ENCRYPTION_KEY: str = os.getenv("TOKEN_ENCRYPTION_KEY", "")
     REQUIRE_AUTH: bool = _env_bool("REQUIRE_AUTH", False)
     TRUST_PROXY: bool = _env_bool("TRUST_PROXY", False)
+    TRUSTED_PROXY_CIDRS: str = os.getenv("TRUSTED_PROXY_CIDRS", "")
 
     # -------------------------------------------------------------------------
     # Rate Limiting

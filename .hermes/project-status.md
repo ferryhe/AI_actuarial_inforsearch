@@ -24,6 +24,50 @@
   the 30-second sandbox command window and was not used as validation evidence.
 - Delivery: per task instruction, do not commit, push, or create a PR in this sandbox.
 
+# Latest work — Issue #352 trusted proxy client IP
+
+- Updated: 2026-09-14; project: `AI_actuarial_inforsearch`.
+- Branch: `fix/352-auth-client-ip`; clean starting baseline: `d1f885b` (`origin/main`).
+- Scope: shared client-IP resolver, config/startup, anonymous rate-limit fallback,
+  production environment guidance, focused resolver/auth/chat tests, and this status.
+- Explicit `TRUSTED_PROXY_CIDRS` gates forwarded headers. Missing or invalid lists
+  fail closed with an application-startup warning. TRUST_PROXY=false keeps the raw
+  socket peer. Trusted chains peel right to left, normalize IPv4/IPv6/mapped IPv6,
+  and reject malformed or oversized chains (32 hops; bounded header length).
+- Uvicorn's built-in header rewriting is disabled in run_server so the resolver
+  receives the real socket peer. Custom Uvicorn launches must use --no-proxy-headers.
+- Production operators must supply their actual Caddy address or isolated proxy
+  network CIDRs; no trust is enabled implicitly and no production data was read.
+- Validation: `python -m pytest -q --no-cov tests/test_client_ip.py -k
+  'not clients_behind_same_proxy'`: 36 passed, 3 deselected.
+- Full focused command: `PYTHONPATH=. timeout 180 python /tmp/issue352_pytest.py
+  -q --no-cov tests/test_client_ip.py tests/test_fastapi_auth_endpoints.py
+  tests/test_fastapi_chat_endpoints.py tests/test_api_logging.py`: 110 passed.
+  The temporary runner schedules a 10ms asyncio heartbeat because native TestClient
+  hangs even for an empty FastAPI app in this sandbox; repository code is unmodified
+  by the workaround. Native full pytest was interrupted at the reproduced hang.
+- `python -m py_compile` on all seven changed Python files and `git diff --check`: passed.
+- Deployment-source suite: 8 passed, 1 blocked/failing because docker run exits 126.
+  Optional Black check unavailable: No module named black.
+- Additional real registration-endpoint isolation assertions passed:
+  `PYTHONPATH=. timeout 60 python /tmp/issue352_pytest.py -q --no-cov
+  tests/test_fastapi_auth_endpoints.py::test_fastapi_auth_rate_limit_uses_trusted_forwarded_ip`
+  (1 passed after the final test edit).
+- Delivery blocked: `git add` failed creating the worktree index.lock under
+  `/opt/ai_actuarial_inforsearch/.git/worktrees/fix-352-auth-client-ip` with
+  "Read-only file system". No commit, push, PR, or remote-review wait was possible.
+  GitHub read also failed: error connecting to api.github.com.
+- All ten scoped files remain uncommitted; tests/test_client_ip.py is untracked.
+- Resume with writable Git metadata and GitHub connectivity: stage the ten scoped
+  files, commit `fix(auth): resolve client IP behind trusted proxies (#352)`, then
+  `git push -u origin fix/352-auth-client-ip` and create a PR closing #352.
+- No unrelated local changes or sibling repository access. No deployment performed.
+- Next: commit/push/create PR, then inspect checks and remote comments after about
+  15 minutes; rerun normal focused pytest in an environment with working TestClient.
+
+---
+
+# Latest work — PR #344 quality-gate repair
 # Latest work — PR #344 quality-gate repair
 
 - Updated: 2026-09-09 EDT.
