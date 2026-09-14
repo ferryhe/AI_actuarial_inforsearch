@@ -4,6 +4,7 @@ import csv
 import hashlib
 import io
 import json
+import mimetypes
 import os
 from pathlib import Path
 from typing import Any, Mapping
@@ -133,7 +134,7 @@ def update_file_markdown_content(
         storage.close()
 
 
-def get_downloadable_file(*, db_path: str, url: str) -> tuple[Path, str]:
+def _get_local_file(*, db_path: str, url: str) -> tuple[Path, str]:
     if not url:
         raise FileWriteError("URL parameter required")
     storage = Storage(db_path)
@@ -158,6 +159,19 @@ def get_downloadable_file(*, db_path: str, url: str) -> tuple[Path, str]:
 
     filename = str(file_record.get("original_filename") or resolved.name or "download.bin")
     return resolved, filename
+
+
+def get_downloadable_file(*, db_path: str, url: str) -> tuple[Path, str]:
+    return _get_local_file(db_path=db_path, url=url)
+
+
+def get_previewable_file(*, db_path: str, url: str) -> tuple[Path, str, str]:
+    """Return a locally stored PDF or image for inline-only browser preview."""
+    path, filename = _get_local_file(db_path=db_path, url=url)
+    media_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+    if media_type != "application/pdf" and not media_type.startswith("image/"):
+        raise FileWriteError("File type is not supported for inline preview", status_code=415)
+    return path, filename, media_type
 
 
 def export_catalog(*, db_path: str, format_type: str) -> tuple[bytes, str, str]:
