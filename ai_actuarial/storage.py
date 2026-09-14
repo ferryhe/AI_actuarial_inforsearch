@@ -935,6 +935,12 @@ class Storage:
             ON file_chunk_sets(profile_id)
             """)
         self._conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_file_chunk_sets_latest
+            ON file_chunk_sets(
+                file_url, profile_id, updated_at DESC, created_at DESC, chunk_set_id DESC
+            )
+            """)
+        self._conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_global_chunks_chunk_set_id
             ON global_chunks(chunk_set_id)
             """)
@@ -5093,7 +5099,7 @@ class Storage:
                     FROM file_chunk_sets s2
                     WHERE s2.file_url = b.file_url
                       AND s2.profile_id = s.profile_id
-                    ORDER BY s2.updated_at DESC, s2.created_at DESC
+                    ORDER BY s2.updated_at DESC, s2.created_at DESC, s2.chunk_set_id DESC
                     LIMIT 1
                   )
                 """,
@@ -5271,7 +5277,7 @@ class Storage:
                     FROM file_chunk_sets s2
                     WHERE s2.file_url = b.file_url
                       AND s2.profile_id = s.profile_id
-                    ORDER BY s2.updated_at DESC, s2.created_at DESC
+                    ORDER BY s2.updated_at DESC, s2.created_at DESC, s2.chunk_set_id DESC
                     LIMIT 1
                 ) AS latest_chunk_set_id
             FROM kb_chunk_bindings b

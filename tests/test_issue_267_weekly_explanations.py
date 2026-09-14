@@ -176,10 +176,11 @@ def test_v12_then_v13_migrations_preserve_v11_data(tmp_path: Path) -> None:
         conn.execute("DROP TABLE IF EXISTS weekly_explanations")
         conn.execute("DROP INDEX idx_global_chunks_stats_metadata")
         conn.execute("DROP INDEX idx_chunk_embeddings_stats_metadata")
+        conn.execute("DROP INDEX idx_file_chunk_sets_latest")
         conn.execute("DROP TABLE markdown_terminal_source_state")
         conn.execute("PRAGMA user_version=11")
 
-    assert CURRENT_SQLITE_SCHEMA_VERSION == 14
+    assert CURRENT_SQLITE_SCHEMA_VERSION == 15
     status = schema_status(db_path)
     plan = schema_plan(db_path)
     assert status["state"] == "needs_migration"
@@ -188,6 +189,7 @@ def test_v12_then_v13_migrations_preserve_v11_data(tmp_path: Path) -> None:
         "add_weekly_explanations_v12",
         "add_chunk_stats_metadata_indexes_v13",
         "add_markdown_terminal_source_state_v14",
+        "add_file_chunk_sets_latest_index_v15",
     ]
 
     applied = apply_schema(db_path)
@@ -196,6 +198,7 @@ def test_v12_then_v13_migrations_preserve_v11_data(tmp_path: Path) -> None:
         "add_weekly_explanations_v12",
         "add_chunk_stats_metadata_indexes_v13",
         "add_markdown_terminal_source_state_v14",
+        "add_file_chunk_sets_latest_index_v15",
     ]
     with sqlite3.connect(db_path) as conn:
         assert conn.execute("SELECT id FROM weekly_snapshots").fetchone()[0] == snapshot["id"]

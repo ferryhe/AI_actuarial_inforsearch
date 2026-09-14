@@ -675,7 +675,11 @@ class StorageV2RAGMixin:
                     LatestCS.c.profile_id == FileChunkSet.profile_id,
                 )
             )
-            .order_by(LatestCS.c.updated_at.desc(), LatestCS.c.created_at.desc())
+            .order_by(
+                LatestCS.c.updated_at.desc(),
+                LatestCS.c.created_at.desc(),
+                LatestCS.c.chunk_set_id.desc(),
+            )
             .limit(1)
             .correlate(KBChunkBinding.__table__, FileChunkSet.__table__)
             .scalar_subquery()

@@ -110,6 +110,7 @@ def test_v4_migration_adds_content_kind_and_manifest_raw(tmp_path) -> None:
     try:
         # Downgrade a fresh v4 database back to v3 shape: drop content_kind and
         # manifest_raw, then rewind the user_version so apply_schema migrates it.
+        storage._conn.execute("DROP INDEX idx_file_chunk_sets_latest")
         storage._conn.execute("ALTER TABLE files DROP COLUMN content_kind")
         storage._conn.execute("DROP TABLE manifest_raw")
         storage._conn.execute("PRAGMA user_version=3")
@@ -149,6 +150,7 @@ def test_v4_migration_backfills_html_rows_as_web_page(tmp_path) -> None:
         storage._conn.commit()
         # Downgrade to v3 (drop content_kind + manifest_raw, rewind version),
         # then let apply_schema re-run the v4 migration with its backfill.
+        storage._conn.execute("DROP INDEX idx_file_chunk_sets_latest")
         storage._conn.execute("ALTER TABLE files DROP COLUMN content_kind")
         storage._conn.execute("DROP TABLE manifest_raw")
         storage._conn.execute("PRAGMA user_version=3")

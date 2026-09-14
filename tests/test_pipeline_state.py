@@ -191,6 +191,7 @@ def test_v5_migration_adds_pipeline_tables(tmp_path) -> None:
     storage = Storage(db_path)
     try:
         # Downgrade a fresh v5 DB back to v4: drop the pipeline tables and rewind.
+        storage._conn.execute("DROP INDEX idx_file_chunk_sets_latest")
         storage._conn.execute("DROP TABLE pipeline_run")
         storage._conn.execute("DROP TABLE pipeline_stage")
         storage._conn.execute("DROP TABLE child_run")
