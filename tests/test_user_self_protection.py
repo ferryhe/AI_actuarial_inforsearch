@@ -8,7 +8,12 @@ from types import SimpleNamespace
 import pytest
 
 from ai_actuarial.api.deps import AuthContext
-from ai_actuarial.api.services.auth import AuthApiError, set_user_active, set_user_role
+from ai_actuarial.api.services.auth import (
+    AuthApiError,
+    list_users,
+    set_user_active,
+    set_user_role,
+)
 from ai_actuarial.storage import Storage
 
 
@@ -16,8 +21,11 @@ def _create_user(storage: Storage, email: str, *, role: str = "admin") -> int:
     return storage.create_user(email, "not-a-real-password-hash", role=role)
 
 
-def _request(db_path: Path) -> SimpleNamespace:
-    return SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(db_path=str(db_path))))
+def _request(db_path: Path, **query_params: str) -> SimpleNamespace:
+    return SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(db_path=str(db_path))),
+        query_params=query_params,
+    )
 
 
 def _email_admin(user_id: int) -> AuthContext:
@@ -212,3 +220,21 @@ def test_concurrent_demotions_leave_one_active_email_admin(tmp_path: Path) -> No
         assert count == 1
     finally:
         storage.close()
+
+
+def test_list_users_reports_global_active_admin_count_beyond_page(tmp_path: Path) -> None:
+    db_path = tmp_path / "users.db"
+    storage = Storage(str(db_path))
+    try:
+        _create_user(storage, "first-admin@example.com")
+        _create_user(storage, "second-admin@example.com")
+        for index in range(51):
+            _create_user(storage, f"member-{index:02d}@example.com", role="registered")
+    finally:
+        storage.close()
+
+    response = list_users(request=_request(db_path, page="1", per_page="1"))
+
+    assert len(response["users"]) == 1
+    assert response["total"] == 53
+    assert response["active_admin_count"] == 2

@@ -8485,8 +8485,8 @@ class Storage:
         per_page: int = 50,
         role: str | None = None,
         search: str | None = None,
-    ) -> tuple[list[dict], int]:
-        """Return a page of users and total count."""
+    ) -> tuple[list[dict], int, int]:
+        """Return a page of users, its filtered total, and global active admins."""
         filters: list[str] = []
         params: list[Any] = []
         if role:
@@ -8497,6 +8497,9 @@ class Storage:
             params.extend([f"%{search}%", f"%{search}%"])
         where = ("WHERE " + " AND ".join(filters)) if filters else ""
         total = self._conn.execute(f"SELECT COUNT(*) FROM users {where}", params).fetchone()[0]
+        active_admin_count = self._conn.execute(
+            "SELECT COUNT(*) FROM users WHERE role = 'admin' AND is_active = 1"
+        ).fetchone()[0]
         offset = (page - 1) * per_page
         rows = self._conn.execute(
             f"SELECT * FROM users {where} ORDER BY created_at DESC LIMIT ? OFFSET ?",
@@ -8505,7 +8508,7 @@ class Storage:
         cur = self._conn.execute("SELECT * FROM users LIMIT 0")
         cols = [d[0] for d in cur.description]
         users = [dict(zip(cols, r)) for r in rows]
-        return users, total
+        return users, total, active_admin_count
 
     # -------------------------------------------------------------------------
     # Quota helpers

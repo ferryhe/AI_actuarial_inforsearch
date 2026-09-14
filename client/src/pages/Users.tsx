@@ -43,6 +43,7 @@ export default function UsersPage() {
   const { t } = useTranslation();
   const { user: currentUser, isLoading: authLoading } = useAuth();
   const [users, setUsers] = useState<User[]>([]);
+  const [activeAdminCount, setActiveAdminCount] = useState(0);
   // Start as not loading — actual fetch is gated on auth being ready and user being admin
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -67,8 +68,9 @@ export default function UsersPage() {
     setLoading(true);
     setError(null);
     try {
-      const data = await apiGet<{ users: User[] } | User[]>("/api/admin/users");
+      const data = await apiGet<{ users: User[]; active_admin_count?: number } | User[]>("/api/admin/users");
       setUsers(Array.isArray(data) ? data : data.users || []);
+      setActiveAdminCount(Array.isArray(data) ? 0 : data.active_admin_count || 0);
     } catch (e: any) {
       setError(e.message || "Failed to load users");
     } finally {
@@ -155,7 +157,6 @@ export default function UsersPage() {
   };
 
   const roleOptions = ["admin", "registered", "premium", "operator", "operator_ai"];
-  const activeAdminCount = users.filter((user) => user.is_active && user.role === "admin").length;
   const unsafeSelfAction = (user: User, nextRole?: string, nextActive?: boolean) => {
     const removesActiveAdmin = user.is_active && user.role === "admin" &&
       ((nextRole !== undefined && nextRole !== "admin") || nextActive === false);

@@ -16,13 +16,15 @@
   credential, password, or session value.
 - UI: unsafe self/last-admin role choices and disable actions are disabled with an
   explanatory visible reason in English and Chinese. Backend enforcement remains authoritative.
-- Validation: `python -m pytest -q tests/test_user_self_protection.py` passed (5);
-  `python -m py_compile ai_actuarial/storage.py ai_actuarial/api/services/auth.py
-  tests/test_user_self_protection.py` passed; `git diff --check` passed. `npm run build`
-  could not run because the worktree lacks locally installed `vite` and related frontend
-  dependencies. An attempted existing auth-endpoint selection did not complete within
-  the 30-second sandbox command window and was not used as validation evidence.
-- Delivery: per task instruction, do not commit, push, or create a PR in this sandbox.
+- Recovery: added `docs/runbooks/admin-break-glass.md` with offline DB and controlled
+  bootstrap recovery, backup, validation, rollback, audit, and secret-rotation guidance.
+- Validation: `python -m pytest -q --no-cov tests/test_user_self_protection.py` passed
+  (6); `python -m py_compile ai_actuarial/storage.py ai_actuarial/api/services/auth.py
+  tests/test_user_self_protection.py` and `git diff --check` passed. The frontend build
+  could not run because `node_modules/.bin/vite` is absent in this worktree.
+- Delivery: staging/commit failed because Git metadata is outside the writable workspace:
+  `/opt/ai_actuarial_inforsearch/.git/worktrees/fix-357-user-self-protection/index.lock`
+  cannot be created on its read-only filesystem. No commit or push was possible.
 
 # Latest work — Issue #352 trusted proxy client IP
 

@@ -488,7 +488,7 @@ def list_users(*, request: Request) -> dict[str, Any]:
 
     storage = Storage(_db_path(request))
     try:
-        users, total = storage.list_users(
+        users, total, active_admin_count = storage.list_users(
             page=page, per_page=per_page, role=role_filter, search=search
         )
         safe_users = [_serialize_user_row(storage, user) for user in users]
@@ -496,6 +496,7 @@ def list_users(*, request: Request) -> dict[str, Any]:
             "success": True,
             "users": safe_users,
             "total": total,
+            "active_admin_count": active_admin_count,
             "page": page,
             "per_page": per_page,
         }
