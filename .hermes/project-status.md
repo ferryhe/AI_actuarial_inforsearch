@@ -1,77 +1,45 @@
-# Latest work — Issue #358 round-1 review follow-up
+# Latest work — Issue #352 trusted proxy client IP
 
-- Updated: 2026-09-14; repository `AI_actuarial_inforsearch`, branch
-  `fix/358-agentic-rag-perm-quota` (worktree
-  `/root/.hermes/projects/ai_actuarial/worktrees/fix-358-agentic-rag-perm-quota`),
-  HEAD (short `0e200b4`, see `git log -1 fix/358-agentic-rag-perm-quota`), parent `7e4b104`.
-- Follow-up scope: address the three findings in
-  `/root/.hermes/issue-to-merge/issue-358/evidence/round1-review.md`
-  (A1 KB-readiness regression, A2 dead constant, A3 missing 410 after sunset).
-- All three fixes live in `ai_actuarial/api/routers/agentic_rag.py`
-  (single file, +60 / -3 lines).
-  - A1: shim now calls the legacy `_resolve_ready_output_dir` helper against
-    the original payload BEFORE `query_chat`, translating any
-    `AgenticRagError` into `ChatApiError(status_code=503)` so missing or
-    non-ready KB manifests return the legacy `503 {"success": False}` body
-    instead of crashing inside the embedding generator with an
-    EmbeddingException -> 500. A small `_validate_chat_message` helper
-    mirrors the empty-message check that lives inside `query_chat`, so
-    callers that never had a chance to succeed (empty `query`) keep
-    getting `400 "Message is required"` instead of `503`.
-  - A2: deleted unused module-level `DEPRECATED_AGENTIC_CHAT_PATH` constant.
-  - A3: top of `api_agentic_rag_chat` parses the `Sunset` header with
-    `email.utils.parsedate_to_datetime` and short-circuits with
-    `JSONResponse(status_code=410, content={"success": False, "error": "Endpoint retired; use /api/chat/query"})`
-    when `datetime.now(timezone.utc) >= sunset` (2026-10-14).
-- Validation:
-  - `python -m pytest tests/test_agentic_rag_chat_query.py
-    tests/test_fastapi_chat_endpoints.py
-    tests/test_fastapi_agentic_rag_endpoints.py -q --no-cov`:
-    68 passed.
-  - `python -m pytest tests/test_fastapi_auth_endpoints.py -q --no-cov`:
-    19 passed.
-  - `python -m py_compile ai_actuarial/api/routers/agentic_rag.py`: ok.
-  - `git diff --check`: clean (run on the pre-commit diff).
-- Per scope constraints the test files `tests/test_agentic_rag_chat_query.py`
-  and `tests/test_fastapi_agentic_rag_endpoints.py` were NOT modified; only
-  production code in the Agentic RAG router changed. No new branch, worktree
-  or PR was created; manager will review and push the single commit on `fix/358-agentic-rag-perm-quota` (currently 1 ahead of
-  `origin/fix/358-agentic-rag-perm-quota`).
-  Verify with `git log -1 fix/358-agentic-rag-perm-quota`.
-- No commit/push attempted by the worker. Sibling repositories remain
-  off-limits.
+- Updated: 2026-09-14; project: `AI_actuarial_inforsearch`.
+- Branch: `fix/352-auth-client-ip`; clean starting baseline: `d1f885b` (`origin/main`).
+- Scope: shared client-IP resolver, config/startup, anonymous rate-limit fallback,
+  production environment guidance, focused resolver/auth/chat tests, and this status.
+- Explicit `TRUSTED_PROXY_CIDRS` gates forwarded headers. Missing or invalid lists
+  fail closed with an application-startup warning. TRUST_PROXY=false keeps the raw
+  socket peer. Trusted chains peel right to left, normalize IPv4/IPv6/mapped IPv6,
+  and reject malformed or oversized chains (32 hops; bounded header length).
+- Uvicorn's built-in header rewriting is disabled in run_server so the resolver
+  receives the real socket peer. Custom Uvicorn launches must use --no-proxy-headers.
+- Production operators must supply their actual Caddy address or isolated proxy
+  network CIDRs; no trust is enabled implicitly and no production data was read.
+- Validation: `python -m pytest -q --no-cov tests/test_client_ip.py -k
+  'not clients_behind_same_proxy'`: 36 passed, 3 deselected.
+- Full focused command: `PYTHONPATH=. timeout 180 python /tmp/issue352_pytest.py
+  -q --no-cov tests/test_client_ip.py tests/test_fastapi_auth_endpoints.py
+  tests/test_fastapi_chat_endpoints.py tests/test_api_logging.py`: 110 passed.
+  The temporary runner schedules a 10ms asyncio heartbeat because native TestClient
+  hangs even for an empty FastAPI app in this sandbox; repository code is unmodified
+  by the workaround. Native full pytest was interrupted at the reproduced hang.
+- `python -m py_compile` on all seven changed Python files and `git diff --check`: passed.
+- Deployment-source suite: 8 passed, 1 blocked/failing because docker run exits 126.
+  Optional Black check unavailable: No module named black.
+- Additional real registration-endpoint isolation assertions passed:
+  `PYTHONPATH=. timeout 60 python /tmp/issue352_pytest.py -q --no-cov
+  tests/test_fastapi_auth_endpoints.py::test_fastapi_auth_rate_limit_uses_trusted_forwarded_ip`
+  (1 passed after the final test edit).
+- Delivery blocked: `git add` failed creating the worktree index.lock under
+  `/opt/ai_actuarial_inforsearch/.git/worktrees/fix-352-auth-client-ip` with
+  "Read-only file system". No commit, push, PR, or remote-review wait was possible.
+  GitHub read also failed: error connecting to api.github.com.
+- All ten scoped files remain uncommitted; tests/test_client_ip.py is untracked.
+- Resume with writable Git metadata and GitHub connectivity: stage the ten scoped
+  files, commit `fix(auth): resolve client IP behind trusted proxies (#352)`, then
+  `git push -u origin fix/352-auth-client-ip` and create a PR closing #352.
+- No unrelated local changes or sibling repository access. No deployment performed.
+- Next: commit/push/create PR, then inspect checks and remote comments after about
+  15 minutes; rerun normal focused pytest in an environment with working TestClient.
 
-# Latest work — Issue #358 compatibility test repairs
-
-- Updated: 2026-09-14; repository `AI_actuarial_inforsearch`, branch
-  `fix/358-agentic-rag-perm-quota` tracking `origin/main`.
-- Follow-up scope: fix the two reported compatibility test failures. The public
-  permission fast path now enforces `chat.query` for authenticated tokens before
-  calling Chat. Anonymous public Chat behavior is preserved.
-- The permission fixture now supplies a test-only catalog/view role: `reader`
-  is actually an alias of `registered`, which includes `chat.query`. Both paths
-  reject this restricted role with 403 even for missing required payload fields.
-- Rate-limit assertions now verify the canonical `detail`/`retry_after` body and
-  `Retry-After` header on both paths; the production response contract is unchanged.
-- Validation: requested normal pytest execution hangs in TestClient during KB
-  fixture setup; a minimal FastAPI TestClient reproduces the same hang. A temporary
-  `/tmp/issue358_pytest_runner.py` schedules periodic asyncio wakeups without
-  changing project code or HTTP assertions. Command:
-  `PYTHONPATH=. python /tmp/issue358_pytest_runner.py tests/test_agentic_rag_chat_query.py tests/unit/test_permissions.py -q --no-cov`
-  passed all 26 tests (6 compatibility, 20 permissions). Python compilation of all
-  five changed Python files and `git diff --check` passed.
-- Existing worktree edits from the earlier implementation remain in the Agentic
-  router, rate limiter, migration docs, and old Agentic endpoint tests. This
-  follow-up changed only the dependency, new regression tests, and this record.
-- Inventory: no product client or CLI caller found. The legacy endpoint test file
-  still exercises the deprecated route at lines 627, 680, 703, 717, 748, 770;
-  the new compatibility suite intentionally exercises it via a path constant.
-  React uses `client/src/pages/chat/api.ts:82` (`apiPost` to `/api/chat/query`).
-  External consumers have not been verified; no live production data was accessed.
-- No commit/push/PR attempted. Sibling repositories remain off-limits. Parent
-  should rerun normal pytest outside this TestClient runtime limitation and review
-  the complete issue acceptance criteria before publishing; this follow-up does
-  not claim full-suite or complete issue acceptance verification.
+---
 
 # Latest work — PR #344 quality-gate repair
 
