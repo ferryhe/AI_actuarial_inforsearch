@@ -238,3 +238,33 @@ def test_list_users_reports_global_active_admin_count_beyond_page(tmp_path: Path
     assert len(response["users"]) == 1
     assert response["total"] == 53
     assert response["active_admin_count"] == 2
+
+
+def test_list_users_refreshes_active_admin_count_after_role_changes(tmp_path: Path) -> None:
+    db_path = tmp_path / "users.db"
+    storage = Storage(str(db_path))
+    try:
+        _create_user(storage, "admin@example.com")
+        member_id = _create_user(storage, "member@example.com", role="registered")
+    finally:
+        storage.close()
+
+    assert list_users(request=_request(db_path))["active_admin_count"] == 1
+
+    promoted = set_user_role(
+        request=_request(db_path),
+        auth=_credential_admin(),
+        user_id=member_id,
+        payload={"role": "admin"},
+    )
+    assert promoted["success"] is True
+    assert list_users(request=_request(db_path))["active_admin_count"] == 2
+
+    demoted = set_user_role(
+        request=_request(db_path),
+        auth=_credential_admin(),
+        user_id=member_id,
+        payload={"role": "registered"},
+    )
+    assert demoted["success"] is True
+    assert list_users(request=_request(db_path))["active_admin_count"] == 1

@@ -1,5 +1,7 @@
 # Latest work — Issue #357 user self-protection
 
+- Round 2 (2026-09-14): refreshed the UI list after successful role and active-state mutations so active-admin protection uses server-current data; added the role-transition count regression; focused pytest (7) and Python compilation passed, while the frontend build remains blocked by absent node_modules.
+
 - Updated: 2026-09-14 Asia/Shanghai.
 - Repository: `AI_actuarial_inforsearch`; branch: `fix/357-user-self-protection`.
 - Scope: guard user role and active-state mutations, user-management UI affordances,

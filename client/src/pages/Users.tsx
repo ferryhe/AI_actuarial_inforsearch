@@ -78,6 +78,10 @@ export default function UsersPage() {
     }
   }, []);
 
+  const refreshUsersList = async () => {
+    await fetchUsers();
+  };
+
   useEffect(() => {
     if (!authLoading && isAdmin) {
       fetchUsers();
@@ -89,7 +93,7 @@ export default function UsersPage() {
     setRoleDropdown(null);
     try {
       await apiPost(`/api/admin/users/${userId}/role`, { role: newRole });
-      setUsers((prev) => prev.map((u) => (u.id === userId ? { ...u, role: newRole } : u)));
+      await refreshUsersList();
     } catch (e: any) {
       alert(e.message || "Failed to change role");
     } finally {
@@ -108,9 +112,7 @@ export default function UsersPage() {
         ? `/api/admin/users/${user.id}/disable`
         : `/api/admin/users/${user.id}/enable`;
       await apiPost(endpoint);
-      setUsers((prev) =>
-        prev.map((u) => (u.id === user.id ? { ...u, is_active: !u.is_active } : u))
-      );
+      await refreshUsersList();
     } catch (e: any) {
       alert(e.message || "Failed to toggle user status");
     } finally {
