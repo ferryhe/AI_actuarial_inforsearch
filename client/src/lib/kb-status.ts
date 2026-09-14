@@ -10,7 +10,7 @@ export const KB_STATUS_REASONS = [
   "healthy",
 ] as const;
 
-export type KbStatusReason = typeof KB_STATUS_REASONS[number];
+type KbStatusReason = (typeof KB_STATUS_REASONS)[number];
 
 export interface KbStatusReference {
   reason?: KbStatusReason | string;
