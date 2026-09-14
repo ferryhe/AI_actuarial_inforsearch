@@ -699,9 +699,7 @@ def test_fastapi_agentic_rag_chat_rejects_empty_query(tmp_path: Path, monkeypatc
     ready_dir = tmp_path / "agentic_ready_data" / "explicit"
     _write_ready_data(ready_dir)
 
-    response = client.post(
-        "/api/agentic-rag/chat", json={"query": "   ", "kb_id": "kb-a"}
-    )
+    response = client.post("/api/agentic-rag/chat", json={"query": "   ", "kb_id": "kb-a"})
 
     assert response.status_code == 400
     assert "Message" in response.json()["error"]

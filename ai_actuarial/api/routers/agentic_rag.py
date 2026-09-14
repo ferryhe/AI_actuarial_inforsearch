@@ -33,9 +33,7 @@ def _db_path(request: Request) -> str:
 
 
 _AGENTIC_CHAT_SUNSET_HEADER = "Wed, 14 Oct 2026 00:00:00 GMT"
-_AGENTIC_CHAT_RETIRED_MESSAGE = (
-    "Endpoint retired; use /api/chat/query"
-)
+_AGENTIC_CHAT_RETIRED_MESSAGE = "Endpoint retired; use /api/chat/query"
 
 
 def _parse_sunset(value: str) -> datetime | None:

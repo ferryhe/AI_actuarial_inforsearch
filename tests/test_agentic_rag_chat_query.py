@@ -13,7 +13,6 @@ from ai_actuarial.shared_auth import GROUP_PERMISSIONS
 from ai_actuarial.storage import Storage
 from tests.test_fastapi_chat_endpoints import _build_test_client, _write_chat_agentic_ready_data
 
-
 CANONICAL_PATH = "/api/chat/query"
 COMPATIBILITY_PATH = "/api/agentic-rag/chat"
 
@@ -80,9 +79,7 @@ def test_compatibility_chat_requires_chat_query_permission_on_both_paths(
 ) -> None:
     client, app, _seed = _build_test_client(tmp_path, monkeypatch)
     app.state.require_auth = True
-    monkeypatch.setitem(
-        GROUP_PERMISSIONS, "catalog_only", frozenset({"catalog.read", "chat.view"})
-    )
+    monkeypatch.setitem(GROUP_PERMISSIONS, "catalog_only", frozenset({"catalog.read", "chat.view"}))
     storage = Storage(str(tmp_path / "index.db"))
     try:
         token = secrets.token_urlsafe(32)
