@@ -49,7 +49,9 @@ def _audit_event(storage: Storage) -> dict[str, object]:
     return json.loads(str(entry[0]))
 
 
-def test_single_active_email_admin_cannot_be_disabled_by_credential_principal(tmp_path: Path) -> None:
+def test_single_active_email_admin_cannot_be_disabled_by_credential_principal(
+    tmp_path: Path,
+) -> None:
     db_path = tmp_path / "users.db"
     storage = Storage(str(db_path))
     try:

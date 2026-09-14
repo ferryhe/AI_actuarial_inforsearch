@@ -528,7 +528,9 @@ def set_user_role(
         if outcome["result"] == "not_found":
             raise AuthApiError("User not found", status_code=404)
         if outcome["result"] == "blocked":
-            raise AuthApiError("This change would remove required administrator access", status_code=409)
+            raise AuthApiError(
+                "This change would remove required administrator access", status_code=409
+            )
         return {"success": True, "user_id": user_id, "role": new_role}
     finally:
         storage.close()
@@ -551,7 +553,9 @@ def set_user_active(
         if outcome["result"] == "not_found":
             raise AuthApiError("User not found", status_code=404)
         if outcome["result"] == "blocked":
-            raise AuthApiError("This change would remove required administrator access", status_code=409)
+            raise AuthApiError(
+                "This change would remove required administrator access", status_code=409
+            )
         return {"success": True, "user_id": user_id, "is_active": is_active}
     finally:
         storage.close()

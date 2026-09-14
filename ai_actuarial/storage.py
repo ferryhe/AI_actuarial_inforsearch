@@ -8407,7 +8407,9 @@ class Storage:
 
                 if result == "success":
                     if role is not None:
-                        self._conn.execute("UPDATE users SET role = ? WHERE id = ?", (role, user_id))
+                        self._conn.execute(
+                            "UPDATE users SET role = ? WHERE id = ?", (role, user_id)
+                        )
                     else:
                         self._conn.execute(
                             "UPDATE users SET is_active = ? WHERE id = ?",
