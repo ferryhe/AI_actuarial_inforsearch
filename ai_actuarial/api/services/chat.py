@@ -643,7 +643,8 @@ def list_knowledge_bases(*, db_path: str, auth: AuthContext | None = None) -> di
                     "index_status": latest_index.get("status")
                     or ("ready" if has_index and effective_index_model else None),
                     "index_built_at": latest_index.get("built_at"),
-                    "needs_reindex": bool(composition.get("needs_reindex")) or not embedding_compatible,
+                    "needs_reindex": bool(composition.get("needs_reindex"))
+                    or not embedding_compatible,
                     "needs_reembed": status["needs_reembed"],
                     "reason": status["reason"],
                     "serving": status["serving"],

@@ -64,7 +64,9 @@ def classify_kb_status(
 
     # A usable index may continue serving while follow-up content/binding work
     # is pending.  Only an incompatible embedding space is a re-embed gate.
-    serving = bool(has_index and not building and embedding_compatible and serving_enabled is not False)
+    serving = bool(
+        has_index and not building and embedding_compatible and serving_enabled is not False
+    )
     if reason == "embedding_incompatible":
         availability = "needs_reindex"
     elif reason in {"index_missing", "index_building"}:

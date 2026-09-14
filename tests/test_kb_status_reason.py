@@ -14,7 +14,14 @@ from ai_actuarial.kb_status import KB_STATUS_REASONS, classify_kb_status
     [
         ("embedding", {"has_index": True}, False, {}, "embedding_incompatible", False),
         ("content", {"has_index": True, "pending_file_count": 1}, True, {}, "content_dirty", True),
-        ("binding", {"has_index": True, "outdated_binding_count": 1}, True, {}, "binding_dirty", True),
+        (
+            "binding",
+            {"has_index": True, "outdated_binding_count": 1},
+            True,
+            {},
+            "binding_dirty",
+            True,
+        ),
         ("missing", {"has_index": False}, True, {}, "index_missing", False),
         (
             "building",

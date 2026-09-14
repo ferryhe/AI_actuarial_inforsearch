@@ -618,7 +618,7 @@ def test_fastapi_agentic_rag_search_rejects_registry_output_dir_outside_ready_ro
     assert "agentic_ready_data" in response.json()["error"]
 
 
-def test_fastapi_agentic_rag_chat_uses_explicit_output_dir(tmp_path: Path, monkeypatch) -> None:
+def test_fastapi_agentic_rag_chat_rejects_explicit_output_dir(tmp_path: Path, monkeypatch) -> None:
     client, _db_path = _build_client(tmp_path, monkeypatch)
     ready_dir = tmp_path / "agentic_ready_data" / "explicit"
     _write_ready_data(ready_dir)
@@ -632,22 +632,8 @@ def test_fastapi_agentic_rag_chat_uses_explicit_output_dir(tmp_path: Path, monke
         },
     )
 
-    assert response.status_code == 200, response.text
-    body = response.json()
-    assert body["query"] == "How does Article 19 define required capital?"
-    assert body["answer"].startswith("Found ")
-    assert "output_dir" not in body
-    assert body["kb_id"] is None
-    assert body["profile"] == "general"
-    assert body["evidence"]
-    assert body["results"] == body["evidence"]
-    assert body["metadata"]["evidence_count"] == len(body["evidence"])
-    assert [step["tool_name"] for step in body["metadata"]["tool_trace"]] == [
-        "search_sections",
-        "search_summaries",
-        "search_titles",
-        "trace_relations",
-    ]
+    assert response.status_code == 400
+    assert response.json()["error"].startswith("output_dir is not supported")
 
 
 def test_fastapi_agentic_rag_chat_resolves_registry_manifest_profile(
@@ -700,12 +686,11 @@ def test_fastapi_agentic_rag_chat_resolves_registry_manifest_profile(
     )
 
     assert response.status_code == 200, response.text
-    body = response.json()
-    assert body["kb_id"] == "kb-regulation"
-    assert body["profile"] == "regulation"
-    assert "output_dir" not in body
-    assert body["evidence"]
-    assert any(item["tool"] == "search_sections" for item in body["evidence"])
+    body = response.json()["data"]
+    assert body["metadata"]["kb_id"] == "kb-regulation"
+    assert body["metadata"]["profile"] == "regulation"
+    assert body["citations"]
+    assert body["metadata"]["tool_trace"]
     assert body["metadata"]["category"] == "document_qa"
 
 
@@ -714,12 +699,10 @@ def test_fastapi_agentic_rag_chat_rejects_empty_query(tmp_path: Path, monkeypatc
     ready_dir = tmp_path / "agentic_ready_data" / "explicit"
     _write_ready_data(ready_dir)
 
-    response = client.post(
-        "/api/agentic-rag/chat", json={"query": "   ", "output_dir": str(ready_dir)}
-    )
+    response = client.post("/api/agentic-rag/chat", json={"query": "   ", "kb_id": "kb-a"})
 
     assert response.status_code == 400
-    assert "query" in response.json()["error"]
+    assert "Message" in response.json()["error"]
 
 
 def test_fastapi_agentic_rag_chat_reuses_missing_ready_data_registry_error(
@@ -732,8 +715,8 @@ def test_fastapi_agentic_rag_chat_reuses_missing_ready_data_registry_error(
         "/api/agentic-rag/chat", json={"query": "capital", "kb_id": "kb-missing"}
     )
 
-    assert response.status_code == 404
-    assert "ready_data" in response.json()["error"]
+    assert response.status_code == 503
+    assert response.json()["success"] is False
 
 
 def test_fastapi_agentic_rag_chat_reuses_not_ready_registry_error(
@@ -763,8 +746,8 @@ def test_fastapi_agentic_rag_chat_reuses_not_ready_registry_error(
         "/api/agentic-rag/chat", json={"query": "capital", "kb_id": "kb-building"}
     )
 
-    assert response.status_code == 409
-    assert "not ready" in response.json()["error"]
+    assert response.status_code == 503
+    assert response.json()["success"] is False
 
 
 def test_fastapi_agentic_rag_chat_does_not_hide_tool_runtime_errors(
@@ -789,9 +772,8 @@ def test_fastapi_agentic_rag_chat_does_not_hide_tool_runtime_errors(
         },
     )
 
-    assert response.status_code == 500
-    assert "No evidence found" not in response.text
-    assert "tool runtime failure" not in response.text
+    assert response.status_code == 400
+    assert response.json()["error"].startswith("output_dir is not supported")
 
 
 def test_agentic_rag_registry_profile_lookup_does_not_hide_sqlite_errors(

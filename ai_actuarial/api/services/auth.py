@@ -488,7 +488,7 @@ def list_users(*, request: Request) -> dict[str, Any]:
 
     storage = Storage(_db_path(request))
     try:
-        users, total = storage.list_users(
+        users, total, active_admin_count = storage.list_users(
             page=page, per_page=per_page, role=role_filter, search=search
         )
         safe_users = [_serialize_user_row(storage, user) for user in users]
@@ -496,6 +496,7 @@ def list_users(*, request: Request) -> dict[str, Any]:
             "success": True,
             "users": safe_users,
             "total": total,
+            "active_admin_count": active_admin_count,
             "page": page,
             "per_page": per_page,
         }
@@ -515,16 +516,21 @@ def set_user_role(
         )
     storage = Storage(_db_path(request))
     try:
-        ok = storage.update_user_role(user_id, new_role)
-        if not ok:
-            raise AuthApiError("User not found", status_code=404)
         actor = auth.token or {}
-        storage.log_user_activity(
-            "admin_set_role",
-            user_id=user_id,
-            ip_address=client_ip(request),
-            detail=f"new_role={new_role} by {actor.get('subject', 'unknown')}",
+        email_user_id = actor.get("_email_user_id")
+        outcome = storage.update_user_with_admin_protection(
+            user_id,
+            role=new_role,
+            operator_kind="email" if email_user_id is not None else "token",
+            operator_id=int(email_user_id) if email_user_id is not None else actor.get("id"),
+            operation="admin_set_role",
         )
+        if outcome["result"] == "not_found":
+            raise AuthApiError("User not found", status_code=404)
+        if outcome["result"] == "blocked":
+            raise AuthApiError(
+                "This change would remove required administrator access", status_code=409
+            )
         return {"success": True, "user_id": user_id, "role": new_role}
     finally:
         storage.close()
@@ -535,16 +541,21 @@ def set_user_active(
 ) -> dict[str, Any]:
     storage = Storage(_db_path(request))
     try:
-        ok = storage.update_user_active(user_id, is_active)
-        if not ok:
-            raise AuthApiError("User not found", status_code=404)
         actor = auth.token or {}
-        storage.log_user_activity(
-            "admin_set_active",
-            user_id=user_id,
-            ip_address=client_ip(request),
-            detail=f"is_active={is_active} by {actor.get('subject', 'unknown')}",
+        email_user_id = actor.get("_email_user_id")
+        outcome = storage.update_user_with_admin_protection(
+            user_id,
+            is_active=is_active,
+            operator_kind="email" if email_user_id is not None else "token",
+            operator_id=int(email_user_id) if email_user_id is not None else actor.get("id"),
+            operation="admin_set_active",
         )
+        if outcome["result"] == "not_found":
+            raise AuthApiError("User not found", status_code=404)
+        if outcome["result"] == "blocked":
+            raise AuthApiError(
+                "This change would remove required administrator access", status_code=409
+            )
         return {"success": True, "user_id": user_id, "is_active": is_active}
     finally:
         storage.close()

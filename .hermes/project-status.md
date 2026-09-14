@@ -1985,3 +1985,2040 @@
 - Commit and push the validated branch, create a draft PR with `Closes #312`, mark it ready, observe
   the full remote-feedback window, assess the single feedback snapshot, require checks on the exact
   head, then merge and complete Issue/branch/worktree cleanup.
+
+---
+
+- Round 2 (2026-09-14): refreshed the UI list after successful role and active-state mutations so active-admin protection uses server-current data; added the role-transition count regression; focused pytest (7) and Python compilation passed, while the frontend build remains blocked by absent node_modules.
+
+- Updated: 2026-09-14 Asia/Shanghai.
+- Repository: `AI_actuarial_inforsearch`; branch: `fix/357-user-self-protection`.
+- Scope: guard user role and active-state mutations, user-management UI affordances,
+  focused regression coverage, and this status record only. Sibling repositories and
+  production data were not accessed.
+- Implementation: `Storage.update_user_with_admin_protection` uses one `BEGIN IMMEDIATE`
+  transaction for target lookup, active email-admin count, state update, and audit writes.
+  It prevents an email-session admin from removing their own active-admin status and
+  prevents every principal type from removing the last active email admin. Inactive
+  admins do not count. The service turns blocked requests into HTTP 409 responses.
+- Audit: both blocked and successful changes are written to `audit_events` and the
+  target user's activity history. `detail` is a compact JSON object with operator kind
+  and stable ID, target user ID, operation, result, and reason; it contains no
+  credential, password, or session value.
+- UI: unsafe self/last-admin role choices and disable actions are disabled with an
+  explanatory visible reason in English and Chinese. Backend enforcement remains authoritative.
+- Recovery: added `docs/runbooks/admin-break-glass.md` with offline DB and controlled
+  bootstrap recovery, backup, validation, rollback, audit, and secret-rotation guidance.
+- Validation: `python -m pytest -q --no-cov tests/test_user_self_protection.py` passed
+  (6); `python -m py_compile ai_actuarial/storage.py ai_actuarial/api/services/auth.py
+  tests/test_user_self_protection.py` and `git diff --check` passed. The frontend build
+  could not run because `node_modules/.bin/vite` is absent in this worktree.
+- Delivery: staging/commit failed because Git metadata is outside the writable workspace:
+  `/opt/ai_actuarial_inforsearch/.git/worktrees/fix-357-user-self-protection/index.lock`
+  cannot be created on its read-only filesystem. No commit or push was possible.
+
+# Latest work — Issue #352 trusted proxy client IP
+
+- Updated: 2026-09-14; project: `AI_actuarial_inforsearch`.
+- Branch: `fix/352-auth-client-ip`; clean starting baseline: `d1f885b` (`origin/main`).
+- Scope: shared client-IP resolver, config/startup, anonymous rate-limit fallback,
+  production environment guidance, focused resolver/auth/chat tests, and this status.
+- Explicit `TRUSTED_PROXY_CIDRS` gates forwarded headers. Missing or invalid lists
+  fail closed with an application-startup warning. TRUST_PROXY=false keeps the raw
+  socket peer. Trusted chains peel right to left, normalize IPv4/IPv6/mapped IPv6,
+  and reject malformed or oversized chains (32 hops; bounded header length).
+- Uvicorn's built-in header rewriting is disabled in run_server so the resolver
+  receives the real socket peer. Custom Uvicorn launches must use --no-proxy-headers.
+- Production operators must supply their actual Caddy address or isolated proxy
+  network CIDRs; no trust is enabled implicitly and no production data was read.
+- Validation: `python -m pytest -q --no-cov tests/test_client_ip.py -k
+  'not clients_behind_same_proxy'`: 36 passed, 3 deselected.
+- Full focused command: `PYTHONPATH=. timeout 180 python /tmp/issue352_pytest.py
+  -q --no-cov tests/test_client_ip.py tests/test_fastapi_auth_endpoints.py
+  tests/test_fastapi_chat_endpoints.py tests/test_api_logging.py`: 110 passed.
+  The temporary runner schedules a 10ms asyncio heartbeat because native TestClient
+  hangs even for an empty FastAPI app in this sandbox; repository code is unmodified
+  by the workaround. Native full pytest was interrupted at the reproduced hang.
+- `python -m py_compile` on all seven changed Python files and `git diff --check`: passed.
+- Deployment-source suite: 8 passed, 1 blocked/failing because docker run exits 126.
+  Optional Black check unavailable: No module named black.
+- Additional real registration-endpoint isolation assertions passed:
+  `PYTHONPATH=. timeout 60 python /tmp/issue352_pytest.py -q --no-cov
+  tests/test_fastapi_auth_endpoints.py::test_fastapi_auth_rate_limit_uses_trusted_forwarded_ip`
+  (1 passed after the final test edit).
+- Delivery blocked: `git add` failed creating the worktree index.lock under
+  `/opt/ai_actuarial_inforsearch/.git/worktrees/fix-352-auth-client-ip` with
+  "Read-only file system". No commit, push, PR, or remote-review wait was possible.
+  GitHub read also failed: error connecting to api.github.com.
+- All ten scoped files remain uncommitted; tests/test_client_ip.py is untracked.
+- Resume with writable Git metadata and GitHub connectivity: stage the ten scoped
+  files, commit `fix(auth): resolve client IP behind trusted proxies (#352)`, then
+  `git push -u origin fix/352-auth-client-ip` and create a PR closing #352.
+- No unrelated local changes or sibling repository access. No deployment performed.
+- Next: commit/push/create PR, then inspect checks and remote comments after about
+  15 minutes; rerun normal focused pytest in an environment with working TestClient.
+
+---
+
+# Latest work — PR #344 quality-gate repair
+# Latest work — PR #344 quality-gate repair
+
+- Updated: 2026-09-09 EDT.
+- Repository: `AI_actuarial_inforsearch`; branch: `codex/fix-pr-344-checks`.
+- Baseline: latest `origin/main@98af167`; PR #344 was already merged.
+- Request: fix the failed checks associated with PR #344.
+- CI run `34410277972` passed all 2,114 tests and four other jobs, but
+  `quality-gate` failed on Pylint E1101 in `tests/test_api_logging.py`:
+  full-repository inference attributed `baseFilename` to `_CapturingHandler`.
+- Fix: use `getattr` without a default after the existing `FileHandler` guard.
+  Missing attributes still raise; the existing path, duplicate-write, count,
+  replacement-type, and unrelated-handler assertions remain unchanged.
+- Changed files: `tests/test_api_logging.py` and this status entry only.
+- Validation: 11 focused logging tests passed; focused Pylint, both dead-code
+  gates, and `git diff --check` passed. Local full pytest: 2,103 passed, 10 skipped; one Docker test failed because
+  the local Docker engine pipe is absent (also failed outside the sandbox).
+  Full formatting/static scans are still running.
+  The original full Pylint scan passed locally on Windows, so Linux CI on the
+  repair PR is required to confirm the original CI failure is removed.
+- Original PR's Copilot suggestion concerns a hypothetical future scheduler
+  test ambiguity and does not explain this failure; left outside this scope.
+- Preserved the pre-existing local status notes and untracked
+  `.codex-tmp-agentic-rag/`, `diagrams/`, and `graphify-out/`; those are excluded
+  from this commit. No sibling repository was accessed.
+- Delivery: publish a follow-up PR; check exact-head CI and remote feedback
+  after approximately 15 minutes. No merge was requested.
+- Blockers: none. Next action: confirm all repair-PR checks pass and assess
+  remote comments against this check-repair request.
+
+---
+
+
+# Project Status — Issue #338 schema v12 migration source validation
+
+- Updated: 2026-09-03 EDT
+- Repository: `AI_actuarial_inforsearch`
+- Worktree: `C:\Project\AI_actuarial_inforsearch-issue-338`
+- Branch: `codex/issue-338-schema-v12-migration`
+- Baseline: `origin/main@411b0d477e68b8dd1748f44139e0ad07e9cbc729`
+- Issue: `#338 fix(schema): v12→v13 source validator rejects a legitimate v12 DB as invalid`
+- Review state: `C:\Users\ferry\.codex\issue-to-merge\AI_actuarial_inforsearch\issue-338\review-state.json`
+- Delivery stage: Draft PR #339 is Ready; the single remote-feedback window is assessed and one
+  documentation-only AC-1 fix is locally validated; ready to push the final candidate
+- Progress heartbeat: id `issue-338`, status `ACTIVE`, 15-minute cadence
+
+## Issue #338 acceptance criteria
+
+- AC-1: `_accept_version_12_source` accepts the exact genuine v12 source shape: no v13 stats
+  covering indexes, no v14 `markdown_terminal_source_state` table, and the supported legacy
+  `api_tokens` physical column order; it remains strict about unrelated future or malformed schema.
+- AC-2: `schema_status` classifies that source as `needs_migration`, with `can_apply=true` and
+  `blocked=false`, and `schema_plan` exposes the exact v12→v13→v14 migration chain.
+- AC-3: `apply_schema` on an isolated genuine-v12 fixture reaches current schema v14, applies the
+  v13 and v14 migrations exactly once, preserves seeded business rows and table counts, passes
+  `PRAGMA foreign_key_check`, and is a no-op when repeated.
+- AC-4: The same v14-signature regression is repaired for genuine v10 and v11 source shapes;
+  v1–v9 and v13 remain unaffected, invalid/future-object shapes stay fail-closed, and the focused
+  SQLite schema-runner suite plus repository-required checks remain green.
+
+## Issue #338 scope, baseline evidence, and non-goals
+
+- Worker-owned files are limited to `ai_actuarial/sqlite_schema.py`,
+  `tests/test_sqlite_schema_runner.py`, the incorrect historical fixtures in
+  `tests/test_issue_306_metadata_only_chunk_stats.py`,
+  `tests/test_issue_266_weekly_snapshots.py`, and
+  `tests/test_issue_267_weekly_explanations.py` that otherwise retain later v13/v14 objects. This
+  manager owns this status record.
+- Non-goals: production schema apply or deployment; server/database access; rebuilding
+  `api_tokens`; per-version signature refactoring; schema registry redesign; dependency upgrades;
+  sibling repositories; security frameworks; or speculative abstractions.
+- The assigned worktree is clean. `HEAD`, `origin/main`, and merge-base all match the supplied
+  baseline `411b0d477e68b8dd1748f44139e0ad07e9cbc729` on the assigned branch. The controller checkout
+  with unrelated Issue #317 work and every sibling repository remain off-limits.
+- Duplicate search found no equivalent active or closed-unmerged implementation. PR #330 is the
+  v14 regression source and PR #323 is the v13 migration dependency; neither fixes #338. Remote
+  heads are only `main` and unrelated `archive/flask-only-system`.
+- An isolated current-schema database was converted to the genuine v12 shape, including legacy
+  `api_tokens` order. Baseline `_accept_version_12_source` returned false and `schema_status`
+  returned `invalid`, `blocked=true`, and `can_apply=false`, with one missing required table and
+  two normalized future-index signature differences. `PRAGMA foreign_key_check` was clean.
+- Blame and function history trace `_accept_version_12_source` to PR #323. PR #330 added the v14
+  table and the correct v13 source validator but did not update the v12 validator to normalize that
+  later table. The premise is current and delivery is classified `code-change`.
+- The worker reproduced the identical PR #330 regression on genuine v10 and v11 sources: their
+  validators normalize their own later weekly tables and the v13 indexes but not the v14 table.
+  They are included as same-shaped AC-4 siblings; v1–v9 already tolerate the allowlisted backfill
+  table and v13 already handles the v14 absence explicitly.
+- Review-policy override: none; findings must be realistically reproducible and map directly to an
+  acceptance criterion above. Required checks remain separate merge gates.
+
+## Issue #338 required validation
+
+- New regression test must show expected failure before the source fix and pass afterward.
+- Focused: `python -m pytest -q tests/test_sqlite_schema_runner.py`.
+- Final: `python scripts/quality_gate.py`, `npm run dead-code:files`,
+  `npm run dead-code:symbols`, and `git diff --check`.
+- Remote merge gates: `dead-code-files`, `dead-code-symbols`, `quality-gate`, `frontend-check`, and
+  `python-smoke` on the exact PR head.
+
+## Issue #338 implementation and local review
+
+- The v12 validator now treats `markdown_terminal_source_state` as a later table, normalizes its
+  legitimate absence together with the two v13 stats indexes, and rejects the table or indexes when
+  they appear ahead of the recorded version. The valid-signature fast path now also checks v12.
+- The same PR #330 regression was repaired explicitly for v10 and v11. No validator uses a broader
+  `tolerate_backfill` path, and v1–v9/v13 behavior is unchanged.
+- The regression fixture reproduces the supported legacy `api_tokens` physical order, seeds a file
+  and API token, and removes exactly the v13/v14 objects from a fresh current schema. It verifies
+  classification, exact plan/apply results, all pre-existing table counts, seeded rows, foreign
+  keys, idempotency, and future/malformed fail-closed cases.
+- TDD first failed because the genuine v12 status was `invalid` instead of `needs_migration`; the
+  complete-future signature test also first failed because it bypassed source validation. Direct
+  v10/v11 probes returned false before their sibling fix and true afterward.
+- Fresh read-only review round 1 independently inspected the complete diff and history, ran the
+  genuine v10–v13 status matrix and 78 related tests, and returned PASS with no valid finding.
+- The first full quality gate exposed seven older v10/v11 migration tests whose setup still kept
+  v13 indexes and the v14 table. The same worker changed only nine fixture-setup lines; no product
+  assertion or explicit future-object invalid case changed. The two affected files then passed all
+  59 tests, and the five-file schema combination passed all 137 tests. Because the state script had
+  closed local review after PASS and the repair was setup-only, the decision log records why no new
+  review round was opened.
+
+## Issue #338 local validation so far
+
+- Worker and manager independently ran the schema-runner, Issue #306, and Issue #322 combination:
+  78 passed with only three existing SWIG deprecation warnings.
+- Full `tests/test_sqlite_schema_runner.py`: 57 passed. Black/isort and `git diff --check` passed.
+- The first complete quality-gate pytest run produced 2,074 passes, 10 skips, and 30 failures:
+  23 frontend runtime tests lacked `node_modules` in the fresh worktree, and seven historical schema
+  fixtures retained future objects. `npm ci` installed the lockfile dependencies without tracked
+  changes, and the seven fixture failures were corrected as described above. A clean full rerun is
+  the final evidence below; npm's existing audit notices are out of scope and caused no dependency
+  change.
+- The clean full `python scripts/quality_gate.py` rerun passed: 2,104 tests passed, 10 skipped, and
+  Black, isort, and Pylint all passed. `npm run dead-code:files` and
+  `npm run dead-code:symbols` each passed with zero baseline findings; final
+  `git diff --check` passed. The five-file historical schema combination remained green at
+  137 passed after the fixture correction.
+
+## Issue #338 remote feedback and checks
+
+- Draft PR `#339` was published from `e0a330009f9dbc4d8fecbca8edca9ef822551fc7` with exact
+  `Closes #338`, then marked Ready. The single remote snapshot was fetched after 694 seconds.
+- There were no human reviews, PR conversation comments, or Issue #338 comments. Copilot left two
+  inline threads. The same persistent worker and manager rejected the machine-path suggestion as
+  outside AC-1–AC-4: this project requires the status record and the same file already uses this
+  path convention. No path content changed.
+- The v12 validator docstring omitted its v14-table fail-closed contract. This maps directly to
+  AC-1 and was handled with a one-line documentation-only correction; no behavior changed. The
+  focused v12 selection passed 5 tests with 52 deselected, Black passed, and `git diff --check`
+  passed.
+- On the pre-feedback-fix head, all five remote merge gates completed successfully:
+  `dead-code-files`, `dead-code-symbols`, `quality-gate`, `frontend-check`, and `python-smoke`.
+  The same gates must complete successfully again on the final documentation-only head.
+
+## Issue #338 blockers or decisions needed
+
+- None.
+
+## Issue #338 recommended next action
+
+- Commit and push the one-line remote documentation fix plus this final status update, verify all
+  five required checks on the exact final head, then merge PR #339 and verify Issue #338 closure.
+
+# Project Status — Issue #333 content-first article lists
+
+- Updated: 2026-09-03 EDT
+- Repository: `AI_actuarial_inforsearch`
+- Worktree: `C:\Users\ferry\.codex\worktrees\44b9\AI_actuarial_inforsearch`
+- Branch: `codex/issue-333-content-first-lists`
+- Baseline: `origin/main@e3f028d1f67910a98e38ae5dfb4045c8d75e6f30`
+- Issue: `#333 feat(ui): make Home, Weekly, and Database article lists content-first`
+- Review state: `C:\Project\AI_actuarial_inforsearch\.git\codex-issue-to-merge\issue-333.json`
+- Delivery stage: local review and final validation complete; ready to create the Draft PR
+
+## Issue #333 acceptance criteria
+
+- AC-1: The full Home Materials, Categories, and Weekly Updates stat cards are links to
+  `/database`, `/categories`, and `/weekly`, with visible hover and keyboard-focus states; Sources
+  remains unchanged.
+- AC-2: Home keeps the deterministic snapshot `file_count`, requests/renders at most the newest six
+  preview files, and each file card shows its title, available full Category, Keywords, Summary,
+  and a localized month/day date only. The original timestamp remains in semantic `time` metadata
+  or a tooltip, file cards open File Detail, and missing metadata adds no empty label or placeholder.
+- AC-3: The selected Weekly detail retains the existing historical master-detail flow, retrieves
+  every snapshot member without a six/eight-item loss, and groups articles by the first trimmed
+  non-empty semicolon-delimited Category. Unclassified items use localized Uncategorized, group
+  counts are exact, and the complete original Category remains visible on each card.
+- AC-4: Every Weekly category group has a keyboard-operable expand/collapse control with correct
+  expanded/collapsed semantics, and every selected-week article remains reachable after grouping.
+- AC-5: The Database desktop list uses a wide article-content area for title plus available
+  Category, Keywords, and a bounded wrapping Summary. Outside that area it retains only Source,
+  First seen, Actions, and the existing selection control; it removes the standalone Category,
+  Markdown, Size, and Last seen/Date displays, and displayed dates always use `first_seen`.
+- AC-6: Database filters, sorting, pagination, row navigation, preview, download, AI Explain,
+  deletion/recovery paths, bulk selection, and permission behavior remain usable. Action and
+  selection controls do not trigger row navigation; icon-only actions have localized accessible
+  names and tooltips.
+- AC-7: The Weekly files read response adds only public `category`, `keywords`, and `summary` via a
+  lightweight Catalog join and does not read Markdown/body content or expose sensitive fields.
+  Database declares and renders its existing public `keywords` field. Missing or malformed public
+  metadata degrades without `null`, `undefined`, crashes, or visual noise.
+- AC-8: Loading, empty, partial-data, and error states remain clear; added English/Chinese copy and
+  short-date formats are correct; 320, 768, 1024, and 1440px layouts have no horizontal overflow,
+  including long titles, keywords, summaries, and category names.
+- AC-9: Focused Dashboard, Weekly, Database, Weekly API/service/storage, permissions/data-contract,
+  and responsive accessibility tests pass, together with frontend lint/type-check/build, both
+  dead-code gates, Python smoke, the unified quality gate, browser smoke, and desktop plus 320px
+  before/after screenshots.
+
+## Issue #333 scope, evidence, and non-goals
+
+- Worker-owned components are the Home stat/Weekly surfaces, shared Weekly read/view helpers and
+  card UI, Weekly selected-detail grouping/loading, Database article rows and `FileItem` metadata,
+  the minimal Weekly public file response/service/storage projection, bilingual copy, and directly
+  corresponding tests. This manager owns this status record and browser evidence.
+- Non-goals: changing Category/Keywords/Summary generation or storage, database schema cleanup,
+  File Detail redesign, Weekly snapshot/count/report generation, the historical-week selector,
+  global layout/max-width or design-system changes, pagination/filter redesign, permission-policy
+  changes, sibling repositories, dependency upgrades, security frameworks, or speculative
+  abstractions.
+- The worktree was clean and detached at the assigned baseline. After fetch, `HEAD`, `origin/main`,
+  and merge-base all matched `e3f028d1f67910a98e38ae5dfb4045c8d75e6f30`; the pre-created
+  assigned branch was then attached at that commit.
+- No open/closed PR, remote branch, or matching commit references #333, its URL, or the distinctive
+  content-first Home/Weekly/Database wording. The only other remote branch is the unrelated
+  `archive/flask-only-system`, whose relevant diff removes the React Dashboard and Database pages.
+- Baseline browser evidence with 15 disposable files and a 12-file latest snapshot showed inert
+  stat cards, eight Home/Weekly rows with full year/time/time-zone dates, four selected-week files
+  unreachable in Weekly, and Database desktop columns Title/Source/Category/MD/Size/Date/Actions.
+  The Database date is selected from `first_seen` or `last_seen` according to the active sort.
+- The Weekly service's field allowlist already names Category/Keywords/Summary, but its storage
+  member query and public Pydantic model return only URL/title/original filename/first seen.
+  `/api/files` already projects Category/Summary/Keywords publicly without sensitive fields.
+- Review-policy override: none; only realistically reproducible findings mapped to an AC above are
+  accepted.
+
+## Issue #333 validation and artifacts
+
+- The persistent worker implemented the content-first Home, Weekly, and Database views plus the
+  narrow Weekly public metadata projection. No lifecycle actions have run yet.
+- Local review round 1 accepted and fixed two AC-8 defects: a failed Weekly detail request and an
+  uncached Database list failure were incorrectly rendered as empty states. Live browser failure
+  injection now shows distinct localized error states while cached/partial behavior is preserved.
+- Local review round 2 accepted and fixed three scoped defects: collapsed Weekly groups now retain
+  their `aria-controls` target via `hidden`; the Database icon-only search-clear action has localized
+  `aria-label` and `title`; and semicolon-only malformed categories no longer create visual noise.
+- Local review round 3 accepted and fixed one AC-3/AC-8 copy defect: the English group count now
+  uses plural-safe noun-first wording (`Articles: {count}`), with one-item and multi-item assertions.
+- Manager-focused verification after round 2 passed: 57 Python tests, executable Issue #333 TSX
+  assertions, TypeScript typecheck, and `git diff --check`. Browser verification at 1024px confirmed
+  stable disclosure targets across collapse/reopen, the search-clear accessible name/tooltip, and
+  no horizontal overflow.
+- Fresh local review round 4 inspected the complete tracked/untracked candidate and passed with no
+  findings. The local review cycle is closed after four rounds.
+- Final candidate validation passed: unified quality gate (`2024 passed, 10 skipped`), frontend
+  ESLint (0 errors; 5 existing warnings), TypeScript typecheck, production build, both dead-code
+  gates (0 findings), FastAPI smoke (`13 passed`), Agentic RAG eval tests (`31 passed`), and the
+  deterministic Agentic RAG smoke (`3/3 passed`). `git diff --check` also passed.
+- Final live browser checks passed at 320, 768, 1024, and 1440px with exact viewport/scroll widths,
+  disclosure collapse/reopen semantics, the localized search-clear accessible name/tooltip, and
+  normal Home/Weekly/Database content. Final desktop and 320px screenshots were refreshed.
+- Final gates are `git diff --check`, both dead-code commands, frontend ESLint/TypeScript/build,
+  the three CI Python smoke commands, `python scripts/quality_gate.py`, and live browser checks at
+  320, 768, 1024, and 1440px.
+- Baseline screenshots are stored outside the checkout under
+  `C:\Users\ferry\.codex\visualizations\2026\09\03\01a06897-4cf9-7ff2-90ed-a0b13f4104cc\issue-333-screenshots\before`.
+- Current after screenshots are stored beside them under `issue-333-screenshots\after`; final
+  captures will be refreshed after the candidate passes the last local review.
+
+## Issue #333 blockers or decisions needed
+
+- None.
+
+## Issue #333 recommended next action
+
+- Commit the reviewed candidate, push the task branch, and create the required Draft PR.
+
+# Project Status — Issue #331 public HTTP redirect
+
+- Updated: 2026-09-02 EDT
+- Repository: `AI_actuarial_inforsearch`
+- Worktree: `C:\Users\ferry\.codex\worktrees\a0f0\AI_actuarial_inforsearch`
+- Branch: `codex/issue-331-http-https-redirect`
+- Baseline: `origin/main@114108dd4426bdeb5b7bd93bda9b2498ebc06986`
+- Issue: `#331 ops: restore public HTTP-to-HTTPS redirects for app hostnames`
+- PR: `https://github.com/ferryhe/AI_actuarial_inforsearch/pull/332`
+- State file: `C:\Users\ferry\.codex\issue-to-merge-state\AI_actuarial_inforsearch\issue-331.json`
+- Delivery stage: Draft PR #332 created; preparing the reviewed head for Ready
+- Progress heartbeat: id `issue-331-delivery-progress`, status `ACTIVE`, 15-minute cadence
+
+## Issue #331 acceptance criteria
+
+- AC-1: Public port 80 accepts only the two app hostnames `aiinforsearch.com` and
+  `www.aiinforsearch.com` for redirect behavior and returns permanent 301/308 responses to the
+  fixed canonical origin `https://www.aiinforsearch.com`.
+- AC-2: The canonical redirect preserves the complete request path and query string, including
+  `/database?category=AI`, and never builds `Location` from the request `Host` header.
+- AC-3: Unrelated Host values on public HTTP receive a bounded non-success response and are not
+  reflected into `Location`; `http://localhost:80/` continues to return 200 for the Caddy
+  container health check.
+- AC-4: The HTTPS application routes, application/baseline security headers, API/frontend private
+  container-port posture, and non-exposed Caddy admin API remain unchanged. The
+  `cross.aiactuary.cn` site block and upstream remain byte-for-byte unchanged.
+- AC-5: Focused regression tests, production-shaped Caddy adaptation/validation, and
+  `docker compose ... config -q` prove the listener, redirect, host-rejection, health, and
+  unchanged-topology contracts before publication.
+- AC-6: After review and squash merge, production is synced to the exact merge commit only after
+  repository-external rollback artifacts capture the pre-change tracked Caddyfile and running
+  Caddy configuration; the candidate validates before a scoped Caddy-only reload, without
+  rebuilding or restarting API/frontend.
+- AC-7: The running deployment passes HTTP redirects from China Telecom, China Unicom, and China
+  Mobile; fixed canonical path/query and arbitrary-Host checks; HTTPS apex/www, API health,
+  localhost health, all three container health states, `cross.aiactuary.cn`, and sustained Caddy
+  error checks; and normal mobile plus WeChat in-app browser canaries without a redirect loop.
+
+## Issue #331 scope, non-goals, and baseline evidence
+
+- Worker-owned repository scope is limited to `Caddyfile`, the directly related deployment
+  source tests, and documentation only where the changed tracked contract requires it. This
+  manager owns `.hermes/project-status.md`.
+- Sibling repositories, the primary checkout's #317 changes, issue-269, pr-324, #328,
+  API/frontend business code, dependency upgrades, DNS/CDN/certificates, HTTPS apex
+  canonicalization, and the `cross.aiactuary.cn` block/upstream are off-limits.
+- Duplicate search across all PR titles/bodies/heads and local/remote branches found no #331 or
+  equivalent public-port-80 redirect implementation. Merged PR #107 only added JSON logging and a
+  loopback-only localhost health responder, so it is relevant history rather than a duplicate.
+- The clean detached worktree, `HEAD`, `origin/main`, and merge-base all matched
+  `114108dd4426bdeb5b7bd93bda9b2498ebc06986` before creating the assigned branch.
+- Baseline public requests to both HTTP hostnames and the path/query probe failed with curl exit 7;
+  HTTPS apex/www, API health, and `cross.aiactuary.cn` returned 200.
+- Production-shaped `caddy adapt` showed the only port-80 listener as `127.0.0.1:80` and
+  `[::1]:80`, while HTTPS listened on `:443`. Targeted blame/history traces that listener to
+  merged PR #107 and finds no documented intent to reject public HTTP.
+- Production-shaped `docker compose -f docker-compose.yml -f docker-compose.override.yml config
+  -q` passed locally with non-secret placeholders; standalone Caddy is available through the
+  pinned container image for adaptation and validation.
+- Review-policy override: none. Only realistically reproducible findings mapped directly to an
+  AC above are accepted.
+
+## Issue #331 implementation and local review
+
+- The tracked Caddy configuration disables Caddy's generated HTTP redirects and owns public port
+  80 through one explicit server. `localhost` returns 200, the apex and `www` app Host values
+  redirect permanently to fixed `https://www.aiinforsearch.com{uri}`, and every other Host returns
+  an empty 421 without a `Location` header.
+- The HTTPS application block, security-header snippets, API/frontend upstreams, and complete
+  `cross.aiactuary.cn` block/upstream remain unchanged from `origin/main`. Compose continues to
+  publish only Caddy 80/443; neither API/frontend nor the Caddy admin port is published.
+- A production-shaped semantic test uses `caddy:2-alpine` to adapt and validate the tracked file,
+  then runs only the adapted HTTP server on an isolated random loopback port. It verifies both app
+  hosts, fixed canonical path/query, localhost health, arbitrary/cross Host rejection, unchanged
+  HTTPS upstreams, and cleanup of the temporary container.
+- TDD red evidence first found no public HTTP server on the baseline. Opening port 80 alone then
+  reproduced Caddy's automatic apex redirect to `https://aiinforsearch.com/...`; the final explicit
+  routing passes with fixed canonical output.
+- The adapted configuration test directly asserts the HTTPS server's automatic redirect state so
+  the guard against generated Host-derived redirects cannot disappear while the focused suite
+  remains green.
+- Local review round 1 found one valid AC-5 gap: the semantic runtime test did not directly prove
+  that Caddy's automatic Host-derived redirect injection remained disabled. The persistent worker
+  added the focused adapted-config assertion, reproduced the failing case by removing the guard,
+  restored it, and returned the focused suite to green.
+- Fresh read-only local review round 2 independently rechecked the full diff, production-shaped
+  runtime, encoded path/query cases, Host values with case/ports, exact HTTPS/cross configuration,
+  Compose topology, CI feasibility, and temporary-container cleanup. It passed with no valid
+  #331 findings, so the local review cycle is closed after two rounds.
+
+## Issue #331 local validation
+
+- Focused deployment configuration suite: 9 passed, including real Caddy adapt, validate, and
+  isolated runtime requests. Base and production Compose `config -q` both passed.
+- Unified quality gate passed after the worktree's lockfile dependencies were installed: 2,012
+  tests passed and 10 skipped; Black, isort, and Pylint passed. The earlier 20 failures were all
+  missing React/tsx executables and passed before the clean full rerun.
+- Both dead-code gates passed with zero findings. Frontend lint passed with zero errors and five
+  existing warnings; type-check and production build passed. Python smoke passed 13 FastAPI tests,
+  31 Agentic evaluation tests, and all 3 CLI evaluation cases.
+- `git diff --check` passed. No temporary `issue-331-caddy-*` container remains. The npm audit's
+  existing dependency findings are outside #331 and did not cause dependency changes.
+- The complete current post-review diff then passed the full gate again: 2,012 tests passed and 10
+  skipped; Black, isort, Pylint, both dead-code checks, frontend lint/type-check/build, all Python
+  and Agentic smoke/evaluation suites, the 9 focused deployment tests, both Compose configurations,
+  production-shaped Caddy validation, and `git diff --check` all passed.
+
+## Issue #331 blockers or decisions needed
+
+- No repository implementation blocker. Production SSH port 22 is reachable, but this host has no
+  SSH config/private key and BatchMode authentication failed for the common server accounts. The
+  existing in-app and Chrome browser sessions both reached the Tencent Cloud login page without an
+  authenticated session. Public 17CE/443.cn probes can cover the three carrier checks after
+  deployment; a real WeChat in-app canary capability has not been found. No unavailable production
+  or browser result will be inferred.
+
+## Issue #331 recommended next action
+
+- Push this Draft PR status update, verify the PR head and exact `Closes #331` reference, then move
+  PR #332 to Ready and start the single full feedback window.
+
+# Project Status — Issue #322 Markdown terminal preflight
+
+- Updated: 2026-09-02 EDT
+- Repository: `AI_actuarial_inforsearch`
+- Worktree: `C:\Users\ferry\.codex\worktrees\8480\AI_actuarial_inforsearch`
+- Branch: `codex/issue-322-markdown-terminal-preflight`
+- Baseline: `origin/main@e0645f92b867a7209af91f2ddd28027cede28778`
+- Issue: `#322 fix(markdown): preflight terminal source failures before conversion`
+- State file: `C:\Users\ferry\.codex\issue-to-merge-state\AI_actuarial_inforsearch\issue-322.json`
+- PR: `https://github.com/ferryhe/AI_actuarial_inforsearch/pull/330`
+- Delivery stage: PR #330 is Ready. Its single feedback window completed after 720.2 seconds;
+  the sole valid Copilot wording fix is pending commit/push and current-head CI.
+- Progress heartbeat: id `issue-322-delivery-progress`, status `ACTIVE`, 15-minute cadence
+
+## Issue #322 acceptance criteria
+
+- AC-1: A legacy binary `.ppt` is classified as `unsupported_legacy_ppt` before converter
+  execution and is excluded from later automatic Markdown backlogs while its source/state is
+  unchanged, unless an operator explicitly retries it.
+- AC-2: A missing local source is durably classified as `repair_required` before converter
+  execution and does not repeat the same scheduled conversion error.
+- AC-3: A `.pdf` whose declared MIME/content kind or magic identifies HTML is durably classified
+  as `invalid_source` and is not accepted solely from its extension or URL.
+- AC-4: Terminal preflight outcomes remain distinct from retryable converter failures. An unchanged
+  terminal source stays out of ordinary incremental selection; a verified source/state change or
+  explicit operator selection makes it eligible again under one narrow rule.
+- AC-5: Terminal skips have their own task counter and per-item result visibility, separate from
+  successful conversions, ordinary skips, and retryable errors; they cannot falsely make a run
+  successful.
+- AC-6: Auto exhaustion preserves every attempted converter and its concrete failure reason in
+  task details instead of only `Auto conversion failed`.
+- AC-7: Valid supported sources preserve the existing incremental selection, conversion,
+  persistence, and retry behavior; downstream Chunk and Embedding contracts do not change.
+- AC-8: Regression tests cover legacy PPT, missing source, HTML-disguised PDF, a valid supported
+  control, durable exclusion/re-entry, separate terminal statistics, and Auto failure details.
+
+## Issue #322 baseline and duplicate evidence
+
+- After fetch, `HEAD`, `origin/main`, and their merge-base all matched the supplied baseline
+  `e0645f92b867a7209af91f2ddd28027cede28778`; the worktree was clean and detached before the
+  isolated task branch was created.
+- No open, closed, or merged PR matched Issue #322, its URL/number, or the distinctive terminal
+  Markdown-preflight title. The remote exposes only `main`, and targeted commit history found no
+  equivalent terminal source state. Closed Issue #319 changes loose-coupled stage continuation and
+  does not implement Markdown source preflight or terminal eligibility.
+- A temporary-database reproduction made a real OLE-header `.ppt`, a missing `.pdf`, an HTML-body
+  `.pdf` with `content_type=text/html` and `content_kind=web_page`, and a valid `%PDF` control.
+  The first run called a converter for the PPT, HTML PDF, and valid PDF; the HTML PDF was accepted.
+  The second ordinary run selected the unchanged PPT and missing PDF again and repeated both
+  failures.
+- A separate runtime reproduction forced `markitdown` and `local` to fail concretely. The exposed
+  Auto error was only `Auto conversion failed for control.pdf`; only the final `local` failure
+  survived as the exception cause.
+- `git blame` and targeted `git log -S` trace broad candidate selection and missing-file retries to
+  the original May task runtime, and generic Auto exhaustion to the February/June converter work.
+  No later history establishes terminal preflight as intentionally excluded, so the bug premise is
+  current.
+
+## Issue #322 scope and validation
+
+- Worker-owned scope is limited to Markdown candidate selection/preflight, the smallest durable
+  state needed for unchanged-terminal exclusion and source-change/explicit-selection re-entry,
+  task result/stat visibility, Auto failure details, and directly corresponding migrations/tests.
+- Likely touched surfaces are `ai_actuarial/task_runtime.py`, storage/schema code only if durable
+  state requires it, the two task display-summary services, the shared frontend task metrics/types
+  and bilingual label, plus focused Python/React/schema tests. Exact edits must be justified by an
+  acceptance criterion; `doc_to_md/registry.py` is an inspected sibling and is edited only if the
+  task contract actually routes through it.
+- Required final checks: Issue-focused red/green tests, relevant Markdown/task/API/schema/frontend
+  regression, `git diff --check`, both dead-code gates, frontend lint/type-check/build, the unified
+  quality gate, and all three Python smoke commands from CI. Browser smoke is required if visible
+  Task metrics change.
+- Non-goals: LibreOffice or new converter installation, automatic source repair/redownload,
+  Issue #319 pipeline redesign, downstream Chunk/Embedding changes, sibling-repository work,
+  security frameworks, schema registries, or speculative abstractions.
+- No unrelated uncommitted or untracked files were present at startup. Generated ignored
+  `graphify-out/` data is manager-created analysis output and will not be committed.
+
+## Issue #322 implementation and local review
+
+- A schema-v14 `markdown_terminal_source_state` record persists `unsupported_legacy_ppt`,
+  `repair_required`, or `invalid_source` together with a bounded source fingerprint. Ordinary
+  selection excludes an unchanged terminal source before logical offset/limit, while explicit
+  selection and verified source changes re-enter preflight.
+- Task results keep downstream-ready files separate from per-item outcomes, expose an independent
+  `items_terminal_skipped` metric through both API summaries and the shared Task UI, and do not
+  report a terminal-only run as successful. Retryable converter failures remain eligible.
+- Runtime Auto and the same-shaped converter registry now retain every attempted converter and a
+  bounded concrete reason. Candidate reasons share the 800-character public budget, so later
+  candidates cannot disappear from the final task detail.
+- TDD first reproduced 12 failures for the original implementation gap. Local review round 1 found
+  two valid defects: generic-MIME OLE `.ppt` records were omitted from the automatic candidate
+  predicate, and a long Auto aggregate was truncated before all converter reasons reached the
+  public task result. The same persistent worker fixed both with red/green tests.
+- Fresh read-only review round 2 independently checked the full diff and returned PASS. Current
+  evidence includes 11 Issue-focused tests, 324 related regression tests, schema and Pipeline Baton
+  coverage, frontend TaskMetrics runtime/type checks, and `git diff --check` passing.
+- The first final dead-symbol gate found one Issue-added exported-but-module-private
+  `TaskFileOutcome`. The same persistent worker removed only the unnecessary `export`; the gate
+  then passed with zero findings. Because this happened after round 2 PASS, a third fresh read-only
+  reviewer checked the full current diff and returned supplemental PASS with no findings.
+
+## Issue #322 final local validation
+
+- Unified quality gate passed: 2,011 tests passed and 10 skipped, then Black, isort, and Pylint all
+  passed.
+- Dead-code files and symbols both passed with zero baseline findings. Frontend lint passed with
+  zero errors and five existing Hook warnings; TypeScript type-check and production build passed,
+  with only the existing large-chunk advisory.
+- Python CI smoke passed: 13 FastAPI authority tests, 31 Agentic evaluation tests, and all 3 CLI
+  evaluation cases. Evidence/citation/refusal rates were 1.0 and unsupported-answer rate was 0.0.
+- In-app-browser smoke used an isolated temporary database and one local test token. The real Task
+  History page rendered `Terminal skips: 1` for a Markdown terminal-source result, and browser
+  console errors were empty. Both local services were stopped after the check; no real account or
+  production data was used.
+- `git diff --check` passed. CRLF notices are informational workspace conversion warnings.
+- Files in scope: Markdown runtime, storage/schema, both task summary services, shared Task metric
+  UI/types/i18n, same-shaped converter registry, focused Issue test, related schema/task/frontend
+  regression fixtures, and this manager-owned status file. No downstream Chunk/Embedding production
+  code changed.
+
+## Issue #322 remote feedback
+
+- PR #330 was marked Ready at head `a0474909ee11b1c5fca8cc046753b737c80161ab`.
+  One complete snapshot was fetched 720.2 seconds later; there will be no second feedback fetch.
+- All five required checks on that head passed. No PR conversation comment or Issue comment was
+  present. Copilot left one inline comment about a failed item still reporting `Converted` progress.
+- The persistent worker and manager confirmed the comment under AC-5: a canonical
+  `retryable_error` must not have success-shaped visible progress. The minimal fix changes only
+  `Converted markdown` to neutral `Processed markdown` and adds a public-result progress assertion.
+- The new assertion failed before the fix and passed afterward. The worker also passed 131 related
+  tests plus Black, isort, Python compilation, and diff checks; the manager independently reran the
+  focused public-result test successfully.
+
+## Issue #322 blockers or decisions needed
+
+- None. Commit and push the confirmed wording fix, wait for all five required checks on the new
+  exact head, then squash merge, verify Issue closure, and clean the remote branch, worktree, and
+  local branch.
+
+# Project Status — Issue #320 strict manifest validation
+
+- Updated: 2026-09-02 EDT
+- Repository: `AI_actuarial_inforsearch`
+- Worktree: `C:\Users\ferry\.codex\worktrees\7a36\AI_actuarial_inforsearch`
+- Branch: `codex/issue-320-strict-manifest-validation`
+- Baseline: `origin/main@29b73be7ecf65d236570b5f9d698783a8966cb46`
+- Issue: `#320 fix(manifest): reject incompatible producer payloads instead of silent zero import`
+- State file: `C:\Users\ferry\.codex\issue-to-merge-state\AI_actuarial_inforsearch\issue-320.json`
+- PR: `https://github.com/ferryhe/AI_actuarial_inforsearch/pull/329`
+- Delivery stage: Draft PR #329 created with `Closes #320`; final status commit pending before the
+  Ready transition and single 600-second feedback/CI window
+
+## Issue #320 scope and acceptance criteria
+
+- Accept only the exact supported legacy `web-listening-manifest.v1` object contract, with
+  non-empty manifest/run/source identities and a `downloaded_assets` list. Full producer Result
+  envelopes, nested manifests, unsupported schemas, missing identities, and wrong container types
+  fail with stable machine-readable errors instead of succeeding with zero imported assets.
+- Parse raw JSON fail-closed, including duplicate keys at any depth and non-standard numeric
+  constants. Preflight every asset before any transaction: object and asset identity; absolute
+  HTTP(S) URL; SHA-256 checksum; media type; non-boolean, non-negative integer byte count;
+  filename; and at least one valid path field with documented precedence.
+- Keep valid legacy behavior: archive the original manifest bytes exactly, retain content kind,
+  preserve URL/SHA upsert behavior and path precedence, and make repeated ingestion idempotent.
+- Direct ingestion, task execution, task history, and API-visible errors expose only stable codes
+  and safe field metadata; malformed inputs cannot leak payload values, credentials, signed query
+  strings, cookies, or local secret paths through error chains or logs.
+- Non-goals: external consumer/adapter changes, producer API calls, artifact downloads, Baton or
+  new lineage work, a schema registry, storage redesign, migration, or backfill. Sibling
+  repositories remain off-limits.
+
+## Issue #320 baseline and duplicate evidence
+
+- Startup confirmed the assigned worktree on the exact supplied baseline. Final pre-publication
+  fetch again confirmed `HEAD`, `origin/main`, and their merge-base at `29b73be7`.
+- Baseline reproduction showed that both a full `web-listening-result.v1` envelope and a nested
+  incompatible manifest returned empty IDs with `imported=0`; an unsupported schema carrying a
+  manifest ID also reported `imported=0` while writing one raw-manifest row.
+- Focused baseline tests passed 44 tests, confirming the defect was an untested contract gap rather
+  than an already-failing implementation.
+- No equivalent open/merged PR, branch, or commit was found. Merged PR #205 introduced the
+  permissive legacy importer and PR #136 covers an unrelated Agentic ready-manifest registry.
+
+## Issue #320 implementation and review
+
+- `manifest_ingest.py` now performs strict raw parsing and complete contract validation before
+  opening the write transaction, then preserves the existing valid archive/upsert/idempotency
+  path. `ManifestIngestError` carries safe machine code and field details.
+- `task_runtime.py` validates and decodes the manifest before constructing storage, persists the
+  safe error code/details in task history, and logs contract failures without unsafe exception
+  chains. The public collection-run API remains unchanged and continues to reject manifest mode.
+- Focused regression coverage now exercises incompatible envelopes, unsupported schemas, duplicate
+  keys, every field/type rule, late-asset atomicity, backslash and invalid-port URLs, exact raw-byte
+  archival, path priority, idempotency, task/history/API propagation, and secret-safe logs.
+- TDD red evidence reproduced six core failures before implementation. Local review round 1 found
+  two valid acceptance-criteria defects: backslash URLs were accepted, and chained URL/file errors
+  could leak sensitive values. The same persistent worker fixed both with targeted red/green tests.
+  Fresh read-only review round 2 returned PASS with no findings. Focused validation passed 102
+  tests; the wider related regression selection passed 201 tests.
+
+## Issue #320 final local validation
+
+- Unified quality gate passed: 2,000 tests passed and 10 skipped, then Black, isort, and Pylint all
+  passed.
+- Both dead-code gates passed with zero baseline findings. Frontend lint passed with zero errors
+  and five existing Hook warnings; type-check and production build passed, with only the existing
+  large-chunk advisory.
+- Python smoke passed: 13 FastAPI authority tests, 31 Agentic evaluation tests, and all 3 CLI
+  evaluation cases with evidence/citation/refusal rates at 1.0 and unsupported-answer rate at 0.0.
+- `git diff --check` passed. No browser smoke is required because this change has no UI behavior.
+- Files in scope: `ai_actuarial/manifest_ingest.py`, `ai_actuarial/task_runtime.py`,
+  `tests/test_manifest_ingest.py`, `tests/test_issue_320_manifest_contract.py`,
+  `tests/test_issue_220_immutable_guards.py`, `tests/test_fastapi_ops_read_endpoints.py`,
+  `tests/test_fastapi_ops_write_endpoints.py`, and this manager-owned status file.
+- No unrelated uncommitted or untracked files are present. There are no local blockers; the next
+  action is to push this final status commit, mark PR #329 Ready, then perform the single required
+  feedback/CI/merge/cleanup lifecycle.
+
+# Project Status — Issue #308 inapplicable retrieval metrics
+
+- Updated: 2026-09-02 EDT
+- Repository: `AI_actuarial_inforsearch`
+- Worktree: `C:\Users\ferry\.codex\worktrees\2378\AI_actuarial_inforsearch`
+- Branch: `codex/issue-308-inapplicable-retrieval-metrics`
+- Baseline: `origin/main@0cdc25fce76d9eaf21d484020ccaa223fef0f3b6`
+- Issue: `#308 fix(chat): distinguish inapplicable retrieval metrics from missing score data`
+- State file: `C:\Users\ferry\.codex\issue-to-merge-state\AI_actuarial_inforsearch\issue-308.json`
+- PR: `https://github.com/ferryhe/AI_actuarial_inforsearch/pull/326`
+- Delivery stage: Draft PR #326 created with `Closes #308`; final status commit pending before
+  Ready for review
+
+## Issue #308 scope and acceptance criteria
+
+- AC-1: Keyword-only methods (`summaries`, `titles`, `sections`, `relations`, `formulas`,
+  `tables`, and `calculation_terms`) show Keyword relevance plus Retrieval method and omit
+  Semantic relevance when its canonical value is absent.
+- AC-2: `vector` evidence shows Semantic relevance plus Retrieval method and omits Keyword
+  relevance when its canonical value is absent.
+- AC-3: A metric applicable to the method remains visible as `—` when its canonical value is
+  missing, invalid, non-integer, or outside `0..100`.
+- AC-4: Any present valid canonical semantic or keyword value is shown regardless of method, so
+  hybrid evidence can show both.
+- AC-5: Unknown methods infer no applicability and show only valid scores actually present, plus
+  the safely normalized Other method badge.
+- AC-6: Citation Cards and Retrieved Blocks use the same shared component and therefore the same
+  rendering rules.
+- AC-7: Every rendered badge remains screen-reader labeled, `whitespace-nowrap`, flex-wrapping,
+  and free of horizontal overflow at 320, 768, 1024, and 1440 px.
+- AC-8: Backend response fields, persistence/history, ranking, result order, thresholds, planner,
+  tool selection, and retrieval APIs remain unchanged.
+
+## Issue #308 ownership, non-goals, and validation
+
+- Implementation ownership is limited to
+  `client/src/pages/chat/RetrievalIndicators.tsx` and its focused component test. The manager owns
+  this status file. `Chat.tsx` is inspected as the two-call-site contract and is edited only if the
+  shared-component contract cannot satisfy AC-6.
+- Sibling repositories are off-limits.
+- Non-goals: adding vector scoring to Ready Data, relabeling scores, creating a combined score,
+  changing any backend contract or retrieval behavior, backfilling history, adding a security
+  framework, or introducing a speculative abstraction.
+- Component matrix: vector-only; every keyword-only method; valid hybrid scores; applicable
+  missing/invalid/out-of-range scores; all missing; and unknown method with absent, one, or both
+  valid scores. Assertions cover exact visible and absent accessible labels.
+- Regression matrix: the existing backend Issue #265 suite preserves Agentic raw-score and
+  Standard vector-mapping contracts; frontend lint, type-check, build, real browser smoke, both
+  dead-code gates, the unified quality gate, and all three Python smoke commands are required.
+
+## Issue #308 baseline evidence
+
+- The assigned worktree arrived clean but detached. After fetching, `HEAD`, `origin/main`, and
+  their merge-base all matched the supplied baseline exactly; the manager created the isolated
+  branch named above without changing files.
+- Runtime server rendering reproduced both defects: `titles` with keyword score `31` rendered an
+  extra `Semantic relevance: —` badge, and `vector` with semantic score `83` rendered an extra
+  `Keyword relevance: —` badge.
+- `git blame` and the complete path history show that PR #286 introduced the component with a
+  fixed three-badge array and no later change. Issue #308 explicitly supersedes that earlier layout
+  rule as a focused UX follow-up, so the report is current rather than stale or duplicate work.
+- Duplicate search found no equivalent PR or branch. Merged PR #286 is the linked #265 origin and
+  does not implement the new applicability distinction.
+
+## Issue #308 implementation and validation
+
+- The shared component now treats `vector` as semantic-applicable, the seven Ready Data methods as
+  keyword-applicable, and unknown methods as having no inferred applicability. Any valid canonical
+  score is still rendered regardless of method, while an applicable invalid/missing score remains
+  visible as `—`.
+- TDD red evidence showed the original vector-only and keyword-only cases each rendered the extra
+  inapplicable `—` badge. The expanded component matrix then passed after the minimal component
+  change.
+- Local review completed after one fresh read-only reviewer round with no valid findings. Citation
+  Cards and Retrieved Blocks were independently confirmed to pass identical fields to the same
+  shared component.
+- The Issue-focused component test passed. The retrieval/backend regression selection passed 143
+  tests, preserving Agentic raw-score and Standard vector-mapping contracts.
+- Frontend lint passed with zero errors and five existing Hook warnings; type-check and production
+  build passed, with only the existing large-chunk advisory. Both dead-code gates passed with zero
+  findings.
+- Python smoke passed: 13 FastAPI authority tests, 31 Agentic evaluation tests, and all 3 CLI smoke
+  cases with quality rates at 1.0.
+- The unified quality gate passed: 1,882 tests passed and 10 skipped; Black, isort, and Pylint all
+  passed.
+- Real browser smoke used controlled local API responses in the actual Chat page. Citation Cards
+  and expanded Retrieved Blocks rendered keyword-only, vector-only, applicable-missing, unknown,
+  and hybrid cases identically. At 320, 768, 1024, and 1440 px, all 22 expected badges stayed
+  within their containers, retained `nowrap`, wrapped as whole badges, and produced no page
+  overflow or console errors. The existing narrow-screen sidebar was closed before inspecting the
+  conversation content.
+- Final fetch confirmed `origin/main`, branch merge-base, and the original baseline remain
+  `0cdc25fce76d9eaf21d484020ccaa223fef0f3b6`.
+
+# Project Status — Issue #307 scheduler reconciliation
+
+- Updated: 2026-09-02 EDT
+- Repository: `AI_actuarial_inforsearch`
+- Worktree: `C:\Users\ferry\.codex\worktrees\be1a\AI_actuarial_inforsearch`
+- Branch: `codex/issue-307-scheduler-reconciliation`
+- Original baseline: `origin/main@0fe3101df6f3834e33b609aff3d119b70df9a274`
+- Integrated main: `origin/main@25d0e0ae96a938d97636041e77a175203184237f`
+- Issue: `#307 fix(tasks): reconcile configured recurring tasks with effective scheduler jobs`
+- State file: `C:\Users\ferry\.codex\issue-to-merge-state\AI_actuarial_inforsearch\issue-307.json`
+- PR: `https://github.com/ferryhe/AI_actuarial_inforsearch/pull/325`
+- Delivery stage: PR #325 is Ready; the full 10-minute feedback window completed, all five CI
+  checks passed, and two confirmed Copilot findings are fixed and locally revalidated for push
+- Progress heartbeat: id `bug-issue`, status `ACTIVE`, 15-minute cadence
+
+## Issue #307 pause checkpoint (historical)
+
+- Pause requested after local review round 1 returned PASS with no findings. The persistent state
+  file remains at `local_review_complete` with `review_count: 1` and no PR recorded.
+- Completed validation: Issue-focused tests (36 passed), worker extended backend regression
+  (293 passed), reviewer regression (113 passed), rendered component assertions, real browser
+  smoke for registered-reader/admin controls and English/Chinese copy, dead-code file/symbol gates,
+  frontend lint/type-check/build, and `python scripts/quality_gate.py`.
+- Unified quality result: PASS; full pytest was 1876 passed and 10 skipped, followed by passing
+  Black, isort, and Pylint baseline checks. Frontend lint retained 5 existing warnings and build
+  retained the existing large-chunk advisory.
+- At this historical pause point, the separate CI-equivalent `python-smoke` commands had not run
+  and no Git or remote lifecycle action had occurred. Both the smoke commands and all other
+  post-integration local checks have now completed below; the Git/remote lifecycle still has not
+  started.
+- Resume entry: from this exact worktree and branch, verify `git status`, run the three
+  `python-smoke` commands from `.github/workflows/ci.yml`, review the final diff/status, then commit,
+  push, open the Draft PR with `Closes #307`, mark Ready, and continue the recorded remote-feedback
+  workflow.
+- Preserve all current tracked implementation/test changes, the two new test files, the three
+  manager-generated `graphify-out/` directories, and the Issue state file. Sibling repositories
+  remain off-limits.
+
+## Issue #307 latest-main integration
+
+- The controller reported and the manager verified that `origin/main` advanced five commits from
+  `0fe3101` to `25d0e0a` through PR #324.
+- A three-way preflight found no business-code or test conflict and no untracked-path collision.
+  The only conflict was this manager-owned status file.
+- The branch fast-forwarded to `25d0e0a`; all #307 tracked changes and both new tests were restored
+  from the recoverable stash. The three `graphify-out/` directories remained untouched.
+- The status-file conflict was resolved by preserving the complete #307 record and its prior
+  #306/#317 history while adding the current main record for PR #324 below.
+- PR #324 changed guest-only task-option caching and unrelated pages/tests. It did not change any
+  #307 production or test file, nor a hook consumed by the #307 scheduling surfaces, so local
+  review round 1 remains applicable and `review_count` stays at 1.
+
+## Issue #307 post-integration validation
+
+- Extended scheduler/API/frontend regression: 293 passed.
+- FastAPI entrypoint/native-authority smoke: 13 passed. Agentic evaluation tests: 31 passed.
+  Agentic command smoke: 3/3 cases passed with all reported quality rates at 1.0.
+- Frontend lint passed with 0 errors and 5 existing hook warnings; type-check and production build
+  passed, with only the existing large-chunk advisory.
+- Dead-code file and symbol gates passed with zero findings.
+- Unified quality gate passed: 1,880 tests passed and 10 skipped; Black, isort, and Pylint passed.
+- Real browser smoke passed against the integrated branch. A registered reader saw both Effective
+  Scheduler Jobs and Configured Recurring Tasks, including all five expected job kinds, while add,
+  reinitialize, edit, and delete controls were absent. An admin saw add, reinitialize, edit, and
+  configured-task delete controls, with no direct effective/system-job delete action. English and
+  Chinese desired/effective, diagnostic/recovery, read-only, and deletion-consequence copy all
+  rendered correctly. The confirmation was inspected without deleting the recurrence.
+- `git diff --check` passed apart from informational CRLF conversion notices. No second local review
+  was needed because the integrated upstream changes did not touch or feed the reviewed #307
+  surfaces.
+
+## Issue #307 remote feedback and follow-up
+
+- PR #325 was created as Draft, verified to contain `Closes #307`, then marked Ready. The required
+  observation window ran for 635 seconds before the one permitted feedback snapshot was fetched.
+- Remote CI passed `dead-code-files`, `dead-code-symbols`, `quality-gate`, `frontend-check`, and
+  `python-smoke`; the reviewed head was `e3109b4bcab6414c5d18f1de19657f5753c21334` and GitHub
+  reported the PR mergeable and clean.
+- Copilot raised four inline comments. Two were confirmed and fixed: unmanaged scheduler jobs now
+  retain their generated sanitized metadata so identity survives in-process list reordering; and
+  `daily at H:MM` is normalized to `HH:MM` both for runtime registration and desired/effective
+  reconciliation.
+- The two comments about absolute paths in this internal workflow record were rejected under the
+  repository review policy because they do not map to any Issue #307 acceptance criterion.
+- Red evidence reproduced both accepted findings, including a 503 reconciliation failure and the
+  real scheduler rejecting the API-accepted single-digit hour. Green evidence: 2/2 focused tests,
+  46/46 Issue/API tests, and the manager's 295/295 extended regression passed. Black, isort, and
+  `git diff --check` passed for the follow-up patch.
+
+## Issue #307 acceptance criteria and boundaries
+
+- AC-1: Effective scheduler status exposes a deterministic within-process `job_key` plus only
+  sanitized kind, source, display name, interval, last/next run, managed, and deletable metadata.
+- AC-2: Configured recurring tasks, site jobs, the global job, Pipeline Baton, and Ready Data are
+  distinguishable; configured effective jobs map back to their configured task.
+- AC-3: Configured-task add, update, and delete return success only after desired YAML and live
+  scheduler state match; recurrence removal needs no manual Reinitialize.
+- AC-4: A forced registration or reconciliation failure returns failure and restores both the
+  previous YAML and the previous scheduler state.
+- AC-5: Reconciliation does not stop active tasks or alter history, logs, stop behavior, or
+  unrelated system jobs; system jobs have no direct delete action.
+- AC-6: `tasks.view` readers can see Configured Recurring Tasks and Effective Scheduler Jobs but
+  no mutation controls; direct writes remain 403 and operator/admin write flows remain valid.
+- AC-7: Reinitialize remains a diagnostic/recovery action, and English/Chinese copy plus deletion
+  confirmation clearly explain desired versus effective state.
+- Implementation ownership is limited to `ai_actuarial/task_runtime.py`, the directly related
+  FastAPI ops read/write services and routers, `client/src/pages/Tasks.tsx`,
+  `client/src/pages/tasks/ScheduledTasksSection.tsx`, `client/src/hooks/use-i18n.ts`, the three
+  same-shaped mutation callers `ScheduleFromTaskButton.tsx`, `WebListeningForm.tsx`, and
+  `PipelineBaton.tsx`, and focused tests for those contracts. `.hermes/project-status.md` remains
+  manager-owned.
+- Sibling repositories are off-limits. Non-goals are schedule/timezone UX from #312, a database
+  job table, a generic scheduler platform, direct system-job deletion, stopping current tasks,
+  history/log/artifact deletion, APScheduler/Celery migration, and pipeline-order changes.
+
+## Issue #307 baseline evidence
+
+- The assigned worktree was clean; branch, `HEAD`, and supplied baseline matched exactly.
+- A real `NativeTaskRuntime` reproduction showed add left only the existing 30-minute Pipeline
+  Baton job, update left the old daily timer effective, and delete left the two-hour timer live
+  after YAML became empty. Manual `init_scheduler()` was required after each mutation.
+- `git blame` and targeted history trace the split to the original April FastAPI work: CRUD writes
+  YAML and calls only `set_site_config`, while the separately exposed Reinitialize path alone calls
+  `init_scheduler`. The status endpoint independently enumerates live jobs. Later changes added
+  system jobs and stricter RBAC without creating an automatic reconcile contract, so the Issue is
+  current and not a stale request.
+- The linked #312 explicitly depends on #307 and owns only future schedule expression/timezone UX.
+- Baseline CI run 33582893736 passed all five jobs at the assigned merge baseline.
+
+## Issue #307 required validation
+
+- Scheduler/runtime tests cover every job kind/source, stable keys, configured mapping,
+  add/update/delete reconciliation, forced failure rollback, and unchanged system jobs.
+- API tests cover the reader/operator/admin RBAC matrix and active/history/log/stop regressions.
+- Frontend source and rendered-component tests cover read-only visibility, hidden mutations,
+  bilingual copy, and deletion confirmation.
+- Final validation includes focused scheduler/API/frontend tests, frontend lint/type-check/build,
+  browser smoke, dead-code file/symbol checks, the unified quality gate, and Python smoke tests.
+
+# Project Status — PR #324 guest UI permission gating
+
+- Updated: 2026-09-02 EDT
+- Repository: `AI_actuarial_inforsearch`
+- Checkout: `C:\Project\AI_actuarial_inforsearch\.codex-worktrees\pr-324`
+- Branch: `fix/guest-ui-permission-noise`
+- Baseline merged: `origin/main@0fe3101`
+- PR: `https://github.com/ferryhe/AI_actuarial_inforsearch/pull/324`
+- Task: review PR #324, fix its failing test gate, and evaluate Copilot feedback
+
+## Scope and boundaries
+
+- This repository is the only writable project workspace; sibling repositories are off-limits.
+- Scope is limited to the guest UI permission behavior, the failed formatting gate, and the
+  Copilot review comment on `useTaskOptions`.
+- The primary checkout has unrelated user-owned changes and remains untouched. Work is isolated
+  in this task worktree.
+
+## Findings and implementation
+
+- The original remote run passed all 1,880 pytest tests but failed the quality gate because
+  `tests/test_knowledge_react_source.py` was not Black-formatted.
+- Copilot's comment was confirmed: a disabled `useTaskOptions` consumer could expose module-level
+  cached operator data and could retain a stale loading state.
+- Disabled consumers now receive stable fallback/empty values, `loading=false`, `error=null`, and
+  a request-free `refresh` function.
+- A runtime TypeScript/React hook regression warms the authorized cache, expires it, mounts a
+  disabled guest consumer, and verifies that no operator data or new requests escape.
+- Black reformatted the original failing test file.
+- The Copilot thread was answered with the fix and regression evidence.
+- Latest `origin/main` was merged after it advanced through PR #323; its sole textual conflict in
+  this status file was resolved in favor of the current PR #324 record.
+
+## Local verification before latest-main merge
+
+- New runtime regression: demonstrated the stale-data/loading failure before the hook fix and
+  passed after the fix.
+- Focused React source suite: 78 passed.
+- Black check for the four relevant React source test files: passed.
+- Frontend lint: passed with 0 errors.
+- Frontend type-check: passed.
+- Frontend production build: passed; only the existing Vite large-chunk advisory remained.
+- Four-layer dead-code gate: passed with zero baseline findings.
+- Unified quality gate: passed with 1,861 tests passed and 10 skipped; Black, isort, and Pylint
+  passed.
+- `git diff --check`: passed apart from informational CRLF conversion notices.
+- Browser shell smoke as a signed-out user showed no operator diagnostics or console errors. The
+  backend was not running, so proxied API requests returned connection-refused/500 responses;
+  the runtime regression is the authoritative guest-cache check.
+
+## Post-merge verification
+
+- Focused React source suite: 78 passed.
+- Frontend lint, type-check, production build, and four-layer dead-code gate: passed.
+- Unified quality gate: 1,871 passed and 10 skipped; Black, isort, and Pylint passed.
+- `git diff --check`: passed.
+
+## Delivery state
+
+- Fix commit `1d61054` is pushed to the PR branch.
+- The Copilot reply is published at discussion comment `3910583670`.
+- Post-merge local validation is complete; the new remote CI run is the remaining check at this
+  snapshot.
+
+## Preserved merged Issue #306 evidence
+
+- PR #323 merged at `0fe3101df6f3834e33b609aff3d119b70df9a274` on 2026-09-02T02:21:06Z.
+- Issue #306 closed automatically one second later.
+- PR #323 passed `dead-code-files`, `dead-code-symbols`, `quality-gate`, `frontend-check`, and
+  `python-smoke`; the post-merge main CI run 33582893736 also passed all five jobs.
+- The detailed #306 implementation and validation record remains preserved below.
+
+# Project Status — Issue #306 metadata-only Chunk & Embedding stats
+
+- Updated: 2026-09-01 EDT
+- Repository: `AI_actuarial_inforsearch`
+- Worktree: `C:\Users\ferry\.codex\worktrees\692c\AI_actuarial_inforsearch`
+- Branch: `codex/issue-306-metadata-only-stats`
+- Baseline: `origin/main@1e7f5f6b1cf29e7e9c0a413e221e774d77bdeee2`
+- Issue: `#306 perf(tasks): make Chunk & Embedding stats metadata-only`
+- State file: `C:\Users\ferry\.codex\issue-to-merge-state\AI_actuarial_inforsearch\issue-306.json`
+- Delivery stage: merged through PR #323 at
+  `0fe3101df6f3834e33b609aff3d119b70df9a274`; Issue #306 is closed and post-merge CI passed
+- Progress heartbeat: id `bug-issue`, status `ACTIVE`, 15-minute cadence
+
+## Issue #306 scope and boundaries
+
+- This repository is the only writable project workspace; sibling repositories are off-limits.
+- Ordinary `GET /api/chunk_generation/stats` must use aggregate metadata only and must not read
+  `global_chunks.content` or `chunk_embeddings.vector_json`.
+- Preserve the response shape, category filtering, embedding identity fields, and
+  `first_without_chunks_index` semantics.
+- Preserve deep vector-body validation for build, audit, repair, and explicit coverage paths.
+- Add measured covering-index/query-plan evidence, regression guards, dimension/byte-size
+  performance evidence, focused API/storage/schema checks, frontend build, and browser smoke.
+- Non-goals remain caching the deep scan, changing embedding generation or serialization,
+  weakening fail-closed build/audit behavior, replacing SQLite, or redesigning Tasks UI.
+
+## Issue #306 baseline evidence
+
+- Worktree was clean; assigned branch and `HEAD` exactly matched the supplied baseline.
+- A baseline endpoint run with 3,072-dimension stored vectors called
+  `Storage.embedding_coverage`, `Storage.list_chunks_for_embedding`, and
+  `Storage.read_valid_chunk_embeddings` once each.
+- Targeted blame/log evidence traces the deep statistics path to the persisted-embedding
+  implementation; current intent already keeps metadata-only and deep validation paths separate
+  for Knowledge Base detail, so Issue #306 is reproducible and not stale.
+
+## Issue #306 current validation
+
+- Issue-focused tests: 10 passed. The added v0 regression proves a real pre-v13 database
+  without the new indexes is recognized, migrated with data preserved, and idempotent.
+- Schema/API combinations: 153 schema migration checks and 42 related API/lightweight-path
+  checks passed.
+- Production-scale benchmark: 21,314 rows at 3,072 dimensions with about 262 MB of stored
+  vector bodies; first new connection 0.02653s and 20-run warm p95 0.02172s.
+- Frontend lint, type-check, production build, dead-code file/symbol gates, and the unified
+  quality gate passed. Final full pytest result: 1,867 passed, 10 skipped, 0 failed;
+  Black, isort, and Pylint also passed. Agentic eval smoke passed 3/3.
+- Browser smoke passed on Tasks → Chunk & Embedding: stats and selected embedding identity
+  rendered without a persistent loading state, the stats API returned 200, and the browser
+  console had no errors.
+- Local review closed after two rounds. One real v0 migration gap was fixed and independently
+  revalidated. A proposed manual wrong-name index construction was rejected under the repository
+  review policy because no supported create or migration path can produce it and Issue #306 does
+  not require compatibility with manual schema tampering.
+
+## Prior project status (Issue #317 historical record)
+
+# Project Status — Issue #317 dead-code and unified quality gates
+
+- Updated: 2026-09-01 EDT
+- Repository: `AI_actuarial_inforsearch`
+- Checkout: `C:\Project\AI_actuarial_inforsearch\.codex-tmp-agentic-rag`
+- Branch: `codex/issue-317-dead-code-detection`
+- Baseline: `origin/main@bd6f47f`
+- Task: implement Issue #317 and the requested unified pytest/Black/isort/Pylint gate
+
+## Scope and boundaries
+
+- This repository is the only writable workspace.
+- Sibling repositories are off-limits.
+- The work covers TypeScript and Python file reachability, symbol detection,
+  reviewed exceptions, shrink-only baselines, local hooks, CI, reports, and
+  contributor documentation.
+- CI only reports and blocks; it never deletes or rewrites source files.
+
+## Implementation state
+
+- PR #318 is open: `https://github.com/ferryhe/AI_actuarial_inforsearch/pull/318`.
+- Added production-first Knip and AST module-reachability checks, followed by
+  Knip/ESLint and Vulture symbol checks.
+- Production and test entries are separate. Constant dynamic imports require a
+  reasoned allowlist, and stale entries fail the gate.
+- Added a statically validated Vulture whitelist for FastAPI routes, Pydantic
+  validators, middleware hooks, and pytest fixtures.
+- Added normalized `path + kind + symbol` dead-code baselines. New findings,
+  stale findings, and all 100%-confidence Vulture findings fail; maintenance
+  updates can only shrink the baseline.
+- Classified the initial baseline: 9 TypeScript files, 5 Python modules, 28
+  TypeScript symbols, and 93 Python symbols. Reviewed cleanups have since
+  reduced all dead-file findings to zero and all symbol findings to 17 Python
+  compatibility/test items.
+- Added the requested unified quality gate: full pytest plus non-mutating
+  Black, isort, and Pylint checks, with an exact shrink-only compatibility
+  baseline for existing formatter/linter debt. Pytest failures cannot be
+  baselined.
+- Added pre-commit/pre-push hooks, ordered CI jobs, text/JSON artifacts,
+  top-level commands, watch mode, and investigation/cleanup documentation.
+- Removed confirmed unused TypeScript locals/imports and corrected narrow test
+  contracts exposed by the new full-suite gate.
+- The first PR #318 run passed file/symbol, frontend, and Python smoke jobs. Its
+  full Linux gate exposed one POSIX path-normalization bug, two FastAPI 0.141
+  route-introspection assumptions, five Linux symlink-path assertions, and
+  four platform-dependent static-baseline entries. These were fixed narrowly:
+  publication slots remain atomic while failed rollback audit fields advance,
+  staging is reverified immediately after digesting, and optional marker
+  Pylint findings are deterministically suppressed at their exact call sites.
+- Copilot's one actionable review finding was confirmed and fixed: the
+  synthetic commit-failure context manager now executes the transaction body,
+  raises during exit, and delegates rollback to the real transaction manager.
+- The second Linux run passed four jobs but showed that four symlink rollback
+  assertions scrubbed audit fields from the direct publication projections,
+  not from the same fields mirrored in the nested manifest projection. The
+  helper now removes only those four audit keys recursively while comparing
+  every other field, with a platform-independent regression for that shape.
+- Historical cleanup now proceeds one directory at a time, with focused tests,
+  the complete gate, and one path-specific commit per directory. The first
+  completed directory is `config/`: Black/isort formatting was applied, the
+  Pydantic path validator was explicitly marked as a classmethod, and the
+  output-format validation was made type-explicit for Pylint.
+- The second completed directory is `scripts/`. Eleven Python scripts received
+  only Black/isort formatting; no behavior, dead-code decision, or script entry
+  point was changed.
+- The third completed directory is `ai_actuarial/agentic_rag/`. Graphify
+  confirmed that its primary modules connect to runtime/API consumers and
+  dedicated tests, so seven historical files received only Black/isort
+  formatting and no file or symbol was removed.
+- The fourth completed directory is `ai_actuarial/api/middleware/`. Its single
+  implementation file is directly exercised by FastAPI auth and ops tests, so
+  it received only Black/isort formatting and no file or symbol was removed.
+- The fifth completed directory is `ai_actuarial/models/`. Both the package
+  exports and `ApiToken` model have direct runtime/storage consumers and
+  dedicated tests, so both files received only Black/isort formatting.
+- The sixth completed directory is `ai_actuarial/security/`. Both production
+  files are imported by crawler, listening-rule, and API-service paths and are
+  covered by URL-safety and integration tests, so both files received only
+  Black/isort formatting and no symbol was removed.
+- The seventh completed directory is `ai_actuarial/services/`. The package
+  export and token-encryption implementation have direct runtime, API, and
+  diagnostic consumers plus dedicated integration tests, so both files
+  received only Black/isort formatting and no symbol was removed.
+- The eighth completed directory is `ai_actuarial/processors/`. Unlike the
+  earlier directories, all three Python modules were production-unreachable,
+  had no code or test callers, and were already classified `remove` in the
+  reviewed dead-code baseline. The three modules and their inaccurate README
+  were deleted rather than reformatted.
+- The ninth completed directory is `ai_actuarial/collectors/`. Current source
+  and exact repository search confirmed that `AdhocCollector` had no runtime,
+  test, export, or dynamic caller; its stale Graphify edge pointed to an import
+  no longer present in the current CLI. The orphan module and its README claim
+  were deleted, two unused imports were removed, and the five reachable
+  collector implementations were formatted. The exported
+  `CollectionConfig.auto_download` constructor field was retained because
+  Issue #317 forbids deleting a public API solely from static-analysis output.
+- The tenth completed directory is the direct files under `ai_actuarial/api/`
+  (excluding its separately reviewed subdirectories). `app.py`, `deps.py`, and
+  `route_inventory.py` were formatted. The `deps.py` email-session selection
+  now uses an explicit typed branch instead of a conditional expression,
+  preserving behavior while removing its Pylint E1136 false inference. The
+  reported `block_retired_api_fallback` symbol remains because its FastAPI
+  decorator registers the framework route at runtime.
+- The eleventh completed directory is `ai_actuarial/chatbot/`. Seven reachable
+  implementation files and the package exports were formatted. Six confirmed
+  unused public symbols plus the private `_extract_citations` helper used only
+  by a removed method were deleted. No test imported or exercised those
+  symbols, so no test was deleted; all tests covering retained chatbot behavior
+  remain. `QueryRouter.select_kbs` remains because its source explicitly marks
+  it as a backward-compatible alias, and the public configuration fields remain
+  part of the configuration contract.
+- The twelfth completed directory is `ai_actuarial/rag/`. All ten modules have
+  production or test consumers, so no module was deleted. Ten confirmed unused
+  baseline symbols were removed, along with four additional helpers or
+  attributes that exact caller analysis and the cleanup itself showed were
+  unreachable. `RAGConfig.chunk_strategy` remains because YAML, environment,
+  migration, documentation, and tests establish it as a public configuration
+  contract. The one test dedicated to proving the removed
+  `_soft_delete_file_vectors` helper was not called was deleted with that
+  helper; all retained RAG behavior remains covered.
+
+## Acceptance results
+
+- Unified quality gate: passed. Pytest reported 1,880 passed and 10 skipped;
+  Black, isort, and Pylint exactly matched the current reviewed baselines at
+  159 files, 99 files, and 19 error identities respectively.
+- Dead-code gate: passed with 9/1 file findings and 28/72 symbol findings,
+  exactly matching the classified baseline and with no 100%-confidence
+  Vulture finding.
+- Dead-code and quality-gate unit tests: 11 passed as part of the full suite.
+- Flaky schema-validator isolation regression: passed five consecutive focused
+  runs and then passed in the full suite.
+- Frontend ESLint: passed with six existing React dependency warnings and no
+  errors.
+- Frontend TypeScript check: passed.
+- Frontend production build: passed; Vite emitted only the existing large
+  chunk advisory.
+- Clean lockfile install: `npm ci` passed. npm reported nine dependency audit
+  findings (2 low, 1 moderate, 6 high); dependency/security upgrades are
+  outside Issue #317.
+- Pre-commit config validation, CI YAML parsing, CLI `--help`, and
+  `git diff --check`: passed.
+- Post-CI focused regression: 6 passed and 5 Windows symlink skips. Static
+  baselines now match exactly at 213 Black files, 142 isort files, and 22
+  Pylint identities; the dead-code gate remains exact.
+- After the Copilot fix, its focused regression passed, then the complete
+  unified quality gate passed again with 1,880 passed and 10 skipped; the
+  dead-code gate also remained exact at 9/5 files and 28/93 symbols.
+- After the nested-audit assertion fix, its focused regression passed. Static
+  baselines remain exact at 213/142/22 with no new or stale entries, and the
+  dead-code gate remains exact at 9/5 files and 28/93 symbols. Final Linux CI
+  run 33456929109 passed all five jobs; its unified gate reported 1,891 tests
+  passed, including the four original symlink tests, then passed Black, isort,
+  and Pylint.
+- `config/` focused validation passed: Black, isort, and Pylint reported no
+  findings; 36 tests passed and 1 platform-specific test skipped.
+- The complete unified quality gate passed after the `config/` cleanup with
+  1,881 tests passed and 10 skipped. Its reviewed baseline shrank only for this
+  directory, from 213/142/22 to 210 Black files, 140 isort files, and 20 Pylint
+  identities.
+- The complete dead-code gate also passed unchanged at 9/5 file findings and
+  28/93 symbol findings.
+- Path-specific commit `fc814fa` was pushed to PR #318. CI run 33460353038
+  passed all five jobs: both dead-code layers, frontend, Python smoke, and the
+  complete Linux quality gate. No new review comment was added.
+- `scripts/` focused validation passed: Black, isort, and Pylint reported no
+  findings; 80 tests passed and 1 platform-specific test skipped.
+- The complete unified quality gate passed after the `scripts/` cleanup with
+  1,881 tests passed and 10 skipped. The reviewed baseline shrank only for this
+  directory, from 210/140/20 to 200 Black files, 132 isort files, and 20 Pylint
+  identities. The complete dead-code gate remained exact at 9/5 files and
+  28/93 symbols.
+- Path-specific commit `c601182` was pushed to PR #318 and all five remote CI
+  jobs passed with no new review feedback.
+- `ai_actuarial/agentic_rag/` focused validation passed: Black, isort, and
+  Pylint reported no findings, and all 94 dedicated tests passed.
+- The complete unified quality gate passed after the `agentic_rag/` cleanup
+  with 1,881 tests passed and 10 skipped. The reviewed baseline shrank only for
+  this directory, from 200/132/20 to 193 Black files, 127 isort files, and 20
+  Pylint identities. The complete dead-code gate remained exact at 9/5 files
+  and 28/93 symbols.
+- The machine's existing global Black cache caused high-CPU CLI stalls for the
+  changed files. Black's API verified them immediately; the official CLI and
+  complete gate then passed with an isolated temporary `BLACK_CACHE_DIR`.
+- Remote commit `5356248` contains the exact `agentic_rag/` tree and passed all
+  five PR #318 jobs in CI run 33467686369. GitHub authentication and the branch
+  update used a task-scoped temporary credential because the sandbox cannot
+  replace the invalid user-level GitHub CLI credential.
+- `ai_actuarial/api/middleware/` focused validation passed: Black, isort, and
+  Pylint reported no gate findings, and all 27 direct FastAPI tests passed.
+- The temporary clone initially lacked its ignored root `node_modules`, so 16
+  TypeScript subprocess tests could not start. `npm ci` restored the pinned
+  dependencies, all 16 focused tests passed, and the complete pytest rerun then
+  passed with 1,881 tests and 10 platform skips.
+- The full static gate passed after the `middleware/` cleanup at 192 Black
+  files, 126 isort files, and 20 Pylint identities, with zero new or stale
+  entries. The complete dead-code gate remained exact at 9/5 files and 28/93
+  symbols.
+- Remote commit `b2c0d92` contains the exact `middleware/` tree. CI run
+  33470766007 passed all five jobs, including the 6m27s Linux quality gate, and
+  no new Review or Copilot comment was added.
+- `ai_actuarial/models/` focused validation passed: Black, isort, and Pylint
+  reported no gate findings, and all 23 model/storage integration tests passed.
+- The complete pytest suite passed after the `models/` cleanup with 1,881 tests
+  and 10 platform skips. The full static gate passed at 190 Black files, 124
+  isort files, and 20 Pylint identities, with zero new or stale entries. The
+  dead-code gate remained exact at 9/5 files and 28/93 symbols.
+- Remote commit `2fff76c` contains the exact `models/` tree. CI run
+  33472039867 passed all five jobs, including the 7m30s Linux quality gate, and
+  no new Review or Copilot comment was added.
+- `ai_actuarial/security/` focused validation passed: Black, isort, and Pylint
+  reported no gate findings, and all 70 URL-safety and direct-consumer tests
+  passed.
+- The complete pytest suite passed after the `security/` cleanup with 1,881
+  tests and 10 platform skips. The full static gate passed at 188 Black files,
+  123 isort files, and 20 Pylint identities, with zero new or stale entries.
+  The complete dead-code gate remained exact at 9/5 files and 28/93 symbols.
+- Remote commit `0699b47` contains the exact `security/` tree. CI run
+  33473548630 passed all five jobs, including the 11m04s Linux quality gate,
+  and no new Review or Copilot comment was added.
+- `ai_actuarial/services/` focused validation passed: Black, isort, and Pylint
+  reported no gate findings, and all 120 token-encryption and direct-consumer
+  tests passed.
+- The complete pytest suite passed after the `services/` cleanup with 1,881
+  tests and 10 platform skips. The full static gate passed at 186 Black files,
+  122 isort files, and 20 Pylint identities, with zero new or stale entries.
+  The complete dead-code gate remained exact at 9/5 files and 28/93 symbols.
+- Remote commit `4bc201e` contains the exact `services/` tree. CI run
+  33475164224 passed all five jobs, including the 7m05s Linux quality gate,
+  and no new Review or Copilot comment was added.
+- `ai_actuarial/processors/` focused validation found no remaining Python
+  caller, compiled the repository successfully, and passed all 23 catalog,
+  collector, and dead-code-gate regression tests.
+- The complete pytest suite passed after removing `processors/` with 1,881
+  tests and 10 platform skips. The full static gate passed at 184 Black files,
+  121 isort files, and 20 Pylint identities, with zero new or stale entries.
+  The dead-code gate shrank exactly from 9/5 files and 28/93 symbols to 9/2
+  files and 28/89 symbols.
+- Remote commit `a7c502e` contains the exact `processors/` tree. CI run
+  33476666119 passed all five jobs, including the 7m51s Linux quality gate,
+  and no new Review or Copilot comment was added.
+- `ai_actuarial/collectors/` compiled successfully, had no remaining
+  `AdhocCollector` reference, passed Black and isort, and passed all 253 tests
+  in the ten directly importing collector modules or their runtime consumers.
+- The complete pytest suite passed after the `collectors/` cleanup with 1,881
+  tests and 10 platform skips. The full static gate passed at 178 Black files,
+  116 isort files, and 20 Pylint error identities, with zero new or stale
+  entries. The dead-code gate shrank exactly from 9/2 files and 28/89 symbols
+  to 9/1 files and 28/88 symbols.
+- Remote commit `915fc4d` contains the exact `collectors/` tree. CI run
+  33511516566 passed all five jobs, including the 7m48s Linux quality gate,
+  and no new Review or Copilot comment was added.
+- The direct `ai_actuarial/api/` files compiled successfully and passed Black,
+  isort, and a zero-error focused Pylint scan. All 407 directly importing tests
+  completed with 400 passed and 7 platform skips.
+- The complete pytest suite passed after the direct `api/` cleanup with 1,881
+  tests and 10 platform skips. The full static gate passed at 175 Black files,
+  114 isort files, and 19 Pylint error identities, with zero new or stale
+  entries. The dead-code gate remained exact at 9/1 files and 28/88 symbols.
+- Remote commit `bf2d2a0` contains the exact direct `ai_actuarial/api/` cleanup.
+  CI run 33513870640 passed all five jobs, including the 7m35s Linux quality
+  gate, and no new Review or Copilot comment was added.
+- `ai_actuarial/chatbot/` compiled successfully and passed Black, isort, and a
+  zero-error focused Pylint scan. All 176 chatbot and direct-consumer tests
+  passed. No dedicated test existed for any removed symbol, so no corresponding
+  test removal was required.
+- The complete pytest suite passed after the `chatbot/` cleanup with 1,881
+  tests and 10 platform skips. The full static gate passed at 168 Black files,
+  107 isort files, and 19 Pylint error identities, with zero new or stale
+  entries. The dead-code gate shrank exactly from 9/1 files and 28/88 symbols
+  to 9/1 files and 28/82 symbols.
+- Remote commit `675c2b5` contains the exact `ai_actuarial/chatbot/` cleanup.
+  CI run 33530581036 passed all five jobs, including the 8m02s Linux quality
+  gate, and no new Review or Copilot comment was added.
+- `ai_actuarial/rag/` compiled successfully and passed Black, isort, and a
+  zero-error focused Pylint scan. The 24 directly importing test files completed
+  with 646 passed and 8 platform skips after the one obsolete test was removed.
+- The complete pytest suite passed after the `rag/` cleanup with 1,880 tests
+  and 10 platform skips. The full static gate passed at 159 Black files, 99
+  isort files, and 19 Pylint error identities, with zero new or stale entries.
+  The dead-code gate shrank exactly from 9/1 files and 28/82 symbols to 9/1
+  files and 28/72 symbols.
+- Remote commit `fdac797` contains the exact `ai_actuarial/rag/` cleanup. CI
+  run 33534463645 passed all five jobs, including the 7m56s Linux quality gate,
+  and no new Review or Copilot comment was added.
+- `ai_actuarial/api/routers/` compiled successfully and all 15 route modules
+  were confirmed as registered FastAPI production modules. The 15 directly
+  related test files completed with 393 passed and 8 platform skips.
+- `WeeklySnapshotFilesModel.truncated` is a live Pydantic response field, not
+  dead code: the service populates it and endpoint tests assert it. An exact
+  whitelist reference now records that framework contract; no source field or
+  test was removed.
+- The complete pytest suite passed after the router cleanup with 1,880 tests
+  and 10 platform skips. The full static gate passed at 146 Black files, 91
+  isort files, and 19 Pylint error identities, with zero new or stale entries.
+  The dead-code gate shrank exactly from 9/1 files and 28/72 symbols to 9/1
+  files and 28/71 symbols.
+- Remote commit `a71e984` contains the exact `ai_actuarial/api/routers/`
+  cleanup. CI run 33537947899 passed all five jobs, including the 6m53s Linux
+  quality gate, and no new Review or Copilot comment was added.
+- `ai_actuarial/api/services/` compiled successfully. Seven confirmed dead
+  baseline symbols and two resulting private orphans were removed; no test was
+  dedicated to those deleted definitions, so no test removal was required.
+- The provider-credential write and environment-import paths now pass
+  `status_code=503` correctly when token encryption is unavailable instead of
+  raising `TypeError`. A regression covers both HTTP entry points. The ready
+  source gate also uses an explicit mapping check, removing a Pylint inference
+  false positive without changing its behavior.
+- The 12 directly related service test files completed with 462 passed and 9
+  platform skips. The complete pytest suite passed with 1,881 tests and 10
+  platform skips. The full static gate passed at 129 Black files, 81 isort
+  files, and 16 Pylint error identities, with zero new or stale entries. The
+  dead-code gate shrank exactly from 9/1 files and 28/71 symbols to 9/1 files
+  and 28/64 symbols.
+- Remote commit `cbd933b` contains the exact `ai_actuarial/api/services/`
+  cleanup. CI run 33539534698 passed all five jobs, including the 6m47s Linux
+  quality gate, and no new Review or Copilot comment was added.
+- `client/src/components/` no longer contains the unreachable
+  `LoadingSkeleton.tsx`. `transformMarkdownUrl` remains live inside
+  `MarkdownContent.tsx` but is no longer exported solely for tests; the direct
+  helper assertions were removed while the component-level link and hostile
+  input coverage was retained.
+- The focused component checks passed: both TypeScript dead-code ratchets,
+  ESLint, the three Markdown content source tests, frontend type-check, and the
+  production build. The complete pytest suite passed with 1,881 tests and 10
+  platform skips, and the full unified quality gate passed at 129 Black files,
+  81 isort files, and 16 Pylint error identities. The dead-code gate shrank
+  exactly from 9/1 files and 28/64 symbols to 8/1 files and 27/64 symbols.
+- Remote commit `182d0c0` contains the exact `client/src/components/` cleanup.
+  CI run 33540711906 passed all five jobs, including the 13m42s Linux quality
+  gate, and no new Review or Copilot comment was added.
+- `client/src/hooks/` no longer contains the completely unreferenced
+  `use-api-query.ts`. The two live task-option result shapes remain in use but
+  are now private implementation types instead of unused public exports.
+- The hooks directory passed ESLint, the 27 task React source tests, frontend
+  type-check, and the production build. The complete pytest suite passed with
+  1,881 tests and 10 platform skips, and the full unified quality gate passed
+  at 129 Black files, 81 isort files, and 16 Pylint error identities. The
+  dead-code gate shrank exactly from 8/1 files and 27/64 symbols to 7/1 files
+  and 25/64 symbols.
+- Remote commit `f80d52d` contains the exact `client/src/hooks/` cleanup. CI
+  run 33542287174 passed all five jobs, including the 7m35s Linux quality gate,
+  and no new Review or Copilot comment was added.
+- `client/src/lib/` now exposes only externally consumed contracts. Two unused
+  navigation helpers and the test-only knowledge-list authority helper were
+  removed; the duplicate ready-data route helper was consolidated under the
+  request name. Live helpers and data shapes that are internal to their module
+  remain implemented but are no longer exported.
+- Tests were updated to exercise the public ready-data merge helper and native
+  URL parsing. The one runtime test segment dedicated only to the removed
+  authority helper was deleted; the surrounding current behavior tests remain.
+  All 77 focused tests, ESLint, frontend type-check, and the production build
+  passed. The complete pytest suite passed with 1,881 tests and 10 platform
+  skips, and the unified quality gate passed at 129/81/16. The dead-code gate
+  shrank exactly from 7/1 files and 25/64 symbols to 7/1 files and 7/64 symbols.
+- Remote commit `8beb8d8` contains the exact `client/src/lib/` cleanup. CI run
+  33543437722 passed all five jobs, including the 7m41s Linux quality gate, and
+  no new Review or Copilot comment was added.
+- Five unreachable historical page implementations were removed from
+  `client/src/pages/`: `FeatureUnavailable`, `NativeFileDetail`, `NativeLogs`,
+  `NativeSettings`, and `NativeTasks`. The live chat route selection type is
+  now private to its module.
+- Test constants and assertions that read the deleted native file/task pages
+  were removed while current FileDetail, FilePreview, task metrics, Markdown,
+  and chat route coverage was retained. All 41 focused tests, directory ESLint,
+  frontend type-check, and the production build passed. The complete pytest
+  suite passed with 1,881 tests and 10 platform skips, and the unified quality
+  gate passed at 129/81/16. The dead-code gate shrank exactly from 7/1 files
+  and 7/64 symbols to 2/1 files and 6/64 symbols.
+- Remote commit `77e54a9` contains the exact `client/src/pages/` cleanup. CI
+  run 33544476773 passed all five jobs, and no new review comment was added.
+- `client/src/pages/tasks/` no longer contains the unreachable
+  `FolderBrowser.tsx` or its unreachable barrel `index.ts`. Three live
+  implementation details remain in use but are no longer exported, and three
+  duplicate schedule types with no caller were removed. The negative test
+  proving that browser uploads do not use the retired folder browser remains
+  because it covers current behavior.
+- The task-page cleanup passed 32 focused source/runtime tests, directory
+  ESLint, frontend type-check, and the production build. One full-suite source
+  assertion was corrected to inspect the shared `TaskMetrics` implementation
+  instead of relying on a removed re-export comment; its focused rerun passed.
+- The complete pytest suite then passed with 1,881 tests and 10 platform skips,
+  and the unified quality gate passed at 129/81/16. The dead-code gate shrank
+  exactly from 2/1 files and 6/64 symbols to 0/1 files and 0/64 symbols, so the
+  TypeScript historical dead-code baseline is now empty.
+- Remote commit `0bbda30` contains the exact `client/src/pages/tasks/`
+  cleanup. CI run 33547151953 passed all five jobs, including the complete
+  Linux quality gate, and no new review comment was added.
+- The exported `CollectionConfig.auto_download` dataclass field was retained as
+  a public constructor contract and added to the statically validated exact
+  whitelist. No source or test was deleted. All 112 directly related collector
+  tests passed, and Black, isort, and Pylint passed for the touched whitelist
+  and collector base files.
+- The complete pytest suite passed with 1,881 tests and 10 platform skips, and
+  the unified quality gate passed at 129/81/16. The dead-code gate shrank
+  exactly from 0/1 files and 0/64 symbols to 0/1 files and 0/63 symbols.
+- Remote commit `1a792e0` contains the exact collector public-contract
+  classification. CI run 33549779936 passed all five jobs, including the
+  complete Linux quality gate, and no new review comment was added.
+- The final unreachable Python module `ai_actuarial/pipeline_config.py` was
+  deleted. Its 20-test dedicated file and four tests in the immutable-guards
+  suite that imported only that module were deleted with it; the live manifest
+  schema-version ingestion traceability test remains.
+- The pipeline-config cleanup compiled successfully, passed all 44 retained
+  focused tests, and left no repository reference to the deleted module. The
+  complete pytest suite passed with 1,857 tests and 10 platform skips. The
+  unified quality gate passed after shrinking to 127 Black files, 80 isort
+  files, and 16 Pylint identities. Both TypeScript and Python dead-file
+  baselines are now empty; symbol findings remain 0/63.
+
+## Files changed
+
+- Gate implementation/config: `scripts/dead_code_gate.py`,
+  `scripts/quality_gate.py`, `knip.json`, `eslint.config.mjs`, `pyproject.toml`,
+  `package.json`, lockfile, development requirements, and both baselines.
+- Framework review: `config/dead_code_whitelist.py`.
+- Automation: `.pre-commit-config.yaml` and `.github/workflows/ci.yml`.
+- Documentation: `docs/dead-code.md`, docs index, and both root READMEs.
+- Focused cleanup/tests: affected React files, small Python unused-argument
+  cleanups, gate tests, and narrow full-suite contract corrections.
+- First historical directory cleanup: `config/__init__.py`,
+  `config/settings.py`, `config/yaml_config.py`, and the matching removals from
+  `quality-gate-baseline.json`.
+- Second historical directory cleanup: eleven formatted Python files under
+  `scripts/` and the matching removals from `quality-gate-baseline.json`.
+- Third historical directory cleanup: seven formatted Python files under
+  `ai_actuarial/agentic_rag/` and the matching removals from
+  `quality-gate-baseline.json`.
+- Fourth historical directory cleanup:
+  `ai_actuarial/api/middleware/rate_limit.py` and the matching removals from
+  `quality-gate-baseline.json`.
+- Fifth historical directory cleanup: `ai_actuarial/models/__init__.py`,
+  `ai_actuarial/models/api_token.py`, and the matching removals from
+  `quality-gate-baseline.json`.
+- Sixth historical directory cleanup: `ai_actuarial/security/__init__.py`,
+  `ai_actuarial/security/url_safety.py`, and the matching removals from
+  `quality-gate-baseline.json`.
+- Seventh historical directory cleanup: `ai_actuarial/services/__init__.py`,
+  `ai_actuarial/services/token_encryption.py`, and the matching removals from
+  `quality-gate-baseline.json`.
+- Eighth historical directory cleanup: deleted the unreachable
+  `ai_actuarial/processors/` package and its inaccurate README, then removed
+  exactly three module and four method findings from `dead-code-baseline.json`
+  plus the three matching formatter paths from `quality-gate-baseline.json`.
+- Ninth historical directory cleanup: deleted
+  `ai_actuarial/collectors/adhoc.py`, removed its inaccurate README section and
+  two dead-code findings, removed two unused imports, formatted the five
+  reachable collector implementations, and removed their eleven matching
+  formatter paths from `quality-gate-baseline.json`.
+- Tenth historical directory cleanup: formatted `ai_actuarial/api/app.py`,
+  `ai_actuarial/api/deps.py`, and `ai_actuarial/api/route_inventory.py`, made
+  the authentication type narrowing explicit, and removed their six matching
+  Black/isort/Pylint entries from `quality-gate-baseline.json`.
+- Eleventh historical directory cleanup: formatted all eight Python files under
+  `ai_actuarial/chatbot/`, removed six confirmed unused public symbols and one
+  private helper, reclassified the explicit `select_kbs` compatibility alias,
+  and removed the matching dead-code and formatter baseline entries. No test
+  file or test case was removed because none corresponded to the deleted code.
+- Twelfth historical directory cleanup: formatted the nine historical Python
+  files under `ai_actuarial/rag/`, removed ten reviewed dead-code baseline
+  symbols plus four exact or cascading orphans, deleted the single test tied to
+  the removed immutable-index helper, and removed the matching dead-code and
+  formatter baseline entries.
+- Thirteenth historical directory cleanup: formatted all 15 files under
+  `ai_actuarial/api/routers/`, added the precise Pydantic response-field
+  whitelist for `WeeklySnapshotFilesModel.truncated`, and removed its stale
+  dead-code entry plus the 21 matching formatter baseline entries.
+- Fourteenth historical directory cleanup: formatted all 17 files under
+  `ai_actuarial/api/services/`, removed seven reviewed dead-code baseline
+  symbols plus two cascading private orphans, fixed three Pylint identities,
+  added the two-entry-point encryption failure regression, and removed the
+  matching dead-code and 27 formatter/linter baseline entries.
+- Fifteenth historical directory cleanup: deleted the unreachable
+  `client/src/components/LoadingSkeleton.tsx`, made the live Markdown URL
+  transformer private, removed only its direct test-only import and assertions,
+  and removed the matching two TypeScript dead-code baseline entries.
+- Sixteenth historical directory cleanup: deleted the unreachable
+  `client/src/hooks/use-api-query.ts`, made two live task-option interfaces
+  private, and removed the matching three TypeScript dead-code baseline entries.
+- Seventeenth historical directory cleanup: removed three confirmed dead
+  `client/src/lib/` functions, consolidated a duplicate ready-data request
+  export, made fourteen live implementation details private, updated the one
+  cross-directory caller and focused tests, and removed the matching eighteen
+  TypeScript dead-code baseline entries.
+- Eighteenth historical directory cleanup: deleted five unreachable legacy
+  files under `client/src/pages/`, made the live chat route selection type
+  private, removed only the test constants and assertions tied to the deleted
+  pages, and removed the matching six TypeScript dead-code baseline entries.
+- Nineteenth historical directory cleanup: deleted the unreachable
+  `client/src/pages/tasks/FolderBrowser.tsx` and barrel `index.ts`, removed
+  three unused exports and three unused duplicate schedule types, corrected
+  one source-contract test to inspect the real shared metrics component, and
+  removed the final eight TypeScript dead-code baseline entries.
+- Twentieth historical directory cleanup: retained the public exported
+  `CollectionConfig.auto_download` constructor field, recorded its exact
+  compatibility reference in the validated whitelist, and removed its stale
+  Python dead-code baseline entry without changing source or tests.
+- Twenty-first historical directory cleanup: deleted the unreachable
+  `ai_actuarial/pipeline_config.py` module and its 24 module-only tests,
+  formatted the touched immutable-guards test while preserving its live
+  manifest traceability case, and removed the final Python dead-file baseline
+  plus the matching Black/isort baseline entries.
+- Twenty-second historical directory cleanup: formatted all 31 direct Python
+  files under `ai_actuarial/`, deleted 20 confirmed-unused root symbols plus one
+  cascading legacy weekly-summary reader, retained 27 framework/public
+  contracts through exact validated whitelist references, and narrowed seven
+  SQLAlchemy/Pydantic Pylint suppressions to their individual call sites. No
+  test was removed because none was dedicated to the deleted code. Focused
+  tests passed 132/1, the full suite passed 1857/10, the dead-code gate passed
+  at 0 files/17 symbols, and the quality baseline fell from 127/80/16 to
+  96/60/9.
+- Twenty-third historical directory cleanup: retained the nested
+  `block_retired_api_fallback` FastAPI 410 route in `ai_actuarial/api/app.py`
+  and added its exact source-level framework reference. Focused tests passed
+  20/20; after one host-resource-abnormal test run was stopped and isolated,
+  the unchanged historical file passed 83/83 and a clean full rerun passed
+  1857/10 plus Black, isort, and Pylint. The dead-code symbol baseline fell
+  from 17 to 16; the quality baseline remains 96/60/9. The first remote
+  quality-gate attempt hit a concurrent-test race in an unrelated historical
+  schema test; the failed job rerun passed without source changes, and all five
+  remote CI jobs are green.
+- Twenty-fourth historical directory cleanup: retained six public exported
+  `ChatbotConfig` fields loaded from environment/YAML settings plus the
+  explicit `QueryRouter.select_kbs` compatibility alias, recording each as an
+  exact validated whitelist reference. No production code or tests were
+  removed. Focused tests passed 115/115, the full suite passed 1857/10 plus
+  Black, isort, and Pylint, and the dead-code symbol baseline fell from 16 to
+  9; the quality baseline remains 96/60/9. All five remote CI jobs passed.
+- Twenty-fifth historical directory cleanup: retained the public
+  `RAGConfig.chunk_strategy` field loaded from environment/YAML settings and
+  recorded its exact validated whitelist reference. No production code or
+  tests were removed. Focused tests passed 41/41, the full suite passed 1857/10
+  plus Black, isort, and Pylint, and the dead-code symbol baseline fell from 9
+  to 8; the quality baseline remains 96/60/9. All five remote CI jobs passed.
+- Twenty-sixth historical directory cleanup: formatted all six Python files
+  under `tests/agentic_rag/` (five Black and two isort baseline identities) and
+  strengthened `test_evaluate_single_pass` to verify the fake retriever
+  receives the query and `top_k`. No tests were removed. Focused tests passed
+  102/102, the full suite passed 1857/10 plus Black, isort, and Pylint, the
+  dead-code symbol baseline fell from 8 to 6, and the quality baseline fell
+  from 96/60/9 to 91/58/9. All five remote CI jobs passed.
+- Twenty-seventh historical directory cleanup: formatted the two historical
+  Python test files under `tests/unit/`, removing two Black and two isort
+  baseline identities. No code or tests were removed. Focused tests passed
+  40/40, the full suite passed 1857/10 plus Black, isort, and Pylint, the
+  dead-code baseline remains 0 files/6 symbols, and the quality baseline fell
+  from 91/58/9 to 89/56/9. All five remote CI jobs passed.
+- Twenty-eighth and final historical directory cleanup: formatted all 105
+  direct Python files under `tests/` (89 historical Black and 56 isort baseline
+  identities), resolved all nine Pylint identities, removed six unused test
+  symbols without deleting any test case, strengthened the API-token timestamp
+  assertion, and isolated the mutating schema-validator test from background
+  database activity. Focused tests passed 319/7, the full suite passed 1857/10,
+  independent semantic and mechanical reviews found no issues, and both the
+  dead-code and quality baselines are now completely empty: 0 files/0 symbols
+  and 0/0/0 respectively. All five remote CI jobs passed. PR #318 is clean and
+  mergeable; the only review thread was an older Copilot finding already fixed
+  and acknowledged before this final cleanup.
+
+## Working tree notes
+
+- Existing untracked `diagrams/` and `graphify-out/` remain user-owned,
+  untouched, and excluded from the commit.
+- Generated `reports/`, coverage output, build output, and installed
+  dependencies are ignored.
+
+## Blockers or decisions needed
+
+- No implementation or local validation blocker.
+- Merge is not authorized by the current request; publication stops at an open
+  PR unless explicit merge authorization is given.
+
+## Recommended next action
+
+- Report the completed directory-by-directory cleanup and leave the clean,
+  mergeable PR #318 open. Merge only after explicit authorization.
+
+# Project Status — Issue #319 loose-coupled incremental stages
+
+- Updated: 2026-09-02 EDT
+- Repository: `AI_actuarial_inforsearch`
+- Worktree: `C:\Users\ferry\.codex\worktrees\e680\AI_actuarial_inforsearch`
+- Branch: `codex/issue-319-loose-coupled-stages`
+- Baseline: `origin/main@ae3e4e689c1bcdbd0c80982f8abaafa7e0af73e9`
+- Issue: `#319 fix(pipeline): continue loose-coupled incremental stages after partial success`
+- State file: `C:\Users\ferry\.codex\issue-to-merge-state\AI_actuarial_inforsearch\issue-319.json`
+- Delivery stage: remote feedback assessed; one confirmed contract fix validated; follow-up push pending
+
+## Issue #319 acceptance criteria
+
+- AC-1: Production-shaped Markdown `status=error` with `items_downloaded=2` launches Catalog
+  exactly once while preserving the Markdown task's original status, errors, counters, result,
+  and log.
+- AC-2: Scheduled, Markdown, Catalog, Chunk, and Embedding all use the same terminal decision
+  matrix: `completed/error + successful outputs > 0` advances once; `completed + 0` completes as
+  a clean no-op; `error + 0` ends in error; `stopped` ends stopped; missing task or hard exception
+  ends in error.
+- AC-3: Catalog launches from its saved/default incremental configuration without predecessor
+  `file_urls` and may select its normal historical uncataloged/outdated backlog.
+- AC-4: Chunk launches from its saved/default incremental configuration without predecessor
+  Markdown `files` and may select its normal historical Markdown-ready backlog.
+- AC-5: Embedding launches without predecessor `chunk_set_ids` or `file_urls`; a minimal
+  module-owned selector-free incremental backlog mode computes its own eligible ready chunk-set
+  backlog and is available through both manual/API and Baton launches.
+- AC-6: Given the same saved/default module configuration, Baton and manual launches resolve
+  equivalent runtime parameters and work-selection behavior; raw frontend payload equality is not
+  required.
+- AC-7: Existing skipped, reused, retry-eligible, and historical backlog behavior remains owned by
+  each module; skipped work is not reinterpreted as a predecessor handoff artifact.
+- AC-8: Repeated ordinary ticks do not launch a next stage or subtask twice.
+- AC-9: Current indexable KBs are enumerated in stable order across `manual`, `category`, and `all`
+  modes; zero KBs completes cleanly.
+- AC-10: One failed KB Index or Ready Data task is recorded and does not block later KBs; any
+  stopped KB subtask stops the whole round immediately and launches no later KB.
+- AC-11: If relay reaches the end, `round_status=completed` means orchestration completed and does
+  not rewrite any individual task outcome.
+- AC-12: Baton state remains compact: current stage/task plus existing KB summary only; no copied
+  per-item errors, partial-evidence schema, or source-task mutation.
+- AC-13: Existing standalone/manual task APIs, forms, saved/default configuration, module logs,
+  status semantics, and Ready Data/KB behavior remain unchanged except for the shared Embedding
+  selector-free backlog mode required by AC-5.
+- AC-14: Existing Baton/runtime tests, the full stage matrix, production-shape Markdown regression,
+  selector-absence and historical-backlog regressions, manual/Baton equivalence, KB failure/stop
+  paths, duplicate-tick behavior, and all repository-required checks pass.
+
+## Issue #319 stage decision matrix
+
+| Task outcome | Successful output count | Baton result |
+| --- | ---: | --- |
+| `completed` | `> 0` | Launch the next module's normal incremental task once |
+| `error` | `> 0` | Preserve the task error and launch the next module once |
+| `completed` | `0` | Complete the round as a clean no-op |
+| `error` | `0` | End the round as `error` |
+| `stopped` | any | End the round as `stopped` |
+| missing task or hard exception | unknown / `0` | End the round as `error` |
+
+## Issue #319 scope and non-goals
+
+- Owned production scope: `ai_actuarial/pipeline_baton.py`; minimal shared runtime/API/Embedding
+  wiring only where AC-5/AC-6 requires it. Focused Baton/runtime/API/domain tests are in scope.
+  Pipeline status/UI copy changes are conditional on observable wording changes.
+- Sibling repositories and the primary checkout's Issue #317 changes are off-limits.
+- No predecessor file/hash/chunk-set handoff, frozen cohort, global lineage, new publication
+  transaction, DAG, retry/resume/checkpoint/lease framework, automatic retry, crawler change,
+  module redesign, or suppression/rewriting of task errors.
+- Review-policy override: none. Findings must be realistically reproducible and map directly to
+  an AC above.
+
+## Issue #319 baseline and history evidence
+
+- The assigned worktree was clean and detached at the supplied baseline. After fetch, `HEAD`,
+  `origin/main`, and their merge-base all remained exactly `ae3e4e689c1bcdbd0c80982f8abaafa7e0af73e9`;
+  the isolated branch above was then created.
+- A production-shaped no-edit reproduction showed Markdown `error + items_downloaded=2` leaves
+  `round_status=error` and starts no Catalog task. Existing #292 Scheduled partial-success tests
+  still pass.
+- The same baseline reproduction showed Catalog receives predecessor `file_urls`, Chunk receives
+  predecessor Markdown `files`, and Embedding receives predecessor `chunk_set_ids`.
+- `git blame` and `git log -S` trace the general terminal behavior to the original Baton, the
+  Scheduled-only exception to merged PR #292, and all three exact selector injections to commit
+  `7a175050` (`feat: persist chunk embeddings`). The original #179 Baton regression explicitly
+  asserted independent tasks without output handoff before that commit changed the contract.
+- Duplicate search across open/closed/merged PRs, local/remote branches, and commit messages found
+  no equivalent #319 work. Merged PR #292 covers Scheduled only and is not a duplicate.
+
+## Issue #319 implementation state
+
+- Baton now uses `items_downloaded` as the single authoritative successful-output count for all
+  five non-KB phases. Partial errors advance once, clean zero-output completions stop cleanly,
+  zero-output errors fail, stopped tasks halt, and missing tasks or hard orchestration failures fail.
+- Catalog and Chunk now launch their normal saved/default incremental backlog without predecessor
+  selectors. Baton no longer persists copied Markdown file evidence.
+- Embedding now exposes a selector-free `incremental` mode owned by the embedding module. It
+  resolves the current server identity first, scans ready chunk sets in stable order, validates
+  chunk-set stability, and selects sets containing missing or invalid embeddings while preserving
+  existing reuse and repair behavior.
+- Manual/API, Baton, Tasks, and scheduled Chunk & Embedding composition use the same selector-free
+  Embedding mode. File Detail retains its explicit single-file `chunk_set_ids` scope.
+- Scheduled composition and Tasks both retain their existing empty Chunk-result guard. Reused
+  stable chunk sets still launch selector-free Embedding so historical missing/invalid coverage can
+  be repaired.
+- KB Index/Ready Data preserves stable `manual`/`category`/`all` enumeration: one KB error is
+  recorded and later KBs continue; a stopped KB task halts the round immediately.
+
+## Issue #319 local review
+
+- Round 1 found and fixed a scheduled-composition regression where reused stable chunk sets had
+  `items_downloaded=0` and incorrectly skipped Embedding. The fix gates on non-empty stable
+  `result.chunk_sets` and still launches only `incremental: true`.
+- Round 2 found and fixed the matching Tasks regression where an empty Chunk result could launch an
+  unrelated global Embedding backlog. Tasks now keeps the non-empty result guard without handing
+  the IDs to Embedding.
+- Round 3 used a fresh read-only reviewer and passed with no reproducible #319 finding. The final
+  reviewer independently ran 96 focused tests.
+
+## Issue #319 verification
+
+- TDD red baseline for the new focused file: 18 product failures and 15 passes after correcting
+  three test-fixture defects; final focused file: 33 passes.
+- Final related Baton/runtime/API/CLI/UI suite: 102 passes; broader related suite previously passed
+  151 tests plus 40 Embedding/Chunk domain tests.
+- Unified quality gate: 1916 passed, 10 skipped; Black, isort, and Pylint passed. The first attempt
+  was stopped after the pytest process reached 23.6 GB and left 0.1 GB host memory; a clean isolated
+  rerun used normal memory and passed without source changes.
+- Dead-code file and symbol gates: 0 findings. Frontend lint: 0 errors and five existing warnings;
+  typecheck and production build passed.
+- Python smoke: FastAPI 13 passed; Agentic RAG eval 31 passed; eval CLI passed all 3 cases with full
+  evidence/citation/refusal metrics.
+- `git diff --check` passed. No visible form, layout, or wording changed, so browser visual smoke was
+  not required; the changed request contract is covered by source tests, typecheck, and build.
+- After final fetch, `HEAD`, `origin/main`, and their merge-base remain
+  `ae3e4e689c1bcdbd0c80982f8abaafa7e0af73e9`.
+
+## Issue #319 remote feedback
+
+- PR #327 was marked Ready at head `02a085339a64ddd9b7d131e897c0b33ff3f2497b`. The single
+  feedback window ran for 680.49 seconds before one complete snapshot was fetched.
+- All five required remote checks passed. No human review, PR comment, or Issue comment was
+  present. Copilot left two inline comments.
+- The first Copilot comment was confirmed: selector-free `incremental` accepted and echoed a
+  `profile_id` that it did not apply. The minimal fix rejects `incremental + profile_id` at both
+  the API launch boundary and the Embedding selection boundary; it does not add profile-filter
+  semantics or change Baton's `{incremental: true}` payload.
+- The second Copilot comment was rejected under the repository review policy. It proposed loading
+  chunk IDs before content as a performance optimization but provided no reproducible functional,
+  workflow, data-contract, or error-handling failure mapped to #319.
+- The confirmed fix failed two new tests before implementation, then passed them. Manager reran the
+  final Embedding/API/Baton/UI combination with 169 passes; the focused #319 file now has 35 passes.
+
+## Issue #319 working tree notes
+
+- Scoped production changes are limited to Pipeline Baton, Embedding selection/runtime/API wiring,
+  and the Tasks request path. Scoped test changes cover the matrix, storage backlog, API/manual
+  parity, scheduled/Tasks empty and reused results, and KB error/stop behavior.
+- The new untracked `tests/test_issue_319_loose_coupled_pipeline.py` is an intentional scoped test
+  file and will be included in the commit. Generated reports, coverage, build output, and installed
+  dependencies are ignored.
+- No unrelated local change is present. Sibling repositories and the primary checkout's Issue #317
+  changes remain unread and untouched.
+
+## Issue #319 blockers or decisions needed
+
+- No implementation, review, validation, or publication blocker.
+
+## Issue #319 recommended next action
+
+- Commit and push the confirmed remote contract fix, allow required checks to rerun, reply to both
+  captured Copilot threads with the accepted/rejected disposition, then merge once the updated head
+  is green.
+# Project Status — Issue #334 Recategory dry-run UI
+
+- Updated: 2026-09-03 EDT
+- Repository: `AI_actuarial_inforsearch`
+- Worktree: `C:\Users\ferry\.codex\worktrees\3632\AI_actuarial_inforsearch`
+- Branch: `codex/issue-334-recategory-dry-run-ui`
+- Baseline: `origin/main@73215789cc6202add89d808ab35d5c430fa1ef0a`
+- Issue: `#334 bug(ui): show Recategory dry-run results and place it before Catalog`
+- Review state: `C:\Project\AI_actuarial_inforsearch\.git\codex-issue-to-merge\issue-334.json`
+- Delivery stage: PR #335 is Ready; the single remote-feedback snapshot was assessed and its one
+  valid localization fix passed focused validation; preparing the follow-up commit and current-head
+  checks before merge
+- Progress heartbeat: id `issue-334-delivery-progress`, status `ACTIVE`, 15-minute cadence
+
+## Issue #334 acceptance criteria
+
+- AC-1: A completed `recategory` history task whose `metadata.dry_run` is exactly true shows a
+  human-readable Dry Run Result in the Task History detail/log dialog, sourced from the history
+  task metadata so the same result remains visible after refresh.
+- AC-2: When changes exist, the result accurately shows whether recategorization is needed and
+  lists every removed and added category with its corresponding `removed_impact` or
+  `added_impact` article count in a quickly scannable layout.
+- AC-3: When `needs_recategory` is false and no category changes exist, the result shows an
+  explicit localized no-changes state instead of an empty block.
+- AC-4: Missing, incomplete, legacy, or wrong-shaped metadata degrades safely: ineligible tasks
+  do not show the result, incomplete eligible results render only safe values, and no `null`,
+  `undefined`, or task-detail crash reaches the user.
+- AC-5: The result is read-only and offers no implicit Apply action or data mutation; the existing
+  Recategory Plan/Apply algorithms and task execution contracts remain unchanged.
+- AC-6: Re-categorize appears before Catalog in the Run Task cards and Scheduled Task type list;
+  the Task History type filter gains Re-categorize before Catalog. Recategory remains independent
+  and is not added to the automatic Pipeline.
+- AC-7: All added user-facing copy is complete in English and Chinese, and category names, counts,
+  lists, and the empty state fit without horizontal overflow at desktop and 320px widths.
+- AC-8: Focused frontend regression tests cover change, no-change, missing/incomplete metadata,
+  eligibility, and all three ordering contracts; the frontend checks, repository quality/dead-code
+  gates, Python smoke gates, and desktop plus 320px browser smoke pass.
+
+## Issue #334 scope, baseline evidence, and non-goals
+
+- Code-change delivery is required. A baseline reproduction failed all five probes: the Run Task
+  order and Scheduled Task order put Re-categorize after Catalog, Task History omits the filter
+  option, `HistoryTask` has no metadata field, and the detail dialog has no dry-run rendering.
+- The clean worktree started detached at the supplied baseline; `HEAD`, `origin/main`, and their
+  merge-base all matched `73215789cc6202add89d808ab35d5c430fa1ef0a` before switching to the
+  pre-created assigned branch at that same commit.
+- PR #202 added the Recategory backend and appended basic Run/Scheduled UI entries. Its body and
+  commit history describe task wiring but no dry-run history result UI or intended ordering.
+  PR #201 only added taxonomy-state support, so neither is equivalent to Issue #334.
+- Worker-owned files are limited to the Tasks history/detail and task-type ordering surfaces,
+  bilingual task copy, and directly corresponding frontend tests. A small dedicated result
+  component is allowed if it is the narrowest complete implementation. This manager owns this
+  project-status record.
+- Non-goals: backend result storage or API changes, `plan_recategory()` or Apply algorithm changes,
+  taxonomy/Catalog/KB sync changes, Pipeline execution or dependency changes, automatic Plan-to-
+  Apply behavior, sibling repositories, dependency upgrades, security frameworks, or speculative
+  abstractions.
+- Review-policy override: none; the default scoped review policy applies unchanged.
+
+## Issue #334 blockers or decisions needed
+
+- None.
+
+## Issue #334 implementation and local review
+
+- The Task History detail/log dialog now renders a dedicated read-only Dry Run Result only for
+  completed Recategory plans with `metadata.dry_run === true`. It shows the plan decision,
+  removed/added categories, safe per-category impact counts, the explicit no-change state, and an
+  unavailable state for incomplete eligible metadata.
+- Runtime guards accept only plain-object metadata, non-empty category strings, and non-negative
+  integer counts. Missing, legacy, wrong-shaped, or ineligible metadata cannot render `null` or
+  `undefined` and cannot break the rest of the task detail.
+- Re-categorize now precedes Catalog in Run Task, Scheduled Task, and Task History filter order;
+  the filter includes the previously missing option. Pipeline definitions remain unchanged.
+- English and Chinese result copy is complete. Long names wrap, long lists are vertically bounded,
+  and the result contains no Apply button or other mutation control.
+- The Task History type filter now uses the existing English/Chinese task-type translations for
+  every concrete option, eliminating the mixed-language dropdown identified during remote review.
+- TDD reproduced three expected pre-fix failures, then the Issue suite passed all three tests.
+  The worker inspected all same-shaped user-facing selectors plus desktop/mobile history paths;
+  Logs, task-specific forms, and Pipeline were explicitly excluded with acceptance-mapped reasons.
+- Fresh read-only review round 1 independently inspected the complete diff and tests and passed
+  with no valid findings. Its only residual was the required changed-result browser evidence, which
+  was completed after review without a code change.
+- The first unified quality-gate invocation passed all 2,025 tests but stopped on Black/isort
+  formatting of the new Python test. The same worker made only the formatter-required test-layout
+  change; focused tests and formatter checks passed. The state record explains why this mechanical,
+  behavior-neutral edit did not reopen local review.
+
+## Issue #334 final local validation
+
+- Focused Issue/task-history regression: 36 passed. Recategory/API regression: 34 passed. Scheduled
+  Tasks and Task Metrics React runtime assertions passed. `git diff --check` passed.
+- Unified quality gate passed on the complete post-format diff: 2,015 passed and 10 skipped; Black,
+  isort, and error-only Pylint passed.
+- Both dead-code gates passed with zero findings. Frontend lint passed with zero errors and five
+  existing unrelated Hook warnings; TypeScript and the production build passed, with only the
+  existing large-chunk advisory.
+- Python smoke passed 13 FastAPI tests, 31 Agentic evaluation tests, and all 3 CLI evaluation cases;
+  evidence, citation, and refusal rates were 1.0 and unsupported-answer rate was 0.
+- Live browser smoke used disposable local data. Desktop and 320px both showed the changed result,
+  the long removed category with impact 1, all 15 added categories with impact 0, bounded vertical
+  scrolling, zero horizontal overflow, and zero result buttons. A page refresh preserved the same
+  history result. The previously verified no-change result showed the explicit empty state.
+- The first post-feedback CI run passed four jobs and all 2,025 tests except one older source
+  assertion that expected the now-replaced hard-coded RAG filter label. The same worker updated only
+  that assertion to the localized option; the exact test and the Issue suite passed locally.
+- Disposable local browser servers were stopped after validation. No production operation ran.
+
+## Issue #334 recommended next action
+
+- Commit and push the validated remote-feedback fix to PR #335, require all checks to pass on that
+  exact head, then merge and complete Issue, branch, worktree, and heartbeat cleanup.
+# Project Status — Issue #312 schedule presets
+
+- Updated: 2026-09-03 EDT
+- Repository: `AI_actuarial_inforsearch`
+- Worktree: `C:\Users\ferry\.codex\worktrees\257d\AI_actuarial_inforsearch`
+- Branch: `codex/issue-312-schedule-presets`
+- Baseline: `origin/main@146028ac8258550f54953c9343b0fd01062c4de3`
+- Issue: `#312 feat(schedule): add frequency, run-time, and timezone presets`
+- State file: `C:\Project\AI_actuarial_inforsearch\.git\codex-issue-to-merge\issue-312.json`
+- Delivery stage: implementation and six-round local review complete; final local gates pass and
+  the branch is ready for commit, push, and draft PR publication
+
+## Issue #312 acceptance criteria
+
+- AC-1: Scheduled-task create/edit UI exposes only Every N minutes, Every N hours, Daily at
+  `HH:MM`, and Weekly on Monday at `HH:MM`, showing only the quantity, run-time, and timezone
+  fields relevant to the selected form.
+- AC-2: Add/update APIs accept only the four canonical structured forms; invalid or non-positive N,
+  invalid/non-canonical `HH:MM`, extra tokens, unknown timezones, and unsupported interval/timezone
+  combinations return 400 without changing configured or effective scheduler state.
+- AC-3: Rolling minute/hour schedules have no timezone and reject a supplied timezone. Newly saved
+  daily/weekly fixed-time schedules require exactly `UTC` or `Asia/Shanghai`, persist a canonical
+  interval plus timezone, and round-trip through reads and the UI.
+- AC-4: `weekly at HH:MM` registers an effective Monday job at the selected timezone through the
+  existing #307 reconciliation path; no second apply or scheduler mutation mechanism is added.
+- AC-5: Existing `daily`, `weekly`, and fixed-time tasks without a timezone retain their prior
+  process-local behavior and stored shape across read, edit-without-schedule-change, restart, and
+  reinitialize until a structured schedule is explicitly saved.
+- AC-6: UTC and Asia/Shanghai fixed-time schedules preserve their wall-clock meaning and are tested
+  across UTC/CST cross-day and Monday boundaries.
+- AC-7: `weekly_summary` remains locked to the previous complete UTC ISO week and its fixed-time
+  schedule remains UTC; the UI/status also shows the equivalent Asia/Shanghai wall time.
+- AC-8: Effective fixed-time job status includes unambiguous timezone/offset information and
+  serialized last/next timestamps carry an offset; naive runtime values are never labeled UTC.
+- AC-9: English/Chinese copy, focused backend/frontend/runtime tests, create/edit round trips,
+  frontend lint/typecheck/build, browser smoke, dead-code gates, Python smoke, and the repository
+  quality gate pass.
+
+## Issue #312 scope, evidence, and non-goals
+
+- Owned production scope is the narrow shared scheduled-task expression contract, scheduled-task
+  add/update persistence and #307 reconciliation comparison, runtime registration/status, the
+  Scheduled Tasks create/edit UI and same-shaped direct scheduled-task creation UI where required,
+  bilingual copy, and directly corresponding tests. This manager owns this status record.
+- Dependency #307 is closed by merged PR #325. Its desired/effective reconciliation, rollback,
+  job identity, and RBAC implementation are reused and must not be duplicated.
+- Non-goals: cron or a generic builder; arbitrary weekdays; monthly/yearly/holiday rules;
+  distributed scheduling, catch-up, or misfire policy; site/default schedule redesign; Pipeline
+  Baton frequency changes; reconciliation/RBAC redesign; dependency upgrades; sibling repositories;
+  security frameworks; or speculative abstractions.
+- The isolated worktree was clean and detached at startup. After fetch, `HEAD`, `origin/main`, the
+  assigned branch, and their merge-base all matched the supplied baseline exactly; the branch was
+  then attached without changing tracked files.
+- A fresh audit found no open/closed PR, remote branch, or commit matching #312, schedule/timezone
+  presets, `weekly at`, or `Asia/Shanghai`; duplicate-work-audit is recorded as `proceed`.
+- Baseline source and runtime probes confirm a free-text interval field, no `weekly at` validation
+  or registration, ignored daily `at_timezone`, non-canonical single-digit time acceptance, no
+  persisted timezone, and naive-looking status timestamps. Delivery shape is `code-change`.
+- Review-policy override: none. Only realistically reproducible functionality, workflow,
+  data-contract, or error-handling findings mapped directly to an AC above are accepted.
+
+## Issue #312 required validation
+
+- Parser/API matrix for every accepted and rejected interval/timezone combination, including
+  state-preserving 400 failures and canonical persisted output.
+- Legacy fixtures for read, edit without schedule fields, restart, reinitialize, and process-local
+  `daily`/`weekly`/no-timezone behavior.
+- Real and fallback scheduler registration, #307 add/update reconciliation and rollback regression,
+  Monday semantics, UTC/Asia-Shanghai cross-day boundaries, offset-bearing status, and Weekly
+  Summary previous-complete-UTC-week/CST-equivalent tests.
+- Scheduled Tasks and direct-create UI create/edit round trips, conditional field visibility,
+  weekly-summary locking, bilingual copy, and desktop plus 320px browser smoke.
+- Focused backend/frontend suites, `git diff --check`, frontend lint/typecheck/build, both dead-code
+  gates, all three Python CI smoke commands, and `python scripts/quality_gate.py`.
+
+## Issue #312 implementation and local review
+
+- Added one shared schedule-preset contract for strict structured writes and bounded legacy runtime
+  parsing. Rolling schedules omit timezone; fixed schedules persist only `UTC` or `Asia/Shanghai`.
+- Scheduled-task writes validate before mutation, preserve unchanged legacy schedule fields, and use
+  the existing #307 reconciliation/rollback path for effective jobs.
+- Runtime registration supports Monday weekly-at schedules, selected fixed timezones, offset-bearing
+  status, process-local legacy status, and the previous-complete-UTC-week Weekly Summary contract.
+- Scheduled Tasks and direct-create UI now expose the four structured forms with bilingual copy.
+  Legacy fixed/no-timezone tasks show process-local state until explicit conversion; legacy
+  non-weekly Weekly Summary schedules show their real cadence read-only with an explicit Weekly UTC
+  migration action.
+- Six fresh read-only review rounds were completed. Accepted findings covered legacy task-type edits,
+  invalid equivalent-time display, baseline-valid legacy whitespace/leading zeros, Weekly Summary
+  timezone compatibility/type transitions, legacy Weekly Summary UI truthfulness, and ordinary
+  legacy process-local UI truthfulness. The same persistent worker fixed each accepted finding.
+  Round 6 returned full PASS with no valid Issue #312 findings.
+- Post-review isort normalization and removal of four test-only helper exports were behavior-neutral
+  gate cleanups by the same worker; state decisions record why functional review did not reopen.
+
+## Issue #312 final local validation
+
+- Unified quality gate: PASS on the final code, with 2,099 passed, 10 skipped, plus Black, isort, and
+  error-only Pylint.
+- Focused schedule/API/runtime/UI regression: 161 passed. Final React-source/Issue suite: 104 passed.
+  Both executable TSX component suites and TypeScript typecheck passed.
+- Frontend lint passed with zero errors and five pre-existing unrelated Hook warnings. Production
+  build passed with only the existing large-chunk advisory.
+- File and symbol dead-code gates passed with zero baseline findings. `git diff --check` passed.
+- CI smoke passed 13 FastAPI tests, 31 Agentic evaluation tests, and all 3 CLI evaluation cases;
+  evidence, citation, and refusal rates were 1.0 and unsupported-answer rate was 0.
+- Disposable browser smoke passed in English and Chinese at desktop and 320px. It verified explicit
+  process-local legacy display, direct canonical UTC conversion, offset/timezone status, read-only
+  legacy Weekly Summary cadence, explicit Weekly UTC conversion, and Shanghai-equivalent copy.
+  Browser services and temporary data were stopped and removed afterward.
+
+## Issue #312 blockers or decisions needed
+
+- None.
+
+## Issue #312 recommended next action
+
+- Commit and push the validated branch, create a draft PR with `Closes #312`, mark it ready, observe
+  the full remote-feedback window, assess the single feedback snapshot, require checks on the exact
+  head, then merge and complete Issue/branch/worktree cleanup.
