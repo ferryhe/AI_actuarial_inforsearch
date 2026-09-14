@@ -1256,6 +1256,10 @@ def test_fastapi_chat_knowledge_bases_defaults_manifest_profile_for_legacy_schem
             self.manifest_requests.append((kb_id, profile))
             return None
 
+        def get_agentic_ready_source_state(self, *, kb_id: str, profile: str = "general"):
+            del kb_id, profile
+            return {"serving_stale": False}
+
         def close(self):
             pass
 

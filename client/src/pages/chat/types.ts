@@ -72,6 +72,8 @@ export interface KnowledgeBase {
   file_count?: number;
   chunk_count?: number;
   usable?: boolean;
+  serving?: boolean;
+  reason?: string;
   availability?: "ready" | "needs_reindex" | "building" | (string & {});
   manifest_profile?: string;
   profile?: string;

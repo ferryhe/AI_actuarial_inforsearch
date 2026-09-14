@@ -24,6 +24,7 @@ import { useTranslation } from "@/components/Layout";
 import { apiGet, apiPost, apiDelete, formatApiErrorDetail } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { getAvailableChatKnowledgeBaseIds } from "@/lib/chat-knowledge-bases";
+import { isAskAiAvailable, kbStatusMessageKey, needsReembed } from "@/lib/kb-status";
 import { buildAskAiChatPath } from "@/lib/navigation";
 import ConfirmDeleteModal from "@/components/ConfirmDeleteModal";
 import { fetchKnowledgeBases as fetchChatKnowledgeBases } from "./chat/api";
@@ -54,6 +55,8 @@ interface KnowledgeBase {
   chunk_count?: number;
   status?: string;
   availability?: string;
+  reason?: string;
+  serving?: boolean;
   categories?: string[];
   embedding_model?: string;
   embedding_identity_key?: string;
@@ -1252,9 +1255,10 @@ export default function Knowledge() {
           {kbs.map((kb, i) => {
             const kbId = getKbId(kb);
             const askAiAvailable = canAskAi
-              && availableChatKnowledgeBaseIds.has(kbId);
+              && availableChatKnowledgeBaseIds.has(kbId)
+              && isAskAiAvailable(kb);
             const askAiPath = kbId ? buildAskAiChatPath(kbId) : "";
-            const needsReembed = kb.needs_reindex || kb.embedding_compatible === false;
+            const reembedRequired = needsReembed(kb);
             const status = kb.availability || kb.status;
             const manifest = kb.agentic_ready_manifest;
             const manifestServing = resolveReadyDataServingState(manifest);
@@ -1368,7 +1372,7 @@ export default function Knowledge() {
                     </div>
                   </div>
                   )}
-                  {canRunKnowledgeTasks && needsReembed && (
+                  {canRunKnowledgeTasks && reembedRequired && (
                     <div
                       className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3"
                       data-testid={`banner-reembed-kb-${kbId}`}
@@ -1394,6 +1398,11 @@ export default function Knowledge() {
                         {t("knowledge.reembed")}
                       </button>
                     </div>
+                  )}
+                  {canRunKnowledgeTasks && kb.reason && kb.reason !== "healthy" && !reembedRequired && (
+                    <p className="mt-2 text-[11px] text-muted-foreground" data-testid={`message-kb-status-${kbId}`}>
+                      {t(kbStatusMessageKey(kb.reason))}
+                    </p>
                   )}
                   {canRunKnowledgeTasks && kb.index_coverage && (
                     <div className="mb-3 grid grid-cols-2 gap-1 rounded-lg bg-muted/40 p-2 text-[10px] text-muted-foreground" data-testid={`kb-index-coverage-${kbId}`}>

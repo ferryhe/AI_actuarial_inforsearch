@@ -26,6 +26,7 @@ from ai_actuarial.ai_runtime import (
 )
 from ai_actuarial.config import settings
 from ai_actuarial.embedding_service import resolve_server_embedding_identity
+from ai_actuarial.kb_status import classify_kb_status
 from ai_actuarial.rag.kb_index import (
     KBIndexContractError,
     binding_contract,
@@ -1266,9 +1267,6 @@ def _build_kb_embedding_status(
         model=effective_index_model,
         dimension=effective_index_dimension,
     )
-    needs_reindex = bool(composition.get("needs_reindex")) or (
-        has_index and not embedding_compatible
-    )
     coverage = {
         "bound_file_count": 0,
         "bound_chunk_count": 0,
@@ -1317,16 +1315,16 @@ def _build_kb_embedding_status(
                 kb_id,
                 kb_payload=kb_payload,
             )
-    index_status = str(latest_index.get("status") or "").strip().lower()
-    if not has_index or index_status in {"pending", "queued", "running", "building", "indexing"}:
-        availability = "building"
-        usable = False
-    elif needs_reindex:
-        availability = "needs_reindex"
-        usable = False
-    else:
-        availability = "ready"
-        usable = True
+    # ``serving_stale`` is the canonical ready-data publication signal.
+    source_state = storage.get_agentic_ready_source_state(
+        kb_id=kb_id,
+        profile=_manifest_profile(kb_payload.get("manifest_profile") or "general"),
+    )
+    status = classify_kb_status(
+        composition=composition,
+        embedding_compatible=embedding_compatible,
+        serving_stale=bool(source_state.get("serving_stale")),
+    )
     return {
         **kb_payload,
         "index_embedding_provider": effective_index_provider,
@@ -1335,10 +1333,13 @@ def _build_kb_embedding_status(
         "index_status": latest_index.get("status")
         or ("ready" if has_index and effective_index_model else None),
         "index_built_at": latest_index.get("built_at"),
-        "needs_reindex": needs_reindex,
+        "needs_reindex": bool(composition.get("needs_reindex")) or not embedding_compatible,
+        "needs_reembed": status["needs_reembed"],
+        "reason": status["reason"],
+        "serving": status["serving"],
         "embedding_compatible": embedding_compatible,
-        "availability": availability,
-        "usable": usable,
+        "availability": status["availability"],
+        "usable": status["serving"],
         "current_embeddings": effective_current_embeddings,
         "index_coverage": coverage,
     }
@@ -3197,6 +3198,11 @@ class _KBListStorageView:
         kb_id: str,
         profile: str = "general",
     ) -> dict[str, Any]:
+        # Read-only SQLite connections do not implicitly open transactions for
+        # SELECT statements. Hold one snapshot across the slot and publication
+        # reads; ``close()`` releases it when this list view is finished.
+        if not self._conn.in_transaction:
+            self._conn.execute("BEGIN")
         normalized_profile = str(profile or "general").strip().lower() or "general"
         row = self._slots.get(self._list_key(kb_id, normalized_profile)) if self._prepared else None
         if not self._prepared and self._table_exists("agentic_ready_slots"):
@@ -3330,6 +3336,10 @@ class _KBListStorageView:
         kb_id: str,
         profile: str = "general",
     ) -> dict[str, Any]:
+        # Start the list-view snapshot before reading source state so its
+        # publication and manifest lookups observe the same database revision.
+        if not self._conn.in_transaction:
+            self._conn.execute("BEGIN")
         normalized_profile = str(profile or "general").strip().lower() or "general"
         row = (
             self._source_rows.get(self._list_key(kb_id, normalized_profile))

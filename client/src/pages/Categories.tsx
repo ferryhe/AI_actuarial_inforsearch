@@ -6,6 +6,7 @@ import { apiGet, formatApiErrorDetail } from "@/lib/api";
 import { categoryDisplayName } from "@/lib/category-labels";
 import { useAuth } from "@/context/AuthContext";
 import { findDedicatedCategoryKnowledgeBaseId } from "@/lib/chat-knowledge-bases";
+import { KB_STATUS_REASONS, isAskAiAvailable, kbStatusMessageKey } from "@/lib/kb-status";
 import { buildAskAiChatPath } from "@/lib/navigation";
 import { fetchKnowledgeBases as fetchChatKnowledgeBases } from "./chat/api";
 import type { KnowledgeBase as ChatKnowledgeBase } from "./chat/types";
@@ -171,6 +172,15 @@ export default function Categories() {
                 chatKnowledgeBases,
               )
               : null;
+            const dedicatedKb = dedicatedKbId
+              ? chatKnowledgeBases.find((kb) => kb.kb_id === dedicatedKbId)
+              : undefined;
+            const statusMessageKey = dedicatedKb?.reason
+              && dedicatedKb.reason !== "healthy"
+              && KB_STATUS_REASONS.some((reason) => reason === dedicatedKb.reason)
+              ? kbStatusMessageKey(dedicatedKb.reason)
+              : null;
+            const askAiAvailable = canAskAi && isAskAiAvailable(dedicatedKb);
             const askAiPath = dedicatedKbId ? buildAskAiChatPath(dedicatedKbId) : "";
             return (
               <div key={category.name} className="group h-full rounded-xl border border-border bg-card p-5 transition-all hover:border-primary/30 hover:shadow-md">
@@ -184,6 +194,11 @@ export default function Categories() {
                         {categoryDisplayName(category, lang)}
                       </h2>
                       <p className="mt-0.5 truncate text-xs text-muted-foreground">{category.name}</p>
+                      {statusMessageKey && (
+                        <span className="mt-1 inline-flex rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+                          {t(statusMessageKey)}
+                        </span>
+                      )}
                     </div>
                   </div>
                   {typeof category.count === "number" && (
@@ -203,10 +218,10 @@ export default function Categories() {
                   </Link>
                   <button
                     type="button"
-                    onClick={() => dedicatedKbId && navigate(askAiPath)}
-                    disabled={!dedicatedKbId}
-                    aria-label={dedicatedKbId ? t("common.ask_ai") : t("categories.ask_ai_unavailable")}
-                    title={dedicatedKbId ? t("common.ask_ai") : t("categories.ask_ai_unavailable")}
+                    onClick={() => askAiAvailable && navigate(askAiPath)}
+                    disabled={!askAiAvailable}
+                    aria-label={askAiAvailable ? t("common.ask_ai") : t("categories.ask_ai_unavailable")}
+                    title={askAiAvailable ? t("common.ask_ai") : t("categories.ask_ai_unavailable")}
                     className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-primary transition-colors hover:bg-primary/5 disabled:cursor-not-allowed disabled:text-muted-foreground disabled:opacity-60"
                     data-testid={`button-ask-ai-category-${category.name}`}
                   >
