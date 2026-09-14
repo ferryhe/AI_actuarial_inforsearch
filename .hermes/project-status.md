@@ -1,3 +1,33 @@
+# Latest work — Issue #357 user self-protection
+
+- Round 2 (2026-09-14): refreshed the UI list after successful role and active-state mutations so active-admin protection uses server-current data; added the role-transition count regression; focused pytest (7) and Python compilation passed, while the frontend build remains blocked by absent node_modules.
+
+- Updated: 2026-09-14 Asia/Shanghai.
+- Repository: `AI_actuarial_inforsearch`; branch: `fix/357-user-self-protection`.
+- Scope: guard user role and active-state mutations, user-management UI affordances,
+  focused regression coverage, and this status record only. Sibling repositories and
+  production data were not accessed.
+- Implementation: `Storage.update_user_with_admin_protection` uses one `BEGIN IMMEDIATE`
+  transaction for target lookup, active email-admin count, state update, and audit writes.
+  It prevents an email-session admin from removing their own active-admin status and
+  prevents every principal type from removing the last active email admin. Inactive
+  admins do not count. The service turns blocked requests into HTTP 409 responses.
+- Audit: both blocked and successful changes are written to `audit_events` and the
+  target user's activity history. `detail` is a compact JSON object with operator kind
+  and stable ID, target user ID, operation, result, and reason; it contains no
+  credential, password, or session value.
+- UI: unsafe self/last-admin role choices and disable actions are disabled with an
+  explanatory visible reason in English and Chinese. Backend enforcement remains authoritative.
+- Recovery: added `docs/runbooks/admin-break-glass.md` with offline DB and controlled
+  bootstrap recovery, backup, validation, rollback, audit, and secret-rotation guidance.
+- Validation: `python -m pytest -q --no-cov tests/test_user_self_protection.py` passed
+  (6); `python -m py_compile ai_actuarial/storage.py ai_actuarial/api/services/auth.py
+  tests/test_user_self_protection.py` and `git diff --check` passed. The frontend build
+  could not run because `node_modules/.bin/vite` is absent in this worktree.
+- Delivery: staging/commit failed because Git metadata is outside the writable workspace:
+  `/opt/ai_actuarial_inforsearch/.git/worktrees/fix-357-user-self-protection/index.lock`
+  cannot be created on its read-only filesystem. No commit or push was possible.
+
 # Latest work — Issue #352 trusted proxy client IP
 
 - Updated: 2026-09-14; project: `AI_actuarial_inforsearch`.
@@ -41,6 +71,7 @@
 
 ---
 
+# Latest work — PR #344 quality-gate repair
 # Latest work — PR #344 quality-gate repair
 
 - Updated: 2026-09-09 EDT.

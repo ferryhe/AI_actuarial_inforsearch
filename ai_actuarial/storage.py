@@ -8351,15 +8351,6 @@ class Storage:
         )
         self._maybe_commit()
 
-    def update_user_role(self, user_id: int, role: str) -> bool:
-        """Change a user's role. Returns True if user was found."""
-        cur = self._conn.execute(
-            "UPDATE users SET role = ? WHERE id = ?",
-            (role, user_id),
-        )
-        self._maybe_commit()
-        return cur.rowcount > 0
-
     def update_user_active(self, user_id: int, is_active: bool) -> bool:
         """Enable/disable a user account."""
         cur = self._conn.execute(
@@ -8368,6 +8359,87 @@ class Storage:
         )
         self._maybe_commit()
         return cur.rowcount > 0
+
+    def update_user_with_admin_protection(
+        self,
+        user_id: int,
+        *,
+        role: str | None = None,
+        is_active: bool | None = None,
+        operator_kind: str,
+        operator_id: int | None,
+        operation: str,
+    ) -> dict[str, str]:
+        """Atomically change a user while retaining an active email admin.
+
+        The caller supplies exactly one state change.  The immediate transaction
+        serializes the active-admin count with the update and its audit event.
+        """
+        if (role is None) == (is_active is None):
+            raise ValueError("Exactly one user state change is required")
+
+        with self.transaction(immediate=True):
+            target = self.get_user_by_id(user_id)
+            result = "success"
+            reason: str | None = None
+
+            if target is None:
+                result = "not_found"
+                reason = "user_not_found"
+            else:
+                target_is_active_admin = bool(target["is_active"]) and target["role"] == "admin"
+                next_role = role if role is not None else str(target["role"])
+                next_active = is_active if is_active is not None else bool(target["is_active"])
+                removes_active_admin = target_is_active_admin and not (
+                    next_role == "admin" and next_active
+                )
+
+                if removes_active_admin and operator_kind == "email" and operator_id == user_id:
+                    result = "blocked"
+                    reason = "self_protection"
+                elif removes_active_admin:
+                    active_admin_count = self._conn.execute(
+                        "SELECT COUNT(*) FROM users WHERE role = 'admin' AND is_active = 1"
+                    ).fetchone()[0]
+                    if active_admin_count <= 1:
+                        result = "blocked"
+                        reason = "last_active_email_admin"
+
+                if result == "success":
+                    if role is not None:
+                        self._conn.execute(
+                            "UPDATE users SET role = ? WHERE id = ?", (role, user_id)
+                        )
+                    else:
+                        self._conn.execute(
+                            "UPDATE users SET is_active = ? WHERE id = ?",
+                            (1 if is_active else 0, user_id),
+                        )
+
+            audit_detail = json.dumps(
+                {
+                    "operator": {"kind": operator_kind, "id": operator_id},
+                    "target_user_id": user_id,
+                    "operation": operation,
+                    "result": result,
+                    "reason": reason,
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            self.log_user_activity(
+                operation,
+                user_id=user_id,
+                resource="user_management",
+                detail=audit_detail,
+            )
+            self.log_audit_event(
+                operation,
+                token_id=operator_id if operator_kind == "token" else None,
+                resource="user_management",
+                detail=audit_detail,
+            )
+            return {"result": result, "reason": reason or ""}
 
     def update_user_profile(
         self,
@@ -8406,8 +8478,8 @@ class Storage:
         per_page: int = 50,
         role: str | None = None,
         search: str | None = None,
-    ) -> tuple[list[dict], int]:
-        """Return a page of users and total count."""
+    ) -> tuple[list[dict], int, int]:
+        """Return a page of users, its filtered total, and global active admins."""
         filters: list[str] = []
         params: list[Any] = []
         if role:
@@ -8418,6 +8490,9 @@ class Storage:
             params.extend([f"%{search}%", f"%{search}%"])
         where = ("WHERE " + " AND ".join(filters)) if filters else ""
         total = self._conn.execute(f"SELECT COUNT(*) FROM users {where}", params).fetchone()[0]
+        active_admin_count = self._conn.execute(
+            "SELECT COUNT(*) FROM users WHERE role = 'admin' AND is_active = 1"
+        ).fetchone()[0]
         offset = (page - 1) * per_page
         rows = self._conn.execute(
             f"SELECT * FROM users {where} ORDER BY created_at DESC LIMIT ? OFFSET ?",
@@ -8426,7 +8501,7 @@ class Storage:
         cur = self._conn.execute("SELECT * FROM users LIMIT 0")
         cols = [d[0] for d in cur.description]
         users = [dict(zip(cols, r)) for r in rows]
-        return users, total
+        return users, total, active_admin_count
 
     # -------------------------------------------------------------------------
     # Quota helpers
@@ -8657,6 +8732,25 @@ class Storage:
     # -------------------------------------------------------------------------
     # Activity log helpers
     # -------------------------------------------------------------------------
+
+    def log_audit_event(
+        self,
+        event_type: str,
+        *,
+        token_id: int | None = None,
+        resource: str | None = None,
+        detail: str | None = None,
+        ip: str | None = None,
+    ) -> None:
+        """Insert a security audit event without recording credential material."""
+        self._conn.execute(
+            """
+            INSERT INTO audit_events (token_id, event_type, resource, detail, ip, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (token_id, event_type, resource, detail, ip, self.now()),
+        )
+        self._maybe_commit()
 
     def log_user_activity(
         self,
