@@ -50,6 +50,7 @@ DEFAULT_RATE_LIMIT = 10
 RATE_LIMITED_PATHS = [
     "/api/search",
     "/api/chat/query",
+    "/api/agentic-rag/chat",
     "/api/chat/conversations",
     "/api/collections/run",
     "/api/auth/login",
