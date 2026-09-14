@@ -8351,15 +8351,6 @@ class Storage:
         )
         self._maybe_commit()
 
-    def update_user_role(self, user_id: int, role: str) -> bool:
-        """Change a user's role. Returns True if user was found."""
-        cur = self._conn.execute(
-            "UPDATE users SET role = ? WHERE id = ?",
-            (role, user_id),
-        )
-        self._maybe_commit()
-        return cur.rowcount > 0
-
     def update_user_active(self, user_id: int, is_active: bool) -> bool:
         """Enable/disable a user account."""
         cur = self._conn.execute(
