@@ -1315,9 +1315,15 @@ def _build_kb_embedding_status(
                 kb_id,
                 kb_payload=kb_payload,
             )
+    # ``serving_stale`` is the canonical ready-data publication signal.
+    source_state = storage.get_agentic_ready_source_state(
+        kb_id=kb_id,
+        profile=_manifest_profile(kb_payload.get("manifest_profile") or "general"),
+    )
     status = classify_kb_status(
         composition=composition,
         embedding_compatible=embedding_compatible,
+        serving_stale=bool(source_state.get("serving_stale")),
     )
     return {
         **kb_payload,

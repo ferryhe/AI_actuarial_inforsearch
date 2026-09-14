@@ -610,6 +610,11 @@ def list_knowledge_bases(*, db_path: str, auth: AuthContext | None = None) -> di
             agentic_manifest = storage.get_agentic_ready_manifest(
                 kb_id=kb_id, profile=manifest_profile
             )
+            # ``serving_stale`` is produced by ready_data_publication's
+            # source-state projection and preserves last-good Ask AI serving.
+            source_state = storage.get_agentic_ready_source_state(
+                kb_id=kb_id, profile=manifest_profile
+            )
             effective_index_provider = latest_index.get("embedding_provider") or kb_provider
             effective_index_model = latest_index.get("embedding_model") or kb_model
             effective_index_dimension = latest_index.get("embedding_dimension")
@@ -624,6 +629,7 @@ def list_knowledge_bases(*, db_path: str, auth: AuthContext | None = None) -> di
             status = classify_kb_status(
                 composition=composition,
                 embedding_compatible=embedding_compatible,
+                serving_stale=bool(source_state.get("serving_stale")),
             )
             knowledge_bases.append(
                 {

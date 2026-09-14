@@ -4,6 +4,7 @@ export const KB_STATUS_REASONS = [
   "binding_dirty",
   "index_missing",
   "index_building",
+  "published_stale_but_servable",
   "publish_failed",
   "serving_disabled",
   "healthy",

@@ -16,6 +16,7 @@ KB_STATUS_REASONS = frozenset(
         "binding_dirty",
         "index_missing",
         "index_building",
+        "published_stale_but_servable",
         "publish_failed",
         "serving_disabled",
         "healthy",
@@ -29,6 +30,7 @@ def classify_kb_status(
     embedding_compatible: bool,
     serving_enabled: bool | None = None,
     publish_failed: bool = False,
+    serving_stale: bool = False,
 ) -> dict[str, Any]:
     """Classify the public KB state without conflating maintenance with serving."""
     latest_index = composition.get("latest_index") or {}
@@ -45,6 +47,9 @@ def classify_kb_status(
         # Legacy composition payloads do not always expose the component counts.
         content_dirty = True
 
+    serving = bool(
+        has_index and not building and embedding_compatible and serving_enabled is not False
+    )
     if not embedding_compatible:
         reason = "embedding_incompatible"
     elif serving_enabled is False:
@@ -55,6 +60,8 @@ def classify_kb_status(
         reason = "index_missing"
     elif building:
         reason = "index_building"
+    elif serving_stale and serving:
+        reason = "published_stale_but_servable"
     elif binding_dirty:
         reason = "binding_dirty"
     elif content_dirty:
@@ -64,9 +71,6 @@ def classify_kb_status(
 
     # A usable index may continue serving while follow-up content/binding work
     # is pending.  Only an incompatible embedding space is a re-embed gate.
-    serving = bool(
-        has_index and not building and embedding_compatible and serving_enabled is not False
-    )
     if reason == "embedding_incompatible":
         availability = "needs_reindex"
     elif reason in {"index_missing", "index_building"}:

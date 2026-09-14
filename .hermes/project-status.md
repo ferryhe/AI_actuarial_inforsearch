@@ -1,3 +1,26 @@
+# Latest work — Issue #349 reviewer round-1 corrections
+
+- Updated: 2026-09-14 Asia/Shanghai.
+- Repository: `AI_actuarial_inforsearch`; branch: `fix/349-kb-reembed-hint`.
+- Scope: minimal corrections for reviewer findings F1/F2 only: the shared KB reason
+  contract, chat/RAG list serialization, Categories presentation/gating, focused tests,
+  and this record. Sibling repositories were not accessed.
+- Added `published_stale_but_servable`: compatible indexed KBs with the existing
+  ready-data `serving_stale` signal retain Ask AI availability and report `ready` without
+  requiring re-embedding. Both list serializers pass the existing source-state signal to
+  `classify_kb_status`; no publication subsystem was added.
+- Categories now displays shared non-healthy reason copy and combines its existing
+  permission/dedicated-KB logic with `isAskAiAvailable` when a chat-KB status is present.
+- Validation: Black, isort, `git diff --check`, and Python compilation passed. Focused
+  tests passed: 49 total (`test_kb_status_reason.py`, `test_knowledge_react_source.py`,
+  and the legacy chat knowledge-base endpoint test). Full chat/RAG endpoint modules exceeded
+  the sandbox's 30-second command window after collection/startup. Frontend typecheck is
+  blocked because root `node_modules` is absent.
+- Delivery: per manager instruction, do not commit, push, or modify PR state. No untracked
+  files; the listed implementation files are intentionally uncommitted for manager review.
+- Next action: manager reviews and commits the narrow diff; in an environment with frontend
+  dependencies, run `npm run typecheck` and the full endpoint modules before push.
+
 # Latest work — Issue #349 KB re-embedding hint / Ask AI serving gate
 
 - Updated: 2026-09-14 Asia/Shanghai.

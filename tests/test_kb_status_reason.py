@@ -31,6 +31,14 @@ from ai_actuarial.kb_status import KB_STATUS_REASONS, classify_kb_status
             "index_building",
             False,
         ),
+        (
+            "published stale but servable",
+            {"has_index": True, "pending_file_count": 1},
+            True,
+            {"serving_stale": True},
+            "published_stale_but_servable",
+            True,
+        ),
         ("publish", {"has_index": True}, True, {"publish_failed": True}, "publish_failed", True),
         (
             "disabled",
@@ -70,6 +78,7 @@ def test_all_shipped_reason_values_are_covered() -> None:
         "binding_dirty",
         "index_missing",
         "index_building",
+        "published_stale_but_servable",
         "publish_failed",
         "serving_disabled",
         "healthy",
@@ -92,6 +101,27 @@ def test_frontend_maps_every_reason_and_uses_serving_for_ask_ai() -> None:
     assert "isAskAiAvailable(kb)" in knowledge
     assert "isAskAiAvailable(meta)" in detail
     assert "knowledge.kb_status.${kb.reason}" in chat
+    assert "isAskAiAvailable(dedicatedKb)" in (root / "pages" / "Categories.tsx").read_text(
+        encoding="utf-8"
+    )
+    assert "kbStatusMessageKey(dedicatedKb.reason)" in (
+        root / "pages" / "Categories.tsx"
+    ).read_text(encoding="utf-8")
+
+
+def test_published_stale_but_servable_keeps_ask_ai_ready() -> None:
+    status = classify_kb_status(
+        composition={"has_index": True, "pending_file_count": 1},
+        embedding_compatible=True,
+        serving_stale=True,
+    )
+
+    assert status == {
+        "reason": "published_stale_but_servable",
+        "needs_reembed": False,
+        "serving": True,
+        "availability": "ready",
+    }
 
 
 def test_three_healthy_kbs_with_generic_reindex_are_still_ask_ai_servable() -> None:
