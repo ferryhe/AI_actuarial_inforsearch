@@ -2081,6 +2081,22 @@
   the full remote-feedback window, assess the single feedback snapshot, require checks on the exact
   head, then merge and complete Issue/branch/worktree cleanup.
 
+## Issue #377 current work
+
+- Updated: 2026-09-27 Asia/Shanghai.
+- Repository: `AI_actuarial_inforsearch`; branch: `fix/issue-377-legacy-bindings`.
+- `resolve_kb_bound_chunks` now performs one detect/heal pass for KBs with no persisted bindings:
+  it selects the latest ready chunk set per member under the selected profile, repairs a missing
+  profile only when exactly one valid profile covers every member, writes warning/audit events,
+  persists `kb_chunk_bindings`, and then re-enters the existing strict #238 contract. Partial or
+  malformed binding sets remain fail-closed.
+- Added idempotent `scripts/maintenance/reconcile_legacy_kb_bindings.py`, dry-run by default with
+  `--apply` for writes, plus three Issue #377 regression tests.
+- Focused validation passed 31 tests (`#377` plus `#238`) and 130 related Ready Data/file mutation
+  tests. Targeted Black/isort/error-only Pylint and `git diff --check` passed. The full quality gate
+  ran 2,198 tests: 2,166 passed and 32 failed because the Python image lacks npm/docker/tsx and one
+  path-sensitive source test assumes the original checkout path; no touched Python test failed.
+
 ---
 
 - Round 2 (2026-09-14): refreshed the UI list after successful role and active-state mutations so active-admin protection uses server-current data; added the role-transition count regression; focused pytest (7) and Python compilation passed, while the frontend build remains blocked by absent node_modules.
