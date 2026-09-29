@@ -64,7 +64,7 @@ production_entries = [
     "ai_actuarial.api.app",
     "ai_actuarial.agentic_rag.eval",
 ]
-script_entry_globs = ["scripts/*.py"]
+script_entry_globs = ["scripts/*.py", "scripts/maintenance/*.py"]
 test_entry_globs = ["tests/**/*.py"]
 dynamic_imports = [
     { module = "ai_actuarial.chatbot.config", reason = "Lazy chat runtime import" },
