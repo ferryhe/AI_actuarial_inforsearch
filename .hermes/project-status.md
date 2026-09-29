@@ -1,5 +1,10 @@
 # Latest work — Issue #356 canonical email-user roles
 
+- Required-check repair: exact-head CI run `36646491306` failed only the Python symbol dead-code
+  gate. The new FastAPI roles route is now registered in the repository's reviewed framework
+  whitelist, and the superseded unreferenced `VALID_USER_ROLES` constant was removed. The canonical
+  assignable schema, role behavior, token groups, and API/UI contracts are unchanged. Focused and
+  exact dead-code validation details are recorded in the check-repair worker report.
 - Updated: 2026-09-29 EDT. Repository: `AI_actuarial_inforsearch`; branch:
   `codex/issue-356-canonical-roles`; baseline:
   `21e4cc58a5a02d6ee55637a620128b047489cfce`. Only this assigned worktree was

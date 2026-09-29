@@ -28,6 +28,7 @@ from ai_actuarial.api.routers.auth import (
     api_create_auth_token,
     api_disable_user,
     api_enable_user,
+    api_list_assignable_user_roles,
     api_list_auth_tokens,
     api_list_users,
     api_reset_user_quota,
@@ -47,6 +48,7 @@ api_create_auth_token  # reason: FastAPI registers this decorated route.
 api_revoke_auth_token  # reason: FastAPI registers this decorated route.
 api_user_me  # reason: FastAPI registers this decorated route.
 api_update_profile  # reason: FastAPI registers this decorated route.
+api_list_assignable_user_roles  # reason: FastAPI registers this decorated route.
 api_list_users  # reason: FastAPI registers this decorated route.
 api_set_user_role  # reason: FastAPI registers this decorated route.
 api_enable_user  # reason: FastAPI registers this decorated route.
