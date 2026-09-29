@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { ChevronDown, ChevronUp, Loader2, Play, RefreshCw } from "lucide-react";
+import { Loader2, Play, RefreshCw } from "lucide-react";
 import { useTranslation } from "@/components/Layout";
 import { CheckboxField, FormField, InputField } from "@/components/FormFields";
 import { useAuth } from "@/context/AuthContext";
@@ -8,22 +8,9 @@ import { CatalogForm } from "./CatalogForm";
 import { ChunkForm } from "./ChunkForm";
 import { MarkdownForm } from "./MarkdownForm";
 import { RagIndexForm } from "./RagIndexForm";
+import { PipelineBatonResults, type PipelineStepName, type PipelineView } from "./PipelineBatonResults";
 
-type StepName = "scheduled" | "markdown_conversion" | "catalog" | "chunk_generation" | "rag_indexing";
-
-interface StageTask {
-  task_id: string;
-  status: string;
-  kb_id?: string;
-  subtask?: "kb_index" | "ready_data_build";
-  label?: string;
-}
-
-interface PipelineView {
-  config: { overrides: Partial<Record<StepName, Record<string, unknown>>> };
-  state: { round_status: string; current_step?: string; last_check?: string };
-  stages: Array<{ step: StepName; tasks: StageTask[] }>;
-}
+type StepName = PipelineStepName;
 
 interface ScheduledTask {
   name: string;
@@ -51,7 +38,8 @@ export function PipelineBaton({ onViewLog }: { onViewLog: (taskId: string, taskN
   const { permissions } = useAuth();
   const canRun = permissions.includes("tasks.run");
   const canConfigure = permissions.includes("schedule.write");
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [expanded, setExpanded] = useState<Set<string> | null>(null);
+  const [showFailuresOnly, setShowFailuresOnly] = useState(false);
   const [view, setView] = useState<PipelineView | null>(null);
   const [scheduledTask, setScheduledTask] = useState<ScheduledTask | null>(null);
   const [scheduledInterval, setScheduledInterval] = useState("");
@@ -86,7 +74,7 @@ export function PipelineBaton({ onViewLog }: { onViewLog: (taskId: string, taskN
 
   const toggle = (step: StepName) => {
     setExpanded((current) => {
-      const next = new Set(current);
+      const next = new Set(current || view?.stages.filter((stage) => stage.status === "failed").map((stage) => stage.step));
       if (next.has(step)) next.delete(step);
       else next.add(step);
       return next;
@@ -164,6 +152,8 @@ export function PipelineBaton({ onViewLog }: { onViewLog: (taskId: string, taskN
     }
   };
 
+  const hasExistingResults = Boolean(view?.stages.some((stage) => stage.tasks.length > 0));
+
   const settingsFor = (step: StepName) => {
     if (!view) return null;
     const initialTask = view.config.overrides[step] || {};
@@ -201,45 +191,17 @@ export function PipelineBaton({ onViewLog }: { onViewLog: (taskId: string, taskN
       <div className="flex items-center justify-between gap-3">
         <div>
           <h2 className="text-lg font-semibold">{t("tasks.pipeline.title")}</h2>
-          <p className="text-xs text-muted-foreground">{view?.state.round_status || "idle"}</p>
         </div>
         <div className="flex gap-2">
           <button type="button" onClick={() => void refresh()} className="rounded-lg border border-border p-2" aria-label={t("tasks.refresh")}><RefreshCw className="h-4 w-4" /></button>
           <button type="button" onClick={() => void start()} disabled={!canRun || busy === "start" || view?.state.round_status === "running"}
             className="flex items-center gap-2 rounded-lg bg-primary px-3 py-2 text-sm text-primary-foreground disabled:opacity-50" data-testid="button-start-pipeline-baton">
-            {busy === "start" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}{t("tasks.pipeline.start")}
+            {busy === "start" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}{t(hasExistingResults ? "tasks.pipeline.rerun" : "tasks.pipeline.start")}
           </button>
         </div>
       </div>
       {error && <p className="rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive">{error}</p>}
-      <div className="space-y-2">
-        {steps.map((step, index) => {
-          const stage = view?.stages.find((item) => item.step === step.step);
-          const hasOverride = Boolean(view?.config.overrides[step.step]);
-          return (
-            <div key={step.step} className="rounded-xl border border-border bg-card" data-testid={step.testId}>
-              <button type="button" onClick={() => toggle(step.step)} aria-expanded={expanded.has(step.step)}
-                className="flex w-full items-center gap-3 px-4 py-3 text-left">
-                <span className="flex h-7 w-7 items-center justify-center rounded-full bg-muted text-xs font-semibold">{index + 1}</span>
-                <span className="flex-1 font-medium">{step.label}{step.step === "rag_indexing" ? ` — ${t("tasks.pipeline.all_indexable_kbs")}` : ""}</span>
-                <span className="text-xs text-muted-foreground">{hasOverride ? t("tasks.pipeline.saved") : t("tasks.pipeline.default_settings")}</span>
-                {expanded.has(step.step) ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-              </button>
-              {stage && stage.tasks.length > 0 && (
-                <div className="flex flex-wrap gap-2 border-t border-border px-4 py-2">
-                  {stage.tasks.map((task) => (
-                    <button key={task.task_id} type="button" onClick={() => onViewLog(task.task_id, `${task.label || step.label}${task.kb_id ? `: ${task.kb_id}` : ""}`)}
-                      className="text-xs text-primary underline" data-testid={`button-pipeline-task-log-${task.task_id}`}>
-                      {task.label || step.label} · {task.status} · {task.task_id}{task.kb_id ? ` · ${task.kb_id}` : ""} · {t("tasks.pipeline.view_log")}
-                    </button>
-                  ))}
-                </div>
-              )}
-              {expanded.has(step.step) && <div className="border-t border-border p-4">{settingsFor(step.step)}</div>}
-            </div>
-          );
-        })}
-      </div>
+      <PipelineBatonResults view={view} steps={steps} expanded={expanded} showFailuresOnly={showFailuresOnly} onShowFailuresOnly={setShowFailuresOnly} onToggle={toggle} onViewLog={onViewLog} renderSettings={settingsFor} t={t} />
     </div>
   );
 }
