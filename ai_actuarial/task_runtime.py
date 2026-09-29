@@ -72,10 +72,16 @@ from ai_actuarial.shared_runtime import (
     task_log_path,
 )
 from ai_actuarial.storage import Storage
+from ai_actuarial.task_item_errors import normalize_item_errors, record_item_error
 
 logger = logging.getLogger(__name__)
 
 _CAPACITY_GATED_TYPES = frozenset({"recategory", "rag_indexing", "ready_data_build"})
+_PUBLIC_STAGE_FAILURES = {
+    "catalog": "Catalog processing failed.",
+    "embedding_generation": "Embedding generation failed.",
+    "markdown_conversion": "Markdown conversion failed.",
+}
 
 # Bounded wait for search-fallback child runs to reach a terminal state before
 # the parent pipeline run finalizes (#213). All child runs are required: a hard
@@ -88,7 +94,6 @@ _QUERY_SITE_FILTER_RE = re.compile(r"(?:^|\s)site:([^\s)]+)", re.IGNORECASE)
 
 _MARKDOWN_PREFLIGHT_READ_BYTES = 8192
 _MARKDOWN_TERMINAL_SCAN_PAGE_SIZE = 32
-_MARKDOWN_FAILURE_DETAIL_MAX_LENGTH = 800
 _OLE_COMPOUND_FILE_HEADER = bytes.fromhex("d0cf11e0a1b11ae1")
 
 _CONVERTIBLE_MARKDOWN_PREDICATE = """
@@ -137,44 +142,6 @@ def _convert_document_path(path: Path, **kwargs: Any) -> Any:
     from doc_to_md.registry import convert_path
 
     return convert_path(path, **kwargs)
-
-
-def _safe_markdown_failure_detail(exc: Exception, local_path: Path) -> str:
-    detail = " ".join(str(exc).split()) or type(exc).__name__
-    path_texts = {str(local_path)}
-    try:
-        path_texts.add(str(local_path.resolve()))
-    except OSError:
-        pass
-    for path_text in sorted(path_texts, key=len, reverse=True):
-        if path_text:
-            detail = detail.replace(path_text, local_path.name)
-    return detail[:_MARKDOWN_FAILURE_DETAIL_MAX_LENGTH]
-
-
-def _format_markdown_auto_failure(
-    local_path: Path,
-    failure_details: list[tuple[str, str]],
-) -> str:
-    prefix = f"Auto conversion failed for {local_path.name}: "
-    if not failure_details:
-        return f"{prefix}no candidate completed"
-    candidate_prefixes = [f"{candidate}: " for candidate, _detail in failure_details]
-    separator_length = 2 * (len(failure_details) - 1)
-    available = (
-        _MARKDOWN_FAILURE_DETAIL_MAX_LENGTH
-        - len(prefix)
-        - sum(len(candidate_prefix) for candidate_prefix in candidate_prefixes)
-        - separator_length
-    )
-    per_candidate_limit = max(1, available // len(failure_details))
-    entries = [
-        f"{candidate_prefix}{detail[:per_candidate_limit]}"
-        for candidate_prefix, (_candidate, detail) in zip(
-            candidate_prefixes, failure_details, strict=True
-        )
-    ]
-    return (prefix + "; ".join(entries))[:_MARKDOWN_FAILURE_DETAIL_MAX_LENGTH]
 
 
 class _FallbackScheduleJob:
@@ -657,6 +624,9 @@ class NativeTaskRuntime:
             "items_downloaded": 0,
             "items_skipped": 0,
             "items_terminal_skipped": 0,
+            "failed_items": 0,
+            "item_errors": [],
+            "item_errors_truncated": False,
             "log_file": str(task_log_path(task_id)),
             "errors": [],
         }
@@ -950,19 +920,25 @@ class NativeTaskRuntime:
 
             if isinstance(exc, ManifestIngestError):
                 logger.error("Task %s failed: %s", task_id, exc)
+                public_error = str(exc)
                 error_code = exc.code
                 error_details = exc.details
             else:
-                logger.exception("Task %s failed", task_id)
+                public_error = _PUBLIC_STAGE_FAILURES.get(collection_type)
+                if public_error is None:
+                    logger.exception("Task %s failed", task_id)
+                    public_error = str(exc)
+                else:
+                    logger.error("Task %s failed during %s", task_id, collection_type)
                 error_code = None
                 error_details = None
             self._finalize_task_error(
                 task_id,
-                str(exc),
+                public_error,
                 error_code=error_code,
                 error_details=error_details,
             )
-            self._finalize_child_run(data, error=str(exc))
+            self._finalize_child_run(data, error=public_error)
 
     def _run_collection(
         self, task_id: str, collection_type: str, data: dict[str, Any]
@@ -1135,6 +1111,7 @@ class NativeTaskRuntime:
                     or None,
                     "output_language": str(data.get("output_language") or "auto").strip() or "auto",
                     "progress_callback": self._progress_callback(task_id),
+                    "task_id": task_id,
                 }
                 file_urls = [
                     str(file_url).strip()
@@ -1161,16 +1138,20 @@ class NativeTaskRuntime:
                     items_downloaded=int(stats.get("processed", 0)),
                     items_skipped=int(stats.get("skipped_ai", 0)),
                     errors=(
-                        []
-                        if not int(stats.get("errors", 0))
-                        else [f"Catalog errors: {stats.get('errors', 0)}"]
+                        [] if not int(stats.get("errors", 0)) else ["Catalog processing failed."]
                     ),
                     metadata={
                         "category": category,
                         "provider": provider,
                         "input_source": input_source,
                         "catalog_version": catalog_version,
-                        "file_urls": file_urls,
+                        "catalog_scanned": int(stats.get("scanned", 0)),
+                        "catalog_ok": int(stats.get("processed", 0)),
+                        "catalog_skipped": int(stats.get("skipped_ai", 0)),
+                        "catalog_errors": 1 if int(stats.get("errors", 0)) else 0,
+                        "failed_items": int(stats.get("failed_items", 0)),
+                        "item_errors": list(stats.get("item_errors") or []),
+                        "item_errors_truncated": bool(stats.get("item_errors_truncated", False)),
                     },
                 )
 
@@ -1950,6 +1931,9 @@ class NativeTaskRuntime:
                     "source_type": "markdown_conversion",
                     "stopped": False,
                     "items_terminal_skipped": 0,
+                    "failed_items": 0,
+                    "item_errors": [],
+                    "item_errors_truncated": False,
                     "result": {"contract_version": 1, "files": [], "outcomes": []},
                 },
             )
@@ -1984,6 +1968,24 @@ class NativeTaskRuntime:
         skip_existing = bool(data.get("skip_existing", True)) and not overwrite_existing
         progress = self._progress_callback(task_id)
         errors: list[str] = []
+        item_errors: list[dict[str, str]] = []
+        failed_object_ids: set[str] = set()
+        failed_items = 0
+
+        def record_failure(code: str, file_url: str, summary: str) -> None:
+            nonlocal failed_items
+            if record_item_error(
+                item_errors,
+                failed_object_ids,
+                "markdown",
+                code,
+                file_url,
+                task_id=task_id,
+            ):
+                failed_items += 1
+            if summary not in errors:
+                errors.append(summary)
+
         converted = 0
         skipped = 0
         terminal_skipped = 0
@@ -2080,26 +2082,17 @@ class NativeTaskRuntime:
                     result_files.append(file_result)
                     result_outcomes.append(file_result)
                 else:
-                    detail = str(reason or "markdown update failed")
-                    errors.append(f"{file_url}: {detail}")
-                    result_outcomes.append(
-                        {
-                            "file_url": file_url,
-                            "status": "error",
-                            "outcome": "retryable_error",
-                            "detail": detail,
-                        }
+                    del reason
+                    record_failure(
+                        "markdown_update_failed",
+                        file_url,
+                        "Converted markdown could not be saved.",
                     )
-            except Exception as exc:  # noqa: BLE001
-                detail = _safe_markdown_failure_detail(exc, local_path)
-                errors.append(f"{file_url}: {detail}")
-                result_outcomes.append(
-                    {
-                        "file_url": file_url,
-                        "status": "error",
-                        "outcome": "retryable_error",
-                        "detail": detail,
-                    }
+            except Exception:  # noqa: BLE001
+                record_failure(
+                    "conversion_failed",
+                    file_url,
+                    "Markdown conversion failed.",
                 )
             progress(index, total, f"Processed markdown {index}/{total}")
             if self._stop_requested(task_id):
@@ -2120,6 +2113,9 @@ class NativeTaskRuntime:
                 "provider": last_provider,
                 "stopped": stopped,
                 "items_terminal_skipped": terminal_skipped,
+                "failed_items": failed_items,
+                "item_errors": item_errors,
+                "item_errors_truncated": failed_items > len(item_errors),
                 "result": {
                     "contract_version": 1,
                     "files": result_files,
@@ -2153,7 +2149,6 @@ class NativeTaskRuntime:
             raise RuntimeError(f"No auto conversion candidates configured for {local_path.name}")
 
         last_exc: Exception | None = None
-        failure_details: list[tuple[str, str]] = []
         for candidate in candidates:
             tool_cfg = (md_config.get("tools") or {}).get(candidate) or {}
             candidate_model = tool_cfg.get("model") if isinstance(tool_cfg, dict) else None
@@ -2166,10 +2161,8 @@ class NativeTaskRuntime:
                 )
             except Exception as exc:  # noqa: BLE001 - auto mode tries fallbacks
                 last_exc = exc
-                failure_details.append((candidate, _safe_markdown_failure_detail(exc, local_path)))
                 continue
             if runtime.provider != "local" and not runtime.api_key:
-                failure_details.append((candidate, "provider not configured"))
                 continue
             try:
                 apply_ocr_runtime_environment(runtime)
@@ -2183,10 +2176,9 @@ class NativeTaskRuntime:
                 return output, runtime.provider
             except Exception as exc:  # noqa: BLE001 - auto mode tries fallbacks
                 last_exc = exc
-                failure_details.append((candidate, _safe_markdown_failure_detail(exc, local_path)))
                 continue
 
-        raise RuntimeError(_format_markdown_auto_failure(local_path, failure_details)) from last_exc
+        raise RuntimeError("Markdown conversion failed") from last_exc
 
     def _run_chunk_generation(
         self,
@@ -2340,6 +2332,7 @@ class NativeTaskRuntime:
             batch_size=identity.config.embedding_batch_size,
             stop_check=lambda: self._stop_requested(task_id),
             progress_callback=progress,
+            task_id=task_id,
         )
         coverage = embedding_coverage_for_selection(
             storage=storage,
@@ -2373,6 +2366,7 @@ class NativeTaskRuntime:
             "persisted_record_count": ensured.persisted_record_count,
             "per_file": coverage["per_file"],
             "errors": ensured.errors,
+            "errors_truncated": bool(getattr(ensured, "errors_truncated", False)),
             "started_at": ensured.started_at,
             "completed_at": ensured.completed_at,
         }
@@ -2381,12 +2375,15 @@ class NativeTaskRuntime:
             items_found=ensured.expected_count,
             items_downloaded=ensured.generated + ensured.invalid_regenerated,
             items_skipped=ensured.reused,
-            errors=[str(error["code"]) for error in ensured.errors],
+            errors=["Embedding generation failed."] if ensured.failed else [],
             metadata={
                 "source_type": "embedding_generation",
                 "stopped": ensured.stopped,
                 "items_processed": items_processed,
                 "items_total": ensured.expected_count,
+                "failed_items": ensured.failed,
+                "item_errors": ensured.errors,
+                "item_errors_truncated": ensured.failed > len(ensured.errors),
                 "result": result,
             },
         )
@@ -2909,7 +2906,19 @@ class NativeTaskRuntime:
             task_data = self.active_tasks.pop(task_id, None)
             if task_data is None:
                 return
-            stopped = bool((result.metadata or {}).get("stopped"))
+            result_metadata = dict(result.metadata or {})
+            stopped = bool(result_metadata.get("stopped"))
+            try:
+                failed_items = max(0, int(result_metadata.get("failed_items") or 0))
+            except (TypeError, ValueError):
+                failed_items = 0
+            item_errors = normalize_item_errors(
+                result_metadata.get("item_errors"),
+                task_id=task_id,
+            )
+            persisted_metadata = dict(result_metadata)
+            for key in ("failed_items", "item_errors", "item_errors_truncated"):
+                persisted_metadata.pop(key, None)
             items_processed = result.items_found
             items_total = result.items_found
             progress = 100
@@ -2944,13 +2953,24 @@ class NativeTaskRuntime:
                     "items_downloaded": result.items_downloaded,
                     "items_skipped": result.items_skipped,
                     "items_terminal_skipped": int(
-                        (result.metadata or {}).get("items_terminal_skipped") or 0
+                        result_metadata.get("items_terminal_skipped") or 0
                     ),
+                    "failed_items": failed_items,
+                    "item_errors": item_errors,
+                    "item_errors_truncated": failed_items > len(item_errors),
                     "errors": list(result.errors or []),
-                    "metadata": dict(result.metadata or {}),
+                    "metadata": persisted_metadata,
                 }
             )
-            canonical_result = (result.metadata or {}).get("result")
+            for key in (
+                "catalog_scanned",
+                "catalog_ok",
+                "catalog_skipped",
+                "catalog_errors",
+            ):
+                if key in result_metadata:
+                    task_data[key] = int(result_metadata[key] or 0)
+            canonical_result = result_metadata.get("result")
             if isinstance(canonical_result, dict):
                 task_data["result"] = canonical_result
             if (

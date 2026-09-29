@@ -18,6 +18,15 @@ export interface TaskContractResult {
   failed?: number;
 }
 
+interface TaskItemError {
+  object_id: string;
+  display_name: string;
+  stage: "catalog" | "embedding" | "markdown";
+  code: string;
+  summary: string;
+  context_url?: string;
+}
+
 interface TaskFileOutcome {
   file_url?: string;
   status?: string;
@@ -43,6 +52,9 @@ export interface Task {
   catalog_ok?: number;
   catalog_skipped?: number;
   catalog_errors?: number;
+  failed_items?: number;
+  item_errors?: TaskItemError[];
+  item_errors_truncated?: boolean;
   errors?: string[];
   result?: TaskContractResult;
 }
@@ -74,6 +86,9 @@ export interface HistoryTask {
   catalog_ok?: number;
   catalog_skipped?: number;
   catalog_errors?: number;
+  failed_items?: number;
+  item_errors?: TaskItemError[];
+  item_errors_truncated?: boolean;
   errors?: string[];
   result?: TaskContractResult;
   metadata?: unknown;

@@ -317,11 +317,14 @@ def _build_task_display_summary(task_data: dict[str, Any]) -> dict[str, Any]:
     error_count = _task_error_count(task_data)
 
     if task_type == "catalog":
+        catalog_error_reasons = int(task_data.get("catalog_errors", error_count) or 0)
+        failed_items = int(task_data.get("failed_items") or 0)
         primary = _task_metric(
             "tasks.metric_cataloged", "Cataloged", task_data.get("catalog_ok", items_processed)
         )
         secondary = [
-            _task_metric("tasks.metric_errors", "Errors", error_count),
+            _task_metric("tasks.metric_error_reasons", "Error reasons", catalog_error_reasons),
+            _task_metric("tasks.metric_failed_items", "Failed items", failed_items),
             _task_metric("tasks.metric_skipped", "Skipped", items_skipped),
         ]
     elif task_type in {"markdown", "markdown_conversion"}:

@@ -31,6 +31,7 @@ import { TaskTable } from "./tasks/TaskTable";
 import { TaskMetrics } from "./tasks/TaskMetrics";
 import { Pagination } from "./tasks/Pagination";
 import { RecategoryDryRunResult } from "./tasks/RecategoryDryRunResult";
+import { TaskErrorDetails, trustedTaskIdFromSearch } from "./tasks/TaskErrors";
 import type { Task, SiteConfig, HistoryTask, LogModal } from "./tasks/Tasks.types";
 
 // Task type definitions
@@ -93,7 +94,7 @@ async function waitForTaskResult(taskId: string): Promise<TaskResult> {
 
 export default function Tasks() {
   const { t } = useTranslation();
-  const [, navigate] = useLocation();
+  const [location, navigate] = useLocation();
   const { permissions } = useAuth();
   const canRunTasks = permissions.includes("tasks.run");
   const canStopTasks = permissions.includes("tasks.stop");
@@ -116,6 +117,7 @@ export default function Tasks() {
   const [logModal, setLogModal] = useState<LogModal | null>(null);
   const [logModalLoading, setLogModalLoading] = useState(false);
   const logContentRef = useRef<HTMLPreElement | null>(null);
+  const openedQueryTaskRef = useRef<string | null>(null);
 
   // Filter state
   const [searchQuery, setSearchQuery] = useState("");
@@ -173,7 +175,7 @@ export default function Tasks() {
     }
   }, [logModalLoading, logModal]);
 
-  const viewTaskLog = async (taskId: string | undefined, taskName: string | undefined, task?: HistoryTask) => {
+  const viewTaskLog = useCallback(async (taskId: string | undefined, taskName: string | undefined, task?: HistoryTask) => {
     if (!taskId) return;
     if (!canReadTaskLogs) {
       setLogModal({ taskId, taskName: taskName || taskId, log: t("tasks.read_only_detail_disabled"), task });
@@ -189,7 +191,16 @@ export default function Tasks() {
     } finally {
       setLogModalLoading(false);
     }
-  };
+  }, [canReadTaskLogs, t]);
+
+  useEffect(() => {
+    const taskId = trustedTaskIdFromSearch(window.location.search);
+    if (!taskId || openedQueryTaskRef.current === taskId) return;
+    const task = [...activeTasks, ...historyTasks].find((candidate) => candidate.id === taskId);
+    if (!task) return;
+    openedQueryTaskRef.current = taskId;
+    void viewTaskLog(taskId, task.name, task);
+  }, [activeTasks, historyTasks, location, viewTaskLog]);
 
   const viewGlobalLogs = async () => {
     if (!permissions.includes("logs.system.read")) {
@@ -607,6 +618,7 @@ export default function Tasks() {
                   ) : (
                     <p className="text-xs text-muted-foreground">{t("tasks.log_no_errors") || "No errors"}</p>
                   )}
+                  {logModal.task && <TaskErrorDetails task={logModal.task} t={t} />}
                 </div>
 
                 {/* Box 3: Application log */}

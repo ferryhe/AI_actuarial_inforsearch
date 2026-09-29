@@ -849,6 +849,7 @@ def test_provider_invalid_item_is_not_persisted_and_error_is_sanitized(
     tmp_path: Path, bad_vector: list[object]
 ) -> None:
     from ai_actuarial.embedding_service import compute_embedding_identity, ensure_chunk_embeddings
+    from ai_actuarial.task_item_errors import make_item_error
 
     storage = Storage(str(tmp_path / "index.db"))
     try:
@@ -868,16 +869,15 @@ def test_provider_invalid_item_is_not_persisted_and_error_is_sanitized(
 
         assert result.failed == 1
         assert result.errors == [
-            {
-                "chunk_id": chunks[0]["chunk_id"],
-                "provider": "local",
-                "model": "secret-text-model",
-                "dimension": 3,
-                "code": "invalid_embedding_vector",
-            }
+            make_item_error(
+                "embedding",
+                "invalid_embedding_vector",
+                str(chunks[0]["chunk_id"]),
+            )
         ]
         assert storage._conn.execute("SELECT COUNT(*) FROM chunk_embeddings").fetchone()[0] == 0
         assert "alpha" not in json.dumps(result.as_dict())
+        assert "secret-text-model" not in json.dumps(result.errors)
         assert "[1.0" not in json.dumps(result.as_dict())
     finally:
         storage.close()
