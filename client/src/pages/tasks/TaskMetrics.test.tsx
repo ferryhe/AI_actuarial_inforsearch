@@ -223,12 +223,14 @@ const catalog = renderMetrics({
   items_downloaded: 6,
   items_skipped: 1,
   errors: ["catalog failed"],
+  failed_items: 4,
 });
 assertTableItemCount(catalog, 6);
 assert.match(catalog, /tasks\.stats\.scanned[^0-9]*8/);
 assert.match(catalog, /tasks\.stats\.ok[^0-9]*6/);
 assert.match(catalog, /tasks\.stats\.skipped[^0-9]*1/);
-assert.match(catalog, /tasks\.stats\.errors[^0-9]*1/);
+assert.match(catalog, /tasks\.stats\.error_reasons[^0-9]*1/);
+assert.match(catalog, /tasks\.stats\.failed_items[^0-9]*4/);
 
 const catalogZeroOverrides = renderMetrics({
   type: "catalog",
@@ -240,12 +242,14 @@ const catalogZeroOverrides = renderMetrics({
   catalog_ok: 0,
   catalog_skipped: 0,
   catalog_errors: 0,
+  failed_items: 0,
 });
 assertTableItemCount(catalogZeroOverrides, 0);
-for (const key of ["scanned", "ok", "skipped", "errors"] as const) {
+for (const key of ["scanned", "ok", "skipped", "error_reasons"] as const) {
   assert.match(catalogZeroOverrides, new RegExp(`tasks\\.stats\\.${key}[^0-9]*0`));
 }
-assert.doesNotMatch(catalogZeroOverrides, /tasks\.stats\.(?:scanned|ok|skipped|errors)[^0-9]*[1468]/);
+assert.match(catalogZeroOverrides, /tasks\.stats\.failed_items[^0-9]*0/);
+assert.doesNotMatch(catalogZeroOverrides, /tasks\.stats\.(?:scanned|ok|skipped|error_reasons)[^0-9]*[1468]/);
 
 const activeCatalog = renderMetrics({
   type: "catalog",
@@ -256,7 +260,7 @@ const activeCatalog = renderMetrics({
 });
 assert.match(activeCatalog, /tasks\.stats\.processed[^0-9]*5/);
 assert.match(activeCatalog, /tasks\.stats\.skipped[^0-9]*1/);
-assert.doesNotMatch(activeCatalog, /tasks\.stats\.(?:scanned|ok|downloaded|errors)/);
+assert.doesNotMatch(activeCatalog, /tasks\.stats\.(?:scanned|ok|downloaded|error_reasons)/);
 
 const legacy = renderMetrics({
   type: "legacy_pipeline",

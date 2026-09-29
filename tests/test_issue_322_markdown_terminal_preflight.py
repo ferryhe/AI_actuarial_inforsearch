@@ -427,7 +427,7 @@ def test_terminal_backlog_paginates_before_applying_logical_offset_and_limit(
     assert calls == ["older-valid.pdf"]
 
 
-def test_retryable_converter_failure_stays_eligible_and_has_per_item_outcome(
+def test_retryable_converter_failure_stays_eligible_and_has_safe_item_error(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -463,7 +463,9 @@ def test_retryable_converter_failure_stays_eligible_and_has_per_item_outcome(
         )
         assert result.success is False
         assert result.metadata["items_terminal_skipped"] == 0
-        assert _outcomes(result)[file_url]["outcome"] == "retryable_error"
+        assert file_url not in _outcomes(result)
+        assert result.metadata["failed_items"] == 1
+        assert result.metadata["item_errors"][0]["code"] == "conversion_failed"
     assert attempts == 2
 
 
@@ -534,7 +536,7 @@ def test_terminal_only_finalization_and_both_api_summaries_stay_visible(
         }
 
 
-def test_auto_failure_details_preserve_every_runtime_candidate(
+def test_auto_failure_details_are_not_exposed_by_runtime_candidate_chain(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -576,13 +578,10 @@ def test_auto_failure_details_preserve_every_runtime_candidate(
             md_config={"tools": {}},
         )
 
-    detail = str(exc_info.value)
-    assert "markitdown: engine unavailable" in detail
-    assert "mistral: provider not configured" in detail
-    assert "local: local concrete failure" in detail
+    assert str(exc_info.value) == "Markdown conversion failed"
 
 
-def test_auto_long_failure_details_preserve_all_candidates_in_public_result(
+def test_auto_long_failure_details_are_omitted_from_public_result(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -643,17 +642,15 @@ def test_auto_long_failure_details_preserve_all_candidates_in_public_result(
     assert result.items_found == 1
     assert result.items_downloaded == 0
     assert result.metadata["items_terminal_skipped"] == 0
-    outcome = _outcomes(result)[file_url]
-    assert outcome["outcome"] == "retryable_error"
-    detail = str(outcome["detail"])
-    assert len(detail) <= 800
-    assert str(source_path) not in detail
-    assert len(result.errors) == 1
+    assert file_url not in _outcomes(result)
+    assert result.errors == ["Markdown conversion failed."]
+    assert result.metadata["failed_items"] == 1
+    assert result.metadata["item_errors"][0]["code"] == "conversion_failed"
     assert progress_messages[-1] == "Processed markdown 1/1"
+    serialized = str(result.metadata["item_errors"])
     for candidate in candidates:
         expected = f"{candidate}: {candidate} concrete reason"
-        assert expected in detail
-        assert expected in result.errors[0]
+        assert expected not in serialized
 
 
 def test_registry_auto_failure_details_preserve_every_candidate(

@@ -27,6 +27,7 @@ export interface TaskMetricData {
   catalog_ok?: number;
   catalog_skipped?: number;
   catalog_errors?: number;
+  failed_items?: number;
   errors?: string[];
   result?: TaskContractResult;
 }
@@ -119,7 +120,8 @@ function getTaskMetrics(task: TaskMetricData): TaskMetric[] {
       ...optionalMetric("scanned", task.catalog_scanned ?? task.items_processed),
       ...optionalMetric("ok", task.catalog_ok ?? task.items_downloaded),
       ...optionalMetric("skipped", task.catalog_skipped ?? task.items_skipped),
-      ...optionalMetric("errors", task.catalog_errors ?? task.errors?.length),
+      ...optionalMetric("error_reasons", task.catalog_errors ?? task.errors?.length),
+      ...optionalMetric("failed_items", task.failed_items),
     ];
   }
 

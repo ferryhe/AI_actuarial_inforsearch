@@ -29,6 +29,7 @@ from .catalog import (
     write_catalog_md,
 )
 from .storage import Storage
+from .task_item_errors import record_item_error
 
 logger = logging.getLogger(__name__)
 
@@ -474,6 +475,7 @@ def _process_single_row(
     original_filename = row_data["original_filename"]
     local_path = row_data["local_path"]
     suggested_title: str | None = None
+    failure_code = "catalog_failed"
 
     try:
         provider_norm = (provider or "local").strip().lower()
@@ -493,11 +495,11 @@ def _process_single_row(
                 raise RuntimeError("missing markdown content")
         else:
             resolved_path = _resolve_path(local_path)
+            if not resolved_path.exists():
+                failure_code = "file_not_found"
+                raise FileNotFoundError
             text = extract_text(resolved_path, max_chars=max_chars)
         if not text.strip():
-            # If still empty check if exist
-            if source_norm == "source" and not resolved_path.exists():
-                raise RuntimeError(f"File not found: {resolved_path} (orig: {local_path})")
             raise RuntimeError("empty extracted text")
 
         if provider_norm == "local":
@@ -562,7 +564,7 @@ def _process_single_row(
         )
         return (row_data, item, "ok", suggested_title)
 
-    except Exception as e:
+    except Exception:
         # Return error item
         item = CatalogItem(
             source_site=source_site,
@@ -574,8 +576,7 @@ def _process_single_row(
             summary="",
             category="",
         )
-        # Using status to pass exception string
-        return (row_data, item, f"error:{str(e)}", None)
+        return (row_data, item, f"error:{failure_code}", None)
 
 
 def run_incremental_catalog(
@@ -599,6 +600,7 @@ def run_incremental_catalog(
     output_language: str = "auto",
     progress_callback: Optional[Callable[[int, int, str], None]] = None,
     stop_check: Optional[Callable[[], bool]] = None,
+    task_id: str | None = None,
 ) -> dict:
     """Run incremental catalog processing.
 
@@ -664,8 +666,24 @@ def run_incremental_catalog(
         "errors": 0,
         "missing_files": 0,
         "error_samples": [],
+        "failed_items": 0,
+        "item_errors": [],
+        "item_errors_truncated": False,
         "stopped": False,
     }
+    failed_object_ids: set[str] = set()
+
+    def record_failure(code: str, file_url: str) -> None:
+        if record_item_error(
+            stats["item_errors"],
+            failed_object_ids,
+            "catalog",
+            code,
+            file_url,
+            task_id=task_id,
+        ):
+            stats["failed_items"] += 1
+        stats["item_errors_truncated"] = stats["failed_items"] > len(stats["item_errors"])
 
     seen_urls = set()
     total_candidates = _count_candidates(
@@ -777,6 +795,7 @@ def run_incremental_catalog(
                     executor.shutdown(wait=False, cancel_futures=True)
                     shutdown_without_wait = True
                     break
+                url = future_to_url[future]
                 try:
                     r_data, item, status, suggested_title = future.result()
                     processed_at = datetime.now(timezone.utc).isoformat()
@@ -828,13 +847,16 @@ def run_incremental_catalog(
 
                     elif status.startswith("error:"):
                         stats["errors"] += 1
-                        err_msg = status[6:]
+                        error_code = (
+                            "file_not_found" if status[6:] == "file_not_found" else "catalog_failed"
+                        )
                         if len(stats["error_samples"]) < 20:
-                            stats["error_samples"].append(err_msg)
-                        if "File not found" in err_msg:
+                            stats["error_samples"].append(error_code)
+                        if error_code == "file_not_found":
                             stats["missing_files"] += 1
+                        record_failure(error_code, str(r_data["url"]))
 
-                        logger.warning("Error processing %s: %s", r_data["url"], err_msg)
+                        logger.warning("Catalog item failed: %s", error_code)
                         _upsert_catalog_row(
                             conn,
                             item=item,
@@ -842,7 +864,7 @@ def run_incremental_catalog(
                             catalog_version=catalog_version,
                             status="error",
                             processed_at=processed_at,
-                            error=err_msg,
+                            error=error_code,
                             storage=storage,
                         )
                         if progress_callback:
@@ -853,11 +875,12 @@ def run_incremental_catalog(
                                 f"Cataloging {completed}/{max(total_candidates, 1)}",
                             )
 
-                except Exception as e:
-                    logger.exception("Worker thread crashed")
+                except Exception:
+                    logger.error("Catalog worker failed: catalog_failed")
                     stats["errors"] += 1
                     if len(stats["error_samples"]) < 20:
-                        stats["error_samples"].append(str(e))
+                        stats["error_samples"].append("catalog_failed")
+                    record_failure("catalog_failed", str(url))
         finally:
             if not shutdown_without_wait:
                 executor.shutdown(wait=True)
@@ -929,6 +952,7 @@ def run_catalog_for_urls(
     output_language: str = "auto",
     progress_callback: Optional[Callable[[int, int, str], None]] = None,
     stop_check: Optional[Callable[[], bool]] = None,
+    task_id: str | None = None,
 ) -> dict:
     """Catalog a specific list of file URLs (used by File Details actions)."""
     storage = Storage(db_path)
@@ -973,8 +997,24 @@ def run_catalog_for_urls(
         "errors": 0,
         "missing_files": 0,
         "error_samples": [],
+        "failed_items": 0,
+        "item_errors": [],
+        "item_errors_truncated": False,
         "stopped": False,
     }
+    failed_object_ids: set[str] = set()
+
+    def record_failure(code: str, file_url: str) -> None:
+        if record_item_error(
+            stats["item_errors"],
+            failed_object_ids,
+            "catalog",
+            code,
+            file_url,
+            task_id=task_id,
+        ):
+            stats["failed_items"] += 1
+        stats["item_errors_truncated"] = stats["failed_items"] > len(stats["item_errors"])
 
     urls = [u for u in (file_urls or []) if isinstance(u, str) and u.strip()]
     urls = [u.strip() for u in urls]
@@ -1015,7 +1055,9 @@ def run_catalog_for_urls(
         else:
             stats["errors"] += 1
             if len(stats["error_samples"]) < 20:
-                stats["error_samples"].append(f"File not found in DB: {u}")
+                stats["error_samples"].append("file_not_found")
+            stats["missing_files"] += 1
+            record_failure("file_not_found", u)
 
     def is_candidate(r: dict) -> bool:
         if not skip_existing:
@@ -1113,11 +1155,14 @@ def run_catalog_for_urls(
                     )
                 elif status.startswith("error:"):
                     stats["errors"] += 1
-                    err_msg = status[6:]
+                    error_code = (
+                        "file_not_found" if status[6:] == "file_not_found" else "catalog_failed"
+                    )
                     if len(stats["error_samples"]) < 20:
-                        stats["error_samples"].append(err_msg)
-                    if "File not found" in err_msg:
+                        stats["error_samples"].append(error_code)
+                    if error_code == "file_not_found":
                         stats["missing_files"] += 1
+                    record_failure(error_code, str(r_data["url"]))
                     _upsert_catalog_row(
                         conn,
                         item=item,
@@ -1125,7 +1170,7 @@ def run_catalog_for_urls(
                         catalog_version=catalog_version,
                         status="error",
                         processed_at=processed_at,
-                        error=err_msg,
+                        error=error_code,
                         storage=storage,
                     )
                 if progress_callback:
@@ -1135,11 +1180,12 @@ def run_catalog_for_urls(
                         max(len(candidates), completed, 1),
                         f"Cataloging {completed}/{max(len(candidates), 1)}",
                     )
-            except Exception as e:
-                logger.exception("Worker thread crashed for %s", url)
+            except Exception:
+                logger.error("Catalog worker failed: catalog_failed")
                 stats["errors"] += 1
                 if len(stats["error_samples"]) < 20:
-                    stats["error_samples"].append(str(e))
+                    stats["error_samples"].append("catalog_failed")
+                record_failure("catalog_failed", str(url))
     finally:
         if not shutdown_without_wait:
             executor.shutdown(wait=True)

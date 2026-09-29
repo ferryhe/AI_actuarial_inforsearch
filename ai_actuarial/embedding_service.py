@@ -11,6 +11,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit
 from ai_actuarial.ai_runtime import infer_embedding_dimension
 from ai_actuarial.rag.config import RAGConfig
 from ai_actuarial.storage import Storage
+from ai_actuarial.task_item_errors import record_item_error
 
 CHUNK_REMOVED_OPTIONS = frozenset(
     {
@@ -330,6 +331,7 @@ class EnsureEmbeddingsResult:
     failed: int
     persisted_record_count: int
     errors: list[dict[str, Any]]
+    errors_truncated: bool
     started_at: str
     completed_at: str
     stopped: bool = False
@@ -345,6 +347,7 @@ class EnsureEmbeddingsResult:
             "failed": self.failed,
             "persisted_record_count": self.persisted_record_count,
             "errors": list(self.errors),
+            "errors_truncated": self.errors_truncated,
             "started_at": self.started_at,
             "completed_at": self.completed_at,
             "stopped": self.stopped,
@@ -353,16 +356,6 @@ class EnsureEmbeddingsResult:
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
-
-
-def _safe_error(chunk: Mapping[str, Any], identity: EmbeddingIdentity, code: str) -> dict[str, Any]:
-    return {
-        "chunk_id": str(chunk.get("chunk_id") or ""),
-        "provider": identity.provider,
-        "model": identity.model,
-        "dimension": identity.dimension,
-        "code": code,
-    }
 
 
 def _valid_provider_vector(vector: Any, dimension: int) -> bool:
@@ -388,6 +381,7 @@ def ensure_chunk_embeddings(
     batch_size: int | None = None,
     stop_check: Callable[[], bool] | None = None,
     progress_callback: Callable[[int, int, str], None] | None = None,
+    task_id: str | None = None,
 ) -> EnsureEmbeddingsResult:
     started_at = _now()
     chunk_rows = list(chunks)
@@ -405,7 +399,18 @@ def ensure_chunk_embeddings(
     invalid_regenerated = 0
     failed = 0
     errors: list[dict[str, Any]] = []
+    failed_object_ids: set[str] = set()
     stopped = False
+
+    def record_failure(chunk: Mapping[str, Any], code: str) -> None:
+        record_item_error(
+            errors,
+            failed_object_ids,
+            "embedding",
+            code,
+            str(chunk["chunk_id"]),
+            task_id=task_id,
+        )
 
     def report_progress() -> None:
         if progress_callback is None:
@@ -444,20 +449,20 @@ def ensure_chunk_embeddings(
             vectors = generator.generate_embeddings(texts) if generator is not None else []
         except Exception:  # provider exceptions must never enter task history or logs verbatim
             failed += len(batch)
-            errors.extend(_safe_error(chunk, identity, "provider_error") for chunk in batch)
+            for chunk in batch:
+                record_failure(chunk, "provider_error")
         else:
             if not isinstance(vectors, list) or len(vectors) != len(batch):
                 failed += len(batch)
-                errors.extend(
-                    _safe_error(chunk, identity, "provider_count_mismatch") for chunk in batch
-                )
+                for chunk in batch:
+                    record_failure(chunk, "provider_count_mismatch")
             else:
                 valid_rows: list[dict[str, Any]] = []
                 valid_chunks: list[Mapping[str, Any]] = []
                 for chunk, vector in zip(batch, vectors):
                     if not _valid_provider_vector(vector, identity.dimension):
                         failed += 1
-                        errors.append(_safe_error(chunk, identity, "invalid_embedding_vector"))
+                        record_failure(chunk, "invalid_embedding_vector")
                         continue
                     valid_rows.append({"chunk_id": chunk["chunk_id"], "vector": vector})
                     valid_chunks.append(chunk)
@@ -489,6 +494,7 @@ def ensure_chunk_embeddings(
         failed=failed,
         persisted_record_count=len(coverage["valid"]),
         errors=errors,
+        errors_truncated=failed > len(errors),
         started_at=started_at,
         completed_at=_now(),
         stopped=stopped,
