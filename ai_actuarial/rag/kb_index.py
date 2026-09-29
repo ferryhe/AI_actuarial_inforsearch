@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import uuid
 from dataclasses import replace
 from pathlib import Path
@@ -17,6 +18,8 @@ from ai_actuarial.embedding_service import (
 from ai_actuarial.rag.config import RAGConfig
 from ai_actuarial.rag.vector_store import VectorStore
 from ai_actuarial.storage import Storage
+
+logger = logging.getLogger(__name__)
 
 FAILURE_CATEGORIES = frozenset(
     {
@@ -47,6 +50,312 @@ def _dedupe(values: Iterable[Any]) -> list[str]:
     return list(dict.fromkeys(str(value).strip() for value in values if str(value).strip()))
 
 
+def _legacy_binding_plan(storage: Storage, kb_id: str) -> dict[str, Any]:
+    """Return a deterministic repair plan for a pre-binding-table KB.
+
+    Binding reconstruction is eligible only when the KB has no binding rows
+    at all.  That distinction keeps partial or malformed modern bindings on
+    the strict fail-closed path in ``_binding_snapshot``.  A missing profile
+    can still be corrected independently when existing bindings point to one
+    consistent valid profile.
+    """
+
+    kid = str(kb_id or "").strip()
+    conn = storage._conn
+    required_tables = {
+        "audit_events",
+        "chunk_profiles",
+        "file_chunk_sets",
+        "files",
+        "global_chunks",
+        "kb_chunk_bindings",
+        "rag_kb_files",
+        "rag_knowledge_bases",
+    }
+    existing_tables = {
+        str(row[0])
+        for row in conn.execute("SELECT name FROM sqlite_schema WHERE type = 'table'").fetchall()
+    }
+    if not required_tables <= existing_tables:
+        return {
+            "kb_id": kid,
+            "action": "noop",
+            "reason": "reconciliation_tables_unavailable",
+            "bindings": [],
+            "profile_changed": False,
+        }
+
+    kb_row = conn.execute(
+        "SELECT chunk_profile_id FROM rag_knowledge_bases WHERE kb_id = ?",
+        (kid,),
+    ).fetchone()
+    if not kb_row:
+        return {
+            "kb_id": kid,
+            "action": "noop",
+            "reason": "knowledge_base_not_found",
+            "bindings": [],
+            "profile_changed": False,
+        }
+    selected_profile_id = str(kb_row[0] or "").strip()
+    member_rows = conn.execute(
+        """
+        SELECT kf.file_url
+        FROM rag_kb_files kf
+        JOIN files f ON f.url = kf.file_url
+        WHERE kf.kb_id = ?
+        ORDER BY kf.file_url
+        """,
+        (kid,),
+    ).fetchall()
+    members = _dedupe(row[0] for row in member_rows)
+    if not members:
+        return {
+            "kb_id": kid,
+            "action": "noop",
+            "reason": "knowledge_base_has_no_files",
+            "bindings": [],
+            "profile_changed": False,
+        }
+
+    binding_count = int(
+        conn.execute(
+            "SELECT COUNT(*) FROM kb_chunk_bindings WHERE kb_id = ?",
+            (kid,),
+        ).fetchone()[0]
+        or 0
+    )
+    ready_rows = conn.execute(
+        """
+        SELECT s.file_url, s.chunk_set_id, s.profile_id, s.profile_config_hash,
+               s.status, s.chunk_count, s.updated_at, s.created_at
+        FROM file_chunk_sets s
+        JOIN rag_kb_files kf ON kf.file_url = s.file_url AND kf.kb_id = ?
+        WHERE s.status = 'ready' AND s.chunk_count > 0
+        ORDER BY s.file_url, s.profile_id,
+                 s.updated_at DESC, s.created_at DESC, s.chunk_set_id DESC
+        """,
+        (kid,),
+    ).fetchall()
+    latest_by_profile: dict[str, dict[str, tuple[Any, ...]]] = {}
+    for row in ready_rows:
+        file_url = str(row[0] or "")
+        profile_id = str(row[2] or "")
+        if not file_url or not profile_id:
+            continue
+        by_file = latest_by_profile.setdefault(profile_id, {})
+        by_file.setdefault(file_url, row)
+
+    member_set = set(members)
+    profile_rows = conn.execute("SELECT profile_id FROM chunk_profiles").fetchall()
+    valid_profile_ids = {str(row[0] or "") for row in profile_rows}
+    selected_profile_exists = bool(selected_profile_id and selected_profile_id in valid_profile_ids)
+    if binding_count and selected_profile_exists:
+        return {
+            "kb_id": kid,
+            "action": "noop",
+            "reason": "bindings_already_exist",
+            "bindings": [],
+            "profile_changed": False,
+        }
+    if selected_profile_exists:
+        candidate_profile_ids = [selected_profile_id]
+    else:
+        candidate_profile_ids = sorted(
+            profile_id
+            for profile_id, by_file in latest_by_profile.items()
+            if profile_id in valid_profile_ids and set(by_file) == member_set
+        )
+        if len(candidate_profile_ids) != 1:
+            return {
+                "kb_id": kid,
+                "action": "noop",
+                "reason": (
+                    "no_unique_consistent_profile"
+                    if candidate_profile_ids
+                    else "no_consistent_ready_profile"
+                ),
+                "selected_profile_id": selected_profile_id,
+                "bindings": [],
+                "profile_changed": False,
+            }
+
+    effective_profile_id = candidate_profile_ids[0]
+    selected_rows = latest_by_profile.get(effective_profile_id, {})
+    if set(selected_rows) != member_set:
+        return {
+            "kb_id": kid,
+            "action": "noop",
+            "reason": "selected_profile_has_incomplete_ready_sets",
+            "selected_profile_id": selected_profile_id,
+            "profile_id": effective_profile_id,
+            "bindings": [],
+            "profile_changed": False,
+        }
+
+    if binding_count:
+        return {
+            "kb_id": kid,
+            "action": "repair_profile",
+            "reason": "missing_selected_profile",
+            "selected_profile_id": selected_profile_id,
+            "profile_id": effective_profile_id,
+            "bindings": [],
+            "profile_changed": effective_profile_id != selected_profile_id,
+        }
+
+    bindings = [
+        {
+            "file_url": file_url,
+            "chunk_set_id": str(selected_rows[file_url][1]),
+            "profile_id": str(selected_rows[file_url][2]),
+        }
+        for file_url in members
+    ]
+    return {
+        "kb_id": kid,
+        "action": "reconstruct",
+        "reason": "missing_bindings",
+        "selected_profile_id": selected_profile_id,
+        "profile_id": effective_profile_id,
+        "bindings": bindings,
+        "profile_changed": effective_profile_id != selected_profile_id,
+    }
+
+
+def _audit_legacy_reconciliation(
+    storage: Storage,
+    *,
+    event_type: str,
+    kb_id: str,
+    detail: Mapping[str, Any],
+) -> None:
+    storage._conn.execute(
+        """
+        INSERT INTO audit_events (token_id, event_type, resource, detail, ip, created_at)
+        VALUES (NULL, ?, ?, ?, NULL, ?)
+        """,
+        (
+            event_type,
+            f"knowledge_base:{kb_id}",
+            json.dumps(dict(detail), ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+            storage.now(),
+        ),
+    )
+
+
+def reconcile_legacy_kb_binding(
+    storage: Storage,
+    kb_id: str,
+    *,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """Reconcile one legacy KB, or report the planned changes in dry-run mode."""
+
+    plan = _legacy_binding_plan(storage, kb_id)
+    if plan.get("action") not in {"reconstruct", "repair_profile"}:
+        return {**plan, "applied": False, "changed": False, "dry_run": dry_run}
+    if dry_run:
+        return {**plan, "applied": False, "changed": True, "dry_run": True}
+
+    conn = storage._conn
+
+    def apply_plan() -> dict[str, Any]:
+        current = _legacy_binding_plan(storage, kb_id)
+        if current.get("action") not in {"reconstruct", "repair_profile"}:
+            return {**current, "applied": False, "changed": False, "dry_run": False}
+        kid = str(current["kb_id"])
+        profile_id = str(current["profile_id"])
+        if current.get("profile_changed"):
+            conn.execute(
+                "UPDATE rag_knowledge_bases SET chunk_profile_id = ? WHERE kb_id = ?",
+                (profile_id, kid),
+            )
+            _audit_legacy_reconciliation(
+                storage,
+                event_type="kb_chunk_profile_reconciled",
+                kb_id=kid,
+                detail={
+                    "from_profile_id": current.get("selected_profile_id", ""),
+                    "to_profile_id": profile_id,
+                    "reason": "legacy_ready_chunk_sets_are_consistent",
+                },
+            )
+            logger.warning(
+                "Reconciled legacy KB %s chunk_profile_id from %s to %s",
+                kid,
+                current.get("selected_profile_id", ""),
+                profile_id,
+            )
+
+        if current.get("action") == "repair_profile":
+            return {**current, "applied": True, "changed": True, "dry_run": False}
+
+        now = storage.now()
+        for binding in current["bindings"]:
+            conn.execute(
+                """
+                INSERT INTO kb_chunk_bindings (
+                    kb_id, file_url, chunk_set_id, bound_at, bound_by,
+                    binding_mode, target_profile_id
+                ) VALUES (?, ?, ?, ?, 'legacy_reconcile', 'pin', NULL)
+                """,
+                (kid, binding["file_url"], binding["chunk_set_id"], now),
+            )
+        _audit_legacy_reconciliation(
+            storage,
+            event_type="kb_legacy_bindings_reconstructed",
+            kb_id=kid,
+            detail={
+                "profile_id": profile_id,
+                "binding_count": len(current["bindings"]),
+                "chunk_set_ids": [item["chunk_set_id"] for item in current["bindings"]],
+                "reason": "kb_chunk_bindings_empty",
+            },
+        )
+        logger.warning(
+            "Reconstructed %d legacy KB bindings for %s using profile %s",
+            len(current["bindings"]),
+            kid,
+            profile_id,
+        )
+        return {**current, "applied": True, "changed": True, "dry_run": False}
+
+    # A caller may already own a raw sqlite transaction.  Storage's
+    # transaction helper cannot issue BEGIN inside that transaction, so keep
+    # those writes in the caller's transaction and use an immediate transaction
+    # for the normal standalone resolver/maintenance path.
+    if conn.in_transaction and getattr(storage, "_tx_depth", 0) == 0:
+        return apply_plan()
+    with storage.transaction(immediate=True):
+        return apply_plan()
+
+
+def reconcile_legacy_kb_bindings(
+    storage: Storage,
+    kb_ids: Iterable[str] | None = None,
+    *,
+    dry_run: bool = True,
+) -> dict[str, Any]:
+    """Reconcile all selected legacy KBs and return a JSON-safe report."""
+
+    if kb_ids is None:
+        rows = storage._conn.execute(
+            "SELECT kb_id FROM rag_knowledge_bases ORDER BY kb_id"
+        ).fetchall()
+        selected = [str(row[0]) for row in rows]
+    else:
+        selected = sorted(_dedupe(kb_ids))
+    results = [reconcile_legacy_kb_binding(storage, kb_id, dry_run=dry_run) for kb_id in selected]
+    return {
+        "dry_run": dry_run,
+        "kb_count": len(results),
+        "changed_count": sum(1 for result in results if result.get("changed")),
+        "applied_count": sum(1 for result in results if result.get("applied")),
+        "results": results,
+    }
+
+
 def _binding_snapshot(
     storage: Storage,
     kb_id: str,
@@ -73,6 +382,11 @@ def _binding_snapshot(
         raise KBIndexContractError(
             "invalid_selector", "knowledge-base composition tables are unavailable"
         )
+    # Legacy KBs created before kb_chunk_bindings existed get one explicit
+    # detect -> heal pass.  Any partial or malformed modern binding set skips
+    # this helper and remains fail-closed below.
+    if file_urls is None:
+        reconcile_legacy_kb_binding(storage, kid)
     started_read = not conn.in_transaction
     if started_read:
         conn.execute("BEGIN")

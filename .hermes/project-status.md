@@ -1,3 +1,21 @@
+# 最新状态 — PR #379 文件死代码门禁修复
+
+- Updated: 2026-09-29 EDT. Repository: `AI_actuarial_inforsearch`; work branch:
+  `codex/fix-pr-379-dead-code-files`, based on PR #379 head
+  `8ee0728a6e35926bb67c2ee8511a474295754ec6`. Sibling repositories were not accessed.
+- PR #379 由外部贡献者 `mikemikimike` 从其 fork 提交，目标为 Issue #377；GitHub 标记
+  `maintainer_can_modify=true`。失败 CI 是 `dead-code-files`：reachability 配置只把
+  `scripts/*.py` 当作脚本入口，漏掉 `scripts/maintenance/reconcile_legacy_kb_bindings.py`，
+  所以该可执行维护 CLI 被误报为 `unused_module`，其余 CI job 随依赖跳过。
+- `pyproject.toml` 的 `tool.dead_code.script_entry_globs` 已加入
+  `scripts/maintenance/*.py`。此修复登记实际脚本入口，不屏蔽死代码发现。
+- 本地验证：`npm run dead-code:files` 和 `npm run dead-code:symbols` 均通过、0 findings；
+  #377/#238 定向 pytest 31 passed；维护脚本 `--help` 和 `git diff --check` 通过。
+- TypeSafe AI 判定该改动可更新现有 PR（置信度 0.94）。当前修复尚未提交或推送；推送后需
+  重新检查整套 CI，因为原失败阻止了另外四个 job 运行。
+- Next action: commit this narrow gate configuration fix and push it to the existing allowed
+  maintainer-editable PR #379 branch; require the rerun CI checks to pass before considering merge.
+
 # Latest work — Issue #376 deterministic latest chunk-set lookup
 
 - Updated: 2026-09-14 EDT.
@@ -2080,6 +2098,22 @@
 - Commit and push the validated branch, create a draft PR with `Closes #312`, mark it ready, observe
   the full remote-feedback window, assess the single feedback snapshot, require checks on the exact
   head, then merge and complete Issue/branch/worktree cleanup.
+
+## Issue #377 current work
+
+- Updated: 2026-09-27 Asia/Shanghai.
+- Repository: `AI_actuarial_inforsearch`; branch: `fix/issue-377-legacy-bindings`.
+- `resolve_kb_bound_chunks` now performs one detect/heal pass for KBs with no persisted bindings:
+  it selects the latest ready chunk set per member under the selected profile, repairs a missing
+  profile only when exactly one valid profile covers every member, writes warning/audit events,
+  persists `kb_chunk_bindings`, and then re-enters the existing strict #238 contract. Partial or
+  malformed binding sets remain fail-closed.
+- Added idempotent `scripts/maintenance/reconcile_legacy_kb_bindings.py`, dry-run by default with
+  `--apply` for writes, plus three Issue #377 regression tests.
+- Focused validation passed 31 tests (`#377` plus `#238`) and 130 related Ready Data/file mutation
+  tests. Targeted Black/isort/error-only Pylint and `git diff --check` passed. The full quality gate
+  ran 2,198 tests: 2,166 passed and 32 failed because the Python image lacks npm/docker/tsx and one
+  path-sensitive source test assumes the original checkout path; no touched Python test failed.
 
 ---
 
