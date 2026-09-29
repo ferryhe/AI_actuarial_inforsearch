@@ -87,7 +87,6 @@ POST /api/agentic-rag/search/formula-cards
 POST /api/agentic-rag/search/tables
 POST /api/agentic-rag/search/calculation-terms
 POST /api/agentic-rag/trace/relations
-POST /api/agentic-rag/chat
 ```
 
 Requests can resolve ready data either from a KB registry entry:
@@ -115,6 +114,39 @@ or, in tests and local diagnostics, from an explicit `output_dir`:
 The service rejects path escapes and does not allow explicit `output_dir` to be mixed with KB registry lookup.
 
 ## Chat Behavior
+
+### Agentic Chat migration (issued 2026-09-14; sunset no later than 2026-10-14)
+
+New clients must send Agentic requests to `POST /api/chat/query`; the UI already
+uses this route. `POST /api/agentic-rag/chat` is a temporary deprecated
+compatibility shim and returns `Deprecation: true`, `Sunset`, and a successor
+link. It runs the same Chat command, so it requires `chat.query` (not merely
+`catalog.read`), uses the same per-minute limiter and daily quota, creates the
+same conversation/messages, and returns the canonical Chat response/error
+contract. The compatibility route will be removed after the stated sunset.
+
+Mechanical request mapping:
+
+| Deprecated field | Canonical field |
+| --- | --- |
+| `query` | `message` |
+| `kb_id` | `kb_ids: [kb_id]` |
+| `profile` / `manifest_profile` | `manifest_profile` |
+| `limit`, `mode`, `conversation_id` | unchanged |
+| implicit Agentic behavior | `rag_mode: "agentic"` |
+
+`output_dir` has no product-Chat equivalent and is rejected by the shim. Use a
+registered, ready KB instead. The canonical request is therefore:
+
+```json
+{
+  "message": "How is net premium calculated?",
+  "kb_ids": ["my-kb"],
+  "manifest_profile": "formula",
+  "rag_mode": "agentic",
+  "limit": 5
+}
+```
 
 The Chat UI has a Standard / Agentic RAG selector.
 

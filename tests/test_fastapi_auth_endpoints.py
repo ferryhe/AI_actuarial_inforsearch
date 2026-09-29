@@ -477,6 +477,7 @@ def test_fastapi_auth_rate_limit_skips_cors_preflight(tmp_path: Path, monkeypatc
 def test_fastapi_auth_rate_limit_uses_trusted_forwarded_ip(tmp_path: Path, monkeypatch) -> None:
     _reset_rate_limit_store_buckets()
     monkeypatch.setattr(rate_limit.settings, "TRUST_PROXY", True)
+    monkeypatch.setattr(rate_limit.settings, "TRUSTED_PROXY_CIDRS", "172.17.0.1/32")
     monkeypatch.setattr(
         rate_limit,
         "AUTH_RATE_LIMIT_RULES",
@@ -484,6 +485,7 @@ def test_fastapi_auth_rate_limit_uses_trusted_forwarded_ip(tmp_path: Path, monke
     )
     client, app, _seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
     app.state.enable_rate_limiting = True
+    client = TestClient(app, client=("172.17.0.1", 12345))
     payload = {"email": "member@example.com", "password": "wrong-password"}
 
     first_ip = client.post(
@@ -499,6 +501,18 @@ def test_fastapi_auth_rate_limit_uses_trusted_forwarded_ip(tmp_path: Path, monke
     assert first_ip.status_code == 401, first_ip.text
     assert second_ip.status_code == 401, second_ip.text
     assert limited_first_ip.status_code == 429, limited_first_ip.text
+
+    for index, ip in enumerate(["203.0.113.10", "203.0.113.11"]):
+        registration = {
+            "email": f"proxy-client-{index}@example.com",
+            "password": "password123",
+            "display_name": f"Proxy Client {index}",
+        }
+        headers = {"X-Forwarded-For": ip}
+        registered = client.post("/api/auth/register", json=registration, headers=headers)
+        assert registered.status_code == 201, registered.text
+        limited = client.post("/api/auth/register", json=registration, headers=headers)
+        assert limited.status_code == 429, limited.text
 
 
 def test_fastapi_non_auth_rate_limit_keeps_human_readable_error(

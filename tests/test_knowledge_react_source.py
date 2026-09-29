@@ -13,7 +13,8 @@ def test_knowledge_pages_surface_reembed_action_for_embedding_mismatch():
 
     assert "handleReembedKB" in knowledge_src
     assert "data-testid={`button-reembed-kb-${kbId}`}" in knowledge_src
-    assert "kb.needs_reindex || kb.embedding_compatible === false" in knowledge_src
+    assert "const reembedRequired = needsReembed(kb);" in knowledge_src
+    assert "const needsEmbeddingRebuild = needsReembed(meta);" in detail_src
 
     assert "needsEmbeddingRebuild" in detail_src
     assert 'data-testid="banner-embedding-mismatch"' in detail_src

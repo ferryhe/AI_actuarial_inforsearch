@@ -12,7 +12,9 @@
 #   export CADDY_APP_SITE_HOSTS=<public-app-host>[,www.<public-app-host>]
 #   export CADDY_CROSS_SITE_HOST=<optional-secondary-host>
 #   export CADDY_CROSS_UPSTREAM=<host-or-service>:<port>
-#   export TRUST_PROXY=true  # only when API access is restricted to trusted proxy traffic
+#   export TRUST_PROXY=true  # only with the explicit allowlist below
+#   export TRUSTED_PROXY_CIDRS=<actual-Caddy-IP/32-or-isolated-Docker-proxy-CIDR>
+# Missing/invalid CIDRs ignore forwarded headers and produce a startup warning.
 
 version: "3.9"
 
@@ -28,6 +30,7 @@ services:
       - ENABLE_CSRF=${ENABLE_CSRF:-true}
       - FASTAPI_SESSION_COOKIE_SECURE=${FASTAPI_SESSION_COOKIE_SECURE:-true}
       - TRUST_PROXY=${TRUST_PROXY:-false}
+      - TRUSTED_PROXY_CIDRS=${TRUSTED_PROXY_CIDRS:-}
       - CONTENT_SECURITY_POLICY
     volumes:
       - ai-data:/app/data:rw

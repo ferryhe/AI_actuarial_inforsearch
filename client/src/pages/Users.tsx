@@ -43,6 +43,7 @@ export default function UsersPage() {
   const { t } = useTranslation();
   const { user: currentUser, isLoading: authLoading } = useAuth();
   const [users, setUsers] = useState<User[]>([]);
+  const [activeAdminCount, setActiveAdminCount] = useState(0);
   // Start as not loading — actual fetch is gated on auth being ready and user being admin
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -67,14 +68,19 @@ export default function UsersPage() {
     setLoading(true);
     setError(null);
     try {
-      const data = await apiGet<{ users: User[] } | User[]>("/api/admin/users");
+      const data = await apiGet<{ users: User[]; active_admin_count?: number } | User[]>("/api/admin/users");
       setUsers(Array.isArray(data) ? data : data.users || []);
+      setActiveAdminCount(Array.isArray(data) ? 0 : data.active_admin_count || 0);
     } catch (e: any) {
       setError(e.message || "Failed to load users");
     } finally {
       setLoading(false);
     }
   }, []);
+
+  const refreshUsersList = async () => {
+    await fetchUsers();
+  };
 
   useEffect(() => {
     if (!authLoading && isAdmin) {
@@ -87,7 +93,7 @@ export default function UsersPage() {
     setRoleDropdown(null);
     try {
       await apiPost(`/api/admin/users/${userId}/role`, { role: newRole });
-      setUsers((prev) => prev.map((u) => (u.id === userId ? { ...u, role: newRole } : u)));
+      await refreshUsersList();
     } catch (e: any) {
       alert(e.message || "Failed to change role");
     } finally {
@@ -106,9 +112,7 @@ export default function UsersPage() {
         ? `/api/admin/users/${user.id}/disable`
         : `/api/admin/users/${user.id}/enable`;
       await apiPost(endpoint);
-      setUsers((prev) =>
-        prev.map((u) => (u.id === user.id ? { ...u, is_active: !u.is_active } : u))
-      );
+      await refreshUsersList();
     } catch (e: any) {
       alert(e.message || "Failed to toggle user status");
     } finally {
@@ -155,6 +159,14 @@ export default function UsersPage() {
   };
 
   const roleOptions = ["admin", "registered", "premium", "operator", "operator_ai"];
+  const unsafeSelfAction = (user: User, nextRole?: string, nextActive?: boolean) => {
+    const removesActiveAdmin = user.is_active && user.role === "admin" &&
+      ((nextRole !== undefined && nextRole !== "admin") || nextActive === false);
+    if (!removesActiveAdmin) return null;
+    if (currentUser?.id === user.id) return t("users.protection_self");
+    if (activeAdminCount <= 1) return t("users.protection_last_admin");
+    return null;
+  };
 
   return (
     <div className="space-y-6">
@@ -262,44 +274,62 @@ export default function UsersPage() {
                         </button>
                         {roleDropdown === user.id && (
                           <div className="absolute z-10 mt-1 bg-popover border border-border rounded-md shadow-md py-1 min-w-[100px]">
-                            {roleOptions.map((role) => (
-                              <button
-                                key={role}
-                                onClick={() => handleRoleChange(user.id, role)}
-                                className={cn(
-                                  "block w-full text-left px-3 py-1.5 text-xs hover:bg-muted transition-colors",
-                                  role === user.role && "font-bold text-primary"
-                                )}
-                                data-testid={`button-set-role-${role}-${user.id}`}
-                              >
-                                {role}
-                              </button>
-                            ))}
+                            {roleOptions.map((role) => {
+                              const protectionReason = unsafeSelfAction(user, role);
+                              return (
+                                <button
+                                  key={role}
+                                  onClick={() => handleRoleChange(user.id, role)}
+                                  disabled={!!protectionReason}
+                                  title={protectionReason || undefined}
+                                  className={cn(
+                                    "block w-full text-left px-3 py-1.5 text-xs hover:bg-muted transition-colors disabled:cursor-not-allowed disabled:opacity-50",
+                                    role === user.role && "font-bold text-primary"
+                                  )}
+                                  data-testid={`button-set-role-${role}-${user.id}`}
+                                >
+                                  {role}
+                                </button>
+                              );
+                            })}
                           </div>
                         )}
                       </div>
                     </td>
                     <td className="px-4 py-3">
-                      <button
-                        onClick={() => handleToggleActive(user)}
-                        disabled={!!actionLoading[user.id]}
-                        className={cn(
-                          "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-colors",
-                          user.is_active
-                            ? "bg-green-500/10 text-green-600 dark:text-green-400"
-                            : "bg-red-500/10 text-red-600 dark:text-red-400"
-                        )}
-                        data-testid={`button-toggle-active-${user.id}`}
-                      >
-                        {actionLoading[user.id] === "toggle" ? (
-                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                        ) : user.is_active ? (
-                          <UserCheck className="w-3.5 h-3.5" />
-                        ) : (
-                          <UserX className="w-3.5 h-3.5" />
-                        )}
-                        {user.is_active ? t("users.active") : t("users.disabled")}
-                      </button>
+                      {(() => {
+                        const protectionReason = unsafeSelfAction(user, undefined, false);
+                        return (
+                          <div>
+                            <button
+                              onClick={() => handleToggleActive(user)}
+                              disabled={!!actionLoading[user.id] || !!protectionReason}
+                              title={protectionReason || undefined}
+                              className={cn(
+                                "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-colors",
+                                user.is_active
+                                  ? "bg-green-500/10 text-green-600 dark:text-green-400"
+                                  : "bg-red-500/10 text-red-600 dark:text-red-400"
+                              )}
+                              data-testid={`button-toggle-active-${user.id}`}
+                            >
+                              {actionLoading[user.id] === "toggle" ? (
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              ) : user.is_active ? (
+                                <UserCheck className="w-3.5 h-3.5" />
+                              ) : (
+                                <UserX className="w-3.5 h-3.5" />
+                              )}
+                              {user.is_active ? t("users.active") : t("users.disabled")}
+                            </button>
+                            {protectionReason && (
+                              <p className="mt-1 max-w-48 text-xs text-muted-foreground">
+                                {protectionReason}
+                              </p>
+                            )}
+                          </div>
+                        );
+                      })()}
                     </td>
                     <td className="px-4 py-3 text-muted-foreground" data-testid={`text-quota-${user.id}`}>
                       {user.quota_limit != null ? (

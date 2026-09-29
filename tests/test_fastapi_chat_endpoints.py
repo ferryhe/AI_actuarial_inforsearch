@@ -1256,6 +1256,10 @@ def test_fastapi_chat_knowledge_bases_defaults_manifest_profile_for_legacy_schem
             self.manifest_requests.append((kb_id, profile))
             return None
 
+        def get_agentic_ready_source_state(self, *, kb_id: str, profile: str = "general"):
+            del kb_id, profile
+            return {"serving_stale": False}
+
         def close(self):
             pass
 
@@ -2390,6 +2394,8 @@ def test_fastapi_chat_query_enforces_anonymous_ip_quota(tmp_path: Path, monkeypa
     import ai_actuarial.api.services.chat as chat_service
 
     monkeypatch.setattr(chat_service.settings, "TRUST_PROXY", True)
+    monkeypatch.setattr(chat_service.settings, "TRUSTED_PROXY_CIDRS", "172.17.0.1/32")
+    client = TestClient(app, client=("172.17.0.1", 12345))
 
     class FakeConversationManager:
         def __init__(self, storage, config):
@@ -2511,3 +2517,8 @@ def test_fastapi_chat_query_enforces_anonymous_ip_quota(tmp_path: Path, monkeypa
     assert all(response.status_code == 200 for response in responses[:limit])
     assert responses[-1].status_code == 429, responses[-1].text
     assert f"Daily AI chat limit reached ({limit}/day)" in responses[-1].text
+
+    other_client = client.post(
+        "/api/chat/query", json=payload, headers={"X-Forwarded-For": "203.0.113.11"}
+    )
+    assert other_client.status_code == 200, other_client.text

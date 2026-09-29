@@ -703,12 +703,16 @@ def test_schema_v14_migrates_terminal_state_table_and_reopens_idempotently(
     storage.close()
     with sqlite3.connect(db_path) as conn:
         conn.execute("DROP TABLE IF EXISTS markdown_terminal_source_state")
+        conn.execute("DROP INDEX IF EXISTS idx_file_chunk_sets_latest")
         conn.execute("PRAGMA user_version=13")
 
     assert schema_status(db_path)["state"] == "needs_migration"
     applied = apply_schema(db_path)
-    assert applied["database"]["user_version"] == 14
-    assert applied["applied_migrations"] == ["add_markdown_terminal_source_state_v14"]
+    assert applied["database"]["user_version"] == 15
+    assert applied["applied_migrations"] == [
+        "add_markdown_terminal_source_state_v14",
+        "add_file_chunk_sets_latest_index_v15",
+    ]
     with sqlite3.connect(db_path) as conn:
         columns = {
             row[1] for row in conn.execute("PRAGMA table_info(markdown_terminal_source_state)")

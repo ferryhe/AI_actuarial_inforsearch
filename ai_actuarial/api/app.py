@@ -19,6 +19,7 @@ from ai_actuarial.shared_runtime import (
 from ai_actuarial.storage import Storage
 from ai_actuarial.task_runtime import NativeTaskRuntime
 
+from .client_ip import validate_proxy_config
 from .deps import _extract_presented_token, _session_allows_explicit_token
 from .logging_config import configure_application_logging
 from .middleware import RateLimitMiddleware
@@ -134,6 +135,7 @@ def _bootstrap_admin_token(db_path: str) -> None:
 
 
 def create_app() -> FastAPI:
+    validate_proxy_config()
     config_data = load_sites_config(require_writable=True)
     runtime_features = resolve_runtime_features(config_data)
     app = FastAPI(
@@ -347,4 +349,5 @@ def run_server(host: str = "127.0.0.1", port: int = 5000, reload: bool = False) 
         port=port,
         reload=reload,
         log_config=None,
+        proxy_headers=False,
     )

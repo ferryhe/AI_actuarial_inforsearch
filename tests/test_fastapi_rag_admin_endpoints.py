@@ -333,6 +333,142 @@ def _prepare_committed_kb_index(
         storage.close()
 
 
+def test_issue_376_latest_any_status_surfaces_binding_dirty(tmp_path: Path, monkeypatch) -> None:
+    from ai_actuarial.api.services import chat as chat_service
+    from ai_actuarial.rag import knowledge_base
+
+    def skip_embedding_runtime(*_args, **_kwargs):
+        raise RuntimeError("embedding runtime is not needed for projection coverage")
+
+    embedding_runtime = SimpleNamespace(
+        provider="openai",
+        model="text-embedding-3-small",
+        credential_source="env",
+        credential_id=None,
+        stable_credential_id="openai:llm:env",
+        credential_label=None,
+        configured=True,
+        credential_error=None,
+    )
+    monkeypatch.setattr(
+        rag_admin_service,
+        "resolve_ai_function_runtime",
+        lambda *_args, **_kwargs: embedding_runtime,
+    )
+    monkeypatch.setattr(
+        chat_service,
+        "resolve_ai_function_runtime",
+        lambda *_args, **_kwargs: embedding_runtime,
+    )
+    monkeypatch.setattr(knowledge_base, "EmbeddingGenerator", skip_embedding_runtime)
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch)
+    db_path = tmp_path / "index.db"
+    profile_id = str(seed["default_chunk_profile_id"])
+    alpha_url = str(seed["alpha_url"])
+    _KnowledgeBase, _manager, initialized_storage = rag_admin_service._manager_and_storage(
+        str(db_path)
+    )
+    initialized_storage.close()
+    storage = Storage(str(db_path))
+    try:
+        ready_set_id = str(
+            storage._conn.execute(
+                """
+                SELECT chunk_set_id
+                FROM file_chunk_sets
+                WHERE file_url = ? AND profile_id = ? AND status = 'ready'
+                LIMIT 1
+                """,
+                (alpha_url, profile_id),
+            ).fetchone()[0]
+        )
+        now = storage._utcnow_iso()
+        storage._conn.execute(
+            """
+            INSERT INTO rag_knowledge_bases (
+                kb_id, name, kb_mode, embedding_model, embedding_dimension, chunk_profile_id,
+                chunk_size, chunk_overlap, index_type, created_at, updated_at
+            ) VALUES (?, ?, 'manual', 'text-embedding-3-small', 1536, ?, 256, 32, 'Flat', ?, ?)
+            """,
+            ("kb-issue-376-http", "Issue 376 HTTP", profile_id, now, now),
+        )
+        storage._conn.execute(
+            """
+            INSERT INTO rag_kb_files (kb_id, file_url, added_at, chunk_count)
+            VALUES ('kb-issue-376-http', ?, ?, 1)
+            """,
+            (alpha_url, now),
+        )
+        storage._conn.commit()
+        storage.bind_chunk_set_to_kb(
+            kb_id="kb-issue-376-http",
+            file_url=alpha_url,
+            chunk_set_id=ready_set_id,
+            binding_mode="follow_latest",
+        )
+    finally:
+        storage.close()
+    _prepare_committed_kb_index(db_path, "kb-issue-376-http", persist_embeddings=True)
+
+    storage = Storage(str(db_path))
+    try:
+        newer = storage.get_or_create_file_chunk_set(
+            file_url=alpha_url,
+            profile_id=profile_id,
+            markdown_hash="issue-376-failed-newer",
+            status="failed",
+        )
+    finally:
+        storage.close()
+
+    original_storage_source_state = Storage.get_agentic_ready_source_state
+    original_list_source_state = rag_admin_service._KBListStorageView.get_agentic_ready_source_state
+
+    def current_storage_source_state(storage, *, kb_id, profile="general"):
+        state = dict(original_storage_source_state(storage, kb_id=kb_id, profile=profile))
+        state["serving_stale"] = False
+        return state
+
+    def current_list_source_state(storage, *, kb_id, profile="general"):
+        state = dict(original_list_source_state(storage, kb_id=kb_id, profile=profile))
+        state["serving_stale"] = False
+        return state
+
+    monkeypatch.setattr(
+        Storage,
+        "get_agentic_ready_source_state",
+        current_storage_source_state,
+    )
+    monkeypatch.setattr(
+        rag_admin_service._KBListStorageView,
+        "get_agentic_ready_source_state",
+        current_list_source_state,
+    )
+
+    rag_list = client.get("/api/rag/knowledge-bases")
+    rag_detail = client.get("/api/rag/knowledge-bases/kb-issue-376-http")
+    chat_list = client.get("/api/chat/knowledge-bases")
+    bindings = client.get("/api/rag/knowledge-bases/kb-issue-376-http/bindings")
+    for response in (rag_list, rag_detail, chat_list, bindings):
+        assert response.status_code == 200, response.text
+
+    rag_list_item = next(
+        item for item in rag_list.json()["knowledge_bases"] if item["kb_id"] == "kb-issue-376-http"
+    )
+    rag_detail_item = rag_detail.json()["knowledge_base"]
+    chat_item = next(
+        item
+        for item in chat_list.json()["data"]["knowledge_bases"]
+        if item["kb_id"] == "kb-issue-376-http"
+    )
+    for item in (rag_list_item, rag_detail_item, chat_item):
+        assert item["needs_reindex"] is True
+        assert item["reason"] == "binding_dirty"
+    binding = bindings.json()["bindings"][0]
+    assert binding["latest_chunk_set_id"] == newer["chunk_set_id"]
+    assert binding["is_latest_for_profile"] is False
+
+
 def _post_ready_build_core(
     client: TestClient,
     url: str,

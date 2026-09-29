@@ -15,7 +15,7 @@ def test_knowledge_management_controls_are_permission_gated():
     assert 'const canManageKnowledge = permissions.includes("config.write");' in src
     assert 'const canRunKnowledgeTasks = permissions.includes("tasks.run");' in src
     assert "{canManageKnowledge && (" in src
-    assert "{canRunKnowledgeTasks && needsReembed && (" in src
+    assert "{canRunKnowledgeTasks && reembedRequired && (" in src
     assert '{canManageKnowledge && <div className="w-px bg-border" />}' in src
     assert "{canManageKnowledge && (" in src and "data-testid={`button-delete-kb-${kbId}`}" in src
     assert "{canManageKnowledge && (" in src and 'data-testid="button-create-profile"' in src

@@ -45,6 +45,7 @@ def _current_db_at_version_10(
         conn.execute("DROP TABLE markdown_terminal_source_state")
         conn.execute("DROP INDEX idx_global_chunks_stats_metadata")
         conn.execute("DROP INDEX idx_chunk_embeddings_stats_metadata")
+        conn.execute("DROP INDEX idx_file_chunk_sets_latest")
         for table in ("weekly_snapshot_members", "weekly_snapshots"):
             if table not in snapshot_tables:
                 conn.execute(f"DROP TABLE {table}")
@@ -113,6 +114,7 @@ def _genuine_v12_db(db_path: Path) -> None:
 
             DROP INDEX idx_global_chunks_stats_metadata;
             DROP INDEX idx_chunk_embeddings_stats_metadata;
+            DROP INDEX idx_file_chunk_sets_latest;
             DROP TABLE markdown_terminal_source_state;
             PRAGMA user_version=12;
             """)
@@ -499,6 +501,7 @@ def test_status_plan_apply_version_zero_baseline_preserves_data(tmp_path: Path) 
         "add_weekly_explanations_v12",
         "add_chunk_stats_metadata_indexes_v13",
         "add_markdown_terminal_source_state_v14",
+        "add_file_chunk_sets_latest_index_v15",
     ]
     assert _user_version(db_path) == 0
 
@@ -519,6 +522,7 @@ def test_status_plan_apply_version_zero_baseline_preserves_data(tmp_path: Path) 
         "add_weekly_explanations_v12",
         "add_chunk_stats_metadata_indexes_v13",
         "add_markdown_terminal_source_state_v14",
+        "add_file_chunk_sets_latest_index_v15",
     ]
     assert _user_version(db_path) == CURRENT_SQLITE_SCHEMA_VERSION
     assert _files_count(db_path) == 1
@@ -548,6 +552,7 @@ def test_status_plan_apply_production_v7_preserves_rows_and_is_idempotent(
         "add_weekly_explanations_v12",
         "add_chunk_stats_metadata_indexes_v13",
         "add_markdown_terminal_source_state_v14",
+        "add_file_chunk_sets_latest_index_v15",
     ]
 
     with sqlite3.connect(db_path) as conn:
@@ -571,6 +576,7 @@ def test_status_plan_apply_production_v7_preserves_rows_and_is_idempotent(
         "add_weekly_explanations_v12",
         "add_chunk_stats_metadata_indexes_v13",
         "add_markdown_terminal_source_state_v14",
+        "add_file_chunk_sets_latest_index_v15",
     ]
     assert schema_status(db_path)["state"] == "current"
     with sqlite3.connect(db_path) as conn:
@@ -675,6 +681,11 @@ def test_status_plan_apply_genuine_v12_preserves_rows_and_is_idempotent(
             "from_version": 13,
             "to_version": 14,
         },
+        {
+            "id": "add_file_chunk_sets_latest_index_v15",
+            "from_version": 14,
+            "to_version": 15,
+        },
     ]
 
     applied = apply_schema(db_path)
@@ -682,6 +693,7 @@ def test_status_plan_apply_genuine_v12_preserves_rows_and_is_idempotent(
     assert applied["applied_migrations"] == [
         "add_chunk_stats_metadata_indexes_v13",
         "add_markdown_terminal_source_state_v14",
+        "add_file_chunk_sets_latest_index_v15",
     ]
     assert _user_version(db_path) == CURRENT_SQLITE_SCHEMA_VERSION
 
@@ -798,6 +810,7 @@ def test_v9_manual_operation_state_migration_is_read_compatible_and_idempotent(
     storage = Storage(str(db_path))
     try:
         storage._conn.execute("DROP TABLE agentic_ready_manual_operation_state")
+        storage._conn.execute("DROP INDEX idx_file_chunk_sets_latest")
         storage._conn.execute("PRAGMA user_version=9")
         storage._conn.commit()
     finally:
@@ -842,6 +855,11 @@ def test_v9_manual_operation_state_migration_is_read_compatible_and_idempotent(
             "from_version": 13,
             "to_version": 14,
         },
+        {
+            "id": "add_file_chunk_sets_latest_index_v15",
+            "from_version": 14,
+            "to_version": 15,
+        },
     ]
     applied = apply_schema(db_path)
     assert applied["state"] == "current"
@@ -851,6 +869,7 @@ def test_v9_manual_operation_state_migration_is_read_compatible_and_idempotent(
         "add_weekly_explanations_v12",
         "add_chunk_stats_metadata_indexes_v13",
         "add_markdown_terminal_source_state_v14",
+        "add_file_chunk_sets_latest_index_v15",
     ]
     with sqlite3.connect(db_path) as conn:
         columns = {
@@ -879,6 +898,7 @@ def test_v10_manual_operation_state_migration_rolls_back_on_failure(
     storage = Storage(str(db_path))
     try:
         storage._conn.execute("DROP TABLE agentic_ready_manual_operation_state")
+        storage._conn.execute("DROP INDEX idx_file_chunk_sets_latest")
         storage._conn.execute("PRAGMA user_version=9")
         storage._conn.commit()
     finally:
@@ -1159,6 +1179,7 @@ def test_v6_migration_preserves_pipeline_stage_and_child_run_rows(tmp_path: Path
         # indexes and rebuild the two child tables at their v5 (FK-less) shape.
         conn.execute("DROP INDEX IF EXISTS idx_child_run_parent_run_id")
         conn.execute("DROP INDEX IF EXISTS idx_pipeline_run_status")
+        conn.execute("DROP INDEX IF EXISTS idx_file_chunk_sets_latest")
         conn.execute("DROP TABLE child_run")
         conn.execute("DROP TABLE pipeline_stage")
         conn.execute("DROP TABLE pipeline_run")
@@ -1194,6 +1215,7 @@ def test_v6_migration_preserves_pipeline_stage_and_child_run_rows(tmp_path: Path
         "add_weekly_explanations_v12",
         "add_chunk_stats_metadata_indexes_v13",
         "add_markdown_terminal_source_state_v14",
+        "add_file_chunk_sets_latest_index_v15",
     ]
     assert _user_version(db_path) == CURRENT_SQLITE_SCHEMA_VERSION
 
@@ -1233,37 +1255,37 @@ def test_schema_runner_plans_registered_old_version_path(
     storage = Storage(str(db_path))
     storage.close()
 
-    def apply_v15(conn: sqlite3.Connection) -> None:
-        conn.execute("PRAGMA user_version=15")
+    def apply_v16(conn: sqlite3.Connection) -> None:
+        conn.execute("PRAGMA user_version=16")
 
-    monkeypatch.setattr(sqlite_schema, "CURRENT_SQLITE_SCHEMA_VERSION", 15)
+    monkeypatch.setattr(sqlite_schema, "CURRENT_SQLITE_SCHEMA_VERSION", 16)
     monkeypatch.setattr(
         sqlite_schema,
         "SQLITE_SCHEMA_MIGRATIONS",
         (
             *sqlite_schema.SQLITE_SCHEMA_MIGRATIONS,
             sqlite_schema.SQLiteSchemaMigration(
-                version=15,
-                migration_id="test_schema_v15",
-                apply=apply_v15,
+                version=16,
+                migration_id="test_schema_v16",
+                apply=apply_v16,
             ),
         ),
     )
 
     status = sqlite_schema.schema_status(db_path)
     assert status["state"] == "needs_migration"
-    assert status["database"]["user_version"] == 14
+    assert status["database"]["user_version"] == 15
 
     plan = sqlite_schema.schema_plan(db_path)
     assert plan["plan"]["actions"] == [
-        {"id": "test_schema_v15", "from_version": 14, "to_version": 15}
+        {"id": "test_schema_v16", "from_version": 15, "to_version": 16}
     ]
 
     applied = sqlite_schema.apply_schema(db_path)
     assert applied["state"] == "current"
-    assert applied["database"]["user_version"] == 15
-    assert applied["applied_migrations"] == ["test_schema_v15"]
-    assert _user_version(db_path) == 15
+    assert applied["database"]["user_version"] == 16
+    assert applied["applied_migrations"] == ["test_schema_v16"]
+    assert _user_version(db_path) == 16
 
 
 def test_schema_runner_accepts_registered_old_version_source_signature(
@@ -1292,11 +1314,11 @@ def test_schema_runner_accepts_registered_old_version_source_signature(
     ) -> bool:
         return tables == v6_signature
 
-    def apply_v15(conn: sqlite3.Connection) -> None:
+    def apply_v16(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE files ADD COLUMN schema_runner_v7_marker TEXT")
-        conn.execute("PRAGMA user_version=15")
+        conn.execute("PRAGMA user_version=16")
 
-    monkeypatch.setattr(sqlite_schema, "CURRENT_SQLITE_SCHEMA_VERSION", 15)
+    monkeypatch.setattr(sqlite_schema, "CURRENT_SQLITE_SCHEMA_VERSION", 16)
     monkeypatch.setattr(sqlite_schema, "_current_storage_signature", lambda: v7_signature)
     monkeypatch.setattr(
         sqlite_schema,
@@ -1304,9 +1326,9 @@ def test_schema_runner_accepts_registered_old_version_source_signature(
         (
             *sqlite_schema.SQLITE_SCHEMA_MIGRATIONS,
             sqlite_schema.SQLiteSchemaMigration(
-                version=15,
-                migration_id="test_schema_v15_add_marker",
-                apply=apply_v15,
+                version=16,
+                migration_id="test_schema_v16_add_marker",
+                apply=apply_v16,
                 source_validator=accepts_v6_source,
             ),
         ),
@@ -1314,17 +1336,17 @@ def test_schema_runner_accepts_registered_old_version_source_signature(
 
     status = sqlite_schema.schema_status(db_path)
     assert status["state"] == "needs_migration"
-    assert status["database"]["user_version"] == 14
+    assert status["database"]["user_version"] == 15
 
     plan = sqlite_schema.schema_plan(db_path)
     assert plan["plan"]["actions"] == [
-        {"id": "test_schema_v15_add_marker", "from_version": 14, "to_version": 15}
+        {"id": "test_schema_v16_add_marker", "from_version": 15, "to_version": 16}
     ]
 
     applied = sqlite_schema.apply_schema(db_path)
     assert applied["state"] == "current"
-    assert applied["applied_migrations"] == ["test_schema_v15_add_marker"]
-    assert _user_version(db_path) == 15
+    assert applied["applied_migrations"] == ["test_schema_v16_add_marker"]
+    assert _user_version(db_path) == 16
 
 
 def test_schema_runner_rejects_mutating_source_validator_during_apply(
@@ -1371,11 +1393,11 @@ def test_schema_runner_rejects_mutating_source_validator_during_apply(
         conn.execute("CREATE TABLE validator_mutation_leak (secret_value TEXT)")
         return True
 
-    def apply_v15(conn: sqlite3.Connection) -> None:
+    def apply_v16(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE files ADD COLUMN schema_runner_v7_marker TEXT")
-        conn.execute("PRAGMA user_version=15")
+        conn.execute("PRAGMA user_version=16")
 
-    monkeypatch.setattr(sqlite_schema, "CURRENT_SQLITE_SCHEMA_VERSION", 15)
+    monkeypatch.setattr(sqlite_schema, "CURRENT_SQLITE_SCHEMA_VERSION", 16)
     monkeypatch.setattr(sqlite_schema, "_current_storage_signature", lambda: v7_signature)
     monkeypatch.setattr(
         sqlite_schema,
@@ -1383,9 +1405,9 @@ def test_schema_runner_rejects_mutating_source_validator_during_apply(
         (
             *sqlite_schema.SQLITE_SCHEMA_MIGRATIONS,
             sqlite_schema.SQLiteSchemaMigration(
-                version=15,
-                migration_id="test_schema_v15_block_mutating_validator",
-                apply=apply_v15,
+                version=16,
+                migration_id="test_schema_v16_block_mutating_validator",
+                apply=apply_v16,
                 source_validator=mutating_validator,
             ),
         ),
@@ -1399,7 +1421,7 @@ def test_schema_runner_rejects_mutating_source_validator_during_apply(
 
     assert validator_calls >= 2
     assert query_only_values and set(query_only_values) == {1}
-    assert _user_version(db_path) == 14
+    assert _user_version(db_path) == 15
     with sqlite3.connect(db_path) as conn:
         assert conn.execute("""
             SELECT 1 FROM sqlite_schema
@@ -1445,6 +1467,7 @@ def test_schema_runner_accepts_exported_chat_service_optional_schema(
         "add_weekly_explanations_v12",
         "add_chunk_stats_metadata_indexes_v13",
         "add_markdown_terminal_source_state_v14",
+        "add_file_chunk_sets_latest_index_v15",
     ]
 
 
@@ -1755,6 +1778,7 @@ def test_schema_cli_json_contract_for_status_plan_apply(tmp_path: Path) -> None:
         "add_weekly_explanations_v12",
         "add_chunk_stats_metadata_indexes_v13",
         "add_markdown_terminal_source_state_v14",
+        "add_file_chunk_sets_latest_index_v15",
     ]
     assert str(db_path) not in apply_result.stdout
 
@@ -1817,6 +1841,7 @@ def test_legacy_missing_backfill_table_is_migratable(tmp_path: Path) -> None:
         "add_weekly_explanations_v12",
         "add_chunk_stats_metadata_indexes_v13",
         "add_markdown_terminal_source_state_v14",
+        "add_file_chunk_sets_latest_index_v15",
     ]
     assert _user_version(db_path) == CURRENT_SQLITE_SCHEMA_VERSION
     with sqlite3.connect(db_path) as conn:

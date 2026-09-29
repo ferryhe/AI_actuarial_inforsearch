@@ -113,6 +113,12 @@ class StorageV2Full(StorageV2, StorageV2RAGMixin, StorageV2AuthMixin):
                     "CREATE INDEX idx_file_chunk_sets_profile_id " "ON file_chunk_sets(profile_id)"
                 )
             )
+            connection.execute(
+                text(
+                    "CREATE INDEX idx_file_chunk_sets_latest ON file_chunk_sets("
+                    "file_url, profile_id, updated_at DESC, created_at DESC, chunk_set_id DESC)"
+                )
+            )
 
 
 __all__ = [

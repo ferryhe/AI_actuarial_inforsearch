@@ -226,6 +226,7 @@ function getKbResultCountLabel(kb: KnowledgeBase, ragMode: RagMode, t: Translate
 }
 
 function getKbAvailabilityLabel(kb: KnowledgeBase, t: Translate): string {
+  if (kb.reason) return t(`knowledge.kb_status.${kb.reason}`);
   if (kb.availability === "needs_reindex") return t("chat.kb_status.needs_reindex");
   if (kb.availability === "building") return t("chat.kb_status.building");
   if (kb.availability === "ready") return t("chat.kb_status.ready");

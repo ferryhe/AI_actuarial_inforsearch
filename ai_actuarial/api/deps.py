@@ -232,6 +232,9 @@ def require_permissions(*required: str):
             if _has_presented_auth_material(request):
                 context = _load_auth_context(request)
                 if context.token:
+                    # Public anonymous chat must not override a token's inference permissions.
+                    if "chat.query" in required:
+                        _assert_context_has_permissions(context, required)
                     return context
             return AuthContext(token=None, permissions=frozenset())
 

@@ -134,9 +134,13 @@ The routed React product shell is expected to use native FastAPI endpoints for:
 - `/api/agentic-rag/search/tables`
 - `/api/agentic-rag/search/calculation-terms`
 - `/api/agentic-rag/trace/relations`
-- `/api/agentic-rag/chat`
 
 Agentic Chat is also exposed through the main chat contract by sending `rag_mode="agentic"` to `/api/chat/query`. That path preserves chat quotas, conversation persistence, and UI evidence rendering. Agentic Chat currently requires exactly one ready KB and rejects direct selected-document context.
+
+`POST /api/agentic-rag/chat` is deprecated as of 2026-09-14 and is retained only
+as a compatibility shim through 2026-10-14 at the latest. New clients must use
+`POST /api/chat/query` with `message`, `kb_ids: [kb_id]`, and
+`rag_mode: "agentic"`; see the Agentic RAG guide for the complete field mapping.
 
 ### Auth / User / Admin
 

@@ -16,6 +16,7 @@ from ai_actuarial.ai_runtime import infer_embedding_dimension, resolve_ai_functi
 from ai_actuarial.api.client_ip import client_ip
 from ai_actuarial.api.deps import AuthContext, _decode_request_sessions
 from ai_actuarial.config import settings
+from ai_actuarial.kb_status import classify_kb_status
 from ai_actuarial.retrieval_indicators import (
     build_retrieval_indicators,
     normalize_semantic_relevance,
@@ -609,6 +610,11 @@ def list_knowledge_bases(*, db_path: str, auth: AuthContext | None = None) -> di
             agentic_manifest = storage.get_agentic_ready_manifest(
                 kb_id=kb_id, profile=manifest_profile
             )
+            # ``serving_stale`` is produced by ready_data_publication's
+            # source-state projection and preserves last-good Ask AI serving.
+            source_state = storage.get_agentic_ready_source_state(
+                kb_id=kb_id, profile=manifest_profile
+            )
             effective_index_provider = latest_index.get("embedding_provider") or kb_provider
             effective_index_model = latest_index.get("embedding_model") or kb_model
             effective_index_dimension = latest_index.get("embedding_dimension")
@@ -620,25 +626,11 @@ def list_knowledge_bases(*, db_path: str, auth: AuthContext | None = None) -> di
                 model=effective_index_model,
                 dimension=effective_index_dimension,
             )
-            needs_reindex = bool(composition.get("needs_reindex")) or (
-                has_index and not embedding_compatible
+            status = classify_kb_status(
+                composition=composition,
+                embedding_compatible=embedding_compatible,
+                serving_stale=bool(source_state.get("serving_stale")),
             )
-            index_status = str(latest_index.get("status") or "").strip().lower()
-            if not has_index or index_status in {
-                "pending",
-                "queued",
-                "running",
-                "building",
-                "indexing",
-            }:
-                availability = "building"
-                usable = False
-            elif needs_reindex:
-                availability = "needs_reindex"
-                usable = False
-            else:
-                availability = "ready"
-                usable = True
             knowledge_bases.append(
                 {
                     "kb_id": kb_id,
@@ -657,10 +649,14 @@ def list_knowledge_bases(*, db_path: str, auth: AuthContext | None = None) -> di
                     "index_status": latest_index.get("status")
                     or ("ready" if has_index and effective_index_model else None),
                     "index_built_at": latest_index.get("built_at"),
-                    "needs_reindex": needs_reindex,
+                    "needs_reindex": bool(composition.get("needs_reindex"))
+                    or not embedding_compatible,
+                    "needs_reembed": status["needs_reembed"],
+                    "reason": status["reason"],
+                    "serving": status["serving"],
                     "embedding_compatible": embedding_compatible,
-                    "availability": availability,
-                    "usable": usable,
+                    "availability": status["availability"],
+                    "usable": status["serving"],
                 }
             )
         data: dict[str, Any] = {
