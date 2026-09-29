@@ -335,7 +335,7 @@ def test_query_navigation_reloads_detail_and_preview():
     assert "useEffect(() => { fetchFile(); }, [fetchFile]);" in detail_src
     assert "`/api/files/detail?url=${encodeURIComponent(requestIdentity)}`" in detail_src
     assert "const searchParams = useRawSearchParams();" in preview_src
-    assert "}, [beginPreviewRequest, fileUrl]);" in preview_src
+    assert "}, [beginPreviewRequest, fileUrl, t]);" in preview_src
     assert (
         "useEffect(() => { fetchPreview(initialChunkSetId); }, [fetchPreview, initialChunkSetId]);"
         in preview_src

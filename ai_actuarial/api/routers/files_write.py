@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from urllib.parse import unquote
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, UploadFile
@@ -12,6 +13,7 @@ from ..services.files_write import (
     export_catalog,
     get_downloadable_file,
     get_file_chunk_sets,
+    get_previewable_file,
     get_rag_file_preview,
     update_file_markdown_content,
     update_file_record,
@@ -21,6 +23,7 @@ from ..services.ops_write import BridgeState, OpsWriteError, start_collection
 from .read import _can_view_sensitive_file_fields
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 def _db_path(request: Request) -> str:
@@ -165,6 +168,35 @@ def api_rag_files_preview(
             file_url=file_url,
             chunk_set_id=chunk_set_id,
             include_sensitive=_can_view_sensitive_file_fields(auth),
+        )
+    except FileWriteError as exc:
+        return _json_error(exc)
+
+
+@router.api_route("/rag/files/preview/raw", methods=["GET", "HEAD"])
+def api_rag_files_preview_raw(
+    request: Request,
+    auth: AuthContext = Depends(require_permissions("files.read")),
+):
+    """Serve PDF/image bytes for authenticated inline preview, never as a download grant."""
+    file_url = str(request.query_params.get("file_url", "") or "").strip()
+    try:
+        path, filename, media_type = get_previewable_file(db_path=_db_path(request), url=file_url)
+        logger.info(
+            "audit_event=file_preview_raw subject=%s resource=%s ip=%s",
+            (auth.token or {}).get("subject", ""),
+            file_url,
+            request.client.host if request.client else "",
+        )
+        return FileResponse(
+            path=path,
+            filename=filename,
+            media_type=media_type,
+            content_disposition_type="inline",
+            headers={
+                "Cache-Control": "private, no-store",
+                "X-Content-Type-Options": "nosniff",
+            },
         )
     except FileWriteError as exc:
         return _json_error(exc)
