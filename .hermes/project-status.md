@@ -1,3 +1,65 @@
+# Latest work — Issue #348 pipeline error visibility
+
+- Updated: 2026-09-29 EDT. Repository: `AI_actuarial_inforsearch`; branch:
+  `codex/issue-348-pipeline-ui`; baseline: `e9cdd59f432cea1539758162f91d0a3c9abbbb0a`.
+  This assigned worktree is the only edited workspace; sibling repositories and `graphify-out/`
+  were not accessed.
+- `NativeTaskRuntime.pipeline_baton_status` keeps raw baton `round_status` and child task
+  statuses while deriving compact stage statuses, counts, and a display-only
+  `completed_with_errors` summary. A persisted stopped task remains stopped even when its task
+  record carries the usual stop message. Existing #319 `kb_results` failures also produce a
+  derived RAG failure without changing baton state. The response exposes only `error_count`,
+  `failed_items`, `first_error_code`, and `first_error_summary`; detailed #368 item errors stay
+  in the task log.
+- Pipeline Baton renders the summary, text/icon/color failed headers, default expandable failed
+  cards, a failure-only filter, item versus task error counts, a manual latest-failure log link,
+  and generic Rerun wording whenever prior stage results exist. It does not retry tasks or change
+  #319 continuation behavior.
+- The production `PipelineBatonResults` component renders summary states, failed-stage expansion,
+  failure-only filtering, and manual log callbacks. Its executable TSX regression plus focused
+  Python and #319 coverage passed (106 Python tests); Black, isort, and `git diff --check` passed.
+  After local dependencies were restored, typecheck and the executable TSX regression pass; lint
+  passes with five pre-existing warnings and build passes with its existing chunk advisory.
+- Round-2 corrections mark the valid current stage failed for an otherwise unprojected hard
+  orchestration error and preserve the raw `error` round status. A link is rendered only for a
+  current task ID present in task history/active tasks. Legacy catalog tasks without the #368
+  `failed_items` key derive that count from an exact bounded `Catalog errors: N` message; explicit
+  values, including zero, remain authoritative.
+- Round-3 correction keeps earlier failed stages while also projecting a later valid current stage
+  as failed for a terminal hard orchestration error. It increments the derived count only when the
+  current stage was not already failed, and makes that terminal context the latest failure.
+- Round-4 correction preserves ordered RAG result failures and lets a positive-output non-KB
+  current task show terminal orchestration context without changing an already failed count.
+- Round-5 projection maps failed advancement to its attempted target stage and overlays terminal
+  RAG orchestration context while preserving raw state and prior failure records.
+- Fix-5 real-transition coverage now drives scheduled markdown-launch and RAG Ready Data OSError
+  failures through `PipelineBaton.tick()` and into the runtime projection.
+- Round-6 repair keeps the general 100-row in-memory history cap. If the retained baton source is
+  evicted, the status projection reloads only its matching durable source/child records even when
+  a late child remains in memory; current active/in-memory records override older snapshots.
+- Publish-gate repair moves the Issue #237 source assertion for pipeline task status/ID rendering
+  to `PipelineBatonResults.tsx`, where the extracted production rendering now resides.
+- Publish-gate repair makes the Results component's internal stage-task and stage interfaces
+  private; the executable TSX test validates its steps through the component props type.
+- Final-candidate repair adds English `Running` and Chinese `运行中` pipeline status entries;
+  focused source and executable TSX coverage verifies locale presence and active-summary rendering.
+- Final local gates pass on the current candidate: the Issue-focused Python suite has 112 tests;
+  the executable TSX regression, typecheck, lint, production build, dead-code check, Black, isort,
+  Pylint baseline, `git diff --check`, and the repository quality gate all pass. The quality gate
+  ran 2,235 tests with 10 skipped. Lint retains five existing Hook warnings and the build retains
+  its existing chunk-size advisory.
+- An isolated real FastAPI + Vite browser smoke passed in English and Chinese at desktop and
+  320x800. It verified the Daily Pipeline summary, five stage cards, failed-only filter, expanded
+  settings, and authenticated API requests. The 320px viewport had no horizontal overflow
+  (`bodyScrollWidth` and root scroll width both 320), and the browser console had no warnings or
+  errors. Temporary services and ignored smoke data were stopped and removed.
+- Final-candidate review found and repaired the missing bilingual `running` summary label. A fresh
+  Sol/high follow-up raised only localization of raw child-task status tokens; TypeSafe review
+  found no direct acceptance-criterion mapping, and TypeSafe Judge rejected it as out of scope
+  with 0.99 probability because AC-3 covers stage headers and AC-7 preserves raw child statuses.
+- Delivery is ready for the authorized commit, push, and pull request flow, followed by exact-head
+  CI and the required remote-feedback window.
+
 # 最新状态 — PR #380 与已合并的 PR #379
 
 - Updated: 2026-09-29 EDT. Repository: `AI_actuarial_inforsearch`; branch:

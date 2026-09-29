@@ -241,6 +241,9 @@ def test_chunk_embedding_ui_removes_binding_and_overwrite_controls_and_uses_fixe
     file_detail = (root / "client/src/pages/FileDetail.tsx").read_text(encoding="utf-8")
     tasks = (root / "client/src/pages/Tasks.tsx").read_text(encoding="utf-8")
     pipeline = (root / "client/src/pages/tasks/PipelineBaton.tsx").read_text(encoding="utf-8")
+    pipeline_results = (root / "client/src/pages/tasks/PipelineBatonResults.tsx").read_text(
+        encoding="utf-8"
+    )
     schedules = (root / "client/src/pages/tasks/ScheduledTasksSection.tsx").read_text(
         encoding="utf-8"
     )
@@ -264,7 +267,7 @@ def test_chunk_embedding_ui_removes_binding_and_overwrite_controls_and_uses_fixe
     assert "chunk_set_ids" in file_detail
     assert "const identity = embeddingTask.result;" in tasks
     assert 'label: "Chunk & Embedding"' in pipeline
-    assert "{task.status} · {task.task_id}" in pipeline
+    assert "{task.status} · {task.task_id}" in pipeline_results
 
 
 def test_managed_schedule_launches_incremental_embedding_for_reused_chunk_sets() -> None:

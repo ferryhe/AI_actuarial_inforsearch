@@ -384,8 +384,7 @@ def test_tasks_page_exposes_fixed_collapsible_pipeline_baton():
     assert "FullPipelineForm" not in tasks_src
     assert "PipelineRuns" not in tasks_src
     assert "<PipelineBaton onViewLog={viewPipelineLog} />" in tasks_src
-    assert "useState<Set<string>>(new Set())" in form_src
-    assert "aria-expanded={expanded.has(step.step)}" in form_src
+    assert "useState<Set<string> | null>(null)" in form_src
     for step in ("scheduled", "markdown_conversion", "catalog", "chunk_generation", "rag_indexing"):
         assert f'"pipeline-step-{step}"' in form_src
     assert 'apiGet<PipelineView>("/api/pipeline/status")' in form_src
@@ -403,8 +402,7 @@ def test_tasks_page_exposes_fixed_collapsible_pipeline_baton():
     assert "...(scheduleChanged ? {" in form_src
     assert "enabled: scheduledEnabled" in form_src
     assert 'label: "Chunk & Embedding"' in form_src
-    assert "task.label || step.label" in form_src
-    assert 'subtask?: "kb_index" | "ready_data_build"' in form_src
+    assert "<PipelineBatonResults" in form_src
     assert "binding_mode" not in form_src
     assert "full_reindex" not in form_src
     assert 'rag_indexing: ["incremental", "force_reindex", "kb_id"]' in form_src
@@ -466,6 +464,31 @@ def test_pipeline_baton_i18n_keys_added_in_both_locales():
         assert f'"{key}":' in i18n_src, key
     assert '"tasks.pipeline.title": "Daily Pipeline"' in i18n_src
     assert '"tasks.pipeline.title": "每日流水线"' in i18n_src
+
+
+def test_pipeline_baton_displays_completed_child_errors_and_manual_logs():
+    src = (ROOT / "pages" / "tasks" / "PipelineBatonResults.tsx").read_text(encoding="utf-8")
+    baton_src = (ROOT / "pages" / "tasks" / "PipelineBaton.tsx").read_text(encoding="utf-8")
+    i18n_src = (ROOT / "hooks" / "use-i18n.ts").read_text(encoding="utf-8")
+
+    assert "view.summary.status" in src
+    assert 'data-testid="pipeline-failed-only"' in src
+    assert 'stage.status === "failed"' in src
+    assert "task.error_count" in src
+    assert "task.failed_items" in src
+    assert "item_errors_truncated" not in src
+    assert "item_errors" not in src
+    assert '"tasks.pipeline.rerun"' in baton_src
+    assert "onViewLog(latestFailure.task_id" in src
+    for key in (
+        "tasks.pipeline.completed_with_errors",
+        "tasks.pipeline.running",
+        "tasks.pipeline.failed_only",
+        "tasks.pipeline.rerun",
+        "tasks.pipeline.errors",
+        "tasks.pipeline.failed_items",
+    ):
+        assert i18n_src.count(f'"{key}":') == 2
 
 
 def test_status_badge_handles_pipeline_statuses():

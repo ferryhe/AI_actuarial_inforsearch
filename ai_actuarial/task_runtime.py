@@ -358,6 +358,28 @@ class NativeTaskRuntime:
             logger.error("Failed to load job history: %s", exc)
             return []
 
+    def _load_pipeline_round_tasks_from_disk(self, source_task_id: str) -> list[dict[str, Any]]:
+        path = Path("data/job_history.jsonl")
+        if not source_task_id or not path.exists():
+            return []
+        try:
+            rows = []
+            with path.open("r", encoding="utf-8") as handle:
+                for line in handle:
+                    try:
+                        task = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if isinstance(task, dict) and (
+                        str(task.get("id") or "") == source_task_id
+                        or str(task.get("pipeline_baton_source_task_id") or "") == source_task_id
+                    ):
+                        rows.append(task)
+            return rows
+        except OSError as exc:
+            logger.error("Failed to load pipeline task history: %s", exc)
+            return []
+
     def refs(self) -> RuntimeRefs:
         return RuntimeRefs(
             active_tasks_ref=self.active_tasks,
@@ -467,30 +489,69 @@ class NativeTaskRuntime:
         with self.task_lock:
             tasks = [dict(task) for task in self.task_history]
             tasks.extend(dict(task) for task in self.active_tasks.values())
+        if source_task_id and not any(
+            str(task.get("id") or "") == source_task_id for task in tasks
+        ):
+            disk_tasks = self._load_pipeline_round_tasks_from_disk(source_task_id)
+            tasks = list({str(task.get("id") or ""): task for task in disk_tasks}.values()) + tasks
+        tasks = list({str(task.get("id") or ""): task for task in tasks}.values())
         stage_tasks: dict[str, list[dict[str, Any]]] = {step: [] for step in PIPELINE_STEPS}
+        stage_failures: dict[str, list[dict[str, Any]]] = {step: [] for step in PIPELINE_STEPS}
+
+        def project_task(task: dict[str, Any]) -> dict[str, Any]:
+            task_id = str(task.get("id") or "")
+            item_errors = normalize_item_errors(task.get("item_errors"), task_id=task_id)
+            errors = task.get("errors")
+            error_count = len(errors) if isinstance(errors, list) else 0
+            try:
+                error_count = max(error_count, int(task.get("catalog_errors") or 0))
+            except (TypeError, ValueError):
+                pass
+            status = str(task.get("status") or "unknown")
+            if status == "stopped":
+                error_count = 0
+            elif status in {"error", "failed"}:
+                error_count = max(error_count, 1)
+            if "failed_items" in task:
+                try:
+                    failed_items = max(0, int(task.get("failed_items") or 0))
+                except (TypeError, ValueError):
+                    failed_items = 0
+            else:
+                failed_items = 0
+                if task.get("pipeline_baton_step") == "catalog":
+                    for error in errors if isinstance(errors, list) else []:
+                        match = re.fullmatch(r"Catalog errors: ([0-9]{1,9})", str(error))
+                        if match:
+                            failed_items = int(match.group(1))
+                            break
+            first_item_error = item_errors[0] if item_errors else {}
+            return {
+                "task_id": task_id,
+                "status": status,
+                "error_count": error_count,
+                "first_error_code": str(first_item_error.get("code") or ""),
+                "first_error_summary": str(
+                    first_item_error.get("summary")
+                    or (errors[0] if isinstance(errors, list) and errors else "")
+                ),
+                "failed_items": failed_items,
+                "log_url": f"/api/tasks/log/{task_id}",
+            }
+
         if source_task_id:
             source = next(
                 (task for task in tasks if str(task.get("id") or "") == source_task_id), None
             )
-            stage_tasks["scheduled"].append(
-                {
-                    "task_id": source_task_id,
-                    "status": str((source or {}).get("status") or "unknown"),
-                    "log_url": f"/api/tasks/log/{source_task_id}",
-                }
-            )
+            stage_tasks["scheduled"].append(project_task(source or {"id": source_task_id}))
         for task in tasks:
             if str(task.get("pipeline_baton_source_task_id") or "") != source_task_id:
                 continue
             step = str(task.get("pipeline_baton_step") or "")
             if step not in stage_tasks:
                 continue
-            projected = {
-                "task_id": str(task.get("id") or ""),
-                "status": str(task.get("status") or "unknown"),
-                "kb_id": task.get("pipeline_baton_kb_id"),
-                "log_url": f"/api/tasks/log/{task.get('id')}",
-            }
+            projected = project_task(task)
+            projected["kb_id"] = task.get("pipeline_baton_kb_id")
             if step == "rag_indexing":
                 subtask = str(task.get("pipeline_baton_subtask") or "kb_index")
                 projected["subtask"] = subtask
@@ -498,14 +559,150 @@ class NativeTaskRuntime:
                     "Ready Data Build/Publish" if subtask == "ready_data_build" else "KB Index"
                 )
             stage_tasks[step].append(projected)
-        view["stages"] = [
-            {
-                "step": step,
-                "label": "KB Index & Ready Data" if step == "rag_indexing" else step,
-                "tasks": stage_tasks[step],
-            }
-            for step in PIPELINE_STEPS
-        ]
+        for result in state.get("kb_results") or []:
+            if not isinstance(result, dict) or result.get("status") != "failed":
+                continue
+            task_id = str(result.get("ready_data_task_id") or result.get("kb_index_task_id") or "")
+            code = str(result.get("failure_status") or "failed")
+            kb_id = str(result.get("kb_id") or "")
+            stage_failures["rag_indexing"].append(
+                {
+                    "task_id": task_id or None,
+                    "first_error_code": code,
+                    "first_error_summary": f"Knowledge base {kb_id} failed: {code}.",
+                }
+            )
+        latest_failure: dict[str, Any] | None = None
+        stages = []
+        for step in PIPELINE_STEPS:
+            stage = stage_tasks[step]
+            failed_tasks = [
+                task
+                for task in stage
+                if task["status"] != "stopped" and (task["error_count"] or task["failed_items"])
+            ]
+            has_errors = bool(failed_tasks or stage_failures[step])
+            if has_errors:
+                status = "failed"
+                if step == "rag_indexing" and stage_failures[step]:
+                    failure = stage_failures[step][-1]
+                    failed_task = next(
+                        (
+                            task
+                            for task in reversed(failed_tasks)
+                            if task["task_id"] == failure["task_id"]
+                        ),
+                        None,
+                    )
+                    latest_failure = {
+                        "task_id": failure["task_id"],
+                        "stage": step,
+                        "error_count": failed_task["error_count"] if failed_task else 1,
+                        "first_error_code": (
+                            failed_task["first_error_code"]
+                            if failed_task
+                            else failure["first_error_code"]
+                        ),
+                        "summary": (
+                            failed_task["first_error_summary"] or failure["first_error_summary"]
+                            if failed_task
+                            else failure["first_error_summary"]
+                        ),
+                    }
+                elif failed_tasks:
+                    failed_task = failed_tasks[-1]
+                    latest_failure = {
+                        "task_id": failed_task["task_id"],
+                        "stage": step,
+                        "error_count": failed_task["error_count"],
+                        "first_error_code": failed_task["first_error_code"],
+                        "summary": failed_task["first_error_summary"] or "Task failed.",
+                    }
+                else:
+                    failure = stage_failures[step][-1]
+                    latest_failure = {
+                        "task_id": failure["task_id"],
+                        "stage": step,
+                        "error_count": 1,
+                        "first_error_code": failure["first_error_code"],
+                        "summary": failure["first_error_summary"],
+                    }
+            elif any(task["status"] == "stopped" for task in stage):
+                status = "stopped"
+            elif stage and all(
+                task["status"] in {"completed", "success", "succeeded"} for task in stage
+            ):
+                status = "completed"
+            else:
+                status = "pending" if stage else "idle"
+            stages.append(
+                {
+                    "step": step,
+                    "label": "KB Index & Ready Data" if step == "rag_indexing" else step,
+                    "status": status,
+                    "tasks": stage,
+                    "failures": stage_failures[step],
+                }
+            )
+        failed_stages = sum(stage["status"] == "failed" for stage in stages)
+        current_step = str(state.get("current_step") or "")
+        if state.get("round_status") == "error" and current_step in PIPELINE_STEPS:
+            stage = next(stage for stage in stages if stage["step"] == current_step)
+            current_task_id = str(state.get("current_task_id") or "")
+            current_task = next(
+                (task for task in tasks if str(task.get("id") or "") == current_task_id), None
+            )
+            try:
+                advanced = (
+                    current_step != "rag_indexing"
+                    and int((current_task or {}).get("items_downloaded") or 0) > 0
+                )
+            except (TypeError, ValueError):
+                advanced = False
+            target_step = current_step
+            if advanced:
+                target_step = {
+                    "scheduled": "markdown_conversion",
+                    "markdown_conversion": "catalog",
+                    "catalog": "chunk_generation",
+                }.get(current_step, current_step)
+                if (
+                    current_step == "chunk_generation"
+                    and state.get("chunk_embedding_phase") == "embedding"
+                ):
+                    target_step = "rag_indexing"
+            if current_step == "rag_indexing" or stage["status"] != "failed" or advanced:
+                stage = next(stage for stage in stages if stage["step"] == target_step)
+                was_failed = stage["status"] == "failed"
+                stage["status"] = "failed"
+                latest_failure = {
+                    "task_id": (
+                        None
+                        if advanced or current_step == "rag_indexing"
+                        else (
+                            current_task_id
+                            if any(str(task.get("id") or "") == current_task_id for task in tasks)
+                            else None
+                        )
+                    ),
+                    "stage": target_step,
+                    "error_count": 1,
+                    "first_error_code": "orchestration_error",
+                    "summary": "Pipeline orchestration failed.",
+                }
+                failed_stages += 0 if was_failed else 1
+        view["stages"] = stages
+        view["summary"] = {
+            "status": (
+                "completed_with_errors"
+                if state.get("round_status") == "completed" and failed_stages
+                else state.get("round_status", "idle")
+            ),
+            "successful_stages": sum(stage["status"] == "completed" for stage in stages),
+            "failed_stages": failed_stages,
+            "stopped_stages": sum(stage["status"] == "stopped" for stage in stages),
+            "latest_failure": latest_failure,
+        }
         return view
 
     def configure_pipeline_baton(self, overrides: dict[str, Any]) -> dict[str, Any]:
