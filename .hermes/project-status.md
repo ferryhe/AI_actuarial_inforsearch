@@ -1,3 +1,35 @@
+# Latest work — PR #374, PR #379, and Issue #375
+
+- Updated: 2026-09-29 EDT.
+- Repository: `AI_actuarial_inforsearch`; current branch: `codex/issue-375-audit-ip`,
+  based on `origin/main@119423437847aecd3a6a60c36281eec5604a967c`. This worktree is the only
+  workspace used; sibling repositories were not accessed.
+- PR #374 / Issue #346 was aligned with current main, the `dead-code-symbols` whitelist cause was
+  fixed, all previously skipped checks were run, all required checks passed, and the PR was merged
+  as `119423437847aecd3a6a60c36281eec5604a967c` on 2026-09-29. Issue #346 is closed.
+- PR #379 / Issue #377 was locally validated against current main: merge tree is clean; 319 focused
+  related tests passed and 2 skipped; the admin endpoint suite passed 135 tests and skipped 7; a
+  temporary-DB API probe confirmed legacy binding reconstruction and audit write. GitHub's fork
+  workflow is `action_required` pending maintainer approval. The PR branch was not changed or merged.
+- Issue #375 root cause is the existing atomic admin-protection storage path dropping its IP
+  context. Both admin role/active service calls now pass the normalized `client_ip(request)`, and
+  the atomic operation writes that same value to activity and audit rows. A writer inventory found
+  register, login, profile update, and quota reset already pass the resolved IP. Regression tests
+  use a real FastAPI trusted-peer + XFF request and read the temporary SQLite DB directly; storage
+  coverage verifies the exact IP in both tables. Existing #372 transaction/concurrency and #352
+  fail-closed behavior remain covered.
+- Full `python scripts/quality_gate.py` passed: 2,197 passed, 10 skipped; Black, isort, and
+  error-only Pylint each had zero baseline/new/stale violations. `git diff --check` passed. Fresh
+  GPT-6-sol extra-high review returned PASS. TypeSafe AI accepted the review feedback without code
+  changes (0.94 confidence) and judged all local acceptance evidence present (0.98); code is ready
+  for PR, while the post-deployment Caddy canary remains pending. Production register/login/profile
+  NULLs could not be reproduced in this checkout, so verify deployed code version and API DB path
+  during that canary. No historical NULL values were changed.
+- Delivery: Issue #375 code is locally validated and awaiting commit/push/PR creation. No production
+  operation has been performed.
+- Next action: create the Issue #375 PR, wait for required remote checks/reviews, then complete the
+  Caddy canary and actual database readback after deployment before calling the issue fully done.
+
 # Latest work — Issue #376 deterministic latest chunk-set lookup
 
 - Updated: 2026-09-14 EDT.

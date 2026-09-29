@@ -683,3 +683,99 @@ def test_fastapi_admin_user_and_token_management_surfaces_work(tmp_path: Path, m
 
     revoke = client.post(f"/api/auth/tokens/{token_id}/revoke", headers=headers)
     assert revoke.status_code == 200, revoke.text
+
+
+def test_fastapi_auth_activity_uses_normalized_trusted_proxy_ip(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(rate_limit.settings, "TRUST_PROXY", True)
+    monkeypatch.setattr(rate_limit.settings, "TRUSTED_PROXY_CIDRS", "172.17.0.0/16")
+    _client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
+    client = TestClient(app, client=("172.17.0.10", 12345))
+    ip = "198.51.100.73"
+    forwarded_headers = {"X-Forwarded-For": ip}
+    admin_headers = {**forwarded_headers, "Authorization": f"Bearer {seed['admin_token']}"}
+
+    register = client.post(
+        "/api/auth/register",
+        json={
+            "email": "audited@example.com",
+            "password": "password123",
+            "display_name": "Audited User",
+        },
+        headers=forwarded_headers,
+    )
+    assert register.status_code == 201, register.text
+    assert client.post("/api/auth/logout", headers=forwarded_headers).status_code == 200
+    login = client.post(
+        "/api/auth/login",
+        json={"email": "audited@example.com", "password": "password123"},
+        headers=forwarded_headers,
+    )
+    assert login.status_code == 200, login.text
+    profile = client.patch(
+        "/api/user/profile",
+        json={"display_name": "Updated Audited User"},
+        headers=forwarded_headers,
+    )
+    assert profile.status_code == 200, profile.text
+    assert client.post("/api/auth/logout", headers=forwarded_headers).status_code == 200
+
+    role_success = client.post(
+        f"/api/admin/users/{seed['user_id']}/role",
+        json={"role": "premium"},
+        headers=admin_headers,
+    )
+    active_success = client.post(
+        f"/api/admin/users/{seed['user_id']}/disable", headers=admin_headers
+    )
+    assert role_success.status_code == 200, role_success.text
+    assert active_success.status_code == 200, active_success.text
+
+    db_path = Path(app.state.db_path)
+    storage = Storage(str(db_path))
+    try:
+        only_admin_id = storage.create_user(
+            "only-admin@example.com", hash_password("password123"), role="admin"
+        )
+    finally:
+        storage.close()
+    role_blocked = client.post(
+        f"/api/admin/users/{only_admin_id}/role",
+        json={"role": "registered"},
+        headers=admin_headers,
+    )
+    active_blocked = client.post(f"/api/admin/users/{only_admin_id}/disable", headers=admin_headers)
+    role_missing = client.post(
+        "/api/admin/users/999999/role", json={"role": "registered"}, headers=admin_headers
+    )
+    active_missing = client.post("/api/admin/users/999999/disable", headers=admin_headers)
+    reset = client.post(f"/api/admin/users/{seed['user_id']}/reset-quota", headers=admin_headers)
+    assert [response.status_code for response in (role_blocked, active_blocked)] == [409, 409]
+    assert [response.status_code for response in (role_missing, active_missing)] == [404, 404]
+    assert reset.status_code == 200, reset.text
+
+    storage = Storage(str(db_path))
+    try:
+        activity_rows = storage._conn.execute(
+            "SELECT action, ip_address FROM user_activity_logs WHERE action IN "
+            "('register', 'login', 'profile_updated', 'admin_set_role', 'admin_set_active', "
+            "'admin_reset_quota')"
+        ).fetchall()
+        audit_rows = storage._conn.execute(
+            "SELECT event_type, ip FROM audit_events WHERE event_type IN "
+            "('admin_set_role', 'admin_set_active')"
+        ).fetchall()
+        assert all(row[1] == ip for row in activity_rows)
+        assert [row[0] for row in activity_rows].count("admin_set_role") == 3
+        assert [row[0] for row in activity_rows].count("admin_set_active") == 3
+        assert {row[0] for row in activity_rows} >= {
+            "register",
+            "login",
+            "profile_updated",
+            "admin_reset_quota",
+        }
+        assert len(audit_rows) == 6
+        assert all(row[1] == ip for row in audit_rows)
+    finally:
+        storage.close()

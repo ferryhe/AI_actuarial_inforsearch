@@ -524,6 +524,7 @@ def set_user_role(
             operator_kind="email" if email_user_id is not None else "token",
             operator_id=int(email_user_id) if email_user_id is not None else actor.get("id"),
             operation="admin_set_role",
+            ip_address=client_ip(request),
         )
         if outcome["result"] == "not_found":
             raise AuthApiError("User not found", status_code=404)
@@ -549,6 +550,7 @@ def set_user_active(
             operator_kind="email" if email_user_id is not None else "token",
             operator_id=int(email_user_id) if email_user_id is not None else actor.get("id"),
             operation="admin_set_active",
+            ip_address=client_ip(request),
         )
         if outcome["result"] == "not_found":
             raise AuthApiError("User not found", status_code=404)
