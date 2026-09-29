@@ -1,35 +1,25 @@
-# Latest work — PR #374, PR #379, and Issue #375
+# 最新状态 — PR #380 与已合并的 PR #379
 
-- Updated: 2026-09-29 EDT.
-- Repository: `AI_actuarial_inforsearch`; current branch: `codex/issue-375-audit-ip`,
-  based on `origin/main@119423437847aecd3a6a60c36281eec5604a967c`. This worktree is the only
-  workspace used; sibling repositories were not accessed.
-- PR #374 / Issue #346 was aligned with current main, the `dead-code-symbols` whitelist cause was
-  fixed, all previously skipped checks were run, all required checks passed, and the PR was merged
-  as `119423437847aecd3a6a60c36281eec5604a967c` on 2026-09-29. Issue #346 is closed.
-- PR #379 / Issue #377 was locally validated against current main: merge tree is clean; 319 focused
-  related tests passed and 2 skipped; the admin endpoint suite passed 135 tests and skipped 7; a
-  temporary-DB API probe confirmed legacy binding reconstruction and audit write. GitHub's fork
-  workflow is `action_required` pending maintainer approval. The PR branch was not changed or merged.
-- Issue #375 root cause is the existing atomic admin-protection storage path dropping its IP
-  context. Both admin role/active service calls now pass the normalized `client_ip(request)`, and
-  the atomic operation writes that same value to activity and audit rows. A writer inventory found
-  register, login, profile update, and quota reset already pass the resolved IP. Regression tests
-  use a real FastAPI trusted-peer + XFF request and read the temporary SQLite DB directly; storage
-  coverage verifies the exact IP in both tables. Existing #372 transaction/concurrency and #352
-  fail-closed behavior remain covered.
-- Full `python scripts/quality_gate.py` passed: 2,197 passed, 10 skipped; Black, isort, and
-  error-only Pylint each had zero baseline/new/stale violations. `git diff --check` passed. Fresh
-  GPT-6-sol extra-high review returned PASS. TypeSafe AI accepted the review feedback without code
-  changes (0.94 confidence) and judged all local acceptance evidence present (0.98); code is ready
-  for PR, while the post-deployment Caddy canary remains pending. Production register/login/profile
-  NULLs could not be reproduced in this checkout, so verify deployed code version and API DB path
-  during that canary. No historical NULL values were changed.
-- Delivery: committed as `3a20ca627194e941c02564568dc844a549fe5a33`, pushed, and submitted as
-  [PR #380](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/380). The PR is open and
-  mergeable; GitHub CI is running. No production operation has been performed.
-- Next action: wait for checks and review feedback on the current PR head; then complete the Caddy
-  canary and actual database readback after deployment before calling the issue fully done.
+- Updated: 2026-09-29 EDT. Repository: `AI_actuarial_inforsearch`; branch:
+  `codex/issue-375-audit-ip`, now based on `origin/main@5d8e74568eb8d44d3faed0bd80038ae598b1de26`.
+  This worktree is the only workspace used; sibling repositories were not accessed.
+- PR #374 / Issue #346 was aligned, all required checks passed, and PR #374 was merged as
+  `119423437847aecd3a6a60c36281eec5604a967c`.
+- PR #379 / Issue #377 was submitted by external contributor `mikemikimike`. Its CI initially
+  reported the nested maintenance CLI as unused because `scripts/maintenance/*.py` was missing from
+  `script_entry_globs`. The CLI glob fix was pushed to the contributor's maintainer-editable fork;
+  all five CI jobs then passed and PR #379 merged as `5d8e74568eb8d44d3faed0bd80038ae598b1de26`.
+- Issue #375 passes normalized `client_ip(request)` through the atomic admin role/active update
+  path into both activity and audit rows. Storage and real FastAPI trusted-peer + XFF regressions
+  read back the temporary SQLite DB. Existing #372 transaction/concurrency and #352 fail-closed
+  coverage remains intact. Local quality gate passed 2,197 tests with 10 skipped; GPT-6-sol
+  extra-high review passed; TypeSafe AI judged PR-stage work complete while the post-deployment
+  Caddy canary and actual API DB readback remain pending. No historical NULL values were changed.
+- PR #380 / Issue #375 is open. Merging latest main exposed only a status-file conflict; all code
+  merges cleanly. The conflict is resolved here while retaining the #379 merge record and #380
+  status. No production operation has been performed.
+- Next action: verify the merged tree, commit and push the normal merge commit to PR #380, then check
+  the resulting CI. Complete the Caddy canary and actual database readback after deployment.
 
 # Latest work — Issue #376 deterministic latest chunk-set lookup
 
@@ -2113,6 +2103,22 @@
 - Commit and push the validated branch, create a draft PR with `Closes #312`, mark it ready, observe
   the full remote-feedback window, assess the single feedback snapshot, require checks on the exact
   head, then merge and complete Issue/branch/worktree cleanup.
+
+## Issue #377 current work
+
+- Updated: 2026-09-27 Asia/Shanghai.
+- Repository: `AI_actuarial_inforsearch`; branch: `fix/issue-377-legacy-bindings`.
+- `resolve_kb_bound_chunks` now performs one detect/heal pass for KBs with no persisted bindings:
+  it selects the latest ready chunk set per member under the selected profile, repairs a missing
+  profile only when exactly one valid profile covers every member, writes warning/audit events,
+  persists `kb_chunk_bindings`, and then re-enters the existing strict #238 contract. Partial or
+  malformed binding sets remain fail-closed.
+- Added idempotent `scripts/maintenance/reconcile_legacy_kb_bindings.py`, dry-run by default with
+  `--apply` for writes, plus three Issue #377 regression tests.
+- Focused validation passed 31 tests (`#377` plus `#238`) and 130 related Ready Data/file mutation
+  tests. Targeted Black/isort/error-only Pylint and `git diff --check` passed. The full quality gate
+  ran 2,198 tests: 2,166 passed and 32 failed because the Python image lacks npm/docker/tsx and one
+  path-sensitive source test assumes the original checkout path; no touched Python test failed.
 
 ---
 
