@@ -213,7 +213,9 @@ export default function ProfilePage() {
                   ) : (
                     <Shield className="w-3.5 h-3.5" />
                   )}
-                  {user.role}
+                  {user.role === "operator_ai"
+                    ? t("users.role_operator_ai_legacy")
+                    : t(`users.role_${user.role}`)}
                 </span>
               </dd>
             </div>

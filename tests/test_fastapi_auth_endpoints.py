@@ -196,6 +196,7 @@ def test_fastapi_auth_routes_are_listed_in_native_inventory(tmp_path: Path, monk
     assert "/api/user/me" in body["native_paths"]
     assert "/api/user/profile" in body["native_paths"]
     assert "/api/admin/users" in body["native_paths"]
+    assert "/api/admin/roles" in body["native_paths"]
     assert "/api/admin/users/{user_id}/role" in body["native_paths"]
     assert "/api/admin/users/{user_id}/enable" in body["native_paths"]
     assert "/api/admin/users/{user_id}/disable" in body["native_paths"]

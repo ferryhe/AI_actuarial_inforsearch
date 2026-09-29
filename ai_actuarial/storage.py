@@ -8430,6 +8430,11 @@ class Storage:
                     "operation": operation,
                     "result": result,
                     "reason": reason,
+                    **(
+                        {"old_role": str(target["role"]), "new_role": role}
+                        if role is not None and target is not None
+                        else {}
+                    ),
                 },
                 sort_keys=True,
                 separators=(",", ":"),

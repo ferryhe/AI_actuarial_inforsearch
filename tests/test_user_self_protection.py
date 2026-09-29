@@ -141,6 +141,8 @@ def test_two_admins_allow_one_demotion_and_records_success(tmp_path: Path) -> No
     try:
         assert storage.get_user_by_id(second_admin_id)["role"] == "registered"
         assert _audit_event(storage) == {
+            "new_role": "registered",
+            "old_role": "admin",
             "operation": "admin_set_role",
             "operator": {"id": first_admin_id, "kind": "email"},
             "reason": None,

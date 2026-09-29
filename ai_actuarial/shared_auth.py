@@ -142,14 +142,19 @@ AI_CHAT_QUOTA: dict[str, int] = {
     "operator_ai": 200,  # Alias for operator
 }
 
-# Valid user roles
-VALID_USER_ROLES: tuple[str, ...] = (
-    "guest",
-    "registered",
-    "premium",
-    "operator",
-    "admin",
+ASSIGNABLE_EMAIL_USER_ROLES: tuple[dict[str, str | bool], ...] = tuple(
+    {
+        "value": role,
+        "name_key": f"users.role_{role}",
+        "description_key": f"users.role_{role}_description",
+        "legacy": False,
+    }
+    for role in ("registered", "premium", "operator", "admin")
 )
+
+
+def canonical_user_role(role: str) -> str:
+    return {"operator_ai": "operator"}.get(role, role)
 
 
 # ============================================================
