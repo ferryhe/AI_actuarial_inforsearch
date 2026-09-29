@@ -151,6 +151,20 @@ VALID_USER_ROLES: tuple[str, ...] = (
     "admin",
 )
 
+ASSIGNABLE_EMAIL_USER_ROLES: tuple[dict[str, str | bool], ...] = tuple(
+    {
+        "value": role,
+        "name_key": f"users.role_{role}",
+        "description_key": f"users.role_{role}_description",
+        "legacy": False,
+    }
+    for role in ("registered", "premium", "operator", "admin")
+)
+
+
+def canonical_user_role(role: str) -> str:
+    return {"operator_ai": "operator"}.get(role, role)
+
 
 # ============================================================
 # Token & Password Functions

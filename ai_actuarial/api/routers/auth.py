@@ -10,6 +10,7 @@ from ..services.auth import (
     auth_me,
     create_auth_token,
     ensure_session_mutation_available,
+    list_assignable_user_roles,
     list_auth_tokens,
     list_users,
     login_user,
@@ -138,6 +139,13 @@ def api_list_users(
         return list_users(request=request)
     except AuthApiError as exc:
         return _error_response(exc)
+
+
+@router.get("/admin/roles")
+def api_list_assignable_user_roles(
+    _auth: AuthContext = Depends(require_permissions("users.manage")),
+):
+    return list_assignable_user_roles()
 
 
 @router.post("/admin/users/{user_id}/role")

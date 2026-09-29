@@ -24,11 +24,23 @@ interface User {
   username: string;
   email?: string;
   role: string;
+  canonical_role?: string;
   is_active: boolean;
   quota_used?: number;
   quota_limit?: number;
   created_at?: string;
   last_login?: string;
+}
+
+interface AssignableRole {
+  value: string;
+  name_key: string;
+  description_key: string;
+  legacy: boolean;
+}
+
+interface AssignableRolesResponse {
+  roles: AssignableRole[];
 }
 
 interface ActivityEntry {
@@ -43,6 +55,7 @@ export default function UsersPage() {
   const { t } = useTranslation();
   const { user: currentUser, isLoading: authLoading } = useAuth();
   const [users, setUsers] = useState<User[]>([]);
+  const [roles, setRoles] = useState<AssignableRole[]>([]);
   const [activeAdminCount, setActiveAdminCount] = useState(0);
   // Start as not loading — actual fetch is gated on auth being ready and user being admin
   const [loading, setLoading] = useState(false);
@@ -68,9 +81,13 @@ export default function UsersPage() {
     setLoading(true);
     setError(null);
     try {
-      const data = await apiGet<{ users: User[]; active_admin_count?: number } | User[]>("/api/admin/users");
+      const [data, roleData] = await Promise.all([
+        apiGet<{ users: User[]; active_admin_count?: number } | User[]>("/api/admin/users"),
+        apiGet<AssignableRolesResponse>("/api/admin/roles"),
+      ]);
       setUsers(Array.isArray(data) ? data : data.users || []);
       setActiveAdminCount(Array.isArray(data) ? 0 : data.active_admin_count || 0);
+      setRoles(roleData.roles || []);
     } catch (e: any) {
       setError(e.message || "Failed to load users");
     } finally {
@@ -158,7 +175,8 @@ export default function UsersPage() {
     }
   };
 
-  const roleOptions = ["admin", "registered", "premium", "operator", "operator_ai"];
+  const roleName = (role: string) =>
+    role === "operator_ai" ? t("users.role_operator_ai_legacy") : t(`users.role_${role}`);
   const unsafeSelfAction = (user: User, nextRole?: string, nextActive?: boolean) => {
     const removesActiveAdmin = user.is_active && user.role === "admin" &&
       ((nextRole !== undefined && nextRole !== "admin") || nextActive === false);
@@ -266,7 +284,7 @@ export default function UsersPage() {
                           ) : (
                             <Shield className="w-3.5 h-3.5" />
                           )}
-                          {user.role}
+                          {roleName(user.role)}
                           <ChevronDown className="w-3 h-3" />
                           {actionLoading[user.id] === "role" && (
                             <Loader2 className="w-3 h-3 animate-spin" />
@@ -274,21 +292,24 @@ export default function UsersPage() {
                         </button>
                         {roleDropdown === user.id && (
                           <div className="absolute z-10 mt-1 bg-popover border border-border rounded-md shadow-md py-1 min-w-[100px]">
-                            {roleOptions.map((role) => {
-                              const protectionReason = unsafeSelfAction(user, role);
+                            {roles.map((role) => {
+                              const protectionReason = unsafeSelfAction(user, role.value);
                               return (
                                 <button
-                                  key={role}
-                                  onClick={() => handleRoleChange(user.id, role)}
+                                  key={role.value}
+                                  onClick={() => handleRoleChange(user.id, role.value)}
                                   disabled={!!protectionReason}
                                   title={protectionReason || undefined}
                                   className={cn(
                                     "block w-full text-left px-3 py-1.5 text-xs hover:bg-muted transition-colors disabled:cursor-not-allowed disabled:opacity-50",
-                                    role === user.role && "font-bold text-primary"
+                                    role.value === (user.canonical_role || user.role) && "font-bold text-primary"
                                   )}
-                                  data-testid={`button-set-role-${role}-${user.id}`}
+                                  data-testid={`button-set-role-${role.value}-${user.id}`}
                                 >
-                                  {role}
+                                  <span className="block font-medium">{t(role.name_key)}</span>
+                                  <span className="block text-[10px] text-muted-foreground">
+                                    {t(role.description_key)}
+                                  </span>
                                 </button>
                               );
                             })}

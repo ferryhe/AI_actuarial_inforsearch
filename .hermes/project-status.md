@@ -1,3 +1,34 @@
+# Latest work — Issue #356 canonical email-user roles
+
+- Updated: 2026-09-29 EDT. Repository: `AI_actuarial_inforsearch`; branch:
+  `codex/issue-356-canonical-roles`; baseline:
+  `21e4cc58a5a02d6ee55637a620128b047489cfce`. Only this assigned worktree was
+  edited; sibling repositories were not accessed.
+- Added the authenticated `/api/admin/roles` contract for the four assignable email-account
+  roles: `registered`, `premium`, `operator`, and `admin`. The same contract drives backend
+  validation and the Users menu. `guest` and legacy `operator_ai` are rejected by email-user role
+  writes; the separate API Token group contract is unchanged.
+- Users and Profile show bilingual role names. Stored `operator_ai` is shown as the localized
+  legacy alias, exposes canonical `operator` to the Users menu, and migrates on the next role save.
+  The existing atomic activity/audit path now records `old_role` and `new_role` for role changes.
+- Registered and Premium descriptions explicitly state equal permissions and different daily AI
+  chat quotas in English and Chinese.
+- TDD red evidence: the new Issue suite failed 4/4 on the baseline for the absent schema/inventory,
+  absent canonical legacy projection, hard-coded menu/missing copy, and missing endpoint. Green:
+  the final Issue/auth/permission/admin-protection suite passed 52 tests and the related React
+  authority/source suite passed 9 tests. Black, isort, `git diff --check`, frontend typecheck,
+  lint, and production build pass; build retains the existing chunk-size advisory.
+- A disposable live FastAPI + Vite browser smoke passed in Chinese and English. It showed exactly
+  four localized menu choices with descriptions and no guest or legacy option. Saving the displayed
+  legacy alias sent `operator`; SQLite then held `operator`, with atomic audit evidence
+  `old_role=operator_ai` and `new_role=operator`. Browser console contained no app errors; only
+  unrelated browser-extension warnings. Temporary services, browser tab, and smoke data were
+  removed.
+- Local review: fresh Sol/high reviewer PASS with no acceptance-mapped findings;
+  TypeSafe review-summary coverage 0.96. Manager final validation passed 61 focused
+  tests, Black, isort, `git diff --check`, frontend typecheck, lint, and build.
+- Delivery: ready for the manager-owned commit, push, and Draft PR workflow. No blocker is known.
+
 # Latest work — Issue #348 pipeline error visibility
 
 - Updated: 2026-09-29 EDT. Repository: `AI_actuarial_inforsearch`; branch:

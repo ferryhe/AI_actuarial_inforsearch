@@ -13,8 +13,9 @@ from itsdangerous import URLSafeSerializer
 from ai_actuarial.api.client_ip import client_ip
 from ai_actuarial.shared_auth import (
     AI_CHAT_QUOTA,
+    ASSIGNABLE_EMAIL_USER_ROLES,
     DUMMY_PASSWORD_HASH,
-    VALID_USER_ROLES,
+    canonical_user_role,
     check_password,
     hash_password,
     hash_token,
@@ -466,6 +467,7 @@ def _serialize_user_row(storage: Storage, user: dict[str, Any]) -> dict[str, Any
     quota_used = storage.get_ai_chat_quota_used(today, user_id=int(user["id"]))
     return {
         **{k: v for k, v in user.items() if k != "password_hash"},
+        "canonical_role": canonical_user_role(role),
         "username": user.get("display_name") or user.get("email") or f"user-{user.get('id')}",
         "quota_used": quota_used,
         "quota_limit": AI_CHAT_QUOTA.get(role, 5),
@@ -504,15 +506,20 @@ def list_users(*, request: Request) -> dict[str, Any]:
         storage.close()
 
 
+def list_assignable_user_roles() -> dict[str, Any]:
+    return {"success": True, "roles": ASSIGNABLE_EMAIL_USER_ROLES}
+
+
 def set_user_role(
     *, request: Request, auth: AuthContext, user_id: int, payload: dict[str, Any]
 ) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise AuthApiError("Request body must be a JSON object", status_code=400)
     new_role = str(payload.get("role") or "").strip().lower()
-    if new_role not in VALID_USER_ROLES:
+    assignable_roles = tuple(role["value"] for role in ASSIGNABLE_EMAIL_USER_ROLES)
+    if new_role not in assignable_roles:
         raise AuthApiError(
-            f"Invalid role. Valid roles: {', '.join(VALID_USER_ROLES)}", status_code=400
+            f"Invalid role. Valid roles: {', '.join(assignable_roles)}", status_code=400
         )
     storage = Storage(_db_path(request))
     try:
