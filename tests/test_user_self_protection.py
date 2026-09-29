@@ -6,6 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from starlette.datastructures import Headers
 
 from ai_actuarial.api.deps import AuthContext
 from ai_actuarial.api.services.auth import (
@@ -25,6 +26,8 @@ def _request(db_path: Path, **query_params: str) -> SimpleNamespace:
     return SimpleNamespace(
         app=SimpleNamespace(state=SimpleNamespace(db_path=str(db_path))),
         query_params=query_params,
+        client=SimpleNamespace(host="127.0.0.1"),
+        headers=Headers(),
     )
 
 
@@ -144,6 +147,44 @@ def test_two_admins_allow_one_demotion_and_records_success(tmp_path: Path) -> No
             "result": "success",
             "target_user_id": second_admin_id,
         }
+    finally:
+        storage.close()
+
+
+def test_admin_protection_records_supplied_ip_in_both_atomic_logs(tmp_path: Path) -> None:
+    db_path = tmp_path / "users.db"
+    storage = Storage(str(db_path))
+    try:
+        first_admin_id = _create_user(storage, "first@example.com")
+        second_admin_id = _create_user(storage, "second@example.com")
+        assert (
+            storage.update_user_with_admin_protection(
+                second_admin_id,
+                role="registered",
+                operator_kind="token",
+                operator_id=73,
+                operation="admin_set_role",
+                ip_address="198.51.100.73",
+            )["result"]
+            == "success"
+        )
+        assert (
+            storage.update_user_with_admin_protection(
+                first_admin_id,
+                is_active=False,
+                operator_kind="token",
+                operator_id=73,
+                operation="admin_set_active",
+                ip_address="198.51.100.73",
+            )["result"]
+            == "blocked"
+        )
+        activity_ips = storage._conn.execute(
+            "SELECT ip_address FROM user_activity_logs ORDER BY id"
+        ).fetchall()
+        audit_ips = storage._conn.execute("SELECT ip FROM audit_events ORDER BY id").fetchall()
+        assert activity_ips == [("198.51.100.73",), ("198.51.100.73",)]
+        assert audit_ips == [("198.51.100.73",), ("198.51.100.73",)]
     finally:
         storage.close()
 

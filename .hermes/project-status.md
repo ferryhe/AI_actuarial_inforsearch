@@ -1,20 +1,25 @@
-# 最新状态 — PR #379 文件死代码门禁修复
+# 最新状态 — PR #380 与已合并的 PR #379
 
-- Updated: 2026-09-29 EDT. Repository: `AI_actuarial_inforsearch`; work branch:
-  `codex/fix-pr-379-dead-code-files`, based on PR #379 head
-  `8ee0728a6e35926bb67c2ee8511a474295754ec6`. Sibling repositories were not accessed.
-- PR #379 由外部贡献者 `mikemikimike` 从其 fork 提交，目标为 Issue #377；GitHub 标记
-  `maintainer_can_modify=true`。失败 CI 是 `dead-code-files`：reachability 配置只把
-  `scripts/*.py` 当作脚本入口，漏掉 `scripts/maintenance/reconcile_legacy_kb_bindings.py`，
-  所以该可执行维护 CLI 被误报为 `unused_module`，其余 CI job 随依赖跳过。
-- `pyproject.toml` 的 `tool.dead_code.script_entry_globs` 已加入
-  `scripts/maintenance/*.py`。此修复登记实际脚本入口，不屏蔽死代码发现。
-- 本地验证：`npm run dead-code:files` 和 `npm run dead-code:symbols` 均通过、0 findings；
-  #377/#238 定向 pytest 31 passed；维护脚本 `--help` 和 `git diff --check` 通过。
-- TypeSafe AI 判定该改动可更新现有 PR（置信度 0.94）。当前修复尚未提交或推送；推送后需
-  重新检查整套 CI，因为原失败阻止了另外四个 job 运行。
-- Next action: commit this narrow gate configuration fix and push it to the existing allowed
-  maintainer-editable PR #379 branch; require the rerun CI checks to pass before considering merge.
+- Updated: 2026-09-29 EDT. Repository: `AI_actuarial_inforsearch`; branch:
+  `codex/issue-375-audit-ip`, now based on `origin/main@5d8e74568eb8d44d3faed0bd80038ae598b1de26`.
+  This worktree is the only workspace used; sibling repositories were not accessed.
+- PR #374 / Issue #346 was aligned, all required checks passed, and PR #374 was merged as
+  `119423437847aecd3a6a60c36281eec5604a967c`.
+- PR #379 / Issue #377 was submitted by external contributor `mikemikimike`. Its CI initially
+  reported the nested maintenance CLI as unused because `scripts/maintenance/*.py` was missing from
+  `script_entry_globs`. The CLI glob fix was pushed to the contributor's maintainer-editable fork;
+  all five CI jobs then passed and PR #379 merged as `5d8e74568eb8d44d3faed0bd80038ae598b1de26`.
+- Issue #375 passes normalized `client_ip(request)` through the atomic admin role/active update
+  path into both activity and audit rows. Storage and real FastAPI trusted-peer + XFF regressions
+  read back the temporary SQLite DB. Existing #372 transaction/concurrency and #352 fail-closed
+  coverage remains intact. Local quality gate passed 2,197 tests with 10 skipped; GPT-6-sol
+  extra-high review passed; TypeSafe AI judged PR-stage work complete while the post-deployment
+  Caddy canary and actual API DB readback remain pending. No historical NULL values were changed.
+- PR #380 / Issue #375 is open. Merging latest main exposed only a status-file conflict; all code
+  merges cleanly. The conflict is resolved here while retaining the #379 merge record and #380
+  status. No production operation has been performed.
+- Next action: verify the merged tree, commit and push the normal merge commit to PR #380, then check
+  the resulting CI. Complete the Caddy canary and actual database readback after deployment.
 
 # Latest work — Issue #376 deterministic latest chunk-set lookup
 

@@ -8375,6 +8375,7 @@ class Storage:
         operator_kind: str,
         operator_id: int | None,
         operation: str,
+        ip_address: str | None = None,
     ) -> dict[str, str]:
         """Atomically change a user while retaining an active email admin.
 
@@ -8436,6 +8437,7 @@ class Storage:
             self.log_user_activity(
                 operation,
                 user_id=user_id,
+                ip_address=ip_address,
                 resource="user_management",
                 detail=audit_detail,
             )
@@ -8444,6 +8446,7 @@ class Storage:
                 token_id=operator_id if operator_kind == "token" else None,
                 resource="user_management",
                 detail=audit_detail,
+                ip=ip_address,
             )
             return {"result": result, "reason": reason or ""}
 
