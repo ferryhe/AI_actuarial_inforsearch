@@ -42,7 +42,7 @@ function readCookie(name: string): string {
   return "";
 }
 
-async function apiFetch<T = unknown>(url: string, options?: RequestInit): Promise<T> {
+async function apiFetch<T = unknown>(url: string, options?: RequestInit, responseType: "json" | "blob" = "json"): Promise<T> {
   const authToken = getStoredAuthToken();
   const method = (options?.method || "GET").toUpperCase();
   const headers: Record<string, string> = {
@@ -76,6 +76,7 @@ async function apiFetch<T = unknown>(url: string, options?: RequestInit): Promis
   }
 
   if (res.status === 204) return null as T;
+  if (responseType === "blob") return res.blob() as Promise<T>;
 
   const contentType = res.headers.get("content-type") || "";
   if (!contentType.includes("application/json")) return null as T;
@@ -85,6 +86,10 @@ async function apiFetch<T = unknown>(url: string, options?: RequestInit): Promis
 
 export function apiGet<T = unknown>(url: string): Promise<T> {
   return apiFetch<T>(url);
+}
+
+export function apiGetBlob(url: string): Promise<Blob> {
+  return apiFetch<Blob>(url, undefined, "blob");
 }
 
 export function apiPost<T = unknown>(url: string, body?: unknown): Promise<T> {

@@ -18,7 +18,7 @@ import { buildFileDetailPath, sanitizeReturnPath, useRawSearchParams } from "@/l
 import { useTranslation } from "@/components/Layout";
 import { useAuth } from "@/context/AuthContext";
 import { useLatestRequestGuard } from "@/hooks/use-latest-request";
-import { apiGet } from "@/lib/api";
+import { apiGet, apiGetBlob, getStoredAuthToken } from "@/lib/api";
 
 interface FileInfo {
   url: string;
@@ -75,7 +75,7 @@ function useMediaQuery(query: string): boolean {
   return matches;
 }
 
-function PdfViewer({ fileUrl }: { fileUrl: string }) {
+function PdfViewer({ fileUrl, errorText }: { fileUrl: string; errorText: string }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [pdfDoc, setPdfDoc] = useState<any>(null);
   const [currentPage, setCurrentPage] = useState(1);
@@ -91,44 +91,53 @@ function PdfViewer({ fileUrl }: { fileUrl: string }) {
       try {
         const pdfjsLib = await loadPdfjsLib();
         const previewUrl = `/api/rag/files/preview/raw?file_url=${encodeURIComponent(fileUrl)}`;
-        const doc = await pdfjsLib.getDocument(previewUrl).promise;
+        const authToken = getStoredAuthToken();
+        const doc = await pdfjsLib.getDocument({
+          url: previewUrl,
+          httpHeaders: authToken ? { "X-Auth-Token": authToken } : {},
+          withCredentials: true,
+        }).promise;
         if (cancelled) return;
         setPdfDoc(doc);
         setTotalPages(doc.numPages);
         setCurrentPage(1);
-      } catch (e) {
-        if (!cancelled) setPdfError(e instanceof Error ? e.message : "Failed to load PDF");
+      } catch {
+        if (!cancelled) setPdfError(errorText);
       } finally {
         if (!cancelled) setPdfLoading(false);
       }
     }
     loadPdf();
     return () => { cancelled = true; };
-  }, [fileUrl]);
+  }, [errorText, fileUrl]);
 
   useEffect(() => {
     if (!pdfDoc || !canvasRef.current) return;
     let cancelled = false;
     async function renderPage() {
-      const page = await pdfDoc.getPage(currentPage);
-      if (cancelled) return;
-      const canvas = canvasRef.current;
-      if (!canvas) return;
-      const container = canvas.parentElement;
-      const containerWidth = container ? container.clientWidth - 16 : 800;
-      const viewport = page.getViewport({ scale: 1 });
-      const scale = containerWidth / viewport.width;
-      const scaledViewport = page.getViewport({ scale });
-      canvas.height = scaledViewport.height;
-      canvas.width = scaledViewport.width;
-      const ctx = canvas.getContext("2d");
-      if (ctx) {
-        await page.render({ canvasContext: ctx, viewport: scaledViewport }).promise;
+      try {
+        const page = await pdfDoc.getPage(currentPage);
+        if (cancelled) return;
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        const container = canvas.parentElement;
+        const containerWidth = container ? container.clientWidth - 16 : 800;
+        const viewport = page.getViewport({ scale: 1 });
+        const scale = containerWidth / viewport.width;
+        const scaledViewport = page.getViewport({ scale });
+        canvas.height = scaledViewport.height;
+        canvas.width = scaledViewport.width;
+        const ctx = canvas.getContext("2d");
+        if (ctx) {
+          await page.render({ canvasContext: ctx, viewport: scaledViewport }).promise;
+        }
+      } catch {
+        if (!cancelled) setPdfError(errorText);
       }
     }
     renderPage();
     return () => { cancelled = true; };
-  }, [pdfDoc, currentPage]);
+  }, [pdfDoc, currentPage, errorText]);
 
   if (pdfLoading) return <div className="flex items-center justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>;
   if (pdfError) return <div className="text-xs text-destructive py-4 text-center flex items-center justify-center gap-2"><AlertCircle className="w-4 h-4" />{pdfError}</div>;
@@ -185,11 +194,42 @@ function loadPdfjsLib(): Promise<any> {
   return _pdfjsLibPromise;
 }
 
-function ImageViewer({ fileUrl }: { fileUrl: string }) {
+function ImageViewer({ fileUrl, errorText }: { fileUrl: string; errorText: string }) {
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    let objectUrl: string | null = null;
+    apiGetBlob(`/api/rag/files/preview/raw?file_url=${encodeURIComponent(fileUrl)}`)
+      .then((blob) => {
+        const nextUrl = URL.createObjectURL(blob);
+        if (cancelled) {
+          URL.revokeObjectURL(nextUrl);
+          return;
+        }
+        objectUrl = nextUrl;
+        setImageUrl(nextUrl);
+      })
+      .catch(() => {
+        if (!cancelled) setFailed(true);
+      });
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [fileUrl]);
+
   return (
     <div className="overflow-auto rounded-lg border border-border bg-white dark:bg-gray-900 p-2">
-      <img src={`/api/rag/files/preview/raw?file_url=${encodeURIComponent(fileUrl)}`} alt="File preview"
-        className="max-w-full mx-auto" data-testid="img-preview" />
+      {failed ? (
+        <p className="text-sm text-muted-foreground text-center py-8" role="status">{errorText}</p>
+      ) : imageUrl ? (
+        <img src={imageUrl} alt="File preview" className="max-w-full mx-auto" data-testid="img-preview"
+          onError={() => setFailed(true)} />
+      ) : (
+        <div className="flex items-center justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
+      )}
     </div>
   );
 }
@@ -209,9 +249,9 @@ function OriginalPane({ fileInfo, canDownload }: { fileInfo: FileInfo; canDownlo
       </div>
       <div className="flex-1 overflow-y-auto p-3">
         {isPdf ? (
-          <PdfViewer fileUrl={fileInfo.url} />
+          <PdfViewer fileUrl={fileInfo.url} errorText={t("fp.preview_error")} />
         ) : isImage ? (
-          <ImageViewer fileUrl={fileInfo.url} />
+          <ImageViewer key={fileInfo.url} fileUrl={fileInfo.url} errorText={t("fp.preview_error")} />
         ) : (
           <div className="text-center py-12">
             <FileText className="w-12 h-12 mx-auto text-muted-foreground/40 mb-3" />
@@ -312,13 +352,13 @@ export default function FilePreview() {
       if (!isLatest()) return;
       setData(d);
       setActiveChunkSetId(d.active_chunk_set_id || "");
-    } catch (e) {
+    } catch {
       if (!isLatest()) return;
-      setError(e instanceof Error ? e.message : "Failed to load preview");
+      setError(t("fp.preview_error"));
     } finally {
       if (isLatest()) setLoading(false);
     }
-  }, [beginPreviewRequest, fileUrl]);
+  }, [beginPreviewRequest, fileUrl, t]);
 
   useEffect(() => { fetchPreview(initialChunkSetId); }, [fetchPreview, initialChunkSetId]);
 

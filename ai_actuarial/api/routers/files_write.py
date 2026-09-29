@@ -6,7 +6,7 @@ from urllib.parse import unquote
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 
-from ..deps import AuthContext, require_authenticated_permissions, require_permissions
+from ..deps import AuthContext, require_permissions
 from ..services.files_write import (
     FileWriteError,
     delete_file_record,
@@ -173,17 +173,15 @@ def api_rag_files_preview(
         return _json_error(exc)
 
 
-@router.get("/rag/files/preview/raw")
+@router.api_route("/rag/files/preview/raw", methods=["GET", "HEAD"])
 def api_rag_files_preview_raw(
     request: Request,
-    auth: AuthContext = Depends(require_authenticated_permissions("files.read")),
+    auth: AuthContext = Depends(require_permissions("files.read")),
 ):
     """Serve PDF/image bytes for authenticated inline preview, never as a download grant."""
     file_url = str(request.query_params.get("file_url", "") or "").strip()
     try:
-        path, filename, media_type = get_previewable_file(
-            db_path=_db_path(request), url=file_url
-        )
+        path, filename, media_type = get_previewable_file(db_path=_db_path(request), url=file_url)
         logger.info(
             "audit_event=file_preview_raw subject=%s resource=%s ip=%s",
             (auth.token or {}).get("subject", ""),
@@ -195,7 +193,10 @@ def api_rag_files_preview_raw(
             filename=filename,
             media_type=media_type,
             content_disposition_type="inline",
-            headers={"Cache-Control": "no-store"},
+            headers={
+                "Cache-Control": "private, no-store",
+                "X-Content-Type-Options": "nosniff",
+            },
         )
     except FileWriteError as exc:
         return _json_error(exc)

@@ -4,7 +4,6 @@ import csv
 import hashlib
 import io
 import json
-import mimetypes
 import os
 from pathlib import Path
 from typing import Any, Mapping
@@ -27,6 +26,17 @@ class FileWriteError(Exception):
         super().__init__(message)
         self.message = message
         self.status_code = status_code
+
+
+_PREVIEW_FILE_TYPES = {
+    ".pdf": ("application/pdf", b"%PDF-"),
+    ".png": ("image/png", b"\x89PNG\r\n\x1a\n"),
+    ".jpg": ("image/jpeg", b"\xff\xd8\xff"),
+    ".jpeg": ("image/jpeg", b"\xff\xd8\xff"),
+    ".gif": ("image/gif", (b"GIF87a", b"GIF89a")),
+    ".webp": ("image/webp", None),
+    ".bmp": ("image/bmp", b"BM"),
+}
 
 
 def _config_data() -> dict[str, Any]:
@@ -142,11 +152,11 @@ def _get_local_file(*, db_path: str, url: str) -> tuple[Path, str]:
         file_record = storage.get_file_by_url(url)
     finally:
         storage.close()
-    if not file_record or not file_record.get("local_path"):
+    if not file_record or not file_record.get("local_path") or file_record.get("deleted_at"):
         raise FileWriteError("File not found", status_code=404)
 
     resolved = _resolve_local_path(file_record.get("local_path"))
-    if resolved is None or not resolved.exists():
+    if resolved is None or not resolved.is_file():
         raise FileWriteError("File not found on disk (path resolution failed)", status_code=404)
 
     data_root = _download_dir().parent.resolve()
@@ -168,8 +178,20 @@ def get_downloadable_file(*, db_path: str, url: str) -> tuple[Path, str]:
 def get_previewable_file(*, db_path: str, url: str) -> tuple[Path, str, str]:
     """Return a locally stored PDF or image for inline-only browser preview."""
     path, filename = _get_local_file(db_path=db_path, url=url)
-    media_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
-    if media_type != "application/pdf" and not media_type.startswith("image/"):
+    file_type = _PREVIEW_FILE_TYPES.get(Path(filename).suffix.casefold())
+    if file_type is None:
+        raise FileWriteError("File type is not supported for inline preview", status_code=415)
+
+    media_type, signature = file_type
+    with path.open("rb") as stream:
+        header = stream.read(12)
+    if signature is None:
+        valid_content = header[:4] == b"RIFF" and header[8:12] == b"WEBP"
+    elif isinstance(signature, tuple):
+        valid_content = any(header.startswith(value) for value in signature)
+    else:
+        valid_content = header.startswith(signature)
+    if not valid_content:
         raise FileWriteError("File type is not supported for inline preview", status_code=415)
     return path, filename, media_type
 
