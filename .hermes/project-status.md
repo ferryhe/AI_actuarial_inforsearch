@@ -25,10 +25,11 @@
   for PR, while the post-deployment Caddy canary remains pending. Production register/login/profile
   NULLs could not be reproduced in this checkout, so verify deployed code version and API DB path
   during that canary. No historical NULL values were changed.
-- Delivery: Issue #375 code is locally validated and awaiting commit/push/PR creation. No production
-  operation has been performed.
-- Next action: create the Issue #375 PR, wait for required remote checks/reviews, then complete the
-  Caddy canary and actual database readback after deployment before calling the issue fully done.
+- Delivery: committed as `3a20ca627194e941c02564568dc844a549fe5a33`, pushed, and submitted as
+  [PR #380](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/380). The PR is open and
+  mergeable; GitHub CI is running. No production operation has been performed.
+- Next action: wait for checks and review feedback on the current PR head; then complete the Caddy
+  canary and actual database readback after deployment before calling the issue fully done.
 
 # Latest work — Issue #376 deterministic latest chunk-set lookup
 
