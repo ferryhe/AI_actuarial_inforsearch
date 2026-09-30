@@ -32,6 +32,7 @@ import { TaskMetrics } from "./tasks/TaskMetrics";
 import { Pagination } from "./tasks/Pagination";
 import { RecategoryDryRunResult } from "./tasks/RecategoryDryRunResult";
 import { TaskErrorDetails, trustedTaskIdFromSearch } from "./tasks/TaskErrors";
+import { IconButton } from "@/components/a11y/IconButton";
 import type { Task, SiteConfig, HistoryTask, LogModal } from "./tasks/Tasks.types";
 
 // Task type definitions
@@ -232,12 +233,12 @@ export default function Tasks() {
     void viewTaskLog(taskId, taskName, undefined);
   };
 
-  const stopTask = async (taskId: string) => {
+  const stopTask = async (taskId: string, taskName?: string) => {
     if (!canStopTasks) {
       setTaskNotice(t("tasks.run_permission_required"));
       return;
     }
-    if (!window.confirm(t("tasks.confirm_stop"))) return;
+    if (!window.confirm(t("tasks.confirm_stop", { target: taskName?.trim() || taskId }))) return;
     try {
       await apiPost(`/api/tasks/stop/${taskId}`);
       setTaskNotice(t("tasks.stop_requested"));
@@ -420,7 +421,7 @@ export default function Tasks() {
         <div className="flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-xs text-muted-foreground" data-testid="text-task-notice">
           <CheckCircle2 className="w-4 h-4 text-emerald-500" />
           <span className="flex-1">{taskNotice}</span>
-          <button onClick={() => setTaskNotice(null)} className="p-1 rounded hover:bg-muted"><X className="w-3.5 h-3.5" /></button>
+          <IconButton onClick={() => setTaskNotice(null)} label={t("a11y.dismiss_notice")} className="hover:bg-muted"><X className="w-3.5 h-3.5" /></IconButton>
         </div>
       )}
       {/* 1. All Tasks (task type selection grid) */}
@@ -431,9 +432,9 @@ export default function Tasks() {
             <motion.div key="form" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}
               transition={{ duration: 0.2 }} className="rounded-xl border border-border bg-card overflow-hidden">
               <div className="flex items-center gap-3 px-5 py-4 border-b border-border">
-                <button onClick={() => { setActiveForm(null); setSubmitError(null); setSubmitSuccess(null); }}
-                  className="p-1.5 rounded-lg hover:bg-muted transition-colors" data-testid="button-back-tasks">
-                  <ArrowLeft className="w-4 h-4" /></button>
+                <IconButton onClick={() => { setActiveForm(null); setSubmitError(null); setSubmitSuccess(null); }}
+                  label={t("a11y.back_tasks")} className="hover:bg-muted" data-testid="button-back-tasks">
+                  <ArrowLeft className="w-4 h-4" /></IconButton>
                 {activeTaskType && (
                   <div className={cn("w-9 h-9 rounded-lg flex items-center justify-center", activeTaskType.color)}>
                     <activeTaskType.icon className="w-5 h-5" strokeWidth={1.8} /></div>
@@ -444,7 +445,7 @@ export default function Tasks() {
                 {submitError && (
                   <div className="mb-4 px-3 py-2 rounded-lg bg-destructive/10 text-destructive text-xs flex items-center gap-2" data-testid="text-submit-error">
                     <AlertCircle className="w-4 h-4 shrink-0" /><span className="flex-1">{submitError}</span>
-                    <button onClick={() => setSubmitError(null)} className="shrink-0"><X className="w-3.5 h-3.5" /></button>
+                    <IconButton onClick={() => setSubmitError(null)} label={t("a11y.dismiss_error")} className="shrink-0"><X className="w-3.5 h-3.5" /></IconButton>
                   </div>
                 )}
                 {submitSuccess && (
@@ -488,8 +489,8 @@ export default function Tasks() {
       <div>
         <div className="flex items-center justify-between mb-2">
           <h2 className="text-lg font-semibold">{t("tasks.active")}</h2>
-          <button onClick={fetchTasks} className="p-2 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
-            data-testid="button-refresh-tasks" title={t("tasks.refresh")}><RefreshCw className="w-4 h-4" /></button>
+          <IconButton onClick={fetchTasks} label={t("tasks.refresh")} className="hover:bg-muted text-muted-foreground hover:text-foreground"
+            data-testid="button-refresh-tasks"><RefreshCw className="w-4 h-4" /></IconButton>
         </div>
         {loading ? (
           <div className="space-y-3">{[...Array(2)].map((_, i) => <div key={i} className="h-24 rounded-xl bg-muted animate-pulse" />)}</div>
@@ -516,10 +517,10 @@ export default function Tasks() {
           </button>
           {historyExpanded && (
             <div className="flex items-center gap-1">
-              <button onClick={viewGlobalLogs} className="p-2 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
-                data-testid="button-global-logs" title={t("logs.title")}><FileText className="w-4 h-4" /></button>
-              <button onClick={fetchHistory} className="p-2 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
-                data-testid="button-refresh-history" title={t("tasks.refresh")}><RefreshCw className="w-4 h-4" /></button>
+              <IconButton onClick={viewGlobalLogs} label={t("logs.title")} className="hover:bg-muted text-muted-foreground hover:text-foreground"
+                data-testid="button-global-logs"><FileText className="w-4 h-4" /></IconButton>
+              <IconButton onClick={fetchHistory} label={t("tasks.refresh")} className="hover:bg-muted text-muted-foreground hover:text-foreground"
+                data-testid="button-refresh-history"><RefreshCw className="w-4 h-4" /></IconButton>
             </div>
           )}
         </div>
@@ -573,11 +574,11 @@ export default function Tasks() {
                   <History className="w-4 h-4 text-muted-foreground shrink-0" />
                   <h3 className="font-semibold text-sm truncate">{t("tasks.log_title")} — {logModal.taskName}</h3>
                 </div>
-                <button onClick={() => setLogModal(null)}
-                  className="p-1.5 rounded-lg hover:bg-muted transition-colors text-muted-foreground"
+                <IconButton onClick={() => setLogModal(null)} label={t("a11y.close_task_log")}
+                  className="hover:bg-muted text-muted-foreground"
                   data-testid="button-close-log-modal">
                   <X className="w-4 h-4" />
-                </button>
+                </IconButton>
               </div>
               <div className="flex-1 overflow-y-auto p-4 space-y-4">
                 {/* Box 1: Summary stats */}

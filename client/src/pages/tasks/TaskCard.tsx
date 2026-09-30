@@ -4,6 +4,7 @@ import { cn } from "@/lib/utils";
 import { useTranslation } from "@/components/Layout";
 import type { HistoryTask, Task } from "./Tasks.types";
 import { TaskMetrics } from "./TaskMetrics";
+import { IconButton } from "@/components/a11y/IconButton";
 
 function statusIcon(status: string) {
   switch (status) {
@@ -61,12 +62,13 @@ function formatDate(dateStr: string): string {
 interface TaskCardProps {
   task: Task;
   index: number;
-  onStop?: (id: string) => void;
+  onStop?: (id: string, name?: string) => void;
   onViewLog?: (id: string | undefined, name: string | undefined, task?: HistoryTask) => void;
 }
 
 export function TaskCard({ task, index, onStop, onViewLog }: TaskCardProps) {
   const { t } = useTranslation();
+  const target = task.name?.trim() || task.id;
   return (
     <motion.div
       custom={index}
@@ -89,14 +91,14 @@ export function TaskCard({ task, index, onStop, onViewLog }: TaskCardProps) {
         </div>
         <div className="flex items-center gap-1">
         {onViewLog && (
-          <button onClick={() => onViewLog(task.id, task.name, task)}
-            className="shrink-0 p-2 rounded-lg border border-border hover:bg-muted transition-colors"
-            data-testid={`button-active-task-log-${task.id}`} title={t("tasks.log")}><Zap className="w-4 h-4" /></button>
+          <IconButton onClick={() => onViewLog(task.id, target, task)} label={t("a11y.view_task_log", { target })}
+            className="shrink-0 border border-border hover:bg-muted"
+            data-testid={`button-active-task-log-${task.id}`}><Zap className="w-4 h-4" /></IconButton>
         )}
         {onStop && (
-          <button onClick={() => onStop(task.id)}
-            className="shrink-0 p-2 rounded-lg bg-red-500/10 text-red-600 hover:bg-red-500/20 transition-colors"
-            data-testid={`button-stop-task-${task.id}`} title={t("tasks.stop")}><Square className="w-4 h-4" /></button>
+          <IconButton onClick={() => onStop(task.id, target)} label={t("a11y.stop_task", { target })}
+            className="shrink-0 bg-red-500/10 text-red-600 hover:bg-red-500/20"
+            data-testid={`button-stop-task-${task.id}`}><Square className="w-4 h-4" /></IconButton>
         )}
         </div>
       </div>

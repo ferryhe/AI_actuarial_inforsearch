@@ -20,8 +20,9 @@ import {
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/hooks/use-theme";
 import { useI18n } from "@/hooks/use-i18n";
-import { useState, createContext, useContext } from "react";
+import { useState, createContext, useContext, useRef } from "react";
 import { useAuth } from "@/context/AuthContext";
+import { IconButton } from "@/components/a11y/IconButton";
 
 const I18nContext = createContext<ReturnType<typeof useI18n>>({
   lang: "en",
@@ -44,7 +45,7 @@ const baseNavItems = [
   { path: "/settings", icon: Settings, labelKey: "nav.settings", permission: "config.write" },
 ];
 
-function Sidebar({ collapsed, onClose }: { collapsed: boolean; onClose: () => void }) {
+function Sidebar({ collapsed, onClose, showClose = false, testIdPrefix = "" }: { collapsed: boolean; onClose: () => void; showClose?: boolean; testIdPrefix?: string }) {
   const [location] = useLocation();
   const { t } = useTranslation();
   const { isLoggedIn, permissions } = useAuth();
@@ -76,13 +77,9 @@ function Sidebar({ collapsed, onClose }: { collapsed: boolean; onClose: () => vo
             {t("nav.brand")}
           </motion.span>
         )}
-        <button
-          onClick={onClose}
-          className="lg:hidden ml-auto p-1 rounded hover:bg-muted"
-          data-testid="close-sidebar"
-        >
+        {showClose && <IconButton onClick={onClose} label={t("a11y.close_navigation")} className="ml-auto hover:bg-muted" data-testid="close-sidebar">
           <X className="w-4 h-4" />
-        </button>
+        </IconButton>}
       </div>
 
       <nav className="flex-1 py-3 px-2 space-y-0.5 overflow-y-auto">
@@ -97,7 +94,7 @@ function Sidebar({ collapsed, onClose }: { collapsed: boolean; onClose: () => vo
                     ? "bg-primary/10 text-primary"
                     : "text-muted-foreground hover:text-foreground hover:bg-muted"
                 )}
-                data-testid={`nav-${labelKey.split(".")[1]}`}
+                data-testid={`${testIdPrefix}nav-${labelKey.split(".")[1]}`}
               >
                 <Icon className={cn("w-[18px] h-[18px] shrink-0", active && "text-primary")} strokeWidth={active ? 2.2 : 1.8} />
                 {!collapsed && <span className="truncate">{t(labelKey)}</span>}
@@ -115,6 +112,11 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const { theme, toggleTheme } = useTheme();
   const { user, isLoggedIn, logout, permissions } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const openSidebarRef = useRef<HTMLButtonElement>(null);
+  const closeSidebar = () => {
+    setSidebarOpen(false);
+    requestAnimationFrame(() => openSidebarRef.current?.focus());
+  };
 
   return (
     <I18nContext.Provider value={i18n}>
@@ -122,29 +124,31 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         {sidebarOpen && (
           <div
             className="fixed inset-0 z-30 bg-black/30 lg:hidden"
-            onClick={() => setSidebarOpen(false)}
+            onClick={closeSidebar}
           />
         )}
 
         <div className={cn("hidden lg:flex")}>
-          <Sidebar collapsed={false} onClose={() => setSidebarOpen(false)} />
+          <Sidebar collapsed={false} onClose={closeSidebar} />
         </div>
 
         {sidebarOpen && (
           <div className="lg:hidden">
-            <Sidebar collapsed={false} onClose={() => setSidebarOpen(false)} />
+            <Sidebar collapsed={false} onClose={closeSidebar} showClose testIdPrefix="mobile-" />
           </div>
         )}
 
         <div className="flex-1 flex flex-col min-w-0">
           <header className="h-14 border-b border-border flex items-center justify-between px-4 bg-card/80 backdrop-blur-sm shrink-0">
-            <button
+            <IconButton
+              ref={openSidebarRef}
               onClick={() => setSidebarOpen(true)}
-              className="lg:hidden p-2 -ml-2 rounded-lg hover:bg-muted"
+              label={i18n.t("a11y.open_navigation")}
+              className="lg:hidden -ml-2 hover:bg-muted"
               data-testid="open-sidebar"
             >
               <Menu className="w-5 h-5" />
-            </button>
+            </IconButton>
             <div className="flex-1" />
             <div className="flex items-center gap-1.5">
               {isLoggedIn ? (
@@ -163,14 +167,14 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                       </div>
                     </Link>
                   )}
-                  <button
+                  <IconButton
                     onClick={logout}
-                    className="p-2 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                    label={i18n.t("a11y.sign_out")}
+                    className="hover:bg-muted text-muted-foreground hover:text-foreground"
                     data-testid="button-logout"
-                    title="Logout"
                   >
                     <LogOut className="w-4 h-4" />
-                  </button>
+                  </IconButton>
                 </>
               ) : (
                 <>

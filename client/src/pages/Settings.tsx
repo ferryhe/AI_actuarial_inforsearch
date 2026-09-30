@@ -31,6 +31,7 @@ import { useTranslation } from "@/components/Layout";
 import { apiGet, apiPost, apiDelete } from "@/lib/api";
 import { formatSettingsMutationError } from "@/lib/settings-errors";
 import { MarkdownConversionTab } from "./settings/MarkdownConversionTab";
+import { IconButton } from "@/components/a11y/IconButton";
 
 type SettingsTab = "ai" | "search" | "categories" | "tokens" | "system" | "prompts" | "markdown";
 
@@ -362,7 +363,8 @@ function AiConfigTab() {
   }
 
   async function deleteProvider(providerId: string) {
-    if (!window.confirm(t("settings.confirm_delete_provider"))) return;
+    const target = llmProviders.find((provider) => provider.provider_id === providerId)?.display_name || providerId;
+    if (!window.confirm(t("a11y.confirm_delete_provider", { target }))) return;
     setSavingProvider(providerId);
     try {
       await apiDelete(`/api/config/provider-credentials/${providerId}?category=llm`);
@@ -687,9 +689,9 @@ function AiConfigTab() {
                         className="w-full px-3 py-2 pr-10 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
                         data-testid="input-add-provider-api-key"
                       />
-                      <button onClick={() => setShowKey(!showKey)} className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-muted-foreground hover:text-foreground">
+                      <IconButton onClick={() => setShowKey(!showKey)} label={t(showKey ? "a11y.hide_secret" : "a11y.show_secret")} className="absolute right-0 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
                         {showKey ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                      </button>
+                      </IconButton>
                     </div>
                   </div>
                   <div>
@@ -757,11 +759,11 @@ function AiConfigTab() {
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
                     {credential?.source === "db" && !isEditing && (
-                      <button onClick={() => deleteProvider(provider.provider_id)} disabled={savingProvider === provider.provider_id}
-                        className="text-xs px-2 py-1 rounded-lg text-destructive hover:bg-destructive/10 transition-colors"
+                      <IconButton onClick={() => deleteProvider(provider.provider_id)} disabled={savingProvider === provider.provider_id}
+                        label={t("a11y.delete_provider", { target: provider.display_name })} className="text-destructive hover:bg-destructive/10"
                         data-testid={`button-delete-provider-${provider.provider_id}`}>
                         {savingProvider === provider.provider_id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
-                      </button>
+                      </IconButton>
                     )}
                     {!isEditing && (
                       <button onClick={() => startEditProvider(provider.provider_id)}
@@ -786,9 +788,9 @@ function AiConfigTab() {
                           className="w-full px-3 py-2 pr-10 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
                           data-testid={`input-api-key-${provider.provider_id}`}
                         />
-                        <button onClick={() => setShowKey(!showKey)} className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-muted-foreground hover:text-foreground">
+                        <IconButton onClick={() => setShowKey(!showKey)} label={t(showKey ? "a11y.hide_secret" : "a11y.show_secret")} className="absolute right-0 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
                           {showKey ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                        </button>
+                        </IconButton>
                       </div>
                       {provider.provider_id === "mathpix" && (
                         <p className="mt-1 text-[11px] text-muted-foreground">{t("settings.mathpix_key_hint")}</p>
@@ -1362,7 +1364,8 @@ function SearchCrawlerTab() {
 
   async function deleteSearchCredential(engineId: string) {
     const providerId = SEARCH_PROVIDER_MAP[engineId] || engineId;
-    if (!window.confirm(t("settings.confirm_delete_provider"))) return;
+    const target = searchEngines.find((engine) => engine.id === engineId)?.name || engineId;
+    if (!window.confirm(t("a11y.confirm_delete_provider", { target }))) return;
     setSearchKeySaving(true);
     try {
       await apiDelete(`/api/config/provider-credentials/${providerId}?category=search`);
@@ -1417,14 +1420,15 @@ function SearchCrawlerTab() {
                 {searchKeyEdit?.engine !== engine.id && (
                   <div className="flex items-center gap-2">
                     {searchCredentialByEngine(engine.id)?.source === "db" && (
-                      <button
+                      <IconButton
                         onClick={() => deleteSearchCredential(engine.id)}
                         disabled={searchKeySaving}
-                        className="text-xs px-2 py-1.5 rounded-lg text-destructive hover:bg-destructive/10 transition-colors disabled:opacity-50"
+                        label={t("a11y.delete_search_credential", { target: engine.name })}
+                        className="text-destructive hover:bg-destructive/10 disabled:opacity-50"
                         data-testid={`button-delete-search-${engine.id}`}
                       >
                         <Trash2 className="w-3 h-3" />
-                      </button>
+                      </IconButton>
                     )}
                     <button
                       onClick={() => setSearchKeyEdit({ engine: engine.id, key: "" })}
@@ -1446,14 +1450,15 @@ function SearchCrawlerTab() {
                     className="flex-1 px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
                     data-testid={`input-search-key-${engine.id}`}
                   />
-                  <button
+                  <IconButton
                     onClick={saveSearchKey}
                     disabled={!searchKeyEdit.key.trim() || searchKeySaving}
-                    className="text-xs px-3 py-2 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
+                    label={t("a11y.save_search_credential", { target: engine.name })}
+                    className="bg-primary px-3 text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
                     data-testid={`button-save-search-${engine.id}`}
                   >
                     {searchKeySaving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
-                  </button>
+                  </IconButton>
                   <button
                     onClick={() => setSearchKeyEdit(null)}
                     className="text-xs px-3 py-2 rounded-lg border border-border hover:bg-muted transition-colors"
@@ -1572,7 +1577,7 @@ function CategoriesTab() {
   }
 
   function deleteCategory(name: string) {
-    if (!window.confirm(t("settings.confirm_delete_cat"))) return;
+    if (!window.confirm(t("a11y.confirm_delete_category", { target: name }))) return;
     setCategories((prev) => {
       const next = { ...prev };
       delete next[name];
@@ -1663,9 +1668,9 @@ function CategoriesTab() {
                       {name}
                       <span className="text-xs text-muted-foreground font-normal">({kws.length} {t("settings.keywords").toLowerCase()})</span>
                     </button>
-                    <button onClick={() => deleteCategory(name)} className="text-xs p-1 rounded hover:bg-destructive/10 text-destructive transition-colors" data-testid={`button-delete-cat-${name}`}>
+                    <IconButton onClick={() => deleteCategory(name)} label={t("a11y.delete_category", { target: name })} className="text-destructive hover:bg-destructive/10" data-testid={`button-delete-cat-${name}`}>
                       <Trash2 className="w-3.5 h-3.5" />
-                    </button>
+                    </IconButton>
                   </div>
                   {isExpanded && (
                     <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} className="mt-2">
@@ -1962,7 +1967,8 @@ function ApiTokensTab() {
   }
 
   async function revokeToken(tokenId: string) {
-    if (!window.confirm(t("settings.confirm_revoke_token"))) return;
+    const target = tokens.find((token) => token.id === tokenId)?.subject || tokenId;
+    if (!window.confirm(t("a11y.confirm_revoke_token", { target }))) return;
     try {
       await apiPost(`/api/auth/tokens/${tokenId}/revoke`, {});
       setToast({ message: t("settings.token_revoked"), type: "success" });
@@ -1998,7 +2004,7 @@ function ApiTokensTab() {
               </code>
               <p className="text-[11px] text-muted-foreground">{t("settings.token_copy_warning")}</p>
             </div>
-            <button onClick={() => setCreatedToken(null)} className="p-1 hover:bg-muted rounded"><X className="w-4 h-4" /></button>
+            <IconButton onClick={() => setCreatedToken(null)} label={t("a11y.dismiss_created_token")} className="hover:bg-muted"><X className="w-4 h-4" /></IconButton>
           </div>
         </motion.div>
       )}
@@ -2065,11 +2071,11 @@ function ApiTokensTab() {
                     {token.last_used && <> · {t("settings.last_used")}: {formatDate(token.last_used)}</>}
                   </div>
                 </div>
-                <button onClick={() => revokeToken(token.id)}
-                  className="text-xs px-2.5 py-1.5 rounded-lg text-destructive hover:bg-destructive/10 transition-colors flex items-center gap-1"
+                <IconButton onClick={() => revokeToken(token.id)} label={t("a11y.revoke_token", { target: token.subject })}
+                  className="gap-1 px-2.5 text-xs text-destructive hover:bg-destructive/10"
                   data-testid={`button-revoke-token-${token.id}`}>
                   <Trash2 className="w-3 h-3" />{t("settings.revoke")}
-                </button>
+                </IconButton>
               </div>
             ))
           )}

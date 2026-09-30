@@ -5,6 +5,7 @@ import { useTranslation } from "@/components/Layout";
 import { useAuth } from "@/context/AuthContext";
 import { apiGet, apiPost, formatApiErrorDetail } from "@/lib/api";
 import { FormField, InputField, SelectField } from "@/components/FormFields";
+import { IconButton } from "@/components/a11y/IconButton";
 import {
   SchedulePresetFields,
   buildScheduleFields,
@@ -657,24 +658,24 @@ export function ScheduledTasksSection({
                       </div>
                     </div>
                     {canManageSchedule && <div className="flex items-center gap-1 shrink-0">
-                      <button onClick={() => openEditForm(task)}
-                        className="p-1.5 rounded hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
-                        data-testid={`button-edit-sched-${task.name}`}><Pencil className="w-3.5 h-3.5" /></button>
+                      <IconButton onClick={() => openEditForm(task)} label={t("a11y.edit_scheduled_task", { target: task.name })}
+                        className="hover:bg-muted text-muted-foreground hover:text-foreground"
+                        data-testid={`button-edit-sched-${task.name}`}><Pencil className="w-3.5 h-3.5" /></IconButton>
                       {deletingTask === task.name ? (
                         <div className="flex flex-col items-end gap-1">
-                          <span className="text-[10px] text-muted-foreground">{t("tasks.sched.confirm_delete_recurrence")}</span>
+                          <span className="text-[10px] text-muted-foreground">{t("tasks.sched.confirm_delete_recurrence", { target: task.name })}</span>
                           <div className="flex items-center gap-1">
                             <button onClick={() => handleDelete(task.name)}
                               className="text-[10px] px-2 py-1 rounded bg-destructive text-destructive-foreground"
-                              data-testid={`button-confirm-delete-sched-${task.name}`}>{t("tasks.sched.delete_task")}</button>
+                              data-testid={`button-confirm-delete-sched-${task.name}`}>{t("a11y.confirm_delete_scheduled_task", { target: task.name })}</button>
                             <button onClick={() => setDeletingTask(null)}
                               className="text-[10px] px-2 py-1 rounded border border-border">{t("tasks.sched.cancel")}</button>
                           </div>
                         </div>
                       ) : (
-                        <button onClick={() => setDeletingTask(task.name)}
-                          className="p-1.5 rounded hover:bg-red-500/10 transition-colors text-muted-foreground hover:text-red-600 disabled:opacity-50 disabled:cursor-not-allowed"
-                          data-testid={`button-delete-sched-${task.name}`}><Trash2 className="w-3.5 h-3.5" /></button>
+                        <IconButton onClick={() => setDeletingTask(task.name)} label={t("a11y.delete_scheduled_task", { target: task.name })}
+                          className="hover:bg-red-500/10 text-muted-foreground hover:text-red-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                          data-testid={`button-delete-sched-${task.name}`}><Trash2 className="w-3.5 h-3.5" /></IconButton>
                       )}
                     </div>}
                   </div>
