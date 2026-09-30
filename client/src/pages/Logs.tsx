@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/components/Layout";
+import { useAuth } from "@/context/AuthContext";
 import { apiGet } from "@/lib/api";
 
 interface LogEntry {
@@ -148,8 +149,10 @@ function formatDate(dateStr: string): string {
 
 export default function LogsPage() {
   const { t } = useTranslation();
+  const { permissions } = useAuth();
+  const canReadSystemLogs = permissions.includes("logs.system.read");
   const [logs, setLogs] = useState<LogEntry[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [levelFilter, setLevelFilter] = useState<string>("ALL");
   const [newestFirst, setNewestFirst] = useState(true);
@@ -157,7 +160,7 @@ export default function LogsPage() {
 
   const [autoScroll, setAutoScroll] = useState(false);
 
-  const [historyExpanded, setHistoryExpanded] = useState(false);
+  const [historyExpanded, setHistoryExpanded] = useState(!canReadSystemLogs);
   const [historyTasks, setHistoryTasks] = useState<HistoryTask[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyFetched, setHistoryFetched] = useState(false);
@@ -166,6 +169,8 @@ export default function LogsPage() {
   const [loadError, setLoadError] = useState<"unauthenticated" | "forbidden" | "disabled" | "failed" | null>(null);
 
   const fetchLogs = useCallback(async () => {
+    if (!canReadSystemLogs) return;
+    setLoading(true);
     try {
       const res = await apiGet<{ logs: string }>("/api/logs/global");
       setLogs(parseLogs(res.logs));
@@ -186,11 +191,11 @@ export default function LogsPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [canReadSystemLogs]);
 
   useEffect(() => {
-    fetchLogs();
-  }, [fetchLogs]);
+    if (canReadSystemLogs) fetchLogs();
+  }, [canReadSystemLogs, fetchLogs]);
 
   useEffect(() => {
     if (logContainerRef.current) {
@@ -235,6 +240,13 @@ export default function LogsPage() {
     }
   }, []);
 
+  useEffect(() => {
+    if (!canReadSystemLogs && !historyFetched) {
+      setHistoryFetched(true);
+      fetchHistory();
+    }
+  }, [canReadSystemLogs, fetchHistory, historyFetched]);
+
   const handleHistoryToggle = () => {
     const next = !historyExpanded;
     setHistoryExpanded(next);
@@ -273,27 +285,30 @@ export default function LogsPage() {
             {t("logs.subtitle")}
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={handleRefresh}
-            className={cn(
-              "p-2 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors",
-              loading && "animate-spin"
-            )}
-            data-testid="button-refresh-logs"
-            title={t("logs.refresh")}
-          >
-            <RefreshCw className="w-4 h-4" />
-          </button>
-        </div>
+        {canReadSystemLogs && (
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleRefresh}
+              className={cn(
+                "p-2 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors",
+                loading && "animate-spin"
+              )}
+              data-testid="button-refresh-logs"
+              title={t("logs.refresh")}
+            >
+              <RefreshCw className="w-4 h-4" />
+            </button>
+          </div>
+        )}
       </motion.div>
 
-      <motion.div
-        initial={{ opacity: 0, y: 8 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.3, delay: 0.1 }}
-        className="flex flex-col sm:flex-row gap-3"
-      >
+      {canReadSystemLogs && <>
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3, delay: 0.1 }}
+          className="flex flex-col sm:flex-row gap-3"
+        >
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <input
@@ -343,15 +358,15 @@ export default function LogsPage() {
           />
           {t("logs.auto_scroll")}
         </label>
-      </motion.div>
+        </motion.div>
 
-      <motion.div
-        initial={{ opacity: 0, y: 8 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.3, delay: 0.2 }}
-        className="rounded-xl border border-border bg-card overflow-hidden"
-        data-testid="section-system-logs"
-      >
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3, delay: 0.2 }}
+          className="rounded-xl border border-border bg-card overflow-hidden"
+          data-testid="section-system-logs"
+        >
         <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-muted/30">
           <div className="flex items-center gap-2">
             <ScrollText className="w-4 h-4 text-muted-foreground" />
@@ -414,7 +429,8 @@ export default function LogsPage() {
             ))}
           </div>
         )}
-      </motion.div>
+        </motion.div>
+      </>}
 
       <motion.div
         initial={{ opacity: 0, y: 8 }}
