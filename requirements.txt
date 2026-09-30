@@ -30,7 +30,7 @@ tiktoken>=0.5.0
 # System prerequisite: OpenDataLoader requires Java 11+ on PATH.
 # Install Java with the OS/package manager; pip requirements cannot install it.
 opendataloader-pdf>=2.0.0
-markitdown[pdf]>=0.1.3
+markitdown[pdf,docx,xlsx]>=0.1.3
 # Use Docling Slim to avoid Docling's heavyweight standard extras.
 docling-slim>=2.0.0
 # CPU PDF backend pieces; PDFs fall back to text extraction without the full model stack.
