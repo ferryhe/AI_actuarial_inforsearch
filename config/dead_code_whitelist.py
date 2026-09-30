@@ -77,6 +77,7 @@ api_chat_query  # reason: FastAPI registers this decorated route.
 from ai_actuarial.api.routers.files_write import (
     api_download,
     api_export,
+    api_export_full,
     api_file_chunk_sets,
     api_file_chunk_sets_generate,
     api_files_delete,
@@ -93,6 +94,7 @@ api_files_delete  # reason: FastAPI registers this decorated route.
 api_files_update_markdown  # reason: FastAPI registers this decorated route.
 api_download  # reason: FastAPI registers this decorated route.
 api_export  # reason: FastAPI registers this decorated route.
+api_export_full  # reason: FastAPI registers this decorated route.
 api_rag_files_preview  # reason: FastAPI registers this decorated route.
 api_rag_files_preview_raw  # reason: FastAPI registers this decorated route.
 api_file_chunk_sets  # reason: FastAPI registers this decorated route.
