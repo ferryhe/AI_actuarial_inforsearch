@@ -73,6 +73,7 @@ class FileListQuery:
     include_deleted: bool
     first_seen_from: str | None
     first_seen_before: str | None
+    snapshot_id: str
 
 
 def _parse_first_seen_boundary(value: str, *, field: str) -> tuple[str, datetime]:
@@ -141,6 +142,7 @@ def parse_file_list_query(raw_query: Mapping[str, str | None]) -> FileListQuery:
         include_deleted=str(raw_query.get("include_deleted", "false") or "false").lower() == "true",
         first_seen_from=first_seen_from,
         first_seen_before=first_seen_before,
+        snapshot_id=str(raw_query.get("snapshot_id", "") or "").strip(),
     )
 
 
@@ -254,6 +256,7 @@ def list_files(
             include_deleted=query.include_deleted,
             first_seen_from=query.first_seen_from,
             first_seen_before=query.first_seen_before,
+            snapshot_id=query.snapshot_id,
         )
     finally:
         storage.close()

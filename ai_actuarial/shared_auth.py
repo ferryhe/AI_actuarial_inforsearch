@@ -30,6 +30,7 @@ PERMISSIONS: frozenset[str] = frozenset(
         "logs.task.read",  # Read task logs
         "logs.system.read",  # Read system logs
         "export.read",  # Export data
+        "export.full",  # Export deleted records or internal fields
         "tokens.manage",  # Manage API tokens
         "chat.view",  # View chat interface
         "chat.query",  # Send chat messages

@@ -225,6 +225,177 @@ def test_fastapi_file_mutations_download_and_export_work(tmp_path: Path, monkeyp
     assert deleted["deleted_at"]
 
 
+def test_filtered_export_matches_database_filters_and_uses_safe_fields(
+    tmp_path: Path, monkeypatch
+) -> None:
+    client, app, seed = _build_test_client(tmp_path, monkeypatch)
+    headers = {"Authorization": f"Bearer {seed['operator_token']}"}
+
+    response = client.get(
+        "/api/export",
+        params={"format": "csv", "query": "Alpha", "order_by": "title", "order_dir": "asc"},
+        headers=headers,
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.headers["x-export-record-count"] == "1"
+    csv_text = response.content.decode("utf-8-sig")
+    assert "Alpha Document" in csv_text
+    assert "Beta Document" not in csv_text
+    assert "local_path" not in csv_text
+    assert "sha256" not in csv_text
+    assert "etag" not in csv_text
+
+
+def test_full_export_requires_capability_and_snapshot_membership_is_shared(
+    tmp_path: Path, monkeypatch
+) -> None:
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch)
+    operator_headers = {"Authorization": f"Bearer {seed['operator_token']}"}
+    admin_token = "admin-export-token"
+    storage = Storage(str(tmp_path / "index.db"))
+    try:
+        storage.upsert_auth_token_by_hash(
+            subject="admin-export-token",
+            group_name="admin",
+            token_hash=hashlib.sha256(admin_token.encode("utf-8")).hexdigest(),
+            is_active=True,
+        )
+        storage.mark_file_deleted(str(seed["alpha_url"]), "2026-03-11T00:00:00+00:00")
+        storage.clear_local_path(str(seed["alpha_url"]))
+        storage.publish_weekly_snapshot(
+            {
+                "id": "snapshot-export-test",
+                "period_start": "2026-03-01T00:00:00+00:00",
+                "period_end": "2026-03-15T00:00:00+00:00",
+                "file_count": 1,
+            },
+            members=[
+                {
+                    "url": str(seed["beta_url"]),
+                    "first_seen": "2026-03-10T10:00:00+00:00",
+                    "original_filename": "doc-b.docx",
+                }
+            ],
+        )
+    finally:
+        storage.close()
+    admin_headers = {"Authorization": f"Bearer {admin_token}"}
+
+    listed = client.get("/api/files?snapshot_id=snapshot-export-test", headers=operator_headers)
+    exported = client.get("/api/export?snapshot_id=snapshot-export-test", headers=operator_headers)
+    assert listed.json()["total"] == 1
+    assert exported.headers["x-export-record-count"] == "1"
+    assert "Beta Document" in exported.content.decode("utf-8-sig")
+    assert "Alpha Document" not in exported.content.decode("utf-8-sig")
+
+    assert (
+        client.get("/api/export?include_deleted=true", headers=operator_headers).status_code == 400
+    )
+    assert (
+        client.get("/api/export/full?include_deleted=true", headers=operator_headers).status_code
+        == 403
+    )
+
+    full_without_deleted = client.get("/api/export/full", headers=admin_headers)
+    assert "Alpha Document" not in full_without_deleted.content.decode("utf-8-sig")
+    full = client.get(
+        "/api/export/full?include_deleted=true&include_internal=true", headers=admin_headers
+    )
+    full_csv = full.content.decode("utf-8-sig")
+    assert full.headers["x-export-record-count"] == "2"
+    assert "Alpha Document" in full_csv
+    assert "local_path" in full_csv and "sha256" in full_csv and "etag" in full_csv
+
+    storage = Storage(str(tmp_path / "index.db"))
+    try:
+        audit_detail = storage._conn.execute(
+            "SELECT detail FROM audit_events WHERE event_type = 'catalog_export' ORDER BY id DESC LIMIT 1"
+        ).fetchone()[0]
+    finally:
+        storage.close()
+    assert audit_detail == "records=2; full=true"
+
+
+def test_snapshot_export_keeps_frozen_member_filename_and_first_seen(
+    tmp_path: Path, monkeypatch
+) -> None:
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch)
+    headers = {"Authorization": f"Bearer {seed['operator_token']}"}
+    storage = Storage(str(tmp_path / "index.db"))
+    try:
+        storage.publish_weekly_snapshot(
+            {
+                "id": "snapshot-frozen-member-test",
+                "period_start": "2024-01-01T00:00:00+00:00",
+                "period_end": "2024-01-08T00:00:00+00:00",
+                "file_count": 1,
+            },
+            members=[
+                {
+                    "url": str(seed["beta_url"]),
+                    "first_seen": "2024-01-03T12:00:00+00:00",
+                    "original_filename": "frozen-beta.docx",
+                }
+            ],
+        )
+        storage.upsert_file(
+            str(seed["beta_url"]),
+            "new-beta-hash",
+            "Beta Document",
+            "beta.example",
+            "https://beta.example",
+            "current-beta.docx",
+            str(tmp_path / "files" / "beta.docx"),
+            2048,
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            None,
+            None,
+            None,
+        )
+        storage._conn.execute(
+            "UPDATE files SET first_seen = ? WHERE url = ?",
+            ("2030-01-03T12:00:00+00:00", seed["beta_url"]),
+        )
+        storage._conn.commit()
+    finally:
+        storage.close()
+
+    params = {
+        "snapshot_id": "snapshot-frozen-member-test",
+        "query": "frozen-beta.docx",
+        "first_seen_from": "2024-01-03T00:00:00+00:00",
+        "first_seen_before": "2024-01-04T00:00:00+00:00",
+        "order_by": "first_seen",
+        "order_dir": "asc",
+    }
+    listed = client.get("/api/files", params=params, headers=headers)
+    exported = client.get("/api/export", params=params, headers=headers)
+
+    assert listed.json()["total"] == 1
+    assert listed.json()["files"][0]["original_filename"] == "frozen-beta.docx"
+    assert listed.json()["files"][0]["first_seen"] == "2024-01-03T12:00:00+00:00"
+    assert exported.headers["x-export-record-count"] == "1"
+    assert "frozen-beta.docx" in exported.content.decode("utf-8-sig")
+
+    storage = Storage(str(tmp_path / "index.db"))
+    try:
+        storage._conn.execute("DELETE FROM files WHERE url = ?", (seed["beta_url"],))
+        storage._conn.commit()
+    finally:
+        storage.close()
+
+    missing_current = client.get(
+        "/api/files?snapshot_id=snapshot-frozen-member-test", headers=headers
+    )
+    missing_current_export = client.get(
+        "/api/export?snapshot_id=snapshot-frozen-member-test", headers=headers
+    )
+    assert missing_current.json()["total"] == 1
+    assert missing_current.json()["files"][0]["original_filename"] == "frozen-beta.docx"
+    assert missing_current_export.headers["x-export-record-count"] == "1"
+
+
 def test_global_file_delete_reconciles_kbs_and_reindexes_only_complete_nonempty_kb(
     tmp_path: Path,
     monkeypatch,

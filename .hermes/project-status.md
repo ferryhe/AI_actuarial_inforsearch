@@ -1,3 +1,11 @@
+# Latest work — Issue #354 filtered and full catalog exports
+
+- Updated: 2026-09-30 EDT. Repository: `AI_actuarial_inforsearch`; branch: `agent/issue-354`; baseline `d479053008c9257e182760e545bc4c320bb87983`. Only the assigned Issue worktree was edited; sibling repositories were not accessed.
+- `/api/export` now uses the Database parser, active-only filtering, public projection, weekly snapshot membership, complete paged results, count header, and bounded audit detail. `/api/export/full` is capability-gated by `export.full`; deleted and internal fields each require explicit selection. Review fix 1 makes snapshot queries start from `weekly_snapshot_members`, so frozen `original_filename` and `first_seen` survive later file changes or current-row removal and drive filename search, date bounds, and first-seen sorting.
+- Database now distinguishes filtered and full-admin exports by capability, uses current filter parameters, blocks filtered export when deleted records are displayed, and requires confirmation for full export. The ordinary control explicitly says “Export current filtered results” / “导出当前筛选结果”; the full-admin confirmation lists the current deleted and internal-field selections.
+- Focused API/source suite: 29 passed after review fix 1. AC-4 frontend source-contract suite: 13 passed. Black, isort, `git diff --check`, TypeScript typecheck, lint, and production build passed; lint keeps five existing Hook warnings and build keeps its chunk advisory. TDD baseline/red-green evidence is in `.git/codex-issue-to-merge/evidence-354/`.
+- Manager completed the Chrome CSV download row-count verification. No commit, push, PR, merge, or cleanup was performed.
+
 # Latest work — Issue #356 canonical email-user roles
 
 - Required-check repair: exact-head CI run `36646491306` failed only the Python symbol dead-code

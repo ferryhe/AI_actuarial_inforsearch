@@ -2800,6 +2800,7 @@ class Storage:
         include_deleted: bool = False,
         first_seen_from: str | None = None,
         first_seen_before: str | None = None,
+        snapshot_id: str = "",
     ) -> tuple[list[dict], int]:
         """Query files with catalog information, filtering and pagination.
 
@@ -2814,6 +2815,7 @@ class Storage:
             include_deleted: Whether to include deleted files
             first_seen_from: Inclusive first-seen RFC3339 boundary
             first_seen_before: Exclusive first-seen RFC3339 boundary
+            snapshot_id: Restrict rows to immutable weekly snapshot membership
 
         Returns:
             Tuple of (list of file dicts, total count)
@@ -2832,23 +2834,43 @@ class Storage:
 
         # When not including deleted files, only show files with valid local_path
         # When including deleted files, show all (deleted files have local_path cleared)
-        if not include_deleted:
-            filters.append("f.local_path IS NOT NULL AND f.local_path != ''")
-            filters.append("f.deleted_at IS NULL")
-
         params = []
+        snapshot_id = str(snapshot_id or "").strip()
+        from_clause = "files f"
+        snapshot_original_filename = "f.original_filename"
+        snapshot_first_seen = "f.first_seen"
+        snapshot_url = "f.url"
+        if snapshot_id:
+            from_clause = "weekly_snapshot_members m LEFT JOIN files f ON f.url = m.file_url"
+            snapshot_original_filename = "m.original_filename"
+            snapshot_first_seen = "m.first_seen"
+            snapshot_url = "m.file_url"
+            filters.append("m.snapshot_id = ?")
+            params.append(snapshot_id)
+            if order_by == "first_seen":
+                order_column = snapshot_first_seen
+
+        if not include_deleted:
+            if snapshot_id:
+                filters.append(
+                    "(f.url IS NULL OR (f.local_path IS NOT NULL AND f.local_path != '' "
+                    "AND f.deleted_at IS NULL))"
+                )
+            else:
+                filters.append("f.local_path IS NOT NULL AND f.local_path != ''")
+                filters.append("f.deleted_at IS NULL")
 
         # Join with catalog_items when query/category filters need catalog fields,
         # and later for result projection even without filters.
-        catalog_join_clause = "LEFT JOIN catalog_items c ON c.file_url = f.url"
+        catalog_join_clause = f"LEFT JOIN catalog_items c ON c.file_url = {snapshot_url}"
         join_clause = ""
 
         if query:
             join_clause = catalog_join_clause
             filters.append(
                 "(LOWER(IFNULL(f.title, '')) LIKE ? "
-                "OR LOWER(IFNULL(f.original_filename, '')) LIKE ? "
-                "OR LOWER(IFNULL(f.url, '')) LIKE ? "
+                f"OR LOWER(IFNULL({snapshot_original_filename}, '')) LIKE ? "
+                f"OR LOWER(IFNULL({snapshot_url}, '')) LIKE ? "
                 "OR LOWER(IFNULL(c.summary, '')) LIKE ? "
                 "OR LOWER(IFNULL(c.keywords, '')) LIKE ? "
                 "OR LOWER(IFNULL(c.category, '')) LIKE ? "
@@ -2882,10 +2904,14 @@ class Storage:
                 params.extend([category, f"{category};%", f"%; {category}", f"%; {category};%"])
 
         if first_seen_from is not None:
-            filters.append("f.first_seen IS NOT NULL AND julianday(f.first_seen) >= julianday(?)")
+            filters.append(
+                f"{snapshot_first_seen} IS NOT NULL AND julianday({snapshot_first_seen}) >= julianday(?)"
+            )
             params.append(first_seen_from)
         if first_seen_before is not None:
-            filters.append("f.first_seen IS NOT NULL AND julianday(f.first_seen) < julianday(?)")
+            filters.append(
+                f"{snapshot_first_seen} IS NOT NULL AND julianday({snapshot_first_seen}) < julianday(?)"
+            )
             params.append(first_seen_before)
 
         # Avoid empty WHERE which causes SQLite "incomplete input"
@@ -2894,7 +2920,7 @@ class Storage:
         # Get total count
         count_query = f"""
             SELECT COUNT(*)
-            FROM files f
+            FROM {from_clause}
             {join_clause}
             WHERE {where_clause}
         """
@@ -2908,9 +2934,9 @@ class Storage:
 
         order_clause = f"{order_column} {order_dir.upper()}"
         query_sql = f"""
-            SELECT f.url, f.sha256, f.title, f.source_site, f.source_page_url,
-                   f.original_filename, f.local_path, f.bytes, f.content_type,
-                   f.last_modified, f.etag, f.published_time, f.first_seen,
+            SELECT {snapshot_url}, f.sha256, f.title, f.source_site, f.source_page_url,
+                   {snapshot_original_filename}, f.local_path, f.bytes, f.content_type,
+                   f.last_modified, f.etag, f.published_time, {snapshot_first_seen},
                    f.last_seen, f.crawl_time, f.deleted_at,
                    c.category, c.summary, c.keywords,
                    CASE
@@ -2920,14 +2946,13 @@ class Storage:
                    END AS has_markdown,
                    c.markdown_source, c.markdown_updated_at,
                    c.rag_chunk_count, c.rag_indexed_at
-            FROM files f
+            FROM {from_clause}
             {join_clause}
             WHERE {where_clause}
             ORDER BY {order_clause}
             LIMIT ? OFFSET ?
         """
-        params.extend([limit, offset])
-        cur = self._conn.execute(query_sql, tuple(params))
+        cur = self._conn.execute(query_sql, tuple(params + [limit, offset]))
 
         files = []
         for row in cur.fetchall():
