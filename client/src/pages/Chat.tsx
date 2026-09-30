@@ -43,6 +43,7 @@ import {
 import { useChatSession } from "./chat/useChatSession";
 import { getChatDisplayName, getChatValidName } from "./chat/displayName";
 import { RetrievalIndicators } from "./chat/RetrievalIndicators";
+import { IconButton } from "@/components/a11y/IconButton";
 import { resolveAskAiRouteInitialization } from "./chat/routeTarget";
 import type {
   AgenticToolTraceEntry,
@@ -865,13 +866,14 @@ export default function Chat() {
                     {t("chat.new_conversation")}
                   </button>
                 )}
-                <button
+                <IconButton
                   onClick={() => setSidebarOpen(false)}
-                  className="p-2 rounded-lg hover:bg-muted text-muted-foreground"
+                  label={t("a11y.close_chat_sidebar")}
+                  className="hover:bg-muted text-muted-foreground"
                   data-testid="button-close-chat-sidebar"
                 >
                   <X className="w-4 h-4" />
-                </button>
+                </IconButton>
               </div>
 
               <div className="flex items-center justify-between gap-2 rounded-lg bg-muted/50 px-2 py-1.5">
@@ -999,16 +1001,17 @@ export default function Chat() {
                         )}
                       </div>
                       {canUseConversations && (
-                        <button
+                        <IconButton
                           onClick={(e) => {
                             e.stopPropagation();
                             deleteConversation(conv.id);
                           }}
-                          className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-destructive/10 hover:text-destructive transition-all"
+                          label={t("a11y.delete_conversation", { target: conv.title || t("chat.untitled") })}
+                          className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 hover:bg-destructive/10 hover:text-destructive"
                           data-testid={`button-delete-conversation-${conv.id}`}
                         >
                           <Trash2 className="w-3.5 h-3.5" />
-                        </button>
+                        </IconButton>
                       )}
                     </div>
                   ))
@@ -1030,13 +1033,14 @@ export default function Chat() {
                         data-testid="input-doc-search"
                       />
                     </div>
-                    <button
+                    <IconButton
                       onClick={searchDocuments}
-                      className="px-2.5 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs hover:bg-primary/90 transition-colors"
+                      label={t("chat.search_documents")}
+                      className="bg-primary text-primary-foreground hover:bg-primary/90"
                       data-testid="button-doc-search"
                     >
                       <Search className="w-3.5 h-3.5" />
-                    </button>
+                    </IconButton>
                   </div>
                   <div className="space-y-1.5" data-testid="doc-category-filter">
                     <div className="flex items-center justify-between gap-2">
@@ -1206,13 +1210,14 @@ export default function Chat() {
       <div className="flex-1 flex flex-col min-w-0">
         {!sidebarOpen && (
           <div className="p-2 border-b border-border flex items-center gap-2">
-            <button
+            <IconButton
               onClick={() => setSidebarOpen(true)}
-              className="p-2 rounded-lg hover:bg-muted text-muted-foreground"
+              label={t("a11y.open_chat_sidebar")}
+              className="hover:bg-muted text-muted-foreground"
               data-testid="button-open-chat-sidebar"
             >
               <ChevronRight className="w-4 h-4" />
-            </button>
+            </IconButton>
             <span className="text-xs text-muted-foreground">{t("chat.show_sidebar")}</span>
           </div>
         )}
@@ -1273,9 +1278,9 @@ export default function Chat() {
         {errorMsg && (
           <div className="mx-4 sm:mx-6 mb-2 px-3 py-2 rounded-lg bg-destructive/10 text-destructive text-xs flex items-center gap-2">
             <span className="flex-1">{errorMsg}</span>
-            <button onClick={() => setErrorMsg(null)} className="shrink-0">
+            <IconButton onClick={() => setErrorMsg(null)} label={t("a11y.dismiss_error")} className="shrink-0">
               <X className="w-3.5 h-3.5" />
-            </button>
+            </IconButton>
           </div>
         )}
 
@@ -1464,9 +1469,9 @@ export default function Chat() {
               }}
               data-testid="input-chat-message"
             />
-            <button
+            <IconButton
               type="button"
-              aria-label="Send message"
+              label={t("a11y.send_message")}
               onClick={() => sendMessage()}
               disabled={!input.trim() || sending}
               className={cn(
@@ -1482,7 +1487,7 @@ export default function Chat() {
               ) : (
                 <Send className="w-5 h-5" />
               )}
-            </button>
+            </IconButton>
           </div>
         </div>
       </div>

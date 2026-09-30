@@ -4254,3 +4254,75 @@
 - Commit and push the validated branch, create a draft PR with `Closes #312`, mark it ready, observe
   the full remote-feedback window, assess the single feedback snapshot, require checks on the exact
   head, then merge and complete Issue/branch/worktree cleanup.
+# Latest work — Issue #355 accessible icon buttons
+
+- Updated: 2026-09-29 EDT. Repository: `AI_actuarial_inforsearch`; worktree:
+  `C:\Users\ferry\.codex\worktrees\issue-355-a11y-buttons\AI_actuarial_inforsearch`;
+  branch: `codex/issue-355-a11y-buttons`; baseline:
+  `fbda2bba66b1c4c0bb87bbe4870d1777e2bb6a85`. Sibling repositories were not accessed.
+- Added one required-label `IconButton` convention with an exact 44px minimum hit area and a
+  visible `focus-visible` ring. Layout, Chat, File Preview, Settings, Tasks, Scheduled Tasks, and
+  Sites now use localized action names; dangerous and object actions include their target.
+- Provider/search/category/token, scheduled-task/site, and backup destructive prompts or labels
+  identify the same target. Existing API calls, permissions, and mutation behavior are unchanged.
+- The desktop Sidebar no longer renders a hidden mobile close control. Mobile navigation test IDs
+  are prefixed, so open desktop/mobile navigation instances do not duplicate `data-testid` values.
+  Closing the mobile drawer restores focus to its opener.
+- Added Vitest + Testing Library + axe DOM coverage and a durable Playwright Core smoke using the
+  installed Chrome. Baseline red failed because the CSS-hidden desktop close button remained in the
+  DOM. Green: 3 DOM/axe tests pass; Chrome at 390x844 verifies Tab focus styling, Enter open, Space
+  close, exact 44px controls, focus recovery, unique test IDs, and English/Chinese names.
+- Final validation: 128 related Python tests pass; related TSX assertion scripts pass; typecheck,
+  build, both dead-code gates, and `git diff --check` pass. ESLint passes with five pre-existing Hook
+  warnings. Build retains the existing large-chunk advisory.
+- No blocker is known. The manager should run fresh Sol/high review, then use the authorized
+  commit/push/PR workflow if review passes.
+
+## Issue #355 local review round 1 correction
+
+- Updated: 2026-09-29 EDT. Accepted AC-2 finding F1 is fixed: the active-task stop control now
+  passes the selected task display name into the existing confirmation, with task ID fallback when
+  the display name is empty. English and Chinese confirmation text interpolate the same target as
+  the dangerous action. API route, permission check, cancellation, and stop behavior are unchanged.
+- Added an executable `Tasks` DOM regression covering English, Chinese, and empty-name ID fallback.
+  Baseline red received `Stop this task?` when the control named `Stop task Rebuild SOA`; green is
+  3/3. The complete a11y suite is 6/6.
+- Related Scheduled Tasks, task metrics, and task error assertion scripts pass. Typecheck, lint,
+  production build, and `git diff --check` pass. Lint retains five pre-existing Hook warnings and
+  build retains the existing large-chunk advisory.
+- No Escape behavior was added because it belongs to excluded Issue #351 scope. No blocker is
+  known. The manager should run a fresh Sol/high review.
+
+## Issue #355 local review round 2 correction
+
+- Applied the TypeSafe Jev `apply_shared_task_target` decision. `TaskCard` now derives one stable
+  target from the trimmed display name with task ID fallback, then uses it for view-log and stop
+  accessible names and callback arguments. The stop button and its confirmation therefore stay
+  identical for empty and whitespace-only names.
+- Executable red evidence could not find the required `Stop task task-42` role/name for an empty
+  task name. Green coverage now passes empty and whitespace fallbacks plus the existing English and
+  Chinese named-task cases: a11y suite 7/7. Typecheck and `git diff --check` pass.
+- No #366 or #351 behavior was added. No blocker is known; run a fresh Sol/high review.
+
+## Issue #355 local review round 3 correction
+
+- Applied the Jev `add_targeted_save_name` decision. The Settings search-engine credential save
+  IconButton now has a dedicated localized name containing the current engine display name in
+  English and Chinese. Existing save logic, disabled state, API call, and permissions are unchanged.
+- New Testing Library coverage renders the real Settings search tab, opens the Brave Search
+  credential editor, and finds the save control by its localized role/name. Baseline red exposed
+  only `Save` / `保存`; green a11y coverage is 9/9. Typecheck and `git diff --check` pass.
+- No #366 or #351 behavior was added. No blocker is known; run a fresh Sol/high review.
+
+## Issue #355 required-check repair 1
+
+- Updated the single stale source-contract assertion in `tests/test_tasks_react_source.py` to
+  require the AC-2 task target argument and task-ID fallback in the existing stop confirmation.
+  Production code was not changed.
+- Focused contract test passes 1/1. The complete quality gate passes with 2239 tests passed, 10
+  skipped, followed by clean Black, isort, and error-only Pylint checks. The a11y suite passes 9/9
+  and `git diff --check` passes.
+- Final manager smoke passes in installed Chrome at 390x844 for Tab, Enter, Space, visible focus,
+  44px controls, focus recovery, unique test IDs, and English/Chinese names. The disposable Vite
+  server was stopped after the run.
+- No blocker is known. The manager can proceed with the exact-head required-check workflow.

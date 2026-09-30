@@ -19,6 +19,7 @@ import { useTranslation } from "@/components/Layout";
 import { useAuth } from "@/context/AuthContext";
 import { useLatestRequestGuard } from "@/hooks/use-latest-request";
 import { apiGet, apiGetBlob, getStoredAuthToken } from "@/lib/api";
+import { IconButton } from "@/components/a11y/IconButton";
 
 interface FileInfo {
   url: string;
@@ -76,6 +77,7 @@ function useMediaQuery(query: string): boolean {
 }
 
 function PdfViewer({ fileUrl, errorText }: { fileUrl: string; errorText: string }) {
+  const { t } = useTranslation();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [pdfDoc, setPdfDoc] = useState<any>(null);
   const [currentPage, setCurrentPage] = useState(1);
@@ -145,15 +147,15 @@ function PdfViewer({ fileUrl, errorText }: { fileUrl: string; errorText: string 
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-center gap-3 py-2">
-        <button onClick={() => setCurrentPage((p) => Math.max(1, p - 1))} disabled={currentPage <= 1}
-          className="p-1 rounded hover:bg-muted disabled:opacity-30 transition-colors" data-testid="button-pdf-prev">
+        <IconButton onClick={() => setCurrentPage((p) => Math.max(1, p - 1))} disabled={currentPage <= 1}
+          label={t("a11y.previous_pdf_page")} className="hover:bg-muted disabled:opacity-30" data-testid="button-pdf-prev">
           <ChevronLeft className="w-4 h-4" />
-        </button>
+        </IconButton>
         <span className="text-xs text-muted-foreground" data-testid="text-pdf-page">{currentPage} / {totalPages}</span>
-        <button onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))} disabled={currentPage >= totalPages}
-          className="p-1 rounded hover:bg-muted disabled:opacity-30 transition-colors" data-testid="button-pdf-next">
+        <IconButton onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))} disabled={currentPage >= totalPages}
+          label={t("a11y.next_pdf_page")} className="hover:bg-muted disabled:opacity-30" data-testid="button-pdf-next">
           <ChevronRight className="w-4 h-4" />
-        </button>
+        </IconButton>
       </div>
       <div className="overflow-auto rounded-lg border border-border bg-white dark:bg-gray-900 p-2">
         <canvas ref={canvasRef} className="mx-auto" data-testid="canvas-pdf" />
@@ -418,9 +420,9 @@ export default function FilePreview() {
   return (
     <div className="space-y-3 h-[calc(100vh-80px)]">
       <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="flex items-center gap-3">
-        <button onClick={goBack} className="p-2 rounded-lg hover:bg-muted transition-colors" data-testid="button-back-preview">
+        <IconButton onClick={goBack} label={t("a11y.back_file_preview")} className="hover:bg-muted" data-testid="button-back-preview">
           <ArrowLeft className="w-5 h-5" />
-        </button>
+        </IconButton>
         <h1 className="text-lg font-serif font-bold truncate" data-testid="text-preview-title">
           {data.file_info.title || data.file_info.original_filename || "File Preview"}
         </h1>

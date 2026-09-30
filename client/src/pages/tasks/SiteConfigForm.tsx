@@ -8,6 +8,7 @@ import { apiGet, apiPost } from "@/lib/api";
 import { getStoredAuthToken } from "@/lib/api";
 import { FormField, InputField } from "@/components/FormFields";
 import { ScheduleFromTaskButton } from "./ScheduleFromTaskButton";
+import { IconButton } from "@/components/a11y/IconButton";
 
 interface SiteConfig {
   name: string;
@@ -244,7 +245,7 @@ export function SiteConfigForm({ sites, onSubmit, submitting, onSitesChanged }: 
   };
 
   const handleRestoreBackup = async (filename: string) => {
-    if (!confirm(t("tasks.sites.restore_confirm"))) return;
+    if (!confirm(t("tasks.sites.restore_confirm", { target: filename }))) return;
     try {
       await apiPost("/api/config/backups/restore", { filename });
       onSitesChanged();
@@ -530,24 +531,24 @@ export function SiteConfigForm({ sites, onSubmit, submitting, onSitesChanged }: 
                     </div>
                   </button>
                   <div className="flex items-center gap-1 shrink-0">
-                    <button onClick={() => onSubmit({ type: "scheduled", name: `Scheduled: ${s.name}`, site: s.name })}
-                      className="p-1.5 rounded hover:bg-emerald-500/10 transition-colors text-muted-foreground hover:text-emerald-600"
-                      data-testid={`button-run-site-${s.name}`} title={t("tasks.sites.run_crawl")}><Plus className="w-3.5 h-3.5" /></button>
-                    <button onClick={() => openEditForm(s)}
-                      className="p-1.5 rounded hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
-                      data-testid={`button-edit-site-${s.name}`}><Pencil className="w-3.5 h-3.5" /></button>
+                    <IconButton onClick={() => onSubmit({ type: "scheduled", name: `Scheduled: ${s.name}`, site: s.name })}
+                      label={t("a11y.run_site", { target: s.name })} className="hover:bg-emerald-500/10 text-muted-foreground hover:text-emerald-600"
+                      data-testid={`button-run-site-${s.name}`}><Plus className="w-3.5 h-3.5" /></IconButton>
+                    <IconButton onClick={() => openEditForm(s)} label={t("a11y.edit_site", { target: s.name })}
+                      className="hover:bg-muted text-muted-foreground hover:text-foreground"
+                      data-testid={`button-edit-site-${s.name}`}><Pencil className="w-3.5 h-3.5" /></IconButton>
                     {deletingSite === s.name ? (
                       <div className="flex items-center gap-1">
                         <button onClick={() => handleDeleteSite(s.name)}
                           className="text-[10px] px-2 py-1 rounded bg-destructive text-destructive-foreground"
-                          data-testid={`button-confirm-delete-site-${s.name}`}>{t("tasks.sched.confirm_delete")}</button>
+                          data-testid={`button-confirm-delete-site-${s.name}`}>{t("a11y.confirm_delete_site", { target: s.name })}</button>
                         <button onClick={() => setDeletingSite(null)}
                           className="text-[10px] px-2 py-1 rounded border border-border">{t("tasks.sched.cancel")}</button>
                       </div>
                     ) : (
-                      <button onClick={() => setDeletingSite(s.name)}
-                        className="p-1.5 rounded hover:bg-red-500/10 transition-colors text-muted-foreground hover:text-red-600"
-                        data-testid={`button-delete-site-${s.name}`}><Trash2 className="w-3.5 h-3.5" /></button>
+                      <IconButton onClick={() => setDeletingSite(s.name)} label={t("a11y.delete_site", { target: s.name })}
+                        className="hover:bg-red-500/10 text-muted-foreground hover:text-red-600"
+                        data-testid={`button-delete-site-${s.name}`}><Trash2 className="w-3.5 h-3.5" /></IconButton>
                     )}
                   </div>
                 </div>
@@ -652,12 +653,12 @@ export function SiteConfigForm({ sites, onSubmit, submitting, onSitesChanged }: 
                     </div>
                   </div>
                   <div className="flex items-center gap-1 shrink-0">
-                    <button onClick={() => handleRestoreBackup(b.filename)}
-                      className="text-[10px] px-2 py-1 rounded border border-border hover:bg-muted transition-colors"
-                      data-testid={`button-restore-backup-${b.filename}`}>{t("tasks.sites.restore")}</button>
-                    <button onClick={() => handleDeleteBackup(b.filename)}
-                      className="text-[10px] px-2 py-1 rounded hover:bg-red-500/10 text-muted-foreground hover:text-red-600 transition-colors"
-                      data-testid={`button-delete-backup-${b.filename}`}><Trash2 className="w-3 h-3" /></button>
+                    <IconButton onClick={() => handleRestoreBackup(b.filename)} label={t("a11y.restore_backup", { target: b.filename })}
+                      className="border border-border px-2 text-[10px] hover:bg-muted"
+                      data-testid={`button-restore-backup-${b.filename}`}>{t("tasks.sites.restore")}</IconButton>
+                    <IconButton onClick={() => handleDeleteBackup(b.filename)} label={t("a11y.delete_backup", { target: b.filename })}
+                      className="hover:bg-red-500/10 text-muted-foreground hover:text-red-600"
+                      data-testid={`button-delete-backup-${b.filename}`}><Trash2 className="w-3 h-3" /></IconButton>
                   </div>
                 </div>
               ))
