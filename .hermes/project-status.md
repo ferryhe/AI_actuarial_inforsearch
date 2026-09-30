@@ -4326,3 +4326,23 @@
   44px controls, focus recovery, unique test IDs, and English/Chinese names. The disposable Vite
   server was stopped after the run.
 - No blocker is known. The manager can proceed with the exact-head required-check workflow.
+
+## Issue #361 — permission-aware logs
+
+- Updated: 2026-09-30. Project AI_actuarial_inforsearch; task branch agent/issue-361,
+  based on d4056faed3316074474c53a3ca077187d78c935f.
+- Logs.tsx now gates the system-log panel, global controls, and /api/logs/global
+  request on logs.system.read. Task-log readers land on expanded task history.
+  Registered/operator browser traces had 0 global-log requests; admin retained the
+  global log load, search, level filter, and refresh.
+- Added client/src/pages/Logs.browser-smoke.mjs with real Chromium request assertions
+  for registered, operator, and admin. The backend /api/logs/global permission remains
+  logs.system.read; the separate Tasks page already guarded its global-log action.
+- Local validation passed: 22 focused Logs/permission tests, 8 backend ops-read tests,
+  TypeScript typecheck, ESLint (five existing warnings), production build (existing
+  chunk-size advisory), Chromium smoke, and git diff --check.
+- Fresh Sol/high local review 1 passed with no acceptance-mapped findings. TypeSafe
+  Jev-1.13.0 review coverage probability was 0.88; no findings were supplied.
+- Draft PR #386 was opened with Closes #361. This entry records the pre-Ready
+  checkpoint; required GitHub checks and the single remote-feedback window remain
+  the next lifecycle gates.
