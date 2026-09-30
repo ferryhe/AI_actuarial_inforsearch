@@ -6,6 +6,7 @@ KB_DETAIL_TSX = ROOT / "pages" / "KBDetail.tsx"
 DATABASE_TSX = ROOT / "pages" / "Database.tsx"
 CHAT_TSX = ROOT / "pages" / "Chat.tsx"
 FILE_DETAIL_TSX = ROOT / "pages" / "FileDetail.tsx"
+I18N_TS = ROOT / "hooks" / "use-i18n.ts"
 
 
 def test_knowledge_management_controls_are_permission_gated():
@@ -39,6 +40,7 @@ def test_kb_detail_admin_controls_are_permission_gated():
 
 def test_database_sensitive_controls_are_permission_gated():
     src = DATABASE_TSX.read_text(encoding="utf-8")
+    i18n = I18N_TS.read_text(encoding="utf-8")
 
     assert "FILE_DELETION_AUTH_TOKEN" not in src
     assert "setStoredAuthToken" not in src
@@ -47,7 +49,20 @@ def test_database_sensitive_controls_are_permission_gated():
     assert 'const canDeleteFiles = permissions.includes("files.delete");' in src
     assert 'const canDownloadFiles = permissions.includes("files.download");' in src
     assert 'const canExportFiles = permissions.includes("export.read");' in src
+    assert 'const canExportFull = permissions.includes("export.full");' in src
     assert "{canExportFiles && (" in src and 'data-testid="button-export-csv"' in src
+    assert '{t("db.export_csv")}' in src
+    assert '"db.export_csv": "Export current filtered results"' in i18n
+    assert '"db.export_csv": "导出当前筛选结果"' in i18n
+    assert "{canExportFull && (" in src and 'data-testid="button-export-full-csv"' in src
+    assert 't("db.export_full_confirm")' in src
+    assert '.replace("{deleted}", deleted)' in src
+    assert '.replace("{internal}", internal)' in src
+    assert '"db.export_selection_on": "On"' in i18n
+    assert '"db.export_selection_off": "Off"' in i18n
+    assert '"db.export_selection_on": "开启"' in i18n
+    assert '"db.export_selection_off": "关闭"' in i18n
+    assert 'data-testid="checkbox-export-internal-fields"' in src
     assert "{canDeleteFiles && (" in src and 'data-testid="button-bulk-delete"' in src
     assert "{canDeleteFiles && (" in src and 'data-testid="checkbox-include-deleted"' in src
     assert "{canDownloadFiles && (" in src and "data-testid={`button-download-${i}`}" in src

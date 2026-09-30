@@ -240,6 +240,7 @@ export default function DatabasePage() {
   const canDeleteFiles = permissions.includes("files.delete");
   const canDownloadFiles = permissions.includes("files.download");
   const canExportFiles = permissions.includes("export.read");
+  const canExportFull = permissions.includes("export.full");
   const [, navigate] = useLocation();
   const searchStr = useSearch();
 
@@ -279,6 +280,7 @@ export default function DatabasePage() {
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [bulkDeleteProgress, setBulkDeleteProgress] = useState<{ current: number; total: number } | null>(null);
   const [pageJumpInput, setPageJumpInput] = useState("1");
+  const [includeInternalExportFields, setIncludeInternalExportFields] = useState(false);
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedQuery(query), 300);
@@ -539,14 +541,34 @@ export default function DatabasePage() {
     a.remove();
   }
 
-  function exportCsv() {
+  function downloadExport(url: string) {
     const a = document.createElement("a");
-    a.href = "/api/export?format=csv";
+    a.href = url;
     a.target = "_blank";
     a.rel = "noopener noreferrer";
     document.body.appendChild(a);
     a.click();
     a.remove();
+  }
+
+  function exportCsv() {
+    if (requestState.includeDeleted) return;
+    const params = buildFilesParams({ ...requestState, offset: 0 });
+    params.set("format", "csv");
+    downloadExport(`/api/export?${params.toString()}`);
+  }
+
+  function exportFullCsv() {
+    const deleted = t(requestState.includeDeleted ? "db.export_selection_on" : "db.export_selection_off");
+    const internal = t(includeInternalExportFields ? "db.export_selection_on" : "db.export_selection_off");
+    const confirmation = t("db.export_full_confirm")
+      .replace("{deleted}", deleted)
+      .replace("{internal}", internal);
+    if (!window.confirm(confirmation)) return;
+    const params = buildFilesParams({ ...requestState, offset: 0 });
+    params.set("format", "csv");
+    if (includeInternalExportFields) params.set("include_internal", "true");
+    downloadExport(`/api/export/full?${params.toString()}`);
   }
 
   async function refreshCurrentPage() {
@@ -591,14 +613,39 @@ export default function DatabasePage() {
         </div>
         <div className="flex items-center gap-2 flex-wrap justify-end">
           {canExportFiles && (
-            <button
-              onClick={exportCsv}
-              className="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-xs font-medium text-foreground hover:bg-muted transition-colors"
-              data-testid="button-export-csv"
-            >
-              <FileSpreadsheet className="w-3.5 h-3.5" />
-              {t("db.export_csv")}
-            </button>
+            <>
+              <button
+                onClick={exportCsv}
+                disabled={requestState.includeDeleted}
+                className="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-xs font-medium text-foreground hover:bg-muted transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+                data-testid="button-export-csv"
+              >
+                <FileSpreadsheet className="w-3.5 h-3.5" />
+                {t("db.export_csv")}
+              </button>
+              {requestState.includeDeleted && <span className="text-xs text-muted-foreground">{t("db.export_filtered_active_only")}</span>}
+            </>
+          )}
+          {canExportFull && (
+            <>
+              <button
+                onClick={exportFullCsv}
+                className="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-xs font-medium text-foreground hover:bg-muted transition-colors"
+                data-testid="button-export-full-csv"
+              >
+                <FileSpreadsheet className="w-3.5 h-3.5" />
+                {t("db.export_full_csv")}
+              </button>
+              <label className="flex items-center gap-1 text-xs text-muted-foreground">
+                <input
+                  type="checkbox"
+                  checked={includeInternalExportFields}
+                  onChange={(event) => setIncludeInternalExportFields(event.target.checked)}
+                  data-testid="checkbox-export-internal-fields"
+                />
+                {t("db.export_internal_fields")}
+              </label>
+            </>
           )}
         </div>
       </motion.div>

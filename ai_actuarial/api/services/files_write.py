@@ -18,7 +18,7 @@ from ai_actuarial.shared_runtime import (
 )
 from ai_actuarial.storage import Storage
 
-from .read import SENSITIVE_FILE_FIELDS
+from .read import SENSITIVE_FILE_FIELDS, FileListQuery, project_database_files
 
 
 class FileWriteError(Exception):
@@ -65,9 +65,29 @@ def _resolve_local_path(local_path: str | None) -> Path | None:
     return fallback
 
 
-def _query_files_for_export(storage: Storage) -> list[dict[str, Any]]:
-    rows, _total = storage.query_files_with_catalog(limit=100000, offset=0, include_deleted=True)
-    return rows
+def _query_files_for_export(
+    storage: Storage, *, query: FileListQuery, include_deleted: bool
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    offset = 0
+    while True:
+        page, total = storage.query_files_with_catalog(
+            limit=1000,
+            offset=offset,
+            order_by=query.order_by,
+            order_dir=query.order_dir,
+            query=query.query,
+            source=query.source,
+            category=query.category,
+            include_deleted=include_deleted,
+            first_seen_from=query.first_seen_from,
+            first_seen_before=query.first_seen_before,
+            snapshot_id=query.snapshot_id,
+        )
+        rows.extend(page)
+        offset += len(page)
+        if offset >= total or not page:
+            return rows
 
 
 def _is_file_deletion_enabled() -> bool:
@@ -196,10 +216,20 @@ def get_previewable_file(*, db_path: str, url: str) -> tuple[Path, str, str]:
     return path, filename, media_type
 
 
-def export_catalog(*, db_path: str, format_type: str) -> tuple[bytes, str, str]:
+def export_catalog(
+    *,
+    db_path: str,
+    format_type: str,
+    query: FileListQuery,
+    include_deleted: bool = False,
+    include_sensitive: bool = False,
+) -> tuple[bytes, str, str, int]:
     storage = Storage(db_path)
     try:
-        data = _query_files_for_export(storage)
+        data = project_database_files(
+            _query_files_for_export(storage, query=query, include_deleted=include_deleted),
+            include_sensitive=include_sensitive,
+        )
     finally:
         storage.close()
 
@@ -213,6 +243,7 @@ def export_catalog(*, db_path: str, format_type: str) -> tuple[bytes, str, str]:
             json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8"),
             "application/json",
             "catalog_export.json",
+            len(data),
         )
 
     si = io.StringIO()
@@ -221,7 +252,7 @@ def export_catalog(*, db_path: str, format_type: str) -> tuple[bytes, str, str]:
     if fieldnames:
         writer.writeheader()
         writer.writerows(data)
-    return si.getvalue().encode("utf-8-sig"), "text/csv", "catalog_export.csv"
+    return si.getvalue().encode("utf-8-sig"), "text/csv", "catalog_export.csv", len(data)
 
 
 def delete_file_record(

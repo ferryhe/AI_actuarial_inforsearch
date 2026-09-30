@@ -6,6 +6,8 @@ from urllib.parse import unquote
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 
+from ai_actuarial.storage import Storage
+
 from ..deps import AuthContext, require_permissions
 from ..services.files_write import (
     FileWriteError,
@@ -20,6 +22,7 @@ from ..services.files_write import (
 )
 from ..services.import_batches import ImportBatchError, create_import_batch
 from ..services.ops_write import BridgeState, OpsWriteError, start_collection
+from ..services.read import FileListValidationError, parse_file_list_query
 from .read import _can_view_sensitive_file_fields
 
 router = APIRouter()
@@ -31,6 +34,20 @@ def _db_path(request: Request) -> str:
     if not db_path:
         raise HTTPException(status_code=500, detail="Database path is unavailable")
     return db_path
+
+
+def _record_export_audit(request: Request, auth: AuthContext, *, count: int, full: bool) -> None:
+    storage = Storage(_db_path(request))
+    try:
+        storage.log_audit_event(
+            "catalog_export",
+            token_id=(auth.token or {}).get("id"),
+            resource="catalog",
+            detail=f"records={count}; full={str(full).lower()}",
+            ip=request.client.host if request.client else None,
+        )
+    finally:
+        storage.close()
 
 
 def _extract_encoded_file_url(request: Request, *, suffix: str) -> str | None:
@@ -139,18 +156,62 @@ def api_download(
 @router.get("/export")
 def api_export(
     request: Request,
-    _auth: AuthContext = Depends(require_permissions("export.read")),
+    auth: AuthContext = Depends(require_permissions("export.read")),
 ):
     format_type = str(request.query_params.get("format", "csv") or "csv")
     try:
-        content, media_type, filename = export_catalog(
-            db_path=_db_path(request), format_type=format_type
+        query = parse_file_list_query(request.query_params)
+        if query.include_deleted:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "Deleted records require full export with include_deleted=true"},
+            )
+        content, media_type, filename, count = export_catalog(
+            db_path=_db_path(request), format_type=format_type, query=query
         )
+        _record_export_audit(request, auth, count=count, full=False)
         return Response(
             content=content,
             media_type=media_type,
-            headers={"Content-Disposition": f"attachment; filename={filename}"},
+            headers={
+                "Content-Disposition": f"attachment; filename={filename}",
+                "X-Export-Record-Count": str(count),
+            },
         )
+    except FileListValidationError as exc:
+        return JSONResponse(status_code=400, content={"error": str(exc)})
+    except FileWriteError as exc:
+        return _json_error(exc)
+
+
+@router.get("/export/full")
+def api_export_full(
+    request: Request,
+    auth: AuthContext = Depends(require_permissions("export.full")),
+):
+    format_type = str(request.query_params.get("format", "csv") or "csv")
+    include_deleted = str(request.query_params.get("include_deleted", "false")).lower() == "true"
+    include_sensitive = str(request.query_params.get("include_internal", "false")).lower() == "true"
+    try:
+        query = parse_file_list_query(request.query_params)
+        content, media_type, filename, count = export_catalog(
+            db_path=_db_path(request),
+            format_type=format_type,
+            query=query,
+            include_deleted=include_deleted,
+            include_sensitive=include_sensitive,
+        )
+        _record_export_audit(request, auth, count=count, full=True)
+        return Response(
+            content=content,
+            media_type=media_type,
+            headers={
+                "Content-Disposition": f"attachment; filename={filename}",
+                "X-Export-Record-Count": str(count),
+            },
+        )
+    except FileListValidationError as exc:
+        return JSONResponse(status_code=400, content={"error": str(exc)})
     except FileWriteError as exc:
         return _json_error(exc)
 
