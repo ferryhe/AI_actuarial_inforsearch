@@ -406,6 +406,58 @@ def test_context_rejection_retries_once_then_persists_safe_failed_turn(
     assert "local-test-key" not in persisted
     assert secret_document not in caplog.text
     assert "local-test-key" not in caplog.text
+    recovery_logs = [
+        record.getMessage()
+        for record in caplog.records
+        if record.getMessage().startswith("Direct document provider context rejection")
+    ]
+    assert len(recovery_logs) == 1
+    assert "provider_error_type=LLMException" in recovery_logs[0]
+
+
+def test_agentic_synthesis_fallback_does_not_log_chained_provider_detail(tmp_path, caplog) -> None:
+    sensitive_marker = "SENSITIVE-AGENTIC-PROVIDER-CAUSE-347"
+
+    class FailingAgenticLLM:
+        def __init__(self, config, storage=None):
+            pass
+
+        def generate_response(self, **kwargs):
+            try:
+                raise RuntimeError(sensitive_marker)
+            except RuntimeError as cause:
+                raise exceptions.LLMException(
+                    "The AI provider is temporarily unavailable.",
+                    code="LLM_PROVIDER_UNAVAILABLE",
+                    classification="upstream",
+                    retryable=True,
+                ) from cause
+
+    storage = Storage(str(tmp_path / "chat.db"))
+    try:
+        answer, source = chat_service._synthesize_agentic_response(
+            modules={"llm": SimpleNamespace(LLMClient=FailingAgenticLLM)},
+            config=_config(),
+            storage=storage,
+            query="Summarize the evidence",
+            retrieved_blocks=[
+                {
+                    "quote": "Safe evidence",
+                    "title": "Evidence",
+                    "file_url": "https://example.test/evidence",
+                }
+            ],
+            mode="expert",
+            conversation_history=[],
+        )
+    finally:
+        storage.close()
+
+    assert source == "deterministic_fallback"
+    assert "Safe evidence" in answer
+    assert sensitive_marker not in caplog.text
+    assert "provider_error_type=LLMException" in caplog.text
+    assert "classification=upstream" in caplog.text
 
 
 def test_standard_rag_path_keeps_existing_generate_response_contract(tmp_path, monkeypatch) -> None:

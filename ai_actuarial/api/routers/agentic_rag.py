@@ -214,6 +214,8 @@ def api_agentic_rag_chat(
         try:
             _resolve_ready_output_dir(db_path=_db_path(request), payload=payload)
         except AgenticRagError as exc:
+            if exc.status_code == 400:
+                raise
             raise chat_service._agentic_unavailable_error() from exc
         result, session_update = query_chat(
             db_path=_db_path(request),

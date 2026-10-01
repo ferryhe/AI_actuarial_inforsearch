@@ -713,6 +713,17 @@ def test_fastapi_agentic_rag_chat_rejects_empty_query(tmp_path: Path, monkeypatc
     assert "Message" in response.json()["error"]
 
 
+def test_fastapi_agentic_rag_chat_preserves_missing_kb_validation(
+    tmp_path: Path, monkeypatch
+) -> None:
+    client, _db_path = _build_client(tmp_path, monkeypatch)
+
+    response = client.post("/api/agentic-rag/chat", json={"query": "capital"})
+
+    assert response.status_code == 400
+    assert response.json() == {"error": "output_dir or kb_id is required"}
+
+
 def test_fastapi_agentic_rag_chat_reuses_missing_ready_data_registry_error(
     tmp_path: Path,
     monkeypatch,

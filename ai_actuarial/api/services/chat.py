@@ -1157,8 +1157,13 @@ def _synthesize_agentic_response(
         )
         if answer:
             return answer, "llm"
-    except Exception:  # pragma: no cover - exact provider errors vary by configured runtime
-        logger.exception("Agentic RAG synthesis failed; using deterministic evidence fallback")
+    except Exception as exc:  # pragma: no cover - exact provider errors vary by configured runtime
+        logger.warning(
+            "Agentic RAG synthesis failed; using deterministic evidence fallback "
+            "provider_error_type=%s classification=%s",
+            type(exc).__name__,
+            getattr(exc, "classification", "provider_error"),
+        )
     return fallback, "deterministic_fallback"
 
 
@@ -1993,12 +1998,13 @@ def query_chat(
                 logger.warning(
                     "Direct document provider context rejection; retrying once original_chars=%s "
                     "used_chars=%s active_model=%s estimated_prompt_tokens=%s output_reserve=%s "
-                    "provider_error_type=LLMContextLengthError",
+                    "provider_error_type=%s",
                     context_notice["original_chars"],
                     context_notice["used_chars"],
                     context_notice["active_model"],
                     context_notice["estimated_prompt_tokens"],
                     context_notice["output_reserve"],
+                    type(exc).__name__,
                 )
                 retry_messages = build_full_prompt(
                     mode=mode,

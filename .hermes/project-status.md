@@ -4465,3 +4465,19 @@
   files are green; the final TypeSafe gate-repair judgment is `both_complete`.
 - Next: push this status checkpoint, mark PR Ready, wait the required remote
   review window, then evaluate current-head checks and all fetched feedback.
+
+### PR #388 remote-feedback repair — 2026-10-01
+
+- The one Ready-window snapshot found all six checks green and three Copilot
+  threads. TypeSafe accepted the chained traceback leak and deprecated 400→503
+  misclassification; a focused probe confirmed the ambiguous hardcoded context
+  error type.
+- The scoped repair removes chained-cause traceback logging from the Agentic
+  fallback, preserves deprecated missing-KB validation as 400 while keeping
+  missing/not-ready registry states as safe retryable 503, and logs the actual
+  caught context exception type.
+- Focused tests passed 3/3, relevant backend tests 119/119, and the full quality
+  gate passed with 2,301 tests passed / 10 skipped plus clean Black, isort, and
+  error-only Pylint. TypeSafe judged all three remote items resolved.
+- Next: push the remote-fix commit, resolve the three review threads, wait for
+  the new-head CI checks, then merge if every gate remains green.
