@@ -13,29 +13,54 @@ def test_knowledge_management_controls_are_permission_gated():
     src = KNOWLEDGE_TSX.read_text(encoding="utf-8")
 
     assert 'import { useAuth } from "@/context/AuthContext";' in src
-    assert 'const canManageKnowledge = permissions.includes("config.write");' in src
+    assert 'const canManageCatalog = permissions.includes("catalog.write");' in src
+    assert 'const canManageChunkProfiles = permissions.includes("config.write");' in src
     assert 'const canRunKnowledgeTasks = permissions.includes("tasks.run");' in src
-    assert "{canManageKnowledge && (" in src
+    assert "{canManageCatalog && (" in src
     assert "{canRunKnowledgeTasks && reembedRequired && (" in src
-    assert '{canManageKnowledge && <div className="w-px bg-border" />}' in src
-    assert "{canManageKnowledge && (" in src and "data-testid={`button-delete-kb-${kbId}`}" in src
-    assert "{canManageKnowledge && (" in src and 'data-testid="button-create-profile"' in src
-    assert "{canManageKnowledge && (" in src and 'data-testid="button-toggle-cleanup"' in src
+    assert '{canManageCatalog && <div className="w-px bg-border" />}' in src
+    assert "{canManageCatalog && (" in src and "data-testid={`button-delete-kb-${kbId}`}" in src
+    assert "{canManageChunkProfiles && (" in src and 'data-testid="button-create-profile"' in src
+    assert "{canManageChunkProfiles && (" in src and 'data-testid="button-toggle-cleanup"' in src
+
+
+def test_create_and_index_requires_catalog_and_task_permissions():
+    src = KNOWLEDGE_TSX.read_text(encoding="utf-8")
+
+    assert 'data-testid="button-submit-kb"' in src
+    start = src.index('data-testid="button-submit-kb-index"')
+    gated_create_and_index = src[src.rfind("{canRunKnowledgeTasks && (", 0, start) : start]
+    assert "onClick={() => handleCreateKB(true)}" in gated_create_and_index
+
+
+def test_plain_kb_create_does_not_require_task_diagnostics():
+    src = KNOWLEDGE_TSX.read_text(encoding="utf-8")
+
+    assert "if (!kbForm.embedding_identity_key) return;" not in src
+    plain_create = src[
+        src.index('data-testid="button-submit-kb"')
+        - 700 : src.index('data-testid="button-submit-kb"')
+    ]
+    assert "|| !kbForm.embedding_identity_key" not in plain_create
 
 
 def test_kb_detail_admin_controls_are_permission_gated():
     src = KB_DETAIL_TSX.read_text(encoding="utf-8")
 
     assert 'import { useAuth } from "@/context/AuthContext";' in src
-    assert 'const canManageKnowledge = permissions.includes("config.write");' in src
+    assert 'const canManageCatalog = permissions.includes("catalog.write");' in src
     assert 'const canRunKnowledgeTasks = permissions.includes("tasks.run");' in src
-    assert "const canBindFiles = canManageKnowledge && Boolean(meta?.chunk_profile_id);" in src
-    assert "{canManageKnowledge && (" in src and 'data-testid="input-kb-edit-name"' in src
-    assert "{canManageKnowledge && (" in src and 'data-testid="button-add-category"' in src
+    assert "const canBindFiles = canManageCatalog && Boolean(meta?.chunk_profile_id);" in src
+    assert "{canManageCatalog && (" in src and 'data-testid="input-kb-edit-name"' in src
+    assert "{canManageCatalog && (" in src and 'data-testid="button-add-category"' in src
     assert "{canRunKnowledgeTasks && (" in src and 'data-testid="button-index-incremental"' in src
     assert "{canRunKnowledgeTasks && (" in src and 'data-testid="button-index-rebuild"' in src
-    assert "{canManageKnowledge && (" in src and "data-testid={`button-remove-file-${i}`}" in src
+    assert "{canManageCatalog && (" in src and "data-testid={`button-remove-file-${i}`}" in src
     assert "onClick={loadPendingFiles}" in src and "canRunKnowledgeTasks" in src
+    assert (
+        "{canRunKnowledgeTasks && (" in src
+        and 'data-testid="toggle-ready-data-automatic-build"' in src
+    )
 
 
 def test_database_sensitive_controls_are_permission_gated():

@@ -256,7 +256,7 @@ def _make_profile(db_path: str, *, chunk_size: int = 800, chunk_overlap: int = 1
 def test_chunk_profile_immutable_change_in_use_requires_full_reindex(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(rag_admin, "_require_config_write_token", lambda *a, **k: None)
+    monkeypatch.setattr(rag_admin, "_require_config_write", lambda *a, **k: None)
     db_path = str(tmp_path / "index.db")
     profile = _make_profile(db_path)
     storage = Storage(db_path)
@@ -277,7 +277,7 @@ def test_chunk_profile_immutable_change_in_use_requires_full_reindex(
 def test_chunk_profile_immutable_change_in_use_rejected_even_with_legacy_full_reindex(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(rag_admin, "_require_config_write_token", lambda *a, **k: None)
+    monkeypatch.setattr(rag_admin, "_require_config_write", lambda *a, **k: None)
     db_path = str(tmp_path / "index.db")
     profile = _make_profile(db_path)
     storage = Storage(db_path)
@@ -306,7 +306,7 @@ def test_chunk_profile_immutable_change_in_use_rejected_even_with_legacy_full_re
 def test_chunk_profile_immutable_change_not_in_use_is_allowed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(rag_admin, "_require_config_write_token", lambda *a, **k: None)
+    monkeypatch.setattr(rag_admin, "_require_config_write", lambda *a, **k: None)
     db_path = str(tmp_path / "index.db")
     profile = _make_profile(db_path)  # never bound to any chunk data
 
@@ -322,7 +322,7 @@ def test_chunk_profile_immutable_change_not_in_use_is_allowed(
 def test_chunk_profile_name_change_is_always_allowed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(rag_admin, "_require_config_write_token", lambda *a, **k: None)
+    monkeypatch.setattr(rag_admin, "_require_config_write", lambda *a, **k: None)
     db_path = str(tmp_path / "index.db")
     profile = _make_profile(db_path)
     storage = Storage(db_path)
@@ -343,7 +343,7 @@ def test_chunk_profile_name_change_is_always_allowed(
 def test_chunk_profile_update_resulting_in_duplicate_config_hash_is_conflict(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(rag_admin, "_require_config_write_token", lambda *a, **k: None)
+    monkeypatch.setattr(rag_admin, "_require_config_write", lambda *a, **k: None)
     db_path = str(tmp_path / "index.db")
     profile = _make_profile(db_path, chunk_size=800)
     storage = Storage(db_path)
@@ -391,7 +391,7 @@ def test_chunk_profile_update_rejects_non_integer_immutable_field(
     field: str,
     bad_value: Any,
 ) -> None:
-    monkeypatch.setattr(rag_admin, "_require_config_write_token", lambda *a, **k: None)
+    monkeypatch.setattr(rag_admin, "_require_config_write", lambda *a, **k: None)
     db_path = str(tmp_path / "index.db")
     profile = _make_profile(db_path)
     with pytest.raises(RagAdminError, match=f"{field} must be an integer") as excinfo:

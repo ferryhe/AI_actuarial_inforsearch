@@ -1472,22 +1472,36 @@ def _kb_embedding_metadata_coverage(
     return coverage
 
 
-def _request_already_authorized(auth: Any | None) -> bool:
+def _request_already_authorized(auth: Any | None, permission: str) -> bool:
     if auth is None or not getattr(auth, "token", None):
         return False
     permissions = getattr(auth, "permissions", frozenset())
-    return bool({"catalog.write", "config.write", "tasks.run"} & set(permissions))
+    return permission in permissions
 
 
-def _require_config_write_token(headers: Mapping[str, str], auth: Any | None = None) -> None:
-    if _request_already_authorized(auth):
+def _require_rag_write(headers: Mapping[str, str], auth: Any | None, permission: str) -> None:
+    if _request_already_authorized(auth, permission):
         return
+    if auth is not None and getattr(auth, "token", None):
+        raise RagAdminError("Forbidden", status_code=403)
     expected_token = os.getenv("CONFIG_WRITE_AUTH_TOKEN") or settings.CONFIG_WRITE_AUTH_TOKEN
     if not expected_token:
         return
     provided_token = headers.get("X-Auth-Token") or headers.get("x-auth-token")
     if not provided_token or provided_token != expected_token:
         raise RagAdminError("Forbidden", status_code=403)
+
+
+def _require_catalog_write(headers: Mapping[str, str], auth: Any | None = None) -> None:
+    _require_rag_write(headers, auth, "catalog.write")
+
+
+def _require_tasks_run(headers: Mapping[str, str], auth: Any | None = None) -> None:
+    _require_rag_write(headers, auth, "tasks.run")
+
+
+def _require_config_write(headers: Mapping[str, str], auth: Any | None = None) -> None:
+    _require_rag_write(headers, auth, "config.write")
 
 
 def list_chunk_profiles(*, db_path: str) -> dict[str, Any]:
@@ -1501,7 +1515,7 @@ def list_chunk_profiles(*, db_path: str) -> dict[str, Any]:
 def create_chunk_profile(
     *, db_path: str, payload: dict[str, Any], headers: Mapping[str, str], auth: Any | None = None
 ) -> dict[str, Any]:
-    _require_config_write_token(headers, auth)
+    _require_config_write(headers, auth)
     if not isinstance(payload, dict):
         raise RagAdminError("Invalid JSON body")
     name = _norm(payload.get("name"))
@@ -1538,7 +1552,7 @@ def create_chunk_profile(
 def delete_chunk_profile(
     *, db_path: str, profile_id: str, headers: Mapping[str, str], auth: Any | None = None
 ) -> dict[str, Any]:
-    _require_config_write_token(headers, auth)
+    _require_config_write(headers, auth)
     normalized_profile_id = _norm(profile_id)
     if not normalized_profile_id:
         raise RagAdminError("profile_id is required")
@@ -1560,7 +1574,7 @@ def update_chunk_profile(
     headers: Mapping[str, str],
     auth: Any | None = None,
 ) -> dict[str, Any]:
-    _require_config_write_token(headers, auth)
+    _require_config_write(headers, auth)
     normalized_profile_id = _norm(profile_id)
     if not normalized_profile_id:
         raise RagAdminError("profile_id is required")
@@ -3637,6 +3651,10 @@ def _can_view_kb_diagnostics(auth: Any | None) -> bool:
     return "tasks.run" in getattr(auth, "permissions", frozenset())
 
 
+def _can_manage_kb_catalog(auth: Any | None) -> bool:
+    return auth is None or "catalog.write" in getattr(auth, "permissions", frozenset())
+
+
 def _kb_customer_projection(kb_payload: Mapping[str, Any]) -> dict[str, Any]:
     """Customer-facing KB projection: name/description/category/count only.
 
@@ -3652,6 +3670,23 @@ def _kb_customer_projection(kb_payload: Mapping[str, Any]) -> dict[str, Any]:
         "categories": list(kb_payload.get("categories") or []),
         "file_count": kb_payload.get("file_count", 0),
     }
+
+
+def _kb_catalog_projection(kb_payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Catalog editor projection without build or index diagnostics."""
+    payload = _kb_customer_projection(kb_payload)
+    payload.update(
+        {
+            key: kb_payload.get(key, "")
+            for key in (
+                "kb_mode",
+                "chunk_profile_id",
+                "chunk_profile_name",
+                "embedding_identity_key",
+            )
+        }
+    )
+    return payload
 
 
 def _kb_file_customer_projection(file_payload: Mapping[str, Any]) -> dict[str, Any]:
@@ -3802,7 +3837,7 @@ def list_knowledge_bases(
 def create_knowledge_base(
     *, db_path: str, payload: dict[str, Any], headers: Mapping[str, str], auth: Any | None = None
 ) -> dict[str, Any]:
-    _require_config_write_token(headers, auth)
+    _require_catalog_write(headers, auth)
     if not isinstance(payload, dict):
         raise RagAdminError("Invalid JSON body")
     kb_id = _kb_id(payload.get("kb_id"))
@@ -3933,21 +3968,16 @@ def get_knowledge_base(
         kb = manager.get_kb(kid)
         if not kb:
             raise RagAdminError(f"Knowledge base '{kid}' not found", status_code=404)
+        kb_payload = _decorate_kb_chunk_profile(storage, _serialize_kb(kb))
+        kb_payload["categories"] = manager.get_kb_categories(kid)
         if not _can_view_kb_diagnostics(auth):
-            return {
-                "knowledge_base": _kb_customer_projection(
-                    {
-                        "kb_id": kb.kb_id,
-                        "name": kb.name,
-                        "description": kb.description,
-                        "categories": manager.get_kb_categories(kid),
-                        "file_count": kb.file_count,
-                    }
-                )
-            }
+            projection = (
+                _kb_catalog_projection if _can_manage_kb_catalog(auth) else _kb_customer_projection
+            )
+            return {"knowledge_base": projection(kb_payload)}
         payload = _build_kb_embedding_status(
             storage=storage,
-            kb_payload=_decorate_kb_chunk_profile(storage, _serialize_kb(kb)),
+            kb_payload=kb_payload,
             deep=deep,
         )
         payload = _decorate_kb_agentic_manifest(
@@ -3998,7 +4028,7 @@ def build_agentic_ready_manifest(
     bridge_state: Any,
     auth: Any | None = None,
 ) -> tuple[dict[str, Any], int]:
-    _require_config_write_token(headers, auth)
+    _require_tasks_run(headers, auth)
     kid = _kb_id(kb_id)
     if not isinstance(payload, dict):
         raise RagAdminError("Invalid JSON body")
@@ -5108,7 +5138,7 @@ def update_knowledge_base(
     headers: Mapping[str, str],
     auth: Any | None = None,
 ) -> dict[str, Any]:
-    _require_config_write_token(headers, auth)
+    _require_catalog_write(headers, auth)
     kid = _kb_id(kb_id)
     if not isinstance(payload, dict):
         raise RagAdminError("Invalid JSON body")
@@ -5219,7 +5249,7 @@ def update_knowledge_base(
 def delete_knowledge_base(
     *, db_path: str, kb_id: str, headers: Mapping[str, str], auth: Any | None = None
 ) -> dict[str, Any]:
-    _require_config_write_token(headers, auth)
+    _require_catalog_write(headers, auth)
     kid = _kb_id(kb_id)
     _KnowledgeBase, manager, storage = _manager_and_storage(db_path)
     try:
@@ -5352,7 +5382,7 @@ def add_knowledge_base_files(
     headers: Mapping[str, str],
     auth: Any | None = None,
 ) -> dict[str, Any]:
-    _require_config_write_token(headers, auth)
+    _require_catalog_write(headers, auth)
     kid = _kb_id(kb_id)
     if not isinstance(payload, dict):
         raise RagAdminError("Invalid JSON body")
@@ -5416,7 +5446,7 @@ def add_knowledge_base_files(
 def remove_knowledge_base_file(
     *, db_path: str, kb_id: str, file_url: str, headers: Mapping[str, str], auth: Any | None = None
 ) -> dict[str, Any]:
-    _require_config_write_token(headers, auth)
+    _require_catalog_write(headers, auth)
     kid = _kb_id(kb_id)
     normalized_file_url = _norm(file_url)
     if not normalized_file_url:
@@ -5621,7 +5651,7 @@ def set_knowledge_base_categories(
     headers: Mapping[str, str],
     auth: Any | None = None,
 ) -> dict[str, Any]:
-    _require_config_write_token(headers, auth)
+    _require_catalog_write(headers, auth)
     kid = _kb_id(kb_id)
     if not isinstance(payload, dict):
         raise RagAdminError("Invalid JSON body")
@@ -5807,7 +5837,7 @@ def bind_chunk_sets(
     headers: Mapping[str, str],
     auth: Any | None = None,
 ) -> dict[str, Any]:
-    _require_config_write_token(headers, auth)
+    _require_catalog_write(headers, auth)
     kid = _kb_id(kb_id)
     if not isinstance(payload, dict):
         raise RagAdminError("Invalid JSON body")
@@ -5917,7 +5947,7 @@ def create_index_task(
     bridge_state: Any,
     auth: Any | None = None,
 ) -> tuple[dict[str, Any], int]:
-    _require_config_write_token(headers, auth)
+    _require_tasks_run(headers, auth)
     kid = _kb_id(kb_id)
     if not isinstance(payload, dict):
         raise RagAdminError("Invalid JSON body")
@@ -5996,7 +6026,7 @@ def create_index_task(
 def cleanup_chunk_sets(
     *, db_path: str, payload: dict[str, Any], headers: Mapping[str, str], auth: Any | None = None
 ) -> dict[str, Any]:
-    _require_config_write_token(headers, auth)
+    _require_config_write(headers, auth)
     if not isinstance(payload, dict):
         raise RagAdminError("Invalid JSON body")
     older_than_days = parse_int_clamped(

@@ -14,7 +14,7 @@ from .rag_admin import (
     _build_agentic_ready_manifest_core,
     _kb_id,
     _manifest_profile,
-    _require_config_write_token,
+    _require_tasks_run,
     _validate_recorded_ready_publication,
 )
 
@@ -77,7 +77,7 @@ def set_ready_data_automation(
     headers: Mapping[str, str],
     auth: Any | None = None,
 ) -> dict[str, Any]:
-    _require_config_write_token(headers, auth)
+    _require_tasks_run(headers, auth)
     kid = _kb_id(kb_id)
     if not isinstance(payload, dict):
         raise RagAdminError("Invalid JSON body")

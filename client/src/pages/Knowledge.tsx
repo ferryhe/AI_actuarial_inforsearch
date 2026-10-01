@@ -324,7 +324,8 @@ function normalizeCategoryNames(items: unknown): string[] {
 export default function Knowledge() {
   const { t } = useTranslation();
   const { permissions } = useAuth();
-  const canManageKnowledge = permissions.includes("config.write");
+  const canManageCatalog = permissions.includes("catalog.write");
+  const canManageChunkProfiles = permissions.includes("config.write");
   const canRunKnowledgeTasks = permissions.includes("tasks.run");
   const canAskAi = permissions.includes("chat.view") && permissions.includes("chat.query");
   const [, navigate] = useLocation();
@@ -401,10 +402,10 @@ export default function Knowledge() {
     if (showLoading) setLoading(true);
     const request = Promise.all([
       apiGet<Record<string, unknown>>("/api/rag/knowledge-bases").catch(() => null),
-      canRunKnowledgeTasks
+      (canManageCatalog || canRunKnowledgeTasks)
         ? apiGet<Record<string, unknown>>("/api/chunk/profiles").catch(() => null)
         : Promise.resolve(null),
-      canManageKnowledge
+      canManageCatalog
         ? apiGet<Record<string, unknown>>("/api/rag/categories/mapping").catch(() => null)
         : Promise.resolve(null),
       apiGet<Record<string, unknown>>("/api/categories?mode=used").catch(() => null),
@@ -471,7 +472,7 @@ export default function Knowledge() {
       loadDataInFlight.current = null;
     });
     return loadDataInFlight.current;
-  }, [applyReadyDataListManifestEpisode, canAskAi, canManageKnowledge, canRunKnowledgeTasks]);
+  }, [applyReadyDataListManifestEpisode, canAskAi, canManageCatalog, canRunKnowledgeTasks]);
 
   const readyDataListBusy = kbs.some((kb) => (
     isReadyDataAutomationBusy(kb.agentic_ready_manifest)
@@ -572,7 +573,6 @@ export default function Knowledge() {
   const handleCreateKB = async (createAndIndex = false) => {
     if (!kbForm.name.trim()) return;
     if (!kbForm.chunk_profile_id) return;
-    if (!kbForm.embedding_identity_key) return;
     if (kbForm.kb_mode === "category" && kbForm.categories.length === 0) return;
     if (kbForm.kb_mode === "manual" && kbForm.file_urls.length === 0) return;
     const finalKbId = kbForm.kb_id.trim() || generateKbId(kbForm.name);
@@ -863,7 +863,7 @@ export default function Knowledge() {
             {t("knowledge.subtitle")}
           </p>
         </div>
-        {canManageKnowledge && (
+        {canManageCatalog && (
           <button
             type="button"
             onClick={openCreateKB}
@@ -890,7 +890,7 @@ export default function Knowledge() {
       )}
 
       <AnimatePresence>
-        {canManageKnowledge && showCreateKB && (
+        {canManageCatalog && showCreateKB && (
           <motion.div
             initial={{ opacity: 0, y: -8, height: 0 }}
             animate={{ opacity: 1, y: 0, height: "auto" }}
@@ -1198,7 +1198,6 @@ export default function Knowledge() {
                   creating
                   || !kbForm.name.trim()
                   || !kbForm.chunk_profile_id
-                  || !kbForm.embedding_identity_key
                   || (kbForm.kb_mode === "category" && kbForm.categories.length === 0)
                   || (kbForm.kb_mode === "manual" && kbForm.file_urls.length === 0)
                 }
@@ -1208,23 +1207,24 @@ export default function Knowledge() {
                 {creating && <Loader2 className="w-4 h-4 animate-spin" />}
                 {t("knowledge.create")}
               </button>
-              <button
-                type="button"
-                onClick={() => handleCreateKB(true)}
-                disabled={
-                  creating
-                  || !kbForm.name.trim()
-                  || !kbForm.chunk_profile_id
-                  || !kbForm.embedding_identity_key
-                  || (kbForm.kb_mode === "category" && kbForm.categories.length === 0)
-                  || (kbForm.kb_mode === "manual" && kbForm.file_urls.length === 0)
-                }
-                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-violet-600 text-white text-sm font-medium hover:bg-violet-700 transition-colors disabled:opacity-50"
-                data-testid="button-submit-kb-index"
-              >
-                {creating && <Loader2 className="w-4 h-4 animate-spin" />}
-                {t("knowledge.create_and_index")}
-              </button>
+              {canRunKnowledgeTasks && (
+                <button
+                  type="button"
+                  onClick={() => handleCreateKB(true)}
+                  disabled={
+                    creating
+                    || !kbForm.name.trim()
+                    || !kbForm.chunk_profile_id
+                    || (kbForm.kb_mode === "category" && kbForm.categories.length === 0)
+                    || (kbForm.kb_mode === "manual" && kbForm.file_urls.length === 0)
+                  }
+                  className="flex items-center gap-2 px-4 py-2 rounded-lg bg-violet-600 text-white text-sm font-medium hover:bg-violet-700 transition-colors disabled:opacity-50"
+                  data-testid="button-submit-kb-index"
+                >
+                  {creating && <Loader2 className="w-4 h-4 animate-spin" />}
+                  {t("knowledge.create_and_index")}
+                </button>
+              )}
             </div>
           </motion.div>
         )}
@@ -1466,8 +1466,8 @@ export default function Knowledge() {
                     <Sparkles className="w-3.5 h-3.5" />
                     {t("common.ask_ai")}
                   </button>
-                  {canManageKnowledge && <div className="w-px bg-border" />}
-                  {canManageKnowledge && (
+                  {canManageCatalog && <div className="w-px bg-border" />}
+                  {canManageCatalog && (
                     <button
                       onClick={() => setDeleteConfirm(kbId)}
                       className="flex items-center justify-center gap-1.5 px-4 py-2.5 text-xs font-medium text-red-500 hover:bg-red-500/5 transition-colors rounded-br-xl"
@@ -1478,7 +1478,7 @@ export default function Knowledge() {
                   )}
                 </div>
 
-                {canManageKnowledge && (
+                {canManageCatalog && (
                   <ConfirmDeleteModal
                     open={deleteConfirm === kbId}
                     onClose={() => setDeleteConfirm(null)}
@@ -1501,7 +1501,7 @@ export default function Knowledge() {
             <Settings2 className="w-5 h-5 text-muted-foreground" />
             <h2 className="text-lg font-semibold">{t("knowledge.chunk_profiles")}</h2>
           </div>
-          {canManageKnowledge && (
+          {canManageChunkProfiles && (
             <button
               onClick={openCreateProfile}
               className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border text-sm font-medium hover:bg-muted transition-colors"
@@ -1514,7 +1514,7 @@ export default function Knowledge() {
         </div>
 
         <AnimatePresence>
-          {canManageKnowledge && showCreateProfile && (
+          {canManageChunkProfiles && showCreateProfile && (
             <motion.div
               initial={{ opacity: 0, y: -8, height: 0 }}
               animate={{ opacity: 1, y: 0, height: "auto" }}
@@ -1648,7 +1648,7 @@ export default function Knowledge() {
                   <th className="text-right px-4 py-2.5 whitespace-nowrap">{t("knowledge.overlap")}</th>
                   <th className="text-left px-4 py-2.5 whitespace-nowrap">{t("knowledge.splitter")}</th>
                   <th className="text-left px-4 py-2.5 whitespace-nowrap">{t("knowledge.tokenizer")}</th>
-                  {canManageKnowledge && <th className="w-10 px-2 py-2.5" />}
+                  {canManageChunkProfiles && <th className="w-10 px-2 py-2.5" />}
                 </tr>
               </thead>
               <tbody>
@@ -1663,7 +1663,7 @@ export default function Knowledge() {
                     <td className="px-4 py-3 text-right text-muted-foreground tabular-nums">{profile.chunk_overlap}</td>
                     <td className="px-4 py-3 text-muted-foreground whitespace-nowrap">{profile.splitter || "-"}</td>
                     <td className="px-4 py-3 text-muted-foreground font-mono whitespace-nowrap">{profile.tokenizer || "-"}</td>
-                    {canManageKnowledge && (
+                    {canManageChunkProfiles && (
                       <td className="px-2 py-3 text-center">
                         <button
                           onClick={() => profile.profile_id && setDeleteProfileConfirm(profile.profile_id)}
@@ -1682,7 +1682,7 @@ export default function Knowledge() {
           </div>
         )}
 
-        {canManageKnowledge && (
+        {canManageChunkProfiles && (
           <ConfirmDeleteModal
             open={!!deleteProfileConfirm}
             onClose={() => setDeleteProfileConfirm(null)}
@@ -1697,7 +1697,7 @@ export default function Knowledge() {
           />
         )}
 
-        {canManageKnowledge && (
+        {canManageChunkProfiles && (
           <>
             <div className="flex items-center gap-3 mt-4">
               <button

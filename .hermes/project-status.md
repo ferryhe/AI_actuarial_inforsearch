@@ -1,3 +1,37 @@
+# Latest work — Issue #360 Operator Knowledge RBAC alignment
+
+- Issue #360 delivery checkpoint (2026-10-01): implementation commit `d6aaecb` is pushed on
+  `agent/issue-360` in Draft PR #389 (`Closes #360`). The initial exact-head CI run passed all six
+  checks; the 15-minute remote review fetch found no reviews, comments, or unresolved threads.
+  Local quality gate passed (2,307 passed, 10 skipped); fresh cycle-4 Sol/high review and
+  TypeSafe assessment found no acceptance-mapped findings.
+
+- Cycle-2 review fixes: catalog-only users can load Chunk Profile choices and submit a plain KB
+  create without task diagnostics; Create-and-index remains tasks-gated. The four-role matrix covers
+  all 29 in-scope RAG admin/Ready Data endpoints. Chromium enters Knowledge via navigation and
+  opens detail through the list for Operator/Admin. Full quality gate passed: 2,306 passed,
+  10 skipped; Black, isort, and Pylint clean.
+
+- Review-fix 1: `Create and index` is now rendered only with both `catalog.write` and
+  `tasks.run`; plain KB creation remains catalog-only. The executable FastAPI mutation matrix
+  covers 16 catalog/task/config endpoints for guest, registered, operator, and admin. The
+  Chromium role matrix covers all protected Knowledge/KBDetail action controls plus the
+  catalog-only edge. Focused suite: 73 passed. Full quality gate: 2,305 passed, 10 skipped;
+  Black, isort, and Pylint have zero violations. No commit, push, or PR was created.
+
+- Updated: 2026-10-01 UTC. Repository: `AI_actuarial_inforsearch`; branch:
+  `agent/issue-360`; baseline `02da9d7cc575a724cb15e7ad2a8b88eee2a851c6`. Only this
+  repository's assigned worktree was used; sibling repositories were not accessed.
+- Knowledge UI and service writes now distinguish `catalog.write` for KB catalog mutations,
+  `tasks.run` for indexing and per-KB Ready Data automation, and `config.write` for Chunk Profile
+  and cleanup writes. The service rejects authenticated callers missing the operation's specific
+  capability while preserving the legacy config-token fallback.
+- Guest/registered/operator/admin mutation coverage and Operator/Admin browser smoke were added.
+  Focused source/RBAC tests pass (46); Chromium smoke, typecheck, lint, production build,
+  dead-code checks, and `git diff --check` pass. Full quality gate passes: 2,303 tests, 10 skipped,
+  24 existing warnings; Black, isort, and Pylint report zero violations.
+- Implementation and verification are complete. Fresh local review and PR creation are pending.
+
 # Latest work — Issue #354 filtered and full catalog exports
 
 - Updated: 2026-09-30 EDT. Repository: `AI_actuarial_inforsearch`; branch: `agent/issue-354`; baseline `d479053008c9257e182760e545bc4c320bb87983`. Only the assigned Issue worktree was edited; sibling repositories were not accessed.
@@ -4481,3 +4515,12 @@
   error-only Pylint. TypeSafe judged all three remote items resolved.
 - Next: push the remote-fix commit, resolve the three review threads, wait for
   the new-head CI checks, then merge if every gate remains green.
+
+### Issue #360 review-fix cycle 3 — 2026-10-01
+
+- Fixed accepted F1: catalog-only KB detail now retains catalog editing state (`kb_mode`, chunk profile id/name, embedding identity key) while guest/registered retain the customer projection and task diagnostics remain `tasks.run`-only. KBDetail loads the authorized profile list for catalog managers and omits unset profile/identity values on a name-only save.
+- Fixed accepted F2: Chromium RBAC smoke asserts the detail embedding mismatch re-embed button is absent for guest/registered/catalog-only and present for Operator/Admin.
+- Added real FastAPI catalog-only create → profile read/detail → name update → chunk binding coverage. Focused tests: 50 passed. Browser smoke: passed for five role shapes.
+- Final `python scripts/quality_gate.py`: PASS, 2,307 passed / 10 skipped; Black, isort, and error-only Pylint passed. Evidence is saved under Issue #360 external evidence as `review-fix-3-*`.
+- At cycle-3 completion the implementation was uncommitted; it was later committed as `d6aaecb`
+  and published in Draft PR #389.
