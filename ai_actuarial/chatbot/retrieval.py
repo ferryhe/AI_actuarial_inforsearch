@@ -122,7 +122,7 @@ class RAGRetriever:
                 self._ensure_kb_embedding_compatibility(kb, current_embedding)
 
             # Generate query embedding
-            logger.info(f"Generating embedding for query: {query[:100]}...")
+            logger.info("Generating embedding for retrieval query")
             query_embedding = self.embedding_generator.generate_single(query)
             query_vector = np.array(query_embedding)
 
@@ -143,8 +143,11 @@ class RAGRetriever:
         except (InvalidKBException, NoResultsException, EmbeddingConfigurationMismatchException):
             raise
         except Exception as e:
-            logger.error(f"Retrieval failed: {e}")
-            raise RetrievalException(f"Retrieval failed: {e}")
+            logger.error(
+                "Retrieval failed error_type=%s classification=retrieval",
+                type(e).__name__,
+            )
+            raise RetrievalException("Knowledge retrieval failed") from e
 
     def _retrieve_from_kb(
         self, kb_id: str, query_vector: np.ndarray, top_k: int, threshold: float
@@ -201,15 +204,26 @@ class RAGRetriever:
         # Retrieve from each KB (get more than top_k per KB for diversity)
         per_kb_k = max(top_k, self.config.min_results_per_kb * len(kb_ids))
         all_results: Dict[str, List[Dict[str, Any]]] = {}
+        successful_reads = 0
+        read_failures: List[Exception] = []
 
         for kb_id in kb_ids:
             try:
                 results = self._retrieve_from_kb(kb_id, query_vector, per_kb_k, threshold)
+                successful_reads += 1
                 if results:
                     all_results[kb_id] = results
             except Exception as e:
-                logger.warning(f"Failed to retrieve from KB '{kb_id}': {e}")
+                read_failures.append(e)
+                logger.warning(
+                    "Knowledge base retrieval failed error_type=%s "
+                    "classification=partial_retrieval",
+                    type(e).__name__,
+                )
                 continue
+
+        if not successful_reads and read_failures:
+            raise RetrievalException("Knowledge retrieval failed") from read_failures[-1]
 
         if not all_results:
             return []

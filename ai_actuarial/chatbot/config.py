@@ -308,13 +308,13 @@ class ChatbotConfig:
             raise ValueError(f"Error loading chatbot configuration from sites.yaml: {exc}") from exc
 
     @classmethod
-    def from_config(
+    def load_unvalidated(
         cls,
         *,
         storage: Any | None = None,
         default_mode: str | None = None,
     ) -> "ChatbotConfig":
-        """Create configuration from sites.yaml with environment fallback."""
+        """Load configuration from sites.yaml without semantic validation."""
         try:
             from config.yaml_config import load_yaml_config
         except (ImportError, ModuleNotFoundError):
@@ -332,6 +332,18 @@ class ChatbotConfig:
 
         if default_mode is not None:
             config.default_mode = default_mode
+        return config
+
+    @classmethod
+    def from_config(
+        cls,
+        *,
+        storage: Any | None = None,
+        default_mode: str | None = None,
+    ) -> "ChatbotConfig":
+        """Create and validate configuration from sites.yaml with environment fallback."""
+        config = cls.load_unvalidated(storage=storage, default_mode=default_mode)
+        config.validate()
         return config
 
     def validate(self) -> bool:
@@ -369,6 +381,19 @@ class ChatbotConfig:
                 "length_recovery_max_tokens must be greater than max_tokens "
                 "when length recovery is enabled, "
                 f"got {self.length_recovery_max_tokens} <= {self.max_tokens}"
+            )
+
+        effective_output_reserve = (
+            max(self.max_tokens, self.length_recovery_max_tokens)
+            if self.length_recovery_enabled
+            else self.max_tokens
+        )
+        if self.max_context_tokens < 1:
+            errors.append(f"max_context_tokens must be positive, got {self.max_context_tokens}")
+        elif self.max_context_tokens <= effective_output_reserve:
+            errors.append(
+                "max_context_tokens must be greater than output reserve, "
+                f"got {self.max_context_tokens} <= {effective_output_reserve}"
             )
 
         reasoning_effort = str(self.length_recovery_reasoning_effort or "").strip().lower()

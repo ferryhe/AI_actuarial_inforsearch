@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 
 from ..deps import AuthContext, require_permissions
+from ..services import chat as chat_service
 from ..services.agentic_rag import (
     AgenticRagError,
     _resolve_ready_output_dir,
@@ -213,7 +214,7 @@ def api_agentic_rag_chat(
         try:
             _resolve_ready_output_dir(db_path=_db_path(request), payload=payload)
         except AgenticRagError as exc:
-            raise ChatApiError(exc.message, status_code=503) from exc
+            raise chat_service._agentic_unavailable_error() from exc
         result, session_update = query_chat(
             db_path=_db_path(request),
             request=request,
@@ -226,4 +227,7 @@ def api_agentic_rag_chat(
         response.headers["Link"] = '</api/chat/query>; rel="successor-version"'
         return result
     except (AgenticRagError, ChatApiError) as exc:
-        return _error_response(exc)
+        error_response = _error_response(exc)
+        if isinstance(exc, ChatApiError):
+            apply_session_update(error_response, request, exc.session_update)
+        return error_response

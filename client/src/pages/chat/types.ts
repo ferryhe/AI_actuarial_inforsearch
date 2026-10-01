@@ -62,6 +62,19 @@ export interface Message {
   metadata?: Record<string, unknown> & {
     retrieved_blocks?: RetrievedBlock[] | string;
     tool_trace?: AgenticToolTraceEntry[] | string;
+    status?: "failed" | string;
+    error_code?: string;
+    retryable?: boolean;
+    retry_request?: {
+      mode?: ChatMode;
+      rag_mode?: RagMode;
+      kb_ids?: string[];
+      document_sources?: Array<{
+        file_url?: string;
+        filename?: string;
+        title?: string;
+      }>;
+    };
   };
 }
 
@@ -123,6 +136,8 @@ export interface SendMessageOptions {
   document?: AvailableDocument;
   documents?: AvailableDocument[];
   modeOverride?: ChatMode;
+  kbIds?: string[];
+  ragModeOverride?: RagMode;
 }
 
 export interface ChatRouteState {

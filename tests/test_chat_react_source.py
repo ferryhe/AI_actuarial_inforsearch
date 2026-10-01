@@ -168,7 +168,7 @@ def test_chat_supports_agentic_rag_mode_and_endpoint_contract():
     assert 'const [ragMode, setRagMode] = useState<RagMode>("standard")' in src
     assert "manifest_profile?: string" in src
     assert "agentic_ready_manifest?" in src
-    assert 'ragMode === "agentic" && selectedKbs.length === 0' in src
+    assert 'requestRagMode === "agentic" && requestKbIds.length === 0' in src
     assert 't("chat.agentic_requires_kb")' in src
     assert '"/api/chat/query"' in src
     assert "conversation_id: activeConvId" in src
@@ -178,9 +178,9 @@ def test_chat_supports_agentic_rag_mode_and_endpoint_contract():
     assert "manifest_profile: agenticProfile" not in src
     assert "profile: agenticProfile" not in src
     assert "isChatKnowledgeBaseAvailable" in src
-    assert "selectedKbs.length !== 1" in src
+    assert "requestKbIds.length !== 1" in src
     assert 't("chat.agentic_requires_ready_kb")' not in src
-    assert 'ragMode === "agentic" && documentInputs.length === 0' in src
+    assert 'requestRagMode === "agentic" && documentInputs.length === 0' in src
     assert 'if (ragMode === "agentic")' in src
     assert "prev.includes(id) ? [] : [id]" in src
     assert "prev.filter((kbId) => isChatKnowledgeBaseAvailable" in src

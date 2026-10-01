@@ -125,7 +125,7 @@ class QueryRouter:
         if not available_kbs:
             raise InvalidKBException("No knowledge bases available")
 
-        logger.info(f"Selecting KB for query: {query[:100]}...")
+        logger.info("Selecting KB query_length=%s", len(query))
 
         # Extract query features
         keywords = self._extract_keywords(query)
@@ -133,8 +133,10 @@ class QueryRouter:
         categories = self._classify_categories(query)
 
         logger.debug(
-            f"Query features: keywords={keywords[:5]}, "
-            f"entities={entities[:5]}, categories={categories}"
+            "Query features keyword_count=%s entity_count=%s category_count=%s",
+            len(keywords),
+            len(entities),
+            len(categories),
         )
 
         # Score each KB

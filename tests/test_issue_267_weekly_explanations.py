@@ -354,7 +354,10 @@ def test_default_generator_enforces_timeout_and_one_sdk_transport_attempt(
     storage = Storage(str(tmp_path / "index.db"))
     try:
         generator = weekly_explanations.ChatRuntimeWeeklyExplanationGenerator(storage)
-        with pytest.raises(LLMException, match="API error"):
+        with pytest.raises(
+            LLMException,
+            match=r"^The AI provider is temporarily unavailable\.$",
+        ):
             generator.generate(
                 [{"role": "user", "content": "bounded mock request"}],
                 timeout_seconds=0.1,

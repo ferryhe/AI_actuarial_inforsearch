@@ -576,6 +576,12 @@ def _install_guest_chat_fakes(
     retrieved_chunks: list[dict[str, object]] | None = None,
     generated_chunks: list[list[dict[str, object]]] | None = None,
     llm_client_class=None,
+    retrieval_error: str | None = None,
+    retrieval_error_once: bool = False,
+    config_override=None,
+    exceptions_override=None,
+    retriever_class=None,
+    patch_user_resolution: bool = True,
 ) -> None:
     import ai_actuarial.api.services.chat as chat_service
 
@@ -584,9 +590,10 @@ def _install_guest_chat_fakes(
         "AI_CHAT_QUOTA",
         {**chat_service.AI_CHAT_QUOTA, "anonymous": 2, "guest": 2},
     )
-    monkeypatch.setattr(
-        chat_service, "_resolve_chat_user", lambda request, auth: ("guest:test", None)
-    )
+    if patch_user_resolution:
+        monkeypatch.setattr(
+            chat_service, "_resolve_chat_user", lambda request, auth: ("guest:test", None)
+        )
 
     class FakeConversationManager:
         def __init__(self, storage, config):
@@ -668,11 +675,19 @@ def _install_guest_chat_fakes(
         def get_context(self, conversation_id: str):
             return []
 
+    class FakeRetrievalException(Exception):
+        pass
+
     class FakeRetriever:
+        calls = 0
+
         def __init__(self, storage, config):
             pass
 
         def retrieve(self, query, kb_ids):
+            type(self).calls += 1
+            if retrieval_error is not None and (not retrieval_error_once or type(self).calls == 1):
+                raise FakeRetrievalException(retrieval_error)
             if retrieved_chunks is not None:
                 return retrieved_chunks
             selected_kb_id = kb_ids[0] if isinstance(kb_ids, list) and kb_ids else "chat-kb-b"
@@ -712,6 +727,8 @@ def _install_guest_chat_fakes(
         class ChatbotConfig:
             @staticmethod
             def from_config(storage=None, default_mode="expert"):
+                if config_override is not None:
+                    return config_override
                 return SimpleNamespace(
                     available_modes=["expert"], similarity_threshold=0.35, model="fake-chat-model"
                 )
@@ -723,14 +740,25 @@ def _install_guest_chat_fakes(
         class EmbeddingConfigurationMismatchException(Exception):
             pass
 
+        class InvalidKBException(Exception):
+            pass
+
+        class LLMException(Exception):
+            pass
+
+        class ConversationException(Exception):
+            pass
+
+        RetrievalException = FakeRetrievalException
+
     monkeypatch.setattr(
         chat_service,
         "_full_chat_modules",
         lambda: {
             "config": FakeConfigModule,
             "conversation": SimpleNamespace(ConversationManager=FakeConversationManager),
-            "exceptions": FakeExceptionsModule,
-            "retrieval": SimpleNamespace(RAGRetriever=FakeRetriever),
+            "exceptions": exceptions_override or FakeExceptionsModule,
+            "retrieval": SimpleNamespace(RAGRetriever=retriever_class or FakeRetriever),
             "llm": SimpleNamespace(LLMClient=llm_client_class or FakeLLMClient),
             "router": SimpleNamespace(QueryRouter=FakeQueryRouter),
         },
@@ -751,6 +779,571 @@ def test_visitor_chat_query_allows_selected_public_kb(tmp_path: Path, monkeypatc
     payload = response.json()["data"]
     assert payload["conversation_id"] == "conv_guest_query"
     assert payload["citations"][0]["kb_id"] == "chat-kb-b"
+
+
+def test_fastapi_standard_retrieval_failure_has_stable_failed_turn_contract(
+    tmp_path: Path, monkeypatch, caplog
+) -> None:
+    client, _app, _seed = _build_test_client(tmp_path, monkeypatch)
+    raw_detail = "SENSITIVE-UNREADABLE-INDEX-PATH-347"
+    _install_guest_chat_fakes(monkeypatch, retrieval_error=raw_detail)
+
+    response = client.post(
+        "/api/chat/query",
+        json={"message": "Find indexed evidence", "kb_ids": ["chat-kb-a"], "mode": "expert"},
+    )
+
+    assert response.status_code == 502, response.text
+    payload = response.json()
+    assert payload["code"] == "CHAT_RETRIEVAL_FAILED"
+    assert payload["retryable"] is True
+    assert payload["data"]["conversation_id"] == "conv_guest_query"
+    assert payload["data"]["message_id"] == "msg_user"
+    assert payload["conversation_id"] == "conv_guest_query"
+    assert payload["message_id"] == "msg_user"
+    assert raw_detail not in response.text
+    assert raw_detail not in caplog.text
+
+    storage = Storage(str(tmp_path / "index.db"))
+    try:
+        rows = storage._conn.execute(
+            "SELECT role, metadata FROM messages WHERE conversation_id = ? ORDER BY created_at",
+            ("conv_guest_query",),
+        ).fetchall()
+    finally:
+        storage.close()
+
+    assert len(rows) == 1
+    assert rows[0][0] == "user"
+    metadata = json.loads(rows[0][1])
+    assert metadata["status"] == "failed"
+    assert metadata["error_code"] == "CHAT_RETRIEVAL_FAILED"
+    assert metadata["retryable"] is True
+
+
+def test_fastapi_all_multi_kb_read_failures_are_retrieval_failure_not_no_results(
+    tmp_path: Path, monkeypatch, caplog
+) -> None:
+    from ai_actuarial.chatbot import exceptions as chatbot_exceptions
+    from ai_actuarial.chatbot.retrieval import RAGRetriever
+
+    raw_error = "SENSITIVE-MULTI-KB-READ-ERROR-347"
+
+    class AllReadFailuresRetriever(RAGRetriever):
+        def __init__(self, storage, config):
+            self.storage = storage
+            self.config = config
+            self.last_effective_threshold = None
+            kb = lambda kb_id: SimpleNamespace(kb_id=kb_id, name="Safe KB")
+            self.kb_manager = SimpleNamespace(
+                get_kb=lambda kb_id: kb(kb_id),
+                list_kbs=lambda: [],
+            )
+            self.embedding_generator = SimpleNamespace(generate_single=lambda _query: [0.0])
+
+        def get_current_embedding_metadata(self):
+            return {"provider": "test", "model": "test", "dimension": 1}
+
+        def _ensure_kb_embedding_compatibility(self, _kb, _metadata):
+            return None
+
+        def _retrieve_from_kb(self, kb_id, query_vector, top_k, threshold):
+            raise OSError(f"{raw_error}:{kb_id}")
+
+    config = SimpleNamespace(
+        available_modes=["expert"],
+        similarity_threshold=0.35,
+        model="fake-chat-model",
+        top_k=5,
+        min_results_per_kb=1,
+    )
+    client, _app, _seed = _build_test_client(tmp_path, monkeypatch)
+    _install_guest_chat_fakes(
+        monkeypatch,
+        config_override=config,
+        exceptions_override=chatbot_exceptions,
+        retriever_class=AllReadFailuresRetriever,
+    )
+
+    response = client.post(
+        "/api/chat/query",
+        json={
+            "message": "Read both indexes",
+            "kb_ids": ["chat-kb-a", "chat-kb-b"],
+            "mode": "expert",
+        },
+    )
+
+    assert response.status_code == 502, response.text
+    payload = response.json()
+    assert payload["code"] == "CHAT_RETRIEVAL_FAILED"
+    assert payload["retryable"] is True
+    assert raw_error not in response.text
+    assert raw_error not in caplog.text
+    assert "chat-kb-a" not in caplog.text
+    assert "chat-kb-b" not in caplog.text
+
+    storage = Storage(str(tmp_path / "index.db"))
+    try:
+        rows = storage._conn.execute(
+            "SELECT role, metadata FROM messages WHERE conversation_id = ? ORDER BY created_at",
+            (payload["data"]["conversation_id"],),
+        ).fetchall()
+    finally:
+        storage.close()
+
+    assert len(rows) == 1
+    assert rows[0][0] == "user"
+    metadata = json.loads(rows[0][1])
+    assert metadata["status"] == "failed"
+    assert metadata["error_code"] == "CHAT_RETRIEVAL_FAILED"
+
+
+def test_fastapi_deleted_selected_kb_is_safe_nonretryable_failed_turn(
+    tmp_path: Path, monkeypatch, caplog
+) -> None:
+    from ai_actuarial.chatbot import exceptions as chatbot_exceptions
+
+    raw_error = "SENSITIVE-DELETED-KB-DETAIL-347"
+
+    class DeletedKBRetriever:
+        last_effective_threshold = 0.35
+
+        def __init__(self, storage, config):
+            pass
+
+        def retrieve(self, query, kb_ids):
+            raise chatbot_exceptions.InvalidKBException(raw_error)
+
+    client, _app, _seed = _build_test_client(tmp_path, monkeypatch)
+    _install_guest_chat_fakes(
+        monkeypatch,
+        exceptions_override=chatbot_exceptions,
+        retriever_class=DeletedKBRetriever,
+    )
+
+    response = client.post(
+        "/api/chat/query",
+        json={"message": "Use my old selection", "kb_ids": ["chat-kb-a"], "mode": "expert"},
+    )
+
+    assert response.status_code == 409, response.text
+    payload = response.json()
+    assert payload["code"] == "CHAT_KB_UNAVAILABLE"
+    assert payload["retryable"] is False
+    assert payload["data"]["conversation_id"]
+    assert payload["data"]["message_id"]
+    assert payload["conversation_id"] == payload["data"]["conversation_id"]
+    assert payload["message_id"] == payload["data"]["message_id"]
+    assert raw_error not in response.text
+    assert raw_error not in caplog.text
+
+    storage = Storage(str(tmp_path / "index.db"))
+    try:
+        rows = storage._conn.execute(
+            "SELECT role, metadata FROM messages WHERE conversation_id = ? ORDER BY created_at",
+            (payload["data"]["conversation_id"],),
+        ).fetchall()
+    finally:
+        storage.close()
+
+    assert len(rows) == 1
+    assert rows[0][0] == "user"
+    metadata = json.loads(rows[0][1])
+    assert metadata["status"] == "failed"
+    assert metadata["error_code"] == "CHAT_KB_UNAVAILABLE"
+    assert metadata["retryable"] is False
+
+
+def test_anonymous_structured_failure_sets_session_for_same_conversation_retry(
+    tmp_path: Path, monkeypatch
+) -> None:
+    client, _app, _seed = _build_test_client(tmp_path, monkeypatch)
+    client.headers.pop("X-Auth-Token", None)
+    client.cookies.clear()
+    _install_guest_chat_fakes(
+        monkeypatch,
+        retrieval_error="temporary unreadable index",
+        retrieval_error_once=True,
+        patch_user_resolution=False,
+    )
+
+    first = client.post(
+        "/api/chat/query",
+        json={"message": "Find evidence", "kb_ids": ["chat-kb-a"], "mode": "expert"},
+    )
+
+    assert first.status_code == 502, first.text
+    first_payload = first.json()
+    assert first_payload["code"] == "CHAT_RETRIEVAL_FAILED"
+    assert "session=" in first.headers.get("set-cookie", "")
+    conversation_id = first_payload["data"]["conversation_id"]
+
+    retried = client.post(
+        "/api/chat/query",
+        json={
+            "conversation_id": conversation_id,
+            "message": "Find evidence",
+            "kb_ids": ["chat-kb-a"],
+            "mode": "expert",
+        },
+    )
+
+    assert retried.status_code == 200, retried.text
+    assert retried.json()["data"]["conversation_id"] == conversation_id
+
+
+def test_fastapi_injected_invalid_config_is_revalidated_and_persisted_safely(
+    tmp_path: Path, monkeypatch, caplog
+) -> None:
+    from ai_actuarial.chatbot import exceptions as chatbot_exceptions
+    from ai_actuarial.chatbot.config import ChatbotConfig
+    from ai_actuarial.chatbot.llm import LLMClient
+
+    client, _app, _seed = _build_test_client(tmp_path, monkeypatch)
+    config = ChatbotConfig(
+        api_key="SENSITIVE-API-KEY-347",
+        model="gpt-4",
+        temperature=347.125,
+        length_recovery_enabled=False,
+        _apply_env_defaults=False,
+    )
+    provider_calls: list[dict[str, object]] = []
+
+    def provider_factory(**kwargs):
+        provider_calls.append(kwargs)
+        raise AssertionError("provider must not be called")
+
+    monkeypatch.setattr("ai_actuarial.chatbot.llm.openai.OpenAI", provider_factory)
+    _install_guest_chat_fakes(
+        monkeypatch,
+        llm_client_class=LLMClient,
+        config_override=config,
+        exceptions_override=chatbot_exceptions,
+    )
+
+    response = client.post(
+        "/api/chat/query",
+        json={"message": "Use configured chat", "kb_ids": ["chat-kb-a"], "mode": "expert"},
+    )
+
+    assert response.status_code == 502, response.text
+    payload = response.json()
+    assert payload["code"] == "CHAT_PROVIDER_AUTH"
+    assert payload["retryable"] is False
+    assert payload["data"]["conversation_id"] == "conv_guest_query"
+    assert payload["data"]["message_id"] == "msg_user"
+    assert provider_calls == []
+    assert "347.125" not in response.text
+    assert "SENSITIVE-API-KEY-347" not in response.text
+    assert "347.125" not in caplog.text
+    assert "SENSITIVE-API-KEY-347" not in caplog.text
+
+    storage = Storage(str(tmp_path / "index.db"))
+    try:
+        rows = storage._conn.execute(
+            "SELECT role, metadata FROM messages WHERE conversation_id = ? ORDER BY created_at",
+            ("conv_guest_query",),
+        ).fetchall()
+    finally:
+        storage.close()
+
+    assert len(rows) == 1
+    assert rows[0][0] == "user"
+    metadata = json.loads(rows[0][1])
+    assert metadata["status"] == "failed"
+    assert metadata["error_code"] == "CHAT_PROVIDER_AUTH"
+    assert metadata["retryable"] is False
+
+
+def test_fastapi_chatbot_config_parse_failure_persists_safe_failed_turn_and_history(
+    tmp_path: Path, monkeypatch, caplog
+) -> None:
+    from config.yaml_config import invalidate_config_cache
+
+    client, _app, _seed = _build_test_client(tmp_path, monkeypatch)
+    config_path = tmp_path / "sites.yaml"
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    raw_bad_value = "SENSITIVE-BAD-MAX-TOKENS-347"
+    config["ai_config"] = {
+        "chatbot": {
+            "provider": "openai",
+            "model": "gpt-4",
+            "max_tokens": raw_bad_value,
+        }
+    }
+    config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
+    invalidate_config_cache()
+
+    response = client.post(
+        "/api/chat/query",
+        json={"message": "Use the configured provider", "kb_ids": ["chat-kb-a"]},
+    )
+
+    assert response.status_code == 502, response.text
+    payload = response.json()
+    assert payload["code"] == "CHAT_PROVIDER_AUTH"
+    assert payload["retryable"] is False
+    conversation_id = payload["data"]["conversation_id"]
+    message_id = payload["data"]["message_id"]
+    assert raw_bad_value not in response.text
+    assert raw_bad_value not in caplog.text
+
+    storage = Storage(str(tmp_path / "index.db"))
+    try:
+        rows = storage._conn.execute(
+            "SELECT message_id, role, metadata FROM messages WHERE conversation_id = ?",
+            (conversation_id,),
+        ).fetchall()
+    finally:
+        storage.close()
+
+    assert len(rows) == 1
+    assert rows[0][0:2] == (message_id, "user")
+    assert json.loads(rows[0][2]) == {
+        "status": "failed",
+        "retry_request": {
+            "mode": "expert",
+            "rag_mode": "standard",
+            "kb_ids": ["chat-kb-a"],
+            "document_sources": [],
+        },
+        "error_code": "CHAT_PROVIDER_AUTH",
+        "retryable": False,
+    }
+    detail = client.get(f"/api/chat/conversations/{conversation_id}")
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["data"]["messages"][0]["metadata"]["status"] == "failed"
+
+
+def test_fastapi_invalid_context_budget_persists_auth_failure_for_short_document(
+    tmp_path: Path, monkeypatch, caplog
+) -> None:
+    from config.yaml_config import invalidate_config_cache
+
+    client, _app, _seed = _build_test_client(tmp_path, monkeypatch)
+    config_path = tmp_path / "sites.yaml"
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    config["ai_config"] = {
+        "chatbot": {
+            "provider": "openai",
+            "model": "gpt-4",
+            "max_tokens": 1000,
+            "max_context_tokens": 4000,
+            "length_recovery_enabled": True,
+            "length_recovery_max_tokens": 4000,
+        }
+    }
+    config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
+    invalidate_config_cache()
+
+    response = client.post(
+        "/api/chat/query",
+        json={
+            "message": "Explain this short file",
+            "document_content": "Short document.",
+            "document_filename": "short.md",
+        },
+    )
+
+    assert response.status_code == 502, response.text
+    payload = response.json()
+    assert payload["code"] == "CHAT_PROVIDER_AUTH"
+    assert payload["retryable"] is False
+    assert payload["code"] != "CHAT_CONTEXT_TOO_LARGE"
+    conversation_id = payload["data"]["conversation_id"]
+    message_id = payload["data"]["message_id"]
+    assert "4000" not in response.text
+    assert "4000" not in caplog.text
+
+    storage = Storage(str(tmp_path / "index.db"))
+    try:
+        row = storage._conn.execute(
+            "SELECT message_id, role, metadata FROM messages WHERE conversation_id = ?",
+            (conversation_id,),
+        ).fetchone()
+    finally:
+        storage.close()
+
+    assert row[0:2] == (message_id, "user")
+    metadata = json.loads(row[2])
+    assert metadata["status"] == "failed"
+    assert metadata["error_code"] == "CHAT_PROVIDER_AUTH"
+    assert metadata["retryable"] is False
+
+
+def test_fastapi_missing_provider_key_persists_guest_failed_turn_and_session(
+    tmp_path: Path, monkeypatch, caplog
+) -> None:
+    from config.yaml_config import invalidate_config_cache
+
+    client, _app, _seed = _build_test_client(tmp_path, monkeypatch)
+    client.headers.pop("X-Auth-Token", None)
+    client.cookies.clear()
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    config_path = tmp_path / "sites.yaml"
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    config["ai_config"] = {
+        "chatbot": {
+            "provider": "openai",
+            "model": "gpt-4",
+            "max_tokens": 1000,
+            "max_context_tokens": 8000,
+        }
+    }
+    config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
+    invalidate_config_cache()
+
+    response = client.post(
+        "/api/chat/query",
+        json={"message": "Use the configured provider", "kb_ids": ["chat-kb-a"]},
+    )
+
+    assert response.status_code == 502, response.text
+    payload = response.json()
+    assert payload["code"] == "CHAT_PROVIDER_AUTH"
+    assert payload["retryable"] is False
+    assert "session=" in response.headers.get("set-cookie", "")
+    conversation_id = payload["data"]["conversation_id"]
+    message_id = payload["data"]["message_id"]
+    assert "OPENAI_API_KEY" not in response.text
+    assert "OPENAI_API_KEY" not in caplog.text
+
+    storage = Storage(str(tmp_path / "index.db"))
+    try:
+        row = storage._conn.execute(
+            "SELECT message_id, role, metadata FROM messages WHERE conversation_id = ?",
+            (conversation_id,),
+        ).fetchone()
+    finally:
+        storage.close()
+    assert row[0:2] == (message_id, "user")
+    metadata = json.loads(row[2])
+    assert metadata["status"] == "failed"
+    assert metadata["error_code"] == "CHAT_PROVIDER_AUTH"
+    assert metadata["retryable"] is False
+
+    retried = client.post(
+        "/api/chat/query",
+        json={
+            "conversation_id": conversation_id,
+            "message": "Use the configured provider",
+            "kb_ids": ["chat-kb-a"],
+        },
+    )
+    assert retried.status_code == 502, retried.text
+    assert retried.json()["data"]["conversation_id"] == conversation_id
+
+
+def test_fastapi_missing_authoritative_config_persists_guest_failed_turn_safely(
+    tmp_path: Path, monkeypatch, caplog
+) -> None:
+    from config.yaml_config import invalidate_config_cache
+
+    client, _app, _seed = _build_test_client(tmp_path, monkeypatch)
+    client.headers.pop("X-Auth-Token", None)
+    client.cookies.clear()
+    missing_config = tmp_path / "SENSITIVE-MISSING-SITES-347.yaml"
+    monkeypatch.setenv("FASTAPI_ENV", "production")
+    monkeypatch.setenv("CONFIG_PATH", str(missing_config))
+    invalidate_config_cache()
+
+    response = client.post(
+        "/api/chat/query",
+        json={"message": "Use production configuration", "kb_ids": ["chat-kb-a"]},
+    )
+
+    assert response.status_code == 502, response.text
+    payload = response.json()
+    assert payload["code"] == "CHAT_PROVIDER_AUTH"
+    assert payload["retryable"] is False
+    assert "session=" in response.headers.get("set-cookie", "")
+    conversation_id = payload["data"]["conversation_id"]
+    message_id = payload["data"]["message_id"]
+    assert str(missing_config) not in response.text
+    assert str(missing_config) not in caplog.text
+    assert "Authoritative runtime configuration" not in response.text
+
+    storage = Storage(str(tmp_path / "index.db"))
+    try:
+        rows = storage._conn.execute(
+            "SELECT message_id, role, metadata FROM messages WHERE conversation_id = ?",
+            (conversation_id,),
+        ).fetchall()
+    finally:
+        storage.close()
+    assert len(rows) == 1
+    assert rows[0][0:2] == (message_id, "user")
+    metadata = json.loads(rows[0][2])
+    assert metadata["status"] == "failed"
+    assert metadata["error_code"] == "CHAT_PROVIDER_AUTH"
+    assert metadata["retryable"] is False
+
+    retried = client.post(
+        "/api/chat/query",
+        json={
+            "conversation_id": conversation_id,
+            "message": "Use production configuration",
+            "kb_ids": ["chat-kb-a"],
+        },
+    )
+    assert retried.status_code == 502, retried.text
+    assert retried.json()["data"]["conversation_id"] == conversation_id
+
+
+def test_fastapi_agentic_failure_sets_guest_session_and_failed_identity(
+    tmp_path: Path, monkeypatch, caplog
+) -> None:
+    from ai_actuarial.api.services import agentic_rag as agentic_service
+    from ai_actuarial.api.services import chat as chat_service
+
+    raw_detail = "SENSITIVE-FASTAPI-READY-DATA-347"
+    client, _app, _seed = _build_test_client(tmp_path, monkeypatch)
+    client.headers.pop("X-Auth-Token", None)
+    client.cookies.clear()
+
+    monkeypatch.setattr(
+        chat_service, "_agentic_source_fallback_reason", lambda storage, **kwargs: None
+    )
+
+    def fail_agentic(**kwargs):
+        raise agentic_service.AgenticRagError(raw_detail, status_code=404)
+
+    monkeypatch.setattr(agentic_service, "chat_agentic_rag", fail_agentic)
+
+    response = client.post(
+        "/api/chat/query",
+        json={
+            "message": "Use current ready data",
+            "kb_ids": ["chat-kb-a"],
+            "rag_mode": "agentic",
+        },
+    )
+
+    assert response.status_code == 503, response.text
+    payload = response.json()
+    assert payload["code"] == "CHAT_AGENTIC_UNAVAILABLE"
+    assert payload["retryable"] is True
+    assert payload["data"]["conversation_id"]
+    assert payload["data"]["message_id"]
+    assert "session=" in response.headers.get("set-cookie", "")
+    assert raw_detail not in response.text
+    assert raw_detail not in caplog.text
+
+    storage = Storage(str(tmp_path / "index.db"))
+    try:
+        rows = storage._conn.execute(
+            "SELECT role, metadata FROM messages WHERE conversation_id = ? ORDER BY created_at",
+            (payload["data"]["conversation_id"],),
+        ).fetchall()
+    finally:
+        storage.close()
+    assert len(rows) == 1
+    assert rows[0][0] == "user"
+    metadata = json.loads(rows[0][1])
+    assert metadata["status"] == "failed"
+    assert metadata["error_code"] == "CHAT_AGENTIC_UNAVAILABLE"
+    assert metadata["retryable"] is True
 
 
 def test_visitor_chat_query_allows_direct_document_context(tmp_path: Path, monkeypatch) -> None:
@@ -2053,7 +2646,8 @@ def test_fastapi_chat_query_maps_llm_exceptions_to_api_error(tmp_path: Path, mon
         json={"message": "What is Solvency II?", "kb_ids": ["chat-kb-a"], "mode": "expert"},
     )
     assert response.status_code == 502, response.text
-    assert response.json()["error"] == "LLM generation failed"
+    assert response.json()["code"] == "CHAT_PROVIDER_UPSTREAM"
+    assert response.json()["error"] == "The AI provider is temporarily unavailable. Please retry."
 
     app.state.expose_error_details = True
     detailed = client.post(
@@ -2061,7 +2655,8 @@ def test_fastapi_chat_query_maps_llm_exceptions_to_api_error(tmp_path: Path, mon
         json={"message": "What is Solvency II?", "kb_ids": ["chat-kb-a"], "mode": "expert"},
     )
     assert detailed.status_code == 502, detailed.text
-    assert detailed.json()["error"] == "LLM generation failed: provider down"
+    assert detailed.json()["code"] == "CHAT_PROVIDER_UPSTREAM"
+    assert detailed.json()["error"] == "The AI provider is temporarily unavailable. Please retry."
 
 
 def test_fastapi_chat_query_maps_embedding_mismatch_to_409_payload(
@@ -2173,10 +2768,14 @@ def test_fastapi_chat_query_maps_embedding_mismatch_to_409_payload(
     assert response.status_code == 409, response.text
     payload = response.json()
     assert payload["code"] == "KB_EMBEDDING_MISMATCH"
+    assert payload["retryable"] is False
+    assert "Reindex the knowledge base" in payload["error"]
     assert payload["data"]["kb_id"] == "chat-kb-a"
     assert payload["data"]["current_embedding"]["provider"] == "mistral"
     assert payload["data"]["index_embedding"]["provider"] == "openai"
     assert payload["data"]["needs_reindex"] is True
+    assert payload["data"]["conversation_id"] == "conv_embedding_mismatch"
+    assert payload["data"]["message_id"] == "msg_user"
 
 
 def test_apply_session_update_uses_fastapi_cookie_serializer() -> None:

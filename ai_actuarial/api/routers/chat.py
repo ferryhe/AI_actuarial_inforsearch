@@ -183,4 +183,6 @@ def api_chat_query(
         apply_session_update(response, request, session_update)
         return result
     except ChatApiError as exc:
-        return _error_response(exc)
+        error_response = _error_response(exc)
+        apply_session_update(error_response, request, exc.session_update)
+        return error_response

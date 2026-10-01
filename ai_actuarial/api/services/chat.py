@@ -7,7 +7,8 @@ import sqlite3
 import time
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Mapping
+from types import SimpleNamespace
+from typing import Any, Callable, Mapping
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
 from itsdangerous import URLSafeSerializer
@@ -15,6 +16,7 @@ from itsdangerous import URLSafeSerializer
 from ai_actuarial.ai_runtime import infer_embedding_dimension, resolve_ai_function_runtime
 from ai_actuarial.api.client_ip import client_ip
 from ai_actuarial.api.deps import AuthContext, _decode_request_sessions
+from ai_actuarial.chatbot.prompts import build_full_prompt
 from ai_actuarial.config import settings
 from ai_actuarial.kb_status import classify_kb_status
 from ai_actuarial.retrieval_indicators import (
@@ -22,6 +24,7 @@ from ai_actuarial.retrieval_indicators import (
     normalize_semantic_relevance,
 )
 from ai_actuarial.shared_auth import AI_CHAT_QUOTA
+from ai_actuarial.shared_runtime import SitesConfigError
 from ai_actuarial.storage import Storage
 
 logger = logging.getLogger(__name__)
@@ -35,6 +38,7 @@ class ChatApiError(Exception):
         self.message = message
         self.status_code = status_code
         self.payload = payload or {"success": False, "error": message}
+        self.session_update: dict[str, Any] | None = None
 
 
 class SessionUpdate(dict):
@@ -1186,6 +1190,7 @@ def _prepare_document_source_chunks(
     max_total_chars: int = MAX_DOCUMENT_CONTEXT_CHARS,
     max_content_chars: int = MAX_DOCUMENT_SOURCE_CONTENT_CHARS,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    has_explicit_sources = bool(document_sources)
     sources = document_sources or [
         {
             "file_url": document_file_url,
@@ -1211,7 +1216,9 @@ def _prepare_document_source_chunks(
         file_url, file_url_omitted = _bounded_document_source_url(source_dict.get("file_url"))
         if file_url_omitted:
             omitted_file_url_sources.append(display_name)
-        raw_content = _normalize_text(source_dict.get("content")) or document_content
+        raw_content = _normalize_text(source_dict.get("content"))
+        if not has_explicit_sources:
+            raw_content = raw_content or document_content
         original_chars += len(raw_content)
 
         remaining_chars = max(0, max_total_chars - used_chars)
@@ -1255,6 +1262,248 @@ def _prepare_document_source_chunks(
     return chunks, context_notice
 
 
+def _estimated_message_tokens(llm_client, messages: list[dict[str, str]], model: str) -> int:
+    count_tokens = getattr(
+        llm_client, "count_tokens", lambda text, _model=None: max(1, len(text) // 4)
+    )
+    return 3 + sum(16 + count_tokens(message.get("content", ""), model) for message in messages)
+
+
+def _call_llm_generate(
+    generate: Callable[[list[dict[str, str]]], str], messages: list[dict[str, str]]
+) -> str:
+    return generate(messages)
+
+
+def _prepare_budgeted_document_chunks(
+    *,
+    llm_client,
+    config,
+    query: str,
+    mode: str,
+    conversation_history: list[dict[str, Any]],
+    document_content: str,
+    document_filename: str,
+    document_file_url: str,
+    document_sources: list[Any],
+    document_title: str = "",
+    max_document_chars: int = MAX_DOCUMENT_CONTEXT_CHARS,
+) -> tuple[list[dict[str, Any]], dict[str, Any], list[dict[str, Any]]]:
+    model = str(getattr(config, "model", "") or "")
+    output_reserve = max(1, int(getattr(config, "max_tokens", 1000)))
+    if bool(getattr(config, "length_recovery_enabled", False)):
+        output_reserve = max(
+            output_reserve,
+            int(getattr(config, "length_recovery_max_tokens", output_reserve)),
+        )
+    input_budget = max(0, int(getattr(config, "max_context_tokens", 8000)) - output_reserve)
+
+    def prepare(
+        limit: int, history: list[dict[str, Any]]
+    ) -> tuple[list[dict[str, Any]], dict[str, Any], int]:
+        candidate_chunks, candidate_notice = _prepare_document_source_chunks(
+            document_content=document_content,
+            document_filename=document_filename,
+            document_file_url=document_file_url,
+            document_sources=document_sources,
+            document_title=document_title,
+            max_total_chars=limit,
+        )
+        messages = build_full_prompt(
+            mode=mode,
+            retrieved_chunks=_chunks_for_llm(candidate_chunks),
+            query=query,
+            conversation_history=history,
+        )
+        return (
+            candidate_chunks,
+            candidate_notice,
+            _estimated_message_tokens(llm_client, messages, model),
+        )
+
+    bounded_history = list(conversation_history)
+    while bounded_history:
+        minimum_chunks, _, minimum_tokens = prepare(1, bounded_history)
+        if minimum_chunks and minimum_tokens <= input_budget:
+            break
+        bounded_history = bounded_history[1:]
+
+    chunks, notice, estimated_tokens = prepare(max_document_chars, bounded_history)
+    if estimated_tokens > input_budget and notice["used_chars"]:
+        low, high = 0, notice["used_chars"]
+        while low < high:
+            midpoint = (low + high + 1) // 2
+            _, _, candidate_tokens = prepare(midpoint, bounded_history)
+            if candidate_tokens <= input_budget:
+                low = midpoint
+            else:
+                high = midpoint - 1
+        chunks, notice, estimated_tokens = prepare(low, bounded_history)
+
+    notice.update(
+        {
+            "active_model": model,
+            "model": model,
+            "estimated_prompt_tokens": estimated_tokens,
+            "output_reserve": output_reserve,
+            "max_context_tokens": int(getattr(config, "max_context_tokens", 8000)),
+        }
+    )
+    return chunks, notice, bounded_history
+
+
+def _turn_metadata(
+    payload: Mapping[str, Any],
+    status: str,
+    *,
+    code: str | None = None,
+    retryable: bool | None = None,
+) -> dict[str, Any]:
+    raw_sources = payload.get("document_sources")
+    sources = raw_sources if isinstance(raw_sources, list) else []
+    if not sources and payload.get("document_file_url"):
+        sources = [payload]
+    document_sources = [
+        {
+            "file_url": _bounded_document_source_url(
+                source.get("file_url") or source.get("document_file_url")
+            )[0],
+            "filename": _bounded_source_text(
+                source.get("filename") or source.get("document_filename")
+            ),
+            "title": _bounded_source_text(source.get("title") or source.get("document_title")),
+        }
+        for source in sources
+        if isinstance(source, Mapping)
+    ]
+    metadata: dict[str, Any] = {
+        "status": status,
+        "retry_request": {
+            "mode": _normalize_text(payload.get("mode") or "expert"),
+            "rag_mode": _normalize_text(payload.get("rag_mode") or "standard"),
+            "kb_ids": (
+                [
+                    _bounded_source_text(value)
+                    for value in payload.get("kb_ids", [])
+                    if isinstance(value, str) and _normalize_text(value)
+                ]
+                if isinstance(payload.get("kb_ids"), list)
+                else []
+            ),
+            "document_sources": document_sources,
+        },
+    }
+    if code:
+        metadata["error_code"] = code
+    if retryable is not None:
+        metadata["retryable"] = retryable
+    return metadata
+
+
+def _mark_turn(storage: Storage, message_id: str | None, metadata: dict[str, Any]) -> None:
+    if not message_id:
+        return
+    storage._conn.execute(
+        "UPDATE messages SET metadata = ? WHERE message_id = ?",
+        (json.dumps(metadata), message_id),
+    )
+    storage._conn.commit()
+
+
+def _retrieval_failure_error() -> ChatApiError:
+    message = (
+        "Knowledge retrieval failed. Retry, or ask an administrator to rebuild "
+        "the knowledge base index."
+    )
+    return ChatApiError(
+        message,
+        status_code=502,
+        payload={
+            "success": False,
+            "code": "CHAT_RETRIEVAL_FAILED",
+            "error": message,
+            "retryable": True,
+            "data": {},
+        },
+    )
+
+
+def _kb_unavailable_error() -> ChatApiError:
+    message = (
+        "The selected knowledge base is no longer available. " "Select another knowledge base."
+    )
+    return ChatApiError(
+        message,
+        status_code=409,
+        payload={
+            "success": False,
+            "code": "CHAT_KB_UNAVAILABLE",
+            "error": message,
+            "retryable": False,
+            "data": {},
+        },
+    )
+
+
+def _conversation_failure_error() -> ChatApiError:
+    message = "Chat could not save the response. Please retry."
+    return ChatApiError(
+        message,
+        status_code=500,
+        payload={
+            "success": False,
+            "code": "CHAT_CONVERSATION_FAILED",
+            "error": message,
+            "retryable": True,
+            "data": {},
+        },
+    )
+
+
+def _provider_configuration_error() -> ChatApiError:
+    message = "The AI provider is not configured correctly. Contact an administrator."
+    return ChatApiError(
+        message,
+        status_code=502,
+        payload={
+            "success": False,
+            "code": "CHAT_PROVIDER_AUTH",
+            "error": message,
+            "retryable": False,
+        },
+    )
+
+
+def _agentic_unavailable_error() -> ChatApiError:
+    message = "Agentic ready data is temporarily unavailable. Retry, or contact an administrator."
+    return ChatApiError(
+        message,
+        status_code=503,
+        payload={
+            "success": False,
+            "code": "CHAT_AGENTIC_UNAVAILABLE",
+            "error": message,
+            "retryable": True,
+            "data": {},
+        },
+    )
+
+
+def _processing_failure_error() -> ChatApiError:
+    message = "Chat processing failed. Please retry."
+    return ChatApiError(
+        message,
+        status_code=500,
+        payload={
+            "success": False,
+            "code": "CHAT_PROCESSING_FAILED",
+            "error": message,
+            "retryable": True,
+            "data": {},
+        },
+    )
+
+
 def query_chat(
     *, db_path: str, request, auth: AuthContext, payload: dict[str, Any]
 ) -> tuple[dict[str, Any], SessionUpdate | None]:
@@ -1291,21 +1540,53 @@ def query_chat(
         raise ChatApiError(
             "Agentic RAG cannot be combined with direct document context", status_code=400
         )
+    direct_document_requested = bool(document_content or document_sources or document_file_url)
+    has_document_content = (
+        all(
+            isinstance(source, Mapping) and _normalize_text(source.get("content"))
+            for source in document_sources
+        )
+        if document_sources
+        else bool(document_content)
+    )
     agentic_kb_id = _selected_agentic_kb_id(kb_ids) if rag_mode == "agentic" else None
 
     modules = _full_chat_modules()
 
     user_id, session_update = _resolve_chat_user(request, auth)
     storage = Storage(db_path)
+    user_message_id: str | None = None
+    exceptions = modules["exceptions"]
     try:
         _enforce_chat_quota(storage=storage, request=request, auth=auth)
-        config = modules["config"].ChatbotConfig.from_config(storage=storage, default_mode=mode)
+        config_error: ValueError | SitesConfigError | None = None
+        config_class = modules["config"].ChatbotConfig
+        load_unvalidated = getattr(config_class, "load_unvalidated", None)
+        try:
+            config = (
+                load_unvalidated(storage=storage, default_mode=mode)
+                if callable(load_unvalidated)
+                else config_class.from_config(storage=storage, default_mode=mode)
+            )
+        except (SitesConfigError, ValueError) as exc:
+            config_error = exc
+            config = SimpleNamespace(
+                available_modes=sorted(VALID_CHAT_MODES),
+                max_messages=20,
+                max_context_tokens=8000,
+            )
+        else:
+            validate_config = getattr(config, "validate", None)
+            if callable(validate_config):
+                try:
+                    validate_config()
+                except ValueError as exc:
+                    config_error = exc
         conversation_manager = modules["conversation"].ConversationManager(storage, config)
-        exceptions = modules["exceptions"]
         requested_profile = _normalize_text(
             payload.get("manifest_profile") or payload.get("profile")
         )
-        if requested_rag_mode == "agentic" and agentic_kb_id:
+        if config_error is None and requested_rag_mode == "agentic" and agentic_kb_id:
             fallback_reason = _agentic_source_fallback_reason(
                 storage,
                 kb_id=agentic_kb_id,
@@ -1346,8 +1627,34 @@ def query_chat(
                 },
             )
 
-        conversation_manager.add_message(conversation_id, "user", message)
+        user_message_id = conversation_manager.add_message(
+            conversation_id,
+            "user",
+            message,
+            metadata=_turn_metadata(payload, "pending"),
+        )
+        if config_error is not None:
+            logger.warning(
+                "Chat provider configuration failure config_error_type=%s",
+                type(config_error).__name__,
+            )
+            raise _provider_configuration_error() from config_error
         conversation_history = conversation_manager.get_context(conversation_id)
+        if direct_document_requested and not has_document_content:
+            raise ChatApiError(
+                "The selected document has no usable Markdown content.",
+                status_code=422,
+                payload={
+                    "success": False,
+                    "code": "CHAT_DOCUMENT_EMPTY",
+                    "error": "The selected document has no usable Markdown content.",
+                    "retryable": True,
+                    "data": {
+                        "conversation_id": conversation_id,
+                        "message_id": user_message_id,
+                    },
+                },
+            )
 
         if rag_mode == "agentic":
             from .agentic_rag import AgenticRagError, chat_agentic_rag
@@ -1366,7 +1673,11 @@ def query_chat(
             try:
                 agentic_response = chat_agentic_rag(db_path=db_path, payload=agentic_payload)
             except AgenticRagError as exc:
-                raise ChatApiError(exc.message, status_code=exc.status_code) from exc
+                logger.warning(
+                    "Agentic ready-data failure agentic_error_type=%s",
+                    type(exc).__name__,
+                )
+                raise _agentic_unavailable_error() from exc
 
             evidence = agentic_response.get("evidence") or agentic_response.get("results") or []
             kb_name = ""
@@ -1438,6 +1749,7 @@ def query_chat(
                 citations=citations,
                 metadata=assistant_metadata,
             )
+            _mark_turn(storage, user_message_id, _turn_metadata(payload, "succeeded"))
             return {
                 "success": True,
                 "data": {
@@ -1486,16 +1798,61 @@ def query_chat(
         no_results = False
         used_threshold = getattr(config, "similarity_threshold", None)
 
-        if document_content:
-            chunks, context_notice = _prepare_document_source_chunks(
+        direct_document = direct_document_requested
+        prompt_history = conversation_history
+        llm_client = None
+        if direct_document:
+            llm_client = modules["llm"].LLMClient(config, storage=storage)
+            budget_sources = [
+                dict(source) for source in document_sources if isinstance(source, Mapping)
+            ] or [
+                {
+                    "content": document_content,
+                    "filename": document_filename,
+                    "title": document_title,
+                    "file_url": document_file_url,
+                }
+            ]
+            _canonicalize_file_references(storage, budget_sources)
+            chunks, context_notice, prompt_history = _prepare_budgeted_document_chunks(
+                llm_client=llm_client,
+                config=config,
+                query=message,
+                mode=mode,
+                conversation_history=prompt_history,
                 document_content=document_content,
                 document_filename=document_filename,
                 document_file_url=document_file_url,
-                document_sources=document_sources,
+                document_sources=budget_sources,
                 document_title=document_title,
             )
+            logger.info(
+                "Direct document prompt budget original_chars=%s used_chars=%s active_model=%s "
+                "estimated_prompt_tokens=%s output_reserve=%s max_context_tokens=%s",
+                context_notice["original_chars"],
+                context_notice["used_chars"],
+                context_notice["active_model"],
+                context_notice["estimated_prompt_tokens"],
+                context_notice["output_reserve"],
+                context_notice["max_context_tokens"],
+            )
+            if not chunks:
+                raise ChatApiError(
+                    "The selected document is too large for the active AI model.",
+                    status_code=422,
+                    payload={
+                        "success": False,
+                        "code": "CHAT_CONTEXT_TOO_LARGE",
+                        "error": "The selected document is too large for the active AI model.",
+                        "retryable": True,
+                        "data": {
+                            "conversation_id": conversation_id,
+                            "message_id": user_message_id,
+                        },
+                    },
+                )
         else:
-            retriever = modules["retrieval"].RAGRetriever(storage, config)
+            retriever = None
             normalized_kb_ids: Any = kb_ids
             if kb_ids in (None, "", "all"):
                 normalized_kb_ids = None
@@ -1504,6 +1861,7 @@ def query_chat(
                     modules["router"].QueryRouter(storage, config).select_kb(message)
                 )
             try:
+                retriever = modules["retrieval"].RAGRetriever(storage, config)
                 chunks = retriever.retrieve(message, normalized_kb_ids)
                 used_threshold = getattr(retriever, "last_effective_threshold", used_threshold)
                 if fallback_membership_filter_applied and fallback_kb_id:
@@ -1521,13 +1879,18 @@ def query_chat(
                 no_results = True
                 chunks = []
             except exceptions.EmbeddingConfigurationMismatchException as exc:
+                mismatch_message = (
+                    "Knowledge base embedding settings do not match its index. "
+                    "Reindex the knowledge base before asking again."
+                )
                 raise ChatApiError(
-                    str(exc),
+                    mismatch_message,
                     status_code=409,
                     payload={
                         "success": False,
                         "code": "KB_EMBEDDING_MISMATCH",
-                        "error": str(exc),
+                        "error": mismatch_message,
+                        "retryable": False,
                         "data": {
                             "kb_id": exc.kb_id,
                             "current_embedding": {
@@ -1544,6 +1907,18 @@ def query_chat(
                         },
                     },
                 ) from exc
+            except exceptions.InvalidKBException as exc:
+                logger.warning(
+                    "Selected knowledge base unavailable error_type=%s",
+                    type(exc).__name__,
+                )
+                raise _kb_unavailable_error() from exc
+            except exceptions.RetrievalException as exc:
+                logger.warning(
+                    "Chat retrieval failure retrieval_error_type=%s",
+                    type(exc).__name__,
+                )
+                raise _retrieval_failure_error() from exc
 
         _canonicalize_file_references(
             storage,
@@ -1561,13 +1936,87 @@ def query_chat(
             citations: list[dict[str, Any]] = []
             retrieved_blocks: list[dict[str, Any]] = []
         else:
-            llm_client = modules["llm"].LLMClient(config, storage=storage)
-            response_text = llm_client.generate_response(
-                query=message,
-                chunks=_chunks_for_llm(chunks),
-                mode=mode,
-                conversation_history=conversation_history,
-            )
+            llm_client = llm_client or modules["llm"].LLMClient(config, storage=storage)
+            try:
+                if direct_document:
+                    messages = build_full_prompt(
+                        mode=mode,
+                        retrieved_chunks=_chunks_for_llm(chunks),
+                        query=message,
+                        conversation_history=prompt_history,
+                    )
+                    generate = getattr(llm_client, "generate", None)
+                    response_text = (
+                        _call_llm_generate(generate, messages)
+                        if callable(generate)
+                        else llm_client.generate_response(
+                            query=message,
+                            chunks=_chunks_for_llm(chunks),
+                            mode=mode,
+                            conversation_history=prompt_history,
+                        )
+                    )
+                else:
+                    response_text = llm_client.generate_response(
+                        query=message,
+                        chunks=_chunks_for_llm(chunks),
+                        mode=mode,
+                        conversation_history=conversation_history,
+                    )
+            except Exception as exc:
+                is_context_error = getattr(
+                    exc, "classification", None
+                ) == "context_length" or getattr(exc, "code", None) in {
+                    "LLM_CONTEXT_LENGTH",
+                    "CHAT_CONTEXT_TOO_LARGE",
+                }
+                if not direct_document or not is_context_error:
+                    raise
+                previous_used_chars = context_notice["used_chars"]
+                if previous_used_chars <= 1:
+                    raise
+                chunks, context_notice, prompt_history = _prepare_budgeted_document_chunks(
+                    llm_client=llm_client,
+                    config=config,
+                    query=message,
+                    mode=mode,
+                    conversation_history=prompt_history,
+                    document_content=document_content,
+                    document_filename=document_filename,
+                    document_file_url=document_file_url,
+                    document_sources=budget_sources,
+                    document_title=document_title,
+                    max_document_chars=previous_used_chars // 2,
+                )
+                if not chunks or context_notice["used_chars"] >= previous_used_chars:
+                    raise
+                logger.warning(
+                    "Direct document provider context rejection; retrying once original_chars=%s "
+                    "used_chars=%s active_model=%s estimated_prompt_tokens=%s output_reserve=%s "
+                    "provider_error_type=LLMContextLengthError",
+                    context_notice["original_chars"],
+                    context_notice["used_chars"],
+                    context_notice["active_model"],
+                    context_notice["estimated_prompt_tokens"],
+                    context_notice["output_reserve"],
+                )
+                retry_messages = build_full_prompt(
+                    mode=mode,
+                    retrieved_chunks=_chunks_for_llm(chunks),
+                    query=message,
+                    conversation_history=prompt_history,
+                )
+                generate = getattr(llm_client, "generate", None)
+                response_text = (
+                    _call_llm_generate(generate, retry_messages)
+                    if callable(generate)
+                    else llm_client.generate_response(
+                        query=message,
+                        chunks=_chunks_for_llm(chunks),
+                        mode=mode,
+                        conversation_history=prompt_history,
+                    )
+                )
             citations, retrieved_blocks = _serialize_citations(chunks)
 
         assistant_metadata = {
@@ -1597,6 +2046,7 @@ def query_chat(
             citations=citations,
             metadata=assistant_metadata,
         )
+        _mark_turn(storage, user_message_id, _turn_metadata(payload, "succeeded"))
 
         return {
             "success": True,
@@ -1627,24 +2077,196 @@ def query_chat(
                 },
             },
         }, session_update
-    except ChatApiError:
+    except ChatApiError as exc:
+        exc.session_update = session_update
+        if user_message_id and exc.payload.get("code"):
+            _mark_turn(
+                storage,
+                user_message_id,
+                _turn_metadata(
+                    payload,
+                    "failed",
+                    code=str(exc.payload["code"]),
+                    retryable=bool(exc.payload.get("retryable", True)),
+                ),
+            )
+            error_data = exc.payload.get("data")
+            if not isinstance(error_data, dict):
+                error_data = {}
+                exc.payload["data"] = error_data
+            error_data.setdefault("conversation_id", conversation_id)
+            error_data.setdefault("message_id", user_message_id)
+            exc.payload.setdefault("conversation_id", conversation_id)
+            exc.payload.setdefault("message_id", user_message_id)
         raise
     except Exception as exc:  # noqa: BLE001
         conversation_exc = getattr(exceptions, "ConversationException", None)
+        invalid_kb_exc = getattr(exceptions, "InvalidKBException", None)
         llm_exc = getattr(exceptions, "LLMException", None)
         retrieval_exc = getattr(exceptions, "RetrievalException", None)
-        expose_detail = bool(
-            getattr(request.app.state, "expose_error_details", settings.EXPOSE_ERROR_DETAILS)
-        )
+        if invalid_kb_exc and isinstance(exc, invalid_kb_exc):
+            error = _kb_unavailable_error()
+            if user_message_id:
+                _mark_turn(
+                    storage,
+                    user_message_id,
+                    _turn_metadata(
+                        payload,
+                        "failed",
+                        code="CHAT_KB_UNAVAILABLE",
+                        retryable=False,
+                    ),
+                )
+                error.payload["data"].update(
+                    {
+                        "conversation_id": conversation_id,
+                        "message_id": user_message_id,
+                    }
+                )
+                error.payload["conversation_id"] = conversation_id
+                error.payload["message_id"] = user_message_id
+            logger.warning(
+                "Selected knowledge base unavailable error_type=%s",
+                type(exc).__name__,
+            )
+            error.session_update = session_update
+            raise error from exc
         if conversation_exc and isinstance(exc, conversation_exc):
-            detail = f": {exc}" if expose_detail else ""
-            raise ChatApiError(f"Conversation error{detail}", status_code=400) from exc
+            error = _conversation_failure_error()
+            if user_message_id:
+                _mark_turn(
+                    storage,
+                    user_message_id,
+                    _turn_metadata(
+                        payload,
+                        "failed",
+                        code="CHAT_CONVERSATION_FAILED",
+                        retryable=True,
+                    ),
+                )
+                error.payload["data"].update(
+                    {
+                        "conversation_id": conversation_id,
+                        "message_id": user_message_id,
+                    }
+                )
+                error.payload["conversation_id"] = conversation_id
+                error.payload["message_id"] = user_message_id
+            logger.warning(
+                "Chat conversation failure conversation_error_type=%s",
+                type(exc).__name__,
+            )
+            error.session_update = session_update
+            raise error from exc
         if llm_exc and isinstance(exc, llm_exc):
-            detail = f": {exc}" if expose_detail else ""
-            raise ChatApiError(f"LLM generation failed{detail}", status_code=502) from exc
+            raw_code = str(getattr(exc, "code", ""))
+            code = (
+                "CHAT_CONTEXT_TOO_LARGE"
+                if raw_code in {"CHAT_CONTEXT_TOO_LARGE", "LLM_CONTEXT_LENGTH"}
+                or getattr(exc, "classification", None) == "context_length"
+                else (
+                    "CHAT_PROVIDER_TIMEOUT"
+                    if raw_code in {"CHAT_PROVIDER_TIMEOUT", "LLM_PROVIDER_TIMEOUT"}
+                    else (
+                        "CHAT_PROVIDER_AUTH"
+                        if raw_code == "CHAT_PROVIDER_AUTH"
+                        else "CHAT_PROVIDER_UPSTREAM"
+                    )
+                )
+            )
+            message_by_code = {
+                "CHAT_CONTEXT_TOO_LARGE": "The selected document is still too large. Try a shorter file or section.",
+                "CHAT_PROVIDER_TIMEOUT": "The AI provider timed out. Please retry.",
+                "CHAT_PROVIDER_UPSTREAM": "The AI provider is temporarily unavailable. Please retry.",
+                "CHAT_PROVIDER_AUTH": "The AI provider is not configured correctly. Contact an administrator.",
+            }
+            retryable = bool(getattr(exc, "retryable", code != "CHAT_PROVIDER_AUTH"))
+            _mark_turn(
+                storage,
+                user_message_id,
+                _turn_metadata(payload, "failed", code=code, retryable=retryable),
+            )
+            logger.warning(
+                "Chat provider failure active_model=%s provider_error_type=%s classification=%s",
+                getattr(locals().get("config"), "model", None),
+                type(exc).__name__,
+                getattr(exc, "classification", "provider_error"),
+            )
+            error = ChatApiError(
+                message_by_code[code],
+                status_code=(
+                    422
+                    if code == "CHAT_CONTEXT_TOO_LARGE"
+                    else 504 if code == "CHAT_PROVIDER_TIMEOUT" else 502
+                ),
+                payload={
+                    "success": False,
+                    "code": code,
+                    "error": message_by_code[code],
+                    "retryable": retryable,
+                    "conversation_id": conversation_id,
+                    "message_id": user_message_id,
+                    "data": {
+                        "conversation_id": conversation_id,
+                        "message_id": user_message_id,
+                    },
+                },
+            )
+            error.session_update = session_update
+            raise error from exc
         if retrieval_exc and isinstance(exc, retrieval_exc):
-            detail = f": {exc}" if expose_detail else ""
-            raise ChatApiError(f"Retrieval failed{detail}", status_code=502) from exc
+            error = _retrieval_failure_error()
+            if user_message_id:
+                _mark_turn(
+                    storage,
+                    user_message_id,
+                    _turn_metadata(
+                        payload,
+                        "failed",
+                        code="CHAT_RETRIEVAL_FAILED",
+                        retryable=True,
+                    ),
+                )
+                error.payload["data"].update(
+                    {
+                        "conversation_id": conversation_id,
+                        "message_id": user_message_id,
+                    }
+                )
+                error.payload["conversation_id"] = conversation_id
+                error.payload["message_id"] = user_message_id
+            logger.warning(
+                "Chat retrieval failure retrieval_error_type=%s",
+                type(exc).__name__,
+            )
+            error.session_update = session_update
+            raise error from exc
+        if user_message_id:
+            error = _processing_failure_error()
+            _mark_turn(
+                storage,
+                user_message_id,
+                _turn_metadata(
+                    payload,
+                    "failed",
+                    code="CHAT_PROCESSING_FAILED",
+                    retryable=True,
+                ),
+            )
+            error.payload["data"].update(
+                {
+                    "conversation_id": conversation_id,
+                    "message_id": user_message_id,
+                }
+            )
+            error.payload["conversation_id"] = conversation_id
+            error.payload["message_id"] = user_message_id
+            logger.warning(
+                "Chat processing failure processing_error_type=%s",
+                type(exc).__name__,
+            )
+            error.session_update = session_update
+            raise error from exc
         raise
     finally:
         storage.close()

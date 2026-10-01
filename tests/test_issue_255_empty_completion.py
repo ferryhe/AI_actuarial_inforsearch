@@ -10,7 +10,7 @@ import openai
 import pytest
 
 from ai_actuarial.chatbot.config import ChatbotConfig
-from ai_actuarial.chatbot.exceptions import LLMException
+from ai_actuarial.chatbot.exceptions import LLMContextLengthError, LLMException
 from ai_actuarial.chatbot.llm import LLMClient
 
 
@@ -277,6 +277,31 @@ def test_recovery_bad_request_preserves_compatibility_failure_without_budget_fal
     assert recovery_kwargs["reasoning_effort"] == "low"
 
 
+@patch("ai_actuarial.chatbot.llm.openai.OpenAI")
+def test_recovery_context_rejection_keeps_stable_context_classification(
+    mock_openai: Mock,
+) -> None:
+    client, provider_client = _client(mock_openai, max_retries=3)
+    request = httpx.Request("POST", "https://api.openai.test/v1/chat/completions")
+    response = httpx.Response(400, request=request)
+    recovery_error = openai.BadRequestError(
+        "maximum context length exceeded",
+        response=response,
+        body={"error": {"code": "context_length_exceeded"}},
+    )
+    provider_client.chat.completions.create.side_effect = [
+        _response("", finish_reason="length"),
+        recovery_error,
+        _response("must not retry a context rejection"),
+    ]
+
+    with pytest.raises(LLMContextLengthError) as exc_info:
+        client.generate([{"role": "user", "content": "test"}])
+
+    assert exc_info.value.__cause__ is recovery_error
+    assert provider_client.chat.completions.create.call_count == 2
+
+
 @pytest.mark.parametrize(
     ("empty_response", "classification"),
     [
@@ -449,6 +474,58 @@ def test_recovery_policy_allows_non_larger_budget_when_disabled() -> None:
         max_tokens=1000,
         length_recovery_enabled=False,
         length_recovery_max_tokens=999,
+        _apply_env_defaults=False,
+    )
+
+    assert config.validate() is True
+
+
+@pytest.mark.parametrize(
+    ("recovery_enabled", "recovery_max_tokens", "max_context_tokens"),
+    [
+        (False, 4000, 1000),
+        (True, 4000, 4000),
+    ],
+)
+def test_context_window_must_exceed_effective_output_reserve(
+    recovery_enabled: bool,
+    recovery_max_tokens: int,
+    max_context_tokens: int,
+) -> None:
+    with pytest.raises(ValueError, match="max_context_tokens must be greater than output reserve"):
+        ChatbotConfig(
+            api_key="fake",
+            max_tokens=1000,
+            max_context_tokens=max_context_tokens,
+            length_recovery_enabled=recovery_enabled,
+            length_recovery_max_tokens=recovery_max_tokens,
+            _apply_env_defaults=False,
+        ).validate()
+
+
+def test_context_window_must_be_positive() -> None:
+    with pytest.raises(ValueError, match="max_context_tokens must be positive"):
+        ChatbotConfig(
+            api_key="fake",
+            max_context_tokens=0,
+            length_recovery_enabled=False,
+            _apply_env_defaults=False,
+        ).validate()
+
+
+@pytest.mark.parametrize(
+    ("recovery_enabled", "max_context_tokens"),
+    [(False, 1001), (True, 4001)],
+)
+def test_context_window_accepts_one_token_above_effective_output_reserve(
+    recovery_enabled: bool, max_context_tokens: int
+) -> None:
+    config = ChatbotConfig(
+        api_key="fake",
+        max_tokens=1000,
+        max_context_tokens=max_context_tokens,
+        length_recovery_enabled=recovery_enabled,
+        length_recovery_max_tokens=4000,
         _apply_env_defaults=False,
     )
 

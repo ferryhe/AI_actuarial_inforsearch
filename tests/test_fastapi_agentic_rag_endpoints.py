@@ -230,7 +230,7 @@ def _build_client(tmp_path: Path, monkeypatch) -> tuple[TestClient, Path]:
 def test_fastapi_agentic_rag_summary_search_uses_explicit_output_dir(
     tmp_path: Path, monkeypatch
 ) -> None:
-    client, _db_path = _build_client(tmp_path, monkeypatch)
+    client, db_path = _build_client(tmp_path, monkeypatch)
     ready_dir = tmp_path / "agentic_ready_data" / "explicit"
     _write_ready_data(ready_dir)
 
@@ -640,6 +640,14 @@ def test_fastapi_agentic_rag_chat_resolves_registry_manifest_profile(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
+    from ai_actuarial.api.services import chat as chat_service
+
+    monkeypatch.setenv("OPENAI_API_KEY", "agentic-chat-test-key")
+    monkeypatch.setattr(
+        chat_service,
+        "_synthesize_agentic_response",
+        lambda **kwargs: ("Deterministic agentic answer", "deterministic_fallback"),
+    )
     client, db_path = _build_client(tmp_path, monkeypatch)
     ready_dir = tmp_path / "agentic_ready_data" / "kbs" / "kb-regulation" / "regulation" / "1"
     _write_ready_data(ready_dir)
@@ -709,14 +717,34 @@ def test_fastapi_agentic_rag_chat_reuses_missing_ready_data_registry_error(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    client, _db_path = _build_client(tmp_path, monkeypatch)
+    client, db_path = _build_client(tmp_path, monkeypatch)
 
     response = client.post(
         "/api/agentic-rag/chat", json={"query": "capital", "kb_id": "kb-missing"}
     )
 
     assert response.status_code == 503
-    assert response.json()["success"] is False
+    payload = response.json()
+    assert payload["success"] is False
+    assert payload["code"] == "CHAT_AGENTIC_UNAVAILABLE"
+    assert payload["retryable"] is True
+    assert payload["error"] == (
+        "Agentic ready data is temporarily unavailable. Retry, or contact an administrator."
+    )
+    assert "conversation_id" not in payload
+    assert "message_id" not in payload
+    assert "manifest" not in response.text.lower()
+    storage = Storage(str(db_path))
+    try:
+        messages_table = storage._conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'messages'"
+        ).fetchone()
+        assert (
+            messages_table is None
+            or storage._conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0] == 0
+        )
+    finally:
+        storage.close()
 
 
 def test_fastapi_agentic_rag_chat_reuses_not_ready_registry_error(
@@ -747,7 +775,28 @@ def test_fastapi_agentic_rag_chat_reuses_not_ready_registry_error(
     )
 
     assert response.status_code == 503
-    assert response.json()["success"] is False
+    payload = response.json()
+    assert payload["success"] is False
+    assert payload["code"] == "CHAT_AGENTIC_UNAVAILABLE"
+    assert payload["retryable"] is True
+    assert payload["error"] == (
+        "Agentic ready data is temporarily unavailable. Retry, or contact an administrator."
+    )
+    assert "conversation_id" not in payload
+    assert "message_id" not in payload
+    assert str(ready_dir) not in response.text
+    assert "not ready" not in response.text.lower()
+    storage = Storage(str(db_path))
+    try:
+        messages_table = storage._conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'messages'"
+        ).fetchone()
+        assert (
+            messages_table is None
+            or storage._conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0] == 0
+        )
+    finally:
+        storage.close()
 
 
 def test_fastapi_agentic_rag_chat_does_not_hide_tool_runtime_errors(
