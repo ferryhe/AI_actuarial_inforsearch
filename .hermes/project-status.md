@@ -4354,3 +4354,130 @@
 - Draft PR #386 was opened with Closes #361. This entry records the pre-Ready
   checkpoint; required GitHub checks and the single remote-feedback window remain
   the next lifecycle gates.
+
+## Issue #347 — bounded direct-document AI Explain
+
+- Updated: 2026-09-30. Task branch `agent/issue-347`, based on
+  `497d0ea1b941ac1954cd2c5f4b2170d6f716a8e7`.
+- Direct-document AI Explain now budgets the complete active-model prompt and
+  output reserve, retries once after a context rejection, and persists safe
+  failed-turn metadata for Chat History retry. Standard RAG keeps its existing
+  request path.
+- Focused validation passed: backend 124, React 4, React source contracts 23,
+  TypeScript, build, Python formatting/compile, and dead-code checks. Local
+  Chrome passed File Detail → AI Explain → Chat → History reload with an
+  isolated database and stub provider. Lint passed with five existing Hook
+  warnings; the build emitted the existing chunk-size advisory.
+- The full `scripts/quality_gate.py` run was manually interrupted after late
+  same-Issue edits appeared during pytest collection; it has no final exit code
+  and is not a passing result. The late edits were preserved, but their source
+  could not be attributed from the worker session; the independent review will
+  inspect the complete diff. No out-of-scope source change is visible.
+- Next: complete a fresh local review, then proceed through the PR checks and
+  the authorized single remote-feedback window.
+
+### Verification update — 2026-09-30
+
+- Third-round fixes are complete. Manager re-ran the focused backend suites:
+  114 passed; the two React suites: 5 passed; typecheck, lint, build, dead-code,
+  Black, isort, and `git diff --check` passed. Lint reports five existing Hook
+  warnings; build reports the existing large-bundle advisory.
+- Local Playwright smoke passed File Detail → AI Explain → Chat → History reload.
+  The API returned 200, included the canonical file citation, made two stub
+  provider calls, and recorded 3,719 prompt tokens + 1,000 output reserve
+  within the 8,000-token window. No API failures occurred; one static resource
+  returned 404 in the browser console.
+- `scripts/quality_gate.py` remains manually interrupted from the earlier run;
+  it has no final exit code and is not recorded as passing.
+- Round 4, scoped to the accepted `CHAT_PROVIDER_AUTH` UI/History regression, is
+  complete. TypeSafe/Judge rejected a request to add provider identity to budget
+  logs and accepted only localized, nonretryable failed-turn rendering.
+- Manager re-ran the relevant backend selection: 11 passed; both React suites:
+  7 passed; typecheck, lint, build, dead-code, and diff check passed. Existing
+  five Hook warnings and bundle-size advisory remain.
+- Next: finish the fresh fifth local review, then continue the authorized PR
+  checks and remote-feedback window.
+
+### Local review limit reached — 2026-09-30
+
+- The cumulative Issue #347 candidate completed 15 fresh Sol/high local review
+  rounds. Round 15 did not pass, so the strict issue-to-merge gate stopped the
+  task before commit, push, PR, merge, Issue closure, or cleanup.
+- The remaining reproduced defect is the production configuration loader's
+  `SitesConfigError` path. `query_chat()` catches `ValueError` only, so a missing
+  or malformed authoritative production configuration escapes before the real
+  user turn, structured `CHAT_PROVIDER_AUTH` response, IDs, History state, or
+  guest session cookie are created.
+- The final reviewer ran 252 focused Python tests, 14 React tests, TypeScript
+  typecheck, and diff check successfully. Real production-loader and exact
+  `query_chat()` probes reproduced the remaining failure. TypeSafe marked it
+  valid and in scope; the Judge selected the scoped fix.
+- The worktree and `agent/issue-347` branch remain intact with all uncommitted
+  Issue changes for recovery. No PR exists and Issue #347 remains open.
+- Blocker: the configured 15-round review limit is exhausted without the
+  required reviewer PASS. A controller or user decision is required before any
+  additional repair/review cycle can be authorized.
+- Final required CI gate check: `npm run dead-code:symbols` fails because the
+  Python symbol gate reports a new `ai_actuarial/config.py | unused variable |
+  EXPOSE_ERROR_DETAILS` finding. TypeScript symbols pass. No baseline or source
+  change was made for this gate after the review limit was reached.
+
+### Authorized extra round and final gate stop — 2026-10-01
+
+- The user authorized exactly one additional scoped repair and one fresh
+  Sol/high review. The worker caught concrete `SitesConfigError` at the existing
+  configuration gate, added a real missing-authoritative-config regression, and
+  removed the unused `Settings.EXPOSE_ERROR_DETAILS` symbol. The exact
+  `dead-code:symbols` check then passed with zero TypeScript/Python findings.
+- Fresh review round 16 passed all nine Issue criteria. TypeSafe review coverage
+  probability was 0.96 with no findings. Real missing/malformed production
+  config, canonical/deprecated Agentic, and FastAPI/Vite/Chrome File Detail →
+  Chat → History checks passed.
+- The required full `scripts/quality_gate.py` subsequently failed: full pytest
+  reported 1 failure, 2,298 passed, and 10 skipped; the failure was
+  `test_default_generator_enforces_timeout_and_one_sdk_transport_attempt` in the
+  Issue #267 suite. Pylint also reported a new #347-path E1102 at
+  `ai_actuarial/api/services/chat.py` (`query_chat`: `generate is not callable`).
+- The user-authorized exception required an immediate stop if any required gate
+  remained failed. No further fix/review, commit, push, PR, merge, Issue closure,
+  or cleanup was performed. Branch and managed worktree remain intact.
+
+### Quality-gate repair authorization — 2026-10-01
+
+- The user separately authorized repair of the two remaining required-gate
+  failures, with no additional Sol reviewer and TypeSafe as the completion judge.
+- The stale Issue #267 assertion now matches the stable safe upstream-provider
+  message while retaining timeout, retry, and one-transport-attempt checks.
+  The two direct-document dynamic `generate` calls now pass through a typed
+  callable helper, preserving their runtime guards, fallback, and single retry.
+- Exact checks passed: Issue #267 target 1/1, chat.py error-only Pylint with an
+  empty result, and 66 focused tests. The final full `scripts/quality_gate.py`
+  exited 0: 2,299 passed, 10 skipped; Black, isort, and error-only Pylint passed.
+- TypeSafe Jev selected `both_complete` with probability 0.94. Local gates are
+  now complete; the next authorized step is commit, push, and Draft PR.
+
+### PR #388 checkpoint — 2026-10-01
+
+- Committed the complete Issue #347 candidate as `8cd9a6b` and pushed
+  `agent/issue-347`. Draft PR #388 includes `Closes #347`.
+- Local publication gates are complete: full quality gate 2,299 passed / 10
+  skipped with Black, isort, and error-only Pylint green; dead-code symbols and
+  files are green; the final TypeSafe gate-repair judgment is `both_complete`.
+- Next: push this status checkpoint, mark PR Ready, wait the required remote
+  review window, then evaluate current-head checks and all fetched feedback.
+
+### PR #388 remote-feedback repair — 2026-10-01
+
+- The one Ready-window snapshot found all six checks green and three Copilot
+  threads. TypeSafe accepted the chained traceback leak and deprecated 400→503
+  misclassification; a focused probe confirmed the ambiguous hardcoded context
+  error type.
+- The scoped repair removes chained-cause traceback logging from the Agentic
+  fallback, preserves deprecated missing-KB validation as 400 while keeping
+  missing/not-ready registry states as safe retryable 503, and logs the actual
+  caught context exception type.
+- Focused tests passed 3/3, relevant backend tests 119/119, and the full quality
+  gate passed with 2,301 tests passed / 10 skipped plus clean Black, isort, and
+  error-only Pylint. TypeSafe judged all three remote items resolved.
+- Next: push the remote-fix commit, resolve the three review threads, wait for
+  the new-head CI checks, then merge if every gate remains green.

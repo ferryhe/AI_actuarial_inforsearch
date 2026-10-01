@@ -328,18 +328,32 @@ class ConversationManager:
         try:
             conn = self.storage._conn
 
-            query = """
+            columns = """
                 SELECT message_id, conversation_id, role, content, citations, 
                        created_at, token_count, metadata
+            """
+            source = """
                 FROM messages
                 WHERE conversation_id = ?
-                ORDER BY created_at ASC
             """
 
             if limit:
-                query += f" LIMIT {int(limit)}"
+                query = f"""
+                    {columns} FROM (
+                        SELECT rowid AS storage_rowid, message_id, conversation_id,
+                               role, content, citations, created_at, token_count, metadata
+                        {source}
+                        ORDER BY created_at DESC, storage_rowid DESC
+                        LIMIT ?
+                    )
+                    ORDER BY created_at ASC, storage_rowid ASC
+                """
+                params = (conversation_id, int(limit))
+            else:
+                query = columns + source + " ORDER BY created_at ASC, rowid ASC"
+                params = (conversation_id,)
 
-            cursor = conn.execute(query, (conversation_id,))
+            cursor = conn.execute(query, params)
 
             messages = []
             for row in cursor.fetchall():
@@ -387,8 +401,19 @@ class ConversationManager:
         max_messages = max_messages or self.config.max_messages
         max_tokens = max_tokens or self.config.max_context_tokens
 
-        # Get recent messages
-        messages = self.get_messages(conversation_id, limit=max_messages)
+        # Exclude failed and pending turns before applying the effective history limit.
+        messages = self.get_messages(
+            conversation_id,
+            include_metadata=True,
+        )
+        messages = [
+            message
+            for message in messages
+            if not (
+                isinstance(message.get("metadata"), dict)
+                and message["metadata"].get("status") in {"failed", "pending"}
+            )
+        ][-max_messages:]
 
         # Format for LLM (only role and content)
         context = []

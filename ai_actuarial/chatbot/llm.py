@@ -13,7 +13,13 @@ import openai
 
 from ai_actuarial.ai_runtime import is_chat_provider_supported
 from ai_actuarial.chatbot.config import ChatbotConfig
-from ai_actuarial.chatbot.exceptions import LLMException
+from ai_actuarial.chatbot.exceptions import (
+    LLMAuthenticationError,
+    LLMContextLengthError,
+    LLMException,
+    LLMTimeoutError,
+    LLMUpstreamError,
+)
 from ai_actuarial.chatbot.prompts import build_full_prompt
 
 logger = logging.getLogger(__name__)
@@ -35,6 +41,19 @@ class _TransientEmptyResponse(Exception):
     def __init__(self, classification: str):
         super().__init__(classification)
         self.classification = classification
+
+
+def _is_context_length_error(exc: openai.BadRequestError) -> bool:
+    body = getattr(exc, "body", None)
+    error = body.get("error", body) if isinstance(body, dict) else {}
+    code = str(error.get("code") or "").lower() if isinstance(error, dict) else ""
+    message = (
+        str(error.get("message") or exc).lower() if isinstance(error, dict) else str(exc).lower()
+    )
+    return code in {"context_length_exceeded", "context_window_exceeded"} or any(
+        marker in message
+        for marker in ("context length", "context window", "maximum context", "too many tokens")
+    )
 
 
 def _is_explicit_azure_gpt5_deployment(
@@ -208,11 +227,11 @@ class LLMClient:
         try:
             self.config.validate()
         except ValueError as e:
-            raise LLMException(f"Invalid configuration: {e}")
+            raise LLMAuthenticationError() from e
 
         # Initialize OpenAI-compatible client
         if not is_chat_provider_supported(self.config.llm_provider):
-            raise LLMException(f"Unsupported LLM provider: {self.config.llm_provider}")
+            raise LLMAuthenticationError()
         client_kwargs: dict[str, Any] = {
             "api_key": self.config.api_key,
             "timeout": 60.0,
@@ -335,6 +354,8 @@ class LLMClient:
                                 )
                             )
                         except openai.BadRequestError as exc:
+                            if _is_context_length_error(exc):
+                                raise LLMContextLengthError() from exc
                             raise LLMException(
                                 "LLM length recovery request was rejected due to "
                                 "incompatible parameters"
@@ -372,8 +393,11 @@ class LLMClient:
 
             except openai.AuthenticationError as e:
                 # Authentication errors are not retryable
-                logger.error("Authentication error from LLM provider")
-                raise LLMException("Authentication failed. Please check your API key.") from e
+                logger.error(
+                    "LLM provider error error_type=%s classification=authentication",
+                    type(e).__name__,
+                )
+                raise LLMAuthenticationError() from e
 
             except openai.RateLimitError as e:
                 # Rate limit - wait and retry
@@ -387,10 +411,11 @@ class LLMClient:
                     )
                     time.sleep(wait_time)
                 else:
-                    logger.error("Max retries exceeded for rate limit")
-                    raise LLMException(
-                        f"Rate limit exceeded after {self.config.max_retries} retries"
+                    logger.error(
+                        "LLM provider error error_type=%s classification=rate_limit",
+                        type(e).__name__,
                     )
+                    raise LLMUpstreamError() from e
 
             except openai.APITimeoutError as e:
                 # Timeout - retry with backoff
@@ -404,8 +429,34 @@ class LLMClient:
                     )
                     time.sleep(wait_time)
                 else:
-                    logger.error("Max retries exceeded for timeout")
-                    raise LLMException(f"API timeout after {self.config.max_retries} retries")
+                    logger.error(
+                        "LLM provider error error_type=%s classification=timeout",
+                        type(e).__name__,
+                    )
+                    raise LLMTimeoutError() from e
+
+            except openai.BadRequestError as e:
+                is_context_error = _is_context_length_error(e)
+                classification = "context_length" if is_context_error else "bad_request"
+                logger.warning(
+                    "LLM provider error error_type=%s classification=%s",
+                    type(e).__name__,
+                    classification,
+                )
+                if is_context_error:
+                    raise LLMContextLengthError() from e
+                last_error = e
+                if attempt < self.config.max_retries:
+                    wait_time = self._calculate_backoff(attempt)
+                    logger.warning(
+                        "API error. Retrying in %.1fs (attempt %s/%s)",
+                        wait_time,
+                        attempt + 1,
+                        self.config.max_retries,
+                    )
+                    time.sleep(wait_time)
+                else:
+                    raise LLMUpstreamError() from e
 
             except openai.APIError as e:
                 # General API error - retry
@@ -419,21 +470,24 @@ class LLMClient:
                     )
                     time.sleep(wait_time)
                 else:
-                    logger.error("Max retries exceeded for API error")
-                    raise LLMException(f"API error after {self.config.max_retries} retries: {e}")
+                    logger.error(
+                        "LLM provider error error_type=%s classification=upstream",
+                        type(e).__name__,
+                    )
+                    raise LLMUpstreamError() from e
 
             except Exception as e:
                 # Unexpected error - fail immediately
                 logger.error(
-                    "Unexpected error during LLM generation error_type=%s",
+                    "LLM provider error error_type=%s classification=unexpected",
                     type(e).__name__,
                 )
                 raise LLMException("Unexpected LLM generation error") from e
 
         # Should not reach here, but just in case
         raise LLMException(
-            f"Failed to generate response after {self.config.max_retries} retries: {last_error}"
-        )
+            f"Failed to generate response after {self.config.max_retries} retries"
+        ) from last_error
 
     def _completion_request_kwargs(
         self,

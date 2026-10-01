@@ -90,8 +90,6 @@ class Settings:
     DEFAULT_CHAT_QUOTA_PER_DAY: int = _env_int("DEFAULT_CHAT_QUOTA_PER_DAY", 100)
     DEFAULT_CHAT_QUOTA_PER_WEEK: int = _env_int("DEFAULT_CHAT_QUOTA_PER_WEEK", 500)
     DEFAULT_CHAT_QUOTA_GUEST_PER_DAY: int = _env_int("DEFAULT_CHAT_QUOTA_GUEST_PER_DAY", 10)
-    EXPOSE_ERROR_DETAILS: bool = _env_bool("EXPOSE_ERROR_DETAILS", False)
-
     # -------------------------------------------------------------------------
     # API Auth Tokens
     # -------------------------------------------------------------------------

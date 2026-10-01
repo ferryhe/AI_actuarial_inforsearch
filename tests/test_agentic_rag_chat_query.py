@@ -74,6 +74,56 @@ def test_compatibility_chat_uses_the_canonical_chat_command_end_to_end(
         assert messages[1]["metadata"]["rag_mode"] == "agentic"
 
 
+def test_anonymous_compatibility_failure_sets_session_for_same_conversation_retry(
+    tmp_path: Path, monkeypatch
+) -> None:
+    import ai_actuarial.api.services.chat as chat_service
+
+    client, _app, _seed = _build_test_client(tmp_path, monkeypatch)
+    _prepare_ready_agentic_kb(client, monkeypatch)
+    client.headers.pop("X-Auth-Token", None)
+    client.cookies.clear()
+    calls = 0
+
+    def fail_once_then_succeed(**_kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise chat_service.ChatApiError(
+                "The AI provider is temporarily unavailable. Please retry.",
+                status_code=502,
+                payload={
+                    "success": False,
+                    "code": "CHAT_PROVIDER_UPSTREAM",
+                    "error": "The AI provider is temporarily unavailable. Please retry.",
+                    "retryable": True,
+                    "data": {},
+                },
+            )
+        return "Recovered agentic answer", "deterministic_fallback"
+
+    monkeypatch.setattr(chat_service, "_synthesize_agentic_response", fail_once_then_succeed)
+
+    first = client.post(COMPATIBILITY_PATH, json=_compatibility_payload())
+
+    assert first.status_code == 502, first.text
+    first_payload = first.json()
+    assert first_payload["code"] == "CHAT_PROVIDER_UPSTREAM"
+    assert "session=" in first.headers.get("set-cookie", "")
+    conversation_id = first_payload["data"]["conversation_id"]
+    message_id = first_payload["data"]["message_id"]
+
+    retried = client.post(
+        COMPATIBILITY_PATH,
+        json={**_compatibility_payload(), "conversation_id": conversation_id},
+    )
+
+    assert retried.status_code == 200, retried.text
+    assert retried.json()["data"]["conversation_id"] == conversation_id
+    assert first_payload["conversation_id"] == conversation_id
+    assert first_payload["message_id"] == message_id
+
+
 def test_compatibility_chat_requires_chat_query_permission_on_both_paths(
     tmp_path: Path, monkeypatch
 ) -> None:

@@ -45,6 +45,7 @@ import { getChatDisplayName, getChatValidName } from "./chat/displayName";
 import { RetrievalIndicators } from "./chat/RetrievalIndicators";
 import { IconButton } from "@/components/a11y/IconButton";
 import { resolveAskAiRouteInitialization } from "./chat/routeTarget";
+import { FailedTurn, chatFailurePayload } from "./chat/failure";
 import type {
   AgenticToolTraceEntry,
   AvailableDocument,
@@ -369,7 +370,7 @@ function AgenticTrace({ trace }: { trace: AgenticToolTraceEntry[] }) {
   );
 }
 
-const MessageBubble = memo(function MessageBubble({ message, index }: { message: Message; index: number }) {
+const MessageBubble = memo(function MessageBubble({ message, index, onRetry }: { message: Message; index: number; onRetry: (message: Message) => void }) {
   const isUser = message.role === "user";
   const retrievedBlocks = normalizeRetrievedBlocks(message.metadata?.retrieved_blocks);
   const toolTrace = normalizeAgenticToolTrace(message.metadata?.tool_trace);
@@ -402,6 +403,7 @@ const MessageBubble = memo(function MessageBubble({ message, index }: { message:
         >
           {isUser ? message.content : <MarkdownContent content={message.content} />}
         </div>
+        <FailedTurn message={message} onRetry={onRetry} />
         {!isUser && message.citations && message.citations.length > 0 && (
           <div className="flex flex-wrap gap-2 mt-1">
             {message.citations.map((c, i) => (
@@ -417,6 +419,20 @@ const MessageBubble = memo(function MessageBubble({ message, index }: { message:
 });
 
 type SidebarTab = "conversations" | "documents";
+
+const FAILED_TURN_CODES = new Set([
+  "CHAT_CONTEXT_TOO_LARGE",
+  "CHAT_PROVIDER_TIMEOUT",
+  "CHAT_PROVIDER_UPSTREAM",
+  "CHAT_PROVIDER_AUTH",
+  "CHAT_RETRIEVAL_FAILED",
+  "CHAT_KB_UNAVAILABLE",
+  "CHAT_CONVERSATION_FAILED",
+  "CHAT_AGENTIC_UNAVAILABLE",
+  "CHAT_PROCESSING_FAILED",
+  "CHAT_DOCUMENT_EMPTY",
+  "KB_EMBEDDING_MISMATCH",
+]);
 
 export default function Chat() {
   const { t } = useTranslation();
@@ -595,6 +611,26 @@ export default function Chat() {
     await sendMessage({ text: questionText, document: doc });
   }
 
+  async function retryFailedMessage(message: Message) {
+    const retry = message.metadata?.retry_request;
+    const documents = (retry?.document_sources || []).map((source) => ({
+      file_url: source.file_url || "",
+      filename: source.filename || "",
+      title: source.title || "",
+      category: "",
+      keywords: [],
+    }));
+    if (Array.isArray(retry?.kb_ids)) setSelectedKbs(retry.kb_ids);
+    if (retry?.rag_mode === "agentic" || retry?.rag_mode === "standard") setRagMode(retry.rag_mode);
+    await sendMessage({
+      text: message.content,
+      documents: documents.length ? documents : undefined,
+      modeOverride: retry?.mode,
+      kbIds: retry?.kb_ids,
+      ragModeOverride: retry?.rag_mode,
+    });
+  }
+
   function toggleCompareDocument(doc: AvailableDocument) {
     setSelectedCompareDocs((current) => {
       const fileUrl = doc.file_url;
@@ -645,9 +681,6 @@ export default function Chat() {
     const res = await fetchDocumentMarkdown(doc.file_url);
     const markdown = res.markdown;
     const content = (markdown?.markdown_content || "").trim();
-    if (!content) {
-      throw new Error(t("chat.document_content_unavailable"));
-    }
 
     return {
       content,
@@ -678,13 +711,15 @@ export default function Chat() {
       : options?.document
         ? [options.document]
         : [];
-    const shouldUseAgentic = ragMode === "agentic" && documentInputs.length === 0;
-    if (ragMode === "agentic" && selectedKbs.length === 0 && shouldUseAgentic) {
+    const requestRagMode = options?.ragModeOverride || ragMode;
+    const requestKbIds = options?.kbIds || selectedKbs;
+    const shouldUseAgentic = requestRagMode === "agentic" && documentInputs.length === 0;
+    if (requestRagMode === "agentic" && requestKbIds.length === 0 && shouldUseAgentic) {
       setErrorMsg(t("chat.agentic_requires_kb"));
       return false;
     }
-    const selectedAgenticKb = shouldUseAgentic ? knowledgeBases.find((kb) => kb.kb_id === selectedKbs[0]) : undefined;
-    if (shouldUseAgentic && (selectedKbs.length !== 1 || !isChatKnowledgeBaseAvailable(selectedAgenticKb))) {
+    const selectedAgenticKb = shouldUseAgentic ? knowledgeBases.find((kb) => kb.kb_id === requestKbIds[0]) : undefined;
+    if (shouldUseAgentic && (requestKbIds.length !== 1 || !isChatKnowledgeBaseAvailable(selectedAgenticKb))) {
       setErrorMsg(t("chat.agentic_requires_kb"));
       return false;
     }
@@ -759,7 +794,7 @@ export default function Chat() {
       const res = await queryChat({
         conversation_id: activeConvId,
         message: text,
-        kb_ids: selectedKbs.length > 0 ? selectedKbs : undefined,
+        kb_ids: requestKbIds.length > 0 ? requestKbIds : undefined,
         mode: activeMode,
         ...(documentContexts.length > 0
           ? {
@@ -808,13 +843,48 @@ export default function Chat() {
       setMessages((prev) => [...prev, assistantMsg]);
       return true;
     } catch (err: unknown) {
-      const errorDetail = err instanceof Error ? err.message : t("chat.error_sending");
-      setErrorMsg(errorDetail);
-      const assistantMsg: Message = {
-        role: "assistant",
-        content: errorDetail,
-      };
-      setMessages((prev) => [...prev, assistantMsg]);
+      const detail = chatFailurePayload(err);
+      const code = typeof detail?.code === "string" ? detail.code : "";
+      if (FAILED_TURN_CODES.has(code)) {
+        const errorData = detail?.data && typeof detail.data === "object"
+          ? detail.data as Record<string, unknown>
+          : null;
+        const failedMessageId = typeof errorData?.message_id === "string"
+          ? errorData.message_id
+          : typeof detail?.message_id === "string" ? detail.message_id : "";
+        const retryDocuments = documentInputs.map((document) => ({
+          file_url: document.file_url,
+          filename: document.filename,
+          title: document.title,
+        }));
+        setMessages((prev) => prev.map((item, index) => index === prev.length - 1 && item.role === "user"
+          ? {
+              ...item,
+              message_id: failedMessageId || item.message_id,
+              metadata: {
+                status: "failed",
+                error_code: code,
+                retryable: detail?.retryable !== false,
+                retry_request: {
+                  mode: options?.modeOverride || mode,
+                  rag_mode: requestRagMode,
+                  kb_ids: requestKbIds,
+                  document_sources: retryDocuments,
+                },
+              },
+            }
+          : item));
+        const failedConversationId = typeof errorData?.conversation_id === "string"
+          ? errorData.conversation_id
+          : typeof detail?.conversation_id === "string" ? detail.conversation_id : "";
+        if (failedConversationId && !activeConvId) {
+          setActiveConvId(failedConversationId);
+          if (canUseConversations) loadConversations();
+        }
+        setErrorMsg(null);
+      } else {
+        setErrorMsg(err instanceof Error ? err.message : t("chat.error_sending"));
+      }
       return false;
     } finally {
       setSending(false);
@@ -1267,7 +1337,7 @@ export default function Chat() {
           ) : (
             <>
               {messages.map((msg, i) => (
-                <MessageBubble key={i} message={msg} index={i} />
+                <MessageBubble key={i} message={msg} index={i} onRetry={retryFailedMessage} />
               ))}
               {sending && <TypingIndicator />}
             </>
