@@ -4455,3 +4455,13 @@
   exited 0: 2,299 passed, 10 skipped; Black, isort, and error-only Pylint passed.
 - TypeSafe Jev selected `both_complete` with probability 0.94. Local gates are
   now complete; the next authorized step is commit, push, and Draft PR.
+
+### PR #388 checkpoint — 2026-10-01
+
+- Committed the complete Issue #347 candidate as `8cd9a6b` and pushed
+  `agent/issue-347`. Draft PR #388 includes `Closes #347`.
+- Local publication gates are complete: full quality gate 2,299 passed / 10
+  skipped with Black, isort, and error-only Pylint green; dead-code symbols and
+  files are green; the final TypeSafe gate-repair judgment is `both_complete`.
+- Next: push this status checkpoint, mark PR Ready, wait the required remote
+  review window, then evaluate current-head checks and all fetched feedback.
