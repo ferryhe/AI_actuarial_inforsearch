@@ -319,7 +319,7 @@ function displayTime(value?: string | null) {
 export default function KBDetail() {
   const { t } = useTranslation();
   const { permissions } = useAuth();
-  const canManageKnowledge = permissions.includes("config.write");
+  const canManageCatalog = permissions.includes("catalog.write");
   const canRunKnowledgeTasks = permissions.includes("tasks.run");
   const canAskAi = permissions.includes("chat.view") && permissions.includes("chat.query");
   const [, navigate] = useLocation();
@@ -328,7 +328,7 @@ export default function KBDetail() {
 
   const [meta, setMeta] = useState<KBMeta | null>(null);
   const [chatKbAvailable, setChatKbAvailable] = useState(false);
-  const canBindFiles = canManageKnowledge && Boolean(meta?.chunk_profile_id);
+  const canBindFiles = canManageCatalog && Boolean(meta?.chunk_profile_id);
   const [stats, setStats] = useState<KBStats | null>(null);
   const [files, setFiles] = useState<KBFile[]>([]);
   const [categories, setCategories] = useState<KBCategory[]>([]);
@@ -716,7 +716,7 @@ export default function KBDetail() {
       },
       onError: () => setCategories([]),
     });
-    if (!canManageKnowledge || !isCurrent()) return;
+    if (!canManageCatalog || !isCurrent()) return;
     const unmappedRequestId = ++unmappedRequestSequence.current;
     const unmappedRequest = captureReadyDataRequest(
       readyDataRoute.current,
@@ -741,7 +741,7 @@ export default function KBDetail() {
       ),
       onError: () => setUnmappedCategories([]),
     });
-  }, [canManageKnowledge, kbId]);
+  }, [canManageCatalog, kbId]);
 
   const loadAll = useCallback(async () => {
     if (!kbId) return;
@@ -779,11 +779,11 @@ export default function KBDetail() {
   }, [match, loadAll]);
 
   useEffect(() => {
-    if (!canManageKnowledge) return;
+    if (!canManageCatalog && !canRunKnowledgeTasks) return;
     void apiGet<{ profiles?: ChunkProfile[] }>("/api/chunk/profiles")
       .then((response) => setChunkProfiles(response.profiles || []))
       .catch(() => setChunkProfiles([]));
-  }, [canManageKnowledge]);
+  }, [canManageCatalog, canRunKnowledgeTasks]);
 
   useEffect(() => {
     let cancelled = false;
@@ -830,12 +830,13 @@ export default function KBDetail() {
     if (!kbId) return;
     setSaving(true);
     try {
-      await apiPut(`/api/rag/knowledge-bases/${encodeURIComponent(kbId)}`, {
+      const payload = {
         name: editName,
         description: editDesc,
-        chunk_profile_id: editChunkProfileId,
-        embedding_identity_key: editEmbeddingIdentityKey,
-      });
+        ...(editChunkProfileId ? { chunk_profile_id: editChunkProfileId } : {}),
+        ...(editEmbeddingIdentityKey ? { embedding_identity_key: editEmbeddingIdentityKey } : {}),
+      };
+      await apiPut(`/api/rag/knowledge-bases/${encodeURIComponent(kbId)}`, payload);
       setHasEdits(false);
       await loadMeta();
     } catch (err) {
@@ -1373,7 +1374,7 @@ export default function KBDetail() {
             </div>
             <div className="flex-1 min-w-0">
               <h1 className="text-xl font-serif font-bold tracking-tight" data-testid="text-kb-name">{meta.name}</h1>
-              {canManageKnowledge && (
+              {canManageCatalog && (
                 <>
                   <input
                     value={editName}
@@ -1431,7 +1432,7 @@ export default function KBDetail() {
                   </div>
                 </>
               )}
-              {!canManageKnowledge && (
+              {!canManageCatalog && (
                 <>
                   {meta.description && (
                     <p className="mt-2 text-sm text-muted-foreground leading-relaxed" data-testid="text-kb-desc-readonly">{meta.description}</p>
@@ -1452,7 +1453,7 @@ export default function KBDetail() {
                 <Sparkles className="w-4 h-4" />
                 {t("common.ask_ai")}
               </button>
-              {canManageKnowledge && hasEdits && (
+              {canManageCatalog && hasEdits && (
                 <button
                   onClick={handleSave}
                   disabled={saving}
@@ -1557,7 +1558,7 @@ export default function KBDetail() {
                 {t("knowledge.manifest_built")} {new Date(manifest.built_at).toLocaleString()}
               </p>
             )}
-            {canManageKnowledge && (
+            {canRunKnowledgeTasks && (
               <div className="mt-4 grid gap-3 border-t border-border pt-4 sm:grid-cols-2">
                 <label className="flex items-center justify-between gap-3 text-xs">
                   <span>{t("knowledge.ready_automatic_build")}</span>
@@ -1872,7 +1873,7 @@ export default function KBDetail() {
               <span className="text-sm font-semibold">{t("kb.categories")}</span>
               <span className="text-xs text-muted-foreground">({categories.length})</span>
             </div>
-            {canManageKnowledge && (
+            {canManageCatalog && (
               <button
                 onClick={() => setShowAddCategory(!showAddCategory)}
                 className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium hover:bg-muted transition-colors"
@@ -1884,7 +1885,7 @@ export default function KBDetail() {
             )}
           </div>
 
-          {canManageKnowledge && showAddCategory && (
+          {canManageCatalog && showAddCategory && (
             <div className="px-4 py-3 border-b border-border bg-muted/10 flex items-center gap-2">
               <input
                 value={newCategory}
@@ -1931,7 +1932,7 @@ export default function KBDetail() {
                   {cat.file_count != null && (
                     <span className="text-[10px] text-primary/60">({cat.file_count})</span>
                   )}
-                  {canManageKnowledge && (
+                  {canManageCatalog && (
                     <button
                       onClick={() => handleRemoveCategory(cat.name)}
                       className="ml-0.5 opacity-0 group-hover:opacity-100 hover:text-red-500 transition-all"
@@ -1967,7 +1968,7 @@ export default function KBDetail() {
               className="w-48 px-3 py-1.5 text-xs rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-primary/30"
               data-testid="input-search-kb-files"
             />
-            {canManageKnowledge && (
+            {canManageCatalog && (
               <button
                 onClick={handleOpenBindDialog}
                 disabled={!canBindFiles}
@@ -2033,7 +2034,7 @@ export default function KBDetail() {
                       )}
                     </div>
                   </div>
-                  {canManageKnowledge && (
+                  {canManageCatalog && (
                     <button
                       onClick={() => handleRemoveFile(file.file_url)}
                       className="p-1.5 rounded hover:bg-red-500/10 text-muted-foreground hover:text-red-500 transition-colors shrink-0"
@@ -2050,7 +2051,7 @@ export default function KBDetail() {
         )}
       </motion.div>
 
-      {canManageKnowledge && showBindDialog && (
+      {canManageCatalog && showBindDialog && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" data-testid="dialog-bind-files">
           <motion.div
             initial={{ opacity: 0, scale: 0.95 }}

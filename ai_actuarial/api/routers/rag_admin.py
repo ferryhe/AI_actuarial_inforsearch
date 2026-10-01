@@ -87,6 +87,17 @@ def require_rag_task_run(request: Request) -> AuthContext:
     return _require_permission_or_legacy_rag_write(request, "tasks.run")
 
 
+def require_rag_profile_read(request: Request) -> AuthContext:
+    context = get_auth_context(request)
+    if context.token and (
+        "catalog.write" in context.permissions or "tasks.run" in context.permissions
+    ):
+        return context
+    if not context.token:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    raise HTTPException(status_code=403, detail="Forbidden")
+
+
 def _db_path(request: Request) -> str:
     db_path = str(getattr(request.app.state, "db_path", "") or "")
     if not db_path:
@@ -105,7 +116,7 @@ def _error_response(exc: RagAdminError) -> JSONResponse:
 @router.get("/chunk/profiles")
 def api_chunk_profiles(
     request: Request,
-    _auth: AuthContext = Depends(require_permissions("tasks.run")),
+    _auth: AuthContext = Depends(require_rag_profile_read),
 ):
     try:
         return list_chunk_profiles(db_path=_db_path(request))

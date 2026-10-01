@@ -59,11 +59,11 @@ def test_public_knowledge_pages_gate_operator_fetches_and_diagnostics():
         "const loadSelectableFiles", 1
     )[0]
     assert (
-        'canRunKnowledgeTasks\n        ? apiGet<Record<string, unknown>>("/api/chunk/profiles")'
+        '(canManageCatalog || canRunKnowledgeTasks)\n        ? apiGet<Record<string, unknown>>("/api/chunk/profiles")'
         in list_loader
     )
     assert (
-        'canManageKnowledge\n        ? apiGet<Record<string, unknown>>("/api/rag/categories/mapping")'
+        'canManageCatalog\n        ? apiGet<Record<string, unknown>>("/api/rag/categories/mapping")'
         in list_loader
     )
     assert (
@@ -85,13 +85,19 @@ def test_public_knowledge_pages_gate_operator_fetches_and_diagnostics():
     category_loader = detail_src.split("const loadCategories = useCallback", 1)[1].split(
         "const loadAll", 1
     )[0]
-    assert "if (!canManageKnowledge || !isCurrent()) return;" in category_loader
-    assert "}, [canManageKnowledge, kbId]);" in category_loader
+    assert "if (!canManageCatalog || !isCurrent()) return;" in category_loader
+    assert "}, [canManageCatalog, kbId]);" in category_loader
     assert (
         '{canRunKnowledgeTasks && (\n          <div\n            className="mt-4 rounded-lg'
         in detail_src
     )
     assert "{canRunKnowledgeTasks && meta.index_coverage && (" in detail_src
+    assert "if (!canManageCatalog && !canRunKnowledgeTasks) return;" in detail_src
+    assert "...(editChunkProfileId ? { chunk_profile_id: editChunkProfileId } : {})," in detail_src
+    assert (
+        "...(editEmbeddingIdentityKey ? { embedding_identity_key: editEmbeddingIdentityKey } : {}),"
+        in detail_src
+    )
     assert "if (!canRunKnowledgeTasks) return;\n    if (!isReadyDataAutomationBusy" in detail_src
     assert "{canRunKnowledgeTasks && (file.profile_name || file.chunk_profile) && (" in detail_src
     assert (
@@ -253,7 +259,7 @@ def test_kb_detail_closes_ready_data_publication_management_loop():
     assert "automation_state" in state_src
     assert "automatic_build_enabled" in state_src
     assert "automatic_publish_enabled" in state_src
-    assert "canManageKnowledge" in src
+    assert "canManageCatalog" in src
     assert "canRunKnowledgeTasks" in src
     assert "handleAutomaticBuildChange" in src
     assert "enabled ? Boolean(manifest?.automatic_publish_enabled) : false" in src
@@ -297,7 +303,7 @@ def test_kb_detail_always_renders_server_name_as_page_heading():
         'data-testid="text-kb-name">{meta.name}</h1>'
     )
     assert heading in src
-    assert src.index(heading) < src.index("{canManageKnowledge && (")
+    assert src.index(heading) < src.index("{canManageCatalog && (")
     assert 'data-testid="text-kb-name-readonly"' not in src
     assert 'data-testid="input-kb-edit-name"' in src
 

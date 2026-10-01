@@ -22,7 +22,7 @@ def api_set_ready_data_automation(
     kb_id: str,
     payload: dict[str, object],
     request: Request,
-    auth: AuthContext = Depends(require_permissions("config.write")),
+    auth: AuthContext = Depends(require_permissions("tasks.run")),
 ):
     try:
         return set_ready_data_automation(

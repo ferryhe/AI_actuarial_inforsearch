@@ -231,6 +231,7 @@
     "lint": "eslint client/src",
     "test:a11y": "vitest run --config vitest.config.ts client/src/components/a11y",
     "smoke:a11y": "node client/src/components/a11y/browser-smoke.mjs",
+    "smoke:knowledge-rbac": "node client/src/pages/Knowledge.rbac.browser-smoke.mjs",
     "dead-code:files": "python scripts/dead_code_gate.py files --report-dir reports/dead-code-files",
     "dead-code:symbols": "python scripts/dead_code_gate.py symbols --report-dir reports/dead-code-symbols",
     "dead-code:check": "npm run dead-code:files && npm run dead-code:symbols",
