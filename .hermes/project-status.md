@@ -1,10 +1,10 @@
 # Latest work — Issue #360 Operator Knowledge RBAC alignment
 
-- Cycle-3 fixes complete: catalog-only KB detail now retains editable catalog state without
-  exposing task diagnostics, and the re-embed action has a five-role browser gate check. Full
-  quality gate passes: 2,307 passed, 10 skipped; Black, isort, and Pylint clean. Fresh cycle-4
-  Sol/high review passed with no AC-mapped findings; TypeSafe reported no findings. Focused tests,
-  TypeScript, five-role Chromium smoke, and `git diff --check` pass. Ready for commit and Draft PR.
+- Issue #360 delivery checkpoint (2026-10-01): implementation commit `d6aaecb` is pushed on
+  `agent/issue-360` in Draft PR #389 (`Closes #360`). The initial exact-head CI run passed all six
+  checks; the 15-minute remote review fetch found no reviews, comments, or unresolved threads.
+  Local quality gate passed (2,307 passed, 10 skipped); fresh cycle-4 Sol/high review and
+  TypeSafe assessment found no acceptance-mapped findings.
 
 - Cycle-2 review fixes: catalog-only users can load Chunk Profile choices and submit a plain KB
   create without task diagnostics; Create-and-index remains tasks-gated. The four-role matrix covers
@@ -4522,4 +4522,5 @@
 - Fixed accepted F2: Chromium RBAC smoke asserts the detail embedding mismatch re-embed button is absent for guest/registered/catalog-only and present for Operator/Admin.
 - Added real FastAPI catalog-only create → profile read/detail → name update → chunk binding coverage. Focused tests: 50 passed. Browser smoke: passed for five role shapes.
 - Final `python scripts/quality_gate.py`: PASS, 2,307 passed / 10 skipped; Black, isort, and error-only Pylint passed. Evidence is saved under Issue #360 external evidence as `review-fix-3-*`.
-- No commit, push, or PR was created. Worktree remains on `agent/issue-360` with the Issue #360 diff uncommitted.
+- At cycle-3 completion the implementation was uncommitted; it was later committed as `d6aaecb`
+  and published in Draft PR #389.
