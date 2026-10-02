@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 export interface MarkdownContentProps {
   content: string;
   className?: string;
+  imagePlaceholder?: boolean;
 }
 
 const REMARK_PLUGINS = [remarkGfm, remarkBreaks];
@@ -118,13 +119,17 @@ const MARKDOWN_COMPONENTS: Components = {
     : null,
 };
 
-function MarkdownContentImpl({ content, className }: MarkdownContentProps) {
+function MarkdownImagePlaceholder({ alt }: { alt?: string }) {
+  return <span role="img" aria-label={alt || "Image unavailable"} className="inline-block rounded bg-muted px-1 text-muted-foreground">[image: {alt || "unavailable"}]</span>;
+}
+
+function MarkdownContentImpl({ content, className, imagePlaceholder = false }: MarkdownContentProps) {
   return (
     <div className={cn("min-w-0 max-w-full break-words text-sm leading-relaxed [overflow-wrap:anywhere]", className)}>
       <ReactMarkdown
         remarkPlugins={REMARK_PLUGINS}
-        components={MARKDOWN_COMPONENTS}
-        disallowedElements={DISALLOWED_ELEMENTS}
+        components={imagePlaceholder ? { ...MARKDOWN_COMPONENTS, img: MarkdownImagePlaceholder } : MARKDOWN_COMPONENTS}
+        disallowedElements={imagePlaceholder ? [] : DISALLOWED_ELEMENTS}
         skipHtml
         urlTransform={transformMarkdownUrl}
       >

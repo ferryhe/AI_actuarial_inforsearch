@@ -25,8 +25,9 @@ def test_shared_markdown_component_has_fixed_safe_contract():
     assert 'hasGeneratedClass(className, "contains-task-list")' in src
     assert "skipHtml" in src
     assert "urlTransform={transformMarkdownUrl}" in src
-    assert "disallowedElements={DISALLOWED_ELEMENTS}" in src
+    assert "disallowedElements={imagePlaceholder ? [] : DISALLOWED_ELEMENTS}" in src
     assert 'const DISALLOWED_ELEMENTS = ["img"]' in src
+    assert "imagePlaceholder = false" in src
     assert "memo(MarkdownContentImpl)" in src
     assert "dangerouslySetInnerHTML" not in src
     assert "rehypeRaw" not in src
@@ -35,7 +36,7 @@ def test_shared_markdown_component_has_fixed_safe_contract():
     assert "...props" not in src
 
 
-def test_chat_and_file_detail_share_markdown_without_crossing_structured_ui_boundaries():
+def test_markdown_callers_keep_safe_defaults_and_file_preview_uses_inert_image_placeholders():
     chat = CHAT_TSX.read_text(encoding="utf-8")
     detail = FILE_DETAIL_TSX.read_text(encoding="utf-8")
 
@@ -48,7 +49,9 @@ def test_chat_and_file_detail_share_markdown_without_crossing_structured_ui_boun
     assert "!isUser && <AgenticTrace" in chat
     assert "function MarkdownRenderer" not in detail
     assert "<MarkdownContent content={markdownContent}" in detail
-    assert "MarkdownContent" not in FILE_PREVIEW_TSX.read_text(encoding="utf-8")
+    preview = FILE_PREVIEW_TSX.read_text(encoding="utf-8")
+    assert 'import { MarkdownContent } from "@/components/MarkdownContent";' in preview
+    assert "<MarkdownContent content={chunk.content} imagePlaceholder" in preview
 
 
 def test_markdown_component_runtime_fixtures():

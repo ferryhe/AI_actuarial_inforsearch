@@ -1,3 +1,34 @@
+# Latest work — Issue #365 safe Markdown preview
+
+- Updated: 2026-10-02 EDT. Repository: `AI_actuarial_inforsearch`; branch:
+  `codex/issue-365-safe-markdown-preview`; baseline:
+  `5c73d16f1f79cb12dc6a06988e5263038cde62c6` (`origin/main`). Only this repository
+  was changed; sibling repositories were not accessed.
+- File Preview chunks use the shared safe Markdown renderer, with a text-only
+  image placeholder enabled only in File Preview. The chunk pane has a source
+  view that preserves exact text; preview panes stack on mobile while keeping
+  tables and code scrollable within their panes.
+- The Python quality gate first exposed two stale Issue #285 source assertions
+  that forbade the required File Preview renderer use. Updated those guards to
+  preserve the shared renderer's safe defaults and assert File Preview's explicit
+  inert-image opt-in. The full gate passed: 2,310 passed, 10 skipped, 26 warnings;
+  Black, isort, and error-only Pylint passed.
+- Focused File Preview tests (2), MarkdownContent assertions, TypeScript, lint
+  (0 errors; 5 existing Hook warnings), production build (existing chunk-size
+  advisory), dead-code gates, Chromium at 1280px/390px, overflow checks, and
+  `git diff --check` passed. Fresh Sol/high review passed AC1–AC5; TypeSafe Jev
+  found no review findings.
+- Commit `92c52f7` was pushed in PR #393, which was marked Ready after all six
+  required checks passed on that head. The single 15-minute feedback snapshot
+  found one reproduced AC4 issue: long profile names clipped the mobile chunk-set
+  selector. A renderer-map identity comment had no observable AC-mapped effect.
+  TypeSafe accepted the selector finding and rejected the renderer-map comment.
+- The selector header now wraps and constrains the control; Chromium smoke covers
+  a long profile name at 1280px, 390px, and 320px. The follow-up commit
+  `cf56ee8` is pushed, and all six required checks pass on that head. Both Copilot
+  threads have written dispositions and are resolved, with zero unresolved.
+  PR #393 is Ready; merge and scoped cleanup are pending.
+
 # Latest work — Issue #351 mobile Chat layout and drawer
 
 - Updated: 2026-10-02 EDT. Repository: `AI_actuarial_inforsearch`; branch: `codex/issue-351-chat-mobile`; baseline: `f245d0890cfad1b078edd30b01f4f9e2ff9a9474` (`origin/main`). Only this repository was edited; sibling repositories were not accessed.
