@@ -4676,5 +4676,12 @@
 - Current-patch validation passed: `npm run test:a11y` (18 files / 70 tests), TypeScript,
   lint (0 errors; five existing Hook warnings), build (existing chunk advisory), 390px Chromium
   form smoke (17 surfaces), the focused RagIndexForm pytest (1 test), and `git diff --check`.
-- The changes are being committed and pushed to `agent/issue-366`; then required checks will be
-  tracked on the new PR head. No merge is authorized.
+- Initial remote-feedback fixes were pushed as `62ab38a85a9957896aa47a1a6ae861846c941efb`.
+  On that head, five required checks passed and `quality-gate` failed only on Black formatting
+  in `tests/test_tasks_react_source.py`; the test suite completed. The same worker made the
+  one-line formatting correction, and manager reruns of Black, the focused pytest, and
+  `git diff --check` passed.
+- All ten fetched inline threads now have written dispositions and are resolved; the required
+  post-resolution query reported zero unresolved threads. No new feedback fetch or review was
+  started. Next: push the formatting repair, rerun required checks on the new head, and track
+  that result. No merge is authorized.

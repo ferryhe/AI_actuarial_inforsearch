@@ -243,7 +243,7 @@ def test_tasks_page_restores_rag_indexing_task_form():
     assert 'apiType: "rag_indexing"' in tasks_src
     assert (
         "<RagIndexForm onSubmit={handleSubmitRagIndex} submitting={submitting} "
-        "errorDescribedBy={submitErrorForm === activeForm ? \"error-task-submit\" : undefined} />"
+        'errorDescribedBy={submitErrorForm === activeForm ? "error-task-submit" : undefined} />'
     ) in tasks_src
     assert "`/api/rag/knowledge-bases/${encodeURIComponent(kbId)}/index`" in tasks_src
     assert '"/api/rag/knowledge-bases"' in rag_src
