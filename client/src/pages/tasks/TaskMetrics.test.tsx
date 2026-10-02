@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { renderToStaticMarkup } from "react-dom/server";
+import { test } from "vitest";
 import { TaskTable } from "./TaskTable";
 import type { HistoryTask } from "./Tasks.types";
 
@@ -15,6 +16,7 @@ function assertTableItemCount(markup: string, expected: number): void {
   assert.equal(Number(itemCell[1]), expected);
 }
 
+test("renders task metrics", () => {
 const acquisition = renderMetrics({
   type: "web_search",
   items_processed: 4,
@@ -284,3 +286,4 @@ for (const status of ["pending", "queued", "stopping"] as const) {
 }
 
 console.log("task metric UI runtime assertions passed");
+});

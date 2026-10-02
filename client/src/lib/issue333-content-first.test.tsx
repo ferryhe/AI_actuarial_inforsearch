@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { Children, type ReactElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { test } from "vitest";
 import { WeeklyGroupDisclosure } from "../components/WeeklyGroupDisclosure";
 import { WeeklyHighlightCard } from "../components/WeeklyHighlightCard";
 import {
@@ -54,7 +55,7 @@ const translations: Record<string, string> = {
 };
 const t = (key: string) => translations[key] || key;
 
-async function main(): Promise<void> {
+test("covers Issue 333 content-first behavior", async () => {
   const homeCalls: string[] = [];
   const home = await loadLatestWeeklyDashboard(async <T,>(url: string): Promise<T> => {
     homeCalls.push(url);
@@ -254,9 +255,4 @@ async function main(): Promise<void> {
   assert.match(reopenedMarkup, /data-testid="runtime-weekly-article"/);
 
   console.log("Issue #333 content-first executable assertions passed");
-}
-
-void main().catch((error) => {
-  console.error(error);
-  process.exitCode = 1;
 });

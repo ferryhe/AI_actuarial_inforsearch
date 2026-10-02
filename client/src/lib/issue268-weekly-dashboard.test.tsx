@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { renderToStaticMarkup } from "react-dom/server";
+import { test } from "vitest";
 import { WeeklyDashboardSection } from "../components/WeeklyDashboardSection";
 import {
   buildWeeklyDashboardView,
@@ -68,7 +69,7 @@ const fakeGet = async <T,>(url: string): Promise<T> => {
   throw new Error(`Unexpected GET ${url}`);
 };
 
-async function main(): Promise<void> {
+test("covers Issue 268 weekly dashboard behavior", async () => {
 const loaded = await loadLatestWeeklyDashboard(fakeGet);
 assert.equal(loaded.status, "ready");
 assert.equal(loaded.files.length, 6);
@@ -235,9 +236,4 @@ assert.match(failedMarkup, /新增 12 份材料/);
 assert.equal((failedMarkup.match(/data-testid="weekly-file-row-/g) || []).length, 6);
 
 console.log("Issue #268 weekly dashboard executable assertions passed");
-}
-
-void main().catch((error) => {
-  console.error(error);
-  process.exitCode = 1;
 });

@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import path from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
+import { test } from "vitest";
 import { RetrievalIndicators } from "./RetrievalIndicators";
 
 const translations: Record<string, string> = {
@@ -34,6 +36,7 @@ function assertLabels(
   assert.match(markup, /class="flex flex-wrap items-center gap-2"/);
 }
 
+test("renders retrieval indicators", () => {
 const keywordMethods = [
   ["summaries", "Summaries"],
   ["titles", "Titles"],
@@ -153,7 +156,8 @@ assertLabels(
 );
 assertLabels({}, ["Retrieval method: Other"]);
 
-const componentSource = readFileSync(new URL("./RetrievalIndicators.tsx", import.meta.url), "utf8");
+const componentSource = readFileSync(path.resolve("client/src/pages/chat/RetrievalIndicators.tsx"), "utf8");
 assert.match(componentSource, /flex flex-wrap items-center gap-2/);
 assert.match(componentSource, /whitespace-nowrap/);
 console.log("chat retrieval indicator component assertions passed");
+});

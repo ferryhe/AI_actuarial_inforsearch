@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { renderToStaticMarkup } from "react-dom/server";
+import { test } from "vitest";
 import { ScheduledTasksSection } from "./ScheduledTasksSection";
 
+test("renders Issue 307 scheduled tasks", () => {
 const status = {
   count: 3,
   jobs: [
@@ -96,3 +98,4 @@ assert.match(writerMarkup, /button-delete-sched-Pricing Catalog/);
 assert.doesNotMatch(writerMarkup, /button-delete-job/);
 
 console.log("Issue 307 scheduled tasks component assertions passed");
+});

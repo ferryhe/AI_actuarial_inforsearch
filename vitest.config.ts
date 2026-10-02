@@ -7,5 +7,6 @@ export default defineConfig({
   resolve: { alias: { "@": path.resolve(import.meta.dirname, "client", "src") } },
   test: {
     environment: "jsdom",
+    setupFiles: ["./client/src/test/setup.ts"],
   },
 });
