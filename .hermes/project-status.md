@@ -4679,9 +4679,10 @@
 - Initial remote-feedback fixes were pushed as `62ab38a85a9957896aa47a1a6ae861846c941efb`.
   On that head, five required checks passed and `quality-gate` failed only on Black formatting
   in `tests/test_tasks_react_source.py`; the test suite completed. The same worker made the
-  one-line formatting correction, and manager reruns of Black, the focused pytest, and
-  `git diff --check` passed.
+  one-line formatting correction. Manager reruns of Black, the focused pytest, and
+  `git diff --check` passed. The correction was pushed as `e46ef973d5b3acce8600e4c89d4b552a8878be2a`;
+  all six required checks then passed, including `quality-gate` (8m33s).
 - All ten fetched inline threads now have written dispositions and are resolved; the required
   post-resolution query reported zero unresolved threads. No new feedback fetch or review was
-  started. Next: push the formatting repair, rerun required checks on the new head, and track
-  that result. No merge is authorized.
+  started. This project-status entry records the code-head check result; the follow-up commit
+  contains only this tracking update. No merge is authorized.
