@@ -1,3 +1,11 @@
+# Latest work — Issue #351 mobile Chat layout and drawer
+
+- Updated: 2026-10-02 EDT. Repository: `AI_actuarial_inforsearch`; branch: `codex/issue-351-chat-mobile`; baseline: `f245d0890cfad1b078edd30b01f4f9e2ff9a9474` (`origin/main`). Only this repository was edited; sibling repositories were not accessed.
+- Chat now starts with its sidebar closed below 768px and open on desktop. Mobile uses an overlay drawer with backdrop, scroll lock, Escape/backdrop close, focus return, and named shared `IconButton` controls. The composer and its controls fit the requested mobile widths.
+- Added an Issue #351 component regression and a real-Chromium smoke for 320/360/390/414px at 100% and 200%, including drawer actions and a visible send reply. The smoke uses deterministic backend fixtures while exercising the real Chat UI and frontend API client.
+- Manager validation passed the focused Vitest regression, Chromium smoke, typecheck, lint, production build, both dead-code gates, and `git diff --check`. Build reports the existing chunk-size advisory. Fresh Sol/high review passed with no AC-mapped findings; TypeSafe Jev returned no findings.
+- Implementation and local review are complete. Commit, Draft PR, required GitHub checks, remote feedback, merge, and cleanup are pending.
+
 # Latest work — Issue #366 form accessibility and responsive controls
 
 - Updated: 2026-10-02 EDT. Repository: AI_actuarial_inforsearch; branch: agent/issue-366. Only this worktree was used; sibling repositories were not accessed.

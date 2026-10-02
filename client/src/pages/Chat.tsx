@@ -468,7 +468,16 @@ export default function Chat() {
   const [selectedKbs, setSelectedKbs] = useState<string[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [isMobile, setIsMobile] = useState(() => (
+    typeof window !== "undefined" && window.matchMedia("(max-width: 767px)").matches
+  ));
+  const [desktopSidebarOpen, setDesktopSidebarOpen] = useState(true);
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const sidebarOpen = isMobile ? mobileSidebarOpen : desktopSidebarOpen;
+  const setSidebarOpen = useCallback((open: boolean) => {
+    if (isMobile) setMobileSidebarOpen(open);
+    else setDesktopSidebarOpen(open);
+  }, [isMobile]);
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>("conversations");
   const [showKbDropdown, setShowKbDropdown] = useState(false);
   const [showModeDropdown, setShowModeDropdown] = useState(false);
@@ -482,6 +491,9 @@ export default function Chat() {
   const [quotaWarning, setQuotaWarning] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const openSidebarRef = useRef<HTMLButtonElement>(null);
+  const closeSidebarRef = useRef<HTMLButtonElement>(null);
+  const mobileDrawerWasOpenRef = useRef(false);
   const routeExplainKeyRef = useRef<string | null>(null);
   const processedAskAiTargetKeyRef = useRef<string | null>(null);
 
@@ -492,6 +504,40 @@ export default function Chat() {
   useEffect(() => {
     scrollToBottom();
   }, [messages, sending, scrollToBottom]);
+
+  useEffect(() => {
+    const query = window.matchMedia("(max-width: 767px)");
+    const updateViewport = () => setIsMobile(query.matches);
+    query.addEventListener("change", updateViewport);
+    return () => query.removeEventListener("change", updateViewport);
+  }, []);
+
+  useEffect(() => {
+    if (!isMobile || !sidebarOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = previousOverflow; };
+  }, [isMobile, sidebarOpen]);
+
+  useEffect(() => {
+    if (!isMobile || !sidebarOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setSidebarOpen(false);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [isMobile, sidebarOpen, setSidebarOpen]);
+
+  useEffect(() => {
+    if (!isMobile) {
+      mobileDrawerWasOpenRef.current = false;
+      return;
+    }
+    const target = sidebarOpen ? closeSidebarRef.current : mobileDrawerWasOpenRef.current ? openSidebarRef.current : null;
+    mobileDrawerWasOpenRef.current = sidebarOpen;
+    const frame = target ? requestAnimationFrame(() => target.focus()) : undefined;
+    return () => { if (frame !== undefined) cancelAnimationFrame(frame); };
+  }, [isMobile, sidebarOpen]);
 
   useEffect(() => {
     if (authLoading) return;
@@ -917,12 +963,24 @@ export default function Chat() {
     <div className="flex h-[calc(100vh-8rem)] -mx-4 sm:-mx-6 -my-6 overflow-hidden">
       <AnimatePresence>
         {sidebarOpen && (
-          <motion.div
-            initial={{ width: 0, opacity: 0 }}
-            animate={{ width: 300, opacity: 1 }}
-            exit={{ width: 0, opacity: 0 }}
+          <>
+            {isMobile && (
+              <div
+                aria-hidden="true"
+                className="fixed inset-0 z-40 bg-black/40"
+                data-testid="chat-sidebar-backdrop"
+                onClick={() => setSidebarOpen(false)}
+              />
+            )}
+            <motion.div
+            initial={isMobile ? { x: "-100%", opacity: 1 } : { width: 0, opacity: 0 }}
+            animate={isMobile ? { x: 0, opacity: 1 } : { width: 300, opacity: 1 }}
+            exit={isMobile ? { x: "-100%", opacity: 1 } : { width: 0, opacity: 0 }}
             transition={{ duration: 0.2 }}
-            className="border-r border-border bg-card flex flex-col shrink-0 overflow-hidden"
+            className={cn(
+              "border-r border-border bg-card flex flex-col overflow-hidden",
+              isMobile ? "fixed inset-y-0 left-0 z-50 w-[min(18.75rem,calc(100vw-1rem))] shadow-xl" : "shrink-0",
+            )}
           >
             <div className="p-3 border-b border-border space-y-2">
               <div className="flex items-center gap-2">
@@ -937,6 +995,7 @@ export default function Chat() {
                   </button>
                 )}
                 <IconButton
+                  ref={closeSidebarRef}
                   onClick={() => setSidebarOpen(false)}
                   label={t("a11y.close_chat_sidebar")}
                   className="hover:bg-muted text-muted-foreground"
@@ -1274,6 +1333,7 @@ export default function Chat() {
               </div>
             )}
           </motion.div>
+          </>
         )}
       </AnimatePresence>
 
@@ -1281,6 +1341,7 @@ export default function Chat() {
         {!sidebarOpen && (
           <div className="p-2 border-b border-border flex items-center gap-2">
             <IconButton
+              ref={openSidebarRef}
               onClick={() => setSidebarOpen(true)}
               label={t("a11y.open_chat_sidebar")}
               className="hover:bg-muted text-muted-foreground"
