@@ -24,9 +24,10 @@
   selector. A renderer-map identity comment had no observable AC-mapped effect.
   TypeSafe accepted the selector finding and rejected the renderer-map comment.
 - The selector header now wraps and constrains the control; Chromium smoke covers
-  a long profile name at 1280px, 390px, and 320px. The manager's focused smoke,
-  File Preview Vitest, TypeScript, and diff check pass. The follow-up commit,
-  push, checks, comment responses/resolutions, merge, and cleanup are pending.
+  a long profile name at 1280px, 390px, and 320px. The follow-up commit
+  `cf56ee8` is pushed, and all six required checks pass on that head. Both Copilot
+  threads have written dispositions and are resolved, with zero unresolved.
+  PR #393 is Ready; merge and scoped cleanup are pending.
 
 # Latest work — Issue #351 mobile Chat layout and drawer
 
