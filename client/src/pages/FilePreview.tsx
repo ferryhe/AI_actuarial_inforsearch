@@ -8,7 +8,6 @@ import {
   FileText,
   Layers,
   Download,
-  Monitor,
   ChevronLeft,
   ChevronRight,
   ImageIcon,
@@ -20,6 +19,7 @@ import { useAuth } from "@/context/AuthContext";
 import { useLatestRequestGuard } from "@/hooks/use-latest-request";
 import { apiGet, apiGetBlob, getStoredAuthToken } from "@/lib/api";
 import { IconButton } from "@/components/a11y/IconButton";
+import { MarkdownContent } from "@/components/MarkdownContent";
 
 interface FileInfo {
   url: string;
@@ -61,19 +61,6 @@ function formatBytes(bytes: number): string {
   let size = bytes;
   while (size >= 1024 && i < units.length - 1) { size /= 1024; i++; }
   return `${size.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
-}
-
-function useMediaQuery(query: string): boolean {
-  const [matches, setMatches] = useState(() =>
-    typeof window !== "undefined" ? window.matchMedia(query).matches : true
-  );
-  useEffect(() => {
-    const mq = window.matchMedia(query);
-    const handler = (e: MediaQueryListEvent) => setMatches(e.matches);
-    mq.addEventListener("change", handler);
-    return () => mq.removeEventListener("change", handler);
-  }, [query]);
-  return matches;
 }
 
 function PdfViewer({ fileUrl, errorText }: { fileUrl: string; errorText: string }) {
@@ -282,14 +269,19 @@ function ChunksPane({ chunks, chunkSets, activeChunkSetId, onChunkSetChange }: {
   onChunkSetChange: (id: string) => void;
 }) {
   const { t } = useTranslation();
+  const [showSource, setShowSource] = useState(false);
   return (
     <div className="flex flex-col h-full">
       <div className="px-3.5 py-2.5 border-b border-border bg-muted/30 flex items-center gap-2">
         <Layers className="w-4 h-4 text-primary" />
         <span id="label-chunk-set" className="text-xs font-medium">{t("fp.chunks")} ({chunks.length})</span>
+        <button type="button" onClick={() => setShowSource((value) => !value)}
+          className="ml-auto min-h-[44px] rounded px-2 text-[11px] text-primary hover:bg-muted" data-testid="button-chunk-source">
+          {showSource ? t("fp.rendered_view") : t("fp.view_source")}
+        </button>
         {chunkSets.length > 1 && (<>
           <select id="select-chunk-set" aria-labelledby="label-chunk-set" value={activeChunkSetId} onChange={(e) => onChunkSetChange(e.target.value)}
-            className="ml-auto min-h-[48px] text-[11px] px-2 py-1 rounded border border-border bg-background" data-testid="select-chunk-set">
+            className="min-h-[48px] text-[11px] px-2 py-1 rounded border border-border bg-background" data-testid="select-chunk-set">
             {chunkSets.map((cs) => (
               <option key={cs.chunk_set_id} value={cs.chunk_set_id}>
                 {cs.profile_name || "default"} ({cs.chunk_count ?? "?"})
@@ -311,9 +303,9 @@ function ChunksPane({ chunks, chunkSets, activeChunkSetId, onChunkSetChange }: {
               {chunk.section_hierarchy && (
                 <p className="text-[10px] text-muted-foreground/70 truncate">{chunk.section_hierarchy}</p>
               )}
-              <pre className="text-xs whitespace-pre-wrap font-sans leading-relaxed text-foreground/90 max-h-[200px] overflow-y-auto">
-                {chunk.content}
-              </pre>
+              {showSource ? (
+                <pre className="max-h-[200px] max-w-full overflow-auto whitespace-pre-wrap break-words text-xs leading-relaxed [overflow-wrap:anywhere]" data-testid={`chunk-source-${chunk.chunk_index}`}>{chunk.content}</pre>
+              ) : <MarkdownContent content={chunk.content} imagePlaceholder className="max-h-[200px] overflow-auto" />}
             </div>
           ))
         )}
@@ -331,8 +323,6 @@ export default function FilePreview() {
   const fileUrl = searchParams.get("file_url") || "";
   const initialChunkSetId = searchParams.get("chunk_set_id") || "";
   const fromParam = sanitizeReturnPath(searchParams.get("from"));
-
-  const isDesktop = useMediaQuery("(min-width: 1024px)");
 
   const [data, setData] = useState<PreviewData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -382,20 +372,6 @@ export default function FilePreview() {
     );
   }
 
-  if (!isDesktop) {
-    return (
-      <div className="text-center py-16 space-y-4">
-        <Monitor className="w-16 h-16 mx-auto text-muted-foreground/40" />
-        <h2 className="text-lg font-semibold">{t("fp.desktop_only_title")}</h2>
-        <p className="text-sm text-muted-foreground max-w-md mx-auto">{t("fp.desktop_only_desc")}</p>
-        <button onClick={goBack}
-          className="inline-flex min-h-[48px] items-center gap-1.5 text-sm text-primary hover:underline mt-4" data-testid="link-back-detail">
-          <ArrowLeft className="w-4 h-4" />{t("fp.back_to_detail")}
-        </button>
-      </div>
-    );
-  }
-
   if (loading) {
     return (
       <div className="flex items-center justify-center py-32">
@@ -418,7 +394,7 @@ export default function FilePreview() {
   }
 
   return (
-    <div className="space-y-3 h-[calc(100vh-80px)]">
+    <div className="min-h-[calc(100vh-80px)] space-y-3 lg:h-[calc(100vh-80px)]">
       <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="flex items-center gap-3">
         <IconButton onClick={goBack} label={t("a11y.back_file_preview")} className="hover:bg-muted" data-testid="button-back-preview">
           <ArrowLeft className="w-5 h-5" />
@@ -429,11 +405,11 @@ export default function FilePreview() {
       </motion.div>
 
       <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 }}
-        className="grid grid-cols-2 gap-3 h-[calc(100%-52px)]">
-        <div className="rounded-xl border border-border bg-card overflow-hidden" data-testid="pane-original">
+        className="grid grid-cols-1 gap-3 lg:h-[calc(100%-52px)] lg:grid-cols-2">
+        <div className="min-h-[24rem] overflow-hidden rounded-xl border border-border bg-card lg:min-h-0" data-testid="pane-original">
           <OriginalPane fileInfo={data.file_info} canDownload={canDownload} />
         </div>
-        <div className="rounded-xl border border-border bg-card overflow-hidden" data-testid="pane-chunks">
+        <div className="min-h-[24rem] overflow-hidden rounded-xl border border-border bg-card lg:min-h-0" data-testid="pane-chunks">
           <ChunksPane
             chunks={data.chunks}
             chunkSets={data.chunk_sets}
