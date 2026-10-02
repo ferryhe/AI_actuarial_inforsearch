@@ -27,11 +27,14 @@ const safe = true;
 ![missing](https://evil.example/missing.png)
 
 ${"verylongword".repeat(30)}`, chunk_set_id: "a" }],
-  chunk_sets: [{ chunk_set_id: "a", profile_name: "Default", chunk_count: 1 }], active_chunk_set_id: "a",
+  chunk_sets: [
+    { chunk_set_id: "a", profile_name: "Default", chunk_count: 1 },
+    { chunk_set_id: "b", profile_name: "Long valid profile name for a responsive chunk preview selector", chunk_count: 1 },
+  ], active_chunk_set_id: "a",
 };
 
 try {
-  for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 }]) {
+  for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 }, { width: 320, height: 844 }]) {
     const page = await browser.newPage({ viewport });
     const requests = [];
     page.on("request", (request) => requests.push(request.url()));
@@ -54,6 +57,9 @@ try {
     const original = await page.getByTestId("pane-original").boundingBox();
     const chunks = await page.getByTestId("pane-chunks").boundingBox();
     assert.ok(original && chunks && (viewport.width > 1024 ? Math.abs(original.y - chunks.y) < 2 : chunks.y > original.y));
+    await page.getByTestId("button-chunk-source").waitFor();
+    const selector = await page.getByTestId("select-chunk-set").boundingBox();
+    assert.ok(selector && chunks && selector.x >= chunks.x && selector.x + selector.width <= chunks.x + chunks.width);
     await page.close();
   }
   console.log("File Preview Chromium smoke passed");

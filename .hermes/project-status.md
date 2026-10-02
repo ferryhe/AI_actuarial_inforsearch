@@ -11,15 +11,22 @@
 - The Python quality gate first exposed two stale Issue #285 source assertions
   that forbade the required File Preview renderer use. Updated those guards to
   preserve the shared renderer's safe defaults and assert File Preview's explicit
-  inert-image opt-in. The full gate now passes: 2,310 passed, 10 skipped,
-  26 warnings; Black, isort, and error-only Pylint pass.
+  inert-image opt-in. The full gate passed: 2,310 passed, 10 skipped, 26 warnings;
+  Black, isort, and error-only Pylint passed.
 - Focused File Preview tests (2), MarkdownContent assertions, TypeScript, lint
   (0 errors; 5 existing Hook warnings), production build (existing chunk-size
   advisory), dead-code gates, Chromium at 1280px/390px, overflow checks, and
-  `git diff --check` pass. Fresh Sol/high review passed AC1–AC5; TypeSafe Jev
+  `git diff --check` passed. Fresh Sol/high review passed AC1–AC5; TypeSafe Jev
   found no review findings.
-- Implementation and local checks are complete. Commit, push, Draft PR, required
-  GitHub checks, remote feedback, merge, and cleanup are pending.
+- Commit `92c52f7` was pushed in PR #393, which was marked Ready after all six
+  required checks passed on that head. The single 15-minute feedback snapshot
+  found one reproduced AC4 issue: long profile names clipped the mobile chunk-set
+  selector. A renderer-map identity comment had no observable AC-mapped effect.
+  TypeSafe accepted the selector finding and rejected the renderer-map comment.
+- The selector header now wraps and constrains the control; Chromium smoke covers
+  a long profile name at 1280px, 390px, and 320px. The manager's focused smoke,
+  File Preview Vitest, TypeScript, and diff check pass. The follow-up commit,
+  push, checks, comment responses/resolutions, merge, and cleanup are pending.
 
 # Latest work — Issue #351 mobile Chat layout and drawer
 

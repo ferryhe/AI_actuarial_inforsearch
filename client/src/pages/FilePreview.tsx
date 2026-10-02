@@ -272,7 +272,7 @@ function ChunksPane({ chunks, chunkSets, activeChunkSetId, onChunkSetChange }: {
   const [showSource, setShowSource] = useState(false);
   return (
     <div className="flex flex-col h-full">
-      <div className="px-3.5 py-2.5 border-b border-border bg-muted/30 flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2 border-b border-border bg-muted/30 px-3.5 py-2.5">
         <Layers className="w-4 h-4 text-primary" />
         <span id="label-chunk-set" className="text-xs font-medium">{t("fp.chunks")} ({chunks.length})</span>
         <button type="button" onClick={() => setShowSource((value) => !value)}
@@ -281,7 +281,7 @@ function ChunksPane({ chunks, chunkSets, activeChunkSetId, onChunkSetChange }: {
         </button>
         {chunkSets.length > 1 && (<>
           <select id="select-chunk-set" aria-labelledby="label-chunk-set" value={activeChunkSetId} onChange={(e) => onChunkSetChange(e.target.value)}
-            className="min-h-[48px] text-[11px] px-2 py-1 rounded border border-border bg-background" data-testid="select-chunk-set">
+            className="min-h-[48px] w-full min-w-0 max-w-full rounded border border-border bg-background px-2 py-1 text-[11px] sm:w-auto sm:max-w-[16rem]" data-testid="select-chunk-set">
             {chunkSets.map((cs) => (
               <option key={cs.chunk_set_id} value={cs.chunk_set_id}>
                 {cs.profile_name || "default"} ({cs.chunk_count ?? "?"})
