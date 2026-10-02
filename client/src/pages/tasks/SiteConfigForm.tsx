@@ -47,8 +47,8 @@ function formatDate(dateStr: string): string {
   }
 }
 
-export function SiteConfigForm({ sites, onSubmit, submitting, onSitesChanged, errorDescribedBy }: {
-  sites: SiteConfig[]; onSubmit: (d: Record<string, unknown>) => void; submitting: boolean; onSitesChanged: () => void; errorDescribedBy?: string;
+export function SiteConfigForm({ sites, onSubmit, submitting, onSitesChanged, errorDescribedBy, errorSiteName }: {
+  sites: SiteConfig[]; onSubmit: (d: Record<string, unknown>) => void; submitting: boolean; onSitesChanged: () => void; errorDescribedBy?: string; errorSiteName?: string;
 }) {
   const { t } = useTranslation();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -534,7 +534,7 @@ export function SiteConfigForm({ sites, onSubmit, submitting, onSitesChanged, er
                   <div className="flex items-center gap-1 shrink-0">
                     <IconButton onClick={() => onSubmit({ type: "scheduled", name: `Scheduled: ${s.name}`, site: s.name })}
                       label={t("a11y.run_site", { target: s.name })} className="hover:bg-emerald-500/10 text-muted-foreground hover:text-emerald-600"
-                      data-testid={`button-run-site-${s.name}`} aria-describedby={errorDescribedBy}><Plus className="w-3.5 h-3.5" /></IconButton>
+                      data-testid={`button-run-site-${s.name}`} aria-describedby={errorSiteName === s.name ? "error-task-submit" : undefined}><Plus className="w-3.5 h-3.5" /></IconButton>
                     <IconButton onClick={() => openEditForm(s)} label={t("a11y.edit_site", { target: s.name })}
                       className="hover:bg-muted text-muted-foreground hover:text-foreground"
                       data-testid={`button-edit-site-${s.name}`}><Pencil className="w-3.5 h-3.5" /></IconButton>
@@ -544,7 +544,7 @@ export function SiteConfigForm({ sites, onSubmit, submitting, onSitesChanged, er
                           className="min-h-[48px] text-[10px] px-2 py-1 rounded bg-destructive text-destructive-foreground"
                           data-testid={`button-confirm-delete-site-${s.name}`}>{t("a11y.confirm_delete_site", { target: s.name })}</button>
                         <button onClick={() => setDeletingSite(null)}
-                          className="min-h-[48px] text-[10px] px-2 py-1 rounded border border-border"
+                          className="min-h-[48px] min-w-[48px] text-[10px] px-2 py-1 rounded border border-border"
                           data-testid={`button-cancel-delete-site-${s.name}`}>{t("tasks.sched.cancel")}</button>
                       </div>
                     ) : (

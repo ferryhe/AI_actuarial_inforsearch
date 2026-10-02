@@ -670,7 +670,8 @@ export function ScheduledTasksSection({
                               className="min-h-[48px] text-[10px] px-2 py-1 rounded bg-destructive text-destructive-foreground"
                               data-testid={`button-confirm-delete-sched-${task.name}`}>{t("a11y.confirm_delete_scheduled_task", { target: task.name })}</button>
                             <button onClick={() => setDeletingTask(null)}
-                              className="min-h-[48px] text-[10px] px-2 py-1 rounded border border-border">{t("tasks.sched.cancel")}</button>
+                              className="min-h-[48px] min-w-[48px] text-[10px] px-2 py-1 rounded border border-border"
+                              data-testid={`button-cancel-delete-sched-${task.name}`}>{t("tasks.sched.cancel")}</button>
                           </div>
                         </div>
                       ) : (

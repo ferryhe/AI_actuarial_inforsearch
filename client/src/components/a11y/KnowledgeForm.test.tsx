@@ -36,6 +36,15 @@ it("keeps the Chinese Create knowledge-base action at the mobile target floor", 
   expect(await screen.findByTestId("button-create-kb")).toHaveClass("min-h-[48px]");
 });
 
+it("gives category choices a two-dimensional mobile target", async () => {
+  apiGet.mockResolvedValue({ knowledge_bases: [], profiles: [{ profile_id: "p", name: "Default" }], categories: ["General"] });
+  const user = userEvent.setup();
+  render(<Layout><Knowledge /></Layout>);
+  await user.click(await screen.findByTestId("button-create-kb"));
+  await user.selectOptions(screen.getByTestId("select-kb-mode"), "category");
+  expect(await screen.findByTestId("button-toggle-kb-category-General")).toHaveClass("min-h-[44px]", "min-w-[44px]");
+});
+
 it("keeps chunk-profile controls operable and describes a failed knowledge-base create", async () => {
   apiGet.mockResolvedValue({ knowledge_bases: [], profiles: [{ profile_id: "p", name: "Default", chunk_size: 512, chunk_overlap: 50 }], categories: [] });
   apiPost.mockRejectedValue({ detail: "create failed" });
@@ -74,6 +83,10 @@ it("describes a failed chunk-profile create from its submit action", async () =>
   expect(alert).toHaveAttribute("id", "error-profile-create");
   expect(submit).toHaveAttribute("aria-describedby", "error-profile-create");
   expect((await axe.run(submit.closest(".rounded-xl") || submit.parentElement!, { rules: { "color-contrast": { enabled: false } } })).violations).toEqual([]);
+  await user.click(screen.getByTestId("button-cancel-profile"));
+  await user.click(screen.getByTestId("button-create-profile"));
+  expect(screen.queryByTestId("error-profile-create")).not.toBeInTheDocument();
+  expect(screen.getByTestId("button-submit-profile")).not.toHaveAttribute("aria-describedby");
 });
 
 it("describes a failed create-and-index action without describing Create", async () => {

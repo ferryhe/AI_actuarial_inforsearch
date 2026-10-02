@@ -1,12 +1,13 @@
 import axe from "axe-core";
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import Layout from "@/components/Layout";
 import FileDetail from "@/pages/FileDetail";
 const { apiGet, apiPost } = vi.hoisted(() => ({ apiGet: vi.fn(), apiPost: vi.fn() }));
 vi.mock("@/lib/api", () => ({ apiGet, apiPost, apiDelete: vi.fn() }));
+vi.mock("@/hooks/use-task-options", () => ({ useTaskOptions: () => ({ catalogProviders: ["OpenAI"], conversionToolsInfo: [{ name: "local", provider: "local", displayName: "Local" }] }) }));
 vi.mock("@/context/AuthContext", () => ({ useAuth: () => ({ permissions: ["catalog.write", "catalog.read", "tasks.run", "config.read", "files.delete", "files.write", "markdown.write"] }) }));
 vi.mock("@/hooks/use-theme", () => ({ useTheme: () => ({ theme: "light", toggleTheme: vi.fn() }) }));
 beforeEach(() => { window.scrollTo = vi.fn(); window.history.pushState({}, "", "/file-detail?url=file-smoke"); apiGet.mockImplementation((url) => Promise.resolve(url.includes("/detail") ? { file: { url: "file-smoke", title: "Smoke file", original_filename: "smoke.pdf", source_site: "smoke", content_type: "text/plain", bytes: 12, local_path: "/tmp/smoke.txt", category: "General", summary: "Summary", keywords: ["actuarial"] } } : url.includes("/markdown") ? { markdown: { markdown_content: "text", markdown_source: "manual" } } : url.includes("chunk-sets") ? { chunk_sets: [] } : url.includes("categories") ? { categories: { General: [] } } : url.includes("chunk/profiles") ? { profiles: [{ profile_id: "p", name: "Default" }] } : { tasks: [] })); });
@@ -51,6 +52,10 @@ it("describes a rejected edit save from the initiating action", async () => {
   expect(alert).toHaveAttribute("id", "error-file-detail-mutation");
   expect(screen.getByTestId("button-save")).toHaveAttribute("aria-describedby", "error-file-detail-mutation");
   expect((await axe.run(alert.parentElement!, { rules: { "color-contrast": { enabled: false } } })).violations).toEqual([]);
+  await user.click(screen.getByTestId("button-cancel"));
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  await user.click(screen.getByTestId("button-edit"));
+  expect(screen.getByTestId("button-save")).not.toHaveAttribute("aria-describedby");
 });
 
 it("describes a rejected delete from the confirmed delete action", async () => {
@@ -64,4 +69,41 @@ it("describes a rejected delete from the confirmed delete action", async () => {
   expect(alert).toHaveAttribute("id", "error-confirm-delete");
   expect(execute).toHaveAttribute("aria-describedby", "error-confirm-delete");
   expect((await axe.run(screen.getByTestId("input-confirm-delete").closest(".space-y-2")!, { rules: { "color-contrast": { enabled: false } } })).violations).toEqual([]);
+});
+
+it("clears a rejected delete error when the confirmation is closed and reopened", async () => {
+  apiPost.mockRejectedValueOnce(new Error("delete failed"));
+  const user = userEvent.setup(); render(<Layout><FileDetail /></Layout>);
+  await user.click(await screen.findByTestId("button-delete"));
+  await user.type(screen.getByTestId("input-confirm-delete"), "confirm delete");
+  await user.click(screen.getByTestId("button-execute-delete"));
+  await screen.findByRole("alert");
+  await user.click(screen.getByTestId("button-cancel-delete"));
+  await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
+  await user.click(screen.getByTestId("button-delete"));
+  expect(screen.getByTestId("button-execute-delete")).not.toHaveAttribute("aria-describedby");
+});
+
+it("clears a rejected Markdown save error when editing is cancelled", async () => {
+  apiPost.mockRejectedValueOnce(new Error("markdown failed"));
+  const user = userEvent.setup(); render(<Layout><FileDetail /></Layout>);
+  await user.click(await screen.findByTestId("button-md-edit"));
+  await user.click(screen.getByTestId("button-save-md"));
+  await screen.findByRole("alert");
+  await user.click(screen.getByTestId("button-cancel-md"));
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  await user.click(screen.getByTestId("button-md-edit"));
+  expect(screen.getByTestId("button-save-md")).not.toHaveAttribute("aria-describedby");
+});
+
+it("clears a rejected Catalog error when the modal is cancelled and reopened", async () => {
+  apiPost.mockRejectedValueOnce(new Error("catalog failed"));
+  const user = userEvent.setup(); render(<Layout><FileDetail /></Layout>);
+  await user.click(await screen.findByTestId("button-catalog"));
+  await user.click(await screen.findByTestId("button-submit-catalog"));
+  await screen.findByRole("alert");
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
+  await user.click(screen.getByTestId("button-catalog"));
+  expect(screen.getByTestId("button-submit-catalog")).not.toHaveAttribute("aria-describedby");
 });

@@ -109,6 +109,7 @@ export default function Tasks() {
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitErrorForm, setSubmitErrorForm] = useState<string | null>(null);
+  const [submitErrorAction, setSubmitErrorAction] = useState<string | null>(null);
   const [submitSuccess, setSubmitSuccess] = useState<string | null>(null);
   const [taskNotice, setTaskNotice] = useState<string | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -252,16 +253,19 @@ export default function Tasks() {
   };
 
   const handleSubmitTask = async (data: Record<string, unknown>) => {
+    const errorAction = activeForm === "site_config" && typeof data.site === "string" && data.site
+      ? `site:${data.site}`
+      : activeForm === "site_config" ? "site-form" : null;
     if (!canRunTasks) {
-      setSubmitError(t("tasks.run_permission_required")); setSubmitErrorForm(activeForm);
+      setSubmitError(t("tasks.run_permission_required")); setSubmitErrorForm(activeForm); setSubmitErrorAction(errorAction);
       return;
     }
     setSubmitting(true);
-    setSubmitError(null); setSubmitErrorForm(null);
+    setSubmitError(null); setSubmitErrorForm(null); setSubmitErrorAction(null);
     setSubmitSuccess(null);
     try {
       const res = await apiPost<{ success?: boolean; job_id?: string; error?: string }>("/api/collections/run", data);
-      if (res.error) { setSubmitError(res.error); setSubmitErrorForm(activeForm); return; }
+      if (res.error) { setSubmitError(res.error); setSubmitErrorForm(activeForm); setSubmitErrorAction(errorAction); return; }
       if (data.type === "chunk_generation" && res.job_id) {
         const chunkTask = await waitForTaskResult(res.job_id);
         const chunk_set_ids = (chunkTask.result?.chunk_sets || [])
@@ -289,7 +293,7 @@ export default function Tasks() {
       setTimeout(() => { setActiveForm(null); setSubmitSuccess(null); }, 2000);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : t("tasks.form.start_error");
-      setSubmitError(msg); setSubmitErrorForm(activeForm);
+      setSubmitError(msg); setSubmitErrorForm(activeForm); setSubmitErrorAction(errorAction);
     } finally { setSubmitting(false); }
   };
 
@@ -343,7 +347,7 @@ export default function Tasks() {
 
   function renderForm() {
     switch (activeForm) {
-      case "site_config": return <SiteConfigForm sites={sites} onSubmit={handleSubmitTask} submitting={submitting} onSitesChanged={fetchSites} errorDescribedBy={submitError && submitErrorForm === activeForm ? "error-task-submit" : undefined} />;
+      case "site_config": return <SiteConfigForm sites={sites} onSubmit={handleSubmitTask} submitting={submitting} onSitesChanged={fetchSites} errorDescribedBy={submitError && submitErrorForm === activeForm && submitErrorAction === "site-form" ? "error-task-submit" : undefined} errorSiteName={submitError && submitErrorForm === activeForm && submitErrorAction?.startsWith("site:") ? submitErrorAction.slice(5) : undefined} />;
       case "web_crawl": return <WebCrawlForm onSubmit={handleSubmitTask} submitting={submitting} errorDescribedBy={submitError && submitErrorForm === activeForm ? "error-task-submit" : undefined} />;
       case "adhoc_url": return <AdhocUrlForm onSubmit={handleSubmitTask} submitting={submitting} errorDescribedBy={submitErrorForm === activeForm ? "error-task-submit" : undefined} />;
       case "file_import": return <FileImportForm onSubmit={handleSubmitTask} submitting={submitting} errorDescribedBy={submitErrorForm === activeForm ? "error-task-submit" : undefined} />;
@@ -433,7 +437,7 @@ export default function Tasks() {
             <motion.div key="form" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}
               transition={{ duration: 0.2 }} className="rounded-xl border border-border bg-card overflow-hidden">
               <div className="flex items-center gap-3 px-5 py-4 border-b border-border">
-                <IconButton onClick={() => { setActiveForm(null); setSubmitError(null); setSubmitErrorForm(null); setSubmitSuccess(null); }}
+                <IconButton onClick={() => { setActiveForm(null); setSubmitError(null); setSubmitErrorForm(null); setSubmitErrorAction(null); setSubmitSuccess(null); }}
                   label={t("a11y.back_tasks")} className="hover:bg-muted" data-testid="button-back-tasks">
                   <ArrowLeft className="w-4 h-4" /></IconButton>
                 {activeTaskType && (
@@ -446,7 +450,7 @@ export default function Tasks() {
                 {submitError && (
                   <div id="error-task-submit" role="alert" className="mb-4 px-3 py-2 rounded-lg bg-destructive/10 text-destructive text-xs flex items-center gap-2" data-testid="text-submit-error">
                     <AlertCircle className="w-4 h-4 shrink-0" /><span className="flex-1">{submitError}</span>
-                    <IconButton onClick={() => { setSubmitError(null); setSubmitErrorForm(null); }} label={t("a11y.dismiss_error")} className="shrink-0"><X className="w-3.5 h-3.5" /></IconButton>
+                    <IconButton onClick={() => { setSubmitError(null); setSubmitErrorForm(null); setSubmitErrorAction(null); }} label={t("a11y.dismiss_error")} className="shrink-0"><X className="w-3.5 h-3.5" /></IconButton>
                   </div>
                 )}
                 {submitSuccess && (

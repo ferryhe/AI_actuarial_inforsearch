@@ -31,7 +31,28 @@ it("describes a Tasks-level run failure from the primary Run action", async () =
   expect((await axe.run(run.parentElement!, { rules: { "color-contrast": { enabled: false } } })).violations).toEqual([]);
 });
 
+it("describes a site run failure only from the matching populated-site action", async () => {
+  render(
+    <Layout>
+      <p id="error-task-submit" role="alert">run failed</p>
+      <SiteConfigForm
+        sites={[{ name: "Smoke", url: "https://smoke.example" }, { name: "Other", url: "https://other.example" }]}
+        onSubmit={vi.fn()}
+        submitting={false}
+        onSitesChanged={vi.fn()}
+        errorSiteName="Smoke"
+      />
+    </Layout>,
+  );
+  expect(screen.getByTestId("button-run-site-Smoke")).toHaveAttribute("aria-describedby", "error-task-submit");
+  expect(screen.getByTestId("button-run-site-Other")).not.toHaveAttribute("aria-describedby");
+  expect((await axe.run(screen.getByTestId("button-run-site-Smoke").parentElement!, { rules: { "color-contrast": { enabled: false } } })).violations).toEqual([]);
+});
+
 it("uses 48px targets for populated site and backup controls", async () => {
+  const user = userEvent.setup();
   render(<Layout><SiteConfigForm sites={[{ name: "Smoke", url: "https://smoke.example" }]} onSubmit={vi.fn()} submitting={false} onSitesChanged={vi.fn()} /></Layout>);
   for (const id of ["button-toggle-site-Smoke", "button-toggle-backups"]) expect(screen.getByTestId(id)).toHaveClass("min-h-[48px]");
+  await user.click(screen.getByTestId("button-delete-site-Smoke"));
+  expect(screen.getByTestId("button-cancel-delete-site-Smoke")).toHaveClass("min-h-[48px]", "min-w-[48px]");
 });

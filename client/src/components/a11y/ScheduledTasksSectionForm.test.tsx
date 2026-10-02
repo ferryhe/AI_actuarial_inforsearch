@@ -34,3 +34,14 @@ it("associates a failed scheduler reinitialize with only Reinitialize", async ()
   expect(alert).toHaveAttribute("role", "alert");
   expect(reinit).toHaveAttribute("aria-describedby", "error-scheduled-task");
 });
+
+it("gives the populated delete-confirm Cancel control a two-dimensional touch target", async () => {
+  const task = { name: "Smoke schedule", type: "scheduled", interval: "daily", enabled: true, params: {} };
+  apiGet.mockImplementation((url) => Promise.resolve(url.includes("/api/schedule/status") ? { count: 1, jobs: [] } : { tasks: [task] })); apiPost.mockResolvedValue({});
+  const user = userEvent.setup();
+  render(<Layout><ScheduledTasksSection initialScheduleStatus={{ count: 1, jobs: [] }} initialScheduledTasks={[task]} initialLoading={false} canManageScheduleOverride /></Layout>);
+  await user.click(await screen.findByTestId("button-delete-sched-Smoke schedule"));
+  const cancel = screen.getByRole("button", { name: "Cancel" });
+  expect(cancel).toHaveClass("min-h-[48px]", "min-w-[48px]");
+  expect((await axe.run(cancel.parentElement!, { rules: { "color-contrast": { enabled: false } } })).violations).toEqual([]);
+});

@@ -823,10 +823,12 @@ export default function Knowledge() {
 
   const openCreateProfile = () => {
     setShowCreateKB(false);
+    setProfileCreateError(null);
     setShowCreateProfile(true);
   };
 
   const closeCreateProfile = () => {
+    setProfileCreateError(null);
     setShowCreateProfile(false);
   };
 
@@ -1087,7 +1089,7 @@ export default function Knowledge() {
                             type="button"
                             onClick={() => toggleKbCategory(category)}
                             className={cn(
-                              "min-h-[44px] rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
+                              "min-h-[44px] min-w-[44px] rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
                               selected
                                 ? "border-primary bg-primary text-primary-foreground"
                                 : "border-border bg-background text-muted-foreground hover:text-foreground hover:bg-muted"

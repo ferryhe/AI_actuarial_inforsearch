@@ -523,6 +523,7 @@ export default function FileDetail() {
   }, [canReadConfig]);
 
   function startEdit() {
+    setMutationError(null);
     if (!file) return;
     setEditTitle(file.title || "");
     setEditCategory(file.category || "");
@@ -786,12 +787,12 @@ export default function FileDetail() {
             <button onClick={saveEdit} disabled={saving} className="flex min-h-[44px] items-center gap-1.5 px-3 py-2 rounded-lg bg-primary text-primary-foreground text-sm hover:bg-primary/90 transition-colors disabled:opacity-50" data-testid="button-save" aria-describedby={mutationError?.action === "edit" ? "error-file-detail-mutation" : undefined}>
               {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}{t("fv.save")}
             </button>
-            <button onClick={() => { setEditing(false); setShowCategoryPicker(false); }} className="flex min-h-[44px] items-center gap-1.5 px-3 py-2 rounded-lg border border-border text-sm hover:bg-muted transition-colors" data-testid="button-cancel">
+            <button onClick={() => { setMutationError(null); setEditing(false); setShowCategoryPicker(false); }} className="flex min-h-[44px] items-center gap-1.5 px-3 py-2 rounded-lg border border-border text-sm hover:bg-muted transition-colors" data-testid="button-cancel">
               <X className="w-3.5 h-3.5" />{t("fv.cancel")}
             </button>
           </>
         )}
-        <button onClick={() => setShowCatalogModal(true)} disabled={!canCatalog}
+        <button onClick={() => { setMutationError(null); setShowCatalogModal(true); }} disabled={!canCatalog}
           className={cn("flex min-h-[48px] items-center gap-1.5 px-3 py-2 rounded-lg border border-border bg-card text-sm hover:bg-muted transition-colors", !canCatalog && disabledBtn)}
           data-testid="button-catalog">
           <Sparkles className="w-3.5 h-3.5" />{t("fv.catalog")}
@@ -811,14 +812,14 @@ export default function FileDetail() {
           data-testid="button-preview">
           <Eye className="w-3.5 h-3.5" />{t("fv.preview")}
         </button>
-        <button onClick={() => setDeleteConfirm(true)} disabled={!canDelete}
+        <button onClick={() => { setDeleteError(null); setDeleteConfirm(true); }} disabled={!canDelete}
           className={cn("flex min-h-[48px] items-center gap-1.5 px-3 py-2 rounded-lg border border-destructive/30 text-destructive text-sm hover:bg-destructive/10 transition-colors", !canDelete && disabledBtn)}
           data-testid="button-delete">
           <Trash2 className="w-3.5 h-3.5" />{t("fv.delete")}
         </button>
         <ConfirmDeleteModal
           open={!!deleteConfirm}
-          onClose={() => setDeleteConfirm(false)}
+          onClose={() => { setDeleteError(null); setDeleteConfirm(false); }}
           onConfirm={handleDelete}
           title={t("fv.confirm_delete")}
           loading={deleting}
@@ -927,7 +928,7 @@ export default function FileDetail() {
                   <div className="flex flex-wrap gap-1.5 p-2 rounded-lg border border-border bg-muted/30">
                     {allCategories.map((c) => (
                       <button key={c} onClick={() => toggleCategory(c)}
-                        className={cn("min-h-[44px] px-2 py-1 text-xs rounded-full border transition-colors",
+                        className={cn("min-h-[44px] min-w-[44px] px-2 py-1 text-xs rounded-full border transition-colors",
                           selectedCategories.includes(c) ? "border-primary bg-primary/10 text-primary" : "border-border hover:border-primary/50"
                         )} data-testid={`button-cat-${c}`}>{c}</button>
                     ))}
@@ -1065,7 +1066,7 @@ export default function FileDetail() {
                   {mdSaving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
                   {t("fv.save_md")}
                 </button>
-                <button onClick={() => { setMdTab("view"); setMdDirty(false); }} className="min-h-[48px] text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors"
+                <button onClick={() => { setMutationError(null); setMdTab("view"); setMdDirty(false); }} className="min-h-[48px] text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors"
                   data-testid="button-cancel-md">{t("fv.cancel")}</button>
                 {markdown?.markdown_updated_at && (
                   <span className="text-[11px] text-muted-foreground ml-auto">
@@ -1120,7 +1121,7 @@ export default function FileDetail() {
 
       {/* Modal: AI Catalog */}
       {showCatalogModal && (
-        <Modal onClose={() => setShowCatalogModal(false)}>
+        <Modal onClose={() => { setMutationError(null); setShowCatalogModal(false); }}>
           <h3 className="text-base font-semibold flex items-center gap-2 mb-3">
             <Sparkles className="w-4 h-4 text-primary" />{t("fv.catalog_modal_title")}
           </h3>
@@ -1176,7 +1177,7 @@ export default function FileDetail() {
               </div>
             )}
             <div className="flex justify-end gap-2 pt-2 border-t border-border">
-              <button onClick={() => setShowCatalogModal(false)} className="min-h-[48px] text-sm px-3 py-2 rounded-lg border border-border hover:bg-muted transition-colors">
+              <button onClick={() => { setMutationError(null); setShowCatalogModal(false); }} className="min-h-[48px] text-sm px-3 py-2 rounded-lg border border-border hover:bg-muted transition-colors">
                 {t("fv.cancel")}
               </button>
               <button onClick={submitCatalog} disabled={catalogSubmitting || taskOptions.catalogProviders.length === 0}

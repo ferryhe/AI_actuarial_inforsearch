@@ -230,15 +230,20 @@ try {
 
   const knowledge = await browser.newPage({ viewport: { width: 390, height: 844 } });
   await knowledge.addInitScript(() => localStorage.setItem("lang", "zh"));
-  await knowledge.route("**/api/**", (route) => route.fulfill({ contentType: "application/json", body: JSON.stringify(route.request().url().includes("/api/rag/knowledge-bases") ? { knowledge_bases: [{ kb_id: "kb-smoke", name: "Smoke KB", description: "Needs re-embed", file_count: 1, chunk_count: 1, status: "ready", embedding_model: "smoke", reason: "embedding_incompatible" }] } : route.request().url().includes("/api/rag/files/selectable") ? { files: [{ url: "file-smoke", title: "Smoke file" }] } : route.request().url().includes("/api/chunk/profiles") ? { profiles: [{ profile_id: "p", name: "Default", chunk_size: 512, chunk_overlap: 50 }] } : fixture(route.request().url())) }));
+  await knowledge.route("**/api/**", (route) => route.fulfill({ contentType: "application/json", body: JSON.stringify(route.request().url().includes("/api/rag/knowledge-bases") ? { knowledge_bases: [{ kb_id: "kb-smoke", name: "Smoke KB", description: "Needs re-embed", file_count: 1, chunk_count: 1, status: "ready", embedding_model: "smoke", reason: "embedding_incompatible" }] } : route.request().url().includes("/api/rag/files/selectable") ? { files: [{ url: "file-smoke", title: "Smoke file" }] } : route.request().url().includes("/api/chunk/profiles") ? { profiles: [{ profile_id: "p", name: "Default", chunk_size: 512, chunk_overlap: 50 }] } : route.request().url().includes("/api/rag/categories/mapping") || route.request().url().includes("/api/categories?mode=used") ? { categories: ["General"] } : fixture(route.request().url())) }));
   await knowledge.goto(`${process.env.SMOKE_URL || "http://127.0.0.1:5173"}/knowledge`, { waitUntil: "domcontentloaded" });
   for (const id of ["button-build-agentic-manifest-kb-smoke", "button-view-kb-kb-smoke", "button-ask-ai-kb-kb-smoke", "button-delete-kb-kb-smoke"]) { const rect = await knowledge.getByTestId(id).boundingBox(); assert.ok(rect && rect.width >= 43.9 && rect.height >= 43.9, JSON.stringify({ id, rect })); }
   for (const id of ["button-reembed-kb-kb-smoke", "button-toggle-cleanup"]) { const rect = await knowledge.getByTestId(id).boundingBox(); assert.ok(rect && rect.width >= 43.9 && rect.height >= 43.9, JSON.stringify({ id, rect })); }
+  await knowledge.getByTestId("button-create-kb").click();
+  await knowledge.getByTestId("select-kb-mode").selectOption("category");
+  await assertTarget(knowledge, "button-toggle-kb-category-General");
+  await knowledge.getByTestId("button-close-create-kb").click();
   await knowledge.getByTestId("button-toggle-cleanup").click();
   for (const id of ["input-cleanup-days", "label-cleanup-dryrun", "button-run-cleanup"]) { const rect = await knowledge.getByTestId(id).boundingBox(); assert.ok(rect && rect.width >= 43.9 && rect.height >= 43.9, JSON.stringify({ id, rect })); }
   await assertTarget(knowledge, "button-create-kb");
   await knowledge.getByTestId("button-create-kb").click();
   const kbName = knowledge.getByTestId("input-kb-name"); await kbName.waitFor();
+  await knowledge.getByTestId("select-kb-mode").selectOption("manual");
   await knowledge.getByTestId("button-select-all-kb-files").waitFor();
   await assertTarget(knowledge, "button-select-all-kb-files");
   const kbCloseBox = await knowledge.getByTestId("button-close-create-kb").boundingBox(); assert.ok(kbCloseBox && kbCloseBox.width >= 43.9 && kbCloseBox.height >= 43.9, JSON.stringify(kbCloseBox));
@@ -268,9 +273,11 @@ try {
   console.log(JSON.stringify({ chromium: "pass", surface: "pipeline-baton", target44: true, tab: true, uniqueIds: true, uniqueTestIds: true, text200: true }));
 
   const schedule = await browser.newPage({ viewport: { width: 390, height: 844 } });
-  await schedule.route("**/api/**", (route) => route.fulfill({ contentType: "application/json", body: JSON.stringify(route.request().url().includes("/api/schedule/status") ? {} : route.request().url().includes("/api/scheduled-tasks") ? { tasks: [] } : fixture(route.request().url())) }));
+  await schedule.route("**/api/**", (route) => route.fulfill({ contentType: "application/json", body: JSON.stringify(route.request().url().includes("/api/schedule/status") ? { count: 1, jobs: [] } : route.request().url().includes("/api/scheduled-tasks") ? { tasks: [{ name: "Smoke schedule", type: "scheduled", interval: "daily", enabled: true, params: {} }] } : fixture(route.request().url())) }));
   await schedule.goto(`${process.env.SMOKE_URL || "http://127.0.0.1:5173"}/tasks`, { waitUntil: "domcontentloaded" });
-  await schedule.getByTestId("tab-scheduled-tasks").click(); await schedule.getByTestId("button-add-scheduled-task").click();
+  await schedule.getByTestId("tab-scheduled-tasks").click();
+  await schedule.getByTestId("button-delete-sched-Smoke schedule").click(); await assertTarget(schedule, "button-cancel-delete-sched-Smoke schedule"); await schedule.getByTestId("button-cancel-delete-sched-Smoke schedule").click();
+  await schedule.getByTestId("button-add-scheduled-task").click();
   const form = schedule.getByTestId("form-scheduled-task"); await form.waitFor();
   await schedule.getByTestId("input-sched-name").fill("Smoke schedule");
   for (const id of ["input-sched-name", "select-sched-type", "select-sched-frequency", "input-sched-time", "select-sched-timezone"]) assert.ok(await schedule.getByTestId(id).evaluate((node) => node.labels?.[0]?.textContent?.trim()));
@@ -294,7 +301,7 @@ try {
       : url.includes("/api/files/file-smoke/chunk-sets") ? { chunk_sets: [] }
       : url.includes("/api/config/llm-providers") ? { providers: ["openai"] }
       : url.includes("/api/config/ai-models") ? { available: { openai: [{ name: "smoke-catalog", types: ["catalog"] }] }, current: { catalog: { provider: "openai", model: "smoke-catalog" } } }
-      : url.includes("/api/config/categories") ? { categories: { General: [] } }
+      : url.includes("/api/config/categories") ? { categories: { AI: [] } }
       : url.includes("/api/chunk/profiles") ? { profiles: [{ profile_id: "p", name: "Default", chunk_size: 512, chunk_overlap: 50 }] }
       : fixture(url);
     return route.fulfill({ contentType: "application/json", body: JSON.stringify(data) });
@@ -308,6 +315,8 @@ try {
   await title.focus(); await fileDetail.keyboard.press("Tab");
   assert.equal(await fileDetail.evaluate(() => document.activeElement instanceof HTMLElement && document.activeElement.matches("button, input, select, textarea")), true);
   assert.equal(await fileDetail.evaluate(() => { const node = document.activeElement; return !!node && (getComputedStyle(node).outlineStyle !== "none" || getComputedStyle(node).boxShadow !== "none"); }), true);
+  await fileDetail.getByTestId("button-toggle-categories").click();
+  await assertTarget(fileDetail, "button-cat-AI");
   await fileDetail.getByTestId("button-cancel").click();
   await fileDetail.getByTestId("button-md-edit").click();
   const markdownInput = fileDetail.getByTestId("input-markdown"); await markdownInput.waitFor();
@@ -381,6 +390,9 @@ try {
   await siteConfig.getByTestId("button-start-site_config").click();
   await siteConfig.getByTestId("button-run-task").click(); await siteConfig.locator("#error-task-submit").waitFor();
   assert.equal(await siteConfig.getByTestId("button-run-task").getAttribute("aria-describedby"), "error-task-submit");
+  await siteConfig.getByTestId("button-run-site-Smoke").click(); await siteConfig.locator("#error-task-submit").waitFor();
+  assert.equal(await siteConfig.getByTestId("button-run-site-Smoke").getAttribute("aria-describedby"), "error-task-submit");
+  assert.equal(await siteConfig.getByTestId("button-run-task").getAttribute("aria-describedby"), null);
   await siteConfig.getByTestId("input-import-file").setInputFiles({ name: "sites.yaml", mimeType: "application/x-yaml", buffer: Buffer.from("sites: []") });
   await siteConfig.getByTestId("panel-import-preview").waitFor();
   for (const id of ["radio-mode-merge", "radio-mode-overwrite"]) { const rect = await siteConfig.getByTestId(id).locator("xpath=..").boundingBox(); assert.ok(rect && rect.width >= 43.9 && rect.height >= 43.9, JSON.stringify({ id, rect })); }

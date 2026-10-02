@@ -4612,8 +4612,8 @@
 - The lifecycle script refuses to record a fix or PR because its strict gate still
   requires a configured-reviewer PASS and all 15 review slots are used. No reviewer
   PASS was fabricated; the user explicitly authorized the TypeSafe-only exception.
-- Next: commit and publish a Draft PR under that instruction, then follow the
-  repository's remote check/review monitoring window. No merge is authorized here.
+- PR #390 was published and marked Ready under that instruction. The remote
+  monitoring snapshot and follow-up are recorded below. No merge is authorized here.
 
 ### PR #390 tracking — 2026-10-02
 
@@ -4627,4 +4627,54 @@
   comments about 15 minutes after Ready, then disposition only confirmed in-scope items.
 - Snapshot at 2026-10-02 09:03 UTC, head `54fef1a`: five checks passed and
   `quality-gate` was pending; no review, inline, or conversation comments were present.
-- Next remote check is due around 09:15 UTC (about 15 minutes after Ready at 08:59 UTC).
+- The formal 15-minute remote snapshot was captured at about 09:17 UTC; see the
+  follow-up section below for current dispositions and validation.
+
+### PR #390 remote feedback follow-up — 2026-10-02
+
+- The 15-minute snapshot was captured at about 09:17 UTC on head
+  `08f7c9166a4d28f2d97ebd2eb95d6ac3180f3146`. Five required checks passed; `quality-gate`
+  failed on a stale `RagIndexForm` source assertion. The same worker updated the assertion,
+  and its focused test passed (1 test); the correction is not yet committed or pushed.
+- Copilot left ten unresolved inline threads, one review summary, and no PR conversation
+  comments. The Issue has one older coordination comment; related PR #385 for #355 is merged.
+- The same Issue worker classified every remote item against #366’s acceptance criteria
+  and applied the confirmed in-scope fixes. No independent reviewer was started.
+- The old checkpoint saying PR creation was still pending has been corrected. The remote
+  feedback has since been assessed by TypeSafe and fixed by the same worker; see the final
+  completion entry below. No merge is authorized.
+
+### PR #390 required-check repair — 2026-10-02
+
+- The only failed `quality-gate` check at head `08f7c9166a4d28f2d97ebd2eb95d6ac3180f3146`
+  was a stale source assertion in `tests/test_tasks_react_source.py`. It expected the old
+  two-prop `RagIndexForm` invocation, while Issue #366 correctly adds the optional
+  `errorDescribedBy` accessibility prop.
+- The assertion now verifies the complete current invocation. Focused verification:
+  `python -m pytest tests/test_tasks_react_source.py::test_tasks_page_restores_rag_indexing_task_form`
+  passed (1 test). No commit, push, or PR mutation was performed; wait for the manager's
+  remote-review snapshot before acting on any Copilot feedback.
+
+### PR #390 remote-feedback coverage follow-up — 2026-10-02
+
+- Added direct regression coverage for File Detail stale mutation errors, the short File Detail
+  category target, and Scheduled Task delete-confirm Cancel. Reversible RED probes failed as
+  expected; restored focused RTL/axe passed (2 files / 11 tests), the full standalone 390px
+  form smoke passed all 17 records, TypeScript passed, and `git diff --check` passed.
+- No commit, push, PR mutation, or sibling-repository access occurred. The manager-owned status
+  history correction remains outside this worker's code changes.
+
+### PR #390 remote-feedback repair and TypeSafe completion — 2026-10-02
+
+- The remote TypeSafe assessment accepted seven in-scope AC2/AC3 findings and rejected three
+  out-of-scope comments. The same Issue worker fixed the seven findings and the stale source
+  assertion that caused the prior `quality-gate` failure; no independent reviewer was started.
+- TypeSafe Judge case `issue-366-pr-390-remote-fix-completion` selected `all_resolved` at
+  09:44 UTC (probability 0.81, confidence 0.71). Its evidence packet and result are saved in
+  the external Issue #366 evidence folder. The explicit user-authorized decision is recorded
+  in the append-only lifecycle decision log; no reviewer PASS was fabricated.
+- Current-patch validation passed: `npm run test:a11y` (18 files / 70 tests), TypeScript,
+  lint (0 errors; five existing Hook warnings), build (existing chunk advisory), 390px Chromium
+  form smoke (17 surfaces), the focused RagIndexForm pytest (1 test), and `git diff --check`.
+- The changes are being committed and pushed to `agent/issue-366`; then required checks will be
+  tracked on the new PR head. No merge is authorized.
