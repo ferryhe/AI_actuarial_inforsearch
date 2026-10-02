@@ -14,8 +14,11 @@
   quality gate passed (2,310 passed, 10 skipped; Black, isort, and error-only
   Pylint passed). Build retains the existing chunk-size advisory.
 - Fresh gpt-6-sol/high review passed all four acceptance criteria with no findings;
-  TypeSafe Jev found no local review findings. Commit, Draft PR, required GitHub
-  checks, remote feedback, merge, and scoped cleanup are next.
+  TypeSafe Jev found no local review findings. Commit `f66e4f5` is published in
+  Draft PR #396 (`Closes #395`). Its first `dead-code-files` run flagged the
+  config-loaded setup file; `knip.json` now lists that exact entry and the local
+  combined dead-code check passes. GitHub checks, remote feedback, merge, and
+  scoped cleanup continue under the lifecycle evidence.
 
 # Latest work — Issue #365 safe Markdown preview
 
