@@ -56,7 +56,7 @@ def test_markdown_callers_keep_safe_defaults_and_file_preview_uses_inert_image_p
 
 def test_markdown_component_runtime_fixtures():
     completed = subprocess.run(
-        [NPM_COMMAND, "exec", "--", "tsx", str(MARKDOWN_COMPONENT_TEST)],
+        [NPM_COMMAND, "exec", "--", "vitest", "run", str(MARKDOWN_COMPONENT_TEST)],
         cwd=REPO_ROOT,
         check=False,
         capture_output=True,

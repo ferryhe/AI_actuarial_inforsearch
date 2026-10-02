@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { renderToStaticMarkup } from "react-dom/server";
+import { test } from "vitest";
 import { TaskErrorDetails, trustedTaskIdFromSearch } from "./TaskErrors";
 
+test("renders Issue 368 task errors", () => {
 const taskId = "task_1780000000000_0123456789abcdef";
 assert.equal(trustedTaskIdFromSearch(`?task_id=${taskId}`), taskId);
 assert.equal(trustedTaskIdFromSearch("?task_id=external-task"), null);
@@ -40,3 +42,4 @@ assert.match(markup, new RegExp(`/tasks\\?task_id=${taskId}`));
 assert.doesNotMatch(markup, /form|retry|POST/i);
 
 console.log("Issue 368 task error UI assertions passed");
+});

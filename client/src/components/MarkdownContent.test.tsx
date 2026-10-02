@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
 import { renderToStaticMarkup } from "react-dom/server";
+import { test } from "vitest";
 import { MarkdownContent } from "./MarkdownContent";
 
 function render(content: string): string {
   return renderToStaticMarkup(<MarkdownContent content={content} />);
 }
+
+test("renders safe MarkdownContent", () => {
 
 const gfm = render(`First line
 第二行
@@ -74,3 +77,4 @@ assert.match(truncated, /const open = true/);
 assert.doesNotThrow(() => render(""));
 
 console.log("MarkdownContent component assertions passed");
+});

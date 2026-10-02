@@ -115,7 +115,14 @@ def _build_weekly_client(
 
 def test_issue_333_executable_react_behavior() -> None:
     result = subprocess.run(
-        [NPM_COMMAND, "exec", "--", "tsx", "client/src/lib/issue333-content-first.test.tsx"],
+        [
+            NPM_COMMAND,
+            "exec",
+            "--",
+            "vitest",
+            "run",
+            "client/src/lib/issue333-content-first.test.tsx",
+        ],
         cwd=ROOT,
         capture_output=True,
         text=True,

@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { renderToStaticMarkup } from "react-dom/server";
+import { test } from "vitest";
 import { PipelineBatonResults, type PipelineView } from "./PipelineBatonResults";
 
+test("renders Issue 348 Pipeline Baton results", () => {
 const steps = [
   { step: "scheduled", label: "Scheduled Collection", testId: "scheduled" },
   { step: "markdown_conversion", label: "Markdown", testId: "markdown" },
@@ -103,3 +105,4 @@ catalogToggle.props.onClick();
 assert.equal(toggled, "catalog");
 
 console.log("Issue 348 Pipeline Baton results component assertions passed");
+});

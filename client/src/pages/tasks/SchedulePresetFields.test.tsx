@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { renderToStaticMarkup } from "react-dom/server";
+import { test } from "vitest";
 import {
   SchedulePresetFields,
   buildScheduleFields,
@@ -9,6 +10,7 @@ import {
   weeklySummaryPreset,
 } from "./SchedulePresetFields";
 
+test("renders Issue 312 schedule presets", () => {
 const noop = () => undefined;
 
 const minutesMarkup = renderToStaticMarkup(
@@ -196,3 +198,4 @@ for (const expected of [
 }
 
 console.log("Issue 312 schedule preset component assertions passed");
+});

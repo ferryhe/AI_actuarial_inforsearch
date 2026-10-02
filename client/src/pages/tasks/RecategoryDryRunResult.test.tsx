@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import { renderToStaticMarkup } from "react-dom/server";
+import { test } from "vitest";
 import { RecategoryDryRunResult } from "./RecategoryDryRunResult";
 import type { HistoryTask } from "./Tasks.types";
 
+test("renders Issue 334 recategory dry-run results", () => {
 const translations: Record<string, string> = {
   "tasks.recategory_result.title": "Dry Run Result",
   "tasks.recategory_result.needed": "Recategorization is needed",
@@ -97,3 +99,4 @@ for (const ineligible of [
 }
 
 console.log("Issue 334 recategory dry-run component assertions passed");
+});

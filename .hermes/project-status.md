@@ -1,3 +1,22 @@
+# Latest work — Issue #395 full Vitest discovery
+
+- Updated: 2026-10-02 EDT. Repository: `AI_actuarial_inforsearch`; branch:
+  `codex/issue-395-vitest-discovery`; baseline:
+  `3565d51d2cb31f85716306900eb4235b1bcbd6d9` (`origin/main`). Only this assigned
+  worktree was changed; sibling repositories were not accessed.
+- Added shared test-only jsdom `matchMedia` setup and registered the eleven
+  assertion-script suites as meaningful Vitest tests. The RetrievalIndicators
+  source path now resolves on Windows. All six Python callers of converted suites
+  use `npm exec -- vitest run` and retain their existing success checks.
+- Full Vitest passed (32 files / 97 tests); accessibility passed (18 files / 71
+  tests); the targeted #351/#347 tests, TypeScript, lint (0 errors; five existing
+  Hook warnings), production build, and `git diff --check` passed. The full Python
+  quality gate passed (2,310 passed, 10 skipped; Black, isort, and error-only
+  Pylint passed). Build retains the existing chunk-size advisory.
+- Fresh gpt-6-sol/high review passed all four acceptance criteria with no findings;
+  TypeSafe Jev found no local review findings. Commit, Draft PR, required GitHub
+  checks, remote feedback, merge, and scoped cleanup are next.
+
 # Latest work — Issue #365 safe Markdown preview
 
 - Updated: 2026-10-02 EDT. Repository: `AI_actuarial_inforsearch`; branch:
@@ -27,7 +46,8 @@
   a long profile name at 1280px, 390px, and 320px. The follow-up commit
   `cf56ee8` is pushed, and all six required checks pass on that head. Both Copilot
   threads have written dispositions and are resolved, with zero unresolved.
-  PR #393 is Ready; merge and scoped cleanup are pending.
+  PR #393 was subsequently merged into `main`; this paragraph preserves the
+  original checkpoint, and Issue #395 is now the latest work above.
 
 # Latest work — Issue #351 mobile Chat layout and drawer
 
