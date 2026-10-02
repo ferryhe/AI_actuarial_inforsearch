@@ -4614,3 +4614,17 @@
   PASS was fabricated; the user explicitly authorized the TypeSafe-only exception.
 - Next: commit and publish a Draft PR under that instruction, then follow the
   repository's remote check/review monitoring window. No merge is authorized here.
+
+### PR #390 tracking — 2026-10-02
+
+- Commit `54fef1a` was pushed on `agent/issue-366`; PR #390 was created as Draft
+  and marked Ready for review. It closes #366. Related PR #385 for #355 is merged.
+- The user explicitly authorized the TypeSafe-only gate after the local review
+  limit. TypeSafe selected `all_resolved`; no configured-reviewer PASS was recorded
+  or implied. The strict lifecycle script cannot record PR publication without that
+  reviewer PASS, so the explicit override and PR URL are retained in its decision log.
+- No merge was performed. Next: check current-head CI and remote reviews/Copilot
+  comments about 15 minutes after Ready, then disposition only confirmed in-scope items.
+- Snapshot at 2026-10-02 09:03 UTC, head `54fef1a`: five checks passed and
+  `quality-gate` was pending; no review, inline, or conversation comments were present.
+- Next remote check is due around 09:15 UTC (about 15 minutes after Ready at 08:59 UTC).
