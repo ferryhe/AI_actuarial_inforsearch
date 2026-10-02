@@ -18,11 +18,15 @@ export function ChunkForm({
   submitting,
   settingsMode = false,
   initialTask = {},
+  errorDescribedBy,
+  runTestId,
 }: {
   onSubmit: (d: Record<string, unknown>) => void;
   submitting: boolean;
   settingsMode?: boolean;
   initialTask?: Record<string, unknown>;
+  errorDescribedBy?: string;
+  runTestId?: string;
 }) {
   const { t } = useTranslation();
   const { categories: dynamicCategories } = useTaskOptions();
@@ -189,7 +193,7 @@ export function ChunkForm({
           </div>
         )}
       </div>
-      <RunButton label={settingsMode ? t("common.save") : t("tasks.form.run")} submitting={submitting} disabled={formDisabled}
+      <RunButton label={settingsMode ? t("common.save") : t("tasks.form.run")} submitting={submitting} disabled={formDisabled} aria-describedby={errorDescribedBy} testId={runTestId}
         onClick={() => {
           const task = buildTask();
           if (task) onSubmit(task);

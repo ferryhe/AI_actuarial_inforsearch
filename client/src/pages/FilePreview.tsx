@@ -286,17 +286,17 @@ function ChunksPane({ chunks, chunkSets, activeChunkSetId, onChunkSetChange }: {
     <div className="flex flex-col h-full">
       <div className="px-3.5 py-2.5 border-b border-border bg-muted/30 flex items-center gap-2">
         <Layers className="w-4 h-4 text-primary" />
-        <span className="text-xs font-medium">{t("fp.chunks")} ({chunks.length})</span>
-        {chunkSets.length > 1 && (
-          <select value={activeChunkSetId} onChange={(e) => onChunkSetChange(e.target.value)}
-            className="ml-auto text-[11px] px-2 py-1 rounded border border-border bg-background" data-testid="select-chunk-set">
+        <span id="label-chunk-set" className="text-xs font-medium">{t("fp.chunks")} ({chunks.length})</span>
+        {chunkSets.length > 1 && (<>
+          <select id="select-chunk-set" aria-labelledby="label-chunk-set" value={activeChunkSetId} onChange={(e) => onChunkSetChange(e.target.value)}
+            className="ml-auto min-h-[48px] text-[11px] px-2 py-1 rounded border border-border bg-background" data-testid="select-chunk-set">
             {chunkSets.map((cs) => (
               <option key={cs.chunk_set_id} value={cs.chunk_set_id}>
                 {cs.profile_name || "default"} ({cs.chunk_count ?? "?"})
               </option>
             ))}
           </select>
-        )}
+        </>)}
       </div>
       <div className="flex-1 overflow-y-auto p-3 space-y-3">
         {chunks.length === 0 ? (
@@ -389,7 +389,7 @@ export default function FilePreview() {
         <h2 className="text-lg font-semibold">{t("fp.desktop_only_title")}</h2>
         <p className="text-sm text-muted-foreground max-w-md mx-auto">{t("fp.desktop_only_desc")}</p>
         <button onClick={goBack}
-          className="inline-flex items-center gap-1.5 text-sm text-primary hover:underline mt-4" data-testid="link-back-detail">
+          className="inline-flex min-h-[48px] items-center gap-1.5 text-sm text-primary hover:underline mt-4" data-testid="link-back-detail">
           <ArrowLeft className="w-4 h-4" />{t("fp.back_to_detail")}
         </button>
       </div>
@@ -410,7 +410,7 @@ export default function FilePreview() {
         <AlertCircle className="w-12 h-12 mx-auto text-destructive/60" />
         <p className="text-muted-foreground">{error || "Preview unavailable"}</p>
         <button onClick={goBack}
-          className="text-sm text-primary hover:underline" data-testid="link-back-error">
+          className="inline-flex min-h-[48px] items-center text-sm text-primary hover:underline" data-testid="link-back-error">
           <ArrowLeft className="w-4 h-4 inline mr-1" />{t("fp.back_to_detail")}
         </button>
       </div>

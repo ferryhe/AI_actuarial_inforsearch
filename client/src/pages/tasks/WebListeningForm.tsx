@@ -71,6 +71,8 @@ export function WebListeningForm({ onMaterialized }: WebListeningFormProps) {
   const [exploration, setExploration] = useState<WebListeningExplorationResponse | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [errorAction, setErrorAction] = useState<string | null>(null);
+  const [resultErrorAction, setResultErrorAction] = useState<string | null>(null);
 
   const toggleSelection = (value: string, current: string[], setCurrent: (values: string[]) => void) => {
     setCurrent(current.includes(value) ? current.filter((item) => item !== value) : [...current, value]);
@@ -80,6 +82,8 @@ export function WebListeningForm({ onMaterialized }: WebListeningFormProps) {
     if (!canWriteSites || !websiteUrl.trim() || !goal.trim()) return;
     setBusy("explore");
     setError(null);
+    setErrorAction(null);
+    setResultErrorAction(null);
     setMessage(null);
     try {
       const res = await apiPost<WebListeningExplorationResponse>("/api/web-listening/rules/explore", {
@@ -96,6 +100,7 @@ export function WebListeningForm({ onMaterialized }: WebListeningFormProps) {
       setMessage(t("tasks.web_listening.explored"));
     } catch (e) {
       setError(e instanceof Error ? e.message : t("tasks.web_listening.explore_error"));
+      setErrorAction("explore");
     } finally {
       setBusy(null);
     }
@@ -104,6 +109,8 @@ export function WebListeningForm({ onMaterialized }: WebListeningFormProps) {
     if (!canWriteSites || !websiteUrl.trim() || !goal.trim()) return;
     setBusy("draft");
     setError(null);
+    setErrorAction(null);
+    setResultErrorAction(null);
     setMessage(null);
     try {
       const scopedPatterns = parseList(allowPatterns);
@@ -121,9 +128,11 @@ export function WebListeningForm({ onMaterialized }: WebListeningFormProps) {
       });
       setYamlText(res.yaml || "");
       setResult(res);
+      setResultErrorAction(res.errors?.length ? "draft" : null);
       setMessage(t("tasks.web_listening.drafted"));
     } catch (e) {
       setError(e instanceof Error ? e.message : t("tasks.web_listening.draft_error"));
+      setErrorAction("draft");
     } finally {
       setBusy(null);
     }
@@ -133,13 +142,17 @@ export function WebListeningForm({ onMaterialized }: WebListeningFormProps) {
     if (!canWriteSites || !yamlText.trim()) return;
     setBusy("validate");
     setError(null);
+    setErrorAction(null);
+    setResultErrorAction(null);
     setMessage(null);
     try {
       const res = await apiPost<WebListeningValidationResponse>("/api/web-listening/rules/validate", { rule_yaml: yamlText });
       setResult(res);
+      setResultErrorAction(res.errors?.length ? "validate" : null);
       setMessage(res.valid === false ? t("tasks.web_listening.invalid") : t("tasks.web_listening.valid"));
     } catch (e) {
       setError(e instanceof Error ? e.message : t("tasks.web_listening.validate_error"));
+      setErrorAction("validate");
     } finally {
       setBusy(null);
     }
@@ -149,10 +162,13 @@ export function WebListeningForm({ onMaterialized }: WebListeningFormProps) {
     if (!canWriteSites || !canWriteSchedule || !yamlText.trim()) return;
     setBusy("materialize");
     setError(null);
+    setErrorAction(null);
+    setResultErrorAction(null);
     setMessage(null);
     try {
       const res = await apiPost<WebListeningMaterializeResponse>("/api/web-listening/rules/materialize", { rule_yaml: yamlText });
       setResult(res);
+      setResultErrorAction(res.errors?.length ? "materialize" : null);
       if (typeof window !== "undefined") {
         window.dispatchEvent(new CustomEvent("scheduled-tasks:changed"));
       }
@@ -160,6 +176,7 @@ export function WebListeningForm({ onMaterialized }: WebListeningFormProps) {
       setMessage(t("tasks.web_listening.materialized"));
     } catch (e) {
       setError(e instanceof Error ? e.message : t("tasks.web_listening.materialize_error"));
+      setErrorAction("materialize");
     } finally {
       setBusy(null);
     }
@@ -176,16 +193,16 @@ export function WebListeningForm({ onMaterialized }: WebListeningFormProps) {
       <div className="grid md:grid-cols-2 gap-4">
         <label className="space-y-1.5">
           <span className="text-xs font-medium text-muted-foreground">{t("tasks.web_listening.website_url")}</span>
-          <input value={websiteUrl} onChange={(e) => setWebsiteUrl(e.target.value)} placeholder="https://www.soa.org/resources/research-reports/" className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm" data-testid="input-web-listening-url" />
+          <input value={websiteUrl} onChange={(e) => setWebsiteUrl(e.target.value)} placeholder="https://www.soa.org/resources/research-reports/" className="w-full min-h-[48px] rounded-lg border border-border bg-card px-3 py-2 text-sm" data-testid="input-web-listening-url" />
         </label>
         <label className="space-y-1.5">
           <span className="text-xs font-medium text-muted-foreground">{t("tasks.web_listening.name")}</span>
-          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="SOA Research Monitor" className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm" data-testid="input-web-listening-name" />
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="SOA Research Monitor" className="w-full min-h-[48px] rounded-lg border border-border bg-card px-3 py-2 text-sm" data-testid="input-web-listening-name" />
         </label>
       </div>
       <label className="space-y-1.5 block">
         <span className="text-xs font-medium text-muted-foreground">{t("tasks.web_listening.goal")}</span>
-        <textarea value={goal} onChange={(e) => setGoal(e.target.value)} rows={3} className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm" data-testid="textarea-web-listening-goal" />
+        <textarea value={goal} onChange={(e) => setGoal(e.target.value)} rows={3} className="w-full min-h-[48px] rounded-lg border border-border bg-card px-3 py-2 text-sm" data-testid="textarea-web-listening-goal" />
       </label>
       <div className="rounded-lg border border-border bg-card p-4 space-y-4">
         <div>
@@ -193,60 +210,60 @@ export function WebListeningForm({ onMaterialized }: WebListeningFormProps) {
           <p className="text-xs text-muted-foreground mt-1">{t("tasks.web_listening.strategy_hint")}</p>
         </div>
         <div className="grid md:grid-cols-2 gap-4">
-          <fieldset className="space-y-2">
+          <fieldset className="space-y-2" aria-describedby={!strategyReady ? "hint-web-listening-strategy-required" : undefined}>
             <legend className="text-xs font-medium text-muted-foreground">{t("tasks.web_listening.tools")}</legend>
-            <label className="flex items-center gap-2 text-sm">
+            <label className="flex min-h-[48px] items-center gap-2 text-sm">
               <input type="checkbox" checked={tools.includes("crawler")} onChange={() => toggleSelection("crawler", tools, setTools)} data-testid="checkbox-web-listening-tool-crawler" />
               {t("tasks.web_listening.tool_crawler")}
             </label>
-            <label className="flex items-center gap-2 text-sm">
+            <label className="flex min-h-[48px] items-center gap-2 text-sm">
               <input type="checkbox" checked={tools.includes("search")} onChange={() => toggleSelection("search", tools, setTools)} data-testid="checkbox-web-listening-tool-search" />
               {t("tasks.web_listening.tool_search")}
             </label>
           </fieldset>
-          <fieldset className="space-y-2">
+          <fieldset className="space-y-2" aria-describedby={!strategyReady ? "hint-web-listening-strategy-required" : undefined}>
             <legend className="text-xs font-medium text-muted-foreground">{t("tasks.web_listening.content_types")}</legend>
-            <label className="flex items-center gap-2 text-sm">
+            <label className="flex min-h-[48px] items-center gap-2 text-sm">
               <input type="checkbox" checked={contentTypes.includes("file")} onChange={() => toggleSelection("file", contentTypes, setContentTypes)} data-testid="checkbox-web-listening-content-file" />
               {t("tasks.web_listening.content_file")}
             </label>
-            <label className="flex items-center gap-2 text-sm">
+            <label className="flex min-h-[48px] items-center gap-2 text-sm">
               <input type="checkbox" checked={contentTypes.includes("webpage")} onChange={() => toggleSelection("webpage", contentTypes, setContentTypes)} data-testid="checkbox-web-listening-content-webpage" />
               {t("tasks.web_listening.content_webpage")}
             </label>
           </fieldset>
         </div>
-        {!strategyReady && <p className="text-xs text-destructive">{t("tasks.web_listening.strategy_required")}</p>}
+        {!strategyReady && <p id="hint-web-listening-strategy-required" className="text-xs text-destructive">{t("tasks.web_listening.strategy_required")}</p>}
       </div>
       <div className="grid md:grid-cols-2 gap-4">
         <label className="space-y-1.5">
           <span className="text-xs font-medium text-muted-foreground">{t("tasks.web_listening.allow_patterns")}</span>
-          <textarea value={allowPatterns} onChange={(e) => setAllowPatterns(e.target.value)} rows={3} placeholder="/research/&#10;/globalassets/" className="w-full rounded-lg border border-border bg-card px-3 py-2 font-mono text-xs" data-testid="input-web-listening-allow-patterns" />
+          <textarea value={allowPatterns} onChange={(e) => setAllowPatterns(e.target.value)} rows={3} placeholder="/research/&#10;/globalassets/" className="w-full min-h-[48px] rounded-lg border border-border bg-card px-3 py-2 font-mono text-xs" data-testid="input-web-listening-allow-patterns" />
         </label>
         <label className="space-y-1.5">
           <span className="text-xs font-medium text-muted-foreground">{t("tasks.web_listening.queries")}</span>
-          <textarea value={queries} onChange={(e) => setQueries(e.target.value)} rows={3} placeholder="site:example.com actuarial AI filetype:pdf" className="w-full rounded-lg border border-border bg-card px-3 py-2 text-xs" data-testid="input-web-listening-queries" />
+          <textarea value={queries} onChange={(e) => setQueries(e.target.value)} rows={3} placeholder="site:example.com actuarial AI filetype:pdf" className="w-full min-h-[48px] rounded-lg border border-border bg-card px-3 py-2 text-xs" data-testid="input-web-listening-queries" />
         </label>
         <label className="space-y-1.5">
           <span className="text-xs font-medium text-muted-foreground">{t("tasks.form.content_selector")}</span>
-          <input value={contentSelector} onChange={(e) => setContentSelector(e.target.value)} placeholder="main" className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm" data-testid="input-web-listening-selector" />
+          <input value={contentSelector} onChange={(e) => setContentSelector(e.target.value)} placeholder="main" className="w-full min-h-[48px] rounded-lg border border-border bg-card px-3 py-2 text-sm" data-testid="input-web-listening-selector" />
         </label>
         <label className="space-y-1.5">
           <span className="text-xs font-medium text-muted-foreground">{t("tasks.sched.schedule_interval")}</span>
-          <input value={scheduleInterval} onChange={(e) => setScheduleInterval(e.target.value)} placeholder="weekly" className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm" data-testid="input-web-listening-schedule" />
+          <input value={scheduleInterval} onChange={(e) => setScheduleInterval(e.target.value)} placeholder="weekly" className="w-full min-h-[48px] rounded-lg border border-border bg-card px-3 py-2 text-sm" data-testid="input-web-listening-schedule" />
         </label>
       </div>
       <div className="flex flex-wrap gap-2">
-        <button type="button" onClick={exploreSite} disabled={busy !== null || !canWriteSites || !websiteUrl.trim() || !goal.trim()} className="inline-flex items-center gap-2 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50" data-testid="button-web-listening-explore">
+        <button type="button" onClick={exploreSite} disabled={busy !== null || !canWriteSites || !websiteUrl.trim() || !goal.trim()} aria-describedby={errorAction === "explore" ? "error-web-listening-explore" : undefined} className="inline-flex min-h-[48px] items-center gap-2 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50" data-testid="button-web-listening-explore">
           {busy === "explore" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Compass className="w-4 h-4" />}{t("tasks.web_listening.explore")}
         </button>
-        <button type="button" onClick={draftRule} disabled={busy !== null || !canWriteSites || !websiteUrl.trim() || !goal.trim() || !strategyReady} className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm hover:bg-muted disabled:opacity-50" data-testid="button-web-listening-draft">
+        <button type="button" onClick={draftRule} disabled={busy !== null || !canWriteSites || !websiteUrl.trim() || !goal.trim() || !strategyReady} aria-describedby={errorAction === "draft" ? "error-web-listening-explore" : resultErrorAction === "draft" ? "error-web-listening-result" : undefined} className="inline-flex min-h-[48px] items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm hover:bg-muted disabled:opacity-50" data-testid="button-web-listening-draft">
           {busy === "draft" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wand2 className="w-4 h-4" />}{t("tasks.web_listening.draft")}
         </button>
-        <button type="button" onClick={validateRule} disabled={busy !== null || !canWriteSites || !yamlText.trim()} className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm hover:bg-muted disabled:opacity-50" data-testid="button-web-listening-validate">
+        <button type="button" onClick={validateRule} disabled={busy !== null || !canWriteSites || !yamlText.trim()} aria-describedby={errorAction === "validate" ? "error-web-listening-explore" : resultErrorAction === "validate" ? "error-web-listening-result" : undefined} className="inline-flex min-h-[48px] items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm hover:bg-muted disabled:opacity-50" data-testid="button-web-listening-validate">
           {busy === "validate" ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}{t("tasks.web_listening.validate")}
         </button>
-        <button type="button" onClick={materializeRule} disabled={busy !== null || !canWriteSites || !canWriteSchedule || !yamlText.trim()} className="inline-flex items-center gap-2 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50" data-testid="button-web-listening-materialize">
+        <button type="button" onClick={materializeRule} disabled={busy !== null || !canWriteSites || !canWriteSchedule || !yamlText.trim()} aria-describedby={errorAction === "materialize" ? "error-web-listening-explore" : resultErrorAction === "materialize" ? "error-web-listening-result" : undefined} className="inline-flex min-h-[48px] items-center gap-2 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50" data-testid="button-web-listening-materialize">
           {busy === "materialize" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}{t("tasks.web_listening.materialize")}
         </button>
       </div>
@@ -264,12 +281,12 @@ export function WebListeningForm({ onMaterialized }: WebListeningFormProps) {
       )}
       <label className="space-y-1.5 block">
         <span className="text-xs font-medium text-muted-foreground">{t("tasks.web_listening.yaml")}</span>
-        <textarea value={yamlText} onChange={(e) => setYamlText(e.target.value)} rows={12} className="w-full rounded-lg border border-border bg-card px-3 py-2 font-mono text-xs" data-testid="textarea-web-listening-yaml" />
+        <textarea value={yamlText} onChange={(e) => setYamlText(e.target.value)} rows={12} className="w-full min-h-[48px] rounded-lg border border-border bg-card px-3 py-2 font-mono text-xs" data-testid="textarea-web-listening-yaml" />
       </label>
       {message && <div className="rounded-lg bg-emerald-500/10 px-3 py-2 text-xs text-emerald-700 dark:text-emerald-300">{message}</div>}
-      {error && <div className="rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive">{error}</div>}
+      {error && <div id="error-web-listening-explore" role="alert" className="rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive">{error}</div>}
       {!!result?.errors?.length && (
-        <div className="rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive" data-testid="text-web-listening-errors">
+        <div id="error-web-listening-result" role="alert" className="rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive" data-testid="text-web-listening-errors">
           <AlertTriangle className="inline w-3.5 h-3.5 mr-1" />{result.errors.join("; ")}
         </div>
       )}

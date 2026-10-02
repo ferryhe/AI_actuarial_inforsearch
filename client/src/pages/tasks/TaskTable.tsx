@@ -45,7 +45,7 @@ export function TaskTable({ historyTasks, onViewLog }: TaskTableProps) {
                 <span className="text-xs text-muted-foreground hidden md:block">{itemCount}</span>
                 {task.id && (
                   <button onClick={() => onViewLog(task.id, task.name, task)} aria-label={t("a11y.view_task_log", { target: task.name || task.id })}
-                    className="text-[10px] px-2 py-1 rounded border border-border hover:bg-muted transition-colors flex items-center gap-1 shrink-0"
+                    className="min-h-[48px] text-[10px] px-2 py-1 rounded border border-border hover:bg-muted transition-colors flex items-center gap-1 shrink-0"
                     data-testid={`button-view-log-${i}`}>
                     <Zap className="w-3 h-3" />{t("tasks.log")}
                   </button>

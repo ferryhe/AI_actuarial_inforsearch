@@ -10,6 +10,7 @@ interface ConfirmDeleteModalProps {
   title?: string;
   message?: string;
   loading?: boolean;
+  error?: string | null;
 }
 
 export default function ConfirmDeleteModal({
@@ -19,6 +20,7 @@ export default function ConfirmDeleteModal({
   title,
   message,
   loading = false,
+  error,
 }: ConfirmDeleteModalProps) {
   const { t } = useTranslation();
   const [inputValue, setInputValue] = useState("");
@@ -57,7 +59,7 @@ export default function ConfirmDeleteModal({
               </div>
               <button
                 onClick={onClose}
-                className="p-1.5 rounded-lg hover:bg-muted transition-colors"
+                className="min-h-[48px] min-w-[48px] p-1.5 rounded-lg hover:bg-muted transition-colors"
                 data-testid="button-close-delete-modal"
               >
                 <X className="w-4 h-4" />
@@ -70,25 +72,27 @@ export default function ConfirmDeleteModal({
               </p>
 
               <div className="space-y-2">
-                <label className="text-xs font-medium text-muted-foreground">
+                <label htmlFor="input-confirm-delete" className="text-xs font-medium text-muted-foreground">
                   {t("common.confirm_delete_type")}{" "}
                   <span className="font-mono font-bold text-foreground">confirm delete</span>
                 </label>
                 <input
+                  id="input-confirm-delete"
                   type="text"
                   value={inputValue}
                   onChange={(e) => setInputValue(e.target.value)}
                   placeholder={t("common.confirm_delete_placeholder")}
-                  className="w-full px-3 py-2 text-sm rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-destructive/30"
+                  className="w-full min-h-[48px] px-3 py-2 text-sm rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-destructive/30"
                   autoFocus
                   data-testid="input-confirm-delete"
                 />
+                {error && <p id="error-confirm-delete" role="alert" className="text-xs text-destructive">{error}</p>}
               </div>
 
               <div className="flex items-center gap-2 justify-end pt-1">
                 <button
                   onClick={onClose}
-                  className="px-3 py-2 text-sm rounded-lg border border-border hover:bg-muted transition-colors"
+                  className="min-h-[48px] px-3 py-2 text-sm rounded-lg border border-border hover:bg-muted transition-colors"
                   data-testid="button-cancel-delete"
                 >
                   {t("common.cancel")}
@@ -96,8 +100,9 @@ export default function ConfirmDeleteModal({
                 <button
                   onClick={onConfirm}
                   disabled={!isMatch || loading}
-                  className="px-3 py-2 text-sm rounded-lg bg-destructive text-destructive-foreground hover:bg-destructive/90 transition-colors disabled:opacity-50 flex items-center gap-1.5"
+                  className="min-h-[48px] px-3 py-2 text-sm rounded-lg bg-destructive text-destructive-foreground hover:bg-destructive/90 transition-colors disabled:opacity-50 flex items-center gap-1.5"
                   data-testid="button-execute-delete"
+                  aria-describedby={error ? "error-confirm-delete" : undefined}
                 >
                   {loading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                   {t("common.delete")}

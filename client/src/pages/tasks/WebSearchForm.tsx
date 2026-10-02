@@ -5,7 +5,7 @@ import { useTaskOptions } from "@/hooks/use-task-options";
 import { FormField, InputField, SelectField, CheckboxField, RunButton } from "@/components/FormFields";
 import { ScheduleFromTaskButton } from "./ScheduleFromTaskButton";
 
-export function WebSearchForm({ onSubmit, submitting }: { onSubmit: (d: Record<string, unknown>) => void; submitting: boolean }) {
+export function WebSearchForm({ onSubmit, submitting, errorDescribedBy }: { onSubmit: (d: Record<string, unknown>) => void; submitting: boolean; errorDescribedBy?: string }) {
   const { t } = useTranslation();
   const { engines: dynamicEngines } = useTaskOptions();
   const [query, setQuery] = useState("");
@@ -68,7 +68,7 @@ export function WebSearchForm({ onSubmit, submitting }: { onSubmit: (d: Record<s
         <TagSelect value={fileExts} onChange={setFileExts} presets={PRESET_FILE_EXTENSIONS} placeholder="Add extension..." testId="input-search-file-exts" />
       </FormField>
       <CheckboxField checked={useDefaults} onChange={setUseDefaults} label={t("tasks.form.use_search_defaults")} testId="checkbox-use-defaults" />
-      <RunButton label={t("tasks.form.run")} submitting={submitting} disabled={submitting || !query.trim() || !selectedEngineAvailable}
+      <RunButton label={t("tasks.form.run")} submitting={submitting} disabled={submitting || !query.trim() || !selectedEngineAvailable} aria-describedby={errorDescribedBy}
         onClick={() => {
           const task = buildTask();
           if (task) onSubmit(task);

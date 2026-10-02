@@ -47,8 +47,8 @@ function formatDate(dateStr: string): string {
   }
 }
 
-export function SiteConfigForm({ sites, onSubmit, submitting, onSitesChanged }: {
-  sites: SiteConfig[]; onSubmit: (d: Record<string, unknown>) => void; submitting: boolean; onSitesChanged: () => void;
+export function SiteConfigForm({ sites, onSubmit, submitting, onSitesChanged, errorDescribedBy, errorSiteName }: {
+  sites: SiteConfig[]; onSubmit: (d: Record<string, unknown>) => void; submitting: boolean; onSitesChanged: () => void; errorDescribedBy?: string; errorSiteName?: string;
 }) {
   const { t } = useTranslation();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -272,7 +272,7 @@ export function SiteConfigForm({ sites, onSubmit, submitting, onSitesChanged }: 
       <input ref={fileInputRef} type="file" accept=".yaml,.yml" className="hidden" onChange={handleFileSelect} data-testid="input-import-file" />
       <div className="flex flex-wrap gap-2">
         <button onClick={() => fileInputRef.current?.click()}
-          className="text-xs px-2.5 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors flex items-center gap-1.5"
+          className="min-h-[48px] text-xs px-2.5 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors flex items-center gap-1.5"
           data-testid="button-import-yaml">
           <FileUp className="w-3 h-3" />{t("tasks.sites.import_yaml")}
         </button>
@@ -294,7 +294,7 @@ export function SiteConfigForm({ sites, onSubmit, submitting, onSitesChanged }: 
               URL.revokeObjectURL(a.href);
             } catch { /* ignore */ }
           }}
-          className="text-xs px-2.5 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors flex items-center gap-1.5"
+          className="min-h-[48px] text-xs px-2.5 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors flex items-center gap-1.5"
           data-testid="button-export-current">
           <Download className="w-3 h-3" />{t("tasks.sites.export_current")}
         </button>
@@ -313,7 +313,7 @@ export function SiteConfigForm({ sites, onSubmit, submitting, onSitesChanged }: 
               URL.revokeObjectURL(a.href);
             } catch { /* ignore */ }
           }}
-          className="text-xs px-2.5 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors flex items-center gap-1.5"
+          className="min-h-[48px] text-xs px-2.5 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors flex items-center gap-1.5"
           data-testid="button-download-sample">
           <Download className="w-3 h-3" />{t("tasks.sites.download_sample")}
         </button>
@@ -333,24 +333,24 @@ export function SiteConfigForm({ sites, onSubmit, submitting, onSitesChanged }: 
           </div>
           <div className="space-y-1.5">
             <p className="text-xs font-medium text-muted-foreground">{t("tasks.sites.import_mode")}</p>
-            <label className="flex items-center gap-2 text-xs cursor-pointer">
+            <label className="flex min-h-[48px] items-center gap-2 text-xs cursor-pointer">
               <input type="radio" name="importMode" checked={importMode === "merge"} onChange={() => setImportMode("merge")} data-testid="radio-mode-merge" />
               {t("tasks.sites.mode_merge")}
             </label>
-            <label className="flex items-center gap-2 text-xs cursor-pointer">
+            <label className="flex min-h-[48px] items-center gap-2 text-xs cursor-pointer">
               <input type="radio" name="importMode" checked={importMode === "overwrite"} onChange={() => setImportMode("overwrite")} data-testid="radio-mode-overwrite" />
               {t("tasks.sites.mode_overwrite")}
             </label>
           </div>
           <div className="flex items-center gap-2">
             <button onClick={handleConfirmImport} disabled={importing}
-              className="text-xs px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-1.5"
+              className="min-h-[48px] text-xs px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-1.5"
               data-testid="button-confirm-import">
               {importing && <Loader2 className="w-3 h-3 animate-spin" />}
               {t("tasks.sites.import_confirm")}
             </button>
             <button onClick={() => { setImportPreview(null); setImportYamlText(""); }}
-              className="text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors"
+              className="min-h-[48px] text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors"
               data-testid="button-cancel-import">{t("tasks.sched.cancel")}</button>
           </div>
         </div>
@@ -360,7 +360,7 @@ export function SiteConfigForm({ sites, onSubmit, submitting, onSitesChanged }: 
         <p className="text-sm text-muted-foreground">{t("tasks.form.scheduled_desc")}</p>
         <FormField label={t("tasks.form.target_site")}>
           <select value={site} onChange={(e) => setSite(e.target.value)}
-            className="w-full px-3 py-2 text-sm rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+            className="w-full min-h-[48px] px-3 py-2 text-sm rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-ring"
             data-testid="select-site">
             <option value="">{t("tasks.form.all_sites")} ({sites.length})</option>
             {sites.map((s) => <option key={s.name} value={s.name}>{s.name}</option>)}
@@ -376,8 +376,8 @@ export function SiteConfigForm({ sites, onSubmit, submitting, onSitesChanged }: 
         </div>
         <button onClick={() => onSubmit(buildCollectionTask())}
           disabled={submitting}
-          className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
-          data-testid="button-run-task">
+          className="w-full min-h-[48px] flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
+          data-testid="button-run-task" aria-describedby={errorDescribedBy}>
           {submitting && <Loader2 className="w-4 h-4 animate-spin" />}
           {t("tasks.form.run")}
         </button>
@@ -388,14 +388,14 @@ export function SiteConfigForm({ sites, onSubmit, submitting, onSitesChanged }: 
         <div className="flex items-center justify-between">
           <p className="text-sm text-muted-foreground">{sites.length} {t("tasks.configured_sites").toLowerCase()}</p>
           <button onClick={() => { resetSiteForm(); setShowAddSite(true); }}
-            className="text-xs px-2.5 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors flex items-center gap-1.5"
+            className="min-h-[48px] text-xs px-2.5 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors flex items-center gap-1.5"
             data-testid="button-add-site">
             <Plus className="w-3 h-3" />{t("tasks.sched.add_site")}
           </button>
         </div>
 
         {showAddSite && (
-          <div className="rounded-lg border border-primary/30 bg-card p-4 space-y-3" data-testid="form-site">
+          <div className="rounded-lg border border-primary/30 bg-card p-4 space-y-3" data-testid="form-site" aria-describedby={saveError ? "error-site-save" : undefined}>
             <h4 className="text-sm font-medium">{editingSite ? t("tasks.sched.edit_site") : t("tasks.sched.add_site")}</h4>
             <div className="grid grid-cols-2 gap-3">
               <FormField label={t("tasks.sched.site_name")}>
@@ -407,56 +407,56 @@ export function SiteConfigForm({ sites, onSubmit, submitting, onSitesChanged }: 
             </div>
             <FormField label={t("tasks.web_listening.goal")}>
               <textarea value={formGoal} onChange={(e) => setFormGoal(e.target.value)} rows={2}
-                className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm"
+                className="w-full min-h-[48px] rounded-lg border border-border bg-background px-3 py-2 text-sm"
                 data-testid="input-site-goal" />
             </FormField>
-            <button type="button" onClick={handleExploreSite} disabled={exploring || !formUrl.trim() || !formGoal.trim()}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs hover:bg-muted disabled:opacity-50"
+            <button type="button" onClick={handleExploreSite} disabled={exploring || !formUrl.trim() || !formGoal.trim()} aria-describedby={exploreError ? "error-site-explore" : undefined}
+              className="inline-flex min-h-[48px] items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs hover:bg-muted disabled:opacity-50"
               data-testid="button-site-explore">
               <RefreshCw className={`w-3 h-3 ${exploring ? "animate-spin" : ""}`} />{t("tasks.web_listening.explore")}
             </button>
             {exploreError && (
-              <p className="text-xs text-destructive" data-testid="text-site-explore-error">{exploreError}</p>
+              <p id="error-site-explore" className="text-xs text-destructive" data-testid="text-site-explore-error">{exploreError}</p>
             )}
             <div className="grid grid-cols-2 gap-3 rounded-lg border border-border p-3">
-              <fieldset className="space-y-2">
+              <fieldset className="space-y-2" aria-describedby={(formTools.length === 0 || formContentTypes.length === 0) ? "error-site-strategy" : undefined}>
                 <legend className="text-xs font-medium text-muted-foreground">{t("tasks.web_listening.tools")}</legend>
-                <label className="flex items-center gap-2 text-xs">
+                <label className="flex min-h-[48px] items-center gap-2 text-xs">
                   <input type="checkbox" checked={formTools.includes("crawler")} onChange={() => toggleSelection("crawler", formTools, setFormTools)} data-testid="checkbox-site-tool-crawler" />
                   {t("tasks.web_listening.tool_crawler")}
                 </label>
-                <label className="flex items-center gap-2 text-xs">
+                <label className="flex min-h-[48px] items-center gap-2 text-xs">
                   <input type="checkbox" checked={formTools.includes("search")} onChange={() => toggleSelection("search", formTools, setFormTools)} data-testid="checkbox-site-tool-search" />
                   {t("tasks.web_listening.tool_search")}
                 </label>
               </fieldset>
-              <fieldset className="space-y-2">
+              <fieldset className="space-y-2" aria-describedby={(formTools.length === 0 || formContentTypes.length === 0) ? "error-site-strategy" : undefined}>
                 <legend className="text-xs font-medium text-muted-foreground">{t("tasks.web_listening.content_types")}</legend>
-                <label className="flex items-center gap-2 text-xs">
+                <label className="flex min-h-[48px] items-center gap-2 text-xs">
                   <input type="checkbox" checked={formContentTypes.includes("file")} onChange={() => toggleSelection("file", formContentTypes, setFormContentTypes)} data-testid="checkbox-site-content-file" />
                   {t("tasks.web_listening.content_file")}
                 </label>
-                <label className="flex items-center gap-2 text-xs">
+                <label className="flex min-h-[48px] items-center gap-2 text-xs">
                   <input type="checkbox" checked={formContentTypes.includes("webpage")} onChange={() => toggleSelection("webpage", formContentTypes, setFormContentTypes)} data-testid="checkbox-site-content-webpage" />
                   {t("tasks.web_listening.content_webpage")}
                 </label>
               </fieldset>
             </div>
             {(formTools.length === 0 || formContentTypes.length === 0) && (
-              <p className="text-xs text-destructive">{t("tasks.web_listening.strategy_required")}</p>
+              <p id="error-site-strategy" className="text-xs text-destructive">{t("tasks.web_listening.strategy_required")}</p>
             )}
             {searchQueryRequired && (
-              <p className="text-xs text-destructive">{t("tasks.web_listening.search_query_required")}</p>
+              <p id="error-site-search-query" className="text-xs text-destructive">{t("tasks.web_listening.search_query_required")}</p>
             )}
             <div className="grid grid-cols-2 gap-3">
               <FormField label={t("tasks.web_listening.allow_patterns")}>
                 <textarea value={formAllowPatterns} onChange={(e) => setFormAllowPatterns(e.target.value)} rows={3}
-                  className="w-full rounded-lg border border-border bg-background px-3 py-2 font-mono text-xs"
+                  className="w-full min-h-[48px] rounded-lg border border-border bg-background px-3 py-2 font-mono text-xs"
                   placeholder="/research/&#10;/globalassets/" data-testid="input-site-allow-patterns" />
               </FormField>
               <FormField label={t("tasks.web_listening.queries")}>
-                <textarea value={formQueries} onChange={(e) => setFormQueries(e.target.value)} rows={3}
-                  className="w-full rounded-lg border border-border bg-background px-3 py-2 text-xs"
+                <textarea value={formQueries} onChange={(e) => setFormQueries(e.target.value)} rows={3} aria-describedby={searchQueryRequired ? "error-site-search-query" : undefined}
+                  className="w-full min-h-[48px] rounded-lg border border-border bg-background px-3 py-2 text-xs"
                   placeholder="site:example.com actuarial AI filetype:pdf" data-testid="input-site-queries" />
               </FormField>
             </div>
@@ -489,14 +489,14 @@ export function SiteConfigForm({ sites, onSubmit, submitting, onSitesChanged }: 
               </FormField>
             </div>
             {saveError && (
-              <p className="text-xs text-destructive" data-testid="text-site-save-error">{saveError}</p>
+              <p id="error-site-save" className="text-xs text-destructive" data-testid="text-site-save-error">{saveError}</p>
             )}
             <div className="flex items-center gap-2 justify-end">
               <button onClick={resetSiteForm}
-                className="text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors"
+                className="min-h-[48px] text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors"
                 data-testid="button-cancel-site">{t("tasks.sched.cancel")}</button>
-              <button onClick={handleSaveSite} disabled={saving || !formName.trim() || !formUrl.trim() || !siteStrategyReady}
-                className="text-xs px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-1.5"
+              <button onClick={handleSaveSite} disabled={saving || !formName.trim() || !formUrl.trim() || !siteStrategyReady} aria-describedby={saveError ? "error-site-save" : undefined}
+                className="min-h-[48px] text-xs px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-1.5"
                 data-testid="button-save-site">
                 {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
                 {saving ? t("tasks.sched.saving") : t("tasks.sched.save")}
@@ -517,7 +517,8 @@ export function SiteConfigForm({ sites, onSubmit, submitting, onSitesChanged }: 
               <div key={s.name} className="rounded-lg border border-border bg-card overflow-hidden" data-testid={`card-site-${s.name}`}>
                 <div className="flex items-center gap-3 px-3.5 py-2.5">
                   <button onClick={() => setExpandedSite(expandedSite === s.name ? null : s.name)}
-                    className="flex items-center gap-3 flex-1 min-w-0 text-left hover:bg-muted/50 -m-1 p-1 rounded transition-colors">
+                    className="flex min-h-[48px] items-center gap-3 flex-1 min-w-0 text-left hover:bg-muted/50 -m-1 p-1 rounded transition-colors"
+                    data-testid={`button-toggle-site-${s.name}`}>
                     <Globe className="w-4 h-4 text-primary shrink-0" />
                     <div className="flex-1 min-w-0">
                       <span className="text-sm font-medium truncate block">{s.name}</span>
@@ -533,17 +534,18 @@ export function SiteConfigForm({ sites, onSubmit, submitting, onSitesChanged }: 
                   <div className="flex items-center gap-1 shrink-0">
                     <IconButton onClick={() => onSubmit({ type: "scheduled", name: `Scheduled: ${s.name}`, site: s.name })}
                       label={t("a11y.run_site", { target: s.name })} className="hover:bg-emerald-500/10 text-muted-foreground hover:text-emerald-600"
-                      data-testid={`button-run-site-${s.name}`}><Plus className="w-3.5 h-3.5" /></IconButton>
+                      data-testid={`button-run-site-${s.name}`} aria-describedby={errorSiteName === s.name ? "error-task-submit" : undefined}><Plus className="w-3.5 h-3.5" /></IconButton>
                     <IconButton onClick={() => openEditForm(s)} label={t("a11y.edit_site", { target: s.name })}
                       className="hover:bg-muted text-muted-foreground hover:text-foreground"
                       data-testid={`button-edit-site-${s.name}`}><Pencil className="w-3.5 h-3.5" /></IconButton>
                     {deletingSite === s.name ? (
                       <div className="flex items-center gap-1">
                         <button onClick={() => handleDeleteSite(s.name)}
-                          className="text-[10px] px-2 py-1 rounded bg-destructive text-destructive-foreground"
+                          className="min-h-[48px] text-[10px] px-2 py-1 rounded bg-destructive text-destructive-foreground"
                           data-testid={`button-confirm-delete-site-${s.name}`}>{t("a11y.confirm_delete_site", { target: s.name })}</button>
                         <button onClick={() => setDeletingSite(null)}
-                          className="text-[10px] px-2 py-1 rounded border border-border">{t("tasks.sched.cancel")}</button>
+                          className="min-h-[48px] min-w-[48px] text-[10px] px-2 py-1 rounded border border-border"
+                          data-testid={`button-cancel-delete-site-${s.name}`}>{t("tasks.sched.cancel")}</button>
                       </div>
                     ) : (
                       <IconButton onClick={() => setDeletingSite(s.name)} label={t("a11y.delete_site", { target: s.name })}
@@ -631,7 +633,7 @@ export function SiteConfigForm({ sites, onSubmit, submitting, onSitesChanged }: 
 
       <div className="border-t border-border pt-4">
         <button onClick={() => { if (!showBackups) fetchBackups(); setShowBackups(!showBackups); }}
-          className="text-xs px-2.5 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors flex items-center gap-1.5"
+          className="min-h-[48px] text-xs px-2.5 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors flex items-center gap-1.5"
           data-testid="button-toggle-backups">
           {showBackups ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
           {t("tasks.sites.backups")}

@@ -153,15 +153,15 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             <div className="flex items-center gap-1.5">
               {isLoggedIn ? (
                 <>
-                  <Link href="/profile">
-                    <div className="hidden sm:flex items-center gap-2 rounded-lg border border-border px-3 py-1.5 text-sm hover:bg-muted cursor-pointer">
+                  <Link href="/profile" className="hidden sm:flex">
+                    <div className="flex items-center gap-2 rounded-lg border border-border px-3 py-1.5 text-sm hover:bg-muted cursor-pointer">
                       <UserCircle2 className="w-4 h-4 text-muted-foreground" />
                       <span className="max-w-32 truncate">{user?.display_name || user?.email || "User"}</span>
                     </div>
                   </Link>
                   {permissions.includes("users.manage") && (
-                    <Link href="/users">
-                      <div className="hidden sm:flex items-center gap-2 rounded-lg border border-border px-3 py-1.5 text-sm hover:bg-muted cursor-pointer">
+                    <Link href="/users" className="hidden sm:flex">
+                      <div className="flex items-center gap-2 rounded-lg border border-border px-3 py-1.5 text-sm hover:bg-muted cursor-pointer">
                         <Users className="w-4 h-4 text-muted-foreground" />
                         <span>{i18n.t("nav.users")}</span>
                       </div>
@@ -183,8 +183,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                       {i18n.t("auth.signIn")}
                     </div>
                   </Link>
-                  <Link href="/register">
-                    <div className="hidden sm:flex items-center rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 cursor-pointer">
+                  <Link href="/register" className="hidden sm:flex">
+                    <div className="flex items-center rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 cursor-pointer">
                       {i18n.t("auth.register")}
                     </div>
                   </Link>
@@ -192,7 +192,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
               )}
               <button
                 onClick={i18n.toggleLang}
-                className="p-2 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground text-xs font-semibold transition-colors"
+                className="min-h-[44px] min-w-[44px] p-2 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground text-xs font-semibold transition-colors"
                 data-testid="toggle-lang"
                 title="Switch language"
               >
@@ -200,7 +200,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
               </button>
               <button
                 onClick={toggleTheme}
-                className="p-2 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                className="min-h-[44px] min-w-[44px] p-2 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
                 data-testid="toggle-theme"
                 title={i18n.t("theme.toggle")}
               >

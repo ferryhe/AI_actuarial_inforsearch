@@ -80,7 +80,6 @@ interface KnowledgeBase {
   manifest_profile?: string;
   agentic_ready_manifest?: AgenticReadyManifest;
 }
-
 interface ChunkProfile {
   profile_id?: string;
   name: string;
@@ -349,6 +348,8 @@ export default function Knowledge() {
   const [categoryStats, setCategoryStats] = useState<Record<string, number> | null>(null);
   const [categoryStatsLoading, setCategoryStatsLoading] = useState(false);
   const [kbActionError, setKbActionError] = useState<string | null>(null);
+  const [profileCreateError, setProfileCreateError] = useState<string | null>(null);
+  const [kbErrorAction, setKbErrorAction] = useState<string | null>(null);
   const [kbActionNotice, setKbActionNotice] = useState<string | null>(null);
   const [readyDataListPollVersion, setReadyDataListPollVersion] = useState(0);
   const readyDataListPollAttempts = useRef(0);
@@ -578,6 +579,7 @@ export default function Knowledge() {
     const finalKbId = kbForm.kb_id.trim() || generateKbId(kbForm.name);
     setCreating(true);
     setKbActionError(null);
+    setKbErrorAction(null);
     setKbActionNotice(null);
     try {
       const createResponse = await apiPost<{
@@ -624,12 +626,14 @@ export default function Knowledge() {
       );
       if (indexFailed) {
         setKbActionError(`${t("knowledge.create_index_partial_error")}${indexErrorDetail ? `: ${indexErrorDetail}` : ""}`);
+        setKbErrorAction("create-index");
       }
       loadData();
     } catch (err) {
       console.error("Failed to create KB:", err);
       const detail = formatApiErrorDetail(err);
       setKbActionError(detail || (createAndIndex ? t("knowledge.create_index_error") : t("knowledge.create_error")));
+      setKbErrorAction(createAndIndex ? "create-index" : "create");
     } finally {
       setCreating(false);
     }
@@ -651,6 +655,7 @@ export default function Knowledge() {
   const handleReembedKB = async (kbId: string) => {
     setIndexingKb(kbId);
     setKbActionError(null);
+    setKbErrorAction(null);
     setKbActionNotice(null);
     try {
       await apiPost(`/api/rag/knowledge-bases/${encodeURIComponent(kbId)}/index`, {
@@ -662,6 +667,7 @@ export default function Knowledge() {
       console.error("Failed to re-embed KB:", err);
       const detail = formatApiErrorDetail(err);
       setKbActionError(detail || t("knowledge.index_error"));
+      setKbErrorAction(`reembed-${kbId}`);
     } finally {
       setIndexingKb(null);
     }
@@ -671,6 +677,7 @@ export default function Knowledge() {
     const mutationManifestVersion = ++readyDataListManifestVersion.current;
     setBuildingManifestKb(kbId);
     setKbActionError(null);
+    setKbErrorAction(null);
     setKbActionNotice(null);
     try {
       const manifestResponse = await apiGet<{ manifest?: AgenticReadyManifest }>(
@@ -679,6 +686,7 @@ export default function Knowledge() {
       const readyBuildInput = manifestResponse.manifest?.ready_build_input;
       if (!readyBuildInput) {
         setKbActionError(t("knowledge.manifest_build_not_ready").replace("{detail}", "KB Index is not ready"));
+        setKbErrorAction(`manifest-${kbId}`);
         return;
       }
       const res = await apiPost<{
@@ -721,11 +729,13 @@ export default function Knowledge() {
       } else {
         const detail = res.validation?.errors?.join("; ") || manifest?.error_message || manifest?.stale_reason || status;
         setKbActionError(t("knowledge.manifest_build_not_ready").replace("{detail}", detail));
+        setKbErrorAction(`manifest-${kbId}`);
       }
     } catch (err) {
       console.error("Failed to build agentic manifest:", err);
       const detail = formatApiErrorDetail(err);
       setKbActionError(detail || t("knowledge.manifest_build_failed"));
+      setKbErrorAction(`manifest-${kbId}`);
     } finally {
       setBuildingManifestKb(null);
     }
@@ -765,6 +775,7 @@ export default function Knowledge() {
 
   const handleCreateProfile = async () => {
     if (!profileForm.name.trim()) return;
+    setProfileCreateError(null);
     setCreating(true);
     try {
       await apiPost("/api/chunk/profiles", {
@@ -778,7 +789,7 @@ export default function Knowledge() {
       closeCreateProfile();
       loadData();
     } catch (err) {
-      console.error("Failed to create profile:", err);
+      setProfileCreateError(err instanceof Error ? err.message : t("knowledge.create_profile"));
     } finally {
       setCreating(false);
     }
@@ -812,10 +823,12 @@ export default function Knowledge() {
 
   const openCreateProfile = () => {
     setShowCreateKB(false);
+    setProfileCreateError(null);
     setShowCreateProfile(true);
   };
 
   const closeCreateProfile = () => {
+    setProfileCreateError(null);
     setShowCreateProfile(false);
   };
 
@@ -867,7 +880,7 @@ export default function Knowledge() {
           <button
             type="button"
             onClick={openCreateKB}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors"
+            className="flex min-h-[48px] items-center gap-2 px-4 py-2.5 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors"
             data-testid="button-create-kb"
           >
             <Plus className="w-4 h-4" />
@@ -877,7 +890,7 @@ export default function Knowledge() {
       </motion.div>
 
       {kbActionError && (
-        <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive" data-testid="alert-kb-action-error">
+        <div id="error-kb-action" role="alert" className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive" data-testid="alert-kb-action-error">
           <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0" />
           <span>{kbActionError}</span>
         </div>
@@ -898,12 +911,12 @@ export default function Knowledge() {
             className="rounded-xl border border-border bg-card p-6 overflow-hidden"
           >
             <div className="flex items-center justify-between mb-4">
-              <h3 className="font-semibold text-sm">{t("knowledge.create_title")}</h3>
+              <h2 className="font-semibold text-sm">{t("knowledge.create_title")}</h2>
               <button
                 type="button"
                 aria-label="Close create knowledge base panel"
                 onClick={closeCreateKB}
-                className="p-2 rounded hover:bg-muted"
+                className="min-h-[48px] min-w-[48px] p-2 rounded hover:bg-muted"
                 data-testid="button-close-create-kb"
               >
                 <X className="w-4 h-4" />
@@ -911,10 +924,10 @@ export default function Knowledge() {
             </div>
             <div className="grid sm:grid-cols-2 gap-4">
               <div>
-                <label className="text-xs font-medium text-muted-foreground mb-1 block">
+                <label htmlFor="input-kb-name" className="text-xs font-medium text-muted-foreground mb-1 block">
                   {t("knowledge.name")} <span className="text-red-500">*</span>
                 </label>
-                <input
+                <input id="input-kb-name"
                   type="text"
                   value={kbForm.name}
                   onChange={(e) => {
@@ -925,52 +938,52 @@ export default function Knowledge() {
                       kb_id: f.kb_id === "" || f.kb_id === generateKbId(f.name) ? "" : f.kb_id,
                     }));
                   }}
-                  className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                  className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
                   placeholder={t("knowledge.name_placeholder")}
                   data-testid="input-kb-name"
                 />
               </div>
               <div>
-                <label className="text-xs font-medium text-muted-foreground mb-1 block">
+                <label htmlFor="input-kb-id" className="text-xs font-medium text-muted-foreground mb-1 block">
                   {t("knowledge.kb_id_label")}
                 </label>
-                <input
+                <input id="input-kb-id" aria-describedby="hint-kb-id"
                   type="text"
                   value={kbForm.kb_id || (kbForm.name ? generateKbId(kbForm.name) : "")}
                   onChange={(e) => setKbForm({ ...kbForm, kb_id: e.target.value })}
-                  className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary/30"
+                  className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-border bg-background text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary/30"
                   placeholder={t("knowledge.kb_id_placeholder")}
                   data-testid="input-kb-id"
                 />
-                <p className="text-[10px] text-muted-foreground mt-1">{t("knowledge.kb_id_hint")}</p>
+                <p id="hint-kb-id" className="text-[10px] text-muted-foreground mt-1">{t("knowledge.kb_id_hint")}</p>
               </div>
               <div>
-                <label className="text-xs font-medium text-muted-foreground mb-1 block">
+                <label htmlFor="select-kb-mode" className="text-xs font-medium text-muted-foreground mb-1 block">
                   {t("knowledge.mode")}
                 </label>
-                <select
+                <select id="select-kb-mode" aria-describedby="hint-kb-mode"
                   value={kbForm.kb_mode}
                   onChange={(e) => setKbForm({ ...kbForm, kb_mode: e.target.value, categories: [], file_urls: [] })}
-                  className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                  className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
                   data-testid="select-kb-mode"
                 >
                   <option value="manual">{t("knowledge.mode_manual")}</option>
                   <option value="category">{t("knowledge.mode_category")}</option>
                   <option value="all">{t("knowledge.mode_all")}</option>
                 </select>
-                <p className="text-[10px] text-muted-foreground mt-1">{t("knowledge.mode_hint")}</p>
+                <p id="hint-kb-mode" className="text-[10px] text-muted-foreground mt-1">{t("knowledge.mode_hint")}</p>
               </div>
               <div>
-                <label className="text-xs font-medium text-muted-foreground mb-1 block">
+                <label htmlFor="select-kb-chunk-profile" className="text-xs font-medium text-muted-foreground mb-1 block">
                   {t("knowledge.chunk_profile")} <span className="text-red-500">*</span>
                 </label>
-                <select
+                <select id="select-kb-chunk-profile" aria-describedby="hint-kb-chunk-profile"
                   value={kbForm.chunk_profile_id}
                   onChange={(e) => {
                     setKbForm({ ...kbForm, chunk_profile_id: e.target.value, file_urls: [] });
                     setSelectableFiles([]);
                   }}
-                  className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                  className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
                   data-testid="select-kb-chunk-profile"
                   disabled={profiles.length === 0}
                 >
@@ -984,34 +997,34 @@ export default function Knowledge() {
                     ))
                   )}
                 </select>
-                <p className="text-[10px] text-muted-foreground mt-1">{t("knowledge.chunk_profile_hint")}</p>
+                <p id="hint-kb-chunk-profile" className="text-[10px] text-muted-foreground mt-1">{t("knowledge.chunk_profile_hint")}</p>
               </div>
               <div>
-                <label className="text-xs font-medium text-muted-foreground mb-1 block">
+                <label htmlFor="select-kb-manifest-profile" className="text-xs font-medium text-muted-foreground mb-1 block">
                   {t("knowledge.manifest_profile")}
                 </label>
-                <select
+                <select id="select-kb-manifest-profile" aria-describedby="hint-kb-manifest-profile"
                   value={kbForm.manifest_profile}
                   onChange={(e) => setKbForm({ ...kbForm, manifest_profile: e.target.value })}
-                  className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                  className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
                   data-testid="select-kb-manifest-profile"
                 >
                   <option value="general">{t("knowledge.manifest_profile_general")}</option>
                   <option value="regulation">{t("knowledge.manifest_profile_regulation")}</option>
                   <option value="formula">{t("knowledge.manifest_profile_formula")}</option>
                 </select>
-                <p className="text-[10px] text-muted-foreground mt-1">
+                <p id="hint-kb-manifest-profile" className="text-[10px] text-muted-foreground mt-1">
                   {t("knowledge.manifest_profile_hint")}
                 </p>
               </div>
               <div>
-                <label className="text-xs font-medium text-muted-foreground mb-1 block">
+                <label htmlFor="select-kb-embedding-identity" className="text-xs font-medium text-muted-foreground mb-1 block">
                   {t("knowledge.embedding_identity")} <span className="text-red-500">*</span>
                 </label>
-                <select
+                <select id="select-kb-embedding-identity" aria-describedby="hint-kb-embedding-identity"
                   value={kbForm.embedding_identity_key}
                   onChange={(e) => setKbForm({ ...kbForm, embedding_identity_key: e.target.value })}
-                  className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                  className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
                   data-testid="select-kb-embedding-identity"
                   disabled={!currentEmbedding?.embedding_identity_key}
                 >
@@ -1019,30 +1032,30 @@ export default function Knowledge() {
                     {[currentEmbedding?.provider, currentEmbedding?.model, currentEmbedding?.dimension].filter(Boolean).join(" / ") || t("knowledge.embedding_unavailable")}
                   </option>
                 </select>
-                <p className="text-[10px] text-muted-foreground mt-1 font-mono truncate">
+                <p id="hint-kb-embedding-identity" className="text-[10px] text-muted-foreground mt-1 font-mono truncate">
                   {kbForm.embedding_identity_key || t("knowledge.embedding_unavailable")}
                 </p>
               </div>
               <div className="sm:col-span-2">
-                <label className="text-xs font-medium text-muted-foreground mb-1 block">
+                <label htmlFor="input-kb-description" className="text-xs font-medium text-muted-foreground mb-1 block">
                   {t("knowledge.description")}
                 </label>
-                <textarea
+                <textarea id="input-kb-description" aria-describedby="hint-kb-description"
                   value={kbForm.description}
                   onChange={(e) => setKbForm({ ...kbForm, description: e.target.value })}
-                  className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 resize-none"
+                  className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 resize-none"
                   rows={2}
                   placeholder={t("knowledge.desc_placeholder")}
                   data-testid="input-kb-description"
                 />
-                <p className="text-[11px] text-muted-foreground/70 mt-1">{t("knowledge.desc_guidance")}</p>
+                <p id="hint-kb-description" className="text-[11px] text-muted-foreground/70 mt-1">{t("knowledge.desc_guidance")}</p>
               </div>
               {kbForm.kb_mode === "category" && (
                 <div className="sm:col-span-2 rounded-lg border border-border bg-muted/20 p-3" data-testid="kb-category-picker">
                   <div className="flex items-center justify-between gap-3 mb-2">
-                    <label className="text-xs font-medium text-muted-foreground">
+                  <div className="text-xs font-medium text-muted-foreground">
                       {t("knowledge.categories")} <span className="text-amber-600">({t("knowledge.required")})</span>
-                    </label>
+                    </div>
                     <span className="text-[11px] text-muted-foreground">
                       {kbForm.categories.length} {t("db.selected_count")}
                     </span>
@@ -1076,7 +1089,7 @@ export default function Knowledge() {
                             type="button"
                             onClick={() => toggleKbCategory(category)}
                             className={cn(
-                              "rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
+                              "min-h-[44px] min-w-[44px] rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
                               selected
                                 ? "border-primary bg-primary text-primary-foreground"
                                 : "border-border bg-background text-muted-foreground hover:text-foreground hover:bg-muted"
@@ -1094,13 +1107,13 @@ export default function Knowledge() {
               {kbForm.kb_mode === "manual" && (
                 <div className="sm:col-span-2 rounded-lg border border-border bg-muted/20 p-3" data-testid="kb-document-picker">
                   <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between mb-3">
-                    <label className="text-xs font-medium text-muted-foreground">{t("knowledge.select_documents")}</label>
+                    <label htmlFor="input-kb-document-search" className="text-xs font-medium text-muted-foreground">{t("knowledge.select_documents")}</label>
                     <div className="flex items-center gap-2">
                       <button
                         type="button"
                         onClick={handleSelectAllKbFiles}
                         disabled={selectableFiles.length === 0}
-                        className="rounded-md border border-border px-2 py-1 text-[11px] font-medium text-muted-foreground hover:bg-muted disabled:opacity-50"
+                        className="min-h-[48px] min-w-[48px] rounded-md border border-border px-2 py-1 text-[11px] font-medium text-muted-foreground hover:bg-muted disabled:opacity-50"
                         data-testid="button-select-all-kb-files"
                       >
                         {selectableFiles.length > 0 && selectableFiles.every((file) => kbForm.file_urls.includes(file.url))
@@ -1113,11 +1126,11 @@ export default function Knowledge() {
                     </div>
                   </div>
                   <div className="relative mb-3">
-                    <input
+                    <input id="input-kb-document-search"
                       type="text"
                       value={fileSearch}
                       onChange={(e) => setFileSearch(e.target.value)}
-                      className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                      className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
                       placeholder={t("knowledge.document_search_placeholder")}
                       data-testid="input-kb-document-search"
                     />
@@ -1140,7 +1153,7 @@ export default function Knowledge() {
                             type="button"
                             onClick={() => toggleKbFile(file.url)}
                             className={cn(
-                              "flex w-full items-start gap-3 px-3 py-2 text-left transition-colors",
+                              "flex min-h-[48px] w-full items-start gap-3 px-3 py-2 text-left transition-colors",
                               selected ? "bg-primary/10" : "hover:bg-muted/70"
                             )}
                             data-testid={`button-toggle-kb-file-${file.url}`}
@@ -1201,7 +1214,8 @@ export default function Knowledge() {
                   || (kbForm.kb_mode === "category" && kbForm.categories.length === 0)
                   || (kbForm.kb_mode === "manual" && kbForm.file_urls.length === 0)
                 }
-                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
+                  aria-describedby={kbErrorAction === "create" ? "error-kb-action" : undefined}
+                  className="min-h-[48px] flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
                 data-testid="button-submit-kb"
               >
                 {creating && <Loader2 className="w-4 h-4 animate-spin" />}
@@ -1218,7 +1232,8 @@ export default function Knowledge() {
                     || (kbForm.kb_mode === "category" && kbForm.categories.length === 0)
                     || (kbForm.kb_mode === "manual" && kbForm.file_urls.length === 0)
                   }
-                  className="flex items-center gap-2 px-4 py-2 rounded-lg bg-violet-600 text-white text-sm font-medium hover:bg-violet-700 transition-colors disabled:opacity-50"
+                  aria-describedby={kbErrorAction === "create-index" ? "error-kb-action" : undefined}
+                  className="min-h-[48px] flex items-center gap-2 px-4 py-2 rounded-lg bg-violet-600 text-white text-sm font-medium hover:bg-violet-700 transition-colors disabled:opacity-50"
                   data-testid="button-submit-kb-index"
                 >
                   {creating && <Loader2 className="w-4 h-4 animate-spin" />}
@@ -1358,8 +1373,9 @@ export default function Knowledge() {
                           type="button"
                           onClick={() => handleBuildAgenticManifest(kbId)}
                           disabled={manifestBusy}
-                          className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border bg-background px-2 py-1 text-[11px] font-medium hover:bg-muted disabled:opacity-50 transition-colors"
+                          className="inline-flex min-h-[44px] shrink-0 items-center gap-1.5 rounded-md border border-border bg-background px-2 py-1 text-[11px] font-medium hover:bg-muted disabled:opacity-50 transition-colors"
                           data-testid={`button-build-agentic-manifest-${kbId}`}
+                          aria-describedby={kbErrorAction === `manifest-${kbId}` ? "error-kb-action" : undefined}
                         >
                           {buildingManifestKb === kbId ? (
                             <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -1391,8 +1407,9 @@ export default function Knowledge() {
                       <button
                         onClick={() => handleReembedKB(kbId)}
                         disabled={indexingKb === kbId}
-                        className="mt-2 inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-amber-600 text-white text-xs font-medium hover:bg-amber-700 disabled:opacity-50 transition-colors"
+                        className="mt-2 inline-flex min-h-[48px] items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-amber-600 text-white text-xs font-medium hover:bg-amber-700 disabled:opacity-50 transition-colors"
                         data-testid={`button-reembed-kb-${kbId}`}
+                        aria-describedby={kbErrorAction === `reembed-${kbId}` ? "error-kb-action" : undefined}
                       >
                         <RefreshCw className={cn("w-3.5 h-3.5", indexingKb === kbId && "animate-spin")} />
                         {t("knowledge.reembed")}
@@ -1447,7 +1464,7 @@ export default function Knowledge() {
                 <div className="flex border-t border-border">
                   <button
                     onClick={() => navigate(`/knowledge/${encodeURIComponent(kbId)}`)}
-                    className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-medium text-primary hover:bg-primary/5 transition-colors rounded-bl-xl"
+                    className="flex-1 min-h-[44px] flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-medium text-primary hover:bg-primary/5 transition-colors rounded-bl-xl"
                     data-testid={`button-view-kb-${kbId}`}
                   >
                     <Eye className="w-3.5 h-3.5" />
@@ -1460,7 +1477,7 @@ export default function Knowledge() {
                     disabled={!askAiAvailable}
                     aria-label={askAiAvailable ? t("common.ask_ai") : t("common.ask_ai_unavailable")}
                     title={askAiAvailable ? t("common.ask_ai") : t("common.ask_ai_unavailable")}
-                    className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-medium text-primary hover:bg-primary/5 transition-colors disabled:cursor-not-allowed disabled:text-muted-foreground disabled:opacity-60"
+                    className="flex-1 min-h-[44px] flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-medium text-primary hover:bg-primary/5 transition-colors disabled:cursor-not-allowed disabled:text-muted-foreground disabled:opacity-60"
                     data-testid={`button-ask-ai-kb-${kbId}`}
                   >
                     <Sparkles className="w-3.5 h-3.5" />
@@ -1470,7 +1487,7 @@ export default function Knowledge() {
                   {canManageCatalog && (
                     <button
                       onClick={() => setDeleteConfirm(kbId)}
-                      className="flex items-center justify-center gap-1.5 px-4 py-2.5 text-xs font-medium text-red-500 hover:bg-red-500/5 transition-colors rounded-br-xl"
+                      className="flex min-h-[44px] min-w-[44px] items-center justify-center gap-1.5 px-4 py-2.5 text-xs font-medium text-red-500 hover:bg-red-500/5 transition-colors rounded-br-xl"
                       data-testid={`button-delete-kb-${kbId}`}
                     >
                       <Trash2 className="w-3.5 h-3.5" />
@@ -1504,7 +1521,7 @@ export default function Knowledge() {
           {canManageChunkProfiles && (
             <button
               onClick={openCreateProfile}
-              className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border text-sm font-medium hover:bg-muted transition-colors"
+              className="flex min-h-[48px] items-center gap-2 px-3 py-2 rounded-lg border border-border text-sm font-medium hover:bg-muted transition-colors"
               data-testid="button-create-profile"
             >
               <Plus className="w-4 h-4" />
@@ -1527,7 +1544,7 @@ export default function Knowledge() {
                   type="button"
                   aria-label="Close create chunk profile panel"
                   onClick={closeCreateProfile}
-                  className="p-2 rounded hover:bg-muted"
+                  className="min-h-[48px] min-w-[48px] p-2 rounded hover:bg-muted"
                   data-testid="button-close-create-profile"
                 >
                   <X className="w-4 h-4" />
@@ -1535,58 +1552,58 @@ export default function Knowledge() {
               </div>
               <div className="grid sm:grid-cols-2 lg:grid-cols-5 gap-4">
                 <div>
-                  <label className="text-xs font-medium text-muted-foreground mb-1 block">
+                  <label htmlFor="input-profile-name" className="text-xs font-medium text-muted-foreground mb-1 block">
                     {t("knowledge.profile_name")}
                   </label>
-                  <input
+                  <input id="input-profile-name"
                     type="text"
                     value={profileForm.name}
                     onChange={(e) => setProfileForm({ ...profileForm, name: e.target.value })}
-                    className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                    className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
                     placeholder={t("knowledge.profile_name_placeholder")}
                     data-testid="input-profile-name"
                   />
                 </div>
                 <div>
-                  <label className="text-xs font-medium text-muted-foreground mb-1 block">
+                  <label htmlFor="input-chunk-size" className="text-xs font-medium text-muted-foreground mb-1 block">
                     {t("knowledge.chunk_size")}
                   </label>
-                  <input
+                  <input id="input-chunk-size"
                     type="number"
                     value={profileForm.chunk_size}
                     onChange={(e) =>
                       setProfileForm({ ...profileForm, chunk_size: parseInt(e.target.value) || 512 })
                     }
-                    className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                    className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
                     min={64}
                     max={8192}
                     data-testid="input-chunk-size"
                   />
                 </div>
                 <div>
-                  <label className="text-xs font-medium text-muted-foreground mb-1 block">
+                  <label htmlFor="input-overlap" className="text-xs font-medium text-muted-foreground mb-1 block">
                     {t("knowledge.overlap")}
                   </label>
-                  <input
+                  <input id="input-overlap"
                     type="number"
                     value={profileForm.overlap}
                     onChange={(e) =>
                       setProfileForm({ ...profileForm, overlap: parseInt(e.target.value) || 50 })
                     }
-                    className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                    className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
                     min={0}
                     max={1024}
                     data-testid="input-overlap"
                   />
                 </div>
                 <div>
-                  <label className="text-xs font-medium text-muted-foreground mb-1 block">
+                  <label htmlFor="select-profile-splitter" className="text-xs font-medium text-muted-foreground mb-1 block">
                     {t("knowledge.splitter")}
                   </label>
-                  <select
+                  <select id="select-profile-splitter"
                     value={profileForm.splitter}
                     onChange={(e) => setProfileForm({ ...profileForm, splitter: e.target.value })}
-                    className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                    className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
                     data-testid="select-profile-splitter"
                   >
                     <option value="semantic">{t("knowledge.splitter_semantic")}</option>
@@ -1594,13 +1611,13 @@ export default function Knowledge() {
                   </select>
                 </div>
                 <div>
-                  <label className="text-xs font-medium text-muted-foreground mb-1 block">
+                  <label htmlFor="select-profile-tokenizer" className="text-xs font-medium text-muted-foreground mb-1 block">
                     {t("knowledge.tokenizer")}
                   </label>
-                  <select
+                  <select id="select-profile-tokenizer"
                     value={profileForm.tokenizer}
                     onChange={(e) => setProfileForm({ ...profileForm, tokenizer: e.target.value })}
-                    className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                    className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
                     data-testid="select-profile-tokenizer"
                   >
                     <option value="cl100k_base">cl100k_base</option>
@@ -1613,7 +1630,7 @@ export default function Knowledge() {
                 <button
                   type="button"
                   onClick={closeCreateProfile}
-                  className="px-4 py-2 rounded-lg border border-border bg-background text-sm font-medium hover:bg-muted transition-colors"
+                  className="min-h-[48px] px-4 py-2 rounded-lg border border-border bg-background text-sm font-medium hover:bg-muted transition-colors"
                   data-testid="button-cancel-profile"
                 >
                   {t("common.cancel")}
@@ -1621,13 +1638,15 @@ export default function Knowledge() {
                 <button
                   onClick={handleCreateProfile}
                   disabled={creating || !profileForm.name.trim()}
-                  className="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
+                  className="min-h-[48px] flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
                   data-testid="button-submit-profile"
+                  aria-describedby={profileCreateError ? "error-profile-create" : undefined}
                 >
                   {creating && <Loader2 className="w-4 h-4 animate-spin" />}
                   {t("knowledge.create_profile")}
                 </button>
               </div>
+              {profileCreateError && <p id="error-profile-create" role="alert" className="mt-2 text-xs text-destructive">{profileCreateError}</p>}
             </motion.div>
           )}
         </AnimatePresence>
@@ -1667,7 +1686,7 @@ export default function Knowledge() {
                       <td className="px-2 py-3 text-center">
                         <button
                           onClick={() => profile.profile_id && setDeleteProfileConfirm(profile.profile_id)}
-                          className="p-1 rounded hover:bg-red-500/10 text-muted-foreground hover:text-red-500 transition-colors"
+                          className="min-h-[48px] min-w-[48px] p-1 rounded hover:bg-red-500/10 text-muted-foreground hover:text-red-500 transition-colors"
                           data-testid={`button-delete-profile-${i}`}
                           title={t("knowledge.delete_profile")}
                         >
@@ -1702,7 +1721,7 @@ export default function Knowledge() {
             <div className="flex items-center gap-3 mt-4">
               <button
                 onClick={() => { setShowCleanup(!showCleanup); setCleanupResult(null); }}
-                className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-border text-xs font-medium text-muted-foreground hover:bg-muted/50 transition-colors"
+                className="flex min-h-[48px] items-center gap-2 px-3 py-1.5 rounded-lg border border-border text-xs font-medium text-muted-foreground hover:bg-muted/50 transition-colors"
                 data-testid="button-toggle-cleanup"
               >
                 <Trash2 className="w-3.5 h-3.5" />
@@ -1722,20 +1741,20 @@ export default function Knowledge() {
               <p className="text-xs text-muted-foreground mb-4">{t("knowledge.cleanup_desc")}</p>
               <div className="flex flex-wrap items-end gap-4">
                 <div>
-                  <label className="text-xs font-medium text-muted-foreground mb-1 block">
+                  <label htmlFor="input-cleanup-days" className="text-xs font-medium text-muted-foreground mb-1 block">
                     {t("knowledge.cleanup_days")}
                   </label>
-                  <input
+                  <input id="input-cleanup-days"
                     type="number"
                     value={cleanupDays}
                     onChange={(e) => setCleanupDays(parseInt(e.target.value) || 30)}
-                    className="w-24 px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                    className="min-h-[48px] w-24 px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
                     min={1}
                     max={365}
                     data-testid="input-cleanup-days"
                   />
                 </div>
-                <label className="flex items-center gap-2 text-sm cursor-pointer py-2">
+                <label className="flex min-h-[48px] items-center gap-2 text-sm cursor-pointer py-2" data-testid="label-cleanup-dryrun">
                   <input
                     type="checkbox"
                     checked={cleanupDryRun}
@@ -1749,7 +1768,7 @@ export default function Knowledge() {
                   onClick={handleCleanup}
                   disabled={cleanupRunning}
                   className={cn(
-                    "flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50",
+                    "flex min-h-[48px] items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50",
                     cleanupDryRun
                       ? "bg-primary text-primary-foreground hover:bg-primary/90"
                       : "bg-red-600 text-white hover:bg-red-700"

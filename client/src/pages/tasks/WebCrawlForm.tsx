@@ -4,7 +4,7 @@ import TagSelect, { PRESET_FILE_EXTENSIONS } from "@/components/TagSelect";
 import { FormField, InputField, CheckboxField, RunButton } from "@/components/FormFields";
 import { ScheduleFromTaskButton } from "./ScheduleFromTaskButton";
 
-export function WebCrawlForm({ onSubmit, submitting }: { onSubmit: (d: Record<string, unknown>) => void; submitting: boolean }) {
+export function WebCrawlForm({ onSubmit, submitting, errorDescribedBy }: { onSubmit: (d: Record<string, unknown>) => void; submitting: boolean; errorDescribedBy?: string }) {
   const { t } = useTranslation();
   const [url, setUrl] = useState("");
   const [name, setName] = useState("");
@@ -52,7 +52,7 @@ export function WebCrawlForm({ onSubmit, submitting }: { onSubmit: (d: Record<st
         <TagSelect value={fileExts} onChange={setFileExts} presets={PRESET_FILE_EXTENSIONS} placeholder="Add extension..." testId="input-crawl-file-exts" />
       </FormField>
       <CheckboxField checked={checkDb} onChange={setCheckDb} label={t("tasks.form.check_database")} testId="checkbox-crawl-check-db" />
-      <RunButton label={t("tasks.form.run")} submitting={submitting} disabled={submitting || !url.trim()}
+      <RunButton label={t("tasks.form.run")} submitting={submitting} disabled={submitting || !url.trim()} aria-describedby={errorDescribedBy}
         onClick={() => {
           const task = buildTask();
           if (task) onSubmit(task);

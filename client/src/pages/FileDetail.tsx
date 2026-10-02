@@ -351,6 +351,8 @@ export default function FileDetail() {
   const [file, setFile] = useState<FileData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [mutationError, setMutationError] = useState<{ action: "edit" | "markdown" | "conversion" | "catalog"; message: string } | null>(null);
 
   const [editing, setEditing] = useState(false);
   const [editTitle, setEditTitle] = useState("");
@@ -521,6 +523,7 @@ export default function FileDetail() {
   }, [canReadConfig]);
 
   function startEdit() {
+    setMutationError(null);
     if (!file) return;
     setEditTitle(file.title || "");
     setEditCategory(file.category || "");
@@ -531,6 +534,7 @@ export default function FileDetail() {
 
   async function saveEdit() {
     if (!file) return;
+    setMutationError(null);
     setSaving(true);
     try {
       const kws = editKeywords.split(",").map((k) => k.trim()).filter(Boolean);
@@ -544,7 +548,7 @@ export default function FileDetail() {
       });
       if (res.file) setFile(res.file);
       setEditing(false);
-    } catch { /* ignore */ } finally { setSaving(false); }
+    } catch (caught) { setMutationError({ action: "edit", message: caught instanceof Error ? caught.message : "Failed to save file" }); } finally { setSaving(false); }
   }
 
   function toggleCategory(cat: string) {
@@ -557,6 +561,7 @@ export default function FileDetail() {
 
   async function saveMarkdown() {
     if (!fileUrl) return;
+    setMutationError(null);
     setMdSaving(true);
     try {
       const res = await apiPost<{ markdown?: MarkdownData }>(`/api/files/${encodeURIComponent(fileUrl)}/markdown`, {
@@ -566,7 +571,7 @@ export default function FileDetail() {
       if (res.markdown) setMarkdown(res.markdown);
       setMdTab("view");
       setMdDirty(false);
-    } catch { /* ignore */ } finally { setMdSaving(false); }
+    } catch (caught) { setMutationError({ action: "markdown", message: caught instanceof Error ? caught.message : "Failed to save markdown" }); } finally { setMdSaving(false); }
   }
 
   async function triggerConversion() {
@@ -576,6 +581,7 @@ export default function FileDetail() {
       if (!ok) return;
     }
     setConverting(true);
+    setMutationError(null);
     try {
       const res = await apiPost<{ job_id?: string }>("/api/collections/run", {
         type: "markdown_conversion",
@@ -587,11 +593,12 @@ export default function FileDetail() {
       setMdTab("view");
       setMdDirty(false);
       conversionPoller.start(res.job_id);
-    } catch { /* ignore */ } finally { setConverting(false); }
+    } catch (caught) { setMutationError({ action: "conversion", message: caught instanceof Error ? caught.message : "Failed to convert markdown" }); } finally { setConverting(false); }
   }
 
   async function submitCatalog() {
     if (!file) return;
+    setMutationError(null);
     setCatalogSubmitting(true);
     try {
       const res = await apiPost<{ job_id?: string }>("/api/collections/run", {
@@ -605,7 +612,7 @@ export default function FileDetail() {
       });
       setShowCatalogModal(false);
       catalogPoller.start(res.job_id);
-    } catch { /* ignore */ } finally { setCatalogSubmitting(false); }
+    } catch (caught) { setMutationError({ action: "catalog", message: caught instanceof Error ? caught.message : "Failed to submit catalog" }); } finally { setCatalogSubmitting(false); }
   }
 
   async function openChunkModal() {
@@ -662,11 +669,12 @@ export default function FileDetail() {
 
   async function handleDelete() {
     if (!file) return;
+    setDeleteError(null);
     setDeleting(true);
     try {
       await apiPost("/api/files/delete", { url: file.url, confirm: "DELETE" });
       navigate(fromParam || "/database");
-    } catch { setDeleting(false); }
+    } catch (caught) { setDeleteError(caught instanceof Error ? caught.message : "Failed to delete file"); setDeleting(false); }
   }
 
   function handleDownload() {
@@ -707,7 +715,7 @@ export default function FileDetail() {
       <div className="space-y-4 py-16 text-center">
         <AlertCircle className="w-12 h-12 mx-auto text-destructive/60" />
         <p className="text-muted-foreground">{error || "File not found"}</p>
-        <button onClick={() => goBack()} className="text-sm text-primary hover:underline" data-testid="link-back-database">
+        <button onClick={() => goBack()} className="inline-flex min-h-[48px] items-center px-3 text-sm text-primary hover:underline" data-testid="link-back-database">
           {t("fv.back")}
         </button>
       </div>
@@ -744,7 +752,7 @@ export default function FileDetail() {
     <div className="space-y-6 max-w-4xl">
       {/* Section 1: Header */}
       <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="flex items-center gap-3">
-        <button onClick={() => goBack()} className="p-2 rounded-lg hover:bg-muted transition-colors" data-testid="button-back">
+        <button aria-label={t("a11y.back_file_preview")} onClick={() => goBack()} className="min-h-[48px] min-w-[48px] p-2 rounded-lg hover:bg-muted transition-colors" data-testid="button-back">
           <ArrowLeft className="w-5 h-5" />
         </button>
         <div className="min-w-0 flex-1">
@@ -770,64 +778,66 @@ export default function FileDetail() {
         className="flex flex-wrap items-center gap-2">
         {!editing ? (
           <button onClick={startEdit} disabled={!canEdit}
-            className={cn("flex items-center gap-1.5 px-3 py-2 rounded-lg border border-border bg-card text-sm hover:bg-muted transition-colors", !canEdit && disabledBtn)}
+            className={cn("flex min-h-[44px] items-center gap-1.5 px-3 py-2 rounded-lg border border-border bg-card text-sm hover:bg-muted transition-colors", !canEdit && disabledBtn)}
             data-testid="button-edit">
             <Pencil className="w-3.5 h-3.5" />{t("fv.edit")}
           </button>
         ) : (
           <>
-            <button onClick={saveEdit} disabled={saving} className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-primary text-primary-foreground text-sm hover:bg-primary/90 transition-colors disabled:opacity-50" data-testid="button-save">
+            <button onClick={saveEdit} disabled={saving} className="flex min-h-[44px] items-center gap-1.5 px-3 py-2 rounded-lg bg-primary text-primary-foreground text-sm hover:bg-primary/90 transition-colors disabled:opacity-50" data-testid="button-save" aria-describedby={mutationError?.action === "edit" ? "error-file-detail-mutation" : undefined}>
               {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}{t("fv.save")}
             </button>
-            <button onClick={() => { setEditing(false); setShowCategoryPicker(false); }} className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-border text-sm hover:bg-muted transition-colors" data-testid="button-cancel">
+            <button onClick={() => { setMutationError(null); setEditing(false); setShowCategoryPicker(false); }} className="flex min-h-[44px] items-center gap-1.5 px-3 py-2 rounded-lg border border-border text-sm hover:bg-muted transition-colors" data-testid="button-cancel">
               <X className="w-3.5 h-3.5" />{t("fv.cancel")}
             </button>
           </>
         )}
-        <button onClick={() => setShowCatalogModal(true)} disabled={!canCatalog}
-          className={cn("flex items-center gap-1.5 px-3 py-2 rounded-lg border border-border bg-card text-sm hover:bg-muted transition-colors", !canCatalog && disabledBtn)}
+        <button onClick={() => { setMutationError(null); setShowCatalogModal(true); }} disabled={!canCatalog}
+          className={cn("flex min-h-[48px] items-center gap-1.5 px-3 py-2 rounded-lg border border-border bg-card text-sm hover:bg-muted transition-colors", !canCatalog && disabledBtn)}
           data-testid="button-catalog">
           <Sparkles className="w-3.5 h-3.5" />{t("fv.catalog")}
         </button>
         <button onClick={explainCurrentFile} disabled={!canExplain}
-          className={cn("flex items-center gap-1.5 px-3 py-2 rounded-lg border border-border bg-card text-sm hover:bg-muted transition-colors", !canExplain && disabledBtn)}
+          className={cn("flex min-h-[48px] items-center gap-1.5 px-3 py-2 rounded-lg border border-border bg-card text-sm hover:bg-muted transition-colors", !canExplain && disabledBtn)}
           data-testid="button-ai-explain">
           <MessageSquare className="w-3.5 h-3.5" />{t("fv.ai_explain")}
         </button>
         <button onClick={handleDownload} disabled={!canDownload}
-          className={cn("flex items-center gap-1.5 px-3 py-2 rounded-lg border border-border bg-card text-sm hover:bg-muted transition-colors", !canDownload && disabledBtn)}
+          className={cn("flex min-h-[48px] items-center gap-1.5 px-3 py-2 rounded-lg border border-border bg-card text-sm hover:bg-muted transition-colors", !canDownload && disabledBtn)}
           data-testid="button-download">
           <Download className="w-3.5 h-3.5" />{t("fv.download")}
         </button>
         <button onClick={() => navigate(buildFilePreviewPath(file.url, buildFileDetailPath(file.url, fromParam)))} disabled={!canPreview}
-          className={cn("flex items-center gap-1.5 px-3 py-2 rounded-lg border border-border bg-card text-sm hover:bg-muted transition-colors", !canPreview && disabledBtn)}
+          className={cn("flex min-h-[48px] items-center gap-1.5 px-3 py-2 rounded-lg border border-border bg-card text-sm hover:bg-muted transition-colors", !canPreview && disabledBtn)}
           data-testid="button-preview">
           <Eye className="w-3.5 h-3.5" />{t("fv.preview")}
         </button>
-        <button onClick={() => setDeleteConfirm(true)} disabled={!canDelete}
-          className={cn("flex items-center gap-1.5 px-3 py-2 rounded-lg border border-destructive/30 text-destructive text-sm hover:bg-destructive/10 transition-colors", !canDelete && disabledBtn)}
+        <button onClick={() => { setDeleteError(null); setDeleteConfirm(true); }} disabled={!canDelete}
+          className={cn("flex min-h-[48px] items-center gap-1.5 px-3 py-2 rounded-lg border border-destructive/30 text-destructive text-sm hover:bg-destructive/10 transition-colors", !canDelete && disabledBtn)}
           data-testid="button-delete">
           <Trash2 className="w-3.5 h-3.5" />{t("fv.delete")}
         </button>
         <ConfirmDeleteModal
           open={!!deleteConfirm}
-          onClose={() => setDeleteConfirm(false)}
+          onClose={() => { setDeleteError(null); setDeleteConfirm(false); }}
           onConfirm={handleDelete}
           title={t("fv.confirm_delete")}
           loading={deleting}
+          error={deleteError}
         />
         <div className="flex items-center gap-1.5 ml-auto">
           <TaskStatusBadge status={conversionPoller.status} t={t} />
           <TaskStatusBadge status={catalogPoller.status} t={t} />
         </div>
       </motion.div>
+      {mutationError?.action === "edit" && <p id="error-file-detail-mutation" role="alert" className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">{mutationError.message}</p>}
 
       {/* Section 2: Metadata Card */}
       <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}
         className="rounded-xl border border-border bg-card overflow-hidden">
         <div className="px-4 py-3 border-b border-border bg-muted/30 flex items-center gap-2">
           <FileText className="w-4 h-4 text-primary" />
-          <h3 className="text-sm font-semibold">{t("fv.metadata")}</h3>
+          <h2 className="text-sm font-semibold">{t("fv.metadata")}</h2>
         </div>
         <div className="p-4">
           {embeddingCoverage && (
@@ -885,10 +895,10 @@ export default function FileDetail() {
         </div>
         <div className="p-4 space-y-4">
           <div>
-            <label className="text-xs font-medium text-muted-foreground mb-1.5 block">{t("fv.title")}</label>
+            {editing ? <label htmlFor="input-title" className="text-xs font-medium text-muted-foreground mb-1.5 block">{t("fv.title")}</label> : <div className="text-xs font-medium text-muted-foreground mb-1.5">{t("fv.title")}</div>}
             {editing ? (
-              <input value={editTitle} onChange={(e) => setEditTitle(e.target.value)}
-                className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+              <input id="input-title" value={editTitle} onChange={(e) => setEditTitle(e.target.value)}
+                className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
                 placeholder={t("fv.title_ph")} data-testid="input-title" />
             ) : (
               <p className="text-sm font-medium" data-testid="text-title">
@@ -905,20 +915,20 @@ export default function FileDetail() {
                   {selectedCategories.map((c) => (
                     <span key={c} className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full bg-primary/10 text-primary">
                       {c}
-                      <button onClick={() => toggleCategory(c)} className="hover:text-destructive"><X className="w-3 h-3" /></button>
+                      <button aria-label={`Remove ${c}`} onClick={() => toggleCategory(c)} className="min-h-[44px] min-w-[44px] -my-2 -mr-2 inline-flex items-center justify-center hover:text-destructive"><X className="w-3 h-3" /></button>
                     </span>
                   ))}
                   {selectedCategories.length === 0 && <span className="text-xs text-muted-foreground">{t("fv.uncategorized")}</span>}
                 </div>
                 <button onClick={() => setShowCategoryPicker(!showCategoryPicker)}
-                  className="text-xs text-primary hover:underline" data-testid="button-toggle-categories">
+                  className="min-h-[44px] px-2 text-xs text-primary hover:underline" data-testid="button-toggle-categories">
                   {t("fv.choose_cat")}
                 </button>
                 {showCategoryPicker && allCategories.length > 0 && (
                   <div className="flex flex-wrap gap-1.5 p-2 rounded-lg border border-border bg-muted/30">
                     {allCategories.map((c) => (
                       <button key={c} onClick={() => toggleCategory(c)}
-                        className={cn("text-xs px-2 py-1 rounded-full border transition-colors",
+                        className={cn("min-h-[44px] min-w-[44px] px-2 py-1 text-xs rounded-full border transition-colors",
                           selectedCategories.includes(c) ? "border-primary bg-primary/10 text-primary" : "border-border hover:border-primary/50"
                         )} data-testid={`button-cat-${c}`}>{c}</button>
                     ))}
@@ -938,10 +948,10 @@ export default function FileDetail() {
           </div>
 
           <div>
-            <label className="text-xs font-medium text-muted-foreground mb-1.5 block">{t("fv.summary")}</label>
+            {editing ? <label htmlFor="input-summary" className="text-xs font-medium text-muted-foreground mb-1.5 block">{t("fv.summary")}</label> : <div className="text-xs font-medium text-muted-foreground mb-1.5">{t("fv.summary")}</div>}
             {editing ? (
-              <textarea value={editSummary} onChange={(e) => setEditSummary(e.target.value)} rows={4}
-                className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm resize-y focus:outline-none focus:ring-2 focus:ring-primary/30"
+              <textarea id="input-summary" value={editSummary} onChange={(e) => setEditSummary(e.target.value)} rows={4}
+                className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-border bg-background text-sm resize-y focus:outline-none focus:ring-2 focus:ring-primary/30"
                 placeholder={t("fv.no_summary")} data-testid="input-summary" />
             ) : (
               <p className="text-sm whitespace-pre-wrap" data-testid="text-summary">
@@ -951,10 +961,10 @@ export default function FileDetail() {
           </div>
 
           <div>
-            <label className="text-xs font-medium text-muted-foreground mb-1.5 block">{t("fv.keywords")}</label>
+            {editing ? <label htmlFor="input-keywords" className="text-xs font-medium text-muted-foreground mb-1.5 block">{t("fv.keywords")}</label> : <div className="text-xs font-medium text-muted-foreground mb-1.5">{t("fv.keywords")}</div>}
             {editing ? (
-              <input value={editKeywords} onChange={(e) => setEditKeywords(e.target.value)}
-                className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+              <input id="input-keywords" value={editKeywords} onChange={(e) => setEditKeywords(e.target.value)}
+                className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
                 placeholder={t("fv.kw_ph")} data-testid="input-keywords" />
             ) : (
               <div className="flex flex-wrap gap-1.5">
@@ -986,18 +996,18 @@ export default function FileDetail() {
           </div>
           <div className="flex items-center gap-1">
             <button onClick={() => { setMdTab("view"); setMdDirty(false); }}
-              className={cn("text-xs px-2.5 py-1 rounded-lg transition-colors", mdTab === "view" ? "bg-primary text-primary-foreground" : "hover:bg-muted text-muted-foreground")}
+              className={cn("min-h-[56px] min-w-[48px] text-xs px-2.5 py-1 rounded-lg transition-colors", mdTab === "view" ? "bg-primary text-primary-foreground" : "hover:bg-muted text-muted-foreground")}
               data-testid="button-md-view">{t("fv.view")}</button>
             <button onClick={() => { setMdTab("edit"); if (markdown?.markdown_content) setMdEditContent(markdown.markdown_content); setMdDirty(false); }}
               disabled={!canSwitchMdEdit}
-              className={cn("text-xs px-2.5 py-1 rounded-lg transition-colors",
+              className={cn("min-h-[56px] min-w-[48px] text-xs px-2.5 py-1 rounded-lg transition-colors",
                 mdTab === "edit" ? "bg-primary text-primary-foreground" : "hover:bg-muted text-muted-foreground",
                 !canSwitchMdEdit && disabledBtn
               )}
               data-testid="button-md-edit">{t("fv.md_edit")}</button>
             {hasMarkdown && (
               <button onClick={() => setMdExpanded(!mdExpanded)}
-                className="text-xs px-2 py-1 rounded-lg hover:bg-muted text-muted-foreground transition-colors" data-testid="button-md-expand">
+                aria-label={mdExpanded ? "Collapse markdown" : "Expand markdown"} className="min-h-[48px] min-w-[48px] text-xs px-2 py-1 rounded-lg hover:bg-muted text-muted-foreground transition-colors" data-testid="button-md-expand">
                 {mdExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
               </button>
             )}
@@ -1023,15 +1033,15 @@ export default function FileDetail() {
             )
           ) : (
             <div className="space-y-3">
-              <textarea value={mdEditContent} onChange={(e) => { setMdEditContent(e.target.value); setMdDirty(true); }} rows={16}
+              <label htmlFor="input-markdown" className="block text-xs font-medium text-muted-foreground">{t("fv.md_edit_ph")}</label><textarea id="input-markdown" value={mdEditContent} onChange={(e) => { setMdEditContent(e.target.value); setMdDirty(true); }} rows={16}
                 className="w-full px-3 py-2 rounded-lg border border-border bg-background text-xs font-mono resize-y focus:outline-none focus:ring-2 focus:ring-primary/30"
                 placeholder={t("fv.md_edit_ph")} data-testid="input-markdown" />
               <div className="flex flex-wrap items-center gap-3 border-t border-border pt-3">
                 <div className="flex items-center gap-2">
-                  <label className="text-xs text-muted-foreground">{t("fv.convert_engine")}</label>
-                  <select value={convertEngine} onChange={(e) => setConvertEngine(e.target.value)}
+                  <label htmlFor="select-convert-engine" className="text-xs text-muted-foreground">{t("fv.convert_engine")}</label>
+                  <select id="select-convert-engine" value={convertEngine} onChange={(e) => setConvertEngine(e.target.value)}
                     disabled={!canConvert}
-                    className={cn("text-xs px-2 py-1 rounded-lg border border-border bg-background", !canConvert && disabledBtn)}
+                className={cn("min-h-[48px] text-xs px-2 py-1 rounded-lg border border-border bg-background", !canConvert && disabledBtn)}
                     data-testid="select-convert-engine">
                     {taskOptions.conversionToolsInfo.map((tool) => (
                       <option key={tool.name} value={tool.name}>{tool.displayName}</option>
@@ -1043,20 +1053,20 @@ export default function FileDetail() {
                   {t("fv.overwrite_md")}
                 </label>
                 <button onClick={triggerConversion} disabled={converting || !canConvert}
-                  className={cn("text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors disabled:opacity-50 flex items-center gap-1.5", !canConvert && disabledBtn)}
-                  data-testid="button-convert">
+                  className={cn("min-h-[48px] text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors disabled:opacity-50 flex items-center gap-1.5", !canConvert && disabledBtn)}
+                  data-testid="button-convert" aria-describedby={mutationError?.action === "conversion" ? "error-file-detail-mutation" : undefined}>
                   {converting ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
                   {t("fv.convert_btn")}
                 </button>
               </div>
               <div className="flex items-center gap-2">
                 <button onClick={saveMarkdown} disabled={mdSaving}
-                  className="text-xs px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-1.5"
-                  data-testid="button-save-md">
+                  className="min-h-[48px] text-xs px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-1.5"
+                  data-testid="button-save-md" aria-describedby={mutationError?.action === "markdown" ? "error-file-detail-mutation" : undefined}>
                   {mdSaving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
                   {t("fv.save_md")}
                 </button>
-                <button onClick={() => { setMdTab("view"); setMdDirty(false); }} className="text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors"
+                <button onClick={() => { setMutationError(null); setMdTab("view"); setMdDirty(false); }} className="min-h-[48px] text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors"
                   data-testid="button-cancel-md">{t("fv.cancel")}</button>
                 {markdown?.markdown_updated_at && (
                   <span className="text-[11px] text-muted-foreground ml-auto">
@@ -1065,6 +1075,7 @@ export default function FileDetail() {
                   </span>
                 )}
               </div>
+              {mutationError && ["markdown", "conversion"].includes(mutationError.action) && <p id="error-file-detail-mutation" role="alert" className="text-xs text-destructive">{mutationError.message}</p>}
             </div>
           )}
         </div>
@@ -1079,7 +1090,7 @@ export default function FileDetail() {
             <h3 className="text-sm font-semibold">{t("fv.chunk_status")}</h3>
           </div>
           <button onClick={openChunkModal} disabled={!canModifyChunk}
-            className={cn("text-xs px-2.5 py-1 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors", !canModifyChunk && disabledBtn)}
+            className={cn("min-h-[48px] text-xs px-2.5 py-1 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors", !canModifyChunk && disabledBtn)}
             data-testid="button-modify-chunk">
             {t("fv.modify_chunk")}
           </button>
@@ -1110,7 +1121,7 @@ export default function FileDetail() {
 
       {/* Modal: AI Catalog */}
       {showCatalogModal && (
-        <Modal onClose={() => setShowCatalogModal(false)}>
+        <Modal onClose={() => { setMutationError(null); setShowCatalogModal(false); }}>
           <h3 className="text-base font-semibold flex items-center gap-2 mb-3">
             <Sparkles className="w-4 h-4 text-primary" />{t("fv.catalog_modal_title")}
           </h3>
@@ -1123,13 +1134,13 @@ export default function FileDetail() {
               </div>
             )}
             <div>
-              <label className="text-xs font-medium text-muted-foreground mb-1 block">{t("fv.catalog_from")}</label>
-              <select value={catalogSource} onChange={(e) => setCatalogSource(e.target.value)}
-                className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm" data-testid="select-catalog-source">
+              <label htmlFor="select-catalog-source" className="text-xs font-medium text-muted-foreground mb-1 block">{t("fv.catalog_from")}</label>
+              <select id="select-catalog-source" aria-describedby="hint-catalog-source" value={catalogSource} onChange={(e) => setCatalogSource(e.target.value)}
+                className="w-full min-h-[48px] px-3 py-2 rounded-lg border border-border bg-background text-sm" data-testid="select-catalog-source">
                 <option value="markdown">{t("fv.catalog_from_md")}</option>
                 <option value="source">{t("fv.catalog_from_src")}</option>
               </select>
-              <p className="text-[11px] text-muted-foreground mt-1">{t("fv.catalog_from_hint")}</p>
+              <p id="hint-catalog-source" className="text-[11px] text-muted-foreground mt-1">{t("fv.catalog_from_hint")}</p>
             </div>
             {taskOptions.catalogProviders.length > 0 && (
               <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-muted/50 border border-border text-xs text-muted-foreground">
@@ -1138,12 +1149,12 @@ export default function FileDetail() {
                 <span className="ml-auto text-[10px]">({t("fv.configured_in_settings")})</span>
               </div>
             )}
-            <label className="flex items-center gap-2 text-sm cursor-pointer">
+            <label className="flex min-h-[48px] items-center gap-2 text-sm cursor-pointer">
               <input type="checkbox" checked={catalogOverwrite} onChange={(e) => setCatalogOverwrite(e.target.checked)} className="rounded" />
               {t("fv.overwrite_recompute")}
             </label>
             {taskOptions.catalogProviders.length > 0 && (
-              <label className="flex items-center gap-2 text-sm cursor-pointer">
+              <label className="flex min-h-[48px] items-center gap-2 text-sm cursor-pointer">
                 <input type="checkbox" checked={catalogUpdateTitle} onChange={(e) => setCatalogUpdateTitle(e.target.checked)} className="rounded" data-testid="checkbox-update-title" />
                 <span>
                   {t("fv.update_title_with_ai")}
@@ -1153,11 +1164,11 @@ export default function FileDetail() {
             )}
             {taskOptions.catalogProviders.length > 0 && (
               <div>
-                <label className="text-xs font-medium text-muted-foreground mb-1 block">{t("tasks.form.output_language")}</label>
-                <select
+                <label htmlFor="select-output-language" className="text-xs font-medium text-muted-foreground mb-1 block">{t("tasks.form.output_language")}</label>
+                <select id="select-output-language"
                   value={catalogOutputLanguage}
                   onChange={(e) => setCatalogOutputLanguage(e.target.value)}
-                  className="w-full px-3 py-2 text-sm rounded-lg border border-border bg-background"
+                  className="w-full min-h-[48px] px-3 py-2 text-sm rounded-lg border border-border bg-background"
                   data-testid="select-output-language">
                   <option value="auto">{t("tasks.form.lang_auto")}</option>
                   <option value="en">{t("tasks.form.lang_en")}</option>
@@ -1166,16 +1177,17 @@ export default function FileDetail() {
               </div>
             )}
             <div className="flex justify-end gap-2 pt-2 border-t border-border">
-              <button onClick={() => setShowCatalogModal(false)} className="text-sm px-3 py-2 rounded-lg border border-border hover:bg-muted transition-colors">
+              <button onClick={() => { setMutationError(null); setShowCatalogModal(false); }} className="min-h-[48px] text-sm px-3 py-2 rounded-lg border border-border hover:bg-muted transition-colors">
                 {t("fv.cancel")}
               </button>
               <button onClick={submitCatalog} disabled={catalogSubmitting || taskOptions.catalogProviders.length === 0}
-                className="text-sm px-3 py-2 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-1.5"
-                data-testid="button-submit-catalog">
+                className="min-h-[48px] text-sm px-3 py-2 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-1.5"
+                data-testid="button-submit-catalog" aria-describedby={mutationError?.action === "catalog" ? "error-file-detail-mutation" : undefined}>
                 {catalogSubmitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
                 {t("fv.submit_catalog")}
               </button>
             </div>
+            {mutationError?.action === "catalog" && <p id="error-file-detail-mutation" role="alert" className="text-xs text-destructive">{mutationError.message}</p>}
           </div>
         </Modal>
       )}
@@ -1193,11 +1205,11 @@ export default function FileDetail() {
                 {t("fv.chunk_modal_migration_notice")}
               </div>
               <div>
-                <label className="text-xs font-medium text-muted-foreground mb-1 block">{t("tasks.form.chunk_profile")}</label>
-                <select
+                <label htmlFor="select-file-chunk-profile" className="text-xs font-medium text-muted-foreground mb-1 block">{t("tasks.form.chunk_profile")}</label>
+                <select id="select-file-chunk-profile"
                   value={chunkProfileId}
                   onChange={(e) => setChunkProfileId(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm"
+                  className="w-full min-h-[48px] px-3 py-2 rounded-lg border border-border bg-background text-sm"
                   data-testid="select-file-chunk-profile"
                 >
                   {chunkProfiles.length === 0 ? (
@@ -1210,14 +1222,14 @@ export default function FileDetail() {
                 </select>
               </div>
             </div>
-            {chunkEmbeddingError && <p className="text-xs text-destructive">{chunkEmbeddingError}</p>}
+            {chunkEmbeddingError && <p id="error-file-chunk-submit" role="alert" className="text-xs text-destructive">{chunkEmbeddingError}</p>}
             <div className="flex justify-end gap-2 pt-2 border-t border-border">
-              <button onClick={() => setShowChunkModal(false)} className="text-sm px-3 py-2 rounded-lg border border-border hover:bg-muted transition-colors">
+              <button onClick={() => setShowChunkModal(false)} className="min-h-[48px] text-sm px-3 py-2 rounded-lg border border-border hover:bg-muted transition-colors">
                 {t("fv.cancel")}
               </button>
               <button onClick={submitChunk} disabled={chunkSubmitting}
-                className="text-sm px-3 py-2 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-1.5"
-                data-testid="button-submit-chunk">
+                className="min-h-[48px] text-sm px-3 py-2 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-1.5"
+                data-testid="button-submit-chunk" aria-describedby={chunkEmbeddingError ? "error-file-chunk-submit" : undefined}>
                 {chunkSubmitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
                 {t("fv.submit_chunk")}
               </button>

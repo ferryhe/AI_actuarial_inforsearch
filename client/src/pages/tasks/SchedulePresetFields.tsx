@@ -158,7 +158,7 @@ export function SchedulePresetFields({
           <button
             type="button"
             onClick={onMigrateLegacySummary}
-            className="text-xs px-2.5 py-1 rounded border border-amber-500/40 hover:bg-amber-500/10"
+            className="min-h-[48px] text-xs px-2.5 py-1 rounded border border-amber-500/40 hover:bg-amber-500/10"
             data-testid={`button-${testIdPrefix}-migrate-weekly-utc`}
           >
             {t("tasks.sched.convert_weekly_summary_utc")}
@@ -171,7 +171,7 @@ export function SchedulePresetFields({
             value={current.frequency}
             onChange={(event) => onChange({ ...current, frequency: event.target.value as ScheduleFrequency })}
             disabled={isWeeklySummary || legacySummaryReadOnly}
-            className="w-full px-3 py-2 text-sm rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-70"
+            className="w-full min-h-[44px] px-3 py-2 text-sm rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-70"
             data-testid={`select-${testIdPrefix}-frequency`}
           >
             {frequencyOptions.map((option) => (
@@ -188,7 +188,7 @@ export function SchedulePresetFields({
               value={current.quantity}
               onChange={(event) => onChange({ ...current, quantity: event.target.value })}
               disabled={legacySummaryReadOnly}
-              className="w-full px-3 py-2 text-sm rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+              className="w-full min-h-[44px] px-3 py-2 text-sm rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-ring"
               data-testid={`input-${testIdPrefix}-quantity`}
             />
           </FormField>
@@ -200,7 +200,7 @@ export function SchedulePresetFields({
               value={current.time}
               onChange={(event) => onChange({ ...current, time: event.target.value })}
               disabled={legacySummaryReadOnly}
-              className="w-full px-3 py-2 text-sm rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+              className="w-full min-h-[44px] px-3 py-2 text-sm rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-ring"
               data-testid={`input-${testIdPrefix}-time`}
             />
           </FormField>
@@ -224,7 +224,7 @@ export function SchedulePresetFields({
               value={legacyProcessLocal ? "process-local" : current.timezone}
               onChange={(event) => onChange({ ...current, timezone: event.target.value as ScheduleTimezone })}
               disabled={isWeeklySummary}
-              className="w-full px-3 py-2 text-sm rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-70"
+              className="w-full min-h-[44px] px-3 py-2 text-sm rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-70"
               data-testid={`select-${testIdPrefix}-timezone`}
             >
               {legacyProcessLocal && (

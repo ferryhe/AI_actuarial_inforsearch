@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useTranslation } from "@/components/Layout";
 import { FormField, SelectField, RunButton } from "@/components/FormFields";
 
-export function RecategoryForm({ onSubmit, submitting }: { onSubmit: (d: Record<string, unknown>) => void; submitting: boolean }) {
+export function RecategoryForm({ onSubmit, submitting, errorDescribedBy }: { onSubmit: (d: Record<string, unknown>) => void; submitting: boolean; errorDescribedBy?: string }) {
   const { t } = useTranslation();
   const [mode, setMode] = useState("plan");
 
@@ -30,6 +30,7 @@ export function RecategoryForm({ onSubmit, submitting }: { onSubmit: (d: Record<
         label={t("tasks.form.run")}
         submitting={submitting}
         disabled={submitting}
+      aria-describedby={errorDescribedBy}
         onClick={() => onSubmit(buildTask())}
       />
     </div>

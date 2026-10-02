@@ -1,3 +1,13 @@
+# Latest work — Issue #366 form accessibility and responsive controls
+
+- Updated: 2026-10-02 EDT. Repository: AI_actuarial_inforsearch; branch: agent/issue-366. Only this worktree was used; sibling repositories were not accessed.
+- Review 9 fixes are complete. Manager independently reran the affected suite and full validation: 14 a11y files / 47 tests, TypeScript, lint (0 errors; 5 existing Hook warnings), production build (existing chunk-size advisory), dead-code checks, 15-surface forms Chromium smoke including File Import and the opened Token form at 390px/200%, keyboard/focus/English-Chinese smoke, and `git diff --check`; all passed.
+- File Detail mutation failures now expose action-linked alerts; File Import chooser inputs are keyboard reachable and connected to visible help; Knowledge and Token controls meet the touch target floor; the Token form reflows at mobile width and has 200% coverage.
+- Review 10: Database search/filter controls now have explicit IDs, visible labels, and 44px targets. Settings provider edit/routing controls use 48px targets, and Mathpix API-key help is associated through a stable ID. Controlled red/green regressions pass; full validation passes 15 a11y files / 49 tests, TypeScript, lint (0 errors; 5 existing Hook warnings), production build (existing chunk advisory), dead-code, 16-surface Chromium forms smoke, keyboard/focus/English-Chinese smoke, and `git diff --check`. No commit, push, PR, or merge exists; Review 11 is next.
+- Review 11: Confirm Delete now labels its confirmation input and provides 48px Close/Cancel/Delete targets. File Detail delete failures render `#error-confirm-delete` as an alert described only by the confirmed Delete action. Chunk Profile creation failures render `#error-profile-create` as an alert described only by Create profile. Categories/System conditional Save controls use 48px targets; the standalone 16-surface Chromium smoke now asserts visible focus in Database, Knowledge, Schedule, Web Listening, Markdown Settings, and Site Configuration and exercises a real failed File Detail confirmation delete. The excluded Close-name and heading-level claims were not changed. Controlled RED/GREEN evidence, focused real-page axe tests, all a11y tests (16 files / 52 tests), TypeScript, browser smoke, and diff check pass. Manager independently reran the full gate: 16 a11y files / 52 tests, TypeScript, lint (0 errors; 5 existing Hook warnings), production build (existing chunk advisory), dead-code, all 16 Chromium form surfaces including the failed Confirm Delete flow, and git diff --check pass. No commit, push, PR, or merge exists; fresh Review 12 is starting.
+- Review 12: Site Configuration's primary Run now consumes the Tasks submit-error description. Web Listening records Draft/Validate/Materialize HTTP-200 validation errors by operation and exposes a stable alert described only by the initiating action. Database Clear search, page-jump input, and Jump use 48px mobile targets. Manager independently passed a11y tests (16 files / 55 tests), TypeScript, lint (0 errors; 5 existing Hook warnings), production build (existing chunk advisory), dead-code, 16-surface Chromium smoke, and `git diff --check`; smoke includes the Site Configuration 500 error path, Web Listening HTTP-200 validation errors, and measured Database mobile targets.
+- Review 13: Prompt editors link textarea controls to visible card titles, each prompt Save has action-specific alert association, and prompt Cancel is 48px. Categories uses the actual localized crawler hint. Populated Database actions and pagination, plus Site import/list/backups states, use 48px targets and are covered in the 16-surface Chromium smoke. Manager independently reran the full gate: 16 a11y files / 58 tests, TypeScript, lint (0 errors; 5 existing Hook warnings), production build (existing chunk advisory), dead-code, populated/open-state 16-surface Chromium smoke, and diff check all pass.
+- Review 14: New review reproduced four further AC3/AC4/AC5 gaps: remaining mobile targets across Database, Tasks History/modal, Pipeline, Settings, and Knowledge; duplicate `button-run-task` test IDs when failed Pipeline stages expand together; missing Pipeline Tab/focus/200% smoke for populated results; and two a11y tests excluded from configured test commands. TypeSafe marked all four valid, and the Judge selected `accept_all_core_only` (0.81 probability). The same worker is fixing these four items in the last repair cycle; one final independent Review 15 remains. No commit, push, PR, or merge exists.
 # Latest work — Issue #360 Operator Knowledge RBAC alignment
 
 - Issue #360 delivery checkpoint (2026-10-01): implementation commit `d6aaecb` is pushed on
@@ -4524,3 +4534,155 @@
 - Final `python scripts/quality_gate.py`: PASS, 2,307 passed / 10 skipped; Black, isort, and error-only Pylint passed. Evidence is saved under Issue #360 external evidence as `review-fix-3-*`.
 - At cycle-3 completion the implementation was uncommitted; it was later committed as `d6aaecb`
   and published in Draft PR #389.
+
+### Issue #366 Review 14 implementation — 2026-10-02
+
+- Completed the accepted mobile target sweep for Database export/filter actions, Tasks
+  history/log/pagination controls, Pipeline failures, Settings editor cancellation,
+  Knowledge manual rows, and task-log refresh. Pipeline Run controls now receive a
+  stage-qualified test id, avoiding duplicates when failed stages are expanded.
+- `npm run test:a11y` now includes `FormFields.test.tsx` and
+  `SchedulePresetFields.a11y.test.tsx`; the 18-file suite executes both.
+- The standalone 390px Chromium form smoke now uses populated failed Pipeline data and
+  verifies targets, Tab-visible focus, 200% text, and unique ids/test ids. It also
+  measures Database export/filter controls and Settings provider/search Cancel actions.
+- No commit, push, PR, merge, or sibling-repository access was performed.
+
+### Issue #366 Review 14 fix validation — 2026-10-02
+
+- Manager independently re-ran `npm run test:a11y` (18 files / 62 tests),
+  `npx tsc --noEmit`, `npm run lint` (0 errors; 5 existing hook warnings),
+  `npm run build` (pass; existing large-chunk advisory),
+  `npm run dead-code:check`, both Chromium browser smokes, and `git diff --check`;
+  all passed.
+- The forms smoke covered 16 surfaces at 390px, including populated Pipeline
+  failures, 44px targets, keyboard focus, unique ids/test ids, and 200% text.
+- Review 15 is the final independent review. No commit, push, PR, or merge yet.
+
+### Issue #366 final local review result — 2026-10-02
+
+- Review 15 returned CHANGES REQUIRED on two reproduced gaps: undersized mobile
+  targets in Settings, Chinese Knowledge, and File Detail error state (AC3), plus
+  visually hidden-only labels on scoped Settings, File Detail, and Markdown
+  Conversion fields (AC1). Manager source inspection confirmed both.
+- TypeSafe assessed both as valid/in-scope (coverage 0.91); the Judge selected
+  `accept_both_and_block` with 0.95 confidence. The configured reviewer did not
+  pass within the strict 15-review limit.
+- Blocked: no further fix/review cycle or PR preparation. All Issue #366 changes
+  remain uncommitted on `agent/issue-366`; sibling repositories were untouched.
+- Evidence: external Issue #366 evidence folder, `local-review-15.txt`,
+  `local-review-15.typesafe-v2.json`, and `review-15.judge-result.json`.
+
+### Issue #366 Review 15 authorized repair — 2026-10-02
+
+- The user authorized a narrow repair without another independent review. Settings AI
+  route add/edit controls, Chinese Knowledge Create KB, and File Detail's not-found
+  Back action now use 48px targets. The Knowledge Select all control discovered while
+  exercising the same create state also now has a 48px usable target.
+- Categories new/category-keyword labels are visible, AI-filter keywords uses its visible
+  heading via `aria-labelledby`, and File Detail/Markdown Conversion editors have visible
+  associated labels. The standalone browser smoke now opens the Settings add/edit route,
+  runs Knowledge in Chinese, checks File Detail's missing-file state, and verifies label
+  boxes are actually visible.
+- Validation passed: 18 a11y test files / 64 tests; TypeScript; lint with five existing
+  Hook warnings only; build with existing chunk advisory; dead-code; both Chromium smokes;
+  and `git diff --check`. No commit, push, PR, merge, or sibling-repository access occurred.
+
+#### Review 15 controlled visible-label RED/GREEN evidence
+
+- A reversible probe changed the visible Categories new-category label back to `sr-only`.
+  The 390px standalone form smoke then failed its Settings visible-label bounding-box check
+  (`width: 1`, `height: 1`) at `forms.browser-smoke.mjs:187`. The exact source was restored.
+- A second reversible probe changed the File Detail Markdown and Markdown Conversion tool-model
+  labels back to `sr-only`. Their focused a11y tests failed the explicit non-`sr-only` label
+  assertions. Both exact sources were restored.
+- Restored green checks: focused Settings/File Detail/Markdown Conversion/Knowledge suite
+  passed (4 files / 32 tests); full standalone form smoke passed all 17 records at 390px;
+  `git diff --check` passed. Raw outputs are in the external Issue #366 evidence folder as
+  `review-15-f2-settings-red.txt`, `review-15-f2-editors-red.txt`, and
+  `review-15-f2-green.txt`.
+
+### Issue #366 TypeSafe repair gate — 2026-10-02
+
+- At the user's explicit direction, no further independent reviewer was started.
+  The same worker repaired the two final findings and the manager reran full gates.
+- TypeSafe Judge selected `all_resolved` (probability 0.64; confidence 0.45) from
+  the current source inspection, exact 390px smoke assertions, visible-label tests,
+  controlled RED/GREEN evidence, and manager validation report.
+- The lifecycle script refuses to record a fix or PR because its strict gate still
+  requires a configured-reviewer PASS and all 15 review slots are used. No reviewer
+  PASS was fabricated; the user explicitly authorized the TypeSafe-only exception.
+- PR #390 was published and marked Ready under that instruction. The remote
+  monitoring snapshot and follow-up are recorded below. No merge is authorized here.
+
+### PR #390 tracking — 2026-10-02
+
+- Commit `54fef1a` was pushed on `agent/issue-366`; PR #390 was created as Draft
+  and marked Ready for review. It closes #366. Related PR #385 for #355 is merged.
+- The user explicitly authorized the TypeSafe-only gate after the local review
+  limit. TypeSafe selected `all_resolved`; no configured-reviewer PASS was recorded
+  or implied. The strict lifecycle script cannot record PR publication without that
+  reviewer PASS, so the explicit override and PR URL are retained in its decision log.
+- No merge was performed. Next: check current-head CI and remote reviews/Copilot
+  comments about 15 minutes after Ready, then disposition only confirmed in-scope items.
+- Snapshot at 2026-10-02 09:03 UTC, head `54fef1a`: five checks passed and
+  `quality-gate` was pending; no review, inline, or conversation comments were present.
+- The formal 15-minute remote snapshot was captured at about 09:17 UTC; see the
+  follow-up section below for current dispositions and validation.
+
+### PR #390 remote feedback follow-up — 2026-10-02
+
+- The 15-minute snapshot was captured at about 09:17 UTC on head
+  `08f7c9166a4d28f2d97ebd2eb95d6ac3180f3146`. Five required checks passed; `quality-gate`
+  failed on a stale `RagIndexForm` source assertion. The same worker updated the assertion,
+  and its focused test passed (1 test); the correction is not yet committed or pushed.
+- Copilot left ten unresolved inline threads, one review summary, and no PR conversation
+  comments. The Issue has one older coordination comment; related PR #385 for #355 is merged.
+- The same Issue worker classified every remote item against #366’s acceptance criteria
+  and applied the confirmed in-scope fixes. No independent reviewer was started.
+- The old checkpoint saying PR creation was still pending has been corrected. The remote
+  feedback has since been assessed by TypeSafe and fixed by the same worker; see the final
+  completion entry below. No merge is authorized.
+
+### PR #390 required-check repair — 2026-10-02
+
+- The only failed `quality-gate` check at head `08f7c9166a4d28f2d97ebd2eb95d6ac3180f3146`
+  was a stale source assertion in `tests/test_tasks_react_source.py`. It expected the old
+  two-prop `RagIndexForm` invocation, while Issue #366 correctly adds the optional
+  `errorDescribedBy` accessibility prop.
+- The assertion now verifies the complete current invocation. Focused verification:
+  `python -m pytest tests/test_tasks_react_source.py::test_tasks_page_restores_rag_indexing_task_form`
+  passed (1 test). No commit, push, or PR mutation was performed; wait for the manager's
+  remote-review snapshot before acting on any Copilot feedback.
+
+### PR #390 remote-feedback coverage follow-up — 2026-10-02
+
+- Added direct regression coverage for File Detail stale mutation errors, the short File Detail
+  category target, and Scheduled Task delete-confirm Cancel. Reversible RED probes failed as
+  expected; restored focused RTL/axe passed (2 files / 11 tests), the full standalone 390px
+  form smoke passed all 17 records, TypeScript passed, and `git diff --check` passed.
+- No commit, push, PR mutation, or sibling-repository access occurred. The manager-owned status
+  history correction remains outside this worker's code changes.
+
+### PR #390 remote-feedback repair and TypeSafe completion — 2026-10-02
+
+- The remote TypeSafe assessment accepted seven in-scope AC2/AC3 findings and rejected three
+  out-of-scope comments. The same Issue worker fixed the seven findings and the stale source
+  assertion that caused the prior `quality-gate` failure; no independent reviewer was started.
+- TypeSafe Judge case `issue-366-pr-390-remote-fix-completion` selected `all_resolved` at
+  09:44 UTC (probability 0.81, confidence 0.71). Its evidence packet and result are saved in
+  the external Issue #366 evidence folder. The explicit user-authorized decision is recorded
+  in the append-only lifecycle decision log; no reviewer PASS was fabricated.
+- Current-patch validation passed: `npm run test:a11y` (18 files / 70 tests), TypeScript,
+  lint (0 errors; five existing Hook warnings), build (existing chunk advisory), 390px Chromium
+  form smoke (17 surfaces), the focused RagIndexForm pytest (1 test), and `git diff --check`.
+- Initial remote-feedback fixes were pushed as `62ab38a85a9957896aa47a1a6ae861846c941efb`.
+  On that head, five required checks passed and `quality-gate` failed only on Black formatting
+  in `tests/test_tasks_react_source.py`; the test suite completed. The same worker made the
+  one-line formatting correction. Manager reruns of Black, the focused pytest, and
+  `git diff --check` passed. The correction was pushed as `e46ef973d5b3acce8600e4c89d4b552a8878be2a`;
+  all six required checks then passed, including `quality-gate` (8m33s).
+- All ten fetched inline threads now have written dispositions and are resolved; the required
+  post-resolution query reported zero unresolved threads. No new feedback fetch or review was
+  started. This project-status entry records the code-head check result; the follow-up commit
+  contains only this tracking update. No merge is authorized.
