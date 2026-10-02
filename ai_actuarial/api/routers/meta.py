@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+
+from ..deps import AuthContext, require_permissions
 
 router = APIRouter()
 
@@ -17,7 +19,9 @@ async def api_health() -> dict[str, object]:
 
 
 @router.get("/health/detailed", tags=["meta"])
-async def health_detailed() -> dict[str, object]:
+async def health_detailed(
+    _auth: AuthContext = Depends(require_permissions("logs.system.read")),
+) -> dict[str, object]:
     """Detailed health check with service and version information."""
     return {
         "status": "healthy",

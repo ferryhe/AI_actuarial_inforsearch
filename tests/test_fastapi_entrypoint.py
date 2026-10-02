@@ -88,6 +88,46 @@ def test_fastapi_migration_inventory_exposes_native_routes_when_enabled(monkeypa
     assert "GET /api/health" in body["native_route_signatures"]
 
 
+@pytest.mark.parametrize("fastapi_env", ["development", "test"])
+def test_fastapi_docs_remain_available_outside_production(monkeypatch, fastapi_env: str) -> None:
+    monkeypatch.setenv("FASTAPI_ENV", fastapi_env)
+    client = TestClient(create_app())
+
+    for path in ("/docs", "/redoc", "/openapi.json"):
+        response = client.get(path)
+        assert response.status_code == 200, response.text
+
+
+def test_fastapi_production_meta_and_docs_policy(monkeypatch) -> None:
+    admin_token = "entrypoint-production-admin-token"
+    monkeypatch.setenv("FASTAPI_ENV", "production")
+    monkeypatch.setenv("FASTAPI_ENABLE_MIGRATION_INVENTORY", "1")
+    monkeypatch.setenv("BOOTSTRAP_ADMIN_TOKEN", admin_token)
+    client = TestClient(create_app())
+
+    health = client.get("/api/health")
+    assert health.status_code == 200, health.text
+    assert set(health.json()) == {"status", "backend", "timestamp"}
+
+    protected_paths = (
+        "/api/health/detailed",
+        "/api/migration/status",
+        "/api/migration/inventory",
+    )
+    for path in protected_paths:
+        response = client.get(path)
+        assert response.status_code == 401, response.text
+
+    headers = {"Authorization": f"Bearer {admin_token}"}
+    for path in protected_paths:
+        response = client.get(path, headers=headers)
+        assert response.status_code == 200, response.text
+
+    for path in ("/docs", "/redoc", "/openapi.json"):
+        response = client.get(path)
+        assert response.status_code == 404, response.text
+
+
 def test_unported_legacy_api_fallback_is_blocked_by_default() -> None:
     client = TestClient(create_app())
 

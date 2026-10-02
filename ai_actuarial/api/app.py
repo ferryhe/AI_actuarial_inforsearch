@@ -138,6 +138,8 @@ def create_app() -> FastAPI:
     validate_proxy_config()
     config_data = load_sites_config(require_writable=True)
     runtime_features = resolve_runtime_features(config_data)
+    fastapi_env, fastapi_env_source = resolve_fastapi_env(config_data)
+    production = fastapi_env in {"prod", "production"}
     app = FastAPI(
         title="AI Actuarial Info Search API",
         description=(
@@ -146,9 +148,9 @@ def create_app() -> FastAPI:
         ),
         version="0.1.0",
         summary="FastAPI product API for the React frontend.",
-        docs_url="/docs",
-        redoc_url="/redoc",
-        openapi_url="/openapi.json",
+        docs_url=None if production else "/docs",
+        redoc_url=None if production else "/redoc",
+        openapi_url=None if production else "/openapi.json",
         responses={
             401: {"description": "Authentication required"},
             403: {"description": "Insufficient permissions"},
@@ -270,7 +272,8 @@ def create_app() -> FastAPI:
     app.state.fastapi_session_cookie_name = "session"
     app.state.fastapi_session_cookie_path = "/"
     app.state.fastapi_session_cookie_domain = None
-    app.state.fastapi_env, app.state.fastapi_env_source = resolve_fastapi_env(config_data)
+    app.state.fastapi_env = fastapi_env
+    app.state.fastapi_env_source = fastapi_env_source
     app.state.fastapi_session_cookie_secure = _env_bool(
         "FASTAPI_SESSION_COOKIE_SECURE",
         settings.FASTAPI_SESSION_COOKIE_SECURE

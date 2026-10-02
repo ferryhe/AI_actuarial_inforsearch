@@ -429,11 +429,14 @@ copying files into a running container or by using `docker compose down -v`.
 
 ## API Documentation
 
-Once running, interactive API docs are available at:
+Development and test environments expose interactive API docs at:
 
 - **Swagger UI**: `http://localhost:5000/docs`
 - **ReDoc**: `http://localhost:5000/redoc`
 - **OpenAPI JSON**: `http://localhost:5000/openapi.json`
+
+Production disables these routes. Use an authenticated admin session for
+production diagnostics instead of exposing the API schema publicly.
 
 ## Health Checks
 
@@ -441,8 +444,8 @@ Once running, interactive API docs are available at:
 # Basic health
 curl http://localhost:5000/api/health
 
-# Detailed health (includes version and service status)
-curl http://localhost:5000/api/health/detailed
+# Detailed health (includes version and service status; admin token required)
+curl -H "Authorization: Bearer $ADMIN_API_TOKEN" http://localhost:5000/api/health/detailed
 ```
 
 ## Updating the Service
