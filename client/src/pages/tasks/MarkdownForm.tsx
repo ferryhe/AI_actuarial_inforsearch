@@ -11,11 +11,15 @@ export function MarkdownForm({
   submitting,
   settingsMode = false,
   initialTask = {},
+  errorDescribedBy,
+  runTestId,
 }: {
   onSubmit: (d: Record<string, unknown>) => void;
   submitting: boolean;
   settingsMode?: boolean;
   initialTask?: Record<string, unknown>;
+  errorDescribedBy?: string;
+  runTestId?: string;
 }) {
   const { t } = useTranslation();
   const { conversionToolsInfo, defaultConversionTool, markdownConversionLimits, categories: dynamicCategories, loading: taskOptionsLoading } = useTaskOptions();
@@ -151,7 +155,7 @@ export function MarkdownForm({
         <CheckboxField checked={overwriteExisting} onChange={(v) => { setOverwriteExisting(v); if (v) setSkipExisting(false); }}
           label={t("tasks.form.overwrite_existing")} testId="checkbox-md-overwrite" />
       </div>
-      <RunButton label={settingsMode ? t("common.save") : t("tasks.form.run")} submitting={submitting} disabled={submitting || (scopeMode === "category" && !category.trim())}
+      <RunButton label={settingsMode ? t("common.save") : t("tasks.form.run")} submitting={submitting} disabled={submitting || (scopeMode === "category" && !category.trim())} aria-describedby={errorDescribedBy} testId={runTestId}
         onClick={() => {
           const task = buildTask();
           if (task) onSubmit(task);

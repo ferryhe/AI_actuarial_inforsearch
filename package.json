@@ -229,7 +229,7 @@
     "test": "npm run build",
     "typecheck": "tsc --noEmit --pretty false",
     "lint": "eslint client/src",
-    "test:a11y": "vitest run --config vitest.config.ts client/src/components/a11y",
+    "test:a11y": "vitest run --config vitest.config.ts client/src/components/a11y client/src/components/FormFields.test.tsx client/src/pages/tasks/SchedulePresetFields.a11y.test.tsx",
     "smoke:a11y": "node client/src/components/a11y/browser-smoke.mjs",
     "smoke:knowledge-rbac": "node client/src/pages/Knowledge.rbac.browser-smoke.mjs",
     "dead-code:files": "python scripts/dead_code_gate.py files --report-dir reports/dead-code-files",

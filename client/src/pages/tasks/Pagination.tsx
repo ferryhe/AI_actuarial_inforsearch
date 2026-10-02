@@ -26,14 +26,14 @@ export function Pagination({ currentPage, totalPages, onPageChange }: Pagination
       <button
         onClick={() => onPageChange(currentPage - 1)}
         disabled={currentPage <= 1}
-        className="p-2 rounded-lg hover:bg-muted transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+        className="min-h-[48px] min-w-[48px] p-2 rounded-lg hover:bg-muted transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
         aria-label="Previous page"
       >
         <ChevronLeft className="w-4 h-4" />
       </button>
       {start > 1 && (
         <>
-          <button onClick={() => onPageChange(1)} className="px-3 py-1 text-sm rounded-lg hover:bg-muted transition-colors">1</button>
+          <button onClick={() => onPageChange(1)} className="min-h-[48px] min-w-[48px] px-3 py-1 text-sm rounded-lg hover:bg-muted transition-colors">1</button>
           {start > 2 && <span className="px-1 text-muted-foreground">...</span>}
         </>
       )}
@@ -41,7 +41,7 @@ export function Pagination({ currentPage, totalPages, onPageChange }: Pagination
         <button
           key={page}
           onClick={() => onPageChange(page)}
-          className={`px-3 py-1 text-sm rounded-lg transition-colors ${
+          className={`min-h-[48px] min-w-[48px] px-3 py-1 text-sm rounded-lg transition-colors ${
             page === currentPage
               ? "bg-primary text-primary-foreground"
               : "hover:bg-muted"
@@ -53,13 +53,13 @@ export function Pagination({ currentPage, totalPages, onPageChange }: Pagination
       {end < totalPages && (
         <>
           {end < totalPages - 1 && <span className="px-1 text-muted-foreground">...</span>}
-          <button onClick={() => onPageChange(totalPages)} className="px-3 py-1 text-sm rounded-lg hover:bg-muted transition-colors">{totalPages}</button>
+          <button onClick={() => onPageChange(totalPages)} className="min-h-[48px] min-w-[48px] px-3 py-1 text-sm rounded-lg hover:bg-muted transition-colors">{totalPages}</button>
         </>
       )}
       <button
         onClick={() => onPageChange(currentPage + 1)}
         disabled={currentPage >= totalPages}
-        className="p-2 rounded-lg hover:bg-muted transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+        className="min-h-[48px] min-w-[48px] p-2 rounded-lg hover:bg-muted transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
         aria-label="Next page"
       >
         <ChevronRight className="w-4 h-4" />

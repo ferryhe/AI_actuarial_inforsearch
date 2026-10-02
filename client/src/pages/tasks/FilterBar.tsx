@@ -23,30 +23,34 @@ export function FilterBar({
   return (
     <div className="flex flex-wrap gap-3 items-center">
       <div className="relative flex-1 min-w-[200px]">
+        <label htmlFor="input-task-filter-search" className="text-xs font-medium text-muted-foreground">Search tasks</label>
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
         <input
           type="text"
           value={searchQuery}
           onChange={(e) => onSearchChange(e.target.value)}
           placeholder="Search tasks..."
-          className="w-full pl-9 pr-3 py-2 text-sm rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+          id="input-task-filter-search"
+          className="w-full min-h-[44px] pl-9 pr-3 py-2 text-sm rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-ring"
         />
       </div>
-      <select
+      <label className="text-xs font-medium text-muted-foreground">Status
+      <select id="select-task-filter-status"
         value={statusFilter}
         onChange={(e) => onStatusChange(e.target.value)}
-        className="px-3 py-2 text-sm rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+        className="block min-h-[44px] px-3 py-2 text-sm rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-ring"
       >
         <option value="">All Status</option>
         <option value="running">Running</option>
         <option value="completed">Completed</option>
         <option value="error">Error</option>
         <option value="stopped">Stopped</option>
-      </select>
-      <select
+      </select></label>
+      <label className="text-xs font-medium text-muted-foreground">Type
+      <select id="select-task-filter-type"
         value={typeFilter}
         onChange={(e) => onTypeChange(e.target.value)}
-        className="px-3 py-2 text-sm rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+        className="block min-h-[44px] px-3 py-2 text-sm rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-ring"
       >
         <option value="">All Types</option>
         <option value="scheduled">{t("tasks.type.site_config")}</option>
@@ -59,7 +63,7 @@ export function FilterBar({
         <option value="markdown_conversion">{t("tasks.type.markdown")}</option>
         <option value="chunk_generation">{t("tasks.type.chunk")}</option>
         <option value="rag_indexing">{t("tasks.type.rag_index")}</option>
-      </select>
+      </select></label>
     </div>
   );
 }

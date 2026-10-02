@@ -143,7 +143,7 @@ function TabButton({
     <button
       onClick={onClick}
       className={cn(
-        "flex items-center gap-2 px-4 py-2.5 text-sm font-medium rounded-lg transition-colors whitespace-nowrap",
+        "flex min-h-[48px] items-center gap-2 px-4 py-2.5 text-sm font-medium rounded-lg transition-colors whitespace-nowrap",
         active
           ? "bg-primary text-primary-foreground shadow-sm"
           : "text-muted-foreground hover:text-foreground hover:bg-muted"
@@ -168,7 +168,7 @@ function StatusBadge({ configured }: { configured: boolean }) {
   );
 }
 
-function Toast({ message, type, onClose }: { message: string; type: "success" | "error"; onClose: () => void }) {
+function Toast({ message, type, onClose, id }: { message: string; type: "success" | "error"; onClose: () => void; id?: string }) {
   useEffect(() => {
     const timer = setTimeout(onClose, 3000);
     return () => clearTimeout(timer);
@@ -178,6 +178,8 @@ function Toast({ message, type, onClose }: { message: string; type: "success" | 
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: 20 }}
+      id={id}
+      role={type === "error" ? "alert" : undefined}
       className={cn(
         "fixed bottom-6 right-6 z-50 flex items-center gap-2 px-4 py-3 rounded-xl shadow-lg border text-sm font-medium",
         type === "success" ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-700 dark:text-emerald-300" : "bg-destructive/10 border-destructive/30 text-destructive"
@@ -192,7 +194,7 @@ function Toast({ message, type, onClose }: { message: string; type: "success" | 
 function AiConfigTab() {
   const { t } = useTranslation();
   const [loading, setLoading] = useState(true);
-  const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
+  const [toast, setToast] = useState<{ message: string; type: "success" | "error"; action?: string } | null>(null);
 
   const [providers, setProviders] = useState<Array<{
     provider_id: string;
@@ -356,7 +358,7 @@ function AiConfigTab() {
       setBaseUrlInput("");
       await fetchData();
     } catch (error) {
-      setToast({ message: formatSettingsMutationError(error, t, "settings.provider_save_error"), type: "error" });
+      setToast({ message: formatSettingsMutationError(error, t, "settings.provider_save_error"), type: "error", action: `provider-${providerId}` });
     } finally {
       setSavingProvider(null);
     }
@@ -371,7 +373,7 @@ function AiConfigTab() {
       setToast({ message: t("settings.provider_deleted"), type: "success" });
       await fetchData();
     } catch (error) {
-      setToast({ message: formatSettingsMutationError(error, t, "settings.provider_delete_error"), type: "error" });
+      setToast({ message: formatSettingsMutationError(error, t, "settings.provider_delete_error"), type: "error", action: `delete-provider-${providerId}` });
     } finally {
       setSavingProvider(null);
     }
@@ -387,7 +389,7 @@ function AiConfigTab() {
       });
       await fetchData();
     } catch (error) {
-      setToast({ message: formatSettingsMutationError(error, t, "settings.provider_save_error"), type: "error" });
+      setToast({ message: formatSettingsMutationError(error, t, "settings.provider_save_error"), type: "error", action: "import-provider-env" });
     } finally {
       setMaintenanceBusy(null);
     }
@@ -401,7 +403,7 @@ function AiConfigTab() {
       setToast({ message: t("settings.model_catalog_refreshed"), type: "success" });
       await fetchData();
     } catch {
-      setToast({ message: t("settings.models_save_error"), type: "error" });
+      setToast({ message: t("settings.models_save_error"), type: "error", action: "refresh-model-catalog" });
     } finally {
       setMaintenanceBusy(null);
     }
@@ -424,7 +426,7 @@ function AiConfigTab() {
       });
       await fetchData();
     } catch (error) {
-      setToast({ message: formatSettingsMutationError(error, t, "settings.credentials_reencrypt_error"), type: "error" });
+      setToast({ message: formatSettingsMutationError(error, t, "settings.credentials_reencrypt_error"), type: "error", action: "reencrypt-credentials" });
     } finally {
       setMaintenanceBusy(null);
     }
@@ -468,7 +470,7 @@ function AiConfigTab() {
       setModelEdits({});
       await fetchData();
     } catch (error) {
-      setToast({ message: formatSettingsMutationError(error, t, "settings.models_save_error"), type: "error" });
+      setToast({ message: formatSettingsMutationError(error, t, "settings.models_save_error"), type: "error", action: "save-models" });
     } finally {
       setSavingRouting(false);
     }
@@ -575,7 +577,7 @@ function AiConfigTab() {
 
   return (
     <div className="space-y-8">
-      <AnimatePresence>{toast && <Toast {...toast} onClose={() => setToast(null)} />}</AnimatePresence>
+      <AnimatePresence>{toast && <Toast message={toast.message} type={toast.type} id={toast.type === "error" && toast.action ? `error-settings-${toast.action}` : undefined} onClose={() => setToast(null)} />}</AnimatePresence>
 
       <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="rounded-xl border border-border bg-card overflow-hidden">
         <div className="px-5 py-4 border-b border-border bg-muted/30 flex items-center justify-between gap-3">
@@ -588,8 +590,9 @@ function AiConfigTab() {
             <button
               onClick={importProviderEnv}
               disabled={maintenanceBusy !== null}
-              className="text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors disabled:opacity-50 flex items-center gap-1.5"
+              className="min-h-[48px] text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors disabled:opacity-50 flex items-center gap-1.5"
               data-testid="button-import-provider-env"
+              aria-describedby={toast?.type === "error" && toast.action === "import-provider-env" ? "error-settings-import-provider-env" : undefined}
             >
               {maintenanceBusy === "import-env" ? <Loader2 className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />}
               {t("settings.import_env")}
@@ -597,8 +600,9 @@ function AiConfigTab() {
             <button
               onClick={refreshModelCatalog}
               disabled={maintenanceBusy !== null}
-              className="text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors disabled:opacity-50 flex items-center gap-1.5"
+              className="min-h-[48px] text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors disabled:opacity-50 flex items-center gap-1.5"
               data-testid="button-refresh-model-catalog"
+              aria-describedby={toast?.type === "error" && toast.action === "refresh-model-catalog" ? "error-settings-refresh-model-catalog" : undefined}
             >
               {maintenanceBusy === "model-catalog" ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
               {t("settings.refresh_models")}
@@ -606,7 +610,7 @@ function AiConfigTab() {
             <button
               onClick={() => setReencryptOpen((open) => !open)}
               disabled={maintenanceBusy !== null}
-              className="text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors disabled:opacity-50 flex items-center gap-1.5"
+              className="min-h-[48px] text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors disabled:opacity-50 flex items-center gap-1.5"
               data-testid="button-reencrypt-credentials"
             >
               <Shield className="w-3 h-3" />
@@ -615,7 +619,7 @@ function AiConfigTab() {
             <button
               onClick={startAddProvider}
               disabled={llmProviders.length === 0 || addingProvider}
-              className="text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors disabled:opacity-50 flex items-center gap-1.5"
+              className="min-h-[48px] text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors disabled:opacity-50 flex items-center gap-1.5"
               data-testid="button-add-provider"
             >
               <Plus className="w-3 h-3" />
@@ -628,31 +632,32 @@ function AiConfigTab() {
             <div className="px-5 py-4 bg-muted/10" data-testid="provider-reencrypt-panel">
               <div className="grid grid-cols-1 md:grid-cols-[1fr_1fr_auto] gap-3 items-end">
                 <div>
-                  <label className="text-[11px] text-muted-foreground mb-1 block">{t("settings.old_encryption_key")}</label>
-                  <input
+                  <label htmlFor="input-old-encryption-key" className="text-[11px] text-muted-foreground mb-1 block">{t("settings.old_encryption_key")}</label>
+                  <input id="input-old-encryption-key"
                     type="password"
                     value={oldEncryptionKey}
                     onChange={(e) => setOldEncryptionKey(e.target.value)}
-                    className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                    className="w-full min-h-[48px] px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
                     data-testid="input-old-encryption-key"
                   />
                 </div>
                 <div>
-                  <label className="text-[11px] text-muted-foreground mb-1 block">{t("settings.new_encryption_key")}</label>
-                  <input
+                  <label htmlFor="input-new-encryption-key" className="text-[11px] text-muted-foreground mb-1 block">{t("settings.new_encryption_key")}</label>
+                  <input id="input-new-encryption-key"
                     type="password"
                     value={newEncryptionKey}
                     onChange={(e) => setNewEncryptionKey(e.target.value)}
                     placeholder={t("settings.new_encryption_key_hint")}
-                    className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                    className="w-full min-h-[48px] px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
                     data-testid="input-new-encryption-key"
                   />
                 </div>
                 <button
                   onClick={reencryptCredentials}
                   disabled={!oldEncryptionKey.trim() || maintenanceBusy !== null}
-                  className="text-xs px-3 py-2 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-1.5"
+                  className="min-h-[48px] text-xs px-3 py-2 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-1.5"
                   data-testid="button-submit-reencrypt-credentials"
+                  aria-describedby={toast?.type === "error" && toast.action === "reencrypt-credentials" ? "error-settings-reencrypt-credentials" : undefined}
                 >
                   {maintenanceBusy === "reencrypt" ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
                   {t("settings.reencrypt_credentials")}
@@ -666,11 +671,11 @@ function AiConfigTab() {
               <div className="px-5 py-4 bg-muted/10" data-testid="provider-add-panel">
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                   <div>
-                    <label className="text-[11px] text-muted-foreground mb-1 block">{t("settings.provider")}</label>
-                    <select
+                    <label htmlFor="select-add-provider" className="text-[11px] text-muted-foreground mb-1 block">{t("settings.provider")}</label>
+                    <select id="select-add-provider"
                       value={providerAddId}
                       onChange={(e) => changeAddProvider(e.target.value)}
-                      className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm"
+                      className="w-full min-h-[48px] px-3 py-2 rounded-lg border border-border bg-background text-sm"
                       data-testid="select-add-provider"
                     >
                       {llmProviders.map((item) => (
@@ -679,14 +684,14 @@ function AiConfigTab() {
                     </select>
                   </div>
                   <div>
-                    <label className="text-[11px] text-muted-foreground mb-1 block">{t("settings.api_key_label")}</label>
+                    <label htmlFor="input-add-provider-api-key" className="text-[11px] text-muted-foreground mb-1 block">{t("settings.api_key_label")}</label>
                     <div className="relative">
-                      <input
+                      <input id="input-add-provider-api-key"
                         type={showKey ? "text" : "password"}
                         value={apiKeyInput}
                         onChange={(e) => setApiKeyInput(e.target.value)}
                         placeholder={provider?.api_key_hint || "sk-..."}
-                        className="w-full px-3 py-2 pr-10 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                        className="w-full min-h-[48px] px-3 py-2 pr-10 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
                         data-testid="input-add-provider-api-key"
                       />
                       <IconButton onClick={() => setShowKey(!showKey)} label={t(showKey ? "a11y.hide_secret" : "a11y.show_secret")} className="absolute right-0 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
@@ -695,13 +700,13 @@ function AiConfigTab() {
                     </div>
                   </div>
                   <div>
-                    <label className="text-[11px] text-muted-foreground mb-1 block">{t("settings.base_url_label")} ({t("settings.optional")})</label>
-                    <input
+                    <label htmlFor="input-add-provider-base-url" className="text-[11px] text-muted-foreground mb-1 block">{t("settings.base_url_label")} ({t("settings.optional")})</label>
+                    <input id="input-add-provider-base-url"
                       type="text"
                       value={baseUrlInput}
                       onChange={(e) => setBaseUrlInput(e.target.value)}
                       placeholder={provider?.default_base_url || "https://..."}
-                      className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                      className="w-full min-h-[48px] px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
                       data-testid="input-add-provider-base-url"
                     />
                   </div>
@@ -710,14 +715,14 @@ function AiConfigTab() {
                   <button
                     onClick={() => saveProvider(providerAddId)}
                     disabled={!providerAddId || (!apiKeyInput.trim() && !providerAllowsEmptyApiKey(providerAddId)) || savingProvider === providerAddId}
-                    className="text-xs px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-1.5"
-                    data-testid="button-save-add-provider"
+                    className="min-h-[48px] text-xs px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-1.5"
+                    data-testid="button-save-add-provider" aria-describedby={toast?.type === "error" && toast.action === `provider-${providerAddId}` ? `error-settings-provider-${providerAddId}` : undefined}
                   >
                     {savingProvider === providerAddId ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
                     {t("settings.save")}
                   </button>
                   <button onClick={cancelProviderEdit}
-                    className="text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors">
+                    className="min-h-[48px] text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors">
                     {t("settings.cancel")}
                   </button>
                 </div>
@@ -761,13 +766,13 @@ function AiConfigTab() {
                     {credential?.source === "db" && !isEditing && (
                       <IconButton onClick={() => deleteProvider(provider.provider_id)} disabled={savingProvider === provider.provider_id}
                         label={t("a11y.delete_provider", { target: provider.display_name })} className="text-destructive hover:bg-destructive/10"
-                        data-testid={`button-delete-provider-${provider.provider_id}`}>
+                        data-testid={`button-delete-provider-${provider.provider_id}`} aria-describedby={toast?.type === "error" && toast.action === `delete-provider-${provider.provider_id}` ? `error-settings-delete-provider-${provider.provider_id}` : undefined}>
                         {savingProvider === provider.provider_id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
                       </IconButton>
                     )}
                     {!isEditing && (
                       <button onClick={() => startEditProvider(provider.provider_id)}
-                        className="text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors flex items-center gap-1.5"
+                        className="min-h-[48px] text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors flex items-center gap-1.5"
                         data-testid={`button-edit-provider-${provider.provider_id}`}>
                         <Pencil className="w-3 h-3" />
                         {credential ? t("settings.update_key") : t("settings.add_key")}
@@ -778,44 +783,47 @@ function AiConfigTab() {
                 {isEditing && (
                   <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} className="mt-3 space-y-3">
                     <div>
-                      <label className="text-xs text-muted-foreground mb-1 block">{t("settings.api_key_label")}</label>
+                      <label htmlFor={`input-api-key-${provider.provider_id}`} className="text-xs text-muted-foreground mb-1 block">{t("settings.api_key_label")}</label>
                       <div className="relative">
-                        <input
+                        <input id={`input-api-key-${provider.provider_id}`}
                           type={showKey ? "text" : "password"}
                           value={apiKeyInput}
                           onChange={(e) => setApiKeyInput(e.target.value)}
                           placeholder={provider.api_key_hint || "sk-..."}
-                          className="w-full px-3 py-2 pr-10 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                          className="w-full min-h-[48px] px-3 py-2 pr-10 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
                           data-testid={`input-api-key-${provider.provider_id}`}
+                          aria-describedby={provider.provider_id === "mathpix" ? "hint-mathpix-api-key" : undefined}
                         />
                         <IconButton onClick={() => setShowKey(!showKey)} label={t(showKey ? "a11y.hide_secret" : "a11y.show_secret")} className="absolute right-0 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
                           {showKey ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                         </IconButton>
                       </div>
                       {provider.provider_id === "mathpix" && (
-                        <p className="mt-1 text-[11px] text-muted-foreground">{t("settings.mathpix_key_hint")}</p>
+                        <p id="hint-mathpix-api-key" className="mt-1 text-[11px] text-muted-foreground">{t("settings.mathpix_key_hint")}</p>
                       )}
                     </div>
                     <div>
-                      <label className="text-xs text-muted-foreground mb-1 block">{t("settings.base_url_label")} ({t("settings.optional")})</label>
-                      <input
+                      <label htmlFor={`input-base-url-${provider.provider_id}`} className="text-xs text-muted-foreground mb-1 block">{t("settings.base_url_label")} ({t("settings.optional")})</label>
+                      <input id={`input-base-url-${provider.provider_id}`}
                         type="text"
                         value={baseUrlInput}
                         onChange={(e) => setBaseUrlInput(e.target.value)}
                         placeholder={provider.default_base_url || "https://..."}
-                        className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                        className="w-full min-h-[48px] px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
                         data-testid={`input-base-url-${provider.provider_id}`}
                       />
                     </div>
                     <div className="flex items-center gap-2">
                       <button onClick={() => saveProvider(provider.provider_id)} disabled={(!apiKeyInput.trim() && !providerAllowsEmptyApiKey(provider.provider_id)) || savingProvider === provider.provider_id}
-                        className="text-xs px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-1.5"
-                        data-testid={`button-save-provider-${provider.provider_id}`}>
+                        className="min-h-[48px] text-xs px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-1.5"
+                        data-testid={`button-save-provider-${provider.provider_id}`}
+                        aria-describedby={toast?.type === "error" && toast.action === `provider-${provider.provider_id}` ? `error-settings-provider-${provider.provider_id}` : undefined}>
                         {savingProvider === provider.provider_id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
                         {t("settings.save")}
                       </button>
                       <button onClick={cancelProviderEdit}
-                        className="text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors">
+                        className="min-h-[48px] text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors"
+                        data-testid={`button-cancel-provider-${provider.provider_id}`}>
                         {t("settings.cancel")}
                       </button>
                     </div>
@@ -838,7 +846,7 @@ function AiConfigTab() {
             <button
               onClick={startAddRouting}
               disabled={addingRouting}
-              className="text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors disabled:opacity-50 flex items-center gap-1.5"
+              className="min-h-[56px] text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors disabled:opacity-50 flex items-center gap-1.5"
               data-testid="button-add-model-route"
             >
               <Plus className="w-3 h-3" />
@@ -846,8 +854,8 @@ function AiConfigTab() {
             </button>
             {Object.keys(modelEdits).length > 0 && (
               <button onClick={saveRouting} disabled={savingRouting}
-                className="text-xs px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-1.5"
-                data-testid="button-save-models">
+                className="min-h-[48px] text-xs px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-1.5"
+                data-testid="button-save-models" aria-describedby={toast?.type === "error" && toast.action === "save-models" ? "error-settings-save-models" : undefined}>
                 {savingRouting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
                 {t("settings.save_model_config")}
               </button>
@@ -878,11 +886,11 @@ function AiConfigTab() {
               <div className="px-5 py-4 bg-muted/10" data-testid="model-add-panel">
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                   <div>
-                    <label className="text-[11px] text-muted-foreground mb-1 block">{t("settings.function")}</label>
-                    <select
+                    <label htmlFor="select-add-model-function" className="text-[11px] text-muted-foreground mb-1 block">{t("settings.function")}</label>
+                    <select id="select-add-model-function"
                       value={routingAddKey}
                       onChange={(e) => changeRoutingAddFunction(e.target.value as AiRoutingKey)}
-                      className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm"
+                      className="w-full min-h-[48px] px-3 py-2 rounded-lg border border-border bg-background text-sm"
                       data-testid="select-add-model-function"
                     >
                       {routingCards.map((item) => (
@@ -891,11 +899,11 @@ function AiConfigTab() {
                     </select>
                   </div>
                   <div>
-                    <label className="text-[11px] text-muted-foreground mb-1 block">{t("settings.provider")}</label>
-                    <select
+                    <label htmlFor="select-add-model-provider" className="text-[11px] text-muted-foreground mb-1 block">{t("settings.provider")}</label>
+                    <select id="select-add-model-provider"
                       value={routingAddDraft.provider}
                       onChange={(e) => updateRoutingDraft(setRoutingAddDraft, card, "provider", e.target.value)}
-                      className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm"
+                      className="w-full min-h-[48px] px-3 py-2 rounded-lg border border-border bg-background text-sm"
                       data-testid="select-add-model-provider"
                     >
                       <option value="">—</option>
@@ -905,11 +913,11 @@ function AiConfigTab() {
                     </select>
                   </div>
                   <div>
-                    <label className="text-[11px] text-muted-foreground mb-1 block">{t("settings.model")}</label>
-                    <select
+                    <label htmlFor="select-add-model-name" className="text-[11px] text-muted-foreground mb-1 block">{t("settings.model")}</label>
+                    <select id="select-add-model-name"
                       value={routingAddDraft.model}
                       onChange={(e) => updateRoutingDraft(setRoutingAddDraft, card, "model", e.target.value)}
-                      className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm"
+                      className="w-full min-h-[48px] px-3 py-2 rounded-lg border border-border bg-background text-sm"
                       data-testid="select-add-model-name"
                     >
                       <option value="">—</option>
@@ -921,11 +929,11 @@ function AiConfigTab() {
                 </div>
                 <div className="mt-3 grid grid-cols-1 md:grid-cols-[1fr_auto] gap-3 items-end">
                   <div>
-                    <label className="text-[11px] text-muted-foreground mb-1 block">{t("settings.credential")}</label>
-                    <select
+                    <label htmlFor="select-add-model-credential" className="text-[11px] text-muted-foreground mb-1 block">{t("settings.credential")}</label>
+                    <select id="select-add-model-credential"
                       value={routingAddDraft.credential_id || ""}
                       onChange={(e) => updateRoutingDraft(setRoutingAddDraft, card, "credential_id", e.target.value)}
-                      className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm"
+                      className="w-full min-h-[48px] px-3 py-2 rounded-lg border border-border bg-background text-sm"
                       data-testid="select-add-model-credential"
                     >
                       <option value="">—</option>
@@ -938,7 +946,7 @@ function AiConfigTab() {
                     <button
                       onClick={stageRoutingAdd}
                       disabled={!routingAddDraft.provider || !routingAddDraft.model}
-                      className="text-xs px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-1.5"
+                      className="min-h-[48px] text-xs px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-1.5"
                       data-testid="button-stage-model-route"
                     >
                       <Plus className="w-3 h-3" />
@@ -946,7 +954,8 @@ function AiConfigTab() {
                     </button>
                     <button
                       onClick={() => setAddingRouting(false)}
-                      className="text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors"
+                      className="min-h-[56px] text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors"
+                      data-testid="button-cancel-model-route-add"
                     >
                       {t("settings.cancel")}
                     </button>
@@ -991,7 +1000,7 @@ function AiConfigTab() {
                   {!isEditing && (
                     <button
                       onClick={() => editRouting(card)}
-                      className="text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors shrink-0 flex items-center gap-1.5"
+                      className="min-h-[48px] text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors shrink-0 flex items-center gap-1.5"
                       data-testid={`button-edit-model-${card.key}`}
                     >
                       <Pencil className="w-3 h-3" />
@@ -1003,9 +1012,9 @@ function AiConfigTab() {
                   <div className="mt-3 space-y-3">
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                       <div>
-                        <label className="text-[11px] text-muted-foreground mb-1 block">{t("settings.provider")}</label>
-                        <select value={current.provider} onChange={(e) => updateModelEdit(card.key, "provider", e.target.value)}
-                          className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm"
+                        <label htmlFor={`select-provider-${card.key}`} className="text-[11px] text-muted-foreground mb-1 block">{t("settings.provider")}</label>
+                        <select id={`select-provider-${card.key}`} value={current.provider} onChange={(e) => updateModelEdit(card.key, "provider", e.target.value)}
+                          className="w-full min-h-[48px] px-3 py-2 rounded-lg border border-border bg-background text-sm"
                           data-testid={`select-provider-${card.key}`}>
                           <option value="">—</option>
                           {filteredProviders.map((provider) => (
@@ -1014,9 +1023,9 @@ function AiConfigTab() {
                         </select>
                       </div>
                       <div>
-                        <label className="text-[11px] text-muted-foreground mb-1 block">{t("settings.credential")}</label>
-                        <select value={current.credential_id || ""} onChange={(e) => updateModelEdit(card.key, "credential_id", e.target.value)}
-                          className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm"
+                        <label htmlFor={`select-credential-${card.key}`} className="text-[11px] text-muted-foreground mb-1 block">{t("settings.credential")}</label>
+                        <select id={`select-credential-${card.key}`} value={current.credential_id || ""} onChange={(e) => updateModelEdit(card.key, "credential_id", e.target.value)}
+                          className="w-full min-h-[48px] px-3 py-2 rounded-lg border border-border bg-background text-sm"
                           data-testid={`select-credential-${card.key}`}>
                           <option value="">—</option>
                           {filteredCredentials.map((credential) => (
@@ -1025,9 +1034,9 @@ function AiConfigTab() {
                         </select>
                       </div>
                       <div>
-                        <label className="text-[11px] text-muted-foreground mb-1 block">{t("settings.model")}</label>
-                        <select value={current.model} onChange={(e) => updateModelEdit(card.key, "model", e.target.value)}
-                          className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm"
+                        <label htmlFor={`select-model-${card.key}`} className="text-[11px] text-muted-foreground mb-1 block">{t("settings.model")}</label>
+                        <select id={`select-model-${card.key}`} value={current.model} onChange={(e) => updateModelEdit(card.key, "model", e.target.value)}
+                          className="w-full min-h-[48px] px-3 py-2 rounded-lg border border-border bg-background text-sm"
                           data-testid={`select-model-${card.key}`}>
                           <option value="">—</option>
                           {filteredModels.map((model) => (
@@ -1038,7 +1047,8 @@ function AiConfigTab() {
                     </div>
                     <button
                       onClick={() => cancelRoutingEdit(card.key)}
-                      className="text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors flex items-center gap-1.5"
+                      className="min-h-[48px] text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors flex items-center gap-1.5"
+                      data-testid={`button-cancel-model-${card.key}`}
                     >
                       <X className="w-3 h-3" />
                       {t("settings.cancel")}
@@ -1062,6 +1072,7 @@ function PromptEditorCard({
   value,
   testIdPrefix,
   onSave,
+  errorDescribedBy,
 }: {
   title: string;
   hint: string;
@@ -1069,6 +1080,7 @@ function PromptEditorCard({
   value: string;
   testIdPrefix: string;
   onSave: (v: string) => Promise<void>;
+  errorDescribedBy?: string;
 }) {
   const { t } = useTranslation();
   const [editing, setEditing] = useState<string | null>(null);
@@ -1093,17 +1105,19 @@ function PromptEditorCard({
       <div className="px-5 py-4 border-b border-border bg-muted/30 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <MessageSquare className="w-4 h-4 text-primary" />
-          <h3 className="text-sm font-semibold">{title}</h3>
+          <h3 id={`${testIdPrefix}-title`} className="text-sm font-semibold">{title}</h3>
         </div>
         {editing !== null && (
           <div className="flex items-center gap-2">
             <button onClick={() => setEditing(null)}
-              className="text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors">
+              className="min-h-[48px] text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors"
+              data-testid={`${testIdPrefix}-cancel`}>
               {t("settings.cancel")}
             </button>
             <button onClick={handleSave} disabled={saving}
-              className="text-xs px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-1.5"
-              data-testid={`${testIdPrefix}-save`}>
+              className="min-h-[56px] text-xs px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-1.5"
+              data-testid={`${testIdPrefix}-save`}
+              aria-describedby={errorDescribedBy}>
               {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
               {t("settings.save")}
             </button>
@@ -1111,10 +1125,9 @@ function PromptEditorCard({
         )}
       </div>
       <div className="px-5 py-4 space-y-2">
-        <p className="text-xs text-muted-foreground">{hint}</p>
+        <p id={`${testIdPrefix}-hint`} className="text-xs text-muted-foreground">{hint}</p>
         {editing !== null ? (
-          <textarea
-            aria-label={title}
+          <textarea id={`${testIdPrefix}-input`} aria-labelledby={`${testIdPrefix}-title`} aria-describedby={`${testIdPrefix}-hint`}
             value={editing}
             onChange={(e) => setEditing(e.target.value)}
             rows={8}
@@ -1128,7 +1141,7 @@ function PromptEditorCard({
               {value || defaultText}
             </pre>
             <button onClick={() => setEditing(value)}
-              className="text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors shrink-0"
+              className="min-h-[48px] text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors shrink-0"
               data-testid={`${testIdPrefix}-edit`}>
               <Pencil className="w-3 h-3 inline mr-1" />{t("settings.edit")}
             </button>
@@ -1147,7 +1160,7 @@ function PromptsTab() {
   const { t } = useTranslation();
   const [currentModels, setCurrentModels] = useState<AiModelsCurrent | null>(null);
   const [loading, setLoading] = useState(true);
-  const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
+  const [toast, setToast] = useState<{ message: string; type: "success" | "error"; action?: string } | null>(null);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -1162,13 +1175,13 @@ function PromptsTab() {
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  async function savePrompt(payload: Record<string, unknown>) {
+  async function savePrompt(payload: Record<string, unknown>, action?: string) {
     try {
       await apiPost("/api/config/ai-models", payload);
       setToast({ message: t("settings.catalog_prompt_saved"), type: "success" });
       await fetchData();
     } catch (error) {
-      setToast({ message: formatSettingsMutationError(error, t, "settings.models_save_error"), type: "error" });
+      setToast({ message: formatSettingsMutationError(error, t, "settings.models_save_error"), type: "error", action });
       throw new Error("save failed");
     }
   }
@@ -1183,7 +1196,7 @@ function PromptsTab() {
 
   return (
     <div className="space-y-6">
-      <AnimatePresence>{toast && <Toast {...toast} onClose={() => setToast(null)} />}</AnimatePresence>
+      <AnimatePresence>{toast && <Toast message={toast.message} type={toast.type} id={toast.type === "error" && toast.action ? `error-settings-${toast.action}` : undefined} onClose={() => setToast(null)} />}</AnimatePresence>
 
       <p className="text-xs text-muted-foreground">
         {t("settings.weekly_explanation_routing_hint")}
@@ -1196,8 +1209,9 @@ function PromptsTab() {
         defaultText={t("settings.weekly_explanation_prompt_default")}
         value={currentModels?.weekly_explanation?.prompt || ""}
         testIdPrefix="weekly-explanation-prompt"
+        errorDescribedBy={toast?.type === "error" && toast.action === "weekly-explanation-prompt" ? "error-settings-weekly-explanation-prompt" : undefined}
         onSave={async (v) => {
-          await savePrompt({ weekly_explanation: { prompt: v } });
+          await savePrompt({ weekly_explanation: { prompt: v } }, "weekly-explanation-prompt");
         }}
       />
 
@@ -1208,8 +1222,9 @@ function PromptsTab() {
         defaultText={t("settings.catalog_prompt_default")}
         value={currentModels?.catalog?.system_prompt || ""}
         testIdPrefix="catalog-prompt"
+        errorDescribedBy={toast?.type === "error" && toast.action === "catalog-prompt" ? "error-settings-catalog-prompt" : undefined}
         onSave={async (v) => {
-          await savePrompt({ catalog: { system_prompt: v } });
+          await savePrompt({ catalog: { system_prompt: v } }, "catalog-prompt");
         }}
       />
 
@@ -1220,8 +1235,9 @@ function PromptsTab() {
         defaultText={t("settings.chatbot_prompt_default")}
         value={currentModels?.chatbot?.prompts?.base || ""}
         testIdPrefix="chatbot-base-prompt"
+        errorDescribedBy={toast?.type === "error" && toast.action === "chatbot-base-prompt" ? "error-settings-chatbot-base-prompt" : undefined}
         onSave={async (v) => {
-          await savePrompt({ chatbot: { prompts: { base: v } } });
+          await savePrompt({ chatbot: { prompts: { base: v } } }, "chatbot-base-prompt");
         }}
       />
 
@@ -1234,8 +1250,9 @@ function PromptsTab() {
           defaultText={t("settings.chatbot_prompt_default")}
           value={currentModels?.chatbot?.prompts?.[mode] || ""}
           testIdPrefix={`chatbot-${mode}-prompt`}
+          errorDescribedBy={toast?.type === "error" && toast.action === `chatbot-${mode}-prompt` ? `error-settings-chatbot-${mode}-prompt` : undefined}
           onSave={async (v) => {
-            await savePrompt({ chatbot: { prompts: { [mode]: v } } });
+            await savePrompt({ chatbot: { prompts: { [mode]: v } } }, `chatbot-${mode}-prompt`);
           }}
         />
       ))}
@@ -1247,8 +1264,9 @@ function PromptsTab() {
         defaultText={t("settings.chatbot_prompt_default")}
         value={currentModels?.chatbot?.summarization_prompt || ""}
         testIdPrefix="summarization-prompt"
+        errorDescribedBy={toast?.type === "error" && toast.action === "summarization-prompt" ? "error-settings-summarization-prompt" : undefined}
         onSave={async (v) => {
-          await savePrompt({ chatbot: { summarization_prompt: v } });
+          await savePrompt({ chatbot: { summarization_prompt: v } }, "summarization-prompt");
         }}
       />
     </div>
@@ -1261,7 +1279,7 @@ function SearchCrawlerTab() {
   const [searchEngines, setSearchEngines] = useState<SearchEngine[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
+  const [toast, setToast] = useState<{ message: string; type: "success" | "error"; action?: string } | null>(null);
 
   const [editDefaults, setEditDefaults] = useState<BackendDefaults>({});
   const [dirty, setDirty] = useState(false);
@@ -1283,6 +1301,7 @@ function SearchCrawlerTab() {
   }>>([]);
   const [searchKeyEdit, setSearchKeyEdit] = useState<{ engine: string; key: string } | null>(null);
   const [searchKeySaving, setSearchKeySaving] = useState(false);
+  const [searchKeyError, setSearchKeyError] = useState<string | null>(null);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -1319,7 +1338,7 @@ function SearchCrawlerTab() {
       setDirty(false);
       await fetchData();
     } catch (error) {
-      setToast({ message: formatSettingsMutationError(error, t, "settings.defaults_save_error"), type: "error" });
+      setToast({ message: formatSettingsMutationError(error, t, "settings.defaults_save_error"), type: "error", action: "save-defaults" });
     } finally {
       setSaving(false);
     }
@@ -1345,6 +1364,7 @@ function SearchCrawlerTab() {
   async function saveSearchKey() {
     if (!searchKeyEdit?.key.trim() || !searchKeyEdit.engine) return;
     setSearchKeySaving(true);
+    setSearchKeyError(null);
     try {
       const providerName = SEARCH_PROVIDER_MAP[searchKeyEdit.engine] || searchKeyEdit.engine;
       await apiPost("/api/config/provider-credentials", {
@@ -1356,7 +1376,9 @@ function SearchCrawlerTab() {
       setSearchKeyEdit(null);
       await fetchData();
     } catch (error) {
-      setToast({ message: formatSettingsMutationError(error, t, "settings.provider_save_error"), type: "error" });
+      const message = formatSettingsMutationError(error, t, "settings.provider_save_error");
+      setSearchKeyError(message);
+      setToast({ message, type: "error" });
     } finally {
       setSearchKeySaving(false);
     }
@@ -1372,7 +1394,7 @@ function SearchCrawlerTab() {
       setToast({ message: t("settings.provider_deleted"), type: "success" });
       await fetchData();
     } catch (error) {
-      setToast({ message: formatSettingsMutationError(error, t, "settings.provider_delete_error"), type: "error" });
+      setToast({ message: formatSettingsMutationError(error, t, "settings.provider_delete_error"), type: "error", action: `delete-search-${engineId}` });
     } finally {
       setSearchKeySaving(false);
     }
@@ -1384,7 +1406,7 @@ function SearchCrawlerTab() {
 
   return (
     <div className="space-y-8">
-      <AnimatePresence>{toast && <Toast {...toast} onClose={() => setToast(null)} />}</AnimatePresence>
+      <AnimatePresence>{toast && <Toast message={toast.message} type={toast.type} id={toast.type === "error" && toast.action ? `error-settings-${toast.action}` : undefined} onClose={() => setToast(null)} />}</AnimatePresence>
 
       <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="rounded-xl border border-border bg-card overflow-hidden">
         <div className="px-5 py-4 border-b border-border bg-muted/30 flex items-center justify-between">
@@ -1405,7 +1427,7 @@ function SearchCrawlerTab() {
                 <div className="flex items-center gap-3">
                   <StatusBadge configured={engine.configured} />
                   <div>
-                    <span className="text-sm font-semibold">{engine.name}</span>
+                    <span id={`label-search-engine-${engine.id}`} className="text-sm font-semibold">{engine.name}</span>
                     <div className="text-[11px] text-muted-foreground">
                       provider: {searchProviderByEngine(engine.id)?.display_name || SEARCH_PROVIDER_MAP[engine.id] || engine.id}
                       {searchCredentialByEngine(engine.id) ? ` · credential: ${searchCredentialByEngine(engine.id)?.source} / search` : " · credential: missing"}
@@ -1425,14 +1447,14 @@ function SearchCrawlerTab() {
                         disabled={searchKeySaving}
                         label={t("a11y.delete_search_credential", { target: engine.name })}
                         className="text-destructive hover:bg-destructive/10 disabled:opacity-50"
-                        data-testid={`button-delete-search-${engine.id}`}
+                        data-testid={`button-delete-search-${engine.id}`} aria-describedby={toast?.type === "error" && toast.action === `delete-search-${engine.id}` ? `error-settings-delete-search-${engine.id}` : undefined}
                       >
                         <Trash2 className="w-3 h-3" />
                       </IconButton>
                     )}
                     <button
-                      onClick={() => setSearchKeyEdit({ engine: engine.id, key: "" })}
-                      className="text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors"
+                      onClick={() => { setSearchKeyEdit({ engine: engine.id, key: "" }); setSearchKeyError(null); }}
+                      className="min-h-[56px] text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors"
                       data-testid={`button-edit-search-${engine.id}`}
                     >
                       {engine.configured ? t("settings.update_key") : t("settings.add_key")}
@@ -1442,12 +1464,13 @@ function SearchCrawlerTab() {
               </div>
               {searchKeyEdit?.engine === engine.id && (
                 <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} className="mt-3 flex items-center gap-2">
-                  <input
+                  <input id={`input-search-key-${engine.id}`}
                     type="password"
                     value={searchKeyEdit.key}
                     onChange={(e) => setSearchKeyEdit({ ...searchKeyEdit, key: e.target.value })}
                     placeholder={searchProviderByEngine(engine.id)?.api_key_hint || "API Key"}
-                    className="flex-1 px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                    aria-labelledby={`label-search-engine-${engine.id}`}
+                    className="flex-1 min-h-[44px] px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
                     data-testid={`input-search-key-${engine.id}`}
                   />
                   <IconButton
@@ -1455,13 +1478,16 @@ function SearchCrawlerTab() {
                     disabled={!searchKeyEdit.key.trim() || searchKeySaving}
                     label={t("a11y.save_search_credential", { target: engine.name })}
                     className="bg-primary px-3 text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+                    aria-describedby={searchKeyError ? "error-search-credential" : undefined}
                     data-testid={`button-save-search-${engine.id}`}
                   >
                     {searchKeySaving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
                   </IconButton>
+                  {searchKeyError && <p id="error-search-credential" role="alert" className="text-xs text-destructive" data-testid="text-search-credential-error">{searchKeyError}</p>}
                   <button
                     onClick={() => setSearchKeyEdit(null)}
-                    className="text-xs px-3 py-2 rounded-lg border border-border hover:bg-muted transition-colors"
+                    className="min-h-[48px] text-xs px-3 py-2 rounded-lg border border-border hover:bg-muted transition-colors"
+                    data-testid={`button-cancel-search-${engine.id}`}
                   >
                     {t("settings.cancel")}
                   </button>
@@ -1483,8 +1509,8 @@ function SearchCrawlerTab() {
             <button
               onClick={saveDefaults}
               disabled={saving}
-              className="text-xs px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-1.5"
-              data-testid="button-save-defaults"
+              className="min-h-[56px] text-xs px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-1.5"
+              data-testid="button-save-defaults" aria-describedby={toast?.type === "error" && toast.action === "save-defaults" ? "error-settings-save-defaults" : undefined}
             >
               {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
               {t("settings.save")}
@@ -1494,35 +1520,35 @@ function SearchCrawlerTab() {
         <div className="p-5 space-y-4">
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
             <div>
-              <label className="text-xs text-muted-foreground mb-1 block">{t("settings.max_pages")}</label>
-              <input type="number" value={editDefaults.max_pages ?? ""} onChange={(e) => updateDefault("max_pages", Number(e.target.value))}
-                className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm" data-testid="input-max-pages" />
+              <label htmlFor="input-max-pages" className="text-xs text-muted-foreground mb-1 block">{t("settings.max_pages")}</label>
+              <input id="input-max-pages" type="number" value={editDefaults.max_pages ?? ""} onChange={(e) => updateDefault("max_pages", Number(e.target.value))}
+                className="w-full min-h-[48px] px-3 py-2 rounded-lg border border-border bg-background text-sm" data-testid="input-max-pages" />
             </div>
             <div>
-              <label className="text-xs text-muted-foreground mb-1 block">{t("settings.max_depth")}</label>
-              <input type="number" value={editDefaults.max_depth ?? ""} onChange={(e) => updateDefault("max_depth", Number(e.target.value))}
-                className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm" data-testid="input-max-depth" />
+              <label htmlFor="input-max-depth" className="text-xs text-muted-foreground mb-1 block">{t("settings.max_depth")}</label>
+              <input id="input-max-depth" type="number" value={editDefaults.max_depth ?? ""} onChange={(e) => updateDefault("max_depth", Number(e.target.value))}
+                className="w-full min-h-[48px] px-3 py-2 rounded-lg border border-border bg-background text-sm" data-testid="input-max-depth" />
             </div>
             <div>
-              <label className="text-xs text-muted-foreground mb-1 block">{t("settings.delay")}</label>
-              <input type="number" step="0.1" value={editDefaults.delay_seconds ?? ""} onChange={(e) => updateDefault("delay_seconds", Number(e.target.value))}
-                className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm" data-testid="input-delay" />
+              <label htmlFor="input-delay" className="text-xs text-muted-foreground mb-1 block">{t("settings.delay")}</label>
+              <input id="input-delay" type="number" step="0.1" value={editDefaults.delay_seconds ?? ""} onChange={(e) => updateDefault("delay_seconds", Number(e.target.value))}
+                className="w-full min-h-[48px] px-3 py-2 rounded-lg border border-border bg-background text-sm" data-testid="input-delay" />
             </div>
           </div>
           <div>
-            <label className="text-xs text-muted-foreground mb-1 block">{t("settings.file_extensions")}</label>
-            <input type="text" value={(editDefaults.file_exts || []).join(", ")}
+            <label htmlFor="input-extensions" className="text-xs text-muted-foreground mb-1 block">{t("settings.file_extensions")}</label>
+            <input id="input-extensions" type="text" value={(editDefaults.file_exts || []).join(", ")}
               onChange={(e) => updateDefault("file_exts", e.target.value.split(",").map((s) => s.trim()).filter(Boolean))}
-              className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm" data-testid="input-extensions"
+              className="w-full min-h-[48px] px-3 py-2 rounded-lg border border-border bg-background text-sm" data-testid="input-extensions"
               placeholder=".pdf, .doc, .docx" />
           </div>
           <div>
-            <label className="text-xs text-muted-foreground mb-1 block">{t("settings.crawler_keywords_label")}</label>
-            <input type="text" value={(editDefaults.keywords || []).join(", ")}
+            <label htmlFor="input-keywords" className="text-xs text-muted-foreground mb-1 block">{t("settings.crawler_keywords_label")}</label>
+            <input id="input-keywords" aria-describedby="hint-crawler-keywords" type="text" value={(editDefaults.keywords || []).join(", ")}
               onChange={(e) => updateDefault("keywords", e.target.value.split(",").map((s) => s.trim()).filter(Boolean))}
-              className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm" data-testid="input-keywords"
+              className="w-full min-h-[48px] px-3 py-2 rounded-lg border border-border bg-background text-sm" data-testid="input-keywords"
               placeholder="artificial intelligence, machine learning, ..." />
-            <p className="text-[11px] text-muted-foreground mt-1">{t("settings.crawler_keywords_desc")}</p>
+            <p id="hint-crawler-keywords" className="text-[11px] text-muted-foreground mt-1">{t("settings.crawler_keywords_desc")}</p>
           </div>
           {settings?.paths && Object.keys(settings.paths).length > 0 && (
             <div className="pt-3 border-t border-border">
@@ -1549,7 +1575,7 @@ function CategoriesTab() {
   const [aiFilterKw, setAiFilterKw] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
+  const [toast, setToast] = useState<{ message: string; type: "success" | "error"; action?: "save" } | null>(null);
   const [dirty, setDirty] = useState(false);
   const [newCatName, setNewCatName] = useState("");
   const [expandedCat, setExpandedCat] = useState<string | null>(null);
@@ -1605,7 +1631,7 @@ function CategoriesTab() {
       setToast({ message: t("settings.categories_saved"), type: "success" });
       setDirty(false);
     } catch (error) {
-      setToast({ message: formatSettingsMutationError(error, t, "settings.categories_save_error"), type: "error" });
+      setToast({ message: formatSettingsMutationError(error, t, "settings.categories_save_error"), type: "error", action: "save" });
     } finally {
       setSaving(false);
     }
@@ -1619,7 +1645,7 @@ function CategoriesTab() {
 
   return (
     <div className="space-y-8">
-      <AnimatePresence>{toast && <Toast {...toast} onClose={() => setToast(null)} />}</AnimatePresence>
+      <AnimatePresence>{toast && <Toast message={toast.message} type={toast.type} id={toast.type === "error" && toast.action === "save" ? "error-settings-categories-save" : undefined} onClose={() => setToast(null)} />}</AnimatePresence>
 
       <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="rounded-xl border border-border bg-card overflow-hidden">
         <div className="px-5 py-4 border-b border-border bg-muted/30 flex items-center justify-between">
@@ -1630,22 +1656,24 @@ function CategoriesTab() {
           </div>
           {dirty && (
             <button onClick={saveAll} disabled={saving}
-              className="text-xs px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-1.5"
-              data-testid="button-save-categories">
+              className="min-h-[48px] text-xs px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-1.5"
+              data-testid="button-save-categories" aria-describedby={toast?.type === "error" && toast.action === "save" ? "error-settings-categories-save" : undefined}>
               {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
               {t("settings.save")}
             </button>
           )}
         </div>
         <div className="p-5 space-y-3">
-          <div className="flex items-center gap-2">
-            <input type="text" value={newCatName} onChange={(e) => setNewCatName(e.target.value)}
+          <div className="flex items-end gap-2">
+            <div className="flex-1">
+              <label htmlFor="input-new-category" className="mb-1 block text-xs font-medium text-muted-foreground">{t("settings.new_category_ph")}</label><input id="input-new-category" type="text" value={newCatName} onChange={(e) => setNewCatName(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && addCategory()}
               placeholder={t("settings.new_category_ph")}
-              className="flex-1 px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+              className="min-h-[48px] w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
               data-testid="input-new-category" />
+            </div>
             <button onClick={addCategory} disabled={!newCatName.trim()}
-              className="px-3 py-2 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-1.5 text-xs"
+              className="min-h-[48px] px-3 py-2 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-1.5 text-xs"
               data-testid="button-add-category">
               <Plus className="w-3 h-3" />{t("settings.add")}
             </button>
@@ -1663,7 +1691,7 @@ function CategoriesTab() {
               return (
                 <div key={name} className="py-3" data-testid={`cat-row-${name}`}>
                   <div className="flex items-center justify-between">
-                    <button onClick={() => setExpandedCat(isExpanded ? null : name)} className="flex items-center gap-2 text-sm font-medium hover:text-primary transition-colors">
+                    <button onClick={() => setExpandedCat(isExpanded ? null : name)} className="flex min-h-[44px] items-center gap-2 text-sm font-medium hover:text-primary transition-colors" data-testid={`button-toggle-category-${name}`}>
                       {isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
                       {name}
                       <span className="text-xs text-muted-foreground font-normal">({kws.length} {t("settings.keywords").toLowerCase()})</span>
@@ -1674,7 +1702,7 @@ function CategoriesTab() {
                   </div>
                   {isExpanded && (
                     <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} className="mt-2">
-                      <textarea
+                      <label htmlFor={`input-cat-keywords-${name}`} className="mb-1 block text-xs font-medium text-muted-foreground">{name} · {t("settings.keywords")}</label><textarea id={`input-cat-keywords-${name}`}
                         value={kws.join(", ")}
                         onChange={(e) => updateCatKeywords(name, e.target.value)}
                         rows={3}
@@ -1695,10 +1723,10 @@ function CategoriesTab() {
         className="rounded-xl border border-border bg-card overflow-hidden">
         <div className="px-5 py-4 border-b border-border bg-muted/30 flex items-center gap-2">
           <Tag className="w-4 h-4 text-amber-500" />
-          <h3 className="text-sm font-semibold">{t("settings.ai_filter_kw")}</h3>
+          <h3 id="heading-ai-filter-keywords" className="text-sm font-semibold">{t("settings.ai_filter_kw")}</h3>
         </div>
         <div className="p-5">
-          <textarea
+          <textarea id="input-ai-filter-keywords" aria-labelledby="heading-ai-filter-keywords" aria-describedby="hint-ai-filter-keywords hint-ai-filter-crawler"
             value={aiFilterKw.join(", ")}
             onChange={(e) => { setAiFilterKw(e.target.value.split(",").map((s) => s.trim()).filter(Boolean)); setDirty(true); }}
             rows={3}
@@ -1706,8 +1734,8 @@ function CategoriesTab() {
             placeholder={t("settings.ai_filter_kw_ph")}
             data-testid="input-ai-filter-keywords"
           />
-          <p className="text-[11px] text-muted-foreground mt-1.5">{t("settings.ai_filter_kw_desc")}</p>
-          <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-1" data-testid="text-ai-filter-kw-hint">{t("settings.ai_filter_kw_hint")}</p>
+          <p id="hint-ai-filter-keywords" className="text-[11px] text-muted-foreground mt-1.5">{t("settings.ai_filter_kw_desc")}</p>
+          <p id="hint-ai-filter-crawler" className="text-[11px] text-amber-600 dark:text-amber-400 mt-1" data-testid="text-ai-filter-kw-hint">{t("settings.ai_filter_kw_hint")}</p>
         </div>
       </motion.div>
     </div>
@@ -1719,7 +1747,7 @@ function SystemTab() {
   const [settings, setSettings] = useState<BackendSettings | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
+  const [toast, setToast] = useState<{ message: string; type: "success" | "error"; action?: "save" } | null>(null);
   const [featureFlags, setFeatureFlags] = useState<Record<string, boolean>>({});
   const [featureText, setFeatureText] = useState<Record<string, string>>({});
   const [dirty, setDirty] = useState(false);
@@ -1802,7 +1830,7 @@ function SystemTab() {
       hasInit.current = false;
       await fetchData();
     } catch (error) {
-      setToast({ message: formatSettingsMutationError(error, t, "settings.system_save_error"), type: "error" });
+      setToast({ message: formatSettingsMutationError(error, t, "settings.system_save_error"), type: "error", action: "save" });
     } finally {
       setSaving(false);
     }
@@ -1814,7 +1842,7 @@ function SystemTab() {
 
   return (
     <div className="space-y-8">
-      <AnimatePresence>{toast && <Toast {...toast} onClose={() => setToast(null)} />}</AnimatePresence>
+      <AnimatePresence>{toast && <Toast message={toast.message} type={toast.type} id={toast.type === "error" && toast.action === "save" ? "error-settings-system-save" : undefined} onClose={() => setToast(null)} />}</AnimatePresence>
 
       <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="rounded-xl border border-border bg-card overflow-hidden">
         <div className="px-5 py-4 border-b border-border bg-muted/30 flex items-center justify-between">
@@ -1824,8 +1852,8 @@ function SystemTab() {
           </div>
           {dirty && (
             <button onClick={saveSystemSettings} disabled={saving}
-              className="text-xs px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-1.5"
-              data-testid="button-save-system">
+              className="min-h-[48px] text-xs px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-1.5"
+              data-testid="button-save-system" aria-describedby={toast?.type === "error" && toast.action === "save" ? "error-settings-system-save" : undefined}>
               {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
               {t("settings.save")}
             </button>
@@ -1862,14 +1890,14 @@ function SystemTab() {
                     <button
                       onClick={() => toggleFeature(key)}
                       className={cn(
-                        "relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                        "relative inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-full transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                         val ? "bg-emerald-500" : "bg-muted border border-border"
                       )}
                       data-testid={`toggle-system-flag-${key}`}
                       aria-label={label}
                     >
                       <span className={cn(
-                        "inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform shadow-sm",
+                        "inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform shadow-sm",
                         val ? "translate-x-4" : "translate-x-1"
                       )} />
                     </button>
@@ -1883,7 +1911,7 @@ function SystemTab() {
               const source = featureSources?.[key] || "yaml";
               const locked = source === "env";
               return (
-                <label key={key} className={cn("space-y-1.5", multiline && "lg:col-span-2")}>
+                <label key={key} htmlFor={`input-${key.replace(/_/g, "-")}`} className={cn("space-y-1.5", multiline && "lg:col-span-2")}>
                   <div className="flex items-center gap-2">
                     <span className="text-xs font-medium">{label}</span>
                     <span className="text-[10px] text-muted-foreground bg-primary/10 text-primary px-1.5 py-0.5 rounded">
@@ -1891,7 +1919,7 @@ function SystemTab() {
                     </span>
                   </div>
                   {multiline ? (
-                    <textarea
+                    <textarea id={`input-${key.replace(/_/g, "-")}`}
                       value={featureText[key] || ""}
                       onChange={(event) => updateFeatureText(key, event.target.value)}
                       disabled={locked}
@@ -1901,11 +1929,11 @@ function SystemTab() {
                       data-testid={`input-${key.replace(/_/g, "-")}`}
                     />
                   ) : (
-                    <input
+                    <input id={`input-${key.replace(/_/g, "-")}`}
                       value={featureText[key] || ""}
                       onChange={(event) => updateFeatureText(key, event.target.value)}
                       disabled={locked}
-                      className="w-full px-3 py-2 rounded-lg border border-border bg-background text-xs font-mono focus:outline-none focus:ring-2 focus:ring-primary/30 disabled:opacity-60"
+                      className="w-full min-h-[48px] px-3 py-2 rounded-lg border border-border bg-background text-xs font-mono focus:outline-none focus:ring-2 focus:ring-primary/30 disabled:opacity-60"
                       placeholder={placeholder}
                       data-testid={`input-${key.replace(/_/g, "-")}`}
                     />
@@ -1924,7 +1952,7 @@ function ApiTokensTab() {
   const { t } = useTranslation();
   const [tokens, setTokens] = useState<ApiToken[]>([]);
   const [loading, setLoading] = useState(true);
-  const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
+  const [toast, setToast] = useState<{ message: string; type: "success" | "error"; action?: string } | null>(null);
 
   const [showCreate, setShowCreate] = useState(false);
   const [newSubject, setNewSubject] = useState("");
@@ -1960,7 +1988,7 @@ function ApiTokensTab() {
         await fetchTokens();
       }
     } catch (error) {
-      setToast({ message: formatSettingsMutationError(error, t, "settings.token_create_error"), type: "error" });
+      setToast({ message: formatSettingsMutationError(error, t, "settings.token_create_error"), type: "error", action: "create-token" });
     } finally {
       setCreating(false);
     }
@@ -1974,7 +2002,7 @@ function ApiTokensTab() {
       setToast({ message: t("settings.token_revoked"), type: "success" });
       await fetchTokens();
     } catch (error) {
-      setToast({ message: formatSettingsMutationError(error, t, "settings.token_revoke_error"), type: "error" });
+      setToast({ message: formatSettingsMutationError(error, t, "settings.token_revoke_error"), type: "error", action: `revoke-token-${tokenId}` });
     }
   }
 
@@ -1991,7 +2019,7 @@ function ApiTokensTab() {
 
   return (
     <div className="space-y-6">
-      <AnimatePresence>{toast && <Toast {...toast} onClose={() => setToast(null)} />}</AnimatePresence>
+      <AnimatePresence>{toast && <Toast message={toast.message} type={toast.type} id={toast.type === "error" && toast.action ? `error-settings-${toast.action}` : undefined} onClose={() => setToast(null)} />}</AnimatePresence>
 
       {createdToken && (
         <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }}
@@ -2016,7 +2044,7 @@ function ApiTokensTab() {
             <h3 className="text-sm font-semibold">{t("settings.api_tokens")}</h3>
           </div>
           <button onClick={() => setShowCreate(!showCreate)}
-            className="text-xs px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors flex items-center gap-1.5"
+            className="min-h-[48px] text-xs px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors flex items-center gap-1.5"
             data-testid="button-create-token">
             <Plus className="w-3 h-3" />{t("settings.create_token")}
           </button>
@@ -2025,26 +2053,26 @@ function ApiTokensTab() {
         {showCreate && (
           <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }}
             className="px-5 py-4 border-b border-border bg-muted/10">
-            <div className="grid grid-cols-[1fr_120px_auto] gap-3 items-end">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_120px_auto] sm:items-end">
               <div>
-                <label className="text-xs text-muted-foreground mb-1 block">{t("settings.token_subject")}</label>
-                <input type="text" value={newSubject} onChange={(e) => setNewSubject(e.target.value)}
+                <label htmlFor="input-token-subject" className="text-xs text-muted-foreground mb-1 block">{t("settings.token_subject")}</label>
+                <input id="input-token-subject" type="text" value={newSubject} onChange={(e) => setNewSubject(e.target.value)}
                   placeholder={t("settings.token_subject_ph")}
-                  className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                  className="w-full min-h-[48px] px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
                   data-testid="input-token-subject" />
               </div>
               <div>
-                <label className="text-xs text-muted-foreground mb-1 block">{t("settings.token_group")}</label>
-                <select value={newGroup} onChange={(e) => setNewGroup(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm" data-testid="select-token-group">
+                <label htmlFor="select-token-group" className="text-xs text-muted-foreground mb-1 block">{t("settings.token_group")}</label>
+                <select id="select-token-group" value={newGroup} onChange={(e) => setNewGroup(e.target.value)}
+                  className="w-full min-h-[48px] px-3 py-2 rounded-lg border border-border bg-background text-sm" data-testid="select-token-group">
                   <option value="reader">Reader</option>
                   <option value="operator">Operator</option>
                   <option value="admin">Admin</option>
                 </select>
               </div>
               <button onClick={createToken} disabled={!newSubject.trim() || creating}
-                className="px-3 py-2 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 text-xs flex items-center gap-1.5"
-                data-testid="button-submit-token">
+                className="min-h-[48px] px-3 py-2 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 text-xs flex items-center justify-center gap-1.5"
+                data-testid="button-submit-token" aria-describedby={toast?.type === "error" && toast.action === "create-token" ? "error-settings-create-token" : undefined}>
                 {creating ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
                 {t("settings.create")}
               </button>
@@ -2073,7 +2101,7 @@ function ApiTokensTab() {
                 </div>
                 <IconButton onClick={() => revokeToken(token.id)} label={t("a11y.revoke_token", { target: token.subject })}
                   className="gap-1 px-2.5 text-xs text-destructive hover:bg-destructive/10"
-                  data-testid={`button-revoke-token-${token.id}`}>
+                  data-testid={`button-revoke-token-${token.id}`} aria-describedby={toast?.type === "error" && toast.action === `revoke-token-${token.id}` ? `error-settings-revoke-token-${token.id}` : undefined}>
                   <Trash2 className="w-3 h-3" />{t("settings.revoke")}
                 </IconButton>
               </div>
@@ -2112,7 +2140,7 @@ export default function SettingsPage() {
           </div>
           <button
             onClick={handleRefresh}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-border hover:bg-muted text-sm text-muted-foreground hover:text-foreground transition-colors"
+            className="flex min-h-[48px] min-w-[48px] items-center gap-1.5 px-3 py-2 rounded-lg border border-border hover:bg-muted text-sm text-muted-foreground hover:text-foreground transition-colors"
             data-testid="button-refresh-settings"
             title={t("settings.refresh")}
           >

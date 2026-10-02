@@ -106,7 +106,7 @@ export function ScheduleFromTaskButton({ buildTask, disabled = false }: Schedule
         type="button"
         onClick={openForm}
         disabled={disabled || !canManageSchedule}
-        className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg border border-border bg-background text-sm font-medium hover:bg-muted transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        className="w-full min-h-[48px] flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg border border-border bg-background text-sm font-medium hover:bg-muted transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         data-testid="button-add-to-schedule"
       >
         <CalendarPlus className="w-4 h-4" />
@@ -121,14 +121,14 @@ export function ScheduleFromTaskButton({ buildTask, disabled = false }: Schedule
       )}
 
       {errorMsg && (
-        <div className="px-3 py-2 rounded-lg bg-destructive/10 text-destructive text-xs flex items-center gap-2" data-testid="text-add-schedule-error">
+        <div id="error-add-schedule" className="px-3 py-2 rounded-lg bg-destructive/10 text-destructive text-xs flex items-center gap-2" data-testid="text-add-schedule-error">
           <AlertCircle className="w-4 h-4 shrink-0" />
           <span className="flex-1">{errorMsg}</span>
           <button
             type="button"
             onClick={() => setErrorMsg(null)}
             aria-label={t("tasks.schedule.dismiss_error")}
-            className="shrink-0"
+            className="min-h-[48px] min-w-[48px] shrink-0"
           >
             <X className="w-3.5 h-3.5" />
           </button>
@@ -155,16 +155,16 @@ export function ScheduleFromTaskButton({ buildTask, disabled = false }: Schedule
                 setExpanded(false);
                 setErrorMsg(null);
               }}
-              className="text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors"
+              className="min-h-[48px] text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors"
               data-testid="button-cancel-add-schedule"
             >
               {t("tasks.sched.cancel")}
             </button>
             <button
               type="button"
-              onClick={saveSchedule}
+              onClick={saveSchedule} aria-describedby={errorMsg ? "error-add-schedule" : undefined}
               disabled={saving || !taskName.trim() || !isSchedulePresetComplete(schedulePreset)}
-              className="text-xs px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-1.5"
+              className="min-h-[48px] text-xs px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-1.5"
               data-testid="button-confirm-add-schedule"
             >
               {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <CalendarPlus className="w-3 h-3" />}

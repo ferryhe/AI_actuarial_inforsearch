@@ -15,11 +15,15 @@ export function RagIndexForm({
   onSubmit,
   submitting,
   settingsMode = false,
+  errorDescribedBy,
+  runTestId,
 }: {
   onSubmit: (d: Record<string, unknown>) => void;
   submitting: boolean;
   settingsMode?: boolean;
   initialTask?: Record<string, unknown>;
+  errorDescribedBy?: string;
+  runTestId?: string;
 }) {
   const { t } = useTranslation();
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBaseOption[]>([]);
@@ -87,10 +91,11 @@ export function RagIndexForm({
           testId="checkbox-rag-force-reindex"
         />
       </div>}
-      <RunButton
+      <RunButton testId={runTestId}
         label={settingsMode ? t("common.save") : t("tasks.form.run")}
         submitting={submitting}
         disabled={submitting || (!settingsMode && (!selectedKbId || loadingKbs))}
+        aria-describedby={errorDescribedBy}
         onClick={() => {
           if (settingsMode) onSubmit({});
           else {

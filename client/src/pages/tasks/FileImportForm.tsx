@@ -37,7 +37,7 @@ function appendFiles(formData: FormData, fileList: FileList | null, allowedExts:
   return count;
 }
 
-export function FileImportForm({ onSubmit, submitting }: { onSubmit: (d: Record<string, unknown>) => void; submitting: boolean }) {
+export function FileImportForm({ onSubmit, submitting, errorDescribedBy }: { onSubmit: (d: Record<string, unknown>) => void; submitting: boolean; errorDescribedBy?: string }) {
   const { t } = useTranslation();
   const [extensions, setExtensions] = useState<string[]>([".pdf", ".docx", ".pptx"]);
   const [selectedLabel, setSelectedLabel] = useState("");
@@ -81,21 +81,24 @@ export function FileImportForm({ onSubmit, submitting }: { onSubmit: (d: Record<
   return (
     <div className="space-y-4">
       <p className="text-sm text-muted-foreground">{t("tasks.form.file_upload_desc")}</p>
-      <FormField label={t("tasks.form.local_files")} hint={t("tasks.form.local_files_hint")}>
+      <div className="space-y-1.5" aria-labelledby="label-local-files">
+        <p id="label-local-files" className="text-xs font-medium text-muted-foreground">{t("tasks.form.local_files")}</p>
         <div className="grid gap-3 sm:grid-cols-2">
-          <label className="flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-dashed border-border px-4 py-6 text-sm text-muted-foreground transition-colors hover:border-primary hover:text-foreground">
+          <label htmlFor="input-local-files" className="flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-dashed border-border px-4 py-6 text-sm text-muted-foreground transition-colors hover:border-primary hover:text-foreground focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2">
             <Upload className="h-4 w-4" />
             <span>{t("tasks.form.choose_files")}</span>
             <input
               ref={filesInputRef}
+              id="input-local-files"
               type="file"
               multiple
-              className="hidden"
+              className="sr-only"
+              aria-describedby="hint-local-files"
               data-testid="input-local-files"
               onChange={updateSelectedLabel}
             />
           </label>
-          <label className="flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-dashed border-border px-4 py-6 text-sm text-muted-foreground transition-colors hover:border-primary hover:text-foreground">
+          <label htmlFor="input-local-directory" className="flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-dashed border-border px-4 py-6 text-sm text-muted-foreground transition-colors hover:border-primary hover:text-foreground focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2">
             <FolderUp className="h-4 w-4" />
             <span>{t("tasks.form.choose_folder")}</span>
             <input
@@ -103,24 +106,28 @@ export function FileImportForm({ onSubmit, submitting }: { onSubmit: (d: Record<
                 directoryInputRef.current = node;
                 if (node) (node as FileInputWithDirectory).webkitdirectory = true;
               }}
+              id="input-local-directory"
               type="file"
               multiple
-              className="hidden"
+              className="sr-only"
+              aria-describedby="hint-local-files"
               data-testid="input-local-directory"
               onChange={updateSelectedLabel}
             />
           </label>
         </div>
+        <p id="hint-local-files" className="text-[11px] text-muted-foreground/70">{t("tasks.form.local_files_hint")}</p>
         {selectedLabel && <p className="mt-2 text-xs text-muted-foreground" data-testid="text-selected-files">{selectedLabel}</p>}
-      </FormField>
+      </div>
       <FormField label={t("tasks.form.file_extensions")} hint={t("tasks.form.file_exts_hint")}>
         <TagSelect value={extensions} onChange={setExtensions} presets={PRESET_FILE_EXTENSIONS} placeholder="Add extension..." testId="input-extensions" />
       </FormField>
-      {uploadError && <p className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive" data-testid="text-file-upload-error">{uploadError}</p>}
+      {uploadError && <p id="error-file-import" role="alert" className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive" data-testid="text-file-upload-error">{uploadError}</p>}
       <RunButton
         label={uploading ? t("tasks.form.uploading") : t("tasks.form.run")}
         submitting={submitting || uploading}
         disabled={submitting || uploading}
+      aria-describedby={uploadError ? "error-file-import" : errorDescribedBy}
         onClick={runImport}
       />
       <ScheduleFromTaskButton buildTask={buildTask} disabled />

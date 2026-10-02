@@ -108,6 +108,7 @@ export default function Tasks() {
   const [taskView, setTaskView] = useState<"run" | "scheduled" | "pipeline">("run");
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [submitErrorForm, setSubmitErrorForm] = useState<string | null>(null);
   const [submitSuccess, setSubmitSuccess] = useState<string | null>(null);
   const [taskNotice, setTaskNotice] = useState<string | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -252,15 +253,15 @@ export default function Tasks() {
 
   const handleSubmitTask = async (data: Record<string, unknown>) => {
     if (!canRunTasks) {
-      setSubmitError(t("tasks.run_permission_required"));
+      setSubmitError(t("tasks.run_permission_required")); setSubmitErrorForm(activeForm);
       return;
     }
     setSubmitting(true);
-    setSubmitError(null);
+    setSubmitError(null); setSubmitErrorForm(null);
     setSubmitSuccess(null);
     try {
       const res = await apiPost<{ success?: boolean; job_id?: string; error?: string }>("/api/collections/run", data);
-      if (res.error) { setSubmitError(res.error); return; }
+      if (res.error) { setSubmitError(res.error); setSubmitErrorForm(activeForm); return; }
       if (data.type === "chunk_generation" && res.job_id) {
         const chunkTask = await waitForTaskResult(res.job_id);
         const chunk_set_ids = (chunkTask.result?.chunk_sets || [])
@@ -288,35 +289,35 @@ export default function Tasks() {
       setTimeout(() => { setActiveForm(null); setSubmitSuccess(null); }, 2000);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : t("tasks.form.start_error");
-      setSubmitError(msg);
+      setSubmitError(msg); setSubmitErrorForm(activeForm);
     } finally { setSubmitting(false); }
   };
 
   const handleSubmitRagIndex = async (data: Record<string, unknown>) => {
     if (!canRunTasks) {
-      setSubmitError(t("tasks.run_permission_required"));
+      setSubmitError(t("tasks.run_permission_required")); setSubmitErrorForm(activeForm);
       return;
     }
     const kbId = String(data.kb_id || "").trim();
     if (!kbId) {
-      setSubmitError(t("tasks.form.start_error"));
+      setSubmitError(t("tasks.form.start_error")); setSubmitErrorForm(activeForm);
       return;
     }
     setSubmitting(true);
-    setSubmitError(null);
+    setSubmitError(null); setSubmitErrorForm(null);
     setSubmitSuccess(null);
     try {
       const res = await apiPost<{ job_id?: string; error?: string }>(
         `/api/rag/knowledge-bases/${encodeURIComponent(kbId)}/index`,
         { force_rebuild: Boolean(data.force_rebuild) },
       );
-      if (res.error) { setSubmitError(res.error); return; }
+      if (res.error) { setSubmitError(res.error); setSubmitErrorForm(activeForm); return; }
       setSubmitSuccess(res.job_id ? `${t("tasks.form.started")} (${res.job_id})` : t("tasks.form.started"));
       await fetchTasks();
       setTimeout(() => { setActiveForm(null); setSubmitSuccess(null); }, 2000);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : t("tasks.form.start_error");
-      setSubmitError(msg);
+      setSubmitError(msg); setSubmitErrorForm(activeForm);
     } finally { setSubmitting(false); }
   };
 
@@ -342,17 +343,17 @@ export default function Tasks() {
 
   function renderForm() {
     switch (activeForm) {
-      case "site_config": return <SiteConfigForm sites={sites} onSubmit={handleSubmitTask} submitting={submitting} onSitesChanged={fetchSites} />;
-      case "web_crawl": return <WebCrawlForm onSubmit={handleSubmitTask} submitting={submitting} />;
-      case "adhoc_url": return <AdhocUrlForm onSubmit={handleSubmitTask} submitting={submitting} />;
-      case "file_import": return <FileImportForm onSubmit={handleSubmitTask} submitting={submitting} />;
-      case "web_search": return <WebSearchForm onSubmit={handleSubmitTask} submitting={submitting} />;
+      case "site_config": return <SiteConfigForm sites={sites} onSubmit={handleSubmitTask} submitting={submitting} onSitesChanged={fetchSites} errorDescribedBy={submitError && submitErrorForm === activeForm ? "error-task-submit" : undefined} />;
+      case "web_crawl": return <WebCrawlForm onSubmit={handleSubmitTask} submitting={submitting} errorDescribedBy={submitError && submitErrorForm === activeForm ? "error-task-submit" : undefined} />;
+      case "adhoc_url": return <AdhocUrlForm onSubmit={handleSubmitTask} submitting={submitting} errorDescribedBy={submitErrorForm === activeForm ? "error-task-submit" : undefined} />;
+      case "file_import": return <FileImportForm onSubmit={handleSubmitTask} submitting={submitting} errorDescribedBy={submitErrorForm === activeForm ? "error-task-submit" : undefined} />;
+      case "web_search": return <WebSearchForm onSubmit={handleSubmitTask} submitting={submitting} errorDescribedBy={submitErrorForm === activeForm ? "error-task-submit" : undefined} />;
       case "web_listening": return <WebListeningForm onMaterialized={async () => { await fetchSites(); setTaskView("scheduled"); }} />;
-      case "catalog": return <CatalogForm onSubmit={handleSubmitTask} submitting={submitting} />;
-      case "markdown": return <MarkdownForm onSubmit={handleSubmitTask} submitting={submitting} />;
-      case "chunk": return <ChunkForm onSubmit={handleSubmitTask} submitting={submitting} />;
-      case "rag_index": return <RagIndexForm onSubmit={handleSubmitRagIndex} submitting={submitting} />;
-      case "recategory": return <RecategoryForm onSubmit={handleSubmitTask} submitting={submitting} />;
+      case "catalog": return <CatalogForm onSubmit={handleSubmitTask} submitting={submitting} errorDescribedBy={submitErrorForm === activeForm ? "error-task-submit" : undefined} />;
+      case "markdown": return <MarkdownForm onSubmit={handleSubmitTask} submitting={submitting} errorDescribedBy={submitErrorForm === activeForm ? "error-task-submit" : undefined} />;
+      case "chunk": return <ChunkForm onSubmit={handleSubmitTask} submitting={submitting} errorDescribedBy={submitErrorForm === activeForm ? "error-task-submit" : undefined} />;
+      case "rag_index": return <RagIndexForm onSubmit={handleSubmitRagIndex} submitting={submitting} errorDescribedBy={submitErrorForm === activeForm ? "error-task-submit" : undefined} />;
+      case "recategory": return <RecategoryForm onSubmit={handleSubmitTask} submitting={submitting} errorDescribedBy={submitErrorForm === activeForm ? "error-task-submit" : undefined} />;
       default: return null;
     }
   }
@@ -377,7 +378,7 @@ export default function Tasks() {
           type="button"
           onClick={() => setTaskView("run")}
           className={cn(
-            "flex items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+            "flex min-h-[44px] items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
             taskView === "run" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
           )}
           data-testid="tab-run-tasks"
@@ -389,7 +390,7 @@ export default function Tasks() {
           type="button"
           onClick={() => setTaskView("pipeline")}
           className={cn(
-            "flex items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+            "flex min-h-[44px] items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
             taskView === "pipeline" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
           )}
           data-testid="tab-pipeline-baton"
@@ -401,7 +402,7 @@ export default function Tasks() {
           type="button"
           onClick={() => setTaskView("scheduled")}
           className={cn(
-            "flex items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+            "flex min-h-[44px] items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
             taskView === "scheduled" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
           )}
           data-testid="tab-scheduled-tasks"
@@ -432,7 +433,7 @@ export default function Tasks() {
             <motion.div key="form" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}
               transition={{ duration: 0.2 }} className="rounded-xl border border-border bg-card overflow-hidden">
               <div className="flex items-center gap-3 px-5 py-4 border-b border-border">
-                <IconButton onClick={() => { setActiveForm(null); setSubmitError(null); setSubmitSuccess(null); }}
+                <IconButton onClick={() => { setActiveForm(null); setSubmitError(null); setSubmitErrorForm(null); setSubmitSuccess(null); }}
                   label={t("a11y.back_tasks")} className="hover:bg-muted" data-testid="button-back-tasks">
                   <ArrowLeft className="w-4 h-4" /></IconButton>
                 {activeTaskType && (
@@ -443,9 +444,9 @@ export default function Tasks() {
               </div>
               <div className="p-5 space-y-0">
                 {submitError && (
-                  <div className="mb-4 px-3 py-2 rounded-lg bg-destructive/10 text-destructive text-xs flex items-center gap-2" data-testid="text-submit-error">
+                  <div id="error-task-submit" role="alert" className="mb-4 px-3 py-2 rounded-lg bg-destructive/10 text-destructive text-xs flex items-center gap-2" data-testid="text-submit-error">
                     <AlertCircle className="w-4 h-4 shrink-0" /><span className="flex-1">{submitError}</span>
-                    <IconButton onClick={() => setSubmitError(null)} label={t("a11y.dismiss_error")} className="shrink-0"><X className="w-3.5 h-3.5" /></IconButton>
+                    <IconButton onClick={() => { setSubmitError(null); setSubmitErrorForm(null); }} label={t("a11y.dismiss_error")} className="shrink-0"><X className="w-3.5 h-3.5" /></IconButton>
                   </div>
                 )}
                 {submitSuccess && (
@@ -509,7 +510,7 @@ export default function Tasks() {
       <div>
         <div className="flex items-center justify-between mb-3">
           <button onClick={() => { if (!historyExpanded) fetchHistory(); setHistoryExpanded(!historyExpanded); }}
-            className="flex items-center gap-2 text-left"
+            className="flex min-h-[44px] items-center gap-2 text-left"
             data-testid="button-toggle-history">
             <History className="w-5 h-5 text-muted-foreground" />
             <h2 className="text-lg font-semibold">{t("tasks.history")}</h2>
@@ -628,7 +629,7 @@ export default function Tasks() {
                     <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{t("tasks.log_app_log") || "Application Log"}</h4>
                     <button
                       onClick={refreshLogModal}
-                      className="text-[10px] px-2 py-0.5 rounded border border-border hover:bg-muted transition-colors text-muted-foreground"
+                      className="min-h-[48px] text-[10px] px-2 py-0.5 rounded border border-border hover:bg-muted transition-colors text-muted-foreground"
                     >
                       {t("common.refresh") || "Refresh"}
                     </button>

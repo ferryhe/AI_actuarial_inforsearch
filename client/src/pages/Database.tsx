@@ -617,7 +617,7 @@ export default function DatabasePage() {
               <button
                 onClick={exportCsv}
                 disabled={requestState.includeDeleted}
-                className="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-xs font-medium text-foreground hover:bg-muted transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+                className="inline-flex min-h-[48px] items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-xs font-medium text-foreground hover:bg-muted transition-colors disabled:cursor-not-allowed disabled:opacity-50"
                 data-testid="button-export-csv"
               >
                 <FileSpreadsheet className="w-3.5 h-3.5" />
@@ -630,13 +630,13 @@ export default function DatabasePage() {
             <>
               <button
                 onClick={exportFullCsv}
-                className="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-xs font-medium text-foreground hover:bg-muted transition-colors"
+                className="inline-flex min-h-[48px] items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-xs font-medium text-foreground hover:bg-muted transition-colors"
                 data-testid="button-export-full-csv"
               >
                 <FileSpreadsheet className="w-3.5 h-3.5" />
                 {t("db.export_full_csv")}
               </button>
-              <label className="flex items-center gap-1 text-xs text-muted-foreground">
+              <label className="flex min-h-[48px] items-center gap-1 text-xs text-muted-foreground">
                 <input
                   type="checkbox"
                   checked={includeInternalExportFields}
@@ -667,7 +667,7 @@ export default function DatabasePage() {
           <button
             type="button"
             onClick={toggleSelectAllVisible}
-            className="inline-flex items-center gap-2 text-sm font-medium text-foreground hover:text-primary transition-colors"
+            className="inline-flex min-h-[48px] items-center gap-2 text-sm font-medium text-foreground hover:text-primary transition-colors"
             data-testid="button-select-all-visible"
           >
             {allVisibleSelected ? <CheckSquare className="w-4 h-4" /> : <Square className="w-4 h-4" />}
@@ -681,7 +681,7 @@ export default function DatabasePage() {
               type="button"
               onClick={() => setShowBulkDeleteModal(true)}
               disabled={selectedUrls.length === 0 || bulkDeleting}
-              className="inline-flex items-center gap-2 rounded-lg bg-destructive px-3 py-2 text-sm font-medium text-destructive-foreground hover:bg-destructive/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              className="inline-flex min-h-[48px] items-center gap-2 rounded-lg bg-destructive px-3 py-2 text-sm font-medium text-destructive-foreground hover:bg-destructive/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               data-testid="button-bulk-delete"
             >
               {bulkDeleting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
@@ -693,19 +693,21 @@ export default function DatabasePage() {
 
       <div className="flex flex-col sm:flex-row gap-3">
         <div className="relative flex-1">
+          <label htmlFor="input-search" className="mb-1 block text-xs font-medium text-muted-foreground">{t("db.search")}</label>
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <input
+            id="input-search"
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder={t("db.search_placeholder")}
-            className="w-full pl-9 pr-4 py-2.5 rounded-lg border border-border bg-card text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 transition-shadow"
+            className="w-full min-h-[44px] pl-9 pr-4 py-2.5 rounded-lg border border-border bg-card text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 transition-shadow"
             data-testid="input-search"
           />
           {query && (
             <button
               onClick={() => setQuery("")}
-              className="absolute right-3 top-1/2 -translate-y-1/2 p-0.5 rounded hover:bg-muted"
+              className="absolute right-1 top-1/2 min-h-[48px] min-w-[48px] -translate-y-1/2 rounded hover:bg-muted"
               data-testid="button-clear-search"
               aria-label={t("db.clear_search")}
               title={t("db.clear_search")}
@@ -718,7 +720,7 @@ export default function DatabasePage() {
         <button
           onClick={() => setFiltersOpen(!filtersOpen)}
           className={cn(
-            "flex items-center gap-2 px-4 py-2.5 rounded-lg border text-sm font-medium transition-colors",
+            "flex min-h-[44px] items-center gap-2 px-4 py-2.5 rounded-lg border text-sm font-medium transition-colors",
             filtersOpen || activeFilterCount > 0
               ? "border-primary/40 bg-primary/5 text-primary"
               : "border-border bg-card text-muted-foreground hover:text-foreground"
@@ -743,11 +745,12 @@ export default function DatabasePage() {
           className="flex flex-col sm:flex-row gap-3 flex-wrap"
         >
           <div className="flex-1 min-w-[160px]">
-            <label className="text-xs font-medium text-muted-foreground mb-1 block">{t("db.source")}</label>
+            <label htmlFor="select-source" className="text-xs font-medium text-muted-foreground mb-1 block">{t("db.source")}</label>
             <select
+              id="select-source"
               value={source}
               onChange={(e) => setSource(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg border border-border bg-card text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+              className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-border bg-card text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
               data-testid="select-source"
             >
               <option value="">{t("db.all_sources")}</option>
@@ -757,11 +760,12 @@ export default function DatabasePage() {
             </select>
           </div>
           <div className="flex-1 min-w-[160px]">
-            <label className="text-xs font-medium text-muted-foreground mb-1 block">{t("db.category")}</label>
+            <label htmlFor="select-category" className="text-xs font-medium text-muted-foreground mb-1 block">{t("db.category")}</label>
             <select
+              id="select-category"
               value={category}
               onChange={(e) => setCategory(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg border border-border bg-card text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+              className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-border bg-card text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
               data-testid="select-category"
             >
               <option value="">{t("db.all_categories")}</option>
@@ -774,15 +778,16 @@ export default function DatabasePage() {
             </select>
           </div>
           <div className="flex-1 min-w-[160px]">
-            <label className="text-xs font-medium text-muted-foreground mb-1 block">{t("db.sort_by")}</label>
+            <label htmlFor="select-sort" className="text-xs font-medium text-muted-foreground mb-1 block">{t("db.sort_by")}</label>
             <select
+              id="select-sort"
               value={`${orderBy}:${orderDir}`}
               onChange={(e) => {
                 const [f, d] = e.target.value.split(":") as [SortField, SortDir];
                 setOrderBy(f);
                 setOrderDir(d);
               }}
-              className="w-full px-3 py-2 rounded-lg border border-border bg-card text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+              className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-border bg-card text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
               data-testid="select-sort"
             >
               <option value="last_seen:desc">{t("db.sort_date_newest")}</option>
@@ -796,7 +801,7 @@ export default function DatabasePage() {
           </div>
           <div className="flex items-end gap-3">
             {canDeleteFiles && (
-              <label className="flex items-center gap-2 cursor-pointer px-3 py-2 rounded-lg border border-border bg-card text-sm" data-testid="checkbox-include-deleted">
+              <label className="flex min-h-[48px] items-center gap-2 cursor-pointer px-3 py-2 rounded-lg border border-border bg-card text-sm" data-testid="checkbox-include-deleted">
                 <input
                   type="checkbox"
                   checked={includeDeleted}
@@ -810,7 +815,7 @@ export default function DatabasePage() {
             {activeFilterCount > 0 && (
               <button
                 onClick={() => { setSource(""); setCategory(""); setIncludeDeleted(false); }}
-                className="px-3 py-2 rounded-lg text-sm text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                className="min-h-[48px] px-3 py-2 rounded-lg text-sm text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
                 data-testid="button-clear-filters"
               >
                 {t("db.clear_filters")}
@@ -912,7 +917,7 @@ export default function DatabasePage() {
                         toggleSelected(file.url);
                       }}
                       disabled={isDeleted}
-                      className="text-muted-foreground hover:text-foreground disabled:opacity-40 disabled:cursor-not-allowed"
+                      className="inline-flex min-h-[48px] min-w-[48px] items-center justify-center text-muted-foreground hover:text-foreground disabled:opacity-40 disabled:cursor-not-allowed"
                       data-testid={`checkbox-select-${i}`}
                       aria-label={selectionLabel}
                       title={selectionLabel}
@@ -1018,7 +1023,7 @@ export default function DatabasePage() {
                         toggleSelected(file.url);
                       }}
                       disabled={isDeleted}
-                      className="text-muted-foreground hover:text-foreground disabled:opacity-40 disabled:cursor-not-allowed"
+                      className="inline-flex min-h-[48px] min-w-[48px] items-center justify-center text-muted-foreground hover:text-foreground disabled:opacity-40 disabled:cursor-not-allowed"
                       data-testid={`checkbox-select-mobile-${i}`}
                       aria-label={selectionLabel}
                       title={selectionLabel}
@@ -1042,7 +1047,7 @@ export default function DatabasePage() {
                       explainFile(file);
                     }}
                     disabled={!hasMd || isDeleted}
-                    className="inline-flex items-center gap-1 rounded-md border border-border px-2.5 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-muted-foreground"
+                    className="inline-flex min-h-[48px] items-center gap-1 rounded-md border border-border px-2.5 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-muted-foreground"
                     data-testid={`button-ai-explain-mobile-${i}`}
                     title={explainLabel}
                   >
@@ -1055,7 +1060,7 @@ export default function DatabasePage() {
                       e.stopPropagation();
                       navigateToPreview(file);
                     }}
-                    className="inline-flex items-center gap-1 rounded-md border border-border px-2.5 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                    className="inline-flex min-h-[48px] items-center gap-1 rounded-md border border-border px-2.5 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
                     data-testid={`button-preview-mobile-${i}`}
                     title={t("db.preview")}
                   >
@@ -1069,7 +1074,7 @@ export default function DatabasePage() {
                         e.stopPropagation();
                         downloadFile(file);
                       }}
-                      className="inline-flex items-center gap-1 rounded-md border border-border px-2.5 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                      className="inline-flex min-h-[48px] items-center gap-1 rounded-md border border-border px-2.5 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
                       data-testid={`button-download-mobile-${i}`}
                       title={t("db.download")}
                     >
@@ -1089,7 +1094,7 @@ export default function DatabasePage() {
           <button
             onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
             disabled={offset === 0}
-            className="flex items-center gap-1 px-3 py-2 rounded-lg border border-border bg-card text-sm font-medium disabled:opacity-40 disabled:cursor-not-allowed hover:bg-muted transition-colors"
+            className="flex min-h-[48px] items-center gap-1 px-3 py-2 rounded-lg border border-border bg-card text-sm font-medium disabled:opacity-40 disabled:cursor-not-allowed hover:bg-muted transition-colors"
             data-testid="button-prev-page"
           >
             <ChevronLeft className="w-4 h-4" />
@@ -1113,13 +1118,13 @@ export default function DatabasePage() {
               value={pageJumpInput}
               onChange={(e) => setPageJumpInput(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handlePageJump()}
-              className="h-9 w-20 rounded-lg border border-border bg-background px-2 text-center text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+              className="min-h-[48px] w-20 rounded-lg border border-border bg-background px-2 text-center text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
               data-testid="input-page-jump"
             />
             <button
               type="button"
               onClick={handlePageJump}
-              className="h-9 rounded-lg border border-border bg-card px-3 text-sm font-medium text-foreground hover:bg-muted transition-colors"
+              className="min-h-[48px] min-w-[48px] rounded-lg border border-border bg-card px-3 text-sm font-medium text-foreground hover:bg-muted transition-colors"
               data-testid="button-page-jump"
             >
               {t("db.jump")}
@@ -1129,7 +1134,7 @@ export default function DatabasePage() {
           <button
             onClick={() => setOffset(offset + PAGE_SIZE)}
             disabled={offset + PAGE_SIZE >= total}
-            className="flex items-center gap-1 px-3 py-2 rounded-lg border border-border bg-card text-sm font-medium disabled:opacity-40 disabled:cursor-not-allowed hover:bg-muted transition-colors"
+            className="flex min-h-[48px] items-center gap-1 px-3 py-2 rounded-lg border border-border bg-card text-sm font-medium disabled:opacity-40 disabled:cursor-not-allowed hover:bg-muted transition-colors"
             data-testid="button-next-page"
           >
             {t("db.next")}

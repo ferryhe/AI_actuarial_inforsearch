@@ -11,11 +11,15 @@ export function CatalogForm({
   submitting,
   settingsMode = false,
   initialTask = {},
+  errorDescribedBy,
+  runTestId,
 }: {
   onSubmit: (d: Record<string, unknown>) => void;
   submitting: boolean;
   settingsMode?: boolean;
   initialTask?: Record<string, unknown>;
+  errorDescribedBy?: string;
+  runTestId?: string;
 }) {
   const { t } = useTranslation();
   const { categories: dynamicCategories, catalogProviders } = useTaskOptions();
@@ -154,7 +158,7 @@ export function CatalogForm({
             label={t("tasks.form.update_title")} testId="checkbox-update-title" />
         )}
       </div>
-      <RunButton label={settingsMode ? t("common.save") : t("tasks.form.run")} submitting={submitting} disabled={submitting || (scopeMode === "category" && !category.trim()) || (!settingsMode && catalogProviders.length === 0)}
+      <RunButton label={settingsMode ? t("common.save") : t("tasks.form.run")} submitting={submitting} disabled={submitting || (scopeMode === "category" && !category.trim()) || (!settingsMode && catalogProviders.length === 0)} aria-describedby={errorDescribedBy} testId={runTestId}
         onClick={() => {
           const task = buildTask();
           if (task) onSubmit(task);

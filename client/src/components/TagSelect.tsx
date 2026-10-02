@@ -20,9 +20,12 @@ interface TagSelectProps {
   presets?: string[];
   placeholder?: string;
   testId?: string;
+  id?: string;
+  "aria-labelledby"?: string;
+  "aria-describedby"?: string;
 }
 
-export default function TagSelect({ value, onChange, presets = [], placeholder = "Add custom...", testId }: TagSelectProps) {
+export default function TagSelect({ value, onChange, presets = [], placeholder = "Add custom...", testId, id, "aria-labelledby": labelledBy, "aria-describedby": describedBy }: TagSelectProps) {
   const [customInput, setCustomInput] = useState("");
   const [showInput, setShowInput] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -56,7 +59,7 @@ export default function TagSelect({ value, onChange, presets = [], placeholder =
   const customValues = value.filter((v) => !presets.includes(v));
 
   return (
-    <div className="space-y-2" data-testid={testId}>
+    <div className="space-y-2" data-testid={testId} aria-labelledby={labelledBy} aria-describedby={describedBy}>
       {presets.length > 0 && (
         <div className="flex flex-wrap gap-1.5" data-testid={testId ? `${testId}-presets` : undefined}>
           {presets.map((tag) => {
@@ -66,8 +69,9 @@ export default function TagSelect({ value, onChange, presets = [], placeholder =
                 key={tag}
                 type="button"
                 onClick={() => toggleTag(tag)}
+                aria-label={`Remove ${tag}`}
                 className={cn(
-                  "inline-flex items-center px-2 py-1 rounded-md text-xs font-medium transition-colors border",
+                  "inline-flex min-h-[48px] min-w-[48px] items-center justify-center px-2 py-1 rounded-md text-xs font-medium transition-colors border",
                   selected
                     ? "bg-primary/15 text-primary border-primary/30 hover:bg-primary/25"
                     : "bg-muted/50 text-muted-foreground border-border hover:bg-muted hover:text-foreground"
@@ -92,7 +96,8 @@ export default function TagSelect({ value, onChange, presets = [], placeholder =
               <button
                 type="button"
                 onClick={() => toggleTag(tag)}
-                className="hover:text-destructive transition-colors"
+                aria-label={`Remove ${tag}`}
+                className="min-h-[48px] min-w-[48px] hover:text-destructive transition-colors"
                 data-testid={testId ? `${testId}-remove-${tag}` : undefined}
               >
                 <X className="w-3 h-3" />
@@ -107,7 +112,7 @@ export default function TagSelect({ value, onChange, presets = [], placeholder =
           <div className="flex items-center gap-1.5 flex-1">
             <input
               ref={inputRef}
-              type="text"
+              id={id ? `${id}-custom-input` : undefined} aria-labelledby={labelledBy} aria-describedby={describedBy} type="text"
               value={customInput}
               onChange={(e) => setCustomInput(e.target.value)}
               onKeyDown={handleKeyDown}
@@ -116,7 +121,7 @@ export default function TagSelect({ value, onChange, presets = [], placeholder =
                 setShowInput(false);
               }}
               placeholder={placeholder}
-              className="flex-1 px-2.5 py-1.5 text-xs rounded-md border border-border bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+              className="flex-1 min-h-[48px] px-2.5 py-1.5 text-xs rounded-md border border-border bg-background focus:outline-none focus:ring-2 focus:ring-ring"
               autoFocus
               data-testid={testId ? `${testId}-custom-input` : undefined}
             />
@@ -128,7 +133,7 @@ export default function TagSelect({ value, onChange, presets = [], placeholder =
               setShowInput(true);
               setTimeout(() => inputRef.current?.focus(), 0);
             }}
-            className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs text-muted-foreground hover:text-foreground hover:bg-muted border border-dashed border-border transition-colors"
+            className="inline-flex min-h-[48px] min-w-[48px] items-center gap-1 px-2 py-1 rounded-md text-xs text-muted-foreground hover:text-foreground hover:bg-muted border border-dashed border-border transition-colors"
             data-testid={testId ? `${testId}-add-custom` : undefined}
           >
             <Plus className="w-3 h-3" />

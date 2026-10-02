@@ -49,8 +49,9 @@ export function PipelineBaton({ onViewLog }: { onViewLog: (taskId: string, taskN
   const [scheduledMaxDepth, setScheduledMaxDepth] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState("");
+  const [errorAction, setErrorAction] = useState<string | null>(null);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (action = "refresh") => {
     try {
       const [nextView, scheduled] = await Promise.all([
         apiGet<PipelineView>("/api/pipeline/status"),
@@ -65,8 +66,10 @@ export function PipelineBaton({ onViewLog }: { onViewLog: (taskId: string, taskN
       setScheduledMaxPages(source?.params.max_pages == null ? "" : String(source.params.max_pages));
       setScheduledMaxDepth(source?.params.max_depth == null ? "" : String(source.params.max_depth));
       setError("");
+      setErrorAction(null);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : t("tasks.pipeline.load_error"));
+      setErrorAction(action);
     }
   }, [t]);
 
@@ -94,8 +97,10 @@ export function PipelineBaton({ onViewLog }: { onViewLog: (taskId: string, taskN
       else delete overrides[step];
       setView(await apiPost<PipelineView>("/api/pipeline/config", { overrides }));
       setError("");
+      setErrorAction(null);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : t("tasks.sched.save_fail"));
+      setErrorAction(`override-${step}`);
     } finally {
       setBusy(null);
     }
@@ -132,9 +137,10 @@ export function PipelineBaton({ onViewLog }: { onViewLog: (taskId: string, taskN
         enabled: scheduledEnabled,
         params,
       });
-      await refresh();
+      await refresh("scheduled");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : t("tasks.sched.save_fail"));
+      setErrorAction("scheduled");
     } finally {
       setBusy(null);
     }
@@ -145,8 +151,10 @@ export function PipelineBaton({ onViewLog }: { onViewLog: (taskId: string, taskN
     try {
       setView(await apiPost<PipelineView>("/api/pipeline/start"));
       setError("");
+      setErrorAction(null);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : t("tasks.form.start_error"));
+      setErrorAction("start");
     } finally {
       setBusy(null);
     }
@@ -169,21 +177,31 @@ export function PipelineBaton({ onViewLog }: { onViewLog: (taskId: string, taskN
             </FormField>
           </div>
           <div className="grid grid-cols-3 gap-3">
-            <InputField value={scheduledSite} onChange={setScheduledSite} placeholder={t("tasks.sched.param.site")} testId="input-pipeline-scheduled-site" />
-            <InputField value={scheduledMaxPages} onChange={setScheduledMaxPages} placeholder={t("tasks.sched.param.max_pages")} type="number" testId="input-pipeline-scheduled-max-pages" />
-            <InputField value={scheduledMaxDepth} onChange={setScheduledMaxDepth} placeholder={t("tasks.sched.param.max_depth")} type="number" testId="input-pipeline-scheduled-max-depth" />
+            <FormField label={t("tasks.sched.param.site")}>
+              <InputField value={scheduledSite} onChange={setScheduledSite} placeholder={t("tasks.sched.param.site")} testId="input-pipeline-scheduled-site" />
+            </FormField>
+            <FormField label={t("tasks.sched.param.max_pages")}>
+              <InputField value={scheduledMaxPages} onChange={setScheduledMaxPages} placeholder={t("tasks.sched.param.max_pages")} type="number" testId="input-pipeline-scheduled-max-pages" />
+            </FormField>
+            <FormField label={t("tasks.sched.param.max_depth")}>
+              <InputField value={scheduledMaxDepth} onChange={setScheduledMaxDepth} placeholder={t("tasks.sched.param.max_depth")} type="number" testId="input-pipeline-scheduled-max-depth" />
+            </FormField>
           </div>
           <button type="button" onClick={() => void saveScheduled()} disabled={!canConfigure || busy === step}
-            className="rounded-lg bg-primary px-4 py-2 text-sm text-primary-foreground disabled:opacity-50">
+            className="min-h-[48px] rounded-lg bg-primary px-4 py-2 text-sm text-primary-foreground disabled:opacity-50"
+            data-testid="button-save-pipeline-scheduled"
+            aria-describedby={errorAction === "scheduled" ? "error-pipeline-baton" : undefined}>
             {t("common.save")}
           </button>
         </div>
       ) : <p className="text-sm text-muted-foreground">Scheduled Collection not found</p>;
     }
-    if (step === "markdown_conversion") return <MarkdownForm key={JSON.stringify(initialTask)} settingsMode initialTask={initialTask} onSubmit={(task) => void saveOverride(step, task)} submitting={busy === step} />;
-    if (step === "catalog") return <CatalogForm key={JSON.stringify(initialTask)} settingsMode initialTask={initialTask} onSubmit={(task) => void saveOverride(step, task)} submitting={busy === step} />;
-    if (step === "chunk_generation") return <ChunkForm key={JSON.stringify(initialTask)} settingsMode initialTask={initialTask} onSubmit={(task) => void saveOverride(step, task)} submitting={busy === step} />;
-    return <RagIndexForm key={JSON.stringify(initialTask)} settingsMode initialTask={initialTask} onSubmit={(task) => void saveOverride(step, task)} submitting={busy === step} />;
+    const errorDescribedBy = errorAction === `override-${step}` ? "error-pipeline-baton" : undefined;
+    const runTestId = `button-run-task-${step}`;
+    if (step === "markdown_conversion") return <MarkdownForm key={JSON.stringify(initialTask)} settingsMode initialTask={initialTask} onSubmit={(task) => void saveOverride(step, task)} submitting={busy === step} errorDescribedBy={errorDescribedBy} runTestId={runTestId} />;
+    if (step === "catalog") return <CatalogForm key={JSON.stringify(initialTask)} settingsMode initialTask={initialTask} onSubmit={(task) => void saveOverride(step, task)} submitting={busy === step} errorDescribedBy={errorDescribedBy} runTestId={runTestId} />;
+    if (step === "chunk_generation") return <ChunkForm key={JSON.stringify(initialTask)} settingsMode initialTask={initialTask} onSubmit={(task) => void saveOverride(step, task)} submitting={busy === step} errorDescribedBy={errorDescribedBy} runTestId={runTestId} />;
+    return <RagIndexForm key={JSON.stringify(initialTask)} settingsMode initialTask={initialTask} onSubmit={(task) => void saveOverride(step, task)} submitting={busy === step} errorDescribedBy={errorDescribedBy} runTestId={runTestId} />;
   };
 
   return (
@@ -193,14 +211,14 @@ export function PipelineBaton({ onViewLog }: { onViewLog: (taskId: string, taskN
           <h2 className="text-lg font-semibold">{t("tasks.pipeline.title")}</h2>
         </div>
         <div className="flex gap-2">
-          <button type="button" onClick={() => void refresh()} className="rounded-lg border border-border p-2" aria-label={t("tasks.refresh")}><RefreshCw className="h-4 w-4" /></button>
+          <button type="button" onClick={() => void refresh()} className="flex min-h-[48px] min-w-[48px] items-center justify-center rounded-lg border border-border p-2" aria-label={t("tasks.refresh")} data-testid="button-refresh-pipeline-baton" aria-describedby={errorAction === "refresh" ? "error-pipeline-baton" : undefined}><RefreshCw className="h-4 w-4" /></button>
           <button type="button" onClick={() => void start()} disabled={!canRun || busy === "start" || view?.state.round_status === "running"}
-            className="flex items-center gap-2 rounded-lg bg-primary px-3 py-2 text-sm text-primary-foreground disabled:opacity-50" data-testid="button-start-pipeline-baton">
+            className="flex min-h-[48px] items-center gap-2 rounded-lg bg-primary px-3 py-2 text-sm text-primary-foreground disabled:opacity-50" data-testid="button-start-pipeline-baton" aria-describedby={errorAction === "start" ? "error-pipeline-baton" : undefined}>
             {busy === "start" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}{t(hasExistingResults ? "tasks.pipeline.rerun" : "tasks.pipeline.start")}
           </button>
         </div>
       </div>
-      {error && <p className="rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive">{error}</p>}
+      {error && <p id="error-pipeline-baton" role="alert" className="rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive">{error}</p>}
       <PipelineBatonResults view={view} steps={steps} expanded={expanded} showFailuresOnly={showFailuresOnly} onShowFailuresOnly={setShowFailuresOnly} onToggle={toggle} onViewLog={onViewLog} renderSettings={settingsFor} t={t} />
     </div>
   );
