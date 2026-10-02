@@ -4694,3 +4694,14 @@
   post-resolution query reported zero unresolved threads. No new feedback fetch or review was
   started. This project-status entry records the code-head check result; the follow-up commit
   contains only this tracking update. No merge is authorized.
+
+### Issue #363 implementation — 2026-10-02
+
+- On `codex/issue-363-prod-meta-docs`, production now omits native FastAPI docs,
+  detailed health requires `logs.system.read`, and migration diagnostics use that
+  permission only in production. Public `/api/health` remains unchanged.
+- Regression coverage passed for development/test docs plus production anonymous/admin
+  behavior (10 entrypoint tests); the related auth and canonical-role suites passed
+  (34 tests), and the migration-caller suite passed (279 passed, 7 skipped).
+  Independent gpt-6-sol/high review and TypeSafe coverage both passed. PR/merge
+  lifecycle state is tracked in the external Issue #363 lifecycle evidence.

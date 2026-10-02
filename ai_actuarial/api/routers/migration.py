@@ -2,9 +2,17 @@ from __future__ import annotations
 
 import os
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
+
+from ..deps import require_permissions
 
 router = APIRouter()
+_require_system_log_access = require_permissions("logs.system.read")
+
+
+def _require_production_migration_access(request: Request) -> None:
+    if getattr(request.app.state, "fastapi_env", "") in {"prod", "production"}:
+        _require_system_log_access(request)
 
 
 def _migration_inventory_enabled() -> bool:
@@ -17,7 +25,10 @@ def _migration_inventory_enabled() -> bool:
 
 
 @router.get("/migration/status")
-async def api_migration_status(request: Request) -> dict[str, object]:
+async def api_migration_status(
+    request: Request,
+    _access: None = Depends(_require_production_migration_access),
+) -> dict[str, object]:
     app = request.app
     native_paths = sorted(getattr(app.state, "native_paths", []))
     inventory_enabled = _migration_inventory_enabled()
@@ -41,7 +52,10 @@ async def api_migration_status(request: Request) -> dict[str, object]:
 
 
 @router.get("/migration/inventory")
-async def api_migration_inventory(request: Request) -> dict[str, object]:
+async def api_migration_inventory(
+    request: Request,
+    _access: None = Depends(_require_production_migration_access),
+) -> dict[str, object]:
     if not _migration_inventory_enabled():
         raise HTTPException(status_code=404, detail="Migration inventory is disabled")
 

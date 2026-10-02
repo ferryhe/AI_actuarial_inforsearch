@@ -20,6 +20,17 @@ Set these only on the deployment server:
 - `TRUST_PROXY`: set `true` only when direct API access is restricted to trusted reverse proxy traffic.
 - `CONTENT_SECURITY_POLICY`: optional override when the frontend needs an explicit CSP change.
 
+## API diagnostics and documentation
+
+- Production (`FASTAPI_ENV=prod` or `production`) does not expose `/docs`,
+  `/redoc`, or `/openapi.json`.
+- Keep `GET /api/health` public for Caddy and container health checks.
+- `GET /api/health/detailed` and production migration diagnostics require an
+  admin API token with `logs.system.read`.
+- Development and test environments keep the native FastAPI documentation
+  routes available. Production migration inventory also requires
+  `FASTAPI_ENABLE_MIGRATION_INVENTORY=1`.
+
 Do not commit the server's real `.env` file.
 
 ## Agentic RAG production notes

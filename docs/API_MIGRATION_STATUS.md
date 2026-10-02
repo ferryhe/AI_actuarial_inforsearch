@@ -175,6 +175,9 @@ as a compatibility shim through 2026-10-14 at the latest. New clients must use
 
 - Add product APIs under `ai_actuarial/api/routers/`.
 - Use `GET /api/migration/inventory` only in explicit ops/debug environments.
+  In production, both migration routes require an admin token with
+  `logs.system.read`; inventory also requires
+  `FASTAPI_ENABLE_MIGRATION_INVENTORY=1`.
 - Keep historical migration notes as dated planning documents when they are useful as project history.
 
 ### Not Allowed
