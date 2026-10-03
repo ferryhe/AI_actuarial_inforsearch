@@ -8,7 +8,8 @@ import tempfile
 import threading
 import time
 import uuid
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from functools import partial
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
@@ -23,37 +24,49 @@ PRODUCTION_CADDY_ENV = (
 )
 
 
-class _CaddyHeaderUpstream(BaseHTTPRequestHandler):
-    def do_GET(self):
-        path = self.path.split("?", maxsplit=1)[0]
-        bodies = {
-            "/": ("text/html; charset=utf-8", b"<!doctype html>" + b"<html>" * 160),
-            "/index.html": ("text/html; charset=utf-8", b"<!doctype html>" + b"<html>" * 160),
-            "/assets/index-D6dVqAIK.js": (
-                "text/javascript; charset=utf-8",
-                b"console.log('hashed javascript asset');\n" * 80,
-            ),
-            "/assets/index-Abc123_9.css": (
-                "text/css; charset=utf-8",
-                b".app { color: #123456; }\n" * 100,
-            ),
-            "/assets/logo.svg": (
-                "image/svg+xml",
-                b"<svg xmlns='http://www.w3.org/2000/svg'></svg>",
-            ),
-        }
-        content_type, body = bodies.get(path, ("application/octet-stream", path.encode()))
-        self.send_response(200)
+class _CaddyStaticUpstream(SimpleHTTPRequestHandler):
+    def end_headers(self):
+        if hasattr(self, "_current_etag"):
+            self.send_header("ETag", self._current_etag)
         self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'unsafe-eval'")
         self.send_header("X-Content-Type-Options", "upstream")
         self.send_header("X-Frame-Options", "SAMEORIGIN")
         self.send_header("Referrer-Policy", "unsafe-url")
         self.send_header("Permissions-Policy", "camera=*")
         self.send_header("Cache-Control", "public, max-age=60")
-        self.send_header("Content-Type", content_type)
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        super().end_headers()
+
+    def send_head(self):
+        request_path = self.path.split("?", 1)[0]
+        if not Path(self.translate_path(self.path)).is_file() and request_path != "/":
+            self.path = "/index.html"
+        file_path = Path(self.translate_path(self.path))
+        if file_path.is_file():
+            stat = file_path.stat()
+            self._current_etag = f'"{stat.st_mtime_ns:x}-{stat.st_size:x}"'
+            if self.headers.get("If-None-Match") in (self._current_etag, "*"):
+                self.send_response(304)
+                self.send_header("Last-Modified", self.date_time_string(stat.st_mtime))
+                self.end_headers()
+                return None
+        return super().send_head()
+
+    def do_GET(self):
+        request_path = self.path.split("?", 1)[0]
+        if request_path == "/assets/redirect-A1b2C3d4.js":
+            self.send_response(302)
+            self.send_header("Location", "/assets/index-D6dVqAIK.js")
+            self.end_headers()
+            return
+        if request_path.startswith("/api/"):
+            body = b'{"status":"ok"}'
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        super().do_GET()
 
 
 def _caddy_docker_args():
@@ -139,6 +152,7 @@ def test_production_caddy_http_listener_and_runtime_redirect_contract():
     assert https_servers[0].get("automatic_https", {}).get("disable_redirects") is True
     assert sorted(item["dial"] for item in _walk_dicts(https_servers[0]) if "dial" in item) == [
         "api:5000",
+        "frontend:5173",
         "frontend:5173",
         "host.docker.internal:8501",
     ]
@@ -231,7 +245,22 @@ def test_production_caddy_http_listener_and_runtime_redirect_contract():
 def test_caddy_replaces_upstream_security_headers_for_app_and_api_routes(
     content_security_policy,
 ):
-    upstream = ThreadingHTTPServer(("0.0.0.0", 0), _CaddyHeaderUpstream)
+    upstream_root = tempfile.TemporaryDirectory(prefix="issue-328-static-")
+    static_root = Path(upstream_root.name)
+    assets_root = static_root / "assets"
+    assets_root.mkdir()
+    html_body = b"<!doctype html><html><body><div id=app>SPA home</div></body></html>"
+    js_body = b"console.log('hashed javascript asset');\n" * 80
+    css_body = b".app { color: #123456; }\n" * 100
+    (static_root / "index.html").write_bytes(html_body)
+    (assets_root / "index-D6dVqAIK.js").write_bytes(js_body)
+    (assets_root / "index-Abc123_9.css").write_bytes(css_body)
+    (assets_root / "logo.svg").write_text(
+        "<svg xmlns='http://www.w3.org/2000/svg'></svg>", encoding="utf-8"
+    )
+    upstream = ThreadingHTTPServer(
+        ("0.0.0.0", 0), partial(_CaddyStaticUpstream, directory=str(static_root))
+    )
     threading.Thread(target=upstream.serve_forever, daemon=True).start()
     caddy_port = _unused_port()
     container_name = f"issue-353-caddy-{uuid.uuid4().hex}"
@@ -317,6 +346,78 @@ def test_caddy_replaces_upstream_security_headers_for_app_and_api_routes(
                 "permissions-policy": "geolocation=(), microphone=(), camera=()",
                 "strict-transport-security": "max-age=31536000",
             }
+
+            for target, content_type, body in (
+                (
+                    "/assets/index-D6dVqAIK.js",
+                    "application/javascript",
+                    js_body,
+                ),
+                (
+                    "/assets/index-Abc123_9.css",
+                    "text/css",
+                    css_body,
+                ),
+            ):
+                upstream_status, upstream_headers, upstream_body = _http_request_bytes(
+                    upstream.server_port, "localhost", target
+                )
+                assert upstream_status == 200
+                assert [
+                    value for key, value in upstream_headers if key.lower() == "content-type"
+                ] == [content_type]
+                assert upstream_body == body
+
+            upstream_status, upstream_headers, upstream_body = _http_request_bytes(
+                upstream.server_port, "localhost", "/assets/missing-D6dVqAIK.js"
+            )
+            assert upstream_status == 200
+            assert [value for key, value in upstream_headers if key.lower() == "content-type"] == [
+                "text/html"
+            ]
+            assert upstream_body == html_body
+            fallback_last_modified = next(
+                value for key, value in upstream_headers if key.lower() == "last-modified"
+            )
+            fallback_etag = next(value for key, value in upstream_headers if key.lower() == "etag")
+            upstream_status, _, _ = _http_request_bytes(
+                upstream.server_port,
+                "localhost",
+                "/assets/missing-D6dVqAIK.js",
+                {"If-Modified-Since": fallback_last_modified, "Cache-Control": "no-cache"},
+            )
+            assert upstream_status == 304
+            upstream_status, upstream_headers, _ = _http_request_bytes(
+                upstream.server_port,
+                "localhost",
+                "/assets/missing-D6dVqAIK.js",
+                {"If-None-Match": fallback_etag, "Cache-Control": "no-cache"},
+            )
+            assert upstream_status == 304
+            assert not any(key.lower() == "content-type" for key, _ in upstream_headers)
+
+            _, existing_headers, _ = _http_request_bytes(
+                upstream.server_port, "localhost", "/assets/index-D6dVqAIK.js"
+            )
+            existing_last_modified = next(
+                value for key, value in existing_headers if key.lower() == "last-modified"
+            )
+            existing_etag = next(value for key, value in existing_headers if key.lower() == "etag")
+            upstream_status, _, _ = _http_request_bytes(
+                upstream.server_port,
+                "localhost",
+                "/assets/index-D6dVqAIK.js",
+                {"If-Modified-Since": existing_last_modified, "Cache-Control": "no-cache"},
+            )
+            assert upstream_status == 304
+            upstream_status, upstream_headers, _ = _http_request_bytes(
+                upstream.server_port,
+                "localhost",
+                "/assets/index-D6dVqAIK.js",
+                {"If-None-Match": existing_etag, "Cache-Control": "no-cache"},
+            )
+            assert upstream_status == 304
+            assert not any(key.lower() == "content-type" for key, _ in upstream_headers)
             for target in (
                 "/",
                 "/index.html",
@@ -333,7 +434,14 @@ def test_caddy_replaces_upstream_security_headers_for_app_and_api_routes(
                     assert values == [value]
                 assert "unsafe-eval" not in expected["content-security-policy"]
 
-            for target in ("/", "/index.html"):
+            status, headers, body = _http_request_bytes(port, f"localhost:{caddy_port}", "/chat")
+            assert status == 200
+            assert body == html_body
+            assert [value for key, value in headers if key.lower() == "content-type"] == [
+                "text/html"
+            ]
+
+            for target in ("/", "/index.html", "/index", "/chat"):
                 status, headers, _ = _http_request_bytes(port, f"localhost:{caddy_port}", target)
                 assert status == 200
                 assert [value for key, value in headers if key.lower() == "cache-control"] == [
@@ -341,16 +449,8 @@ def test_caddy_replaces_upstream_security_headers_for_app_and_api_routes(
                 ]
 
             for target, content_type, body in (
-                (
-                    "/assets/index-D6dVqAIK.js",
-                    "text/javascript; charset=utf-8",
-                    b"console.log('hashed javascript asset');\n" * 80,
-                ),
-                (
-                    "/assets/index-Abc123_9.css",
-                    "text/css; charset=utf-8",
-                    b".app { color: #123456; }\n" * 100,
-                ),
+                ("/assets/index-D6dVqAIK.js", "application/javascript", js_body),
+                ("/assets/index-Abc123_9.css", "text/css", css_body),
             ):
                 status, headers, encoded_body = _http_request_bytes(
                     port,
@@ -375,6 +475,75 @@ def test_caddy_replaces_upstream_security_headers_for_app_and_api_routes(
                 assert gzip.decompress(encoded_body) == body
                 assert len(encoded_body) < len(body)
 
+            status, headers, body = _http_request_bytes(
+                port,
+                f"localhost:{caddy_port}",
+                "/assets/index-D6dVqAIK.js",
+                {"If-Modified-Since": existing_last_modified, "Cache-Control": "no-cache"},
+            )
+            assert status == 200
+            assert body == js_body
+            assert [value for key, value in headers if key.lower() == "cache-control"] == [
+                "public, max-age=31536000, immutable"
+            ]
+            status, headers, body = _http_request_bytes(
+                port,
+                f"localhost:{caddy_port}",
+                "/assets/index-D6dVqAIK.js",
+                {"If-None-Match": existing_etag, "Cache-Control": "no-cache"},
+            )
+            assert status == 200
+            assert body == js_body
+            assert [value for key, value in headers if key.lower() == "cache-control"] == [
+                "public, max-age=31536000, immutable"
+            ]
+
+            for target in (
+                "/assets/missing-D6dVqAIK.js",
+                "/assets/missing.css",
+            ):
+                status, headers, body = _http_request_bytes(port, f"localhost:{caddy_port}", target)
+                assert status == 404
+                assert body != html_body
+                assert [value for key, value in headers if key.lower() == "cache-control"] == [
+                    "no-store"
+                ]
+
+            status, headers, body = _http_request_bytes(
+                port,
+                f"localhost:{caddy_port}",
+                "/assets/missing-D6dVqAIK.js",
+                {"If-Modified-Since": fallback_last_modified, "Cache-Control": "no-cache"},
+            )
+            assert status == 404
+            assert body != html_body
+            assert [value for key, value in headers if key.lower() == "cache-control"] == [
+                "no-store"
+            ]
+
+            status, headers, body = _http_request_bytes(
+                port,
+                f"localhost:{caddy_port}",
+                "/assets/missing-D6dVqAIK.js",
+                {"If-None-Match": fallback_etag, "Cache-Control": "no-cache"},
+            )
+            assert status == 404
+            assert body != html_body
+            assert [value for key, value in headers if key.lower() == "cache-control"] == [
+                "no-store"
+            ]
+
+            status, headers, _ = _http_request_bytes(
+                port, f"localhost:{caddy_port}", "/assets/redirect-A1b2C3d4.js"
+            )
+            assert status == 302
+            assert [value for key, value in headers if key.lower() == "location"] == [
+                "/assets/index-D6dVqAIK.js"
+            ]
+            assert [value for key, value in headers if key.lower() == "cache-control"] == [
+                "no-store"
+            ]
+
             for target in ("/assets/logo.svg", "/api/health"):
                 status, headers, _ = _http_request_bytes(port, f"localhost:{caddy_port}", target)
                 assert status == 200
@@ -390,6 +559,7 @@ def test_caddy_replaces_upstream_security_headers_for_app_and_api_routes(
             )
             upstream.shutdown()
             upstream.server_close()
+            upstream_root.cleanup()
 
 
 def test_production_compose_uses_fastapi_env_and_keeps_features_in_yaml():

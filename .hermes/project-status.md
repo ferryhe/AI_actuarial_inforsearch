@@ -1,21 +1,30 @@
-# Latest work — Issue #328 Caddy compression and caching
+# Latest work — Issue #328 missing-asset cache blocker fix
 
 - Updated: 2026-10-03 EDT. Repository: `AI_actuarial_inforsearch`; branch:
-  `codex/issue-328-caddy-compression-cache`; baseline:
-  `ba6dd8ed190304850feb0a42d37542b289d909e0` (`origin/main`). Only this
-  repository was changed; sibling repositories were not accessed.
-- The app Caddy site now negotiates zstd/gzip, caches only eight-character
-  content-hashed `/assets/*` files for one year as immutable, and sets `/` plus
-  `/index.html` to `no-cache`. API routes and the secondary site retain their
-  existing routing and headers.
-- Docker-backed Caddy regressions cover HTML and asset cache policy, compressed
-  JS/CSS responses with `Vary: Accept-Encoding`, MIME types, exact decompression,
-  and preservation of upstream cache headers for unversioned assets and API
-  responses. The deployment config tests passed (12 tests); production Caddy
-  adapt/validate passed. Production Compose config, Black, isort, and
+  `codex/issue-328-caddy-compression-cache`; starting head:
+  `011043f454ca900a0d190f797989e713fc07e463`. Only this repository was changed;
+  sibling repositories were not accessed.
+- The Caddy `/assets/*` handler now converts a successful HTML SPA fallback to
+  404. Hashed asset paths receive one-year immutable caching only for 200/206
+  responses; it strips `If-None-Match` and `If-Modified-Since` from upstream
+  requests so a headerless 304 cannot bypass the fallback check. Asset redirects
+  and errors receive `no-store`. Successful HTML responses across the app,
+  including `/`, `/index.html`, `/index`, and `/chat`, receive `no-cache`.
+- Docker-backed Caddy tests use a file-backed static HTTP server with SPA
+  fallback. They prove real hashed JS/CSS files return the expected bytes and
+  MIME types, missing assets that upstream serves as the homepage still return
+  404 under `If-Modified-Since` and `If-None-Match` (where the upstream alone
+  returns a headerless 304), redirects and errors are not cached, and SPA deep
+  links serve the homepage with `no-cache`. Gzip responses and
+  `Vary: Accept-Encoding` passed end to end; zstd end-to-end behavior remains
+  unverified. The focused deployment suite passed (12 tests), including Caddy
+  adapt/validate. Black, isort, and
   `git diff --check` passed.
-- PR #398 is open. No production deployment has been performed. The
-  Huawei/WeChat/Chrome post-deploy field checks remain pending.
+- Fresh gpt-6-sol/high review passed the five Issue #328 cache criteria, including
+  the conditional-304 regression. No merge or production deployment was performed.
+- PR #398 remains open and has not been merged. No production deployment has
+  been performed; Huawei/WeChat/Chrome field comparison remains for after a
+  reviewed, safe deployment.
 
 # Latest work — Issue #395 full Vitest discovery
 

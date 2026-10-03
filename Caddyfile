@@ -58,16 +58,41 @@ http://:80 {
 	header @hashed_assets {
 		defer
 		Cache-Control "public, max-age=31536000, immutable"
+		match status 200 206
 	}
 
-	@html_documents path / /index.html
-	header @html_documents {
+	@asset_paths path /assets/*
+	header @asset_paths {
+		defer
+		Cache-Control "no-store"
+		match status 300 301 302 303 305 306 307 308 4xx 5xx
+	}
+
+	header {
 		defer
 		Cache-Control "no-cache"
+		match {
+			status 2xx
+			header Content-Type text/html*
+		}
 	}
 
 	handle /api/* {
 		reverse_proxy api:5000
+	}
+
+	handle /assets/* {
+		reverse_proxy frontend:5173 {
+			header_up -If-None-Match
+			header_up -If-Modified-Since
+			@spa_fallback {
+				status 2xx
+				header Content-Type text/html*
+			}
+			handle_response @spa_fallback {
+				respond "Not Found" 404
+			}
+		}
 	}
 
 	handle {
