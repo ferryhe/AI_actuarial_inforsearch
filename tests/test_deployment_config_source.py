@@ -2,6 +2,7 @@ import http.client
 import json
 import socket
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -227,6 +228,8 @@ def test_caddy_replaces_upstream_security_headers_for_app_and_api_routes(
             "--env",
             f"CADDY_APP_SITE_HOSTS=http://localhost:{caddy_port}",
         ]
+        if sys.platform.startswith("linux"):
+            run_args.extend(("--add-host", "host.docker.internal:host-gateway"))
         if content_security_policy is not None:
             run_args.extend(("--env", f"CONTENT_SECURITY_POLICY={content_security_policy}"))
         subprocess.run(

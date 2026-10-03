@@ -4783,3 +4783,10 @@
 - Commit e822b656 contains the reviewed Caddy/header changes and regression tests. Full pytest coverage passed in 26 sequential groups (2,313 passed, 10 skipped); Black, isort, and pylint component checks passed separately.
 - The single-process scripts/quality_gate.py run remains incomplete; its components are documented in the PR and external delivery evidence.
 - PR stays in draft for the user's real-machine validation. Production AC-4/AC-8 evidence and rollback validation remain pending. Do not merge or deploy until those results are reviewed.
+
+### Issue #353 PR #397 Linux CI repair — 2026-10-02
+
+- The 15-minute PR check found five passing checks and one failing quality-gate check. Its pytest run had 2,320 passing tests and three failures, all parameterizations of the new Caddy request test. In GitHub Actions Linux Docker, the Caddy container could not resolve host.docker.internal, so requests returned 502.
+- Fixed the test setup to add Docker's host-gateway mapping only on Linux. Windows Docker Desktop keeps its built-in host.docker.internal route.
+- Local validation passed: tests/test_deployment_config_source.py (12 passed), Black (1 file unchanged), isort (exit 0), and pylint (empty error list).
+- The PR review query returned no reviews, inline threads, or conversation comments. PR #397 remains Draft while the CI reruns and the user performs real-machine validation; production AC-4/AC-8 and rollback evidence remain pending.
