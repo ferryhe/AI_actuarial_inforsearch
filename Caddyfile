@@ -14,6 +14,7 @@
 
 (baseline_security_headers) {
 	header {
+		defer
 		X-Content-Type-Options "nosniff"
 		X-Frame-Options "DENY"
 		Referrer-Policy "strict-origin-when-cross-origin"
@@ -23,8 +24,14 @@
 
 (app_security_headers) {
 	import baseline_security_headers
+	map {env.CONTENT_SECURITY_POLICY} {app_content_security_policy} {
+		"" "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; img-src 'self' data: blob: https:; font-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' ws: wss:"
+		default "{env.CONTENT_SECURITY_POLICY}"
+	}
 	header {
-		Content-Security-Policy "{$CONTENT_SECURITY_POLICY:default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; img-src 'self' data: blob: https:; font-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' ws: wss:}"
+		defer
+		Content-Security-Policy "{app_content_security_policy}"
+		Strict-Transport-Security "max-age=31536000"
 	}
 }
 
@@ -36,7 +43,7 @@ http://:80 {
 
 	@app_hosts host aiinforsearch.com www.aiinforsearch.com
 	handle @app_hosts {
-		redir https://www.aiinforsearch.com{uri} permanent
+		redir https://www.aiinforsearch.com{uri} 308
 	}
 
 	respond "" 421

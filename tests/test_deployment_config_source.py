@@ -1,11 +1,15 @@
 import http.client
 import json
+import socket
 import subprocess
 import tempfile
+import threading
 import time
 import uuid
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -15,6 +19,18 @@ PRODUCTION_CADDY_ENV = (
     "CADDY_CROSS_SITE_HOST=cross.aiactuary.cn",
     "CADDY_CROSS_UPSTREAM=host.docker.internal:8501",
 )
+
+
+class _CaddyHeaderUpstream(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'unsafe-eval'")
+        self.send_header("X-Content-Type-Options", "upstream")
+        self.send_header("X-Frame-Options", "SAMEORIGIN")
+        self.send_header("Referrer-Policy", "unsafe-url")
+        self.send_header("Permissions-Policy", "camera=*")
+        self.end_headers()
+        self.wfile.write(self.path.encode())
 
 
 def _caddy_docker_args():
@@ -39,6 +55,22 @@ def _http_request(port, host, target="/"):
         return response.status, dict(response.getheaders()), response.read().decode("utf-8")
     finally:
         connection.close()
+
+
+def _http_request_headers(port, host, target="/"):
+    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
+    try:
+        connection.request("GET", target, headers={"Host": host})
+        response = connection.getresponse()
+        return response.status, response.getheaders(), response.read().decode("utf-8")
+    finally:
+        connection.close()
+
+
+def _unused_port():
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        return listener.getsockname()[1]
 
 
 def _walk_dicts(value):
@@ -144,7 +176,7 @@ def test_production_caddy_http_listener_and_runtime_redirect_contract():
 
             for host in ("aiinforsearch.com", "www.aiinforsearch.com"):
                 status, headers, _ = _http_request(port, host, "/database?category=AI")
-                assert status in (301, 308)
+                assert status == 308
                 assert headers["Location"] == ("https://www.aiinforsearch.com/database?category=AI")
 
             for host in ("unrelated.example", "cross.aiactuary.cn"):
@@ -160,6 +192,123 @@ def test_production_caddy_http_listener_and_runtime_redirect_contract():
                 capture_output=True,
                 text=True,
             )
+
+
+@pytest.mark.parametrize(
+    "content_security_policy",
+    [None, "", "default-src 'self'; img-src 'self' data: blob: https:"],
+)
+def test_caddy_replaces_upstream_security_headers_for_app_and_api_routes(
+    content_security_policy,
+):
+    upstream = ThreadingHTTPServer(("0.0.0.0", 0), _CaddyHeaderUpstream)
+    threading.Thread(target=upstream.serve_forever, daemon=True).start()
+    caddy_port = _unused_port()
+    container_name = f"issue-353-caddy-{uuid.uuid4().hex}"
+
+    with tempfile.TemporaryDirectory(prefix="issue-353-caddy-") as temp_dir:
+        runtime_caddyfile = Path(temp_dir) / "Caddyfile"
+        runtime_caddyfile.write_text(
+            (ROOT / "Caddyfile")
+            .read_text(encoding="utf-8")
+            .replace("api:5000", f"host.docker.internal:{upstream.server_port}")
+            .replace("frontend:5173", f"host.docker.internal:{upstream.server_port}"),
+            encoding="utf-8",
+        )
+        run_args = [
+            "docker",
+            "run",
+            "--detach",
+            "--rm",
+            "--name",
+            container_name,
+            "--publish",
+            f"127.0.0.1::{caddy_port}",
+            "--env",
+            f"CADDY_APP_SITE_HOSTS=http://localhost:{caddy_port}",
+        ]
+        if content_security_policy is not None:
+            run_args.extend(("--env", f"CONTENT_SECURITY_POLICY={content_security_policy}"))
+        subprocess.run(
+            run_args
+            + [
+                "--volume",
+                f"{runtime_caddyfile}:/etc/caddy/Caddyfile:ro",
+                "caddy:2-alpine",
+                "caddy",
+                "run",
+                "--config",
+                "/etc/caddy/Caddyfile",
+                "--adapter",
+                "caddyfile",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        try:
+            published = subprocess.run(
+                ["docker", "port", container_name, f"{caddy_port}/tcp"],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            port = int(published.rsplit(":", 1)[1])
+            deadline = time.monotonic() + 10
+            while True:
+                try:
+                    status, _, _ = _http_request_headers(port, f"localhost:{caddy_port}")
+                    if status == 200:
+                        break
+                except OSError:
+                    pass
+                if time.monotonic() >= deadline:
+                    logs = subprocess.run(
+                        ["docker", "logs", container_name],
+                        check=False,
+                        capture_output=True,
+                        text=True,
+                    )
+                    raise AssertionError(f"Caddy did not become ready:\n{logs.stderr}")
+                time.sleep(0.1)
+
+            expected_csp = content_security_policy or (
+                "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; "
+                "form-action 'self'; img-src 'self' data: blob: https:; font-src 'self' data:; "
+                "style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' ws: wss:"
+            )
+            expected = {
+                "content-security-policy": expected_csp,
+                "x-content-type-options": "nosniff",
+                "x-frame-options": "DENY",
+                "referrer-policy": "strict-origin-when-cross-origin",
+                "permissions-policy": "geolocation=(), microphone=(), camera=()",
+                "strict-transport-security": "max-age=31536000",
+            }
+            for target in (
+                "/",
+                "/index.html",
+                "/login",
+                "/missing-spa-route",
+                "/chat",
+                "/files/1/preview",
+                "/api/health",
+            ):
+                status, headers, _ = _http_request_headers(port, f"localhost:{caddy_port}", target)
+                assert status == 200
+                for name, value in expected.items():
+                    values = [item for key, item in headers if key.lower() == name]
+                    assert values == [value]
+                assert "unsafe-eval" not in expected["content-security-policy"]
+        finally:
+            subprocess.run(
+                ["docker", "rm", "--force", container_name],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            upstream.shutdown()
+            upstream.server_close()
 
 
 def test_production_compose_uses_fastapi_env_and_keeps_features_in_yaml():
@@ -209,7 +358,7 @@ def test_public_caddyfile_keeps_runtime_topology_in_environment_placeholders():
     assert "{$CADDY_CROSS_SITE_HOST:http://localhost:8081}" in src
     assert "{$CADDY_CROSS_UPSTREAM:host.docker.internal:8501}" in src
     assert "@app_hosts host aiinforsearch.com www.aiinforsearch.com" in src
-    assert "redir https://www.aiinforsearch.com{uri} permanent" in src
+    assert "redir https://www.aiinforsearch.com{uri} 308" in src
     assert "cross.aiactuary.cn" not in src
     assert "172.28.0.1" not in src
     assert """{$CADDY_CROSS_SITE_HOST:http://localhost:8081} {

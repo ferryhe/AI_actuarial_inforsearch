@@ -445,6 +445,10 @@ from ai_actuarial.utils import _TextExtractor
 
 _TextExtractor.handle_data  # reason: HTMLParser invokes this protocol callback dynamically.
 
+from tests.test_deployment_config_source import _CaddyHeaderUpstream
+
+_CaddyHeaderUpstream.do_GET  # reason: BaseHTTPRequestHandler dispatches this test upstream callback dynamically.
+
 from tests.agentic_rag.test_ready_data_builder import test_db_path
 from tests.conftest import admin_token, guest_token, sample_task, sample_user
 from tests.test_api_logging import restore_logging_state
