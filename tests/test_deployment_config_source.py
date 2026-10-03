@@ -347,15 +347,15 @@ def test_caddy_replaces_upstream_security_headers_for_app_and_api_routes(
                 "strict-transport-security": "max-age=31536000",
             }
 
-            for target, content_type, body in (
+            for target, content_types, body in (
                 (
                     "/assets/index-D6dVqAIK.js",
-                    "application/javascript",
+                    ("application/javascript", "text/javascript"),
                     js_body,
                 ),
                 (
                     "/assets/index-Abc123_9.css",
-                    "text/css",
+                    ("text/css",),
                     css_body,
                 ),
             ):
@@ -363,9 +363,9 @@ def test_caddy_replaces_upstream_security_headers_for_app_and_api_routes(
                     upstream.server_port, "localhost", target
                 )
                 assert upstream_status == 200
-                assert [
-                    value for key, value in upstream_headers if key.lower() == "content-type"
-                ] == [content_type]
+                assert [value for key, value in upstream_headers if key.lower() == "content-type"][
+                    0
+                ] in content_types
                 assert upstream_body == body
 
             upstream_status, upstream_headers, upstream_body = _http_request_bytes(
@@ -448,9 +448,13 @@ def test_caddy_replaces_upstream_security_headers_for_app_and_api_routes(
                     "no-cache"
                 ]
 
-            for target, content_type, body in (
-                ("/assets/index-D6dVqAIK.js", "application/javascript", js_body),
-                ("/assets/index-Abc123_9.css", "text/css", css_body),
+            for target, content_types, body in (
+                (
+                    "/assets/index-D6dVqAIK.js",
+                    ("application/javascript", "text/javascript"),
+                    js_body,
+                ),
+                ("/assets/index-Abc123_9.css", ("text/css",), css_body),
             ):
                 status, headers, encoded_body = _http_request_bytes(
                     port,
@@ -469,9 +473,9 @@ def test_caddy_replaces_upstream_security_headers_for_app_and_api_routes(
                     key.lower() == "vary" and "accept-encoding" in value.lower()
                     for key, value in headers
                 )
-                assert [value for key, value in headers if key.lower() == "content-type"] == [
-                    content_type
-                ]
+                assert [value for key, value in headers if key.lower() == "content-type"][
+                    0
+                ] in content_types
                 assert gzip.decompress(encoded_body) == body
                 assert len(encoded_body) < len(body)
 

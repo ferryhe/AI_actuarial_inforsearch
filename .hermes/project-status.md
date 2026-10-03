@@ -26,6 +26,9 @@
   whitelist after replacing that fixture. The whitelist now references the real
   file-backed `_CaddyStaticUpstream`; local TypeScript and Python symbol gates
   pass with zero baseline findings.
+- The first remote unified quality-gate run then exposed Python's platform
+  difference in `.js` MIME labels (`text/javascript` on Linux,
+  `application/javascript` on Windows); the fixture now accepts both valid labels.
 - PR #398 remains open and has not been merged. No production deployment has
   been performed; Huawei/WeChat/Chrome field comparison remains for after a
   reviewed, safe deployment.
