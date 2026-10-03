@@ -52,6 +52,19 @@ http://:80 {
 {$CADDY_APP_SITE_HOSTS:http://localhost:8080} {
 	import json_access_log
 	import app_security_headers
+	encode zstd gzip
+
+	@hashed_assets path_regexp hashed_asset ^/assets/.+-[A-Za-z0-9_-]{8}\.[A-Za-z0-9.]+$
+	header @hashed_assets {
+		defer
+		Cache-Control "public, max-age=31536000, immutable"
+	}
+
+	@html_documents path / /index.html
+	header @html_documents {
+		defer
+		Cache-Control "no-cache"
+	}
 
 	handle /api/* {
 		reverse_proxy api:5000

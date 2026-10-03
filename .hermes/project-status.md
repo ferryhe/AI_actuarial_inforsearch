@@ -1,3 +1,22 @@
+# Latest work — Issue #328 Caddy compression and caching
+
+- Updated: 2026-10-03 EDT. Repository: `AI_actuarial_inforsearch`; branch:
+  `codex/issue-328-caddy-compression-cache`; baseline:
+  `ba6dd8ed190304850feb0a42d37542b289d909e0` (`origin/main`). Only this
+  repository was changed; sibling repositories were not accessed.
+- The app Caddy site now negotiates zstd/gzip, caches only eight-character
+  content-hashed `/assets/*` files for one year as immutable, and sets `/` plus
+  `/index.html` to `no-cache`. API routes and the secondary site retain their
+  existing routing and headers.
+- Docker-backed Caddy regressions cover HTML and asset cache policy, compressed
+  JS/CSS responses with `Vary: Accept-Encoding`, MIME types, exact decompression,
+  and preservation of upstream cache headers for unversioned assets and API
+  responses. The deployment config tests passed (12 tests); production Caddy
+  adapt/validate passed. Production Compose config, Black, isort, and
+  `git diff --check` passed.
+- This is local implementation evidence only. PR publication is next; production
+  deploy and Huawei/WeChat/Chrome field checks remain pending.
+
 # Latest work — Issue #395 full Vitest discovery
 
 - Updated: 2026-10-02 EDT. Repository: `AI_actuarial_inforsearch`; branch:

@@ -1,3 +1,4 @@
+import gzip
 import http.client
 import json
 import socket
@@ -24,14 +25,35 @@ PRODUCTION_CADDY_ENV = (
 
 class _CaddyHeaderUpstream(BaseHTTPRequestHandler):
     def do_GET(self):
+        path = self.path.split("?", maxsplit=1)[0]
+        bodies = {
+            "/": ("text/html; charset=utf-8", b"<!doctype html>" + b"<html>" * 160),
+            "/index.html": ("text/html; charset=utf-8", b"<!doctype html>" + b"<html>" * 160),
+            "/assets/index-D6dVqAIK.js": (
+                "text/javascript; charset=utf-8",
+                b"console.log('hashed javascript asset');\n" * 80,
+            ),
+            "/assets/index-Abc123_9.css": (
+                "text/css; charset=utf-8",
+                b".app { color: #123456; }\n" * 100,
+            ),
+            "/assets/logo.svg": (
+                "image/svg+xml",
+                b"<svg xmlns='http://www.w3.org/2000/svg'></svg>",
+            ),
+        }
+        content_type, body = bodies.get(path, ("application/octet-stream", path.encode()))
         self.send_response(200)
         self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'unsafe-eval'")
         self.send_header("X-Content-Type-Options", "upstream")
         self.send_header("X-Frame-Options", "SAMEORIGIN")
         self.send_header("Referrer-Policy", "unsafe-url")
         self.send_header("Permissions-Policy", "camera=*")
+        self.send_header("Cache-Control", "public, max-age=60")
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
         self.end_headers()
-        self.wfile.write(self.path.encode())
+        self.wfile.write(body)
 
 
 def _caddy_docker_args():
@@ -58,14 +80,21 @@ def _http_request(port, host, target="/"):
         connection.close()
 
 
-def _http_request_headers(port, host, target="/"):
+def _http_request_bytes(port, host, target="/", request_headers=None):
     connection = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
     try:
-        connection.request("GET", target, headers={"Host": host})
+        headers = {"Host": host}
+        headers.update(request_headers or {})
+        connection.request("GET", target, headers=headers)
         response = connection.getresponse()
-        return response.status, response.getheaders(), response.read().decode("utf-8")
+        return response.status, response.getheaders(), response.read()
     finally:
         connection.close()
+
+
+def _http_request_headers(port, host, target="/"):
+    status, headers, body = _http_request_bytes(port, host, target)
+    return status, headers, body.decode("utf-8")
 
 
 def _unused_port():
@@ -303,6 +332,55 @@ def test_caddy_replaces_upstream_security_headers_for_app_and_api_routes(
                     values = [item for key, item in headers if key.lower() == name]
                     assert values == [value]
                 assert "unsafe-eval" not in expected["content-security-policy"]
+
+            for target in ("/", "/index.html"):
+                status, headers, _ = _http_request_bytes(port, f"localhost:{caddy_port}", target)
+                assert status == 200
+                assert [value for key, value in headers if key.lower() == "cache-control"] == [
+                    "no-cache"
+                ]
+
+            for target, content_type, body in (
+                (
+                    "/assets/index-D6dVqAIK.js",
+                    "text/javascript; charset=utf-8",
+                    b"console.log('hashed javascript asset');\n" * 80,
+                ),
+                (
+                    "/assets/index-Abc123_9.css",
+                    "text/css; charset=utf-8",
+                    b".app { color: #123456; }\n" * 100,
+                ),
+            ):
+                status, headers, encoded_body = _http_request_bytes(
+                    port,
+                    f"localhost:{caddy_port}",
+                    target,
+                    {"Accept-Encoding": "gzip"},
+                )
+                assert status == 200
+                assert [value for key, value in headers if key.lower() == "cache-control"] == [
+                    "public, max-age=31536000, immutable"
+                ]
+                assert [value for key, value in headers if key.lower() == "content-encoding"] == [
+                    "gzip"
+                ]
+                assert any(
+                    key.lower() == "vary" and "accept-encoding" in value.lower()
+                    for key, value in headers
+                )
+                assert [value for key, value in headers if key.lower() == "content-type"] == [
+                    content_type
+                ]
+                assert gzip.decompress(encoded_body) == body
+                assert len(encoded_body) < len(body)
+
+            for target in ("/assets/logo.svg", "/api/health"):
+                status, headers, _ = _http_request_bytes(port, f"localhost:{caddy_port}", target)
+                assert status == 200
+                assert [value for key, value in headers if key.lower() == "cache-control"] == [
+                    "public, max-age=60"
+                ]
         finally:
             subprocess.run(
                 ["docker", "rm", "--force", container_name],
