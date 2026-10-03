@@ -1,3 +1,64 @@
+# Latest work — PR #398 Caddy template isolation and redirect configuration
+
+- Updated: 2026-10-03 EDT. Repository: `AI_actuarial_inforsearch`; branch:
+  `codex/issue-328-caddy-compression-cache`; starting head:
+  `afe4aa1f7a1c63c0db2febd154fb4de965a34188`. Only this repository was edited;
+  sibling repositories remain off-limits.
+- Split the standalone `Caddyfile` entrypoint from the app-only `Caddyfile.app`
+  fragment, mounted at the generic `/etc/caddy/app.caddy` path. Removed the
+  secondary site route and all production host literals from active Caddy
+  config, tests, and deployment docs. HTTP redirect hosts now come from
+  space-separated `CADDY_APP_REDIRECT_HOSTS`; the fixed HTTPS origin comes from
+  `CADDY_APP_REDIRECT_ORIGIN` and Caddy appends `{uri}`. Development defaults
+  are localhost; production Compose requires the app site hosts and both new
+  redirect values.
+- The focused deployment suite passed: 14 tests, including two fake deployment
+  overrides, Caddy adapt/validate, HTTP 308 path/query preservation, unknown
+  host 421, health 200, host-managed site composition, and the existing static
+  cache/security-header checks. Compose config checks confirmed localhost dev
+  defaults, production failure when redirect hosts are absent, and successful
+  mapping of fictional production values.
+- Deployment has not happened and no server values were supplied. Before any
+  rollout, operations must preserve the server-local site config and validate
+  the combined Caddy entrypoint; compare host/container hashes and inodes with
+  active config, and recreate Caddy if the single-file mount is stale because
+  reload does not refresh it. PR #398 remains open and unmerged.
+
+# Latest work — Issue #328 missing-asset cache blocker fix
+
+- Updated: 2026-10-03 EDT. Repository: `AI_actuarial_inforsearch`; branch:
+  `codex/issue-328-caddy-compression-cache`; starting head:
+  `011043f454ca900a0d190f797989e713fc07e463`. Only this repository was changed;
+  sibling repositories were not accessed.
+- The Caddy `/assets/*` handler now converts a successful HTML SPA fallback to
+  404. Hashed asset paths receive one-year immutable caching only for 200/206
+  responses; it strips `If-None-Match` and `If-Modified-Since` from upstream
+  requests so a headerless 304 cannot bypass the fallback check. Asset redirects
+  and errors receive `no-store`. Successful HTML responses across the app,
+  including `/`, `/index.html`, `/index`, and `/chat`, receive `no-cache`.
+- Docker-backed Caddy tests use a file-backed static HTTP server with SPA
+  fallback. They prove real hashed JS/CSS files return the expected bytes and
+  MIME types, missing assets that upstream serves as the homepage still return
+  404 under `If-Modified-Since` and `If-None-Match` (where the upstream alone
+  returns a headerless 304), redirects and errors are not cached, and SPA deep
+  links serve the homepage with `no-cache`. Gzip responses and
+  `Vary: Accept-Encoding` passed end to end; zstd end-to-end behavior remains
+  unverified. The focused deployment suite passed (12 tests), including Caddy
+  adapt/validate. Black, isort, and
+  `git diff --check` passed.
+- Fresh gpt-6-sol/high review passed the five Issue #328 cache criteria, including
+  the conditional-304 regression. No merge or production deployment was performed.
+- CI initially found the old `_CaddyHeaderUpstream` test name in the dead-code
+  whitelist after replacing that fixture. The whitelist now references the real
+  file-backed `_CaddyStaticUpstream`; local TypeScript and Python symbol gates
+  pass with zero baseline findings.
+- The first remote unified quality-gate run then exposed Python's platform
+  difference in `.js` MIME labels (`text/javascript` on Linux,
+  `application/javascript` on Windows); the fixture now accepts both valid labels.
+- PR #398 remains open and has not been merged. No production deployment has
+  been performed; Huawei/WeChat/Chrome field comparison remains for after a
+  reviewed, safe deployment.
+
 # Latest work — Issue #395 full Vitest discovery
 
 - Updated: 2026-10-02 EDT. Repository: `AI_actuarial_inforsearch`; branch:

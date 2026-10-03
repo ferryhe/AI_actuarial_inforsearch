@@ -89,16 +89,15 @@ services:
       - "${CADDY_HTTPS_PORT:-443}:443"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./Caddyfile.app:/etc/caddy/app.caddy:ro
       - ai-caddy-data:/data
       - ai-caddy-config:/config
     environment:
       - ACME_EMAIL=${ACME_EMAIL:-}
       - CADDY_APP_SITE_HOSTS=${CADDY_APP_SITE_HOSTS:-http://localhost:8080}
-      - CADDY_CROSS_SITE_HOST=${CADDY_CROSS_SITE_HOST:-http://localhost:8081}
-      - CADDY_CROSS_UPSTREAM=${CADDY_CROSS_UPSTREAM:-host.docker.internal:8501}
+      - CADDY_APP_REDIRECT_HOSTS=${CADDY_APP_REDIRECT_HOSTS:-localhost}
+      - CADDY_APP_REDIRECT_ORIGIN=${CADDY_APP_REDIRECT_ORIGIN:-https://localhost}
       - CONTENT_SECURITY_POLICY
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:80/"]
       interval: 30s

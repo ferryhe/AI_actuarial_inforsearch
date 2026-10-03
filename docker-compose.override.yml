@@ -10,8 +10,8 @@
 #   export FASTAPI_CORS_ORIGINS=https://<public-app-host>
 #   export VITE_API_BASE_URL=https://<public-app-host>/api
 #   export CADDY_APP_SITE_HOSTS=<public-app-host>[,www.<public-app-host>]
-#   export CADDY_CROSS_SITE_HOST=<optional-secondary-host>
-#   export CADDY_CROSS_UPSTREAM=<host-or-service>:<port>
+#   export CADDY_APP_REDIRECT_HOSTS='<http-host> <www-http-host>'
+#   export CADDY_APP_REDIRECT_ORIGIN='https://<canonical-app-host>'
 #   export TRUST_PROXY=true  # only with the explicit allowlist below
 #   export TRUSTED_PROXY_CIDRS=<actual-Caddy-IP/32-or-isolated-Docker-proxy-CIDR>
 # Missing/invalid CIDRs ignore forwarded headers and produce a startup warning.
@@ -83,6 +83,10 @@ services:
   # ── Caddy — Production ───────────────────────────────────────────────────────
   caddy:
     restart: always
+    environment:
+      - CADDY_APP_SITE_HOSTS=${CADDY_APP_SITE_HOSTS:?CADDY_APP_SITE_HOSTS is required in production}
+      - CADDY_APP_REDIRECT_HOSTS=${CADDY_APP_REDIRECT_HOSTS:?CADDY_APP_REDIRECT_HOSTS is required in production}
+      - CADDY_APP_REDIRECT_ORIGIN=${CADDY_APP_REDIRECT_ORIGIN:?CADDY_APP_REDIRECT_ORIGIN is required in production}
     logging:
       driver: "json-file"
       options:
