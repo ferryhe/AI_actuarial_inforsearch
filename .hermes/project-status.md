@@ -4759,3 +4759,41 @@
   (34 tests), and the migration-caller suite passed (279 passed, 7 skipped).
   Independent gpt-6-sol/high review and TypeSafe coverage both passed. PR/merge
   lifecycle state is tracked in the external Issue #363 lifecycle evidence.
+
+### Issue #353 verification blocked — 2026-10-02
+
+- The reviewed Caddy changes remain on `codex/issue-353-csp-security-headers`. Fresh reviewer and TypeSafe review passed after one fix cycle. The final-tree focused deployment suite had previously passed 12 tests before the host restart.
+- The later full `python scripts/quality_gate.py` run collected 2,323 tests but ended incomplete; the raw log shows progress only through 99%, then `python -m black --check ai_actuarial scripts tests config` exited with native code `3221226091` (`0xC000026B`). The outer quality-gate exit code was 2. This is not a formatting result. The report files under `reports/quality-gate` are stale from 19:53 and were not updated by this run.
+- Windows Event 2004 at 20:34 reported low virtual memory and listed `python.exe` PID 62068 consuming 98,483,150,848 bytes. Event 1074 recorded an unplanned restart at 20:47; Event 6006 recorded the Event Log service stopping. Microsoft maps `0xC000026B` to `STATUS_DLL_INIT_FAILED_LOGOFF`, consistent with process startup during shutdown. No matching Python/Black Application Error records or current-run dump were found.
+- After restart, the changed-file Black check passed. A focused deployment pytest rerun reported 8 passed and 4 Docker-dependent failures because the Docker Desktop engine pipe was unavailable. Docker Desktop was started once, but `docker info` still could not connect. Current samples showed about 11.7 GB free physical memory and 19.6 GB free virtual memory; the prior test process peak working set is unavailable because it exited.
+- The full gate was not rerun after the low-virtual-memory event. Production AC-4 and AC-8 also remain unverified, so no commit, PR, deployment, or merge was made. Resume after Docker is available and the test host has enough commit-memory headroom for the full gate; capture production Caddy dump/mount/SHA and rollback evidence before any production operation.
+- Raw failure output, resource events, and stale report copies are saved in the external Issue #353 evidence directory.
+- The post-restart focused pytest updated ignored `.coverage` and `htmlcov` outputs around 21:09; they describe that focused run, not the incomplete full suite.
+
+### Issue #353 grouped quality-gate recovery — 2026-10-02
+
+- Docker recovered at version 29.8.1; the final-tree focused deployment suite passed all 12 tests.
+- Ran all 130 discovered test files in 26 sequential pytest groups of five with coverage appended. All 2,323 collected items completed: 2,313 passed, 10 skipped, 0 failed, 0 errors. The combined coverage report is 82%; the summary and logs are stored in the external Issue #353 evidence directory.
+- Full static components passed separately: Black checked 269 files with no changes, isort exited 0, and pylint returned an empty error list. The single-process scripts/quality_gate.py run remains incomplete and is not reported as passed.
+- Production AC-4 and AC-8 remain blocked pending the live Caddy dump/matcher/mount/deployed SHA, production HTTP/browser evidence, and verified rollback evidence. No commit, PR, deployment, or merge was made.
+
+### Issue #353 Draft PR opened — 2026-10-02
+
+- Draft PR #397: https://github.com/ferryhe/AI_actuarial_inforsearch/pull/397
+- Commit e822b656 contains the reviewed Caddy/header changes and regression tests. Full pytest coverage passed in 26 sequential groups (2,313 passed, 10 skipped); Black, isort, and pylint component checks passed separately.
+- The single-process scripts/quality_gate.py run remains incomplete; its components are documented in the PR and external delivery evidence.
+- PR stays in draft for the user's real-machine validation. Production AC-4/AC-8 evidence and rollback validation remain pending. Do not merge or deploy until those results are reviewed.
+
+### Issue #353 PR #397 Linux CI repair — 2026-10-02
+
+- The 15-minute PR check found five passing checks and one failing quality-gate check. Its pytest run had 2,320 passing tests and three failures, all parameterizations of the new Caddy request test. In GitHub Actions Linux Docker, the Caddy container could not resolve host.docker.internal, so requests returned 502.
+- Fixed the test setup to add Docker's host-gateway mapping only on Linux. Windows Docker Desktop keeps its built-in host.docker.internal route.
+- Local validation passed: tests/test_deployment_config_source.py (12 passed), Black (1 file unchanged), isort (exit 0), and pylint (empty error list).
+- The PR review query returned no reviews, inline threads, or conversation comments. PR #397 remains Draft while the CI reruns and the user performs real-machine validation; production AC-4/AC-8 and rollback evidence remain pending.
+
+### Issue #353 PR #397 required checks passed — 2026-10-02
+
+- After the Linux Docker host-gateway test fix, commit ae71cb8 passed all six GitHub CI checks. The quality-gate completed in 9m33s; the other five checks also passed.
+- The 15-minute PR feedback query returned no reviews, inline threads, or conversation comments.
+- PR #397 remains Draft for the user's real-machine validation. Production AC-4/AC-8 evidence and rollback verification remain pending; no merge or deployment was performed.
+- This entry records the result for code commit ae71cb8; this status-only update does not change the tested code.
