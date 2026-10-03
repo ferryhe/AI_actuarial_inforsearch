@@ -14,8 +14,8 @@
   responses. The deployment config tests passed (12 tests); production Caddy
   adapt/validate passed. Production Compose config, Black, isort, and
   `git diff --check` passed.
-- This is local implementation evidence only. PR publication is next; production
-  deploy and Huawei/WeChat/Chrome field checks remain pending.
+- PR #398 is open. Production deployment and the Huawei/WeChat/Chrome
+  post-deploy field checks remain pending; this PR makes no runtime changes.
 
 # Latest work — Issue #395 full Vitest discovery
 
