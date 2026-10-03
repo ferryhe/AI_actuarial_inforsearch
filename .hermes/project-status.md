@@ -4776,3 +4776,10 @@
 - Ran all 130 discovered test files in 26 sequential pytest groups of five with coverage appended. All 2,323 collected items completed: 2,313 passed, 10 skipped, 0 failed, 0 errors. The combined coverage report is 82%; the summary and logs are stored in the external Issue #353 evidence directory.
 - Full static components passed separately: Black checked 269 files with no changes, isort exited 0, and pylint returned an empty error list. The single-process scripts/quality_gate.py run remains incomplete and is not reported as passed.
 - Production AC-4 and AC-8 remain blocked pending the live Caddy dump/matcher/mount/deployed SHA, production HTTP/browser evidence, and verified rollback evidence. No commit, PR, deployment, or merge was made.
+
+### Issue #353 Draft PR opened — 2026-10-02
+
+- Draft PR #397: https://github.com/ferryhe/AI_actuarial_inforsearch/pull/397
+- Commit e822b656 contains the reviewed Caddy/header changes and regression tests. Full pytest coverage passed in 26 sequential groups (2,313 passed, 10 skipped); Black, isort, and pylint component checks passed separately.
+- The single-process scripts/quality_gate.py run remains incomplete; its components are documented in the PR and external delivery evidence.
+- PR stays in draft for the user's real-machine validation. Production AC-4/AC-8 evidence and rollback validation remain pending. Do not merge or deploy until those results are reviewed.
