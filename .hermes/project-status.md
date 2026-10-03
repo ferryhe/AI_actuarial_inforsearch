@@ -4790,3 +4790,10 @@
 - Fixed the test setup to add Docker's host-gateway mapping only on Linux. Windows Docker Desktop keeps its built-in host.docker.internal route.
 - Local validation passed: tests/test_deployment_config_source.py (12 passed), Black (1 file unchanged), isort (exit 0), and pylint (empty error list).
 - The PR review query returned no reviews, inline threads, or conversation comments. PR #397 remains Draft while the CI reruns and the user performs real-machine validation; production AC-4/AC-8 and rollback evidence remain pending.
+
+### Issue #353 PR #397 required checks passed — 2026-10-02
+
+- After the Linux Docker host-gateway test fix, commit ae71cb8 passed all six GitHub CI checks. The quality-gate completed in 9m33s; the other five checks also passed.
+- The 15-minute PR feedback query returned no reviews, inline threads, or conversation comments.
+- PR #397 remains Draft for the user's real-machine validation. Production AC-4/AC-8 evidence and rollback verification remain pending; no merge or deployment was performed.
+- This entry records the result for code commit ae71cb8; this status-only update does not change the tested code.
