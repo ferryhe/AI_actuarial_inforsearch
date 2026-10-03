@@ -22,6 +22,10 @@
   `git diff --check` passed.
 - Fresh gpt-6-sol/high review passed the five Issue #328 cache criteria, including
   the conditional-304 regression. No merge or production deployment was performed.
+- CI initially found the old `_CaddyHeaderUpstream` test name in the dead-code
+  whitelist after replacing that fixture. The whitelist now references the real
+  file-backed `_CaddyStaticUpstream`; local TypeScript and Python symbol gates
+  pass with zero baseline findings.
 - PR #398 remains open and has not been merged. No production deployment has
   been performed; Huawei/WeChat/Chrome field comparison remains for after a
   reviewed, safe deployment.
