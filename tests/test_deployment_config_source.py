@@ -17,10 +17,17 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 
-PRODUCTION_CADDY_ENV = (
-    "CADDY_APP_SITE_HOSTS=www.aiinforsearch.com, aiinforsearch.com",
-    "CADDY_CROSS_SITE_HOST=cross.aiactuary.cn",
-    "CADDY_CROSS_UPSTREAM=host.docker.internal:8501",
+TEST_CADDY_DEPLOYMENTS = (
+    {
+        "CADDY_APP_SITE_HOSTS": "app-one.example.test, www.app-one.example.test",
+        "CADDY_APP_REDIRECT_HOSTS": "app-one.example.test www.app-one.example.test",
+        "CADDY_APP_REDIRECT_ORIGIN": "https://www.app-one.example.test",
+    },
+    {
+        "CADDY_APP_SITE_HOSTS": "app-two.example.test, www.app-two.example.test",
+        "CADDY_APP_REDIRECT_HOSTS": "app-two.example.test www.app-two.example.test",
+        "CADDY_APP_REDIRECT_ORIGIN": "https://www.app-two.example.test",
+    },
 )
 
 
@@ -69,14 +76,16 @@ class _CaddyStaticUpstream(SimpleHTTPRequestHandler):
         super().do_GET()
 
 
-def _caddy_docker_args():
+def _caddy_docker_args(environment, caddyfile_path=None):
     args = ["docker", "run", "--rm"]
-    for value in PRODUCTION_CADDY_ENV:
-        args.extend(("--env", value))
+    for name, value in environment.items():
+        args.extend(("--env", f"{name}={value}"))
     args.extend(
         (
             "--volume",
-            f"{ROOT / 'Caddyfile'}:/etc/caddy/Caddyfile:ro",
+            f"{caddyfile_path or ROOT / 'Caddyfile'}:/etc/caddy/Caddyfile:ro",
+            "--volume",
+            f"{ROOT / 'Caddyfile.app'}:/etc/caddy/app.caddy:ro",
             "caddy:2-alpine",
         )
     )
@@ -126,9 +135,10 @@ def _walk_dicts(value):
             yield from _walk_dicts(child)
 
 
-def test_production_caddy_http_listener_and_runtime_redirect_contract():
+@pytest.mark.parametrize("caddy_environment", TEST_CADDY_DEPLOYMENTS, ids=("app-one", "app-two"))
+def test_caddy_http_listener_and_runtime_redirect_contract(caddy_environment):
     adapted = subprocess.run(
-        _caddy_docker_args()
+        _caddy_docker_args(caddy_environment)
         + ["caddy", "adapt", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"],
         check=True,
         capture_output=True,
@@ -154,11 +164,10 @@ def test_production_caddy_http_listener_and_runtime_redirect_contract():
         "api:5000",
         "frontend:5173",
         "frontend:5173",
-        "host.docker.internal:8501",
     ]
 
     subprocess.run(
-        _caddy_docker_args()
+        _caddy_docker_args(caddy_environment)
         + ["caddy", "validate", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"],
         check=True,
         capture_output=True,
@@ -218,17 +227,106 @@ def test_production_caddy_http_listener_and_runtime_redirect_contract():
                     raise AssertionError(f"Caddy did not become ready:\n{logs.stderr}")
                 time.sleep(0.1)
 
-            for host in ("aiinforsearch.com", "www.aiinforsearch.com"):
+            redirect_origin = caddy_environment["CADDY_APP_REDIRECT_ORIGIN"]
+            for host in caddy_environment["CADDY_APP_REDIRECT_HOSTS"].split():
                 status, headers, _ = _http_request(port, host, "/database?category=AI")
                 assert status == 308
-                assert headers["Location"] == ("https://www.aiinforsearch.com/database?category=AI")
+                assert headers["Location"] == f"{redirect_origin}/database?category=AI"
 
-            for host in ("unrelated.example", "cross.aiactuary.cn"):
+            for host in ("unrelated.example.test",):
                 status, headers, body = _http_request(port, host, "/probe?source=host")
                 assert status == 421
                 assert "Location" not in headers
                 assert host not in body
                 assert host not in "\n".join(f"{key}: {value}" for key, value in headers.items())
+        finally:
+            subprocess.run(
+                ["docker", "rm", "--force", container_name],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+
+def test_caddy_app_fragment_composes_with_a_host_managed_site():
+    caddy_environment = TEST_CADDY_DEPLOYMENTS[0]
+    with tempfile.TemporaryDirectory(prefix="issue-328-caddy-compose-") as temp_dir:
+        composed_caddyfile = Path(temp_dir) / "Caddyfile"
+        composed_caddyfile.write_text(
+            "{\n\tauto_https disable_redirects\n}\n"
+            "import /etc/caddy/app.caddy\n\n"
+            'http://independent.example.test {\n\trespond "host-managed site" 200\n}\n',
+            encoding="utf-8",
+        )
+        adapted = subprocess.run(
+            _caddy_docker_args(caddy_environment, composed_caddyfile)
+            + ["caddy", "adapt", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        config = json.loads(adapted.stdout)
+        servers = list(config["apps"]["http"]["servers"].values())
+        public_http_servers = [server for server in servers if ":80" in server.get("listen", [])]
+        assert len(public_http_servers) == 1
+
+        runtime_config_path = Path(temp_dir) / "caddy.json"
+        runtime_config_path.write_text(
+            json.dumps({"apps": {"http": {"servers": {"http": public_http_servers[0]}}}}),
+            encoding="utf-8",
+        )
+        container_name = f"issue-328-caddy-compose-{uuid.uuid4().hex}"
+        run_args = [
+            "docker",
+            "run",
+            "--detach",
+            "--rm",
+            "--name",
+            container_name,
+            "--publish",
+            "127.0.0.1::80",
+            "--volume",
+            f"{runtime_config_path}:/etc/caddy/caddy.json:ro",
+            "caddy:2-alpine",
+            "caddy",
+            "run",
+            "--config",
+            "/etc/caddy/caddy.json",
+        ]
+        subprocess.run(run_args, check=True, capture_output=True, text=True)
+
+        try:
+            published = subprocess.run(
+                ["docker", "port", container_name, "80/tcp"],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            port = int(published.rsplit(":", 1)[1])
+            deadline = time.monotonic() + 10
+            while True:
+                try:
+                    status, _, body = _http_request(port, "localhost:80")
+                    if status == 200:
+                        assert body == "ok"
+                        break
+                except OSError:
+                    pass
+                if time.monotonic() >= deadline:
+                    logs = subprocess.run(
+                        ["docker", "logs", container_name],
+                        check=False,
+                        capture_output=True,
+                        text=True,
+                    )
+                    raise AssertionError(f"Caddy did not become ready:\n{logs.stderr}")
+                time.sleep(0.1)
+
+            status, _, body = _http_request(port, "independent.example.test")
+            assert status == 200
+            assert body == "host-managed site"
+            status, _, _ = _http_request(port, "unconfigured.example.test")
+            assert status == 421
         finally:
             subprocess.run(
                 ["docker", "rm", "--force", container_name],
@@ -267,8 +365,10 @@ def test_caddy_replaces_upstream_security_headers_for_app_and_api_routes(
 
     with tempfile.TemporaryDirectory(prefix="issue-353-caddy-") as temp_dir:
         runtime_caddyfile = Path(temp_dir) / "Caddyfile"
-        runtime_caddyfile.write_text(
-            (ROOT / "Caddyfile")
+        runtime_caddy_app = Path(temp_dir) / "Caddyfile.app"
+        runtime_caddyfile.write_text((ROOT / "Caddyfile").read_text(encoding="utf-8"))
+        runtime_caddy_app.write_text(
+            (ROOT / "Caddyfile.app")
             .read_text(encoding="utf-8")
             .replace("api:5000", f"host.docker.internal:{upstream.server_port}")
             .replace("frontend:5173", f"host.docker.internal:{upstream.server_port}"),
@@ -295,6 +395,8 @@ def test_caddy_replaces_upstream_security_headers_for_app_and_api_routes(
             + [
                 "--volume",
                 f"{runtime_caddyfile}:/etc/caddy/Caddyfile:ro",
+                "--volume",
+                f"{runtime_caddy_app}:/etc/caddy/app.caddy:ro",
                 "caddy:2-alpine",
                 "caddy",
                 "run",
@@ -587,6 +689,18 @@ def test_production_compose_uses_fastapi_env_and_keeps_features_in_yaml():
     assert "CONTENT_SECURITY_POLICY=${CONTENT_SECURITY_POLICY:-default-src" not in src
     assert "- CONTENT_SECURITY_POLICY" in src
     assert "CADDY_DOMAIN" not in src
+    assert (
+        "CADDY_APP_SITE_HOSTS=${CADDY_APP_SITE_HOSTS:?CADDY_APP_SITE_HOSTS is required in production}"
+        in src
+    )
+    assert (
+        "CADDY_APP_REDIRECT_HOSTS=${CADDY_APP_REDIRECT_HOSTS:?CADDY_APP_REDIRECT_HOSTS is required in production}"
+        in src
+    )
+    assert (
+        "CADDY_APP_REDIRECT_ORIGIN=${CADDY_APP_REDIRECT_ORIGIN:?CADDY_APP_REDIRECT_ORIGIN is required in production}"
+        in src
+    )
 
 
 def test_env_example_documents_comma_separated_cors_origins():
@@ -597,32 +711,25 @@ def test_env_example_documents_comma_separated_cors_origins():
 
 
 def test_caddy_fail2ban_access_log_and_healthcheck_are_deployable():
-    src = (ROOT / "Caddyfile").read_text(encoding="utf-8")
+    src = (ROOT / "Caddyfile.app").read_text(encoding="utf-8")
+    entrypoint = (ROOT / "Caddyfile").read_text(encoding="utf-8")
 
     assert "output file /data/access.log" in src
     assert "/data/logs/access.log" not in src
     assert "http://:80 {" in src
     assert "@health host localhost" in src
     assert 'respond "ok" 200' in src
+    assert "auto_https disable_redirects" in entrypoint
+    assert "import /etc/caddy/app.caddy" in entrypoint
 
 
-def test_public_caddyfile_keeps_runtime_topology_in_environment_placeholders():
-    src = (ROOT / "Caddyfile").read_text(encoding="utf-8")
+def test_public_caddyfile_is_app_only_and_uses_deployment_redirect_settings():
+    src = (ROOT / "Caddyfile.app").read_text(encoding="utf-8")
 
     assert "{$CADDY_APP_SITE_HOSTS:http://localhost:8080}" in src
-    assert "{$CADDY_CROSS_SITE_HOST:http://localhost:8081}" in src
-    assert "{$CADDY_CROSS_UPSTREAM:host.docker.internal:8501}" in src
-    assert "@app_hosts host aiinforsearch.com www.aiinforsearch.com" in src
-    assert "redir https://www.aiinforsearch.com{uri} 308" in src
-    assert "cross.aiactuary.cn" not in src
+    assert "@app_redirect_hosts host {$CADDY_APP_REDIRECT_HOSTS:localhost}" in src
+    assert "redir {$CADDY_APP_REDIRECT_ORIGIN:https://localhost}{uri} 308" in src
     assert "172.28.0.1" not in src
-    assert """{$CADDY_CROSS_SITE_HOST:http://localhost:8081} {
-\timport json_access_log
-\timport baseline_security_headers
-
-\treverse_proxy {$CADDY_CROSS_UPSTREAM:host.docker.internal:8501}
-}
-""" in src
 
 
 def test_compose_does_not_pin_public_bridge_topology():
@@ -630,9 +737,10 @@ def test_compose_does_not_pin_public_bridge_topology():
     data = yaml.safe_load(src)
 
     assert "172.28." not in src
-    assert "host.docker.internal:host-gateway" in src
     assert "CADDY_APP_SITE_HOSTS=${CADDY_APP_SITE_HOSTS:-http://localhost:8080}" in src
-    assert "CADDY_CROSS_UPSTREAM=${CADDY_CROSS_UPSTREAM:-host.docker.internal:8501}" in src
+    assert "CADDY_APP_REDIRECT_HOSTS=${CADDY_APP_REDIRECT_HOSTS:-localhost}" in src
+    assert "CADDY_APP_REDIRECT_ORIGIN=${CADDY_APP_REDIRECT_ORIGIN:-https://localhost}" in src
+    assert "./Caddyfile.app:/etc/caddy/app.caddy:ro" in src
     assert "CONTENT_SECURITY_POLICY=${CONTENT_SECURITY_POLICY:-default-src" not in src
     assert "- CONTENT_SECURITY_POLICY" in src
     assert "ports" not in data["services"]["api"]

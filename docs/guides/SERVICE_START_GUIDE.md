@@ -111,8 +111,8 @@ export CONFIG_FILENAME=sites.yaml
 export FASTAPI_CORS_ORIGINS=https://<public-app-host>
 export VITE_API_BASE_URL=https://<public-app-host>/api
 export CADDY_APP_SITE_HOSTS=<public-app-host>[,www.<public-app-host>]
-export CADDY_CROSS_SITE_HOST=<optional-secondary-host>
-export CADDY_CROSS_UPSTREAM=<host-or-service>:<port>
+export CADDY_APP_REDIRECT_HOSTS='app.example.test www.app.example.test'
+export CADDY_APP_REDIRECT_ORIGIN=https://www.app.example.test
 ```
 
 ## Update Helper
@@ -139,7 +139,8 @@ RELOAD_CADDY=true CADDY_CONTAINER=ai-caddy APP_SERVICE_NAME=api bash scripts/dep
 - `FASTAPI_CORS_ORIGINS`: comma-separated public frontend origins allowed to call the API.
 - `VITE_API_BASE_URL`: public API URL embedded into the frontend build.
 - `CADDY_APP_SITE_HOSTS`: public hostnames Caddy should serve for the main app.
-- `CADDY_CROSS_SITE_HOST` / `CADDY_CROSS_UPSTREAM`: optional secondary host and upstream target.
+- `CADDY_APP_REDIRECT_HOSTS`: space-separated HTTP hosts that receive the permanent redirect.
+- `CADDY_APP_REDIRECT_ORIGIN`: fixed HTTPS redirect origin without a trailing slash.
 - `features.require_auth` in `CONFIG_PATH`: set to `true` to require authentication.
 - `FASTAPI_ENV`: optional deployment override. If unset, FastAPI uses `CONFIG_PATH -> server.fastapi_env`.
 - `BOOTSTRAP_ADMIN_TOKEN`: optional local admin bootstrap token.

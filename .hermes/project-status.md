@@ -1,3 +1,29 @@
+# Latest work — PR #398 Caddy template isolation and redirect configuration
+
+- Updated: 2026-10-03 EDT. Repository: `AI_actuarial_inforsearch`; branch:
+  `codex/issue-328-caddy-compression-cache`; starting head:
+  `afe4aa1f7a1c63c0db2febd154fb4de965a34188`. Only this repository was edited;
+  sibling repositories remain off-limits.
+- Split the standalone `Caddyfile` entrypoint from the app-only `Caddyfile.app`
+  fragment, mounted at the generic `/etc/caddy/app.caddy` path. Removed the
+  secondary site route and all production host literals from active Caddy
+  config, tests, and deployment docs. HTTP redirect hosts now come from
+  space-separated `CADDY_APP_REDIRECT_HOSTS`; the fixed HTTPS origin comes from
+  `CADDY_APP_REDIRECT_ORIGIN` and Caddy appends `{uri}`. Development defaults
+  are localhost; production Compose requires the app site hosts and both new
+  redirect values.
+- The focused deployment suite passed: 14 tests, including two fake deployment
+  overrides, Caddy adapt/validate, HTTP 308 path/query preservation, unknown
+  host 421, health 200, host-managed site composition, and the existing static
+  cache/security-header checks. Compose config checks confirmed localhost dev
+  defaults, production failure when redirect hosts are absent, and successful
+  mapping of fictional production values.
+- Deployment has not happened and no server values were supplied. Before any
+  rollout, operations must preserve the server-local site config and validate
+  the combined Caddy entrypoint; compare host/container hashes and inodes with
+  active config, and recreate Caddy if the single-file mount is stale because
+  reload does not refresh it. PR #398 remains open and unmerged.
+
 # Latest work — Issue #328 missing-asset cache blocker fix
 
 - Updated: 2026-10-03 EDT. Repository: `AI_actuarial_inforsearch`; branch:

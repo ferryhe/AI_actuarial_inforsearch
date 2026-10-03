@@ -1,16 +1,16 @@
 # Production Security Configuration
 
-This repository keeps server-local upstream addresses and production-only
-security policy values generic. Set them on the server through environment
-variables or a private `.env` file.
+This repository keeps Caddy configuration limited to the app. Set hostnames,
+the canonical redirect origin, and production-only security policy values on
+the server through environment variables or a private `.env` file.
 
 ## Server-local values
 
 Set these only on the deployment server:
 
 - `CADDY_APP_SITE_HOSTS`: comma-separated public app hostnames.
-- `CADDY_CROSS_SITE_HOST`: optional secondary hostname for the host-side app.
-- `CADDY_CROSS_UPSTREAM`: host or service target for the secondary app.
+- `CADDY_APP_REDIRECT_HOSTS`: space-separated HTTP hostnames accepted by the app redirect matcher.
+- `CADDY_APP_REDIRECT_ORIGIN`: fixed trusted HTTPS origin, without a trailing slash; Caddy appends the original path and query.
 - `FASTAPI_CORS_ORIGINS`: comma-separated browser origins allowed to call the API.
 - `VITE_API_BASE_URL`: public API URL used by the frontend build.
 - `FASTAPI_SESSION_SECRET`: strong random session secret.
@@ -45,14 +45,12 @@ Agentic RAG does not require new production secrets. It does create and read rea
 
 ## Why this shape
 
-- The committed `Caddyfile` fixes public HTTP redirects for `aiinforsearch.com`
-  and `www.aiinforsearch.com` to the canonical HTTPS `www` origin while preserving
-  the path and query. Other public HTTP hostnames are rejected; the `localhost`
-  health endpoint remains available to the Caddy container.
-- HTTPS app and secondary-site hostnames and the secondary upstream continue to
-  use Caddy environment placeholders.
-- Docker Compose uses `host.docker.internal:host-gateway` for host-side
-  upstreams instead of publishing a fixed bridge subnet or gateway.
+- The committed `Caddyfile` is an app-only template. HTTP redirect hosts and the
+  fixed HTTPS origin come from environment variables; unmatched HTTP hosts are
+  rejected, and the `localhost` health endpoint remains available to Caddy.
+- Local development defaults these values to `localhost`. The production
+  Compose override requires `CADDY_APP_SITE_HOSTS`,
+  `CADDY_APP_REDIRECT_HOSTS`, and `CADDY_APP_REDIRECT_ORIGIN` to be set.
 - `config/sites.yaml` keeps safe public defaults for CSRF, CSP, and loopback
   server binding. Compose passes `CONTENT_SECURITY_POLICY` through from the
   server environment; when it is unset or blank, the FastAPI app and Caddy use
@@ -65,6 +63,26 @@ Use the production override after setting the server-local values:
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.override.yml up -d
 ```
+
+## Shared host Caddy configuration
+
+`Caddyfile.app` contains only this app's routes. The standalone `Caddyfile`
+imports it from `/etc/caddy/app.caddy`; Compose mounts it at that generic path.
+For a shared Caddy host, the local entrypoint imports the same app fragment and
+keeps all other site routes and upstreams in server-local configuration. The
+shared entrypoint owns global options once, including
+`auto_https disable_redirects` so the configured fixed-origin redirect remains
+in effect. This repository does not name or proxy independent sites.
+
+Before replacing a shared single-file Caddy bind mount, operations must save and
+prepare the other site configuration, then adapt and validate the combined
+configuration. Replacing a host file can leave a single-file bind mount attached
+to its previous inode. Compare hashes and inodes for the host file and the
+container-mounted file, then inspect the active Caddy configuration and confirm
+it matches the validated entrypoint. If the mount is stale, recreate the Caddy
+container because reload reads the mounted file again and does not refresh the
+mount. This repository change does not deploy the new variables or change
+production configuration.
 
 The override requires `FASTAPI_CORS_ORIGINS` and `VITE_API_BASE_URL`, so a
 production deployment fails early if the server has not supplied its public
