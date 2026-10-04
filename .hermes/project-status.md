@@ -5131,3 +5131,9 @@
 - Committed and pushed scoped implementation as `0bbf110b7409317b26aee8c414737ec92b5dcd5b` on `codex/issue-364-runtime-provenance`.
 - Draft PR: https://github.com/ferryhe/AI_actuarial_inforsearch/pull/403 (`Closes #364`). PR #403 is intentionally kept Draft. GitHub check `dead-code-files` was pending at initial observation; other check jobs had not yet appeared. Worktree was clean after push.
 - No deployment/production action occurred. Do not merge while the full required CI result is unknown/incomplete or production canary/rollback acceptance remains unverified and unauthorized.
+
+### Issue #364 runtime provenance — initial GitHub CI and feedback check — 2026-10-04
+
+- Initial GitHub CI completed on PR #403 HEAD `039167624d376eaf85d4b126849d5b0c741879c7`: `quality-gate` PASS (9m43s), `frontend-check` PASS, `python-smoke` PASS, `dead-code-files` PASS, `dead-code-symbols` PASS, `office-conversion-smoke` PASS.
+- At the approximately 15-minute check after Draft PR creation, pull request reviews, PR/Issue comments, and inline review threads were all empty; unresolved thread count was 0. The PR remains Draft, so Ready-for-review remote-feedback timing has not started.
+- Local full quality gate remains recorded as incomplete due to resource termination; GitHub CI is the independent full-gate result for its current HEAD. Production canary/rollback and #313 rollout remain unverified and not authorized. No merge or production action.
