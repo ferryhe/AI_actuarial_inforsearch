@@ -2,12 +2,13 @@ import { Zap, History } from "lucide-react";
 import { useTranslation } from "@/components/Layout";
 import { useAuth } from "@/context/AuthContext";
 import { TaskTableProps } from "./Tasks.types";
-import { statusBadge, formatDate } from "./TaskCard";
+import { statusBadge } from "./TaskCard";
 import { TaskMetrics as TaskResultSummary, getTaskItemCount } from "./TaskMetrics";
 import { EnumDiagnostic, EnumDisplay, canInspectEnumRaw } from "@/lib/enum-display";
+import { FormattedDateTime } from "@/components/FormattedDateTime";
 
 export function TaskTable({ historyTasks, onViewLog }: TaskTableProps) {
-  const { t } = useTranslation();
+  const { t, lang } = useTranslation();
   const { user } = useAuth();
 
   if (historyTasks.length === 0) {
@@ -42,8 +43,8 @@ export function TaskTable({ historyTasks, onViewLog }: TaskTableProps) {
               </div>
               <div className="text-xs text-muted-foreground hidden md:block"><EnumDisplay category="task_type" value={task.type} t={t} /><EnumDiagnostic category="task_type" value={task.type} t={t} canInspectRaw={canInspectEnumRaw(user?.role)} /></div>
               <div className="hidden md:block">{task.status ? statusBadge(task.status, t, canInspectEnumRaw(user?.role)) : "-"}</div>
-              <div className="text-xs text-muted-foreground hidden md:block">{task.started_at ? formatDate(task.started_at) : "-"}</div>
-              <div className="text-xs text-muted-foreground hidden md:block">{task.completed_at ? formatDate(task.completed_at) : "-"}</div>
+              <div className="text-xs text-muted-foreground hidden md:block"><FormattedDateTime value={task.started_at} lang={lang} fallback="-" /></div>
+              <div className="text-xs text-muted-foreground hidden md:block"><FormattedDateTime value={task.completed_at} lang={lang} fallback="-" /></div>
               <div className="flex items-center gap-2">
                 <span className="text-xs text-muted-foreground hidden md:block">{itemCount}</span>
                 {task.id && (

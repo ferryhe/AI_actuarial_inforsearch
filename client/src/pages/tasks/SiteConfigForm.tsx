@@ -9,6 +9,7 @@ import { getStoredAuthToken } from "@/lib/api";
 import { FormField, InputField } from "@/components/FormFields";
 import { ScheduleFromTaskButton } from "./ScheduleFromTaskButton";
 import { IconButton } from "@/components/a11y/IconButton";
+import { FormattedDateTime } from "@/components/FormattedDateTime";
 
 interface SiteConfig {
   name: string;
@@ -37,20 +38,10 @@ function parseList(value: string): string[] {
   return value.split(/[\n,]/).map((item) => item.trim()).filter(Boolean);
 }
 
-function formatDate(dateStr: string): string {
-  if (!dateStr) return "-";
-  try {
-    const d = new Date(dateStr);
-    return d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
-  } catch {
-    return dateStr;
-  }
-}
-
 export function SiteConfigForm({ sites, onSubmit, submitting, onSitesChanged, errorDescribedBy, errorSiteName }: {
   sites: SiteConfig[]; onSubmit: (d: Record<string, unknown>) => void; submitting: boolean; onSitesChanged: () => void; errorDescribedBy?: string; errorSiteName?: string;
 }) {
-  const { t } = useTranslation();
+  const { t, lang } = useTranslation();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [importMode, setImportMode] = useState<"merge" | "overwrite">("merge");
   const [importPreview, setImportPreview] = useState<{ count: number; names: string[] } | null>(null);
@@ -650,7 +641,7 @@ export function SiteConfigForm({ sites, onSubmit, submitting, onSitesChanged, er
                   <div className="flex-1 min-w-0">
                     <span className="font-medium truncate block">{b.filename}</span>
                     <div className="flex items-center gap-3 text-muted-foreground mt-0.5">
-                      {b.timestamp && <span>{formatDate(b.timestamp)}</span>}
+                      {b.timestamp && <span><FormattedDateTime value={b.timestamp} lang={lang} fallback="-" /></span>}
                       {b.size != null && <span>{(b.size / 1024).toFixed(1)} KB</span>}
                     </div>
                   </div>

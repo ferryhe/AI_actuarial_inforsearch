@@ -1,4 +1,5 @@
 import { apiGet } from "./api";
+import { formatDateTime } from "./date-format";
 
 const WEEKLY_HOME_PREVIEW_LIMIT = 6;
 const WEEKLY_FILES_PAGE_LIMIT = 500;
@@ -216,10 +217,7 @@ export function buildWeeklyDatabasePath(snapshot: WeeklySnapshot): string {
 }
 
 export function formatWeeklyDateTime(value: string | null | undefined, lang: string): string {
-  if (!value) return "—";
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return value;
-  return new Intl.DateTimeFormat(lang === "zh" ? "zh-CN" : "en-US", {
+  return formatDateTime(value, lang, {
     year: "numeric",
     month: "short",
     day: "numeric",
@@ -227,18 +225,14 @@ export function formatWeeklyDateTime(value: string | null | undefined, lang: str
     minute: "2-digit",
     timeZone: "UTC",
     timeZoneName: "short",
-  }).format(parsed);
+  });
 }
 
 export function formatWeeklyShortDate(value: string | null | undefined, lang: string): string {
-  if (!value) return "—";
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return value;
-  return new Intl.DateTimeFormat(lang === "zh" ? "zh-CN" : "en-US", {
+  return formatDateTime(value, lang, {
     month: "short",
     day: "numeric",
-    timeZone: "UTC",
-  }).format(parsed);
+  });
 }
 
 export function normalizePublicMetadataText(value: unknown): string {
@@ -297,15 +291,12 @@ export function groupWeeklyFiles(
 }
 
 function formatWeeklyDate(value: string | null | undefined, lang: string): string {
-  if (!value) return "—";
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return value;
-  return new Intl.DateTimeFormat(lang === "zh" ? "zh-CN" : "en-US", {
+  return formatDateTime(value, lang, {
     year: "numeric",
     month: "short",
     day: "numeric",
     timeZone: "UTC",
-  }).format(parsed);
+  });
 }
 
 export function formatWeeklyPeriodLabel(

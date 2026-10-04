@@ -36,7 +36,7 @@ try {
     assert.match(text, /Ordinary admin/);
     assert.match(text, /admin/);
     const renderedDate = await page.getByTestId("token-row-1").locator("time").first().textContent();
-    assert.equal(renderedDate, await page.evaluate(() => new Date("2026-01-01T12:00:00Z").toLocaleString()));
+    assert.equal(renderedDate, await page.evaluate(locale => new Intl.DateTimeFormat(locale, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date("2026-01-01T12:00:00Z")), language === "zh" ? "zh-CN" : "en-US"));
     assert.equal(await page.getByTestId("token-row-1").locator("time").first().getAttribute("title"), "2026-01-01T12:00:00.000Z (UTC)");
     assert.match(await page.getByTestId("token-row-2").textContent(), language === "en" ? /Service.*Revoked.*No expiry/ : /服务.*已撤销.*永不过期/);
     assert.match(await page.getByTestId("token-row-3").textContent(), language === "en" ? /Expired/ : /已过期/);

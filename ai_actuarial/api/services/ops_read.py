@@ -366,6 +366,15 @@ def _build_task_display_summary(task_data: dict[str, Any]) -> dict[str, Any]:
 
 def _serialize_task_for_api(task_data: dict[str, Any]) -> dict[str, Any]:
     row = dict(task_data)
+    for field in ("started_at", "completed_at"):
+        value = row.get(field)
+        if isinstance(value, str):
+            try:
+                parsed = datetime.fromisoformat(value)
+            except ValueError:
+                continue
+            if parsed.tzinfo is None:
+                row[field] = parsed.astimezone().isoformat()
     row["error_count"] = _task_error_count(row)
     row["display_summary"] = _build_task_display_summary(row)
     return row

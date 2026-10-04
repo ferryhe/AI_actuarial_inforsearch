@@ -19,6 +19,7 @@ import { useTranslation } from "@/components/Layout";
 import { apiGet, apiPost } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { EnumDiagnostic, resolveEnumLabel } from "@/lib/enum-display";
+import { FormattedDateTime } from "@/components/FormattedDateTime";
 
 interface User {
   id: number;
@@ -53,7 +54,7 @@ interface ActivityEntry {
 }
 
 export default function UsersPage() {
-  const { t } = useTranslation();
+  const { t, lang } = useTranslation();
   const { user: currentUser, isLoading: authLoading } = useAuth();
   const [users, setUsers] = useState<User[]>([]);
   const [roles, setRoles] = useState<AssignableRole[]>([]);
@@ -363,9 +364,7 @@ export default function UsersPage() {
                       )}
                     </td>
                     <td className="px-4 py-3 text-muted-foreground text-xs" data-testid={`text-last-login-${user.id}`}>
-                      {user.last_login
-                        ? new Date(user.last_login).toLocaleString()
-                        : "—"}
+                      <FormattedDateTime value={user.last_login} lang={lang} />
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-end gap-1">
@@ -455,7 +454,7 @@ export default function UsersPage() {
                           )}
                         </div>
                         <div className="text-xs text-muted-foreground whitespace-nowrap shrink-0">
-                          <div>{new Date(entry.timestamp).toLocaleString()}</div>
+                          <div><FormattedDateTime value={entry.timestamp} lang={lang} /></div>
                           {entry.ip_address && <div className="mt-0.5">{entry.ip_address}</div>}
                         </div>
                       </div>

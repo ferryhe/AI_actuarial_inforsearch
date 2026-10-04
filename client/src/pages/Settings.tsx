@@ -30,6 +30,7 @@ import { useAuth } from "@/context/AuthContext";
 import { EnumDiagnostic, EnumDisplay, canInspectEnumRaw, resolveEnumLabel } from "@/lib/enum-display";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/components/Layout";
+import { FormattedDateTime } from "@/components/FormattedDateTime";
 import { apiGet, apiPost, apiDelete } from "@/lib/api";
 import { formatSettingsMutationError } from "@/lib/settings-errors";
 import { MarkdownConversionTab } from "./settings/MarkdownConversionTab";
@@ -1964,7 +1965,7 @@ function SystemTab() {
 }
 
 function ApiTokensTab() {
-  const { t } = useTranslation();
+  const { t, lang } = useTranslation();
   const { user } = useAuth();
   const canInspectRaw = canInspectEnumRaw(user?.role);
   const canCreateService = user?.role === "admin" && user?.id != null && !!user?.email;
@@ -2033,14 +2034,6 @@ function ApiTokensTab() {
     } catch (error) {
       setToast({ message: formatSettingsMutationError(error, t, "settings.token_revoke_error"), type: "error", action: `revoke-token-${tokenId}` });
     }
-  }
-
-  function formatDate(dateStr: string | null) {
-    if (!dateStr) return "—";
-    // Historical naive storage timestamps were written as UTC.
-    const date = new Date(/(?:Z|[+-]\d{2}:\d{2})$/i.test(dateStr) ? dateStr : `${dateStr}Z`);
-    if (Number.isNaN(date.getTime())) return dateStr;
-    return <time dateTime={date.toISOString()} title={`${date.toISOString()} (UTC)`}>{date.toLocaleString()}</time>;
   }
 
   if (loading) {
@@ -2151,9 +2144,9 @@ function ApiTokensTab() {
                     <span className="text-xs font-semibold">{t(token.status === "revoked" ? "settings.token_status_revoked" : `settings.token_${token.status}`)}</span>
                   </div>
                   <div className="text-[11px] text-muted-foreground">
-                    {t("settings.created")}: {formatDate(token.created_at)}
-                    <br />{t("settings.token_expires")}: {token.expires_at ? formatDate(token.expires_at) : t("settings.token_no_expiry")}
-                    <br />{t("settings.last_used")}: {formatDate(token.last_used_at)}
+                    {t("settings.created")}: <FormattedDateTime value={token.created_at} lang={lang} assumeUtcForNaive />
+                    <br />{t("settings.token_expires")}: {token.expires_at ? <FormattedDateTime value={token.expires_at} lang={lang} assumeUtcForNaive /> : t("settings.token_no_expiry")}
+                    <br />{t("settings.last_used")}: <FormattedDateTime value={token.last_used_at} lang={lang} assumeUtcForNaive />
                   </div>
                 </div>
                 <IconButton onClick={() => revokeToken(token.id)} label={t("a11y.revoke_token", { target: token.subject })}

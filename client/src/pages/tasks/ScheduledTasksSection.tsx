@@ -4,6 +4,7 @@ import { cn } from "@/lib/utils";
 import { useTranslation } from "@/components/Layout";
 import { useAuth } from "@/context/AuthContext";
 import { EnumDiagnostic, EnumDisplay, canInspectEnumRaw, resolveEnumLabel } from "@/lib/enum-display";
+import { FormattedDateTime } from "@/components/FormattedDateTime";
 import { apiGet, apiPost, formatApiErrorDetail } from "@/lib/api";
 import { FormField, InputField, SelectField } from "@/components/FormFields";
 import { IconButton } from "@/components/a11y/IconButton";
@@ -193,7 +194,7 @@ export function ScheduledTasksSection({
   initialLoading = true,
   canManageScheduleOverride,
 }: ScheduledTasksSectionProps = {}) {
-  const { t } = useTranslation();
+  const { t, lang } = useTranslation();
   const { permissions, user } = useAuth();
   const canManageSchedule = canManageScheduleOverride ?? permissions.includes("schedule.write");
   const canInspectRaw = canInspectEnumRaw(user?.role);
@@ -481,8 +482,8 @@ export function ScheduledTasksSection({
                         </div>
                         <div className="flex items-center gap-3 shrink-0 text-muted-foreground">
                           <span>{job.interval}</span>
-                          {job.last_run && <span>{t("tasks.sched.last_run")}: {job.last_run}</span>}
-                          {job.next_run && <span>{t("tasks.sched.next_run")}: {job.next_run}</span>}
+                          {job.last_run && <span>{t("tasks.sched.last_run")}: <FormattedDateTime value={job.last_run} lang={lang} /> ({t("tasks.sched.browser_local")})</span>}
+                          {job.next_run && <span>{t("tasks.sched.next_run")}: <FormattedDateTime value={job.next_run} lang={lang} /> ({t("tasks.sched.browser_local")})</span>}
                           {job.timezone && (
                             <span>
                               {t("tasks.sched.timezone")}: {job.timezone === "process-local"

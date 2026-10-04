@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { getCanonicalDisplayName } from "@/pages/chat/displayName";
+import { formatUtcIso } from "@/lib/date-format";
 import {
   formatWeeklyShortDate,
   groupWeeklyFiles,
@@ -35,6 +36,7 @@ function WeeklyArticleCard({ file, index, lang, t, onOpenFile }: WeeklyArticleCa
   const category = normalizePublicCategory(file.category);
   const keywords = normalizePublicKeywords(file.keywords);
   const summary = normalizePublicMetadataText(file.summary);
+  const utcIso = formatUtcIso(file.first_seen);
 
   return (
     <button
@@ -49,8 +51,8 @@ function WeeklyArticleCard({ file, index, lang, t, onOpenFile }: WeeklyArticleCa
         </span>
         <time
           className="text-xs text-muted-foreground whitespace-nowrap"
-          dateTime={file.first_seen}
-          title={file.first_seen}
+          dateTime={utcIso ?? undefined}
+          title={utcIso ? `${utcIso} (UTC)` : undefined}
         >
           {formatWeeklyShortDate(file.first_seen, lang)}
         </time>

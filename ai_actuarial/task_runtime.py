@@ -13,6 +13,7 @@ from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
 from datetime import time as datetime_time
+from datetime import timezone
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlparse
@@ -815,7 +816,7 @@ class NativeTaskRuntime:
             "type": collection_type,
             "status": "pending",
             "progress": 0,
-            "started_at": datetime.now().isoformat(),
+            "started_at": datetime.now(timezone.utc).isoformat(),
             "items_processed": 0,
             "items_total": 0,
             "items_downloaded": 0,
@@ -3139,7 +3140,7 @@ class NativeTaskRuntime:
                         "stopped" if stopped else ("completed" if result.success else "error")
                     ),
                     "progress": progress,
-                    "completed_at": datetime.now().isoformat(),
+                    "completed_at": datetime.now(timezone.utc).isoformat(),
                     "current_activity": (
                         "Stopped"
                         if stopped
@@ -3245,7 +3246,7 @@ class NativeTaskRuntime:
                 {
                     "status": "error",
                     "progress": 100,
-                    "completed_at": datetime.now().isoformat(),
+                    "completed_at": datetime.now(timezone.utc).isoformat(),
                     "current_activity": "Failed",
                     "errors": [error],
                 }
