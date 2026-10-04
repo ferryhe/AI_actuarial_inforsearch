@@ -5137,3 +5137,9 @@
 - Initial GitHub CI completed on PR #403 HEAD `039167624d376eaf85d4b126849d5b0c741879c7`: `quality-gate` PASS (9m43s), `frontend-check` PASS, `python-smoke` PASS, `dead-code-files` PASS, `dead-code-symbols` PASS, `office-conversion-smoke` PASS.
 - At the approximately 15-minute check after Draft PR creation, pull request reviews, PR/Issue comments, and inline review threads were all empty; unresolved thread count was 0. The PR remains Draft, so Ready-for-review remote-feedback timing has not started.
 - Local full quality gate remains recorded as incomplete due to resource termination; GitHub CI is the independent full-gate result for its current HEAD. Production canary/rollback and #313 rollout remain unverified and not authorized. No merge or production action.
+
+### Issue #364 runtime provenance — latest PR head checks — 2026-10-04
+
+- After the project-status PR note commit, PR #403 head `6bf4fa574b107af62a8bf0121a3cfad0412c9999` completed all required GitHub checks successfully. `quality-gate` passed in 9m41s; frontend-check, python-smoke, dead-code-files, dead-code-symbols, and office-conversion-smoke also passed.
+- PR #403 remains Draft/OPEN. Initial review/comment/thread fetch was empty. Ready-for-review timer has not started. Worktree is clean at the recorded checked commit.
+- No live production canary, rollback, deployment, or #313 configuration rollout was authorized or performed; no merge.
