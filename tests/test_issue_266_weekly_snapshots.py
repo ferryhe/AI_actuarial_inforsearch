@@ -782,6 +782,7 @@ def test_v11_migration_backfills_legacy_weekly_rows_and_runner_agrees(tmp_path: 
         "add_chunk_stats_metadata_indexes_v13",
         "add_markdown_terminal_source_state_v14",
         "add_file_chunk_sets_latest_index_v15",
+        "add_auth_token_type_v16",
     ]
 
     applied = apply_schema(db_path)
@@ -792,6 +793,7 @@ def test_v11_migration_backfills_legacy_weekly_rows_and_runner_agrees(tmp_path: 
         "add_chunk_stats_metadata_indexes_v13",
         "add_markdown_terminal_source_state_v14",
         "add_file_chunk_sets_latest_index_v15",
+        "add_auth_token_type_v16",
     ]
     with sqlite3.connect(db_path) as conn:
         legacy = conn.execute(

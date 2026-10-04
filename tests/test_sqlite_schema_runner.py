@@ -502,6 +502,7 @@ def test_status_plan_apply_version_zero_baseline_preserves_data(tmp_path: Path) 
         "add_chunk_stats_metadata_indexes_v13",
         "add_markdown_terminal_source_state_v14",
         "add_file_chunk_sets_latest_index_v15",
+        "add_auth_token_type_v16",
     ]
     assert _user_version(db_path) == 0
 
@@ -523,6 +524,7 @@ def test_status_plan_apply_version_zero_baseline_preserves_data(tmp_path: Path) 
         "add_chunk_stats_metadata_indexes_v13",
         "add_markdown_terminal_source_state_v14",
         "add_file_chunk_sets_latest_index_v15",
+        "add_auth_token_type_v16",
     ]
     assert _user_version(db_path) == CURRENT_SQLITE_SCHEMA_VERSION
     assert _files_count(db_path) == 1
@@ -553,6 +555,7 @@ def test_status_plan_apply_production_v7_preserves_rows_and_is_idempotent(
         "add_chunk_stats_metadata_indexes_v13",
         "add_markdown_terminal_source_state_v14",
         "add_file_chunk_sets_latest_index_v15",
+        "add_auth_token_type_v16",
     ]
 
     with sqlite3.connect(db_path) as conn:
@@ -577,6 +580,7 @@ def test_status_plan_apply_production_v7_preserves_rows_and_is_idempotent(
         "add_chunk_stats_metadata_indexes_v13",
         "add_markdown_terminal_source_state_v14",
         "add_file_chunk_sets_latest_index_v15",
+        "add_auth_token_type_v16",
     ]
     assert schema_status(db_path)["state"] == "current"
     with sqlite3.connect(db_path) as conn:
@@ -686,6 +690,7 @@ def test_status_plan_apply_genuine_v12_preserves_rows_and_is_idempotent(
             "from_version": 14,
             "to_version": 15,
         },
+        {"id": "add_auth_token_type_v16", "from_version": 15, "to_version": 16},
     ]
 
     applied = apply_schema(db_path)
@@ -694,6 +699,7 @@ def test_status_plan_apply_genuine_v12_preserves_rows_and_is_idempotent(
         "add_chunk_stats_metadata_indexes_v13",
         "add_markdown_terminal_source_state_v14",
         "add_file_chunk_sets_latest_index_v15",
+        "add_auth_token_type_v16",
     ]
     assert _user_version(db_path) == CURRENT_SQLITE_SCHEMA_VERSION
 
@@ -860,6 +866,7 @@ def test_v9_manual_operation_state_migration_is_read_compatible_and_idempotent(
             "from_version": 14,
             "to_version": 15,
         },
+        {"id": "add_auth_token_type_v16", "from_version": 15, "to_version": 16},
     ]
     applied = apply_schema(db_path)
     assert applied["state"] == "current"
@@ -870,6 +877,7 @@ def test_v9_manual_operation_state_migration_is_read_compatible_and_idempotent(
         "add_chunk_stats_metadata_indexes_v13",
         "add_markdown_terminal_source_state_v14",
         "add_file_chunk_sets_latest_index_v15",
+        "add_auth_token_type_v16",
     ]
     with sqlite3.connect(db_path) as conn:
         columns = {
@@ -1216,6 +1224,7 @@ def test_v6_migration_preserves_pipeline_stage_and_child_run_rows(tmp_path: Path
         "add_chunk_stats_metadata_indexes_v13",
         "add_markdown_terminal_source_state_v14",
         "add_file_chunk_sets_latest_index_v15",
+        "add_auth_token_type_v16",
     ]
     assert _user_version(db_path) == CURRENT_SQLITE_SCHEMA_VERSION
 
@@ -1255,37 +1264,37 @@ def test_schema_runner_plans_registered_old_version_path(
     storage = Storage(str(db_path))
     storage.close()
 
-    def apply_v16(conn: sqlite3.Connection) -> None:
-        conn.execute("PRAGMA user_version=16")
+    def apply_v17(conn: sqlite3.Connection) -> None:
+        conn.execute("PRAGMA user_version=17")
 
-    monkeypatch.setattr(sqlite_schema, "CURRENT_SQLITE_SCHEMA_VERSION", 16)
+    monkeypatch.setattr(sqlite_schema, "CURRENT_SQLITE_SCHEMA_VERSION", 17)
     monkeypatch.setattr(
         sqlite_schema,
         "SQLITE_SCHEMA_MIGRATIONS",
         (
             *sqlite_schema.SQLITE_SCHEMA_MIGRATIONS,
             sqlite_schema.SQLiteSchemaMigration(
-                version=16,
-                migration_id="test_schema_v16",
-                apply=apply_v16,
+                version=17,
+                migration_id="test_schema_v17",
+                apply=apply_v17,
             ),
         ),
     )
 
     status = sqlite_schema.schema_status(db_path)
     assert status["state"] == "needs_migration"
-    assert status["database"]["user_version"] == 15
+    assert status["database"]["user_version"] == 16
 
     plan = sqlite_schema.schema_plan(db_path)
     assert plan["plan"]["actions"] == [
-        {"id": "test_schema_v16", "from_version": 15, "to_version": 16}
+        {"id": "test_schema_v17", "from_version": 16, "to_version": 17}
     ]
 
     applied = sqlite_schema.apply_schema(db_path)
     assert applied["state"] == "current"
-    assert applied["database"]["user_version"] == 16
-    assert applied["applied_migrations"] == ["test_schema_v16"]
-    assert _user_version(db_path) == 16
+    assert applied["database"]["user_version"] == 17
+    assert applied["applied_migrations"] == ["test_schema_v17"]
+    assert _user_version(db_path) == 17
 
 
 def test_schema_runner_accepts_registered_old_version_source_signature(
@@ -1314,11 +1323,11 @@ def test_schema_runner_accepts_registered_old_version_source_signature(
     ) -> bool:
         return tables == v6_signature
 
-    def apply_v16(conn: sqlite3.Connection) -> None:
+    def apply_v17(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE files ADD COLUMN schema_runner_v7_marker TEXT")
-        conn.execute("PRAGMA user_version=16")
+        conn.execute("PRAGMA user_version=17")
 
-    monkeypatch.setattr(sqlite_schema, "CURRENT_SQLITE_SCHEMA_VERSION", 16)
+    monkeypatch.setattr(sqlite_schema, "CURRENT_SQLITE_SCHEMA_VERSION", 17)
     monkeypatch.setattr(sqlite_schema, "_current_storage_signature", lambda: v7_signature)
     monkeypatch.setattr(
         sqlite_schema,
@@ -1326,9 +1335,9 @@ def test_schema_runner_accepts_registered_old_version_source_signature(
         (
             *sqlite_schema.SQLITE_SCHEMA_MIGRATIONS,
             sqlite_schema.SQLiteSchemaMigration(
-                version=16,
-                migration_id="test_schema_v16_add_marker",
-                apply=apply_v16,
+                version=17,
+                migration_id="test_schema_v17_add_marker",
+                apply=apply_v17,
                 source_validator=accepts_v6_source,
             ),
         ),
@@ -1336,17 +1345,17 @@ def test_schema_runner_accepts_registered_old_version_source_signature(
 
     status = sqlite_schema.schema_status(db_path)
     assert status["state"] == "needs_migration"
-    assert status["database"]["user_version"] == 15
+    assert status["database"]["user_version"] == 16
 
     plan = sqlite_schema.schema_plan(db_path)
     assert plan["plan"]["actions"] == [
-        {"id": "test_schema_v16_add_marker", "from_version": 15, "to_version": 16}
+        {"id": "test_schema_v17_add_marker", "from_version": 16, "to_version": 17}
     ]
 
     applied = sqlite_schema.apply_schema(db_path)
     assert applied["state"] == "current"
-    assert applied["applied_migrations"] == ["test_schema_v16_add_marker"]
-    assert _user_version(db_path) == 16
+    assert applied["applied_migrations"] == ["test_schema_v17_add_marker"]
+    assert _user_version(db_path) == 17
 
 
 def test_schema_runner_rejects_mutating_source_validator_during_apply(
@@ -1393,11 +1402,11 @@ def test_schema_runner_rejects_mutating_source_validator_during_apply(
         conn.execute("CREATE TABLE validator_mutation_leak (secret_value TEXT)")
         return True
 
-    def apply_v16(conn: sqlite3.Connection) -> None:
+    def apply_v17(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE files ADD COLUMN schema_runner_v7_marker TEXT")
-        conn.execute("PRAGMA user_version=16")
+        conn.execute("PRAGMA user_version=17")
 
-    monkeypatch.setattr(sqlite_schema, "CURRENT_SQLITE_SCHEMA_VERSION", 16)
+    monkeypatch.setattr(sqlite_schema, "CURRENT_SQLITE_SCHEMA_VERSION", 17)
     monkeypatch.setattr(sqlite_schema, "_current_storage_signature", lambda: v7_signature)
     monkeypatch.setattr(
         sqlite_schema,
@@ -1405,9 +1414,9 @@ def test_schema_runner_rejects_mutating_source_validator_during_apply(
         (
             *sqlite_schema.SQLITE_SCHEMA_MIGRATIONS,
             sqlite_schema.SQLiteSchemaMigration(
-                version=16,
-                migration_id="test_schema_v16_block_mutating_validator",
-                apply=apply_v16,
+                version=17,
+                migration_id="test_schema_v17_block_mutating_validator",
+                apply=apply_v17,
                 source_validator=mutating_validator,
             ),
         ),
@@ -1421,7 +1430,7 @@ def test_schema_runner_rejects_mutating_source_validator_during_apply(
 
     assert validator_calls >= 2
     assert query_only_values and set(query_only_values) == {1}
-    assert _user_version(db_path) == 15
+    assert _user_version(db_path) == 16
     with sqlite3.connect(db_path) as conn:
         assert conn.execute("""
             SELECT 1 FROM sqlite_schema
@@ -1468,6 +1477,7 @@ def test_schema_runner_accepts_exported_chat_service_optional_schema(
         "add_chunk_stats_metadata_indexes_v13",
         "add_markdown_terminal_source_state_v14",
         "add_file_chunk_sets_latest_index_v15",
+        "add_auth_token_type_v16",
     ]
 
 
@@ -1779,6 +1789,7 @@ def test_schema_cli_json_contract_for_status_plan_apply(tmp_path: Path) -> None:
         "add_chunk_stats_metadata_indexes_v13",
         "add_markdown_terminal_source_state_v14",
         "add_file_chunk_sets_latest_index_v15",
+        "add_auth_token_type_v16",
     ]
     assert str(db_path) not in apply_result.stdout
 
@@ -1842,6 +1853,7 @@ def test_legacy_missing_backfill_table_is_migratable(tmp_path: Path) -> None:
         "add_chunk_stats_metadata_indexes_v13",
         "add_markdown_terminal_source_state_v14",
         "add_file_chunk_sets_latest_index_v15",
+        "add_auth_token_type_v16",
     ]
     assert _user_version(db_path) == CURRENT_SQLITE_SCHEMA_VERSION
     with sqlite3.connect(db_path) as conn:
@@ -2082,3 +2094,33 @@ def test_accept_version_2_source_requires_taxonomy_state(tmp_path: Path) -> None
         assert _accept_version_2_source(storage._conn, tables) is False
     finally:
         storage.close()
+
+
+def test_v15_auth_token_type_migration_preserves_legacy_tokens(tmp_path: Path) -> None:
+    from ai_actuarial.shared_auth import hash_token
+    from ai_actuarial.sqlite_schema import apply_schema, schema_status
+
+    path = tmp_path / "v15-token.db"
+    storage = Storage(str(path))
+    storage.create_auth_token(
+        subject="Old operator", group_name="operator_ai", token_hash=hash_token("old-token")
+    )
+    storage.close()
+    with sqlite3.connect(path) as conn:
+        if "token_type" in {row[1] for row in conn.execute("PRAGMA table_info(auth_tokens)")}:
+            conn.execute("ALTER TABLE auth_tokens DROP COLUMN token_type")
+        conn.execute("PRAGMA user_version=15")
+    assert schema_status(path)["state"] == "needs_migration"
+    assert apply_schema(path)["applied_migrations"] == ["add_auth_token_type_v16"]
+    storage = Storage(str(path))
+    try:
+        record = storage.get_auth_token_by_hash(hash_token("old-token"))
+        assert record["group_name"] == "operator" and record["token_type"] == "standard"
+        assert record["expires_at"] is None and record["is_active"] is True
+        assert (
+            storage._conn.execute("SELECT group_name FROM auth_tokens").fetchone()[0]
+            == "operator_ai"
+        )
+    finally:
+        storage.close()
+    assert apply_schema(path)["applied_migrations"] == []

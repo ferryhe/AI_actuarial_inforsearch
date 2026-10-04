@@ -11,7 +11,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable
 
-CURRENT_SQLITE_SCHEMA_VERSION = 15
+CURRENT_SQLITE_SCHEMA_VERSION = 16
 
 _LATEST_CHUNK_SET_INDEX_NAME = "idx_file_chunk_sets_latest"
 _LATEST_CHUNK_SET_INDEX_COLUMNS = (
@@ -75,6 +75,7 @@ _AUTO_BACKFILL_COLUMNS: dict[str, frozenset[str]] = {
             "source_version_kind",
         }
     ),
+    "auth_tokens": frozenset({"token_type"}),
     "taxonomy_state": frozenset({"applied_categories"}),
     "files": frozenset({"content_kind"}),
 }
@@ -1340,6 +1341,34 @@ def _accept_version_14_source(
     return valid
 
 
+def _add_auth_token_type_v16(conn: sqlite3.Connection) -> None:
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(auth_tokens)")}
+    if "token_type" not in columns:
+        conn.execute(
+            "ALTER TABLE auth_tokens ADD COLUMN token_type TEXT NOT NULL DEFAULT 'standard'"
+        )
+    _set_user_version(conn, 16)
+
+
+def _normalize_pre_v16_auth_tokens(tables: dict[str, TableSignature]) -> dict[str, TableSignature]:
+    current = _current_storage_signature()["auth_tokens"]
+    historical = TableSignature(
+        columns=tuple(column for column in current.columns if column[0] != "token_type"),
+        indexes=current.indexes,
+        foreign_keys=current.foreign_keys,
+    )
+    if tables.get("auth_tokens") != historical:
+        return tables
+    return {**tables, "auth_tokens": current}
+
+
+def _accept_version_15_source(conn: sqlite3.Connection, tables: dict[str, TableSignature]) -> bool:
+    valid, _, _ = _schema_validation(
+        tables, unexpected_schema_objects=_unexpected_schema_object_counts(conn, tables)
+    )
+    return valid and _latest_chunk_set_index_contract_valid(conn, required=True)
+
+
 SQLITE_SCHEMA_MIGRATIONS: tuple[SQLiteSchemaMigration, ...] = (
     SQLiteSchemaMigration(
         version=1,
@@ -1429,6 +1458,12 @@ SQLITE_SCHEMA_MIGRATIONS: tuple[SQLiteSchemaMigration, ...] = (
         migration_id="add_file_chunk_sets_latest_index_v15",
         apply=_add_file_chunk_sets_latest_index_v15,
         source_validator=_accept_version_14_source,
+    ),
+    SQLiteSchemaMigration(
+        version=16,
+        migration_id="add_auth_token_type_v16",
+        apply=_add_auth_token_type_v16,
+        source_validator=_accept_version_15_source,
     ),
 )
 
@@ -2183,6 +2218,8 @@ def _migration_accepts_source(
         if not _latest_chunk_set_index_contract_valid(conn, required=False):
             return False
         tables = _normalize_pre_v15_latest_chunk_set_index(tables)
+    if start_version < 16:
+        tables = _normalize_pre_v16_auth_tokens(tables)
     previous_query_only = int(conn.execute("PRAGMA query_only").fetchone()[0])
     restore_value = "ON" if previous_query_only else "OFF"
     try:
@@ -2262,7 +2299,7 @@ def _analyze_connection(
     )
     if (
         valid
-        and version in {10, 11, 12, 14}
+        and version in {10, 11, 12, 14, 15}
         and not _migration_accepts_source(conn, tables, start_version=version)
     ):
         return _base_payload(

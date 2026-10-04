@@ -1,3 +1,19 @@
+# Active work — Issue #359 Token permissions, expiry, and usage status
+
+- Updated: 2026-10-04 EDT. Repository: `AI_actuarial_inforsearch`; branch:
+  `agent/issue-359`; baseline `7eb0d3ad6a4929544035197688a2cef11a13a649`
+  (`origin/main`). This issue worktree is the only project workspace in scope;
+  sibling repositories remain off-limits.
+- Issue #359 is still OPEN/P1. Independent PR/branch searches found no equivalent
+  work. The current gaps are the `reader`/`operator_ai` create allowlist, missing
+  expiry propagation, untyped/mismatched Settings token contracts, and missing
+  expiry/status/service-token management UI.
+- The issue queue heartbeat remains active: `ai-actuarial-inforsearch-issue-to-merge-queue`.
+  Implementation is complete on `agent/issue-359`; the final Python quality gate
+  passed (2,321 passed, 11 skipped), along with Vitest, Chromium, typecheck, lint,
+  build, dead-code and disposable PostgreSQL checks. A fresh independent review
+  is next. No commit or PR exists yet; no production data or services were touched.
+
 # Latest work — PR #398 Caddy template isolation and redirect configuration
 
 - Updated: 2026-10-03 EDT. Repository: `AI_actuarial_inforsearch`; branch:

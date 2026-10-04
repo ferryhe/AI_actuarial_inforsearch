@@ -191,6 +191,9 @@ def _load_auth_context(request: Request) -> AuthContext:
             presented = _extract_presented_token(request)
             if presented:
                 token = storage.get_auth_token_by_hash(hash_token(presented))
+        token = _validate_token_record(token)
+        if token and token.get("id") is not None and not token.get("_email_user"):
+            storage.touch_auth_token_last_used(int(token["id"]))
     finally:
         storage.close()
 

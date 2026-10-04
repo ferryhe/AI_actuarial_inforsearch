@@ -264,6 +264,7 @@ class AuthToken(Base):
     last_used_at = Column(Text)
     revoked_at = Column(Text)
     expires_at = Column(Text)
+    token_type = Column(Text, nullable=False, default="standard", server_default="standard")
 
 
 # Note: APIToken is defined in ai_actuarial.models.api_token

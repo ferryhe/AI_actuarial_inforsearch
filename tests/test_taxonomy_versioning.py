@@ -136,6 +136,7 @@ def test_migration_v1_to_v2_creates_taxonomy_state(tmp_path: Path) -> None:
         "add_chunk_stats_metadata_indexes_v13",
         "add_markdown_terminal_source_state_v14",
         "add_file_chunk_sets_latest_index_v15",
+        "add_auth_token_type_v16",
     ]
 
     with sqlite3.connect(db_path) as conn:

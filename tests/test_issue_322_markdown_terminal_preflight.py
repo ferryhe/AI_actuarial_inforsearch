@@ -705,10 +705,11 @@ def test_schema_v14_migrates_terminal_state_table_and_reopens_idempotently(
 
     assert schema_status(db_path)["state"] == "needs_migration"
     applied = apply_schema(db_path)
-    assert applied["database"]["user_version"] == 15
+    assert applied["database"]["user_version"] == 16
     assert applied["applied_migrations"] == [
         "add_markdown_terminal_source_state_v14",
         "add_file_chunk_sets_latest_index_v15",
+        "add_auth_token_type_v16",
     ]
     with sqlite3.connect(db_path) as conn:
         columns = {

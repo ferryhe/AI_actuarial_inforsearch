@@ -153,6 +153,9 @@ class SQLiteBackend(DatabaseBackend):
                 "updated_at": "TEXT",
             },
         )
+        self._ensure_columns(
+            "auth_tokens", {"expires_at": "TEXT", "token_type": "TEXT NOT NULL DEFAULT 'standard'"}
+        )
         self._migrate_catalog_items()
 
     def close(self) -> None:
@@ -166,7 +169,7 @@ class SQLiteBackend(DatabaseBackend):
     def _ensure_columns(self, table: str, columns: dict[str, str]) -> None:
         """Ensure columns exist in the table (for SQLite migrations)."""
         # Validate table name to prevent SQL injection
-        allowed_tables = {"files", "pages", "blobs", "catalog_items"}
+        allowed_tables = {"files", "pages", "blobs", "catalog_items", "auth_tokens"}
         if table not in allowed_tables:
             raise ValueError(f"Invalid table name: {table}")
 
@@ -275,6 +278,9 @@ class PostgreSQLBackend(DatabaseBackend):
                 "updated_at": "TEXT",
             },
         )
+        self._ensure_columns(
+            "auth_tokens", {"expires_at": "TEXT", "token_type": "TEXT NOT NULL DEFAULT 'standard'"}
+        )
         self._migrate_catalog_items()
 
     def close(self) -> None:
@@ -288,7 +294,7 @@ class PostgreSQLBackend(DatabaseBackend):
     def _ensure_columns(self, table: str, columns: dict[str, str]) -> None:
         """Ensure columns exist in the table (for PostgreSQL migrations)."""
         # Validate table name to prevent SQL injection
-        allowed_tables = {"files", "pages", "blobs", "catalog_items"}
+        allowed_tables = {"files", "pages", "blobs", "catalog_items", "auth_tokens"}
         if table not in allowed_tables:
             raise ValueError(f"Invalid table name: {table}")
 

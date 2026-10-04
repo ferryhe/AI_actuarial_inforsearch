@@ -132,7 +132,9 @@ def test_role_permissions_copy_and_frontend_menu_contract_are_bilingual() -> Non
     ):
         assert text in translations
 
-    assert '<option value="reader">Reader</option>' in settings
+    assert '<option value="reader">Reader</option>' not in settings
+    assert '<option value="registered">Registered</option>' in settings
+    assert '<option value="premium">Premium</option>' in settings
     assert '<option value="operator">Operator</option>' in settings
     assert '<option value="admin">Admin</option>' in settings
 

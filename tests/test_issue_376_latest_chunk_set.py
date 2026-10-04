@@ -142,18 +142,22 @@ def test_v15_migration_plan_apply_and_strict_source_validation(tmp_path: Path) -
         conn.execute("PRAGMA user_version=14")
 
     status = schema_status(db_path)
-    assert CURRENT_SQLITE_SCHEMA_VERSION == 15
+    assert CURRENT_SQLITE_SCHEMA_VERSION == 16
     assert status["state"] == "needs_migration"
     assert schema_plan(db_path)["plan"]["actions"] == [
         {
             "id": "add_file_chunk_sets_latest_index_v15",
             "from_version": 14,
             "to_version": 15,
-        }
+        },
+        {"id": "add_auth_token_type_v16", "from_version": 15, "to_version": 16},
     ]
 
     applied = apply_schema(db_path)
-    assert applied["applied_migrations"] == ["add_file_chunk_sets_latest_index_v15"]
+    assert applied["applied_migrations"] == [
+        "add_file_chunk_sets_latest_index_v15",
+        "add_auth_token_type_v16",
+    ]
     assert apply_schema(db_path)["applied_migrations"] == []
     with sqlite3.connect(db_path) as conn:
         assert _index_columns(conn) == LATEST_INDEX_COLUMNS
@@ -276,7 +280,7 @@ def test_fresh_schema_includes_latest_covering_index(tmp_path: Path) -> None:
     db_path = tmp_path / "fresh.db"
     storage = Storage(str(db_path))
     try:
-        assert int(storage._conn.execute("PRAGMA user_version").fetchone()[0]) == 15
+        assert int(storage._conn.execute("PRAGMA user_version").fetchone()[0]) == 16
         assert _index_columns(storage._conn) == LATEST_INDEX_COLUMNS
     finally:
         storage.close()

@@ -4,17 +4,28 @@ import os
 import re
 import secrets
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Any
+from datetime import datetime, timedelta, timezone
+from typing import Any, Literal
 
 from fastapi import Request, Response
 from itsdangerous import URLSafeSerializer
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 from ai_actuarial.api.client_ip import client_ip
 from ai_actuarial.shared_auth import (
     AI_CHAT_QUOTA,
     ASSIGNABLE_EMAIL_USER_ROLES,
     DUMMY_PASSWORD_HASH,
+    AuthTokenMetadata,
+    AuthTokenRecord,
     canonical_user_role,
     check_password,
     hash_password,
@@ -403,40 +414,108 @@ def update_profile(
         storage.close()
 
 
-def list_auth_tokens(*, request: Request) -> dict[str, Any]:
+class CreateAuthTokenRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    subject: str = Field(min_length=1)
+    group_name: Literal["registered", "premium", "operator", "admin"]
+    token_type: Literal["standard", "service"] = "standard"
+    expires_at: datetime | None = Field(
+        default_factory=lambda: datetime.now(timezone.utc) + timedelta(days=7)
+    )
+    confirm_service: StrictBool = False
+
+    @field_validator("subject")
+    @classmethod
+    def nonempty_subject(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("subject required")
+        return value
+
+    @model_validator(mode="after")
+    def validate_expiry(self):
+        if self.token_type == "service":
+            if self.group_name != "admin" or not self.confirm_service:
+                raise ValueError("service token requires admin group and explicit confirmation")
+            if "expires_at" not in self.model_fields_set:
+                self.expires_at = None
+        elif self.expires_at is None:
+            raise ValueError("standard token requires expires_at")
+        if self.expires_at is not None:
+            if self.expires_at.tzinfo is None or self.expires_at <= datetime.now(timezone.utc):
+                raise ValueError("expires_at must be a future time with timezone")
+            self.expires_at = self.expires_at.astimezone(timezone.utc)
+        return self
+
+
+class CreateAuthTokenResponse(BaseModel):
+    success: bool = True
+    token: str
+    metadata: AuthTokenMetadata
+
+
+class ListAuthTokensResponse(BaseModel):
+    success: bool = True
+    tokens: list[AuthTokenMetadata]
+
+
+def _token_metadata(row: AuthTokenRecord) -> AuthTokenMetadata:
+    status = "active"
+    if not row["is_active"]:
+        status = "revoked"
+    elif row.get("expires_at"):
+        try:
+            expiry = datetime.fromisoformat(row["expires_at"])
+            now = datetime.now(expiry.tzinfo) if expiry.tzinfo else datetime.now()
+            if expiry <= now:
+                status = "expired"
+        except ValueError:
+            status = "expired"
+    return {**row, "status": status}
+
+
+def list_auth_tokens(*, request: Request) -> ListAuthTokensResponse:
     storage = Storage(_db_path(request))
     try:
-        return {"success": True, "tokens": storage.list_auth_tokens()}
+        return ListAuthTokensResponse(
+            tokens=[_token_metadata(row) for row in storage.list_auth_tokens()]
+        )
     finally:
         storage.close()
 
 
-def create_auth_token(*, request: Request, payload: dict[str, Any]) -> dict[str, Any]:
-    if not isinstance(payload, dict):
-        raise AuthApiError("Invalid JSON body", status_code=400)
-    subject = str(payload.get("subject") or "").strip()
-    group_name = str(payload.get("group_name") or "").strip().lower()
-    if not subject:
-        raise AuthApiError("subject required", status_code=400)
-    valid_groups = {"registered", "premium", "reader", "operator", "operator_ai", "admin"}
-    if group_name not in valid_groups:
-        raise AuthApiError("invalid group_name", status_code=400)
+def create_auth_token(
+    *, request: Request, payload: CreateAuthTokenRequest | dict[str, Any]
+) -> CreateAuthTokenResponse:
+    try:
+        data = (
+            payload
+            if isinstance(payload, CreateAuthTokenRequest)
+            else CreateAuthTokenRequest.model_validate(payload)
+        )
+    except ValidationError as exc:
+        raise AuthApiError("Invalid token request", detail=str(exc)) from exc
+    if data.token_type == "service":
+        actor = (get_auth_context(request).token or {}).get("_email_user")
+        if not isinstance(actor, dict) or actor.get("role") != "admin":
+            raise AuthApiError(
+                "Service tokens require an authenticated admin email session", status_code=403
+            )
 
     plaintext = secrets.token_urlsafe(32)
     storage = Storage(_db_path(request))
     try:
         token_id = storage.create_auth_token(
-            subject=subject, group_name=group_name, token_hash=hash_token(plaintext)
+            subject=data.subject,
+            group_name=data.group_name,
+            token_hash=hash_token(plaintext),
+            expires_at=data.expires_at.isoformat() if data.expires_at else None,
+            token_type=data.token_type,
         )
-        return {
-            "success": True,
-            "token": {
-                "id": token_id,
-                "subject": subject,
-                "group_name": group_name,
-                "token": plaintext,
-            },
-        }
+        return CreateAuthTokenResponse(
+            token=plaintext, metadata=_token_metadata(storage.get_auth_token_by_id(token_id))
+        )
     finally:
         storage.close()
 
