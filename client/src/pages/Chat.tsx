@@ -22,6 +22,8 @@ import {
   AlertTriangle,
   Check,
 } from "lucide-react";
+import FilePagination from "@/components/FilePagination";
+import { usePagedFiles } from "@/hooks/use-paged-files";
 import { cn } from "@/lib/utils";
 import { MarkdownContent } from "@/components/MarkdownContent";
 import { useTranslation } from "@/components/Layout";
@@ -481,10 +483,12 @@ export default function Chat() {
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>("conversations");
   const [showKbDropdown, setShowKbDropdown] = useState(false);
   const [showModeDropdown, setShowModeDropdown] = useState(false);
-  const [documents, setDocuments] = useState<AvailableDocument[]>([]);
-  const [loadingDocs, setLoadingDocs] = useState(false);
-  const [docSearch, setDocSearch] = useState("");
-  const [selectedDocCategories, setSelectedDocCategories] = useState<string[]>([]);
+  const documentPage = usePagedFiles(fetchAvailableDocuments, sidebarTab === "documents");
+  const documents = documentPage.items;
+  const loadingDocs = documentPage.loading;
+  const docSearch = documentPage.search;
+  const setDocSearch = documentPage.setSearch;
+  const selectedDocCategories = documentPage.categories;
   const [docCategoryOptions, setDocCategoryOptions] = useState<string[]>([]);
   const [selectedCompareDocs, setSelectedCompareDocs] = useState<AvailableDocument[]>([]);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -590,48 +594,22 @@ export default function Chat() {
     } catch {}
   }
 
-  async function loadDocuments(filters?: { categories?: string[]; search?: string }) {
-    setLoadingDocs(true);
-    try {
-      const nextDocuments = await fetchAvailableDocuments({
-        categories: filters?.categories ?? selectedDocCategories,
-        search: filters?.search ?? docSearch,
-      });
-      setDocuments(nextDocuments);
-      setDocCategoryOptions((prev) => (
-        prev.length > 0
-          ? prev
-          : normalizeCategoryNames(nextDocuments.map((doc) => doc.category)).sort((a, b) => a.localeCompare(b))
-      ));
-    } catch {
-      setDocuments([]);
-    } finally {
-      setLoadingDocs(false);
-    }
-  }
-
   useEffect(() => {
-    if (sidebarTab === "documents") {
-      loadDocumentCategories();
-      loadDocuments();
-    }
+    if (sidebarTab === "documents") void loadDocumentCategories();
   }, [sidebarTab]);
 
   function searchDocuments() {
-    loadDocuments();
+    documentPage.reload();
   }
 
   function toggleDocCategory(category: string) {
-    const next = selectedDocCategories.includes(category)
+    documentPage.setCategories(selectedDocCategories.includes(category)
       ? selectedDocCategories.filter((item) => item !== category)
-      : [...selectedDocCategories, category];
-    setSelectedDocCategories(next);
-    void loadDocuments({ categories: next });
+      : [...selectedDocCategories, category]);
   }
 
   function clearDocCategories() {
-    setSelectedDocCategories([]);
-    void loadDocuments({ categories: [] });
+    documentPage.setCategories([]);
   }
 
   async function loadConversation(id: string) {
@@ -1233,14 +1211,14 @@ export default function Chat() {
                   ) : (
                     <>
                       <div className="text-[10px] text-muted-foreground px-2 py-1">
-                        {documents.length} {t("chat.documents_available")}
+                        {documentPage.total} {t("chat.documents_available")}
                       </div>
                       {documents.map((doc, i) => {
                         const selectedForCompare = selectedCompareDocs.some((item) => item.file_url === doc.file_url);
                         const compareSelectionLimitReached = !selectedForCompare && selectedCompareDocs.length >= MAX_DOCUMENT_CONTEXT_SOURCES;
                         return (
                           <div
-                            key={doc.file_url || i}
+                            key={doc.file_url}
                             className="group flex items-start gap-2 px-3 py-2.5 rounded-lg hover:bg-muted cursor-pointer transition-colors"
                             role="button"
                             tabIndex={0}
@@ -1254,6 +1232,7 @@ export default function Chat() {
                               }
                             }}
                             data-testid={`document-${i}`}
+                            data-file-url={doc.file_url}
                           >
                             <FileText className="w-4 h-4 shrink-0 mt-0.5 text-muted-foreground group-hover:text-primary transition-colors" strokeWidth={1.5} />
                             <div className="flex-1 min-w-0">
@@ -1288,6 +1267,8 @@ export default function Chat() {
                     </>
                   )}
                 </div>
+                {documentPage.error && <p role="alert" className="p-2 text-xs text-red-500">{documentPage.error}</p>}
+                <FilePagination {...documentPage} onOffset={documentPage.setOffset} testId="chat-document-pagination" />
                 {selectedCompareDocs.length > 0 && (
                   <div className="border-t border-border bg-card/80 backdrop-blur-sm p-2 space-y-2" data-testid="compare-documents-bar">
                     <div className="flex items-center justify-between gap-2">

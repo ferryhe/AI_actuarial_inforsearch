@@ -68,7 +68,7 @@ async function stub(route, user) {
           : path.endsWith("/stats")
             ? { file_count: 1, pending_count: 1 }
             : path.endsWith("/files")
-              ? { files: [file], total_files: 1 }
+              ? { items: [file], total: 1, offset: 0, limit: 50 }
               : path.endsWith("/categories")
                 ? { categories: [{ name: "Smoke", file_count: 1 }] }
                 : path.endsWith("agentic-ready-manifest")
@@ -184,6 +184,7 @@ try {
       });
     }
     await page.getByTestId("text-kb-name").waitFor();
+    await page.getByTestId("row-kb-file-0").waitFor();
     assert.equal(
       await page.getByTestId("input-kb-edit-name").count(),
       canCatalog ? 1 : 0,

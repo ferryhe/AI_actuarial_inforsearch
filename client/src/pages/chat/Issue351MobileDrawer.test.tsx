@@ -30,7 +30,7 @@ vi.mock("wouter", () => ({ useLocation: () => ["/chat", vi.fn()] }));
 vi.mock("wouter/use-browser-location", () => ({ useHistoryState: () => null }));
 vi.mock("@/lib/navigation", async (original) => ({ ...await original<typeof import("@/lib/navigation")>(), useRawSearch: () => "" }));
 vi.mock("./api", () => ({
-  fetchAvailableDocuments: vi.fn().mockResolvedValue([]),
+  fetchAvailableDocuments: vi.fn().mockResolvedValue({ items: [], total: 0, limit: 50, offset: 0 }),
   fetchDocumentCategories: vi.fn().mockResolvedValue([]),
   fetchDocumentMarkdown: vi.fn(),
   fetchKnowledgeBases: vi.fn().mockResolvedValue([]),

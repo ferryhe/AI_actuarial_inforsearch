@@ -23,6 +23,9 @@ import {
   LinkIcon,
   Sparkles,
 } from "lucide-react";
+import FilePagination from "@/components/FilePagination";
+import { usePagedFiles } from "@/hooks/use-paged-files";
+import type { FilePage, FilePageFilters } from "@/hooks/use-paged-files";
 import { cn } from "@/lib/utils";
 import {
   captureReadyDataRequest,
@@ -330,7 +333,15 @@ export default function KBDetail() {
   const [chatKbAvailable, setChatKbAvailable] = useState(false);
   const canBindFiles = canManageCatalog && Boolean(meta?.chunk_profile_id);
   const [stats, setStats] = useState<KBStats | null>(null);
-  const [files, setFiles] = useState<KBFile[]>([]);
+  const fetchFilePage = useCallback(async (filters: FilePageFilters, signal: AbortSignal) => {
+    const params = new URLSearchParams({ limit: String(filters.limit), offset: String(filters.offset) });
+    if (filters.search) params.set("query", filters.search);
+    if (filters.categories[0]) params.set("category", filters.categories[0]);
+    return apiGet<FilePage<KBFile>>(`/api/rag/knowledge-bases/${encodeURIComponent(kbId)}/files?${params}`, { signal });
+  }, [kbId]);
+  const filePage = usePagedFiles(fetchFilePage, !!kbId && match);
+  const files = filePage.items;
+  const loadFiles = filePage.reload;
   const [categories, setCategories] = useState<KBCategory[]>([]);
   const [unmappedCategories, setUnmappedCategories] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
@@ -353,7 +364,6 @@ export default function KBDetail() {
   const automationAppliedEpisodeVersion = useRef(0);
   const metaRequestSequence = useRef(0);
   const statsRequestSequence = useRef(0);
-  const filesRequestSequence = useRef(0);
   const categoriesRequestSequence = useRef(0);
   const unmappedRequestSequence = useRef(0);
   const loadAllRequestSequence = useRef(0);
@@ -454,8 +464,6 @@ export default function KBDetail() {
   const [showAddCategory, setShowAddCategory] = useState(false);
   const [newCategory, setNewCategory] = useState("");
 
-  const [fileSearch, setFileSearch] = useState("");
-
   const [showPendingFiles, setShowPendingFiles] = useState(false);
   const [pendingFiles, setPendingFiles] = useState<KBFile[]>([]);
   const [loadingPending, setLoadingPending] = useState(false);
@@ -476,7 +484,6 @@ export default function KBDetail() {
     automationAppliedEpisodeVersion.current = 0;
     metaRequestSequence.current += 1;
     statsRequestSequence.current += 1;
-    filesRequestSequence.current += 1;
     categoriesRequestSequence.current += 1;
     unmappedRequestSequence.current += 1;
     loadAllRequestSequence.current += 1;
@@ -487,7 +494,6 @@ export default function KBDetail() {
     agenticManifestRef.current = null;
     setMeta(null);
     setStats(null);
-    setFiles([]);
     setCategories([]);
     setUnmappedCategories([]);
     setEditName("");
@@ -511,7 +517,6 @@ export default function KBDetail() {
       automationAppliedEpisodeVersion.current = 0;
       metaRequestSequence.current += 1;
       statsRequestSequence.current += 1;
-      filesRequestSequence.current += 1;
       categoriesRequestSequence.current += 1;
       unmappedRequestSequence.current += 1;
       loadAllRequestSequence.current += 1;
@@ -659,31 +664,6 @@ export default function KBDetail() {
       ),
       onSuccess: setStats,
       onError: () => setStats(null),
-    });
-  }, [kbId]);
-
-  const loadFiles = useCallback(async () => {
-    if (!kbId) return;
-    const requestId = ++filesRequestSequence.current;
-    const requestRoute = captureReadyDataRequest(
-      readyDataRoute.current,
-      manifestMounted.current,
-      kbId,
-      requestId,
-    );
-    if (!requestRoute) return;
-    await runReadyDataRouteRequest({
-      request: () => apiGet<{ files?: KBFile[]; data?: { files?: KBFile[] } }>(
-        `/api/rag/knowledge-bases/${encodeURIComponent(requestRoute.kbId)}/files`,
-      ),
-      isCurrent: () => isReadyDataRequestCurrent(
-        readyDataRoute.current,
-        manifestMounted.current,
-        requestRoute,
-        filesRequestSequence.current,
-      ),
-      onSuccess: (res) => setFiles(res.data?.files || res.files || []),
-      onError: () => setFiles([]),
     });
   }, [kbId]);
 
@@ -1300,16 +1280,6 @@ export default function KBDetail() {
       </div>
     );
   }
-
-  const filteredFiles = files.filter((f) => {
-    if (!fileSearch) return true;
-    const q = fileSearch.toLowerCase();
-    return (
-      f.file_url.toLowerCase().includes(q) ||
-      (f.title || "").toLowerCase().includes(q) ||
-      (f.category || "").toLowerCase().includes(q)
-    );
-  });
 
   const pendingCount = stats?.pending_count ?? stats?.pending_files ?? 0;
   const needsEmbeddingRebuild = needsReembed(meta);
@@ -1954,20 +1924,26 @@ export default function KBDetail() {
         transition={{ delay: 0.25, duration: 0.4 }}
         className="rounded-xl border border-border bg-card overflow-hidden"
       >
-        <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-muted/30">
+        <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 border-b border-border bg-muted/30">
           <div className="flex items-center gap-2">
             <FileText className="w-4 h-4 text-muted-foreground" />
             <span className="text-sm font-semibold">{t("kb.files")}</span>
-            <span className="text-xs text-muted-foreground">({files.length})</span>
+            <span className="text-xs text-muted-foreground">({filePage.total})</span>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <input
-              value={fileSearch}
-              onChange={(e) => setFileSearch(e.target.value)}
+              aria-label={t("kb.search_files")}
+              value={filePage.search}
+              onChange={(e) => filePage.setSearch(e.target.value)}
               placeholder={t("kb.search_files")}
               className="w-48 px-3 py-1.5 text-xs rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-primary/30"
               data-testid="input-search-kb-files"
             />
+            <select value={filePage.categories[0] || ""} onChange={(event) => filePage.setCategories(event.target.value ? [event.target.value] : [])}
+              aria-label={t("kb.categories")} className="min-h-12 max-w-36 rounded border border-border bg-background text-xs" data-testid="select-kb-file-category">
+              <option value="">{t("db.all_categories")}</option>
+              {categories.map((category) => <option key={category.name} value={category.name}>{category.name}</option>)}
+            </select>
             {canManageCatalog && (
               <button
                 onClick={handleOpenBindDialog}
@@ -1983,25 +1959,27 @@ export default function KBDetail() {
           </div>
         </div>
 
-        {filteredFiles.length === 0 ? (
+        {filePage.error && <p role="alert" className="px-4 py-2 text-sm text-red-500">{filePage.error}</p>}
+        {filePage.loading ? <div className="flex justify-center py-12"><Loader2 className="w-5 h-5 animate-spin" /></div> : files.length === 0 ? (
           <div className="text-center py-12">
             <FileText className="w-8 h-8 mx-auto text-muted-foreground/30 mb-2" />
             <p className="text-sm text-muted-foreground">
-              {files.length === 0 ? t("kb.no_files") : t("kb.no_files_match")}
+              {filePage.search || filePage.categories.length ? t("kb.no_files_match") : t("kb.no_files")}
             </p>
-            {files.length === 0 && (
+            {!filePage.search && filePage.categories.length === 0 && (
               <p className="text-xs text-muted-foreground/60 mt-1">{t("kb.no_files_hint")}</p>
             )}
           </div>
         ) : (
           <div className="divide-y divide-border max-h-[50vh] overflow-y-auto">
-            {filteredFiles.map((file, i) => {
+            {files.map((file, i) => {
               const fileName = file.file_url.split("/").pop() || file.file_url;
               return (
                 <div
                   key={file.file_url}
                   className="flex items-center gap-3 px-4 py-3 hover:bg-muted/20 transition-colors"
                   data-testid={`row-kb-file-${i}`}
+                  data-file-url={file.file_url}
                 >
                   <FileText className="w-4 h-4 text-muted-foreground shrink-0" />
                   <div className="flex-1 min-w-0">
@@ -2049,6 +2027,7 @@ export default function KBDetail() {
             })}
           </div>
         )}
+        <FilePagination {...filePage} onOffset={filePage.setOffset} testId="kb-file-pagination" />
       </motion.div>
 
       {canManageCatalog && showBindDialog && (

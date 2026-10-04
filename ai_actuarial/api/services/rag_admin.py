@@ -5289,87 +5289,125 @@ def list_knowledge_base_files(
 ) -> dict[str, Any]:
     kid = _kb_id(kb_id)
     status_filter = _norm(query.get("status")).lower()
+    try:
+        limit = min(100, max(1, int(query.get("limit", 50))))
+        offset = max(0, int(query.get("offset", 0)))
+    except (TypeError, ValueError):
+        raise RagAdminError("limit and offset must be integers") from None
     _KnowledgeBase, manager, storage = _manager_and_storage(db_path)
     try:
         if not manager.get_kb(kid):
             raise RagAdminError(f"Knowledge base '{kid}' not found", status_code=404)
-        if not _can_view_kb_diagnostics(auth):
-            files = [_kb_file_customer_projection(item) for item in manager.get_kb_files(kid)]
-            return {
-                "kb_id": kid,
-                "total_files": len(files),
-                "files": files,
-            }
-        bindings = storage.list_kb_chunk_bindings(kid)
-        latest_binding_by_file: dict[str, dict[str, Any]] = {}
-        version_count_cache: dict[tuple[str, str], int] = {}
-        profile_names: set[str] = set()
-        for binding in bindings:
-            file_url = str(binding.get("file_url") or "")
-            if not file_url or file_url in latest_binding_by_file:
-                continue
-            latest_binding_by_file[file_url] = binding
-            profile_name = str(
-                binding.get("profile_name") or binding.get("profile_id") or ""
-            ).strip()
-            if profile_name:
-                profile_names.add(profile_name)
-
-        rows = []
-        for item in manager.get_kb_files(kid):
-            file_url = item.get("file_url")
-            binding = latest_binding_by_file.get(str(file_url or ""), {})
-            profile_id = str(binding.get("profile_id") or "").strip()
-            cache_key = (str(file_url or ""), profile_id)
-            if cache_key not in version_count_cache:
-                if profile_id:
-                    row = storage._conn.execute(
-                        "SELECT COUNT(*) FROM file_chunk_sets WHERE file_url = ? AND profile_id = ?",
-                        (cache_key[0], profile_id),
-                    ).fetchone()
-                else:
-                    row = storage._conn.execute(
-                        "SELECT COUNT(*) FROM file_chunk_sets WHERE file_url = ?",
-                        (cache_key[0],),
-                    ).fetchone()
-                version_count_cache[cache_key] = int((row[0] if row else 0) or 0)
-            indexed = item.get("indexed_at") is not None
-            stale = bool(item.get("needs_reindex"))
-            status = "indexed" if indexed and not stale else ("stale" if indexed else "pending")
-            rows.append(
-                {
-                    "file_url": file_url,
-                    "title": item.get("title") or "",
-                    "category": item.get("category") or "",
-                    "source_site": item.get("source_site") or "",
-                    "added_at": item.get("added_at"),
-                    "indexed_at": item.get("indexed_at"),
-                    "markdown_updated_at": item.get("markdown_updated_at"),
-                    "chunk_count": binding.get("chunk_count") or item.get("chunk_count") or 0,
-                    "chunk_set_id": binding.get("chunk_set_id") or "",
-                    "chunk_version_count": version_count_cache.get(cache_key, 0),
-                    "chunk_set_updated_at": binding.get("chunk_set_updated_at")
-                    or binding.get("bound_at"),
-                    "bound_at": binding.get("bound_at"),
-                    "chunk_profile": binding.get("profile_name") or binding.get("profile_id") or "",
-                    "indexed": indexed,
-                    "needs_reindex": stale,
-                    "status": status,
-                }
+        diagnostics = _can_view_kb_diagnostics(auth)
+        status_sql = """CASE WHEN kf.indexed_at IS NULL THEN 'pending'
+            WHEN c.markdown_updated_at > kf.indexed_at THEN 'stale'
+            ELSE 'indexed' END"""
+        where = ["kf.kb_id = ?"]
+        params: list[Any] = [kid]
+        search = _norm(query.get("query"))
+        if search:
+            where.append(
+                "(LOWER(f.title) LIKE ? OR LOWER(kf.file_url) LIKE ? OR LOWER(c.category) LIKE ?)"
             )
-        if status_filter:
-            rows = [row for row in rows if row.get("status") == status_filter]
-        profile_summary = "-"
-        if len(profile_names) == 1:
-            profile_summary = next(iter(profile_names))
-        elif len(profile_names) > 1:
-            profile_summary = f"Mixed ({len(profile_names)})"
-        return {
+            params.extend([f"%{search.lower()}%"] * 3)
+        category = _norm(query.get("category"))
+        if category == "__uncategorized__":
+            where.append("(c.category IS NULL OR TRIM(c.category) = '')")
+        elif category:
+            where.append(
+                "(c.category = ? OR c.category LIKE ? OR c.category LIKE ? OR c.category LIKE ?)"
+            )
+            params.extend([category, f"{category};%", f"%; {category}", f"%; {category};%"])
+        if diagnostics and status_filter:
+            where.append(f"({status_sql}) = ?")
+            params.append(status_filter)
+        source = f"""FROM rag_kb_files kf JOIN files f ON kf.file_url = f.url
+            LEFT JOIN catalog_items c ON c.file_url = kf.file_url
+            WHERE {' AND '.join(where)}"""
+        total = int(storage._conn.execute(f"SELECT COUNT(*) {source}", params).fetchone()[0])
+        cursor = storage._conn.execute(
+            f"""SELECT kf.file_url, f.title, c.category, f.source_site,
+                kf.added_at, kf.indexed_at, c.markdown_updated_at, kf.chunk_count,
+                {status_sql} AS status
+                {source}
+                ORDER BY LOWER(TRIM(COALESCE(NULLIF(TRIM(f.title), ''), kf.file_url))), kf.file_url
+                LIMIT ? OFFSET ?""",
+            [*params, limit, offset],
+        )
+        rows = [dict(zip([col[0] for col in cursor.description], row)) for row in cursor.fetchall()]
+        if diagnostics and rows:
+            urls = [row["file_url"] for row in rows]
+            placeholders = ",".join("?" for _ in urls)
+            bindings = storage._conn.execute(
+                f"""SELECT b.file_url, b.chunk_set_id, b.bound_at, b.binding_mode,
+                    s.profile_id, p.name, s.chunk_count, s.updated_at
+                    FROM kb_chunk_bindings b
+                    LEFT JOIN file_chunk_sets s ON s.chunk_set_id = b.chunk_set_id
+                    LEFT JOIN chunk_profiles p ON p.profile_id = s.profile_id
+                    WHERE b.kb_id = ? AND b.file_url IN ({placeholders})
+                    ORDER BY b.bound_at DESC, b.chunk_set_id DESC""",
+                [kid, *urls],
+            ).fetchall()
+            latest = {}
+            for binding in bindings:
+                latest.setdefault(binding[0], binding)
+            counts = storage._conn.execute(
+                f"""SELECT file_url, profile_id, COUNT(*) FROM file_chunk_sets
+                    WHERE file_url IN ({placeholders}) GROUP BY file_url, profile_id""",
+                urls,
+            ).fetchall()
+            versions = {(row[0], row[1]): int(row[2]) for row in counts}
+            file_versions: dict[str, int] = {}
+            for url, _profile, count in counts:
+                file_versions[url] = file_versions.get(url, 0) + int(count)
+            for row in rows:
+                for field in ("title", "category", "source_site"):
+                    row[field] = row[field] or ""
+                binding = latest.get(row["file_url"])
+                row.update(
+                    {
+                        "indexed": row["indexed_at"] is not None,
+                        "needs_reindex": row["status"] == "stale",
+                        "chunk_set_id": binding[1] if binding else "",
+                        "bound_at": binding[2] if binding else None,
+                        "binding_mode": binding[3] if binding else "",
+                        "chunk_profile": (binding[5] or binding[4] or "") if binding else "",
+                        "chunk_set_updated_at": (binding[7] or binding[2]) if binding else None,
+                        "chunk_version_count": (
+                            versions.get((row["file_url"], binding[4]), 0)
+                            if binding and binding[4]
+                            else file_versions.get(row["file_url"], 0)
+                        ),
+                        "chunk_count": (binding[6] if binding else 0) or row["chunk_count"] or 0,
+                    }
+                )
+        if not diagnostics:
+            rows = [_kb_file_customer_projection(row) for row in rows]
+        result = {
             "kb_id": kid,
-            "total_files": len(rows),
+            "items": rows,
+            "total": total,
+            "limit": limit,
+            "offset": offset,
             "files": rows,
-            "profile_summary": profile_summary,
+            "total_files": total,
         }
+        if diagnostics:
+            profiles = storage._conn.execute(
+                """SELECT DISTINCT COALESCE(NULLIF(TRIM(p.name), ''), s.profile_id)
+                    FROM (
+                        SELECT chunk_set_id, ROW_NUMBER() OVER (
+                            PARTITION BY file_url ORDER BY bound_at DESC, chunk_set_id DESC
+                        ) AS position FROM kb_chunk_bindings WHERE kb_id = ?
+                    ) b JOIN file_chunk_sets s ON s.chunk_set_id = b.chunk_set_id
+                    LEFT JOIN chunk_profiles p ON p.profile_id = s.profile_id WHERE b.position = 1""",
+                (kid,),
+            ).fetchall()
+            names = {row[0] for row in profiles if row[0]}
+            result["profile_summary"] = (
+                next(iter(names)) if len(names) == 1 else f"Mixed ({len(names)})" if names else "-"
+            )
+        return result
     finally:
         storage.close()
 

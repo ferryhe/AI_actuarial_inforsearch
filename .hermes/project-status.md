@@ -1,3 +1,62 @@
+# Latest work — Issue #350 knowledge-base list pagination
+
+- Updated: 2026-10-04 EDT. Repository: AI_actuarial_inforsearch; branch:
+  codex/issue-350-kb-list-pagination; baseline:
+  0a2d6bf6a964104505b44c32865cb8649bf51342. Only this issue worktree is writable;
+  sibling repositories remain off-limits. No production writes, deployments,
+  production-data cleanup, or schema migrations were performed.
+- Validity and tier: Issue #350 remains OPEN and no matching PR existed at startup.
+  TypeSafe Jev chose valid (confidence 0.98; probability 0.99). Complex tier was
+  selected because the work crosses KB and Chat APIs, their React consumers,
+  cross-page identity, and chunk-count query behavior. Ponytail full applied.
+- Implemented the shared items/total/limit/offset contract: default 50, maximum
+  100, server query/category filters, normalized-title then stable-URL ordering.
+  Chat can reach files beyond its former LIMIT 1000. Bounded legacy files/
+  total_files/documents aliases remain for compatibility. Customer field
+  projections and operator status/diagnostics are preserved. KB binding reads
+  and one grouped chunk-version count query now operate on the selected page;
+  no per-file COUNT query remains. Issue #273 detail behavior is preserved.
+- Both React lists mount one page of 50 rows, use a common 250 ms debounce and
+  AbortController cancellation, reset offsets for filters/routes, and recover
+  after removal empties the last page. KB removal and Chat comparison selection
+  use stable file URLs. API contract documentation and existing smoke mocks
+  were updated for the new page shape and asynchronous page loading.
+- Verification: `python scripts/quality_gate.py` PASS: full pytest 2,333 passed,
+  11 skipped (425.82 seconds), Black/isort/Pylint checks passed with no new or
+  stale baseline findings. `python -m pytest tests/test_issue_350_file_pagination.py
+  --no-cov -q` PASS (4 tests; 1,101-file API fixture, stable boundaries/filtering,
+  customer projection, tail past 1,000, and one grouped count query).
+- `npm exec -- vitest run client/src/pages/Issue350FilePagination.test.tsx` PASS
+  (5 tests; bounded rows/Remove buttons, page/URL removal, stale-filter and
+  stale-route cancellation, cross-page/filter selection, and last-page recovery).
+  Existing Chat #347/#351 tests passed (13). Final full `npm exec -- vitest run`
+  yielded 116 passed and one unchanged baseline failure in
+  client/src/components/a11y/FilterBar.test.tsx (task-filter label).
+- `npm run typecheck`, `npm run lint`, `npm run build`, `npm run dead-code:check`,
+  Node syntax checks, and `git diff --check` PASS. Lint has 0 errors and four
+  existing Hook warnings; build retains its existing large-chunk advisory.
+  Two old KB loader source guards were updated to assert the common paged
+  cancellation path; focused knowledge source tests passed (36).
+- Chromium commands, with the local Vite server on 127.0.0.1:5180:
+  `node client/src/pages/Issue350FilePagination.browser-smoke.mjs` PASS;
+  `SMOKE_URL=http://127.0.0.1:5180 node
+  client/src/pages/chat/Issue351MobileDrawer.browser-smoke.mjs` PASS;
+  `SMOKE_URL=http://127.0.0.1:5180 node
+  client/src/pages/Knowledge.rbac.browser-smoke.mjs` PASS (five roles).
+  These use local API fixtures with the real UI/API client, not production data.
+  The new smoke covers 1,101 files, at most 50 DOM rows, scrolling, page changes,
+  removal, search/category filtering, and stable comparison selection. Initial
+  KB cold/warm first view: 2,898/456 ms; Chat: 547/457 ms. Final rerun after Vite
+  compilation: KB 597/446 ms, Chat 560/470 ms. All meet cold <5 s / warm <2.5 s;
+  production timing remains outside this local fixture measurement.
+- Unrelated root untracked directories remain untouched: .codex-tmp-agentic-rag/,
+  .hermes/research/, diagrams/, graphify-out/. The issue worktree contains only
+  the scoped changes. No other project was accessed.
+- Current stage: implementation and required local validation complete; the
+  required fresh independent Sol/high review is pending. This selected worker
+  remains responsible for accepted local-review or remote-feedback repairs.
+  Do not create a PR or merge before the manager reports review PASS.
+
 # Latest work — Issue #367 unified browser-local date/time display
 
 - Updated: 2026-10-04 EDT. Repository: `AI_actuarial_inforsearch`; branch:
