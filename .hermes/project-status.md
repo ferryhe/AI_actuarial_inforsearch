@@ -4957,6 +4957,7 @@
   registered/operator/admin with all four labels in Chinese and English.
   Manager revalidation passed typecheck, lint (0 errors; 5 existing warnings),
   production build (existing large-chunk advisory), and diff check. PR #400
-  remains Ready for review at checked HEAD
-  `10bc980adc13b57472d25b0d3ef225cbc3f01ca5`; commit and push are pending.
-  F2-F5 were not implemented.
+  remains Ready for review. The fix was committed and pushed as
+  `95c52029ee0fc85bc04f4001a04ef94224918db7`; all six required checks passed
+  on that head and all four inline review threads are resolved. F2-F5 were not
+  implemented. Merge is pending final head verification.
