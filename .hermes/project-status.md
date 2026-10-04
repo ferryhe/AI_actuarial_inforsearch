@@ -52,10 +52,29 @@
 - Unrelated root untracked directories remain untouched: .codex-tmp-agentic-rag/,
   .hermes/research/, diagrams/, graphify-out/. The issue worktree contains only
   the scoped changes. No other project was accessed.
-- Current stage: implementation and required local validation complete; the
-  required fresh independent Sol/high review is pending. This selected worker
-  remains responsible for accepted local-review or remote-feedback repairs.
-  Do not create a PR or merge before the manager reports review PASS.
+- PR #402 is open: https://github.com/ferryhe/AI_actuarial_inforsearch/pull/402.
+  The initial implementation commit 1d1ef7b received fresh Sol/high local review
+  PASS and all six initial GitHub checks PASS. The single 15-minute feedback
+  checkpoint found three confirmed in-scope Copilot threads (4179212013,
+  4179212047, 4179212068): literal query search in Chat/KB and this stage record.
+- Remote-feedback repair: both new query paths now escape LIKE wildcard characters
+  and the escape character, with an explicit SQL ESCAPE clause. Queries containing
+  percent/underscore search literal metadata; Chat's legacy keywords retains
+  wildcard and comma-separated matching. Seven regression cases first reproduced
+  the query problem (five failures) and now pass, alongside the four original
+  pagination API cases. This status distinguishes the completed initial review
+  from the pending fresh review of the feedback repair.
+- Focused repair verification: `python -m pytest
+  tests/test_issue_350_file_pagination.py tests/test_fastapi_chat_endpoints.py
+  tests/test_issue_273_kb_detail_lightweight.py tests/test_issue_272_kb_rbac.py
+  --no-cov -q` PASS (74 tests, 38.66 seconds). Changed-file `python -m black
+  --check`, `python -m isort --check-only`, `python -m pylint --errors-only
+  --disable=import-error`, and `git diff --check` PASS. Only two API services,
+  the pagination regression test, and this status file changed in the repair;
+  no frontend behavior or production data was changed.
+- Current stage: PR #402 remains open; Copilot feedback is being addressed by
+  the same selected worker. The repair is ready for the manager's fresh Sol/high
+  review and checks on its new head. No additional PR or merge was performed.
 
 # Latest work — Issue #367 unified browser-local date/time display
 

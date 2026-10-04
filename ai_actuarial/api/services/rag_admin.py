@@ -5307,9 +5307,10 @@ def list_knowledge_base_files(
         search = _norm(query.get("query"))
         if search:
             where.append(
-                "(LOWER(f.title) LIKE ? OR LOWER(kf.file_url) LIKE ? OR LOWER(c.category) LIKE ?)"
+                "(LOWER(f.title) LIKE ? ESCAPE '!' OR LOWER(kf.file_url) LIKE ? ESCAPE '!' OR LOWER(c.category) LIKE ? ESCAPE '!')"
             )
-            params.extend([f"%{search.lower()}%"] * 3)
+            term = search.lower().replace("!", "!!").replace("%", "!%").replace("_", "!_")
+            params.extend([f"%{term}%"] * 3)
         category = _norm(query.get("category"))
         if category == "__uncategorized__":
             where.append("(c.category IS NULL OR TRIM(c.category) = '')")

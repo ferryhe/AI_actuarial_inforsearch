@@ -709,11 +709,15 @@ def list_available_documents(*, db_path: str, query: Mapping[str, Any]) -> dict[
             where_parts.append(f"({' OR '.join(category_clauses)})")
         if keywords:
             keyword_clauses = []
+            escape_clause = " ESCAPE '!'" if search else ""
             for keyword in keywords:
                 keyword_clauses.append(
-                    "(LOWER(f.title) LIKE ? OR LOWER(f.original_filename) LIKE ? OR LOWER(c.keywords) LIKE ?)"
+                    f"(LOWER(f.title) LIKE ?{escape_clause} OR LOWER(f.original_filename) LIKE ?{escape_clause} OR LOWER(c.keywords) LIKE ?{escape_clause})"
                 )
-                wildcard = f"%{keyword.lower()}%"
+                term = keyword.lower()
+                if search:
+                    term = term.replace("!", "!!").replace("%", "!%").replace("_", "!_")
+                wildcard = f"%{term}%"
                 params.extend([wildcard, wildcard, wildcard])
             where_parts.append(f"({' OR '.join(keyword_clauses)})")
         where_sql = " AND ".join(where_parts)

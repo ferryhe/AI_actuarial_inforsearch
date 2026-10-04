@@ -155,3 +155,67 @@ def test_customer_page_preserves_safe_projection_without_chunk_diagnostics(paged
         set(row) == {"file_url", "title", "category", "source_site"} for row in page["items"]
     )
     assert "profile_summary" not in page
+
+
+@pytest.mark.parametrize("term", ["%", "_", "!"])
+def test_chat_query_matches_literal_metadata_characters(paged_client, term):
+    client, db_path, urls = paged_client
+    storage = Storage(str(db_path))
+    try:
+        storage._conn.execute("UPDATE files SET title = ? WHERE url = ?", ("Rate 100%", urls[0]))
+        storage._conn.execute(
+            "UPDATE files SET original_filename = ? WHERE url = ?", ("reserve_!.pdf", urls[1])
+        )
+        storage._conn.execute(
+            "UPDATE catalog_items SET keywords = ? WHERE file_url = ?",
+            ("discount%rate,under_score,bang!flag", urls[2]),
+        )
+        storage._conn.commit()
+    finally:
+        storage.close()
+    result = client.get("/api/chat/available-documents", params={"query": term}).json()["data"]
+    expected = [urls[0], urls[2]] if term == "%" else [urls[1], urls[2]]
+    assert result["total"] == len(expected)
+    assert {row["file_url"] for row in result["items"]} == set(expected)
+
+
+@pytest.mark.parametrize("term", ["%", "_", "!"])
+def test_kb_query_matches_literal_title_category_and_url(paged_client, term):
+    client, db_path, urls = paged_client
+    literal_url = "https://fixture.test/literal%_!.pdf"
+    storage = Storage(str(db_path))
+    try:
+        storage._conn.execute("UPDATE files SET title = ? WHERE url = ?", ("Rate 100%!", urls[0]))
+        storage._conn.execute(
+            "UPDATE catalog_items SET category = ? WHERE file_url = ?", ("under_score", urls[1])
+        )
+        storage._conn.execute(
+            "INSERT INTO files(url,title) VALUES(?,?)", (literal_url, "Literal URL")
+        )
+        storage._conn.execute(
+            "INSERT INTO rag_kb_files(kb_id,file_url,added_at) VALUES(?,?,?)",
+            ("kb-350", literal_url, "2026-01-01"),
+        )
+        storage._conn.commit()
+    finally:
+        storage.close()
+    result = client.get("/api/rag/knowledge-bases/kb-350/files", params={"query": term}).json()
+    expected = [literal_url, urls[1] if term == "_" else urls[0]]
+    assert result["total"] == len(expected)
+    assert {row["file_url"] for row in result["items"]} == set(expected)
+
+
+def test_chat_legacy_keywords_keep_wildcard_and_comma_semantics(paged_client):
+    client, _db_path, urls = paged_client
+    endpoint = "/api/chat/available-documents"
+    total = client.get(endpoint).json()["data"]["total"]
+    assert client.get(endpoint, params={"keywords": "%"}).json()["data"]["total"] == total
+    result = client.get(endpoint, params={"keywords": "report%0500,report_0540"}).json()["data"]
+    assert result["total"] == 4
+    assert {row["file_url"] for row in result["items"]} == {
+        urls[1000],
+        urls[1001],
+        urls[1080],
+        urls[1081],
+    }
+    assert client.get(endpoint, params={"query": "report_0500"}).json()["data"]["total"] == 0
