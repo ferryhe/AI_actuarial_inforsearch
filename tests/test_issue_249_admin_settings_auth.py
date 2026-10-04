@@ -793,7 +793,7 @@ def test_all_admin_settings_mutations_use_precise_error_formatter() -> None:
         "apiDelete(`/api/config/provider-credentials/${providerId}?category=search`)",
         'apiPost("/api/config/categories",',
         'apiPost("/api/config/backend-settings", { features:',
-        'apiPost<{ token?: string; success?: boolean }>("/api/auth/tokens"',
+        'apiPost<CreateApiTokenResponse>("/api/auth/tokens"',
         "apiPost(`/api/auth/tokens/${tokenId}/revoke`, {})",
     ):
         _assert_mutation_uses_settings_error_formatter(settings_source, marker)

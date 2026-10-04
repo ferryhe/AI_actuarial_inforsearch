@@ -384,3 +384,97 @@ class TestDBModels:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+def test_storage_v2_auth_token_type_and_legacy_migration(tmp_path):
+    from ai_actuarial.shared_auth import hash_token
+    from ai_actuarial.storage_v2_full import StorageV2Full
+
+    path = tmp_path / "auth-v2.db"
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            "CREATE TABLE auth_tokens (id INTEGER PRIMARY KEY, subject TEXT NOT NULL, group_name TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE, is_active INTEGER NOT NULL DEFAULT 1, created_at TEXT, last_used_at TEXT, revoked_at TEXT, expires_at TEXT)"
+        )
+        conn.execute(
+            "INSERT INTO auth_tokens (subject, group_name, token_hash) VALUES (?, ?, ?)",
+            ("Old reader", "reader", hash_token("old")),
+        )
+    storage = StorageV2Full({"type": "sqlite", "path": str(path)})
+    try:
+        old = storage.get_auth_token_by_hash(hash_token("old"))
+        assert old["group_name"] == "registered" and old["token_type"] == "standard"
+        service_id = storage.create_auth_token(
+            subject="Service",
+            group_name="admin",
+            token_hash=hash_token("service"),
+            token_type="service",
+        )
+        standard_id = storage.create_auth_token(
+            subject="Ordinary",
+            group_name="premium",
+            token_hash=hash_token("standard"),
+            expires_at="2030-01-01T00:00:00+00:00",
+        )
+        storage.touch_auth_token_last_used(service_id)
+        rows = {row["id"]: row for row in storage.list_auth_tokens()}
+        assert rows[service_id]["token_type"] == "service" and rows[service_id]["last_used_at"]
+        assert rows[standard_id]["expires_at"] == "2030-01-01T00:00:00+00:00"
+        assert "token_hash" not in rows[service_id] and "token" not in rows[service_id]
+        assert storage.revoke_auth_token(service_id)
+        assert storage.get_auth_token_by_id(service_id)["is_active"] is False
+    finally:
+        storage.close()
+
+
+def test_postgresql_auth_token_schema_and_metadata():
+    """Run against the disposable Issue #359 database when configured."""
+    import json
+
+    from sqlalchemy import text
+
+    from ai_actuarial.shared_auth import hash_token
+    from ai_actuarial.storage_v2_full import StorageV2Full
+
+    config_text = os.environ.get("TEST_TOKEN_POSTGRES_CONFIG")
+    if not config_text:
+        pytest.skip("TEST_TOKEN_POSTGRES_CONFIG not set")
+    config = json.loads(config_text)
+    storage = StorageV2Full(config)
+    # This test owns its disposable database, supplied explicitly by the runner.
+    with storage.backend.engine.begin() as conn:
+        conn.execute(text("ALTER TABLE auth_tokens DROP COLUMN token_type"))
+        conn.execute(
+            text(
+                "INSERT INTO auth_tokens (subject, group_name, token_hash, is_active) VALUES ('Legacy', 'operator_ai', :hash, 1)"
+            ),
+            {"hash": hash_token("legacy-pg")},
+        )
+    storage.close()
+    storage = StorageV2Full(config)
+    try:
+        old = storage.get_auth_token_by_hash(hash_token("legacy-pg"))
+        assert old["group_name"] == "operator" and old["token_type"] == "standard"
+        service_id = storage.create_auth_token(
+            subject="PG Service",
+            group_name="admin",
+            token_hash=hash_token("pg-service"),
+            token_type="service",
+        )
+        standard_id = storage.create_auth_token(
+            subject="PG Standard",
+            group_name="registered",
+            token_hash=hash_token("pg-standard"),
+            expires_at="2030-01-01T00:00:00+00:00",
+        )
+        storage.touch_auth_token_last_used(service_id)
+        rows = {row["id"]: row for row in storage.list_auth_tokens()}
+        assert (
+            rows[service_id]["token_type"] == "service" and rows[service_id]["expires_at"] is None
+        )
+        assert rows[service_id]["last_used_at"]
+        assert rows[standard_id]["expires_at"] == "2030-01-01T00:00:00+00:00"
+        assert "token" not in rows[service_id] and "token_hash" not in rows[service_id]
+        assert storage.revoke_auth_token(service_id)
+        assert not storage.get_auth_token_by_id(service_id)["is_active"]
+    finally:
+        storage.close()

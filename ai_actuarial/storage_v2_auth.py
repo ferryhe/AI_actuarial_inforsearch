@@ -12,6 +12,7 @@ from typing import Any
 from sqlalchemy import and_
 
 from .db_models import AuthToken
+from .shared_auth import AuthTokenRecord, canonical_token_group
 
 # ApiToken maps to the 'api_tokens' table and is the only correct model for
 # LLM provider token CRUD.  If the import fails the module is mis-installed
@@ -49,7 +50,7 @@ class StorageV2AuthMixin:
     # Auth Token Management
     # ---------------------------------------------------------------------------
 
-    def get_auth_token_by_id(self, token_id: int) -> dict | None:
+    def get_auth_token_by_id(self, token_id: int) -> AuthTokenRecord | None:
         """Get auth token by ID."""
         token = self._session.query(AuthToken).filter(AuthToken.id == int(token_id)).first()
 
@@ -59,15 +60,16 @@ class StorageV2AuthMixin:
         return {
             "id": token.id,
             "subject": token.subject,
-            "group_name": token.group_name,
+            "group_name": canonical_token_group(token.group_name),
             "is_active": bool(token.is_active),
             "created_at": token.created_at,
             "last_used_at": token.last_used_at,
             "revoked_at": token.revoked_at,
             "expires_at": token.expires_at,
+            "token_type": token.token_type,
         }
 
-    def get_auth_token_by_hash(self, token_hash: str) -> dict | None:
+    def get_auth_token_by_hash(self, token_hash: str) -> AuthTokenRecord | None:
         """Get auth token by hash."""
         token = (
             self._session.query(AuthToken).filter(AuthToken.token_hash == str(token_hash)).first()
@@ -79,15 +81,16 @@ class StorageV2AuthMixin:
         return {
             "id": token.id,
             "subject": token.subject,
-            "group_name": token.group_name,
+            "group_name": canonical_token_group(token.group_name),
             "is_active": bool(token.is_active),
             "created_at": token.created_at,
             "last_used_at": token.last_used_at,
             "revoked_at": token.revoked_at,
             "expires_at": token.expires_at,
+            "token_type": token.token_type,
         }
 
-    def list_auth_tokens(self) -> list[dict]:
+    def list_auth_tokens(self) -> list[AuthTokenRecord]:
         """List all auth tokens."""
         tokens = self._session.query(AuthToken).order_by(AuthToken.id.desc()).all()
 
@@ -95,12 +98,13 @@ class StorageV2AuthMixin:
             {
                 "id": t.id,
                 "subject": t.subject,
-                "group_name": t.group_name,
+                "group_name": canonical_token_group(t.group_name),
                 "is_active": bool(t.is_active),
                 "created_at": t.created_at,
                 "last_used_at": t.last_used_at,
                 "revoked_at": t.revoked_at,
                 "expires_at": t.expires_at,
+                "token_type": t.token_type,
             }
             for t in tokens
         ]
@@ -112,6 +116,7 @@ class StorageV2AuthMixin:
         group_name: str,
         token_hash: str,
         expires_at: str | None = None,
+        token_type: str = "standard",
     ) -> int:
         """Create a new auth token."""
         ts = self.now()
@@ -123,6 +128,7 @@ class StorageV2AuthMixin:
             is_active=1,
             created_at=ts,
             expires_at=expires_at,
+            token_type=token_type,
         )
         self._session.add(token)
         self.backend._maybe_commit()

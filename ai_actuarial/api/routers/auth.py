@@ -6,6 +6,9 @@ from fastapi.responses import JSONResponse
 from ..deps import AuthContext, get_auth_context, require_permissions
 from ..services.auth import (
     AuthApiError,
+    CreateAuthTokenRequest,
+    CreateAuthTokenResponse,
+    ListAuthTokensResponse,
     _apply_session_mutation,
     auth_me,
     create_auth_token,
@@ -72,7 +75,7 @@ def api_auth_logout(request: Request, response: Response):
         return _error_response(exc)
 
 
-@router.get("/auth/tokens")
+@router.get("/auth/tokens", response_model=ListAuthTokensResponse)
 def api_list_auth_tokens(
     request: Request,
     _auth: AuthContext = Depends(require_permissions("tokens.manage")),
@@ -83,9 +86,9 @@ def api_list_auth_tokens(
         return _error_response(exc)
 
 
-@router.post("/auth/tokens", status_code=201)
+@router.post("/auth/tokens", status_code=201, response_model=CreateAuthTokenResponse)
 def api_create_auth_token(
-    payload: dict[str, object],
+    payload: CreateAuthTokenRequest,
     request: Request,
     _auth: AuthContext = Depends(require_permissions("tokens.manage")),
 ):

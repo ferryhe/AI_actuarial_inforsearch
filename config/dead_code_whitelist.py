@@ -465,3 +465,10 @@ restore_logging_state  # reason: Pytest injects this fixture by name.
 proxy_config  # reason: Pytest injects this autouse fixture by name.
 _hermetic_fastapi_env  # reason: Pytest injects this fixture by name.
 env  # reason: Pytest injects this fixture by name.
+
+
+from ai_actuarial.api.services.auth import CreateAuthTokenRequest
+
+CreateAuthTokenRequest.model_config  # reason: Pydantic reads this request-schema configuration.
+CreateAuthTokenRequest.nonempty_subject  # reason: Pydantic invokes this decorated field validator.
+CreateAuthTokenRequest.validate_expiry  # reason: Pydantic invokes this decorated model validator.

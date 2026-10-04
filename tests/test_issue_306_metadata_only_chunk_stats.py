@@ -440,6 +440,7 @@ def test_stats_work_is_independent_of_vector_dimension_and_bytes(
                 "add_chunk_stats_metadata_indexes_v13",
                 "add_markdown_terminal_source_state_v14",
                 "add_file_chunk_sets_latest_index_v15",
+                "add_auth_token_type_v16",
             ],
         ),
         (
@@ -450,6 +451,7 @@ def test_stats_work_is_independent_of_vector_dimension_and_bytes(
                 "add_chunk_stats_metadata_indexes_v13",
                 "add_markdown_terminal_source_state_v14",
                 "add_file_chunk_sets_latest_index_v15",
+                "add_auth_token_type_v16",
             ],
         ),
         (
@@ -459,6 +461,7 @@ def test_stats_work_is_independent_of_vector_dimension_and_bytes(
                 "add_chunk_stats_metadata_indexes_v13",
                 "add_markdown_terminal_source_state_v14",
                 "add_file_chunk_sets_latest_index_v15",
+                "add_auth_token_type_v16",
             ],
         ),
     ],
@@ -554,7 +557,7 @@ def test_schema_v13_adds_stats_covering_indexes_for_fresh_and_v12_databases(
         schema_status,
     )
 
-    assert CURRENT_SQLITE_SCHEMA_VERSION == 15
+    assert CURRENT_SQLITE_SCHEMA_VERSION == 16
     db_path = tmp_path / "schema.db"
     storage = Storage(str(db_path))
     try:
@@ -592,6 +595,7 @@ def test_schema_v13_adds_stats_covering_indexes_for_fresh_and_v12_databases(
             "from_version": 14,
             "to_version": 15,
         },
+        {"id": "add_auth_token_type_v16", "from_version": 15, "to_version": 16},
     ]
     applied = apply_schema(db_path)
     assert applied["state"] == "current"
@@ -599,9 +603,10 @@ def test_schema_v13_adds_stats_covering_indexes_for_fresh_and_v12_databases(
         "add_chunk_stats_metadata_indexes_v13",
         "add_markdown_terminal_source_state_v14",
         "add_file_chunk_sets_latest_index_v15",
+        "add_auth_token_type_v16",
     ]
     with sqlite3.connect(db_path) as conn:
-        assert int(conn.execute("PRAGMA user_version").fetchone()[0]) == 15
+        assert int(conn.execute("PRAGMA user_version").fetchone()[0]) == 16
         assert [
             str(row[2])
             for row in conn.execute("PRAGMA index_info(idx_global_chunks_stats_metadata)")

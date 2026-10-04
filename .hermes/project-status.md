@@ -1,3 +1,29 @@
+# Active work — Issue #359 Token permissions, expiry, and usage status
+
+- Updated: 2026-10-04 EDT. Repository: `AI_actuarial_inforsearch`; branch:
+  `agent/issue-359`; baseline `7eb0d3ad6a4929544035197688a2cef11a13a649`
+  (`origin/main`). This issue worktree is the only project workspace in scope;
+  sibling repositories remain off-limits.
+- Issue #359 is OPEN/P1. PR #399 is ready for review and closes the issue:
+  https://github.com/ferryhe/AI_actuarial_inforsearch/pull/399. Commit
+  `c7fcabdd59a74f3d786f687d6654edbaf391472d` passed the local Python quality gate
+  (2,321 passed, 11 skipped), Vitest, Chromium, typecheck, lint, build, dead-code,
+  disposable PostgreSQL, and all six GitHub checks. Independent local review and
+  TypeSafe review passed.
+- The post-Ready feedback fetch found four Copilot inline comments. The
+  last-used timestamp write failure reproduced as an authentication 500 and is
+  now fixed; 26 focused auth tests pass. TypeSafe Judge found the list group-name
+  contract ambiguous under AC1/AC3. At the user's direction to evaluate and
+  resolve the comments, the manager selected four canonical create groups and
+  an open string group name for list metadata to preserve existing stored data.
+  A v0 migration compatibility claim was reproduced as invalid. The
+  stale status claim in an earlier draft of this section had no Issue
+  acceptance-criteria mapping; this update corrects the project record. Focused
+  backend and Settings coverage, typecheck, lint and diff checks pass. Next,
+  publish the reviewed fix to PR #399; no second remote feedback window is needed.
+- The issue queue heartbeat remains active: `ai-actuarial-inforsearch-issue-to-merge-queue`.
+  No production data or services were touched.
+
 # Latest work — PR #398 Caddy template isolation and redirect configuration
 
 - Updated: 2026-10-03 EDT. Repository: `AI_actuarial_inforsearch`; branch:

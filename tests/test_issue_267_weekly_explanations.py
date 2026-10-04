@@ -180,7 +180,7 @@ def test_v12_then_v13_migrations_preserve_v11_data(tmp_path: Path) -> None:
         conn.execute("DROP TABLE markdown_terminal_source_state")
         conn.execute("PRAGMA user_version=11")
 
-    assert CURRENT_SQLITE_SCHEMA_VERSION == 15
+    assert CURRENT_SQLITE_SCHEMA_VERSION == 16
     status = schema_status(db_path)
     plan = schema_plan(db_path)
     assert status["state"] == "needs_migration"
@@ -190,6 +190,7 @@ def test_v12_then_v13_migrations_preserve_v11_data(tmp_path: Path) -> None:
         "add_chunk_stats_metadata_indexes_v13",
         "add_markdown_terminal_source_state_v14",
         "add_file_chunk_sets_latest_index_v15",
+        "add_auth_token_type_v16",
     ]
 
     applied = apply_schema(db_path)
@@ -199,6 +200,7 @@ def test_v12_then_v13_migrations_preserve_v11_data(tmp_path: Path) -> None:
         "add_chunk_stats_metadata_indexes_v13",
         "add_markdown_terminal_source_state_v14",
         "add_file_chunk_sets_latest_index_v15",
+        "add_auth_token_type_v16",
     ]
     with sqlite3.connect(db_path) as conn:
         assert conn.execute("SELECT id FROM weekly_snapshots").fetchone()[0] == snapshot["id"]

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import secrets
-from typing import Any
+from typing import Any, Literal
+
+from typing_extensions import TypedDict
 
 # ============================================================
 # Permission Definitions
@@ -196,3 +198,26 @@ def permissions_for_group(group_name: str) -> frozenset[str]:
 
 
 DUMMY_PASSWORD_HASH: str = hash_password("__timing_sentinel__")
+
+
+def canonical_token_group(group_name: str) -> str:
+    """Project historical API-token aliases without changing stored permissions."""
+    return {"reader": "registered", "operator_ai": "operator"}.get(group_name, group_name)
+
+
+class AuthTokenRecord(TypedDict):
+    """Canonical persisted token metadata; secrets never enter this projection."""
+
+    id: int
+    subject: str
+    group_name: str
+    token_type: Literal["standard", "service"]
+    is_active: bool
+    created_at: str | None
+    last_used_at: str | None
+    revoked_at: str | None
+    expires_at: str | None
+
+
+class AuthTokenMetadata(AuthTokenRecord):
+    status: Literal["active", "revoked", "expired"]

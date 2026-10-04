@@ -26,6 +26,7 @@ import {
   Download,
   FileText,
 } from "lucide-react";
+import { useAuth } from "@/context/AuthContext";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/components/Layout";
 import { apiGet, apiPost, apiDelete } from "@/lib/api";
@@ -115,11 +116,30 @@ interface CategoriesConfig {
 }
 
 interface ApiToken {
-  id: string;
+  id: number;
   subject: string;
-  group: string;
-  created_at: string;
-  last_used?: string;
+  group_name: string;
+  token_type: "standard" | "service";
+  is_active: boolean;
+  created_at: string | null;
+  last_used_at: string | null;
+  revoked_at: string | null;
+  expires_at: string | null;
+  status: "active" | "revoked" | "expired";
+}
+
+interface CreateApiTokenRequest {
+  subject: string;
+  group_name: "registered" | "premium" | "operator" | "admin";
+  token_type: ApiToken["token_type"];
+  expires_at: string | null;
+  confirm_service: boolean;
+}
+
+interface CreateApiTokenResponse {
+  success: boolean;
+  token: string;
+  metadata: ApiToken;
 }
 
 type AiRoutingKey = "chat" | "embeddings" | "catalog" | "ocr";
@@ -1950,14 +1970,23 @@ function SystemTab() {
 
 function ApiTokensTab() {
   const { t } = useTranslation();
+  const { user } = useAuth();
+  const canCreateService = user?.role === "admin" && user?.id != null && !!user?.email;
   const [tokens, setTokens] = useState<ApiToken[]>([]);
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState<{ message: string; type: "success" | "error"; action?: string } | null>(null);
 
   const [showCreate, setShowCreate] = useState(false);
   const [newSubject, setNewSubject] = useState("");
-  const [newGroup, setNewGroup] = useState("reader");
+  const [newGroup, setNewGroup] = useState<CreateApiTokenRequest["group_name"]>("registered");
+  const [tokenType, setTokenType] = useState<ApiToken["token_type"]>("standard");
+  const [expiryDays, setExpiryDays] = useState("7");
+  const [customExpiry, setCustomExpiry] = useState("");
+  const [confirmService, setConfirmService] = useState(false);
   const [creating, setCreating] = useState(false);
+  const isService = tokenType === "service" && canCreateService;
+  const customExpiryValid = !!customExpiry && Date.parse(customExpiry) > Date.now();
+  const canSubmit = !!newSubject.trim() && !creating && (isService ? confirmService : expiryDays !== "custom" || customExpiryValid);
   const [createdToken, setCreatedToken] = useState<string | null>(null);
 
   const fetchTokens = useCallback(async () => {
@@ -1975,13 +2004,17 @@ function ApiTokensTab() {
   useEffect(() => { fetchTokens(); }, [fetchTokens]);
 
   async function createToken() {
-    if (!newSubject.trim()) return;
+    if (!canSubmit) return;
     setCreating(true);
     try {
-      const res = await apiPost<{ token?: string; success?: boolean }>("/api/auth/tokens", {
+      const payload: CreateApiTokenRequest = {
         subject: newSubject.trim(),
-        group: newGroup,
-      });
+        group_name: isService ? "admin" : newGroup,
+        token_type: isService ? "service" : "standard",
+        expires_at: isService ? null : expiryDays === "custom" ? new Date(customExpiry).toISOString() : new Date(Date.now() + Number(expiryDays) * 86400000).toISOString(),
+        confirm_service: isService && confirmService,
+      };
+      const res = await apiPost<CreateApiTokenResponse>("/api/auth/tokens", payload);
       if (res.token) {
         setCreatedToken(res.token);
         setToast({ message: t("settings.token_created"), type: "success" });
@@ -1994,7 +2027,7 @@ function ApiTokensTab() {
     }
   }
 
-  async function revokeToken(tokenId: string) {
+  async function revokeToken(tokenId: number) {
     const target = tokens.find((token) => token.id === tokenId)?.subject || tokenId;
     if (!window.confirm(t("a11y.confirm_revoke_token", { target }))) return;
     try {
@@ -2006,11 +2039,12 @@ function ApiTokensTab() {
     }
   }
 
-  function formatDate(dateStr?: string): string {
-    if (!dateStr) return "-";
-    try {
-      return new Date(dateStr).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
-    } catch { return dateStr; }
+  function formatDate(dateStr: string | null) {
+    if (!dateStr) return "—";
+    // Historical naive storage timestamps were written as UTC.
+    const date = new Date(/(?:Z|[+-]\d{2}:\d{2})$/i.test(dateStr) ? dateStr : `${dateStr}Z`);
+    if (Number.isNaN(date.getTime())) return dateStr;
+    return <time dateTime={date.toISOString()} title={`${date.toISOString()} (UTC)`}>{date.toLocaleString()}</time>;
   }
 
   if (loading) {
@@ -2053,7 +2087,7 @@ function ApiTokensTab() {
         {showCreate && (
           <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }}
             className="px-5 py-4 border-b border-border bg-muted/10">
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_120px_auto] sm:items-end">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:items-end">
               <div>
                 <label htmlFor="input-token-subject" className="text-xs text-muted-foreground mb-1 block">{t("settings.token_subject")}</label>
                 <input id="input-token-subject" type="text" value={newSubject} onChange={(e) => setNewSubject(e.target.value)}
@@ -2063,14 +2097,40 @@ function ApiTokensTab() {
               </div>
               <div>
                 <label htmlFor="select-token-group" className="text-xs text-muted-foreground mb-1 block">{t("settings.token_group")}</label>
-                <select id="select-token-group" value={newGroup} onChange={(e) => setNewGroup(e.target.value)}
+                <select id="select-token-group" value={isService ? "admin" : newGroup} onChange={(e) => setNewGroup(e.target.value as CreateApiTokenRequest["group_name"])} disabled={isService}
                   className="w-full min-h-[48px] px-3 py-2 rounded-lg border border-border bg-background text-sm" data-testid="select-token-group">
-                  <option value="reader">Reader</option>
+                  <option value="registered">Registered</option>
+                  <option value="premium">Premium</option>
                   <option value="operator">Operator</option>
                   <option value="admin">Admin</option>
                 </select>
               </div>
-              <button onClick={createToken} disabled={!newSubject.trim() || creating}
+              {canCreateService && <div>
+                <label htmlFor="select-token-type" className="text-xs text-muted-foreground mb-1 block">{t("settings.token_type")}</label>
+                <select id="select-token-type" data-testid="select-token-type" value={tokenType} onChange={(e) => { setTokenType(e.target.value as ApiToken["token_type"]); setConfirmService(false); }} className="w-full min-h-[48px] px-3 py-2 rounded-lg border border-border bg-background text-sm">
+                  <option value="standard">{t("settings.token_standard")}</option>
+                  <option value="service">{t("settings.token_service")}</option>
+                </select>
+              </div>}
+              {!isService && <div>
+                <label htmlFor="select-token-expiry" className="text-xs text-muted-foreground mb-1 block">{t("settings.token_expiry")}</label>
+                <select id="select-token-expiry" data-testid="select-token-expiry" value={expiryDays} onChange={(e) => setExpiryDays(e.target.value)} className="w-full min-h-[48px] px-3 py-2 rounded-lg border border-border bg-background text-sm">
+                  {[1, 7, 30].map(days => <option key={days} value={days}>{t("settings.token_days", { days })}</option>)}
+                  <option value="custom">{t("settings.token_custom")}</option>
+                </select>
+              </div>}
+              {!isService && expiryDays === "custom" && <div>
+                <label htmlFor="input-token-expiry" className="text-xs text-muted-foreground mb-1 block">{t("settings.token_custom_expiry")}</label>
+                <input id="input-token-expiry" data-testid="input-token-expiry" type="datetime-local" value={customExpiry} onChange={(e) => setCustomExpiry(e.target.value)} className="w-full min-h-[48px] px-3 py-2 rounded-lg border border-border bg-background text-sm" />
+              </div>}
+              {isService && <div className="sm:col-span-2 rounded-lg border-2 border-destructive bg-destructive/10 p-3 text-sm">
+                <p id="token-service-warning" data-testid="token-service-warning" className="font-semibold text-destructive">{t("settings.token_service_warning")}</p>
+                <label className="flex min-h-[48px] items-center gap-2">
+                  <input data-testid="confirm-service-token" type="checkbox" checked={confirmService} onChange={(e) => setConfirmService(e.target.checked)} aria-describedby="token-service-warning" />
+                  {t("settings.token_service_confirm")}
+                </label>
+              </div>}
+              <button onClick={createToken} disabled={!canSubmit}
                 className="min-h-[48px] px-3 py-2 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 text-xs flex items-center justify-center gap-1.5"
                 data-testid="button-submit-token" aria-describedby={toast?.type === "error" && toast.action === "create-token" ? "error-settings-create-token" : undefined}>
                 {creating ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
@@ -2088,15 +2148,18 @@ function ApiTokensTab() {
             </div>
           ) : (
             tokens.map((token) => (
-              <div key={token.id} className="px-5 py-3 flex items-center justify-between" data-testid={`token-row-${token.id}`}>
+              <div key={token.id} className="px-5 py-3 flex flex-wrap items-center justify-between gap-3" data-testid={`token-row-${token.id}`}>
                 <div className="space-y-0.5 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium">{token.subject}</span>
-                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-primary/10 text-primary font-semibold">{token.group}</span>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-sm font-medium break-all">{token.subject}</span>
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-primary/10 text-primary font-semibold">{token.group_name}</span>
+                    <span className={token.token_type === "service" ? "text-xs font-bold text-destructive" : "text-xs text-muted-foreground"}>{t(`settings.token_${token.token_type}`)}</span>
+                    <span className="text-xs font-semibold">{t(token.status === "revoked" ? "settings.token_status_revoked" : `settings.token_${token.status}`)}</span>
                   </div>
                   <div className="text-[11px] text-muted-foreground">
                     {t("settings.created")}: {formatDate(token.created_at)}
-                    {token.last_used && <> · {t("settings.last_used")}: {formatDate(token.last_used)}</>}
+                    <br />{t("settings.token_expires")}: {token.expires_at ? formatDate(token.expires_at) : t("settings.token_no_expiry")}
+                    <br />{t("settings.last_used")}: {formatDate(token.last_used_at)}
                   </div>
                 </div>
                 <IconButton onClick={() => revokeToken(token.id)} label={t("a11y.revoke_token", { target: token.subject })}

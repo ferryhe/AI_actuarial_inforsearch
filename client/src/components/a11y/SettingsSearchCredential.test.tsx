@@ -265,16 +265,16 @@ it("associates failed Search credential Delete with only that Delete action", as
 });
 
 it("associates failed API Token revoke with only that revoke action", async () => {
-  apiGet.mockImplementation((url: string) => url === "/api/auth/tokens" ? Promise.resolve({ tokens: [{ id: "smoke", subject: "Smoke", group: "reader" }] }) : Promise.resolve({ defaults: {}, engines: [] }));
+  apiGet.mockImplementation((url: string) => url === "/api/auth/tokens" ? Promise.resolve({ tokens: [{ id: 10, subject: "Smoke", group_name: "registered", token_type: "standard", is_active: true, status: "active", created_at: null, expires_at: "2030-01-01T00:00:00Z", last_used_at: null, revoked_at: null }] }) : Promise.resolve({ defaults: {}, engines: [] }));
   apiPost.mockRejectedValueOnce({ detail: "revoke failed" });
   vi.spyOn(window, "confirm").mockReturnValue(true);
   const user = userEvent.setup();
   render(<Layout><Settings /></Layout>);
   await user.click(screen.getByTestId("tab-tokens"));
-  await user.click(await screen.findByTestId("button-revoke-token-smoke"));
+  await user.click(await screen.findByTestId("button-revoke-token-10"));
   const alert = await screen.findByRole("alert");
-  expect(alert).toHaveAttribute("id", "error-settings-revoke-token-smoke");
-  expect(screen.getByTestId("button-revoke-token-smoke")).toHaveAttribute("aria-describedby", "error-settings-revoke-token-smoke");
+  expect(alert).toHaveAttribute("id", "error-settings-revoke-token-10");
+  expect(screen.getByTestId("button-revoke-token-10")).toHaveAttribute("aria-describedby", "error-settings-revoke-token-10");
   expect((await axe.run(alert, { rules: { "color-contrast": { enabled: false } } })).violations).toEqual([]);
 });
 

@@ -671,12 +671,12 @@ def test_fastapi_admin_user_and_token_management_surfaces_work(tmp_path: Path, m
 
     token_create = client.post(
         "/api/auth/tokens",
-        json={"subject": "reader@example.com", "group_name": "reader"},
+        json={"subject": "reader@example.com", "group_name": "registered"},
         headers=headers,
     )
     assert token_create.status_code == 201, token_create.text
-    token_id = token_create.json()["token"]["id"]
-    assert token_create.json()["token"]["token"]
+    token_id = token_create.json()["metadata"]["id"]
+    assert token_create.json()["token"]
 
     token_list = client.get("/api/auth/tokens", headers=headers)
     assert token_list.status_code == 200, token_list.text
@@ -780,3 +780,226 @@ def test_fastapi_auth_activity_uses_normalized_trusted_proxy_ip(
         assert all(row[1] == ip for row in audit_rows)
     finally:
         storage.close()
+
+
+# Issue #359: the token API is a separate contract from email-user roles.
+def test_token_canonical_contract_and_expiry(tmp_path: Path, monkeypatch) -> None:
+    from datetime import datetime, timedelta, timezone
+
+    client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
+    headers = {"X-Auth-Token": seed["admin_token"]}
+    expiry = (datetime.now(timezone.utc) + timedelta(days=1)).isoformat()
+    created = client.post(
+        "/api/auth/tokens",
+        json={"subject": "Canonical", "group_name": "admin", "expires_at": expiry},
+        headers=headers,
+    )
+    assert created.status_code == 201, created.text
+    body = created.json()
+    assert isinstance(body["token"], str)
+    metadata = body["metadata"]
+    assert metadata["expires_at"] == expiry
+    assert metadata["token_type"] == "standard"
+    assert metadata["status"] == "active"
+    assert "token" not in metadata and "token_hash" not in metadata
+    token_headers = {"X-Auth-Token": body["token"]}
+    assert client.get("/api/auth/tokens", headers=token_headers).status_code == 200
+    listing = client.get("/api/auth/tokens", headers=headers).json()["tokens"]
+    row = next(row for row in listing if row["id"] == metadata["id"])
+    assert row["last_used_at"]
+    assert all("token" not in row and "token_hash" not in row for row in listing)
+    storage = Storage(app.state.db_path)
+    storage._conn.execute(
+        "UPDATE auth_tokens SET expires_at=? WHERE id=?",
+        ((datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat(), metadata["id"]),
+    )
+    storage._conn.commit()
+    storage.close()
+    assert client.get("/api/auth/tokens", headers=token_headers).status_code == 401
+    listing = client.get("/api/auth/tokens", headers=headers).json()["tokens"]
+    assert next(row for row in listing if row["id"] == metadata["id"])["status"] == "expired"
+    default = client.post(
+        "/api/auth/tokens", json={"subject": "Default", "group_name": "admin"}, headers=headers
+    ).json()
+    remaining = datetime.fromisoformat(default["metadata"]["expires_at"]) - datetime.now(
+        timezone.utc
+    )
+    assert timedelta(days=6, hours=23) < remaining <= timedelta(days=7)
+    assert (
+        client.post(
+            f"/api/auth/tokens/{default['metadata']['id']}/revoke", headers=token_headers
+        ).status_code
+        == 401
+    )
+    assert (
+        client.post(
+            f"/api/auth/tokens/{default['metadata']['id']}/revoke", headers=headers
+        ).status_code
+        == 200
+    )
+    assert (
+        client.get("/api/auth/tokens", headers={"X-Auth-Token": default["token"]}).status_code
+        == 401
+    )
+
+
+def test_token_creation_validation_and_legacy_read(tmp_path: Path, monkeypatch) -> None:
+    from ai_actuarial.shared_auth import hash_token, permissions_for_group
+
+    client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
+    headers = {"X-Auth-Token": seed["admin_token"]}
+    for payload in (
+        {"group_name": "reader"},
+        {"group_name": "operator_ai"},
+        {"group_name": "guest"},
+        {"group_name": "catalog_only"},
+        {"group_name": "unknown-group"},
+        {"group_name": "admin", "expires_at": None},
+        {"group_name": "admin", "expires_at": "bad-date"},
+        {"group_name": "admin", "expires_at": "2000-01-01T00:00:00Z"},
+        {"group_name": "admin", "expires_at": "2030-01-01T00:00:00"},
+        {"group": "admin"},
+    ):
+        response = client.post(
+            "/api/auth/tokens", json={"subject": "Invalid", **payload}, headers=headers
+        )
+        assert response.status_code in (400, 422), (payload, response.text)
+    storage = Storage(app.state.db_path)
+    try:
+        for alias, canonical in (("reader", "registered"), ("operator_ai", "operator")):
+            token_id = storage.create_auth_token(
+                subject=alias, group_name=alias, token_hash=hash_token(alias)
+            )
+            assert storage.get_auth_token_by_id(token_id)["group_name"] == canonical
+            legacy_auth = client.get("/api/auth/me", headers={"X-Auth-Token": alias}).json()["data"]
+            assert legacy_auth["authenticated"] is True
+            assert legacy_auth["token"]["group_name"] == canonical
+            assert set(legacy_auth["permissions"]) == set(permissions_for_group(alias))
+            assert client.post("/api/auth/login", json={"token": alias}).status_code == 200
+            client.cookies.clear()
+    finally:
+        storage.close()
+
+
+def test_token_list_preserves_other_stored_groups_and_permissions(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from ai_actuarial.shared_auth import hash_token, permissions_for_group
+
+    client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
+    storage = Storage(app.state.db_path)
+    try:
+        token_ids = {
+            group: storage.create_auth_token(
+                subject=group, group_name=group, token_hash=hash_token(group)
+            )
+            for group in ("guest", "catalog_only", "unknown-group")
+        }
+    finally:
+        storage.close()
+    response = client.get("/api/auth/tokens", headers={"X-Auth-Token": seed["admin_token"]})
+    assert response.status_code == 200, response.text
+    rows = {row["id"]: row for row in response.json()["tokens"]}
+    for group, token_id in token_ids.items():
+        assert rows[token_id]["group_name"] == group
+        auth = client.get("/api/auth/me", headers={"X-Auth-Token": group}).json()["data"]
+        assert auth["authenticated"] is True
+        assert auth["token"]["group_name"] == group
+        assert set(auth["permissions"]) == set(permissions_for_group(group))
+
+
+def test_service_tokens_require_confirmed_admin_email_session(tmp_path: Path, monkeypatch) -> None:
+    client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
+    payload = {
+        "subject": "Automation",
+        "group_name": "admin",
+        "token_type": "service",
+        "confirm_service": True,
+    }
+    headers = {"X-Auth-Token": seed["admin_token"]}
+    assert client.post("/api/auth/tokens", json=payload, headers=headers).status_code == 403
+    client.cookies.set("session", _make_session_cookie(app, {"email_user_id": seed["user_id"]}))
+    assert client.post("/api/auth/tokens", json=payload).status_code == 403
+    storage = Storage(app.state.db_path)
+    storage._conn.execute("UPDATE users SET role='admin' WHERE id=?", (seed["user_id"],))
+    storage._conn.commit()
+    storage.close()
+    assert client.post(
+        "/api/auth/tokens", json={**payload, "confirm_service": False}
+    ).status_code in (400, 422)
+    assert (
+        client.post("/api/auth/tokens", json={**payload, "confirm_service": "yes"}).status_code
+        == 422
+    )
+    service = client.post("/api/auth/tokens", json=payload)
+    assert service.status_code == 201, service.text
+    metadata = service.json()["metadata"]
+    assert metadata["token_type"] == "service" and metadata["expires_at"] is None
+    assert client.post(
+        "/api/auth/tokens", json={**payload, "group_name": "registered"}
+    ).status_code in (400, 422)
+    token_id = metadata["id"]
+    client.cookies.set(
+        "session",
+        _make_session_cookie(app, {"email_user_id": seed["user_id"], "auth_token_id": token_id}),
+    )
+    assert client.post(f"/api/auth/tokens/{token_id}/revoke").status_code == 200
+    me = client.get("/api/auth/me", headers={"X-Auth-Token": service.json()["token"]}).json()[
+        "data"
+    ]
+    assert me["user"]["email"] and me["user"]["id"] == seed["user_id"]
+    client.cookies.clear()
+    assert (
+        client.get(
+            "/api/auth/tokens", headers={"X-Auth-Token": service.json()["token"]}
+        ).status_code
+        == 401
+    )
+
+
+def test_token_openapi_schema(tmp_path: Path, monkeypatch) -> None:
+    client, _app, _seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
+    schema = client.get("/openapi.json").json()
+    operation = schema["paths"]["/api/auth/tokens"]["post"]
+    assert "$ref" in operation["requestBody"]["content"]["application/json"]["schema"]
+    assert "$ref" in operation["responses"]["201"]["content"]["application/json"]["schema"]
+    definitions = schema["components"]["schemas"]
+    assert definitions["CreateAuthTokenRequest"]["properties"]["group_name"]["enum"] == [
+        "registered",
+        "premium",
+        "operator",
+        "admin",
+    ]
+    assert definitions["AuthTokenMetadata"]["properties"]["group_name"] == {
+        "type": "string",
+        "title": "Group Name",
+    }
+
+
+def test_token_auth_survives_last_used_persistence_failure(tmp_path: Path, monkeypatch) -> None:
+    import sqlite3
+
+    client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
+    storage = Storage(app.state.db_path)
+    try:
+        token_id = storage.get_auth_token_by_hash(
+            hashlib.sha256(seed["admin_token"].encode("utf-8")).hexdigest()
+        )["id"]
+    finally:
+        storage.close()
+    failed_touches: list[int] = []
+
+    def fail_touch(_storage: Storage, token_id: int) -> None:
+        failed_touches.append(token_id)
+        raise sqlite3.OperationalError("attempt to write a readonly database")
+
+    monkeypatch.setattr(Storage, "touch_auth_token_last_used", fail_touch)
+    for auth_mode in ("header", "session"):
+        if auth_mode == "session":
+            client.cookies.set("session", _make_session_cookie(app, {"auth_token_id": token_id}))
+        headers = {"X-Auth-Token": seed["admin_token"]} if auth_mode == "header" else {}
+        response = client.get("/api/auth/tokens", headers=headers)
+        assert response.status_code == 200, response.text
+        row = next(row for row in response.json()["tokens"] if row["id"] == token_id)
+        assert row["is_active"] is True and row["last_used_at"] is None
+    assert failed_touches == [token_id, token_id]

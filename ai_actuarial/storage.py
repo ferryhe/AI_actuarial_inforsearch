@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
 from ai_actuarial.ai_runtime import infer_embedding_dimension, infer_embedding_provider
+from ai_actuarial.shared_auth import AuthTokenRecord, canonical_token_group
 from ai_actuarial.sqlite_schema import (
     CURRENT_SQLITE_SCHEMA_VERSION,
     has_user_schema_objects,
@@ -340,7 +341,8 @@ class Storage:
                 created_at TEXT,
                 last_used_at TEXT,
                 revoked_at TEXT,
-                expires_at TEXT
+                expires_at TEXT,
+                token_type TEXT NOT NULL DEFAULT 'standard'
             )
             """)
         self._conn.execute("""
@@ -454,6 +456,7 @@ class Storage:
                 "last_used_at": "TEXT",
                 "revoked_at": "TEXT",
                 "expires_at": "TEXT",
+                "token_type": "TEXT NOT NULL DEFAULT 'standard'",
             },
         )
 
@@ -1400,10 +1403,10 @@ class Storage:
     # Auth tokens (public deployments)
     # -----------------------------
 
-    def get_auth_token_by_id(self, token_id: int) -> dict | None:
+    def get_auth_token_by_id(self, token_id: int) -> AuthTokenRecord | None:
         cur = self._conn.execute(
             """
-            SELECT id, subject, group_name, is_active, created_at, last_used_at, revoked_at, expires_at
+            SELECT id, subject, group_name, is_active, created_at, last_used_at, revoked_at, expires_at, token_type
             FROM auth_tokens
             WHERE id = ?
             """,
@@ -1415,18 +1418,19 @@ class Storage:
         return {
             "id": row[0],
             "subject": row[1],
-            "group_name": row[2],
+            "group_name": canonical_token_group(row[2]),
             "is_active": bool(row[3]),
             "created_at": row[4],
             "last_used_at": row[5],
             "revoked_at": row[6],
             "expires_at": row[7],
+            "token_type": row[8],
         }
 
-    def get_auth_token_by_hash(self, token_hash: str) -> dict | None:
+    def get_auth_token_by_hash(self, token_hash: str) -> AuthTokenRecord | None:
         cur = self._conn.execute(
             """
-            SELECT id, subject, group_name, is_active, created_at, last_used_at, revoked_at, expires_at
+            SELECT id, subject, group_name, is_active, created_at, last_used_at, revoked_at, expires_at, token_type
             FROM auth_tokens
             WHERE token_hash = ?
             """,
@@ -1438,32 +1442,34 @@ class Storage:
         return {
             "id": row[0],
             "subject": row[1],
-            "group_name": row[2],
+            "group_name": canonical_token_group(row[2]),
             "is_active": bool(row[3]),
             "created_at": row[4],
             "last_used_at": row[5],
             "revoked_at": row[6],
             "expires_at": row[7],
+            "token_type": row[8],
         }
 
-    def list_auth_tokens(self) -> list[dict]:
+    def list_auth_tokens(self) -> list[AuthTokenRecord]:
         cur = self._conn.execute("""
-            SELECT id, subject, group_name, is_active, created_at, last_used_at, revoked_at, expires_at
+            SELECT id, subject, group_name, is_active, created_at, last_used_at, revoked_at, expires_at, token_type
             FROM auth_tokens
             ORDER BY id DESC
             """)
-        out: list[dict] = []
+        out: list[AuthTokenRecord] = []
         for row in cur.fetchall():
             out.append(
                 {
                     "id": row[0],
                     "subject": row[1],
-                    "group_name": row[2],
+                    "group_name": canonical_token_group(row[2]),
                     "is_active": bool(row[3]),
                     "created_at": row[4],
                     "last_used_at": row[5],
                     "revoked_at": row[6],
                     "expires_at": row[7],
+                    "token_type": row[8],
                 }
             )
         return out
@@ -1475,14 +1481,15 @@ class Storage:
         group_name: str,
         token_hash: str,
         expires_at: str | None = None,
+        token_type: str = "standard",
     ) -> int:
         ts = self.now()
         cur = self._conn.execute(
             """
-            INSERT INTO auth_tokens (subject, group_name, token_hash, is_active, created_at, expires_at)
-            VALUES (?, ?, ?, 1, ?, ?)
+            INSERT INTO auth_tokens (subject, group_name, token_hash, is_active, created_at, expires_at, token_type)
+            VALUES (?, ?, ?, 1, ?, ?, ?)
             """,
-            (str(subject), str(group_name), str(token_hash), ts, expires_at),
+            (str(subject), str(group_name), str(token_hash), ts, expires_at, token_type),
         )
         self._maybe_commit()
         return int(cur.lastrowid)
