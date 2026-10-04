@@ -22,6 +22,7 @@ import { useTranslation } from "@/components/Layout";
 import { useAuth } from "@/context/AuthContext";
 import { apiGet } from "@/lib/api";
 import { EnumDiagnostic, EnumDisplay, canInspectEnumRaw } from "@/lib/enum-display";
+import { FormattedDateTime } from "@/components/FormattedDateTime";
 
 interface LogEntry {
   timestamp: string;
@@ -141,18 +142,8 @@ function historyStatusBadge(status: string, t: (key: string) => string, canInspe
   );
 }
 
-function formatDate(dateStr: string): string {
-  if (!dateStr) return "-";
-  try {
-    const d = new Date(dateStr);
-    return d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
-  } catch {
-    return dateStr;
-  }
-}
-
 export default function LogsPage() {
-  const { t } = useTranslation();
+  const { t, lang } = useTranslation();
   const { permissions, user } = useAuth();
   const canInspectRaw = canInspectEnumRaw(user?.role);
   const canReadSystemLogs = permissions.includes("logs.system.read");
@@ -494,7 +485,7 @@ export default function LogsPage() {
                     </div>
                     <div className="text-xs text-muted-foreground hidden sm:flex items-center gap-1"><EnumDisplay category="task_type" value={task.type} t={t} /><EnumDiagnostic category="task_type" value={task.type} t={t} canInspectRaw={canInspectRaw} /></div>
                     <span className="hidden sm:flex items-center">{historyStatusBadge(task.status, t, canInspectRaw)}</span>
-                    <span className="text-xs text-muted-foreground hidden sm:flex items-center">{formatDate(task.started_at)}</span>
+                    <span className="text-xs text-muted-foreground hidden sm:flex items-center"><FormattedDateTime value={task.started_at} lang={lang} fallback="-" /></span>
                     <span className="text-xs text-muted-foreground hidden sm:flex items-center">{task.items_processed}</span>
                   </div>
                 ))}

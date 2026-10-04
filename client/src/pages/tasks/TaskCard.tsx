@@ -7,6 +7,7 @@ import type { HistoryTask, Task } from "./Tasks.types";
 import { TaskMetrics } from "./TaskMetrics";
 import { IconButton } from "@/components/a11y/IconButton";
 import { EnumDiagnostic, EnumDisplay, canInspectEnumRaw } from "@/lib/enum-display";
+import { FormattedDateTime } from "@/components/FormattedDateTime";
 
 function statusIcon(status: string) {
   switch (status) {
@@ -55,16 +56,6 @@ function statusBadge(status: string, t: (key: string) => string, canInspectRaw =
   );
 }
 
-function formatDate(dateStr: string): string {
-  if (!dateStr) return "-";
-  try {
-    const d = new Date(dateStr);
-    return d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
-  } catch {
-    return dateStr;
-  }
-}
-
 interface TaskCardProps {
   task: Task;
   index: number;
@@ -73,7 +64,7 @@ interface TaskCardProps {
 }
 
 export function TaskCard({ task, index, onStop, onViewLog }: TaskCardProps) {
-  const { t } = useTranslation();
+  const { t, lang } = useTranslation();
   const { user } = useAuth();
   const target = task.name?.trim() || task.id;
   return (
@@ -120,9 +111,9 @@ export function TaskCard({ task, index, onStop, onViewLog }: TaskCardProps) {
         </div>
       </div>
       <div className="mt-2"><TaskMetrics task={task} t={t} /></div>
-      <p className="text-[11px] text-muted-foreground mt-2">{t("tasks.started")}: {formatDate(task.started_at)}</p>
+      <p className="text-[11px] text-muted-foreground mt-2">{t("tasks.started")}: <FormattedDateTime value={task.started_at} lang={lang} fallback="-" /></p>
     </motion.div>
   );
 }
 
-export { statusBadge, formatDate };
+export { statusBadge };

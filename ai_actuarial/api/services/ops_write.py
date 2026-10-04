@@ -7,7 +7,7 @@ import re
 import sqlite3
 import time
 from copy import deepcopy
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -1081,7 +1081,7 @@ def list_backups() -> dict[str, list[dict[str, Any]]]:
         backups.append(
             {
                 "filename": path.name,
-                "timestamp": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                "timestamp": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
                 "size_bytes": stat.st_size,
                 "size": stat.st_size,
             }
@@ -1103,7 +1103,7 @@ def create_backup(label: str = "manual") -> dict[str, Any]:
         stat = backup_path.stat()
         return {
             "filename": backup_name,
-            "timestamp": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+            "timestamp": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
             "size_bytes": stat.st_size,
             "size": stat.st_size,
         }
@@ -2246,7 +2246,7 @@ def _record_rejected_task(
 ) -> None:
     task_id = f"rejected_{int(datetime.now().timestamp())}"
     task_name = str(data.get("name") or f"{collection_type} (rejected)")
-    stamp = datetime.now().isoformat()
+    stamp = datetime.now(timezone.utc).isoformat()
     log_file = str(Path("data/task_logs") / f"{task_id}.log")
     append_task_log(task_id, "ERROR", f"Rejected request: {reason}")
     task_data = {

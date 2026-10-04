@@ -26,7 +26,8 @@ import { ChunkForm } from "./tasks/ChunkForm";
 import { RagIndexForm } from "./tasks/RagIndexForm";
 import { RecategoryForm } from "./tasks/RecategoryForm";
 import { FilterBar } from "./tasks/FilterBar";
-import { TaskCard, statusBadge, formatDate } from "./tasks/TaskCard";
+import { TaskCard, statusBadge } from "./tasks/TaskCard";
+import { FormattedDateTime } from "@/components/FormattedDateTime";
 import { TaskTable } from "./tasks/TaskTable";
 import { TaskMetrics } from "./tasks/TaskMetrics";
 import { Pagination } from "./tasks/Pagination";
@@ -95,7 +96,7 @@ async function waitForTaskResult(taskId: string): Promise<TaskResult> {
 }
 
 export default function Tasks() {
-  const { t } = useTranslation();
+  const { t, lang } = useTranslation();
   const [location, navigate] = useLocation();
   const { permissions, user } = useAuth();
   const canRunTasks = permissions.includes("tasks.run");
@@ -598,11 +599,11 @@ export default function Tasks() {
                       </div>
                       <div className="flex gap-1">
                         <span className="text-muted-foreground">{t("tasks.log_started") || "Started"}:</span>
-                        <span>{logModal.task.started_at ? formatDate(logModal.task.started_at) : "-"}</span>
+                        <span><FormattedDateTime value={logModal.task.started_at} lang={lang} fallback="-" /></span>
                       </div>
                       <div className="flex gap-1">
                         <span className="text-muted-foreground">{t("tasks.log_completed") || "Completed"}:</span>
-                        <span>{logModal.task.completed_at ? formatDate(logModal.task.completed_at) : "-"}</span>
+                        <span><FormattedDateTime value={logModal.task.completed_at} lang={lang} fallback="-" /></span>
                       </div>
                       <TaskMetrics task={logModal.task} t={t} className="contents" labelClassName="text-muted-foreground" />
                     </div>

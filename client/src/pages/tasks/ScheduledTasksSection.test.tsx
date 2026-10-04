@@ -76,6 +76,8 @@ assert.match(readerMarkup, /Pricing Catalog/);
 assert.match(readerMarkup, /Pipeline Baton/);
 assert.match(readerMarkup, /text-effective-shanghai-weekly-summary-312/);
 assert.match(readerMarkup, /UTC\+00:00/);
+assert.match(readerMarkup, /tasks\.sched\.browser_local/);
+assert.match(readerMarkup, /title="2026-08-24T20:30:00\.000Z \(UTC\)"/);
 assert.match(readerMarkup, /tasks\.sched\.effective/);
 assert.doesNotMatch(readerMarkup, /button-add-scheduled-task/);
 assert.doesNotMatch(readerMarkup, /button-reinit-scheduler/);

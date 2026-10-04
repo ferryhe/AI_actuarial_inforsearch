@@ -180,7 +180,7 @@ test("covers Issue 333 content-first behavior", async () => {
   assert.match(homeMarkup, /A complete public summary\./);
   assert.match(
     homeMarkup,
-    /<time[^>]+dateTime="2026-09-03T15:16:17\+00:00"[^>]+title="2026-09-03T15:16:17\+00:00"[^>]*>Sep 3<\/time>/,
+    /<time[^>]+dateTime="2026-09-03T15:16:17.000Z"[^>]+title="2026-09-03T15:16:17.000Z \(UTC\)"[^>]*>Sep 3<\/time>/,
   );
 
   const missingMetadata: WeeklyDashboardData = {

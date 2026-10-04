@@ -1,3 +1,32 @@
+# Latest work — Issue #367 unified browser-local date/time display
+
+- Updated: 2026-10-04 EDT. Repository: `AI_actuarial_inforsearch`; branch:
+  `codex/issue-367-unified-date-format`; baseline `7b192bd49b435906a93631cc73be0e1f3326f709`.
+  Only this repository is in scope; sibling repositories remain off-limits.
+- Shared date formatting is in place for Tasks, Schedule, Weekly, Users, Token,
+  and Logs. New task timestamps carry UTC offsets; legacy task history retains
+  its process-local interpretation without changing stored rows. Backup mtimes
+  preserve their source epoch. No account timezone model or schema change.
+- Remote feedback on PR #401 found a mixed-format task-history ordering bug and
+  an exact Weekly period datetime display mismatch. Both are fixed locally:
+  history sorts parsed instants before limiting; Database period endpoints show
+  browser-local time with a canonical UTC tooltip and retain UTC filter values.
+  Weekly list/detail date-only labels remain UTC calendar dates. No #362 enum
+  resolver changes were made.
+- Final local verification on the six-file PR diff: 81 focused Python
+  tests, 12 focused Vitest tests, New York and Shanghai browser smoke, typecheck,
+  changed-file ESLint (zero errors; one existing Database hook warning), Node
+  syntax check, and `git diff --check` passed. Full Vitest and accessibility
+  suites each retain one unchanged baseline FilterBar label failure.
+- PR #401 is Ready for review. Remote-feedback fixes were committed and pushed
+  as `24d38b485710977ff8f7f96357fe59e582b71599`; mixed task-history ordering
+  and exact Weekly datetime display findings are fixed. The UTC date-only
+  suggestion was rejected per the period-boundary contract. All three fetched
+  Copilot threads received replies and are resolved; the fresh unresolved count
+  is zero. On this head, frontend, dead-code, and office-conversion checks pass;
+  quality-gate and Python smoke are still running. No second feedback fetch,
+  production write/deploy, or production-data cleanup occurred. Next: finish CI,
+  verify merge gates, then merge and verify cleanup.
 # Latest work — Issue #362 bilingual enum labels
 
 - Updated: 2026-10-04 EDT. Repository: `AI_actuarial_inforsearch`; branch:

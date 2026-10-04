@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import Layout from "@/components/Layout";
 import Settings from "@/pages/Settings";
+import { formatDateTime } from "@/lib/date-format";
 
 const { apiGet, apiPost, actor } = vi.hoisted(() => ({ apiGet: vi.fn(), apiPost: vi.fn(), actor: { user: { id: 1 as number | null, email: "admin@example.test" as string | null, role: "admin" } } }));
 vi.mock("@/lib/api", () => ({ apiGet, apiPost, apiDelete: vi.fn(), ApiError: class extends Error {}, formatApiErrorDetail: () => "" }));
@@ -62,7 +63,8 @@ it("translates canonical role choices while retaining submitted values", async (
   await screen.findByTestId("text-created-token");
   expect(apiPost.mock.calls.at(-1)![1].group_name).toBe("operator");
 });
-it("shows complete metadata, local dates with UTC titles, and confirmed service creation", async () => {
+it("shows complete metadata in the selected locale with UTC titles, and confirmed service creation", async () => {
+  apiGet.mockImplementation(async (url: string) => url === "/api/auth/tokens" ? { tokens: [metadata, { ...metadata, id: 11, subject: "Expired", token_type: "standard", expires_at: "2026-01-03T12:00:00+00:00", status: "expired" }, { ...metadata, id: 12, subject: "Revoked", status: "revoked", is_active: false }, { ...metadata, id: 13, created_at: "not-a-date" }] } : {});
   const user = await openTokens();
   const row = screen.getByTestId("token-row-10");
   expect(screen.getByTestId("token-role-10")).toHaveTextContent("Administrator");
@@ -71,7 +73,12 @@ it("shows complete metadata, local dates with UTC titles, and confirmed service 
   expect(row).toHaveTextContent("No expiry");
   const time = row.querySelector("time")!;
   expect(time.title).toBe("2026-01-01T12:00:00.000Z (UTC)");
-  expect(time.textContent).toBe(new Date(metadata.created_at).toLocaleString());
+  expect(time.textContent).toBe(formatDateTime(metadata.created_at, "en"));
+  await user.click(screen.getByTestId("toggle-lang"));
+  expect(time.textContent).toBe(formatDateTime(metadata.created_at, "zh"));
+  await user.click(screen.getByTestId("toggle-lang"));
+  expect(screen.getByTestId("token-row-13")).toHaveTextContent("—");
+  expect(screen.getByTestId("token-row-13")).not.toHaveTextContent("Invalid Date");
   expect(screen.getByTestId("token-row-11")).toHaveTextContent("Expired");
   expect(screen.getByTestId("token-row-12")).toHaveTextContent("Revoked");
   await user.selectOptions(screen.getByTestId("select-token-type"), "service");
