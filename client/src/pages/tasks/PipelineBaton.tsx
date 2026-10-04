@@ -9,6 +9,7 @@ import { ChunkForm } from "./ChunkForm";
 import { MarkdownForm } from "./MarkdownForm";
 import { RagIndexForm } from "./RagIndexForm";
 import { PipelineBatonResults, type PipelineStepName, type PipelineView } from "./PipelineBatonResults";
+import { canInspectEnumRaw } from "@/lib/enum-display";
 
 type StepName = PipelineStepName;
 
@@ -35,7 +36,7 @@ const batonOwnedFields: Partial<Record<StepName, string[]>> = {
 
 export function PipelineBaton({ onViewLog }: { onViewLog: (taskId: string, taskName: string) => void }) {
   const { t } = useTranslation();
-  const { permissions } = useAuth();
+  const { permissions, user } = useAuth();
   const canRun = permissions.includes("tasks.run");
   const canConfigure = permissions.includes("schedule.write");
   const [expanded, setExpanded] = useState<Set<string> | null>(null);
@@ -219,7 +220,7 @@ export function PipelineBaton({ onViewLog }: { onViewLog: (taskId: string, taskN
         </div>
       </div>
       {error && <p id="error-pipeline-baton" role="alert" className="rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive">{error}</p>}
-      <PipelineBatonResults view={view} steps={steps} expanded={expanded} showFailuresOnly={showFailuresOnly} onShowFailuresOnly={setShowFailuresOnly} onToggle={toggle} onViewLog={onViewLog} renderSettings={settingsFor} t={t} />
+      <PipelineBatonResults view={view} steps={steps} expanded={expanded} showFailuresOnly={showFailuresOnly} onShowFailuresOnly={setShowFailuresOnly} onToggle={toggle} onViewLog={onViewLog} renderSettings={settingsFor} t={t} canInspectRaw={canInspectEnumRaw(user?.role)} />
     </div>
   );
 }

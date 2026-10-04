@@ -1,5 +1,8 @@
 import { Search } from "lucide-react";
 import { useTranslation } from "@/components/Layout";
+import { resolveEnumLabel } from "@/lib/enum-display";
+
+const taskTypeFilters = ["scheduled", "quick_check", "url", "file", "search", "recategory", "catalog", "markdown_conversion", "chunk_generation", "rag_indexing", "embedding_generation", "ready_data_build"];
 
 interface FilterBarProps {
   searchQuery: string;
@@ -34,35 +37,23 @@ export function FilterBar({
           className="w-full min-h-[44px] pl-9 pr-3 py-2 text-sm rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-ring"
         />
       </div>
-      <label className="text-xs font-medium text-muted-foreground">Status
+      <label className="text-xs font-medium text-muted-foreground">{t("tasks.col.status")}
       <select id="select-task-filter-status"
         value={statusFilter}
         onChange={(e) => onStatusChange(e.target.value)}
         className="block min-h-[44px] px-3 py-2 text-sm rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-ring"
       >
-        <option value="">All Status</option>
-        <option value="running">Running</option>
-        <option value="completed">Completed</option>
-        <option value="error">Error</option>
-        <option value="stopped">Stopped</option>
+        <option value="">{t("tasks.filter.all_status")}</option>
+        {["running", "completed", "error", "stopped"].map((status) => <option key={status} value={status}>{resolveEnumLabel("status", status, t)}</option>)}
       </select></label>
-      <label className="text-xs font-medium text-muted-foreground">Type
+      <label className="text-xs font-medium text-muted-foreground">{t("tasks.col.type")}
       <select id="select-task-filter-type"
         value={typeFilter}
         onChange={(e) => onTypeChange(e.target.value)}
         className="block min-h-[44px] px-3 py-2 text-sm rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-ring"
       >
-        <option value="">All Types</option>
-        <option value="scheduled">{t("tasks.type.site_config")}</option>
-        <option value="quick_check">{t("tasks.type.web_crawl")}</option>
-        <option value="url">{t("tasks.type.adhoc_url")}</option>
-        <option value="file">{t("tasks.type.file_import")}</option>
-        <option value="search">{t("tasks.type.web_search")}</option>
-        <option value="recategory">{t("tasks.type.recategory")}</option>
-        <option value="catalog">{t("tasks.type.catalog")}</option>
-        <option value="markdown_conversion">{t("tasks.type.markdown")}</option>
-        <option value="chunk_generation">{t("tasks.type.chunk")}</option>
-        <option value="rag_indexing">{t("tasks.type.rag_index")}</option>
+        <option value="">{t("tasks.filter.all_types")}</option>
+        {taskTypeFilters.map((type) => <option key={type} value={type}>{resolveEnumLabel("task_type", type, t)}</option>)}
       </select></label>
     </div>
   );

@@ -23,8 +23,9 @@ import { cn } from "@/lib/utils";
 import { useTranslation } from "@/components/Layout";
 import { apiGet, apiPost, apiDelete, formatApiErrorDetail } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
+import { EnumDiagnostic, EnumDisplay, canInspectEnumRaw } from "@/lib/enum-display";
 import { getAvailableChatKnowledgeBaseIds } from "@/lib/chat-knowledge-bases";
-import { isAskAiAvailable, kbStatusMessageKey, needsReembed } from "@/lib/kb-status";
+import { isAskAiAvailable, needsReembed } from "@/lib/kb-status";
 import { buildAskAiChatPath } from "@/lib/navigation";
 import ConfirmDeleteModal from "@/components/ConfirmDeleteModal";
 import { fetchKnowledgeBases as fetchChatKnowledgeBases } from "./chat/api";
@@ -137,7 +138,7 @@ const fadeUp = {
   }),
 };
 
-function StatusBadge({ status }: { status?: string }) {
+function StatusBadge({ status, t, canInspectRaw }: { status?: string; t: (key: string) => string; canInspectRaw: boolean }) {
   const s = status?.toLowerCase() || "unknown";
   const colors =
     s === "active" || s === "ready"
@@ -147,12 +148,14 @@ function StatusBadge({ status }: { status?: string }) {
         : "bg-muted text-muted-foreground";
 
   return (
-    <span
-      className={cn("inline-block text-[10px] font-semibold px-2 py-0.5 rounded-full", colors)}
+    <div className="flex flex-col">
+    <span className={cn("inline-block text-[10px] font-semibold px-2 py-0.5 rounded-full", colors)}
       data-testid="status-badge"
     >
-      {status || "unknown"}
+      <EnumDisplay category="kb_status" value={status} t={t} />
     </span>
+    <EnumDiagnostic category="kb_status" value={status} t={t} canInspectRaw={canInspectRaw} />
+    </div>
   );
 }
 
@@ -286,12 +289,12 @@ function getAutomationStatusLabel(status: string, t: Translate) {
   }
 }
 
-function ModeBadge({ mode }: { mode?: string }) {
+function ModeBadge({ mode, t, canInspectRaw }: { mode?: string; t: (key: string) => string; canInspectRaw: boolean }) {
   if (!mode) return null;
   const isCategory = mode === "category";
   const isAll = mode === "all";
   return (
-    <span
+    <div
       className={cn(
         "inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full",
         isCategory
@@ -302,8 +305,9 @@ function ModeBadge({ mode }: { mode?: string }) {
       )}
     >
       {isCategory ? <FolderOpen className="w-2.5 h-2.5" /> : <Sparkles className="w-2.5 h-2.5" />}
-      {mode}
-    </span>
+      <EnumDisplay category="kb_mode" value={mode} t={t} />
+      <EnumDiagnostic category="kb_mode" value={mode} t={t} canInspectRaw={canInspectRaw} />
+    </div>
   );
 }
 
@@ -322,7 +326,8 @@ function normalizeCategoryNames(items: unknown): string[] {
 
 export default function Knowledge() {
   const { t } = useTranslation();
-  const { permissions } = useAuth();
+  const { permissions, user } = useAuth();
+  const canInspectRaw = canInspectEnumRaw(user?.role);
   const canManageCatalog = permissions.includes("catalog.write");
   const canManageChunkProfiles = permissions.includes("config.write");
   const canRunKnowledgeTasks = permissions.includes("tasks.run");
@@ -1302,8 +1307,8 @@ export default function Knowledge() {
                     </div>
                     {canRunKnowledgeTasks && (
                       <div className="flex items-center gap-1.5">
-                        <ModeBadge mode={kb.kb_mode} />
-                        <StatusBadge status={status} />
+                        <ModeBadge mode={kb.kb_mode} t={t} canInspectRaw={canInspectRaw} />
+                        <StatusBadge status={status} t={t} canInspectRaw={canInspectRaw} />
                       </div>
                     )}
                   </div>
@@ -1347,9 +1352,11 @@ export default function Knowledge() {
                           >
                             {t("knowledge.ready_operation_status")}: {t(readyDataOperationKindTranslationKey(manifestOperation.kind))} · {getAutomationStatusLabel(manifestOperation.status, t)}
                           </span>
-                          <span className="text-[10px] text-muted-foreground font-mono truncate">
-                            {manifestProfile}
-                          </span>
+                          <div className="text-[10px] text-muted-foreground font-mono truncate">
+                            {manifest?.profile || kb.manifest_profile
+                              ? <><EnumDisplay category="kb_profile" value={manifest?.profile || kb.manifest_profile} t={t} /><EnumDiagnostic category="kb_profile" value={manifest?.profile || kb.manifest_profile} t={t} canInspectRaw={canInspectRaw} /></>
+                              : manifestProfile}
+                          </div>
                         </div>
                         {manifestMessage && (
                           <p
@@ -1417,9 +1424,10 @@ export default function Knowledge() {
                     </div>
                   )}
                   {canRunKnowledgeTasks && kb.reason && kb.reason !== "healthy" && !reembedRequired && (
-                    <p className="mt-2 text-[11px] text-muted-foreground" data-testid={`message-kb-status-${kbId}`}>
-                      {t(kbStatusMessageKey(kb.reason))}
-                    </p>
+                    <div className="mt-2 text-[11px] text-muted-foreground" data-testid={`message-kb-status-${kbId}`}>
+                      <EnumDisplay category="kb_reason" value={kb.reason} t={t} />
+                      <EnumDiagnostic category="kb_reason" value={kb.reason} t={t} canInspectRaw={canInspectRaw} />
+                    </div>
                   )}
                   {canRunKnowledgeTasks && kb.index_coverage && (
                     <div className="mb-3 grid grid-cols-2 gap-1 rounded-lg bg-muted/40 p-2 text-[10px] text-muted-foreground" data-testid={`kb-index-coverage-${kbId}`}>

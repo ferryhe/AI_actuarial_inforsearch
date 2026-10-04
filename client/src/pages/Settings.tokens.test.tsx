@@ -48,10 +48,24 @@ it("uses canonical groups, seven-day admin default and 1/7/30/custom expiry", as
   await user.click(screen.getByTestId("button-submit-token"));
   expect(apiPost.mock.calls.at(-1)![1].expires_at).toBe(new Date("2030-01-01T12:00").toISOString());
 });
+it("translates canonical role choices while retaining submitted values", async () => {
+  const user = await openTokens();
+  const groups = screen.getByTestId("select-token-group");
+  const values = () => Array.from(groups.querySelectorAll("option")).map((o) => o.value);
+  const labels = () => Array.from(groups.querySelectorAll("option")).map((o) => o.textContent);
+  expect(values()).toEqual(["registered", "premium", "operator", "admin"]);
+  expect(labels()).toEqual(["Registered", "Premium", "Operator", "Administrator"]);
+  await user.click(screen.getByTestId("toggle-lang"));
+  expect(labels()).toEqual(["注册用户", "Premium 用户", "操作员", "管理员"]);
+  await user.selectOptions(groups, "operator");
+  await user.click(screen.getByTestId("button-submit-token"));
+  await screen.findByTestId("text-created-token");
+  expect(apiPost.mock.calls.at(-1)![1].group_name).toBe("operator");
+});
 it("shows complete metadata, local dates with UTC titles, and confirmed service creation", async () => {
   const user = await openTokens();
   const row = screen.getByTestId("token-row-10");
-  expect(row).toHaveTextContent("admin");
+  expect(screen.getByTestId("token-role-10")).toHaveTextContent("Administrator");
   expect(row).toHaveTextContent("Service");
   expect(row).toHaveTextContent("Active");
   expect(row).toHaveTextContent("No expiry");
@@ -73,15 +87,33 @@ it("does not offer service creation for API-token identity", async () => {
   await openTokens();
   expect(screen.queryByTestId("select-token-type")).not.toBeInTheDocument();
 });
-it("displays persisted group names while keeping creation canonical", async () => {
-  apiGet.mockImplementation(async (url: string) => url === "/api/auth/tokens" ? { tokens: [metadata, ...["guest", "catalog_only", "unknown-group"].map((group_name, i) => ({ ...metadata, id: 20 + i, group_name }))] } : {});
+it("translates stored canonical roles in both locales while preserving create values", async () => {
+  const roles = ["registered", "premium", "operator", "admin"];
+  apiGet.mockImplementation(async (url: string) => url === "/api/auth/tokens" ? { tokens: [metadata, ...roles.map((group_name, i) => ({ ...metadata, id: 20 + i, group_name }))] } : {});
   const user = await openTokens();
-  for (const [i, group] of ["guest", "catalog_only", "unknown-group"].entries()) {
-    expect(screen.getByTestId(`token-row-${20 + i}`)).toHaveTextContent(group);
-  }
+  ["Registered", "Premium", "Operator", "Administrator"].forEach((label, i) => expect(screen.getByTestId(`token-role-${20 + i}`)).toHaveTextContent(label));
+  await user.click(screen.getByTestId("toggle-lang"));
+  ["注册用户", "Premium 用户", "操作员", "管理员"].forEach((label, i) => expect(screen.getByTestId(`token-role-${20 + i}`)).toHaveTextContent(label));
   const groups = screen.getByTestId("select-token-group");
-  expect(Array.from(groups.querySelectorAll("option")).map(o => o.value)).toEqual(["registered", "premium", "operator", "admin"]);
+  expect(Array.from(groups.querySelectorAll("option")).map(o => o.value)).toEqual(roles);
+  await user.selectOptions(groups, "premium");
   await user.click(screen.getByTestId("button-submit-token"));
   await screen.findByTestId("text-created-token");
-  expect(apiPost.mock.calls.at(-1)![1].group_name).toBe("registered");
+  expect(apiPost.mock.calls.at(-1)![1].group_name).toBe("premium");
+});
+it("hides historical token role codes from customers", async () => {
+  apiGet.mockImplementation(async (url: string) => url === "/api/auth/tokens" ? { tokens: [metadata, { ...metadata, id: 30, group_name: "catalog_only" }] } : {});
+  actor.user = { id: 2, email: "customer@example.test", role: "registered" };
+  await openTokens();
+  expect(screen.getByTestId("token-role-30")).toHaveTextContent("Unknown status");
+  expect(screen.getByTestId("token-row-30")).not.toHaveTextContent("catalog_only");
+  expect(screen.queryByTestId("token-row-30")?.querySelector("details")).toBeNull();
+});
+it("shows historical token role codes only in collapsed privileged diagnostics", async () => {
+  apiGet.mockImplementation(async (url: string) => url === "/api/auth/tokens" ? { tokens: [metadata, { ...metadata, id: 31, group_name: "catalog_only" }] } : {});
+  actor.user = { id: 3, email: "operator@example.test", role: "operator" };
+  await openTokens();
+  const row = screen.getByTestId("token-row-31");
+  expect(row.querySelector("details")).not.toHaveAttribute("open");
+  expect(row.querySelector("details")).toHaveTextContent("catalog_only");
 });

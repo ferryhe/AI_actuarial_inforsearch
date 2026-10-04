@@ -1,11 +1,14 @@
 import { Zap, History } from "lucide-react";
 import { useTranslation } from "@/components/Layout";
+import { useAuth } from "@/context/AuthContext";
 import { TaskTableProps } from "./Tasks.types";
 import { statusBadge, formatDate } from "./TaskCard";
 import { TaskMetrics as TaskResultSummary, getTaskItemCount } from "./TaskMetrics";
+import { EnumDiagnostic, EnumDisplay, canInspectEnumRaw } from "@/lib/enum-display";
 
 export function TaskTable({ historyTasks, onViewLog }: TaskTableProps) {
   const { t } = useTranslation();
+  const { user } = useAuth();
 
   if (historyTasks.length === 0) {
     return (
@@ -37,8 +40,8 @@ export function TaskTable({ historyTasks, onViewLog }: TaskTableProps) {
                 <div className="font-medium text-sm truncate max-w-full">{task.name || "-"}</div>
                 <div className="text-[10px] font-mono text-muted-foreground truncate" data-testid={`text-history-task-id-${i}`}>ID: {task.id || "-"}</div>
               </div>
-              <div className="text-xs text-muted-foreground hidden md:block">{task.type || "-"}</div>
-              <div className="hidden md:block">{task.status ? statusBadge(task.status) : "-"}</div>
+              <div className="text-xs text-muted-foreground hidden md:block"><EnumDisplay category="task_type" value={task.type} t={t} /><EnumDiagnostic category="task_type" value={task.type} t={t} canInspectRaw={canInspectEnumRaw(user?.role)} /></div>
+              <div className="hidden md:block">{task.status ? statusBadge(task.status, t, canInspectEnumRaw(user?.role)) : "-"}</div>
               <div className="text-xs text-muted-foreground hidden md:block">{task.started_at ? formatDate(task.started_at) : "-"}</div>
               <div className="text-xs text-muted-foreground hidden md:block">{task.completed_at ? formatDate(task.completed_at) : "-"}</div>
               <div className="flex items-center gap-2">

@@ -33,6 +33,7 @@ import { Pagination } from "./tasks/Pagination";
 import { RecategoryDryRunResult } from "./tasks/RecategoryDryRunResult";
 import { TaskErrorDetails, trustedTaskIdFromSearch } from "./tasks/TaskErrors";
 import { IconButton } from "@/components/a11y/IconButton";
+import { canInspectEnumRaw } from "@/lib/enum-display";
 import type { Task, SiteConfig, HistoryTask, LogModal } from "./tasks/Tasks.types";
 
 // Task type definitions
@@ -96,7 +97,7 @@ async function waitForTaskResult(taskId: string): Promise<TaskResult> {
 export default function Tasks() {
   const { t } = useTranslation();
   const [location, navigate] = useLocation();
-  const { permissions } = useAuth();
+  const { permissions, user } = useAuth();
   const canRunTasks = permissions.includes("tasks.run");
   const canStopTasks = permissions.includes("tasks.stop");
   const canManageSites = permissions.includes("sites.write");
@@ -593,7 +594,7 @@ export default function Tasks() {
                     <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-1 text-xs">
                       <div className="flex gap-1">
                         <span className="text-muted-foreground">{t("tasks.log_status") || "Status"}:</span>
-                        <span>{logModal.task.status ? statusBadge(logModal.task.status) : "-"}</span>
+                        <span>{logModal.task.status ? statusBadge(logModal.task.status, t, canInspectEnumRaw(user?.role)) : "-"}</span>
                       </div>
                       <div className="flex gap-1">
                         <span className="text-muted-foreground">{t("tasks.log_started") || "Started"}:</span>
@@ -624,7 +625,7 @@ export default function Tasks() {
                   ) : (
                     <p className="text-xs text-muted-foreground">{t("tasks.log_no_errors") || "No errors"}</p>
                   )}
-                  {logModal.task && <TaskErrorDetails task={logModal.task} t={t} />}
+                  {logModal.task && <TaskErrorDetails task={logModal.task} t={t} canInspectRaw={canInspectEnumRaw(user?.role)} />}
                 </div>
 
                 {/* Box 3: Application log */}
