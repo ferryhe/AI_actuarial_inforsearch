@@ -5125,3 +5125,9 @@
 - Full `python scripts/quality_gate.py` remains incomplete/exit 1: the worker stopped its own pytest process after aggregate RSS reached 24,035,385,344 bytes around the existing #263 test; full pytest did not pass. Full Vitest has the separately documented pre-existing FilterBar task-label failure (119 passed, 1 failed). No rerun was started.
 - No production deployment, canary, rollback, or #313 configuration rollout occurred. Those production acceptance items remain UNVERIFIED and are not claimed as passed.
 - Review-cycle lifecycle state was not backfilled: the earlier external state file is left untouched under the project boundary, and historical transitions will not be fabricated. This note plus immutable agent reports, Git state, and TypeSafe result provide current in-repository evidence. The incomplete full gate and unverified production acceptance remain merge blockers; after focused validation and local review PASS, manager may prepare a PR for independent GitHub CI/review under the user's existing authorization.
+
+### Issue #364 runtime provenance — Draft PR opened — 2026-10-04
+
+- Committed and pushed scoped implementation as `0bbf110b7409317b26aee8c414737ec92b5dcd5b` on `codex/issue-364-runtime-provenance`.
+- Draft PR: https://github.com/ferryhe/AI_actuarial_inforsearch/pull/403 (`Closes #364`). PR #403 is intentionally kept Draft. GitHub check `dead-code-files` was pending at initial observation; other check jobs had not yet appeared. Worktree was clean after push.
+- No deployment/production action occurred. Do not merge while the full required CI result is unknown/incomplete or production canary/rollback acceptance remains unverified and unauthorized.
