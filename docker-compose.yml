@@ -5,10 +5,12 @@
 
 services:
   api:
+    image: ${API_IMAGE:-ai_actuarial_inforsearch-api:latest}
     build:
       context: .
       dockerfile: Dockerfile
       args:
+        BUILD_RELEASE_ID: ${BUILD_RELEASE_ID:-unknown}
         BUILD_GIT_SHA: ${BUILD_GIT_SHA:-unknown}
         BUILD_GIT_DIRTY: ${BUILD_GIT_DIRTY:-unknown}
         BUILD_UTC: ${BUILD_UTC:-unknown}
@@ -18,6 +20,7 @@ services:
     expose:
       - "5000"
     environment:
+      - API_IMAGE_DIGEST=${API_IMAGE_DIGEST:-unknown}
       - FASTAPI_ENV=${FASTAPI_ENV:-development}
       - FASTAPI_SESSION_SECRET=${FASTAPI_SESSION_SECRET:?FASTAPI_SESSION_SECRET is required}
       - TOKEN_ENCRYPTION_KEY=${TOKEN_ENCRYPTION_KEY:?TOKEN_ENCRYPTION_KEY is required}

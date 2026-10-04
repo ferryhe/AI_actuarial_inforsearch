@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from itsdangerous import BadSignature, URLSafeSerializer
 
+from ai_actuarial.build_info import public_build_info
 from ai_actuarial.config import settings
 from ai_actuarial.shared_auth import hash_token
 from ai_actuarial.shared_runtime import (
@@ -146,7 +147,7 @@ def create_app() -> FastAPI:
             "REST API for the AI Actuarial Info Search platform. "
             "Provides document search, RAG administration, chat, and system management endpoints."
         ),
-        version="0.1.0",
+        version=public_build_info()["release_manifest_id"],
         summary="FastAPI product API for the React frontend.",
         docs_url=None if production else "/docs",
         redoc_url=None if production else "/redoc",

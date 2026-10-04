@@ -1,0 +1,23 @@
+FROM node:20-alpine AS build
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci
+COPY . .
+ARG BUILD_RELEASE_ID=unknown
+ARG BUILD_GIT_SHA=unknown
+ARG BUILD_UTC=unknown
+ENV BUILD_RELEASE_ID=${BUILD_RELEASE_ID} BUILD_GIT_SHA=${BUILD_GIT_SHA} BUILD_UTC=${BUILD_UTC}
+RUN npm run build
+
+FROM node:20-alpine
+ARG BUILD_RELEASE_ID=unknown
+ARG BUILD_GIT_SHA=unknown
+ARG BUILD_UTC=unknown
+ARG BUILD_SOURCE_URL=https://github.com/ferryhe/AI_actuarial_inforsearch
+LABEL com.aiinforsearch.release-id="${BUILD_RELEASE_ID}" \
+      org.opencontainers.image.revision="${BUILD_GIT_SHA}" \
+      org.opencontainers.image.created="${BUILD_UTC}" \
+      org.opencontainers.image.source="${BUILD_SOURCE_URL}"
+RUN npm install -g serve
+COPY --from=build /app/dist/public /opt/frontend
+CMD ["serve", "-s", "/opt/frontend", "-l", "5173", "--no-clipboard"]

@@ -22,6 +22,10 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+# Also support direct execution from scripts/ without an installed package.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from ai_actuarial.build_info import config_provenance  # noqa: E402
+
 BACKUP_FORMAT_VERSION = 1
 # ``files`` holds re-crawlable source documents (PDF/PPTX/DOCX); it is excluded
 # from full snapshots. Its metadata lives in the ``files`` table and is still
@@ -496,6 +500,7 @@ def create_release_record(
     config_path: Path,
     db_path: Path,
     output_path: Path,
+    frontend_image: str | None = None,
     inspect_image: Callable[[str], dict[str, Any]] = inspect_docker_image,
     now: Callable[[], datetime] = _utc_now,
 ) -> dict[str, Any]:
@@ -513,17 +518,40 @@ def create_release_record(
         raise ValueError("Docker image inspect did not return an image ID or repository digest")
     database = _database_report(db_path)
     dirty_label = selected_labels["com.aiinforsearch.git-dirty"].lower()
+    release_id = str(labels.get("com.aiinforsearch.release-id") or "unknown")
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", release_id) or release_id == "unknown":
+        raise ValueError("Image is missing a safe release manifest ID")
+    frontend_digest = None
+    if frontend_image:
+        frontend_data = inspect_image(frontend_image)
+        frontend_labels = (frontend_data.get("Config") or {}).get("Labels") or {}
+        for name in (
+            "com.aiinforsearch.release-id",
+            "org.opencontainers.image.revision",
+            "org.opencontainers.image.created",
+            "org.opencontainers.image.source",
+        ):
+            if frontend_labels.get(name) != labels.get(name):
+                raise ValueError(f"Frontend/API provenance mismatch: {name}")
+        frontend_digest = str(
+            (frontend_data.get("RepoDigests") or [frontend_data.get("Id") or "unknown"])[0]
+        )
+        if frontend_digest == "unknown":
+            raise ValueError("Frontend image has no digest")
     record = {
         "recorded_at": _iso_utc(now()),
+        "release_manifest_id": release_id,
         "image": image,
         "image_digest": image_digest,
         "git_sha": selected_labels["org.opencontainers.image.revision"],
         "git_dirty": True if dirty_label == "true" else False if dirty_label == "false" else None,
         "build_utc": selected_labels["org.opencontainers.image.created"],
         "source_url": selected_labels["org.opencontainers.image.source"],
-        "config_sha256": _sha256(config_path),
+        **config_provenance(config_path),
         "schema_user_version": database["schema_user_version"],
     }
+    if frontend_image:
+        record.update(frontend_image=frontend_image, frontend_image_digest=frontend_digest)
     _write_json(output_path.expanduser().resolve(), record)
     return record
 
@@ -583,6 +611,7 @@ def _parser() -> argparse.ArgumentParser:
         "release-record", help="Record image, config, and schema versions"
     )
     release.add_argument("--image", required=True)
+    release.add_argument("--frontend-image", help="Require matching frontend/API build labels")
     release.add_argument("--config", type=Path, required=True)
     release.add_argument("--db", type=Path, required=True)
     release.add_argument("--output", type=Path, required=True)
@@ -616,6 +645,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     elif args.command == "release-record":
         payload = create_release_record(
             image=args.image,
+            frontend_image=args.frontend_image,
             config_path=args.config,
             db_path=args.db,
             output_path=args.output,

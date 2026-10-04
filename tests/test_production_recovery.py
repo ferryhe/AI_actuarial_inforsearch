@@ -309,6 +309,7 @@ def test_release_record_captures_image_config_and_schema_versions(tmp_path: Path
                 "org.opencontainers.image.created": "2026-08-16T12:00:00Z",
                 "org.opencontainers.image.source": "https://github.com/ferryhe/AI_actuarial_inforsearch",
                 "com.aiinforsearch.git-dirty": "false",
+                "com.aiinforsearch.release-id": "release-fixture-1",
             }
         },
     }

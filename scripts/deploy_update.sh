@@ -15,6 +15,8 @@ BACKUP_LOCK_FILE="${BACKUP_LOCK_FILE:-/run/aiinforsearch-backup.lock}"
 RELEASE_DIR="${RELEASE_DIR:-/var/lib/aiinforsearch/releases}"
 CAPACITY_THRESHOLD="${CAPACITY_THRESHOLD:-80}"
 API_IMAGE="${API_IMAGE:-ai_actuarial_inforsearch-api:latest}"
+FRONTEND_IMAGE="${FRONTEND_IMAGE:-ai_actuarial_inforsearch-frontend:latest}"
+FRONTEND_SERVICE_NAME="${FRONTEND_SERVICE_NAME:-frontend}"
 BUILD_SOURCE_URL="${BUILD_SOURCE_URL:-https://github.com/ferryhe/AI_actuarial_inforsearch}"
 CONFIG_PATH="${CONFIG_PATH:?Set CONFIG_PATH to the external production sites.yaml}"
 
@@ -126,18 +128,24 @@ export BUILD_GIT_SHA="${BUILD_GIT_SHA:-$(git rev-parse HEAD)}"
 export BUILD_GIT_DIRTY="${BUILD_GIT_DIRTY:-false}"
 export BUILD_UTC="${BUILD_UTC:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
 export BUILD_SOURCE_URL
+export API_IMAGE FRONTEND_IMAGE
+export BUILD_RELEASE_ID="${BUILD_RELEASE_ID:-$(python3 -c 'import uuid; print(uuid.uuid4())')}"
 
-echo "[5/7] Build and restart service: $APP_SERVICE_NAME"
-"${compose[@]}" build --pull "$APP_SERVICE_NAME"
-"${compose[@]}" up -d "$APP_SERVICE_NAME"
+echo "[5/7] Build API and static frontend with the same release manifest ID"
+"${compose[@]}" build --pull "$APP_SERVICE_NAME" "$FRONTEND_SERVICE_NAME"
+# Inspect the freshly built tags, not images of still-running old containers.
+# Digests are read by release-record only after both builds complete.
 
 echo "[6/7] Write the release traceability record"
 mkdir -p "$RELEASE_DIR"
 python3 scripts/production_recovery.py release-record \
   --image "$API_IMAGE" \
+  --frontend-image "$FRONTEND_IMAGE" \
   --config "$CONFIG_PATH" \
   --db "$DATA_DIR/index.db" \
-  --output "$RELEASE_DIR/$BUILD_GIT_SHA.json"
+  --output "$RELEASE_DIR/$BUILD_RELEASE_ID.json"
+export API_IMAGE_DIGEST="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["image_digest"].rsplit("@", 1)[-1])' "$RELEASE_DIR/$BUILD_RELEASE_ID.json")"
+"${compose[@]}" up -d "$APP_SERVICE_NAME" "$FRONTEND_SERVICE_NAME"
 
 if [[ "$RELOAD_CADDY" == "true" ]]; then
   echo "[7/7] Reload Caddy: $CADDY_CONTAINER"
