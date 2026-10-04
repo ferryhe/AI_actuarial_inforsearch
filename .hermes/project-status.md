@@ -4948,4 +4948,15 @@
 - Review-5 fix: Pipeline Baton now recognizes only the four listed Ready Data prefixes (`build_failure`, `publish_failure`, `stale_snapshot`, `invalid_selector`) at the start of a structured failure summary when the projected error code is empty. Customer surfaces show a bilingual generic Ready Data failure message; source summaries remain available only in collapsed Operator/Admin diagnostics. Other prose is not sanitized. API/backend values were not changed.
 - Added bilingual semantic coverage for all four prefixes using empty `first_error_code` projection fields, plus a Chromium fixture for `build_failure` covering registered/operator/admin fallback, language switching, collapsed diagnostics, and interaction. Focused Vitest passed (1 file / 4 tests), Pipeline Chromium smoke, typecheck, lint (0 errors / 5 existing Hook warnings), build (existing large-chunk advisory), dead-code gates, and diff check passed.
 - Independent local review 6 passed all six Issue acceptance criteria with no accepted findings; TypeSafe assessment also returned no findings. The reviewer independently passed 24 focused frontend/caller tests, 25 backend Pipeline tests, typecheck, diff check, and real Chromium smokes for Knowledge, Tasks/Pipeline, Logs, Users, and Settings.
-- Final manager validation passed: Vitest (8 files/24 tests), Pipeline Baton pytest (25), typecheck, lint (0 errors; 5 existing warnings), production build (existing chunk advisory), dead-code checks, and Logs/Settings/Pipeline Chromium smokes. Issue #362 remains OPEN; commit, push and Draft PR are pending, and no PR exists yet.
+- Final manager validation passed: Vitest (8 files/24 tests), Pipeline Baton pytest (25), typecheck, lint (0 errors; 5 existing warnings), production build (existing chunk advisory), dead-code checks, and Logs/Settings/Pipeline Chromium smokes. Issue #362 remains OPEN; PR #400 has moved from Draft to Ready for review after all required checks passed.
+- Remote-feedback F1 fix: added shared bilingual `error_code` labels for
+  `orchestration_error`, `invalid_index_result`, `ready_launch_failed`, and
+  `error`; API enum values remain unchanged. Regression was red before mapping
+  (`orchestration_error` resolved to `Unknown status`) and green afterward.
+  Focused Vitest passed (3 files/7 tests); Pipeline Chromium smoke passed for
+  registered/operator/admin with all four labels in Chinese and English.
+  Manager revalidation passed typecheck, lint (0 errors; 5 existing warnings),
+  production build (existing large-chunk advisory), and diff check. PR #400
+  remains Ready for review at checked HEAD
+  `10bc980adc13b57472d25b0d3ef225cbc3f01ca5`; commit and push are pending.
+  F2-F5 were not implemented.

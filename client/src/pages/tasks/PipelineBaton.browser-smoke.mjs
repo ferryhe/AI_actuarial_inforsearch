@@ -3,6 +3,12 @@ import { chromium } from "playwright-core";
 
 const baseUrl = process.env.SMOKE_URL || "http://127.0.0.1:5173";
 const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || "C:/Program Files/Google/Chrome/Application/chrome.exe", headless: true });
+const projectedErrorCodes = [
+  ["orchestration", "orchestration_error", "Pipeline orchestration failed", "流程编排失败"],
+  ["invalid-index", "invalid_index_result", "Invalid index result", "索引结果无效"],
+  ["ready-launch", "ready_launch_failed", "Ready Data launch failed", "就绪数据启动失败"],
+  ["generic-error", "error", "Error", "错误"],
+];
 
 try {
   for (const role of ["registered", "operator", "admin"]) {
@@ -23,7 +29,7 @@ try {
             { step: "markdown_conversion", status: "idle", tasks: [], failures: [] },
             { step: "catalog", status: "idle", tasks: [], failures: [] },
             { step: "chunk_generation", status: "idle", tasks: [], failures: [] },
-            { step: "rag_indexing", status: "failed", tasks: [], failures: [{ task_id: null, first_error_code: "", first_error_summary: "build_failure: Ready Data artifact digest mismatch" }] },
+            { step: "rag_indexing", status: "failed", tasks: projectedErrorCodes.map(([id, code]) => ({ task_id: id, status: "failed", error_count: 1, first_error_code: code, first_error_summary: "", failed_items: 1, label: code })), failures: [{ task_id: null, first_error_code: "", first_error_summary: "build_failure: Ready Data artifact digest mismatch" }] },
           ],
         };
       } else if (path === "/api/scheduled-tasks") body = { tasks: [] };
@@ -41,6 +47,9 @@ try {
     assert.match(await stage.getByTestId("pipeline-stage-status-scheduled").textContent(), /未知状态/);
     assert.match(await latestFailure.textContent(), /就绪数据处理失败/);
     assert.match(await launchFailure.textContent(), /就绪数据处理失败/);
+    for (const [id, , , zhLabel] of projectedErrorCodes) {
+      assert.match(await page.getByTestId(`button-pipeline-task-log-${id}`).textContent(), new RegExp(zhLabel));
+    }
 
     if (role === "registered") {
       assert.doesNotMatch(await summary.innerHTML(), /private_phase/);
@@ -48,7 +57,7 @@ try {
       assert.doesNotMatch(await launchFailure.innerHTML(), /build_failure|Ready Data artifact digest mismatch/);
       assert.equal(await page.locator("details").count(), 0);
     } else {
-      assert.equal(await page.locator("details").count(), 4);
+      assert.equal(await page.locator("details").count(), 8);
       assert.equal(await page.locator("details[open]").count(), 0);
       const stageButton = stage.getByTestId("button-pipeline-stage-scheduled");
       const priorExpanded = await stageButton.getAttribute("aria-expanded");
@@ -75,6 +84,9 @@ try {
     assert.match(await stage.getByTestId("pipeline-stage-status-scheduled").textContent(), /Unknown status/);
     assert.match(await latestFailure.textContent(), /Ready Data operation failed/);
     assert.match(await launchFailure.textContent(), /Ready Data operation failed/);
+    for (const [id, , enLabel] of projectedErrorCodes) {
+      assert.match(await page.getByTestId(`button-pipeline-task-log-${id}`).textContent(), new RegExp(enLabel));
+    }
     console.log(JSON.stringify({ role, diagnostics: await page.locator("details").count() }));
     await page.close();
   }
