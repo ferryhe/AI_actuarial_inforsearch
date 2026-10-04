@@ -267,7 +267,8 @@ def test_chunk_embedding_ui_removes_binding_and_overwrite_controls_and_uses_fixe
     assert "chunk_set_ids" in file_detail
     assert "const identity = embeddingTask.result;" in tasks
     assert 'label: "Chunk & Embedding"' in pipeline
-    assert "{task.status} · {task.task_id}" in pipeline_results
+    assert '<EnumDisplay category="status" value={task.status} t={t} />' in pipeline_results
+    assert "· {task.task_id}" in pipeline_results
 
 
 def test_managed_schedule_launches_incremental_embedding_for_reused_chunk_sets() -> None:

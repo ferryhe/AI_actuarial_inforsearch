@@ -1,3 +1,22 @@
+# Latest work — Issue #362 bilingual enum labels
+
+- Updated: 2026-10-04 EDT. Repository: `AI_actuarial_inforsearch`; branch:
+  `codex/issue-362-status-i18n-r2`; PR #400 is open as a draft and closes Issue
+  #362. Only this repository is in scope; sibling repositories remain off-limits.
+- The PR's first GitHub check run passed five of six checks. `quality-gate`
+  exposed five stale source-contract assertions in four tests that still expected
+  literal enum text after this issue moved those surfaces to the shared resolver.
+  The same implementation worker updated only those tests; no product code changed.
+- Local full pytest passed (2,323 passed, 11 skipped); the five previously
+  failing assertions pass after formatting. Black and isort checks pass across
+  Python source, tests, and configuration. The quality-gate report showed zero
+  new/stale isort or Pylint findings; the unified script was initially blocked
+  only by Black formatting in those four tests and will be rerun by GitHub after
+  the repair is pushed.
+- Next: publish the narrow check repair, wait for all required checks, mark the
+  PR ready, then perform the single required remote-feedback fetch after its
+  full wait window. Merge only after checks and thread state permit it.
+
 # Active work — Issue #359 Token permissions, expiry, and usage status
 
 - Updated: 2026-10-04 EDT. Repository: `AI_actuarial_inforsearch`; branch:

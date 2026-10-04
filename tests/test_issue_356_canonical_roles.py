@@ -120,7 +120,8 @@ def test_role_permissions_copy_and_frontend_menu_contract_are_bilingual() -> Non
     assert 'apiGet<AssignableRolesResponse>("/api/admin/roles")' in users
     assert 'const roleOptions = ["admin"' not in users
     assert "role.description_key" in users
-    assert 't("users.role_operator_ai_legacy")' in users
+    assert 'resolveEnumLabel("role", role, t)' in users
+    assert 'import { EnumDiagnostic, resolveEnumLabel } from "@/lib/enum-display"' in users
     assert 't("users.role_operator_ai_legacy")' in profile
     for text in (
         '"users.role_operator_ai_legacy": "Operator (legacy alias)"',
@@ -133,10 +134,10 @@ def test_role_permissions_copy_and_frontend_menu_contract_are_bilingual() -> Non
         assert text in translations
 
     assert '<option value="reader">Reader</option>' not in settings
-    assert '<option value="registered">Registered</option>' in settings
-    assert '<option value="premium">Premium</option>' in settings
-    assert '<option value="operator">Operator</option>' in settings
-    assert '<option value="admin">Admin</option>' in settings
+    assert (
+        '(["registered", "premium", "operator", "admin"] as const).map((role) => <option key={role} value={role}>{resolveEnumLabel("role", role, t)}</option>)'
+        in settings
+    )
 
 
 @pytest.mark.parametrize("path", ["/api/admin/roles"])

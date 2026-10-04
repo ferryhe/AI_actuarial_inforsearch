@@ -34,6 +34,8 @@ def test_recategory_precedes_catalog_in_every_task_type_selector() -> None:
     scheduled = (TASKS_DIR / "ScheduledTasksSection.tsx").read_text(encoding="utf-8")
     history_filter = (TASKS_DIR / "FilterBar.tsx").read_text(encoding="utf-8")
     pipeline = (TASKS_DIR / "PipelineBaton.tsx").read_text(encoding="utf-8")
+    i18n = (CLIENT_ROOT / "hooks" / "use-i18n.ts").read_text(encoding="utf-8")
+    enum_display = (CLIENT_ROOT / "lib" / "enum-display.tsx").read_text(encoding="utf-8")
 
     run_recategory = tasks.index('{ type: "recategory", apiType: "recategory"')
     run_catalog = tasks.index('{ type: "catalog", apiType: "catalog"')
@@ -45,11 +47,19 @@ def test_recategory_precedes_catalog_in_every_task_type_selector() -> None:
     scheduled_catalog = scheduled.index('{ value: "catalog", label: t("tasks.type.catalog") }')
     assert scheduled_recategory < scheduled_catalog
 
-    filter_recategory = history_filter.index('<option value="recategory">')
-    filter_catalog = history_filter.index('<option value="catalog">')
+    filter_recategory = history_filter.index(
+        '"recategory"', history_filter.index("const taskTypeFilters")
+    )
+    filter_catalog = history_filter.index(
+        '"catalog"', history_filter.index("const taskTypeFilters")
+    )
     assert filter_recategory < filter_catalog
+    assert (
+        'taskTypeFilters.map((type) => <option key={type} value={type}>{resolveEnumLabel("task_type", type, t)}</option>)'
+        in history_filter
+    )
     for value, translation_key in (
-        ("scheduled", "tasks.type.site_config"),
+        ("scheduled", "tasks.type.scheduled"),
         ("quick_check", "tasks.type.web_crawl"),
         ("url", "tasks.type.adhoc_url"),
         ("file", "tasks.type.file_import"),
@@ -60,7 +70,16 @@ def test_recategory_precedes_catalog_in_every_task_type_selector() -> None:
         ("chunk_generation", "tasks.type.chunk"),
         ("rag_indexing", "tasks.type.rag_index"),
     ):
-        assert f'<option value="{value}">{{t("{translation_key}")}}</option>' in history_filter
+        assert f'"{value}"' in history_filter
+        assert translation_key in i18n
+    for alias, translation_key in (
+        ('quick_check: "tasks.type.web_crawl"', "tasks.type.web_crawl"),
+        ('markdown_conversion: "tasks.type.markdown"', "tasks.type.markdown"),
+        ('chunk_generation: "tasks.type.chunk"', "tasks.type.chunk"),
+        ('rag_indexing: "tasks.type.rag_index"', "tasks.type.rag_index"),
+    ):
+        assert alias in enum_display
+        assert translation_key in i18n
     assert "recategory" not in pipeline
 
 
