@@ -673,12 +673,20 @@ def list_knowledge_bases(*, db_path: str, auth: AuthContext | None = None) -> di
 
 
 def list_available_documents(*, db_path: str, query: Mapping[str, Any]) -> dict[str, Any]:
+    try:
+        limit = min(100, max(1, int(query.get("limit", 50))))
+        offset = max(0, int(query.get("offset", 0)))
+    except (TypeError, ValueError):
+        raise ChatApiError("limit and offset must be integers") from None
     categories = _query_values(query, "category")
     categories.extend(
         category for category in _query_values(query, "categories") if category not in categories
     )
+    search = _normalize_text(query.get("query"))
     keywords_raw = _normalize_text(query.get("keywords"))
-    keywords = [item.strip() for item in keywords_raw.split(",") if item.strip()]
+    keywords = (
+        [search] if search else [item.strip() for item in keywords_raw.split(",") if item.strip()]
+    )
 
     storage = Storage(db_path)
     try:
@@ -701,24 +709,34 @@ def list_available_documents(*, db_path: str, query: Mapping[str, Any]) -> dict[
             where_parts.append(f"({' OR '.join(category_clauses)})")
         if keywords:
             keyword_clauses = []
+            escape_clause = " ESCAPE '!'" if search else ""
             for keyword in keywords:
                 keyword_clauses.append(
-                    "(LOWER(f.title) LIKE ? OR LOWER(f.original_filename) LIKE ? OR LOWER(c.keywords) LIKE ?)"
+                    f"(LOWER(f.title) LIKE ?{escape_clause} OR LOWER(f.original_filename) LIKE ?{escape_clause} OR LOWER(c.keywords) LIKE ?{escape_clause})"
                 )
-                wildcard = f"%{keyword.lower()}%"
+                term = keyword.lower()
+                if search:
+                    term = term.replace("!", "!!").replace("%", "!%").replace("_", "!_")
+                wildcard = f"%{term}%"
                 params.extend([wildcard, wildcard, wildcard])
             where_parts.append(f"({' OR '.join(keyword_clauses)})")
         where_sql = " AND ".join(where_parts)
+        total = int(
+            storage._conn.execute(
+                f"SELECT COUNT(*) FROM files f JOIN catalog_items c ON c.file_url = f.url WHERE {where_sql}",
+                params,
+            ).fetchone()[0]
+        )
         rows = storage._conn.execute(
             f"""
             SELECT f.url, f.original_filename, f.title, c.category, c.keywords
             FROM files f
             JOIN catalog_items c ON c.file_url = f.url
             WHERE {where_sql}
-            ORDER BY f.title, f.original_filename
-            LIMIT 1000
+            ORDER BY LOWER(TRIM(COALESCE(NULLIF(TRIM(f.title), ''), NULLIF(TRIM(f.original_filename), ''), f.url))), f.url
+            LIMIT ? OFFSET ?
             """,
-            params,
+            [*params, limit, offset],
         ).fetchall()
         documents = []
         for row in rows:
@@ -745,7 +763,16 @@ def list_available_documents(*, db_path: str, query: Mapping[str, Any]) -> dict[
                     "keywords": parsed_keywords,
                 }
             )
-        return {"success": True, "data": {"documents": documents}}
+        return {
+            "success": True,
+            "data": {
+                "items": documents,
+                "total": total,
+                "limit": limit,
+                "offset": offset,
+                "documents": documents,
+            },
+        }
     finally:
         storage.close()
 

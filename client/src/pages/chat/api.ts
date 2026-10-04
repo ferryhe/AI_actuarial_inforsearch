@@ -1,4 +1,5 @@
 import { apiDelete, apiGet, apiPost } from "@/lib/api";
+import type { FilePage, FilePageFilters } from "@/hooks/use-paged-files";
 import type {
   AvailableDocument,
   CategoryOption,
@@ -48,17 +49,12 @@ export async function fetchDocumentCategories(): Promise<Array<string | Category
   return res.categories || [];
 }
 
-export async function fetchAvailableDocuments(filters?: { categories?: string[]; search?: string }): Promise<AvailableDocument[]> {
-  let url = "/api/chat/available-documents";
-  const params = new URLSearchParams();
-  const categories = filters?.categories || [];
-  const search = filters?.search || "";
-  categories.forEach((category) => params.append("category", category));
-  if (search) params.set("keywords", search);
-  if (params.toString()) url += `?${params}`;
-
-  const res = await apiGet<{ success?: boolean; data?: { documents?: AvailableDocument[] }; documents?: AvailableDocument[] }>(url);
-  return res.data?.documents || res.documents || [];
+export async function fetchAvailableDocuments(filters: FilePageFilters, signal?: AbortSignal): Promise<FilePage<AvailableDocument>> {
+  const params = new URLSearchParams({ limit: String(filters.limit), offset: String(filters.offset) });
+  filters.categories.forEach((category) => params.append("category", category));
+  if (filters.search) params.set("query", filters.search);
+  const res = await apiGet<{ data: FilePage<AvailableDocument> }>(`/api/chat/available-documents?${params}`, { signal });
+  return res.data;
 }
 
 export async function fetchDocumentMarkdown(fileUrl: string): Promise<MarkdownResponse> {

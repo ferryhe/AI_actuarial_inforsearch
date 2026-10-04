@@ -18,8 +18,8 @@ async function fixtureApi(route, requests) {
   if (pathname === "/api/chat/knowledge-bases") return route.fulfill({ json: { success: true, data: { knowledge_bases: [kb] } } });
   if (pathname === "/api/categories") return route.fulfill({ json: { categories: ["Reserving"] } });
   if (pathname === "/api/chat/available-documents") {
-    assert.ok([null, "reserve"].includes(searchParams.get("keywords")));
-    return route.fulfill({ json: { success: true, data: { documents: [{ file_url: "smoke-file", filename: "smoke.pdf", title: "Reserve evidence", category: "Reserving", keywords: ["reserve"] }] } } });
+    assert.ok([null, "reserve"].includes(searchParams.get("query")));
+    return route.fulfill({ json: { success: true, data: { items: [{ file_url: "smoke-file", filename: "smoke.pdf", title: "Reserve evidence", category: "Reserving", keywords: ["reserve"] }], total: 1, offset: 0, limit: 50 } } });
   }
   if (pathname === "/api/chat/query") {
     const body = route.request().postDataJSON();
@@ -94,7 +94,7 @@ try {
       }
       results.push({ width, zoom, ...measurements });
     }
-    assert.ok(requests.some((request) => request.path === "/api/chat/available-documents?keywords=reserve"));
+    assert.ok(requests.some((request) => request.path === "/api/chat/available-documents?limit=50&offset=0&query=reserve"));
     await page.close();
   }
   const requests = [];

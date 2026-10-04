@@ -89,8 +89,8 @@ async function apiFetch<T = unknown>(url: string, options?: RequestInit, respons
   return res.json() as Promise<T>;
 }
 
-export function apiGet<T = unknown>(url: string): Promise<T> {
-  return apiFetch<T>(url);
+export function apiGet<T = unknown>(url: string, options?: RequestInit): Promise<T> {
+  return apiFetch<T>(url, options);
 }
 
 export function apiGetBlob(url: string): Promise<Blob> {

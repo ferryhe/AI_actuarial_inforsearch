@@ -627,7 +627,6 @@ def test_kb_detail_guards_every_route_bound_loader_and_profile_fallback():
         "loadMeta",
         "loadAgenticManifest",
         "loadStats",
-        "loadFiles",
         "loadCategories",
         "loadAll",
     )
@@ -658,7 +657,6 @@ def test_kb_detail_guards_every_route_bound_loader_and_profile_fallback():
     for reset in (
         "setMeta(null);",
         "setStats(null);",
-        "setFiles([]);",
         "setCategories([]);",
         "setUnmappedCategories([]);",
         'setEditName("");',
@@ -688,7 +686,6 @@ def test_kb_detail_uses_latest_sequence_for_each_same_route_resource_and_episode
     sequence_names = (
         "metaRequestSequence",
         "statsRequestSequence",
-        "filesRequestSequence",
         "categoriesRequestSequence",
         "unmappedRequestSequence",
         "loadAllRequestSequence",
@@ -698,8 +695,7 @@ def test_kb_detail_uses_latest_sequence_for_each_same_route_resource_and_episode
 
     loader_sequences = (
         ("loadMeta", "loadAgenticManifest", "metaRequestSequence"),
-        ("loadStats", "loadFiles", "statsRequestSequence"),
-        ("loadFiles", "loadCategories", "filesRequestSequence"),
+        ("loadStats", "loadCategories", "statsRequestSequence"),
         ("loadCategories", "loadAll", "categoriesRequestSequence"),
         ("loadAll", "useEffect(() =>", "loadAllRequestSequence"),
     )
@@ -901,3 +897,15 @@ def test_manifest_episode_authority_is_shared_in_detail_and_scoped_per_list_item
     assert "resolveReadyDataSafeMutationManifestEpisode(" in knowledge_src
     assert "currentManifest," in knowledge_build
     assert "true," in knowledge_build
+
+
+def test_kb_file_pages_cancel_obsolete_route_and_filter_requests():
+    src = KB_DETAIL_TSX.read_text(encoding="utf-8")
+    hook = Path("client/src/hooks/use-paged-files.ts").read_text(encoding="utf-8")
+    assert "const filePage = usePagedFiles(fetchFilePage, !!kbId && match);" in src
+    assert "const loadFiles = filePage.reload;" in src
+    assert "files?${params}`" in src and "{ signal }" in src
+    assert "}, [kbId]);" in src
+    assert "controller.abort();" in hook
+    assert "if (controller.signal.aborted) return;" in hook
+    assert "[load, enabled, search, categories, offset, revision]" in hook

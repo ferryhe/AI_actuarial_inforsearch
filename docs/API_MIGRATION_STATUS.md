@@ -18,6 +18,23 @@ The legacy server-rendered runtime has been retired from the active tree. React 
 - **RAG modes:** standard vector RAG and Agentic RAG both use native FastAPI endpoints.
 - **Roadmap surfaces:** Markdown conversion config, typed scheduled tasks, `weekly_summary`, `full_pipeline`, web-listening rule draft/validate/materialize, weekly updates, customer Dashboard, and KB-first Chat are all native FastAPI + React surfaces.
 
+## KB and Chat file pages
+
+`GET /api/rag/knowledge-bases/{kb_id}/files` returns `items`, `total`, `limit`,
+and `offset`. `GET /api/chat/available-documents` returns the same page inside
+`data`. Both default to 50 rows, cap `limit` at 100, and accept a nonnegative
+`offset`, `query` search, and `category` filter. Rows sort by trimmed, lowercase
+display title and then unique file URL; an empty title falls back to URL for KB
+files and filename (then URL) for Chat documents. Counts use the same filters.
+
+The old KB `files`/`total_files` and Chat `documents` keys remain bounded aliases
+for this page. Chat also retains repeated `category`/`categories` filters and
+legacy comma-separated `keywords`; `query` searches a single string. KB `status`
+filtering and chunk diagnostics remain restricted to operators. Customers retain
+only file URL, title, category, and source site. The React lists render 50 rows
+per page, debounce search by 250 ms, and cancel obsolete requests. File URL is
+the identity used for removal and cross-page Chat comparison selection.
+
 ## Product Contract Status
 
 The routed React product shell is expected to use native FastAPI endpoints for:

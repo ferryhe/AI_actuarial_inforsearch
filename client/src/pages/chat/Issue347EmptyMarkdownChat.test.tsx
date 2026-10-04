@@ -86,7 +86,7 @@ vi.mock("@/lib/navigation", async (importOriginal) => ({
 }));
 
 vi.mock("./api", () => ({
-  fetchAvailableDocuments: vi.fn().mockResolvedValue([]),
+  fetchAvailableDocuments: vi.fn().mockResolvedValue({ items: [], total: 0, limit: 50, offset: 0 }),
   fetchDocumentCategories: vi.fn().mockResolvedValue([]),
   fetchDocumentMarkdown: vi.fn(),
   fetchKnowledgeBases: vi.fn().mockResolvedValue([]),

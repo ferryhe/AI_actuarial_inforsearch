@@ -1,3 +1,84 @@
+# Latest work — Issue #350 knowledge-base list pagination
+
+- Updated: 2026-10-04 EDT. Repository: AI_actuarial_inforsearch; branch:
+  codex/issue-350-kb-list-pagination; baseline:
+  0a2d6bf6a964104505b44c32865cb8649bf51342. Only this issue worktree is writable;
+  sibling repositories remain off-limits. No production writes, deployments,
+  production-data cleanup, or schema migrations were performed.
+- Validity and tier: Issue #350 remains OPEN and no matching PR existed at startup.
+  TypeSafe Jev chose valid (confidence 0.98; probability 0.99). Complex tier was
+  selected because the work crosses KB and Chat APIs, their React consumers,
+  cross-page identity, and chunk-count query behavior. Ponytail full applied.
+- Implemented the shared items/total/limit/offset contract: default 50, maximum
+  100, server query/category filters, normalized-title then stable-URL ordering.
+  Chat can reach files beyond its former LIMIT 1000. Bounded legacy files/
+  total_files/documents aliases remain for compatibility. Customer field
+  projections and operator status/diagnostics are preserved. KB binding reads
+  and one grouped chunk-version count query now operate on the selected page;
+  no per-file COUNT query remains. Issue #273 detail behavior is preserved.
+- Both React lists mount one page of 50 rows, use a common 250 ms debounce and
+  AbortController cancellation, reset offsets for filters/routes, and recover
+  after removal empties the last page. KB removal and Chat comparison selection
+  use stable file URLs. API contract documentation and existing smoke mocks
+  were updated for the new page shape and asynchronous page loading.
+- Verification: `python scripts/quality_gate.py` PASS: full pytest 2,333 passed,
+  11 skipped (425.82 seconds), Black/isort/Pylint checks passed with no new or
+  stale baseline findings. `python -m pytest tests/test_issue_350_file_pagination.py
+  --no-cov -q` PASS (4 tests; 1,101-file API fixture, stable boundaries/filtering,
+  customer projection, tail past 1,000, and one grouped count query).
+- `npm exec -- vitest run client/src/pages/Issue350FilePagination.test.tsx` PASS
+  (5 tests; bounded rows/Remove buttons, page/URL removal, stale-filter and
+  stale-route cancellation, cross-page/filter selection, and last-page recovery).
+  Existing Chat #347/#351 tests passed (13). Final full `npm exec -- vitest run`
+  yielded 116 passed and one unchanged baseline failure in
+  client/src/components/a11y/FilterBar.test.tsx (task-filter label).
+- `npm run typecheck`, `npm run lint`, `npm run build`, `npm run dead-code:check`,
+  Node syntax checks, and `git diff --check` PASS. Lint has 0 errors and four
+  existing Hook warnings; build retains its existing large-chunk advisory.
+  Two old KB loader source guards were updated to assert the common paged
+  cancellation path; focused knowledge source tests passed (36).
+- Chromium commands, with the local Vite server on 127.0.0.1:5180:
+  `node client/src/pages/Issue350FilePagination.browser-smoke.mjs` PASS;
+  `SMOKE_URL=http://127.0.0.1:5180 node
+  client/src/pages/chat/Issue351MobileDrawer.browser-smoke.mjs` PASS;
+  `SMOKE_URL=http://127.0.0.1:5180 node
+  client/src/pages/Knowledge.rbac.browser-smoke.mjs` PASS (five roles).
+  These use local API fixtures with the real UI/API client, not production data.
+  The new smoke covers 1,101 files, at most 50 DOM rows, scrolling, page changes,
+  removal, search/category filtering, and stable comparison selection. Initial
+  KB cold/warm first view: 2,898/456 ms; Chat: 547/457 ms. Final rerun after Vite
+  compilation: KB 597/446 ms, Chat 560/470 ms. All meet cold <5 s / warm <2.5 s;
+  production timing remains outside this local fixture measurement.
+- Unrelated root untracked directories remain untouched: .codex-tmp-agentic-rag/,
+  .hermes/research/, diagrams/, graphify-out/. The issue worktree contains only
+  the scoped changes. No other project was accessed.
+- PR #402 is open: https://github.com/ferryhe/AI_actuarial_inforsearch/pull/402.
+  The initial implementation commit 1d1ef7b received fresh Sol/high local review
+  PASS and all six initial GitHub checks PASS. The single 15-minute feedback
+  checkpoint found three confirmed in-scope Copilot threads (4179212013,
+  4179212047, 4179212068): literal query search in Chat/KB and this stage record.
+- Remote-feedback repair: both new query paths now escape LIKE wildcard characters
+  and the escape character, with an explicit SQL ESCAPE clause. Queries containing
+  percent/underscore search literal metadata; Chat's legacy keywords retains
+  wildcard and comma-separated matching. Seven regression cases first reproduced
+  the query problem (five failures) and now pass, alongside the four original
+  pagination API cases. This status distinguishes the completed initial review
+  from the pending fresh review of the feedback repair.
+- Focused repair verification: `python -m pytest
+  tests/test_issue_350_file_pagination.py tests/test_fastapi_chat_endpoints.py
+  tests/test_issue_273_kb_detail_lightweight.py tests/test_issue_272_kb_rbac.py
+  --no-cov -q` PASS (74 tests, 38.66 seconds). Changed-file `python -m black
+  --check`, `python -m isort --check-only`, `python -m pylint --errors-only
+  --disable=import-error`, and `git diff --check` PASS. Only two API services,
+  the pagination regression test, and this status file changed in the repair;
+  no frontend behavior or production data was changed.
+- Current stage: PR #402 is open. Implementation ca6a140 passed fresh Sol/high
+  review and all six GitHub checks. The three original findings were fixed in
+  ca6a140, replied to, and their threads resolved. Merge when required checks on
+  the latest status-only head pass and the final 15-minute post-push review
+  window clears. This status-only head must still complete those gates; no
+  additional PR, merge, or product-code change was performed in this update.
+
 # Latest work — Issue #367 unified browser-local date/time display
 
 - Updated: 2026-10-04 EDT. Repository: `AI_actuarial_inforsearch`; branch:
