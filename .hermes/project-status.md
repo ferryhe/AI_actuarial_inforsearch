@@ -13,18 +13,20 @@
   browser-local time with a canonical UTC tooltip and retain UTC filter values.
   Weekly list/detail date-only labels remain UTC calendar dates. No #362 enum
   resolver changes were made.
-- Final local verification on the current five-file diff: 81 focused Python
+- Final local verification on the six-file PR diff: 81 focused Python
   tests, 12 focused Vitest tests, New York and Shanghai browser smoke, typecheck,
   changed-file ESLint (zero errors; one existing Database hook warning), Node
   syntax check, and `git diff --check` passed. Full Vitest and accessibility
   suites each retain one unchanged baseline FilterBar label failure.
-- PR #401 is Ready for review. All six GitHub checks passed on `f738e79`; the
-  current remote-feedback fixes are not yet committed or pushed, so CI will rerun
-  afterward. Three fetched Copilot threads await replies/resolution: two findings
-  are fixed locally and the UTC date-only suggestion is rejected per the period
-  boundary contract. No second feedback fetch, production write/deploy, or
-  production-data cleanup occurred. Next: commit/push, resolve the threads, pass
-  GitHub checks on the new head, then merge and verify cleanup.
+- PR #401 is Ready for review. Remote-feedback fixes were committed and pushed
+  as `24d38b485710977ff8f7f96357fe59e582b71599`; mixed task-history ordering
+  and exact Weekly datetime display findings are fixed. The UTC date-only
+  suggestion was rejected per the period-boundary contract. All three fetched
+  Copilot threads received replies and are resolved; the fresh unresolved count
+  is zero. On this head, frontend, dead-code, and office-conversion checks pass;
+  quality-gate and Python smoke are still running. No second feedback fetch,
+  production write/deploy, or production-data cleanup occurred. Next: finish CI,
+  verify merge gates, then merge and verify cleanup.
 # Latest work — Issue #362 bilingual enum labels
 
 - Updated: 2026-10-04 EDT. Repository: `AI_actuarial_inforsearch`; branch:
