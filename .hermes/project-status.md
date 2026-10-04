@@ -72,13 +72,12 @@
   --disable=import-error`, and `git diff --check` PASS. Only two API services,
   the pagination regression test, and this status file changed in the repair;
   no frontend behavior or production data was changed.
-- Current stage: PR #402 is open. Head ca6a140 has fresh Sol/high review PASS
-  and all six current-head GitHub checks PASS. The 15-minute post-push checkpoint
-  found no newer review beyond the three original Copilot threads. Those three
-  threads were corrected in ca6a140 and are awaiting the manager's replies and
-  resolution; they are not yet resolved. Next is the final feedback/check gate
-  after this status-only push, before merge. No additional PR or merge was
-  performed, and this update changes no product code.
+- Current stage: PR #402 is open. Implementation ca6a140 passed fresh Sol/high
+  review and all six GitHub checks. The three original findings were fixed in
+  ca6a140, replied to, and their threads resolved. Merge when required checks on
+  the latest status-only head pass and the final 15-minute post-push review
+  window clears. This status-only head must still complete those gates; no
+  additional PR, merge, or product-code change was performed in this update.
 
 # Latest work — Issue #367 unified browser-local date/time display
 
