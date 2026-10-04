@@ -3,6 +3,7 @@ import { Clock, Loader2, Plus, Pencil, Trash2, Save, Timer, RefreshCw, ToggleLef
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/components/Layout";
 import { useAuth } from "@/context/AuthContext";
+import { EnumDiagnostic, EnumDisplay, canInspectEnumRaw, resolveEnumLabel } from "@/lib/enum-display";
 import { apiGet, apiPost, formatApiErrorDetail } from "@/lib/api";
 import { FormField, InputField, SelectField } from "@/components/FormFields";
 import { IconButton } from "@/components/a11y/IconButton";
@@ -193,8 +194,9 @@ export function ScheduledTasksSection({
   canManageScheduleOverride,
 }: ScheduledTasksSectionProps = {}) {
   const { t } = useTranslation();
-  const { permissions } = useAuth();
+  const { permissions, user } = useAuth();
   const canManageSchedule = canManageScheduleOverride ?? permissions.includes("schedule.write");
+  const canInspectRaw = canInspectEnumRaw(user?.role);
   const [scheduleStatus, setScheduleStatus] = useState<ScheduleStatus | null>(initialScheduleStatus);
   const [scheduledTasks, setScheduledTasks] = useState<ScheduledTask[]>(initialScheduledTasks);
   const [loading, setLoading] = useState(initialLoading);
@@ -393,7 +395,7 @@ export function ScheduledTasksSection({
   const editingLegacyTaskType = editingTask?.type === formType
     && !supportedTaskTypeOptions.some((option) => option.value === formType);
   const taskTypeOptions = editingLegacyTaskType
-    ? [{ value: formType, label: formType }, ...supportedTaskTypeOptions]
+    ? [{ value: formType, label: resolveEnumLabel("task_type", formType, t) }, ...supportedTaskTypeOptions]
     : supportedTaskTypeOptions;
   const jobCount = scheduleStatus ? (scheduleStatus.job_count ?? scheduleStatus.count ?? scheduleStatus.jobs?.length ?? 0) : 0;
   const typedParamFields = scheduledParamFields[formType] || [];
@@ -645,7 +647,7 @@ export function ScheduledTasksSection({
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
                         <span className="text-sm font-medium truncate">{task.name}</span>
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">{task.type}</span>
+                        <div className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground"><EnumDisplay category="task_type" value={task.type} t={t} /><EnumDiagnostic category="task_type" value={task.type} t={t} canInspectRaw={canInspectRaw} /></div>
                         <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
                           {scheduleStatus?.jobs.some((job) => job.kind === "configured_task" && job.source === task.name)
                             ? t("tasks.sched.effective")

@@ -21,6 +21,7 @@ import { cn } from "@/lib/utils";
 import { useTranslation } from "@/components/Layout";
 import { useAuth } from "@/context/AuthContext";
 import { apiGet } from "@/lib/api";
+import { EnumDiagnostic, EnumDisplay, canInspectEnumRaw } from "@/lib/enum-display";
 
 interface LogEntry {
   timestamp: string;
@@ -114,7 +115,7 @@ function historyStatusIcon(status: string) {
   }
 }
 
-function historyStatusBadge(status: string) {
+function historyStatusBadge(status: string, t: (key: string) => string, canInspectRaw: boolean) {
   const colors: Record<string, string> = {
     running: "bg-blue-500/10 text-blue-600 dark:text-blue-400",
     success: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
@@ -124,16 +125,19 @@ function historyStatusBadge(status: string) {
     stopped: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
   };
   return (
+    <div className="inline-flex flex-col">
     <span
       className={cn(
         "inline-flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-1 rounded-full",
         colors[status] || "bg-muted text-muted-foreground"
       )}
-      data-testid={`status-badge-log-${status}`}
+      data-testid="status-badge-log"
     >
       {historyStatusIcon(status)}
-      {status}
+      <EnumDisplay category="status" value={status} t={t} />
     </span>
+    <EnumDiagnostic category="status" value={status} t={t} canInspectRaw={canInspectRaw} />
+    </div>
   );
 }
 
@@ -149,7 +153,8 @@ function formatDate(dateStr: string): string {
 
 export default function LogsPage() {
   const { t } = useTranslation();
-  const { permissions } = useAuth();
+  const { permissions, user } = useAuth();
+  const canInspectRaw = canInspectEnumRaw(user?.role);
   const canReadSystemLogs = permissions.includes("logs.system.read");
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [loading, setLoading] = useState(false);
@@ -487,8 +492,8 @@ export default function LogsPage() {
                       <ScrollText className="w-4 h-4 text-muted-foreground shrink-0" strokeWidth={1.5} />
                       <span className="text-sm font-medium truncate">{task.name}</span>
                     </div>
-                    <span className="text-xs text-muted-foreground hidden sm:flex items-center">{task.type}</span>
-                    <span className="hidden sm:flex items-center">{historyStatusBadge(task.status)}</span>
+                    <div className="text-xs text-muted-foreground hidden sm:flex items-center gap-1"><EnumDisplay category="task_type" value={task.type} t={t} /><EnumDiagnostic category="task_type" value={task.type} t={t} canInspectRaw={canInspectRaw} /></div>
+                    <span className="hidden sm:flex items-center">{historyStatusBadge(task.status, t, canInspectRaw)}</span>
                     <span className="text-xs text-muted-foreground hidden sm:flex items-center">{formatDate(task.started_at)}</span>
                     <span className="text-xs text-muted-foreground hidden sm:flex items-center">{task.items_processed}</span>
                   </div>

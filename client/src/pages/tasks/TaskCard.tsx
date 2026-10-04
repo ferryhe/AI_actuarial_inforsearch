@@ -2,9 +2,11 @@ import { motion } from "framer-motion";
 import { Square, CheckCircle2, XCircle, Loader2, Clock, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/components/Layout";
+import { useAuth } from "@/context/AuthContext";
 import type { HistoryTask, Task } from "./Tasks.types";
 import { TaskMetrics } from "./TaskMetrics";
 import { IconButton } from "@/components/a11y/IconButton";
+import { EnumDiagnostic, EnumDisplay, canInspectEnumRaw } from "@/lib/enum-display";
 
 function statusIcon(status: string) {
   switch (status) {
@@ -24,7 +26,7 @@ function statusIcon(status: string) {
   }
 }
 
-function statusBadge(status: string) {
+function statusBadge(status: string, t: (key: string) => string, canInspectRaw = false) {
   const colors: Record<string, string> = {
     running: "bg-blue-500/10 text-blue-600 dark:text-blue-400",
     success: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
@@ -36,16 +38,20 @@ function statusBadge(status: string) {
     stopped: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
   };
   return (
+    <div className="inline-flex flex-col"
+    >
     <span
       className={cn(
         "inline-flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-1 rounded-full",
         colors[status] || "bg-muted text-muted-foreground"
       )}
-      data-testid={`status-badge-${status}`}
+      data-testid="status-badge"
     >
       {statusIcon(status)}
-      {status}
+      <EnumDisplay category="status" value={status} t={t} />
     </span>
+    <EnumDiagnostic category="status" value={status} t={t} canInspectRaw={canInspectRaw} />
+    </div>
   );
 }
 
@@ -68,6 +74,7 @@ interface TaskCardProps {
 
 export function TaskCard({ task, index, onStop, onViewLog }: TaskCardProps) {
   const { t } = useTranslation();
+  const { user } = useAuth();
   const target = task.name?.trim() || task.id;
   return (
     <motion.div
@@ -81,7 +88,7 @@ export function TaskCard({ task, index, onStop, onViewLog }: TaskCardProps) {
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 mb-1">
-            {statusBadge(task.status)}
+            {statusBadge(task.status, t, canInspectEnumRaw(user?.role))}
             <span className="font-semibold text-sm truncate">{task.name}</span>
           </div>
           {task.current_activity && (

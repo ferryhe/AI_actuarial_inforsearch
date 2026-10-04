@@ -12,6 +12,9 @@ try {
       { id: 1, subject: "Ordinary admin", group_name: "admin", token_type: "standard", status: "active", is_active: true, revoked_at: null, created_at: "2026-01-01T12:00:00+00:00", expires_at: "2030-01-01T12:00:00+00:00", last_used_at: "2026-01-02T12:00:00+00:00" },
       { id: 2, subject: "Automation", group_name: "admin", token_type: "service", status: "revoked", is_active: false, revoked_at: "2026-01-03T12:00:00+00:00", created_at: "2026-01-01T12:00:00+00:00", expires_at: null, last_used_at: null },
       { id: 3, subject: "Expired worker", group_name: "operator", token_type: "standard", status: "expired", is_active: true, revoked_at: null, created_at: "2026-01-01T12:00:00+00:00", expires_at: "2026-01-03T12:00:00+00:00", last_used_at: null },
+      { id: 4, subject: "Registered worker", group_name: "registered", token_type: "standard", status: "active", is_active: true, revoked_at: null, created_at: "2026-01-01T12:00:00+00:00", expires_at: null, last_used_at: null },
+      { id: 5, subject: "Premium worker", group_name: "premium", token_type: "standard", status: "active", is_active: true, revoked_at: null, created_at: "2026-01-01T12:00:00+00:00", expires_at: null, last_used_at: null },
+      { id: 6, subject: "Legacy worker", group_name: "catalog_only", token_type: "standard", status: "active", is_active: true, revoked_at: null, created_at: "2026-01-01T12:00:00+00:00", expires_at: null, last_used_at: null },
     ];
     await page.addInitScript(lang => localStorage.setItem("lang", lang), language);
     await page.route("**/api/**", async route => {
@@ -37,9 +40,19 @@ try {
     assert.equal(await page.getByTestId("token-row-1").locator("time").first().getAttribute("title"), "2026-01-01T12:00:00.000Z (UTC)");
     assert.match(await page.getByTestId("token-row-2").textContent(), language === "en" ? /Service.*Revoked.*No expiry/ : /服务.*已撤销.*永不过期/);
     assert.match(await page.getByTestId("token-row-3").textContent(), language === "en" ? /Expired/ : /已过期/);
+    assert.deepEqual(await Promise.all([1, 2, 3, 4, 5].map(id => page.getByTestId(`token-role-${id}`).textContent())), language === "en" ? ["Administrator", "Administrator", "Operator", "Registered", "Premium"] : ["管理员", "管理员", "操作员", "注册用户", "Premium 用户"]);
+    assert.equal(await page.getByTestId("token-role-6").textContent(), language === "en" ? "Unknown status" : "未知状态");
+    assert.equal(await page.getByTestId("token-row-6").locator("details").evaluate(details => details.open), false);
+    assert.match(await page.getByTestId("token-row-6").locator("details").textContent(), /catalog_only/);
+    await page.getByTestId("toggle-lang").click();
+    await page.waitForFunction(expected => document.documentElement.lang === expected, language === "en" ? "zh" : "en");
+    assert.deepEqual(await Promise.all([1, 2, 3, 4, 5].map(id => page.getByTestId(`token-role-${id}`).textContent())), language === "en" ? ["管理员", "管理员", "操作员", "注册用户", "Premium 用户"] : ["Administrator", "Administrator", "Operator", "Registered", "Premium"]);
+    await page.getByTestId("toggle-lang").click();
+    await page.waitForFunction(expected => document.documentElement.lang === expected, language);
     await page.getByTestId("button-create-token").click();
     await page.getByTestId("input-token-subject").fill("Smoke");
     assert.deepEqual(await page.getByTestId("select-token-group").locator("option").evaluateAll(opts => opts.map(o => o.value)), ["registered", "premium", "operator", "admin"]);
+    assert.deepEqual(await page.getByTestId("select-token-group").locator("option").evaluateAll(opts => opts.map(o => o.textContent)), language === "en" ? ["Registered", "Premium", "Operator", "Administrator"] : ["注册用户", "Premium 用户", "操作员", "管理员"]);
     await page.getByTestId("select-token-group").selectOption("admin");
     assert.equal(await page.getByTestId("select-token-expiry").inputValue(), "7");
     for (const days of ["1", "7", "30"]) {

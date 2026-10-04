@@ -102,7 +102,10 @@ def test_scheduled_tasks_section_retains_the_current_legacy_task_type_option():
     assert "const supportedTaskTypeOptions = [" in src
     assert "editingTask?.type === formType" in src
     assert "!supportedTaskTypeOptions.some((option) => option.value === formType)" in src
-    assert "[{ value: formType, label: formType }, ...supportedTaskTypeOptions]" in src
+    assert (
+        '[{ value: formType, label: resolveEnumLabel("task_type", formType, t) }, ...supportedTaskTypeOptions]'
+        in src
+    )
 
 
 def test_add_to_schedule_error_dismiss_button_is_accessible():
@@ -375,7 +378,8 @@ def test_web_listening_entry_uses_site_permission_not_tasks_run_only():
     assert "return canManageSites" in tasks_src
     assert "const canShowTaskEntryGrid = visibleTaskTypes.length > 0" in tasks_src
     assert "{canShowTaskEntryGrid ? <div>" in tasks_src
-    assert '<option value="rag_indexing">{t("tasks.type.rag_index")}</option>' in filter_src
+    assert '"rag_indexing"' in filter_src[filter_src.index("const taskTypeFilters") :]
+    assert 'resolveEnumLabel("task_type", type, t)' in filter_src
     assert '<option value="full_pipeline">Full Pipeline</option>' not in filter_src
 
 

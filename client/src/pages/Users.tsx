@@ -18,6 +18,7 @@ import { cn } from "@/lib/utils";
 import { useTranslation } from "@/components/Layout";
 import { apiGet, apiPost } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
+import { EnumDiagnostic, resolveEnumLabel } from "@/lib/enum-display";
 
 interface User {
   id: number;
@@ -175,8 +176,7 @@ export default function UsersPage() {
     }
   };
 
-  const roleName = (role: string) =>
-    role === "operator_ai" ? t("users.role_operator_ai_legacy") : t(`users.role_${role}`);
+  const roleName = (role: string) => resolveEnumLabel("role", role, t);
   const unsafeSelfAction = (user: User, nextRole?: string, nextActive?: boolean) => {
     const removesActiveAdmin = user.is_active && user.role === "admin" &&
       ((nextRole !== undefined && nextRole !== "admin") || nextActive === false);
@@ -290,9 +290,10 @@ export default function UsersPage() {
                             <Loader2 className="w-3 h-3 animate-spin" />
                           )}
                         </button>
+                        <EnumDiagnostic category="role" value={user.role} t={t} canInspectRaw />
                         {roleDropdown === user.id && (
                           <div className="absolute z-10 mt-1 bg-popover border border-border rounded-md shadow-md py-1 min-w-[100px]">
-                            {roles.map((role) => {
+                            {roles.map((role, roleIndex) => {
                               const protectionReason = unsafeSelfAction(user, role.value);
                               return (
                                 <button
@@ -304,9 +305,9 @@ export default function UsersPage() {
                                     "block w-full text-left px-3 py-1.5 text-xs hover:bg-muted transition-colors disabled:cursor-not-allowed disabled:opacity-50",
                                     role.value === (user.canonical_role || user.role) && "font-bold text-primary"
                                   )}
-                                  data-testid={`button-set-role-${role.value}-${user.id}`}
+                                  data-testid={`button-set-role-${user.id}-${roleIndex}`}
                                 >
-                                  <span className="block font-medium">{t(role.name_key)}</span>
+                                  <span className="block font-medium">{roleName(role.value)}</span>
                                   <span className="block text-[10px] text-muted-foreground">
                                     {t(role.description_key)}
                                   </span>

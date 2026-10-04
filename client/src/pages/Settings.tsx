@@ -27,6 +27,7 @@ import {
   FileText,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
+import { EnumDiagnostic, EnumDisplay, canInspectEnumRaw, resolveEnumLabel } from "@/lib/enum-display";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/components/Layout";
 import { apiGet, apiPost, apiDelete } from "@/lib/api";
@@ -213,6 +214,8 @@ function Toast({ message, type, onClose, id }: { message: string; type: "success
 
 function AiConfigTab() {
   const { t } = useTranslation();
+  const { user } = useAuth();
+  const canInspectRaw = canInspectEnumRaw(user?.role);
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState<{ message: string; type: "success" | "error"; action?: string } | null>(null);
 
@@ -308,14 +311,6 @@ function AiConfigTab() {
     if (credential.decrypt_ok === false || credential.last_error) return false;
     if (credential.status === "inactive") return false;
     return true;
-  }
-
-  function credentialStatusText(credential?: { source: string; status?: string; decrypt_ok?: boolean; last_error?: string | null }) {
-    if (!credential) return t("settings.missing");
-    if (credential.decrypt_ok === false || credential.last_error) return t("settings.decrypt_failed");
-    if (credential.status === "active") return t("settings.status_active");
-    if (credential.status === "inactive") return t("settings.status_inactive");
-    return credential.status || credential.source || t("settings.status_active");
   }
 
   function setProviderFormDefaults(providerId: string) {
@@ -779,7 +774,7 @@ function AiConfigTab() {
                       {credential?.api_base_url || provider.default_base_url || t("settings.default_base_url")}
                     </div>
                     <div className="mt-1 text-[11px] text-muted-foreground">
-                      {t("settings.status")}: {credentialStatusText(credential)}{credential?.source ? ` / ${credential.source}` : ""}{credential?.is_default ? ` / ${t("settings.default")}` : ""}
+                      {t("settings.status")}: {!credential ? t("settings.missing") : credential.decrypt_ok === false || credential.last_error ? t("settings.decrypt_failed") : credential.status ? <><EnumDisplay category="credential_status" value={credential.status} t={t} /><EnumDiagnostic category="credential_status" value={credential.status} t={t} canInspectRaw={canInspectRaw} /></> : t("settings.status_active")}{credential?.source && <> / <EnumDisplay category="credential_source" value={credential.source} t={t} /><EnumDiagnostic category="credential_source" value={credential.source} t={t} canInspectRaw={canInspectRaw} /></>}{credential?.is_default ? ` / ${t("settings.default")}` : ""}
                     </div>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
@@ -1971,6 +1966,7 @@ function SystemTab() {
 function ApiTokensTab() {
   const { t } = useTranslation();
   const { user } = useAuth();
+  const canInspectRaw = canInspectEnumRaw(user?.role);
   const canCreateService = user?.role === "admin" && user?.id != null && !!user?.email;
   const [tokens, setTokens] = useState<ApiToken[]>([]);
   const [loading, setLoading] = useState(true);
@@ -2099,10 +2095,7 @@ function ApiTokensTab() {
                 <label htmlFor="select-token-group" className="text-xs text-muted-foreground mb-1 block">{t("settings.token_group")}</label>
                 <select id="select-token-group" value={isService ? "admin" : newGroup} onChange={(e) => setNewGroup(e.target.value as CreateApiTokenRequest["group_name"])} disabled={isService}
                   className="w-full min-h-[48px] px-3 py-2 rounded-lg border border-border bg-background text-sm" data-testid="select-token-group">
-                  <option value="registered">Registered</option>
-                  <option value="premium">Premium</option>
-                  <option value="operator">Operator</option>
-                  <option value="admin">Admin</option>
+                  {(["registered", "premium", "operator", "admin"] as const).map((role) => <option key={role} value={role}>{resolveEnumLabel("role", role, t)}</option>)}
                 </select>
               </div>
               {canCreateService && <div>
@@ -2152,7 +2145,8 @@ function ApiTokensTab() {
                 <div className="space-y-0.5 min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="text-sm font-medium break-all">{token.subject}</span>
-                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-primary/10 text-primary font-semibold">{token.group_name}</span>
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-primary/10 text-primary font-semibold" data-testid={`token-role-${token.id}`}><EnumDisplay category="role" value={token.group_name} t={t} /></span>
+                    <EnumDiagnostic category="role" value={token.group_name} t={t} canInspectRaw={canInspectRaw} />
                     <span className={token.token_type === "service" ? "text-xs font-bold text-destructive" : "text-xs text-muted-foreground"}>{t(`settings.token_${token.token_type}`)}</span>
                     <span className="text-xs font-semibold">{t(token.status === "revoked" ? "settings.token_status_revoked" : `settings.token_${token.status}`)}</span>
                   </div>

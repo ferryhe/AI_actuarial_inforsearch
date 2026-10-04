@@ -1,3 +1,22 @@
+# Latest work — Issue #362 bilingual enum labels
+
+- Updated: 2026-10-04 EDT. Repository: `AI_actuarial_inforsearch`; branch:
+  `codex/issue-362-status-i18n-r2`; PR #400 is open as a draft and closes Issue
+  #362. Only this repository is in scope; sibling repositories remain off-limits.
+- The PR's first GitHub check run passed five of six checks. `quality-gate`
+  exposed five stale source-contract assertions in four tests that still expected
+  literal enum text after this issue moved those surfaces to the shared resolver.
+  The same implementation worker updated only those tests; no product code changed.
+- Local full pytest passed (2,323 passed, 11 skipped); the five previously
+  failing assertions pass after formatting. Black and isort checks pass across
+  Python source, tests, and configuration. The quality-gate report showed zero
+  new/stale isort or Pylint findings; the unified script was initially blocked
+  only by Black formatting in those four tests and will be rerun by GitHub after
+  the repair is pushed.
+- Next: publish the narrow check repair, wait for all required checks, mark the
+  PR ready, then perform the single required remote-feedback fetch after its
+  full wait window. Merge only after checks and thread state permit it.
+
 # Active work — Issue #359 Token permissions, expiry, and usage status
 
 - Updated: 2026-10-04 EDT. Repository: `AI_actuarial_inforsearch`; branch:
@@ -4884,3 +4903,61 @@
 - The 15-minute PR feedback query returned no reviews, inline threads, or conversation comments.
 - PR #397 remains Draft for the user's real-machine validation. Production AC-4/AC-8 evidence and rollback verification remain pending; no merge or deployment was performed.
 - This entry records the result for code commit ae71cb8; this status-only update does not change the tested code.
+
+### Issue #362 implementation — 2026-10-04
+
+- On `codex/issue-362-status-i18n-r2` at baseline `375cb901`, added one shared
+  frontend enum label resolver and role-gated collapsed diagnostics. Knowledge,
+  Tasks, Logs, Users and Settings now use it for their scoped status, task type,
+  item error, role, knowledge base mode/profile/reason and credential values.
+  Existing bilingual `tasks.type.*`, role, KB reason, mode/profile and credential
+  status translations are reused; API/backend enums were not changed.
+- The targeted regression was red on baseline: `completed` was untranslated and
+  the unknown `private_type` appeared in visible text and a `data-testid`. The
+  focused bilingual semantic suite now passes. The Chromium Logs smoke passes
+  for registered/operator/admin, confirms unknown values are hidden from
+  registered users and operator/admin diagnostics stay collapsed, and verifies
+  Chinese-to-English switching for known and fallback labels.
+- Focused Vitest passed (4 files / 8 tests); TypeScript passed; lint had zero
+  errors and five pre-existing React Hook warnings; build passed with the
+  existing large-chunk advisory; both dead-code gates and `git diff --check`
+  passed. Changes remain uncommitted in this worktree; no push, PR, merge or
+  production access was performed by the implementation worker.
+- Same-shaped UI sites inspected: scheduled task types and PipelineBaton task
+  status/error code displays are included. `TaskMetrics` uses task enums only
+  for calculations; Categories filters KB reasons against the known reason
+  list before translation; task prose summaries and arbitrary system log lines
+  are not enum label surfaces, so these remain unchanged. At the initial implementation checkpoint, Issue #362 remained OPEN pending independent review.
+- Review-1 fixes: `FilterBar` now uses the shared status/type resolver and a
+  localized All Status label while retaining API option values; `queued`,
+  `stopping`, `embedding_generation`, and `ready_data_build` have bilingual
+  labels and semantic coverage. Logs diagnostic summaries stop click bubbling;
+  Chromium smoke expands both details and verifies no task-log modal opens.
+- Follow-up checks passed: focused Vitest (5 files / 9 tests), TypeScript,
+  lint (0 errors, 5 existing Hook warnings), production build (existing chunk
+  advisory), dead-code checks, and `git diff --check`. The real Logs Chromium
+  smoke passed. An optional second-page `/tasks` Chromium navigation did not
+  complete with this smoke's API fixture; FilterBar labels/options are covered
+  by the focused component test. No API/backend enum changes; no commit/push/PR.
+- Review-2 fixes: token creation role choices now use the shared bilingual resolver while retaining canonical `registered`, `premium`, `operator`, and `admin` values; the Settings Chromium smoke checks both locales and submitted values. Pipeline Baton summary and stage status now use the shared status resolver, including bilingual `idle` and `completed_with_errors` labels, with unknown raw codes visible only in collapsed Operator/Admin diagnostics outside the stage toggle button. Semantic tests cover both locales, fallback, and diagnostic gating; Chromium smoke confirms disclosure interaction does not toggle the stage or open the task-log modal.
+- Round-2 validation passed: focused Vitest (3 files / 9 tests), Settings and Pipeline Baton Chromium smokes, Logs Chromium smoke, TypeScript, lint (0 errors; 5 existing Hook warnings), production build (existing large-chunk advisory), both dead-code gates, and `git diff --check`. Work remains uncommitted; no API/backend enum changes and no commit/push/PR.
+- Review-3 fix: Pipeline Baton now sanitizes structured launch-failure summaries on the latest-failure, stage-failure, and task-error surfaces. The real `index_launch_failed` response renders a bilingual message that retains the knowledge-base ID; its error code is included in the shared mapping. Operator/Admin can expand collapsed diagnostics to inspect the original code and response summary, while customer roles see neither raw value. No API fields or backend behavior changed.
+- Added bilingual component regression coverage using the #348 response shape (`latest_failure` plus `stages[].failures[]`) and extended the real Pipeline Baton Chromium smoke. It passed for registered/operator/admin, checks Chinese-to-English switching, customer redaction, diagnostic disclosure, and confirms clicking diagnostics does not toggle a stage or open a task-log modal. Focused Vitest passed (2 files / 5 tests); typecheck, lint (0 errors / 5 existing Hook warnings), build (existing chunk advisory), dead-code checks and diff check passed.
+- Review-4 fix: existing API token list badges now use the shared bilingual role resolver for canonical groups while preserving stored API values. Historical group codes fall back to `Unknown status` / `未知状态`; raw values are hidden from customer roles and available to Operators/Admins only in collapsed diagnostics. The create form and submitted `group_name` values are unchanged.
+- Added semantic coverage for all four canonical stored roles in both locales, historical-code gating, and preserved create values. The Settings Chromium smoke now asserts role badges for registered/premium/operator/admin in both locales, toggles language in the real page, and verifies a legacy code is safely diagnosed while collapsed. Focused Vitest (1 file / 7 tests), Settings Chromium smoke, typecheck, lint (0 errors / 5 existing Hook warnings), build (existing chunk advisory), and diff check passed.
+- Review-5 fix: Pipeline Baton now recognizes only the four listed Ready Data prefixes (`build_failure`, `publish_failure`, `stale_snapshot`, `invalid_selector`) at the start of a structured failure summary when the projected error code is empty. Customer surfaces show a bilingual generic Ready Data failure message; source summaries remain available only in collapsed Operator/Admin diagnostics. Other prose is not sanitized. API/backend values were not changed.
+- Added bilingual semantic coverage for all four prefixes using empty `first_error_code` projection fields, plus a Chromium fixture for `build_failure` covering registered/operator/admin fallback, language switching, collapsed diagnostics, and interaction. Focused Vitest passed (1 file / 4 tests), Pipeline Chromium smoke, typecheck, lint (0 errors / 5 existing Hook warnings), build (existing large-chunk advisory), dead-code gates, and diff check passed.
+- Independent local review 6 passed all six Issue acceptance criteria with no accepted findings; TypeSafe assessment also returned no findings. The reviewer independently passed 24 focused frontend/caller tests, 25 backend Pipeline tests, typecheck, diff check, and real Chromium smokes for Knowledge, Tasks/Pipeline, Logs, Users, and Settings.
+- Final manager validation passed: Vitest (8 files/24 tests), Pipeline Baton pytest (25), typecheck, lint (0 errors; 5 existing warnings), production build (existing chunk advisory), dead-code checks, and Logs/Settings/Pipeline Chromium smokes. Issue #362 remains OPEN; PR #400 has moved from Draft to Ready for review after all required checks passed.
+- Remote-feedback F1 fix: added shared bilingual `error_code` labels for
+  `orchestration_error`, `invalid_index_result`, `ready_launch_failed`, and
+  `error`; API enum values remain unchanged. Regression was red before mapping
+  (`orchestration_error` resolved to `Unknown status`) and green afterward.
+  Focused Vitest passed (3 files/7 tests); Pipeline Chromium smoke passed for
+  registered/operator/admin with all four labels in Chinese and English.
+  Manager revalidation passed typecheck, lint (0 errors; 5 existing warnings),
+  production build (existing large-chunk advisory), and diff check. PR #400
+  remains Ready for review. The fix was committed and pushed as
+  `95c52029ee0fc85bc04f4001a04ef94224918db7`; all six required checks passed
+  on that head and all four inline review threads are resolved. F2-F5 were not
+  implemented. Merge is pending final head verification.

@@ -106,3 +106,101 @@ assert.equal(toggled, "catalog");
 
 console.log("Issue 348 Pipeline Baton results component assertions passed");
 });
+
+test("uses bilingual shared status labels and safe privileged fallback for summary and stage", () => {
+  const steps = [
+    { step: "scheduled", label: "Scheduled Collection", testId: "pipeline-scheduled" },
+    { step: "catalog", label: "Catalog", testId: "pipeline-catalog" },
+  ] satisfies Parameters<typeof PipelineBatonResults>[0]["steps"];
+  const makeView = (status: string, stageStatus: string): PipelineView => ({
+    config: { overrides: {} },
+    state: { round_status: status },
+    summary: { status, successful_stages: 0, failed_stages: 0, stopped_stages: 0, latest_failure: null },
+    stages: steps.map((step) => ({ ...step, status: step.step === "catalog" ? stageStatus : "idle", tasks: [], failures: [] })),
+  });
+  const translations = {
+    en: { "enum.unknown": "Unknown status", "enum.diagnostic_details": "Diagnostic details", "enum.error_code.index_launch_failed": "Index launch failed", "tasks.pipeline.idle": "Idle", "tasks.pipeline.completed_with_errors": "Completed with errors", "tasks.pipeline.index_launch_failed_summary": "Knowledge base {kbId} could not start indexing", "tasks.pipeline.kb_failure_summary": "Knowledge base {kbId} failed", "tasks.pipeline.failure_summary": "The pipeline stage failed" },
+    zh: { "enum.unknown": "未知状态", "enum.diagnostic_details": "诊断详情", "enum.error_code.index_launch_failed": "索引启动失败", "tasks.pipeline.idle": "空闲", "tasks.pipeline.completed_with_errors": "完成但有错误", "tasks.pipeline.index_launch_failed_summary": "知识库 {kbId} 无法启动索引", "tasks.pipeline.kb_failure_summary": "知识库 {kbId} 处理失败", "tasks.pipeline.failure_summary": "流程阶段处理失败" },
+  };
+  const render = (status: string, stageStatus: string, locale: "en" | "zh", canInspectRaw = false) => renderToStaticMarkup(
+    <PipelineBatonResults view={makeView(status, stageStatus)} steps={steps} expanded={null} showFailuresOnly={false} onShowFailuresOnly={() => undefined} onToggle={() => undefined} onViewLog={() => undefined} renderSettings={() => null} t={(key) => translations[locale][key as keyof typeof translations.en] || key} canInspectRaw={canInspectRaw} />,
+  );
+
+  for (const locale of ["en", "zh"] as const) {
+    const idle = render("idle", "idle", locale);
+    const completedWithErrors = render("completed_with_errors", "completed_with_errors", locale);
+    assert.match(idle, new RegExp(locale === "en" ? "Idle" : "空闲"));
+    assert.match(completedWithErrors, new RegExp(locale === "en" ? "Completed with errors" : "完成但有错误"));
+  }
+
+  const customer = render("private_phase", "private_phase", "zh");
+  assert.match(customer, /未知状态/);
+  assert.doesNotMatch(customer, /private_phase|<details/);
+  const operator = render("private_phase", "private_phase", "zh", true);
+  assert.equal((operator.match(/<details/g) || []).length, 2);
+  assert.equal((operator.match(/<details open/g) || []).length, 0);
+  assert.equal((operator.match(/private_phase/g) || []).length, 2);
+  assert.match(operator, /<button[^>]*>.*?未知状态/s);
+});
+
+test("localizes the structured index launch failure and keeps its raw code privileged", () => {
+  const steps = [{ step: "rag_indexing", label: "KB Index", testId: "pipeline-step-rag_indexing" }] as const;
+  const rawSummary = "Knowledge base kb-demo failed: index_launch_failed.";
+  const view: PipelineView = {
+    config: { overrides: {} },
+    state: { round_status: "completed" },
+    summary: { status: "completed_with_errors", successful_stages: 0, failed_stages: 1, stopped_stages: 0, latest_failure: { task_id: null, stage: "rag_indexing", error_count: 1, first_error_code: "index_launch_failed", summary: rawSummary } },
+    stages: [{ step: "rag_indexing", status: "failed", tasks: [], failures: [{ task_id: null, first_error_code: "index_launch_failed", first_error_summary: rawSummary }] }],
+  };
+  const translations = {
+    en: { "enum.diagnostic_details": "Diagnostic details", "enum.error_code.index_launch_failed": "Index launch failed", "tasks.pipeline.index_launch_failed_summary": "Knowledge base {kbId} could not start indexing" },
+    zh: { "enum.diagnostic_details": "诊断详情", "enum.error_code.index_launch_failed": "索引启动失败", "tasks.pipeline.index_launch_failed_summary": "知识库 {kbId} 无法启动索引" },
+  };
+  const render = (locale: "en" | "zh", canInspectRaw: boolean) => renderToStaticMarkup(
+    <PipelineBatonResults view={view} steps={[...steps]} expanded={null} showFailuresOnly={false} onShowFailuresOnly={() => undefined} onToggle={() => undefined} onViewLog={() => undefined} renderSettings={() => null} t={(key) => translations[locale][key as keyof typeof translations.en] || key} canInspectRaw={canInspectRaw} />,
+  );
+
+  for (const locale of ["en", "zh"] as const) {
+    const expected = locale === "en" ? "Knowledge base kb-demo could not start indexing" : "知识库 kb-demo 无法启动索引";
+    const customer = render(locale, false);
+    assert.equal((customer.match(new RegExp(expected, "g")) || []).length, 2);
+    assert.doesNotMatch(customer, /index_launch_failed|<details/);
+    const operator = render(locale, true);
+    assert.equal((operator.match(/<details/g) || []).length, 2);
+    assert.equal((operator.match(/<details open/g) || []).length, 0);
+    assert.equal((operator.match(/index_launch_failed/g) || []).length, 4);
+  }
+});
+
+test("hides Ready Data error prefixes when projection normalizes the error code to empty", () => {
+  const steps = [{ step: "rag_indexing", label: "KB Index", testId: "pipeline-step-rag_indexing" }] as const;
+  const translations = {
+    en: { "enum.diagnostic_details": "Diagnostic details", "tasks.pipeline.ready_data_failure_summary": "Ready Data operation failed" },
+    zh: { "enum.diagnostic_details": "诊断详情", "tasks.pipeline.ready_data_failure_summary": "就绪数据处理失败" },
+  };
+  const render = (prefix: string, locale: "en" | "zh", canInspectRaw: boolean) => {
+    const rawSummary = `${prefix}: Ready Data operation could not complete`;
+    const view: PipelineView = {
+      config: { overrides: {} },
+      state: { round_status: "completed" },
+      summary: { status: "failed", successful_stages: 0, failed_stages: 1, stopped_stages: 0, latest_failure: { task_id: null, stage: "rag_indexing", error_count: 1, first_error_code: "", summary: rawSummary } },
+      stages: [{ step: "rag_indexing", status: "failed", tasks: [], failures: [{ task_id: null, first_error_code: "", first_error_summary: rawSummary }] }],
+    };
+    return renderToStaticMarkup(<PipelineBatonResults view={view} steps={[...steps]} expanded={null} showFailuresOnly={false} onShowFailuresOnly={() => undefined} onToggle={() => undefined} onViewLog={() => undefined} renderSettings={() => null} t={(key) => translations[locale][key as keyof typeof translations.en] || key} canInspectRaw={canInspectRaw} />);
+  };
+
+  for (const prefix of ["build_failure", "publish_failure", "stale_snapshot", "invalid_selector"]) {
+    for (const locale of ["en", "zh"] as const) {
+      const safeLabel = locale === "en" ? "Ready Data operation failed" : "就绪数据处理失败";
+      const rawSummary = `${prefix}: Ready Data operation could not complete`;
+      const customer = render(prefix, locale, false);
+      assert.equal((customer.match(new RegExp(safeLabel, "g")) || []).length, 2);
+      assert.doesNotMatch(customer, new RegExp(`${prefix}|Ready Data operation could not complete|<details`));
+      const operator = render(prefix, locale, true);
+      assert.equal((operator.match(/<details/g) || []).length, 2);
+      assert.equal((operator.match(/<details open/g) || []).length, 0);
+      assert.equal((operator.match(new RegExp(prefix, "g")) || []).length, 2);
+      assert.equal((operator.match(new RegExp(rawSummary, "g")) || []).length, 2);
+    }
+  }
+});

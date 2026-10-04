@@ -28,14 +28,17 @@ const markup = renderToStaticMarkup(
     t={(key) => ({
       "tasks.log_failed_items": "Failed items",
       "tasks.log_item_errors_truncated": "Only the first {count} failures are shown.",
+      "enum.error_stage.catalog": "Catalog stage",
+      "enum.error_code.file_not_found": "File not found",
     }[key] || key)}
   />,
 );
 
 assert.match(markup, /Failed items[^0-9]*51/);
 assert.match(markup, /File abcdef012345/);
-assert.match(markup, /catalog/);
-assert.match(markup, /file_not_found/);
+assert.match(markup, /Catalog stage/);
+assert.match(markup, /File not found/);
+assert.doesNotMatch(markup, /file_not_found/);
 assert.match(markup, /The catalog source was not found/);
 assert.match(markup, /Only the first 1 failures are shown/);
 assert.match(markup, new RegExp(`/tasks\\?task_id=${taskId}`));
