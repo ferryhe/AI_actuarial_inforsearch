@@ -3,26 +3,28 @@
 - Updated: 2026-10-04 EDT. Repository: `AI_actuarial_inforsearch`; branch:
   `codex/issue-367-unified-date-format`; baseline `7b192bd49b435906a93631cc73be0e1f3326f709`.
   Only this repository is in scope; sibling repositories remain off-limits.
-- Added a shared browser-local date/time formatter for the scoped Tasks, Schedule,
-  Weekly, Users, Token, and Logs timestamps, with English/Chinese locale output,
-  safe fallbacks, and UTC tooltips. Pipeline surfaces do not render timestamps;
-  Pipeline schedule occurrences appear in the Schedule section. Raw log lines
-  remain unchanged.
-- New task timestamps use UTC offsets; the task API attaches the process-local
-  offset to legacy naive history without rewriting persisted records. Site Config
-  backup timestamps now preserve their source file epoch as UTC. No account
-  timezone model or schema change was made.
-- Local verification passed: 80 focused Python tests; 11 focused Vitest tests;
-  New York DST/cross-day/UTC-4 and Shanghai UTC+8 Chromium smoke; token locale
-  smoke; TypeScript, lint, production build, dead-code, changed-file Black/isort,
-  and `git diff --check`. Full Vitest and `npm run test:a11y` each retain one
-  unchanged baseline FilterBar label failure; it is outside this Issue's scope.
-- Weekly article `first_seen` uses the browser timezone and provides a canonical
-  UTC tooltip. A New York/Shanghai Chromium regression passed in English and
-  Chinese, including invalid-date fallback. Independent review is pending. No
-  commit, push, PR, merge, production write/deploy, or production-data cleanup
-  has occurred.
-
+- Shared date formatting is in place for Tasks, Schedule, Weekly, Users, Token,
+  and Logs. New task timestamps carry UTC offsets; legacy task history retains
+  its process-local interpretation without changing stored rows. Backup mtimes
+  preserve their source epoch. No account timezone model or schema change.
+- Remote feedback on PR #401 found a mixed-format task-history ordering bug and
+  an exact Weekly period datetime display mismatch. Both are fixed locally:
+  history sorts parsed instants before limiting; Database period endpoints show
+  browser-local time with a canonical UTC tooltip and retain UTC filter values.
+  Weekly list/detail date-only labels remain UTC calendar dates. No #362 enum
+  resolver changes were made.
+- Final local verification on the current five-file diff: 81 focused Python
+  tests, 12 focused Vitest tests, New York and Shanghai browser smoke, typecheck,
+  changed-file ESLint (zero errors; one existing Database hook warning), Node
+  syntax check, and `git diff --check` passed. Full Vitest and accessibility
+  suites each retain one unchanged baseline FilterBar label failure.
+- PR #401 is Ready for review. All six GitHub checks passed on `f738e79`; the
+  current remote-feedback fixes are not yet committed or pushed, so CI will rerun
+  afterward. Three fetched Copilot threads await replies/resolution: two findings
+  are fixed locally and the UTC date-only suggestion is rejected per the period
+  boundary contract. No second feedback fetch, production write/deploy, or
+  production-data cleanup occurred. Next: commit/push, resolve the threads, pass
+  GitHub checks on the new head, then merge and verify cleanup.
 # Latest work — Issue #362 bilingual enum labels
 
 - Updated: 2026-10-04 EDT. Repository: `AI_actuarial_inforsearch`; branch:

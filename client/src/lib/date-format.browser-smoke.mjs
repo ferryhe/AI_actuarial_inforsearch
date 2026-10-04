@@ -9,6 +9,7 @@ try {
     await page.goto(process.env.SMOKE_URL || "http://127.0.0.1:5173", { waitUntil: "domcontentloaded" });
     const result = await page.evaluate(async (timeZone) => {
       const { formatDateTime, formatUtcIso } = await import("/src/lib/date-format.ts");
+      const { formatWeeklyDateTime, formatWeeklyPeriodLabel, formatWeeklyPeriodUtcTitle } = await import("/src/lib/weekly-dashboard.ts");
       const mainSource = await (await fetch("/src/main.tsx")).text();
       const reactUrl = mainSource.match(/from "([^"]*react\.js\?v=[^"]+)"/)?.[1];
       const reactDomUrl = mainSource.match(/from "([^"]*react-dom_client\.js\?v=[^"]+)"/)?.[1];
@@ -57,6 +58,11 @@ try {
         utc: formatUtcIso("2026-03-08T07:30:00Z"),
         invalid: formatDateTime("bad", "en"),
         weeklyEn, weeklyZh, weeklyInvalid,
+        weeklyPeriodDateTime: formatWeeklyDateTime("2026-03-09T00:00:00Z", "en"),
+        weeklyPeriodDateEn: formatWeeklyPeriodLabel("2026-03-09T00:00:00Z", "2026-03-16T00:00:00Z", "en"),
+        weeklyPeriodDateZh: formatWeeklyPeriodLabel("2026-03-09T00:00:00Z", "2026-03-16T00:00:00Z", "zh"),
+        weeklyPeriodUtcTitle: formatWeeklyPeriodUtcTitle("2026-03-09T00:00:00Z", "2026-03-16T00:00:00Z"),
+        invalidWeeklyPeriodUtcTitle: formatWeeklyPeriodUtcTitle("not-a-date", "2026-03-16T00:00:00Z"),
       };
     }, zone);
     assert.equal(result.utc, "2026-03-08T07:30:00.000Z");
@@ -79,6 +85,15 @@ try {
     assert.equal(result.weeklyInvalid?.text, "—");
     assert.equal(result.weeklyInvalid?.title, null);
     assert.equal(result.weeklyInvalid?.dateTime, null);
+    if (zone === "America/New_York") {
+      assert.match(result.weeklyPeriodDateTime, /Mar 8, 2026, 08:00 PM EDT/);
+    } else {
+      assert.match(result.weeklyPeriodDateTime, /Mar 9, 2026, 08:00 AM GMT\+8/);
+    }
+    assert.equal(result.weeklyPeriodDateEn, "Mar 9, 2026 – Mar 16, 2026");
+    assert.equal(result.weeklyPeriodDateZh, "2026年3月9日 – 2026年3月16日");
+    assert.equal(result.weeklyPeriodUtcTitle, "2026-03-09T00:00:00.000Z – 2026-03-16T00:00:00.000Z (UTC)");
+    assert.equal(result.invalidWeeklyPeriodUtcTitle, undefined);
     console.log(`${zone}:`, JSON.stringify(result));
     await context.close();
   }

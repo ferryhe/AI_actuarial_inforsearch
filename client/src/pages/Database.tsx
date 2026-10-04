@@ -39,6 +39,7 @@ import {
 } from "@/lib/database-query";
 import {
   formatWeeklyDateTime,
+  formatWeeklyPeriodUtcTitle,
   normalizePublicCategory,
   normalizePublicKeywords,
   normalizePublicMetadataText,
@@ -654,6 +655,7 @@ export default function DatabasePage() {
         <div
           className="rounded-xl border border-primary/20 bg-primary/5 px-4 py-3 text-sm break-words [overflow-wrap:anywhere]"
           data-testid="weekly-period-context"
+          title={formatWeeklyPeriodUtcTitle(initialState.firstSeenFrom, initialState.firstSeenBefore)}
         >
           {t("db.weekly_period_context")
             .replace("{snapshot}", initialState.snapshotId)

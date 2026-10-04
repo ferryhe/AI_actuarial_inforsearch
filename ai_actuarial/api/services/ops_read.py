@@ -391,14 +391,23 @@ def list_active_tasks(
     return {"tasks": tasks}
 
 
+def _task_history_sort_key(task_data: dict[str, Any]) -> tuple[bool, float]:
+    value = task_data.get("started_at")
+    if not isinstance(value, str):
+        return (False, 0)
+    try:
+        instant = datetime.fromisoformat(value).astimezone().timestamp()
+    except (OverflowError, OSError, ValueError):
+        return (False, 0)
+    return (True, instant)
+
+
 def list_task_history(
     task_history_ref: list[dict[str, Any]], limit: int
 ) -> dict[str, list[dict[str, Any]]]:
     tasks = [
         _serialize_task_for_api(task)
-        for task in sorted(task_history_ref, key=lambda x: x.get("started_at", ""), reverse=True)[
-            :limit
-        ]
+        for task in sorted(task_history_ref, key=_task_history_sort_key, reverse=True)[:limit]
     ]
     return {"tasks": tasks}
 

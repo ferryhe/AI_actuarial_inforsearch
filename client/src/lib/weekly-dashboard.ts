@@ -1,5 +1,5 @@
 import { apiGet } from "./api";
-import { formatDateTime } from "./date-format";
+import { formatDateTime, formatUtcIso } from "./date-format";
 
 const WEEKLY_HOME_PREVIEW_LIMIT = 6;
 const WEEKLY_FILES_PAGE_LIMIT = 500;
@@ -223,9 +223,17 @@ export function formatWeeklyDateTime(value: string | null | undefined, lang: str
     day: "numeric",
     hour: "2-digit",
     minute: "2-digit",
-    timeZone: "UTC",
     timeZoneName: "short",
   });
+}
+
+export function formatWeeklyPeriodUtcTitle(
+  start: string | null | undefined,
+  end: string | null | undefined,
+): string | undefined {
+  const startIso = formatUtcIso(start);
+  const endIso = formatUtcIso(end);
+  return startIso && endIso ? `${startIso} – ${endIso} (UTC)` : undefined;
 }
 
 export function formatWeeklyShortDate(value: string | null | undefined, lang: string): string {

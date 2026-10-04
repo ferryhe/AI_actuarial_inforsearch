@@ -143,3 +143,15 @@ def test_task_serializer_preserves_aware_values_and_malformed_strings() -> None:
 
     assert result["started_at"] == "2026-03-08T01:30:00-05:00"
     assert result["completed_at"] == "invalid"
+
+
+def test_task_history_sorts_mixed_instants_before_limit_and_keeps_invalid_last() -> None:
+    task_history = [
+        {"id": "older-aware", "started_at": "2026-10-04T08:00:00+08:00"},
+        {"id": "newer-legacy", "started_at": "2026-10-04T07:00:00"},
+        {"id": "invalid", "started_at": "not-a-date"},
+    ]
+
+    result = list_task_history(task_history, 2)["tasks"]
+
+    assert [task["id"] for task in result] == ["newer-legacy", "older-aware"]
