@@ -851,6 +851,9 @@ def test_token_creation_validation_and_legacy_read(tmp_path: Path, monkeypatch) 
     for payload in (
         {"group_name": "reader"},
         {"group_name": "operator_ai"},
+        {"group_name": "guest"},
+        {"group_name": "catalog_only"},
+        {"group_name": "unknown-group"},
         {"group_name": "admin", "expires_at": None},
         {"group_name": "admin", "expires_at": "bad-date"},
         {"group_name": "admin", "expires_at": "2000-01-01T00:00:00Z"},
@@ -876,6 +879,33 @@ def test_token_creation_validation_and_legacy_read(tmp_path: Path, monkeypatch) 
             client.cookies.clear()
     finally:
         storage.close()
+
+
+def test_token_list_preserves_other_stored_groups_and_permissions(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from ai_actuarial.shared_auth import hash_token, permissions_for_group
+
+    client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
+    storage = Storage(app.state.db_path)
+    try:
+        token_ids = {
+            group: storage.create_auth_token(
+                subject=group, group_name=group, token_hash=hash_token(group)
+            )
+            for group in ("guest", "catalog_only", "unknown-group")
+        }
+    finally:
+        storage.close()
+    response = client.get("/api/auth/tokens", headers={"X-Auth-Token": seed["admin_token"]})
+    assert response.status_code == 200, response.text
+    rows = {row["id"]: row for row in response.json()["tokens"]}
+    for group, token_id in token_ids.items():
+        assert rows[token_id]["group_name"] == group
+        auth = client.get("/api/auth/me", headers={"X-Auth-Token": group}).json()["data"]
+        assert auth["authenticated"] is True
+        assert auth["token"]["group_name"] == group
+        assert set(auth["permissions"]) == set(permissions_for_group(group))
 
 
 def test_service_tokens_require_confirmed_admin_email_session(tmp_path: Path, monkeypatch) -> None:
@@ -933,3 +963,43 @@ def test_token_openapi_schema(tmp_path: Path, monkeypatch) -> None:
     operation = schema["paths"]["/api/auth/tokens"]["post"]
     assert "$ref" in operation["requestBody"]["content"]["application/json"]["schema"]
     assert "$ref" in operation["responses"]["201"]["content"]["application/json"]["schema"]
+    definitions = schema["components"]["schemas"]
+    assert definitions["CreateAuthTokenRequest"]["properties"]["group_name"]["enum"] == [
+        "registered",
+        "premium",
+        "operator",
+        "admin",
+    ]
+    assert definitions["AuthTokenMetadata"]["properties"]["group_name"] == {
+        "type": "string",
+        "title": "Group Name",
+    }
+
+
+def test_token_auth_survives_last_used_persistence_failure(tmp_path: Path, monkeypatch) -> None:
+    import sqlite3
+
+    client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
+    storage = Storage(app.state.db_path)
+    try:
+        token_id = storage.get_auth_token_by_hash(
+            hashlib.sha256(seed["admin_token"].encode("utf-8")).hexdigest()
+        )["id"]
+    finally:
+        storage.close()
+    failed_touches: list[int] = []
+
+    def fail_touch(_storage: Storage, token_id: int) -> None:
+        failed_touches.append(token_id)
+        raise sqlite3.OperationalError("attempt to write a readonly database")
+
+    monkeypatch.setattr(Storage, "touch_auth_token_last_used", fail_touch)
+    for auth_mode in ("header", "session"):
+        if auth_mode == "session":
+            client.cookies.set("session", _make_session_cookie(app, {"auth_token_id": token_id}))
+        headers = {"X-Auth-Token": seed["admin_token"]} if auth_mode == "header" else {}
+        response = client.get("/api/auth/tokens", headers=headers)
+        assert response.status_code == 200, response.text
+        row = next(row for row in response.json()["tokens"] if row["id"] == token_id)
+        assert row["is_active"] is True and row["last_used_at"] is None
+    assert failed_touches == [token_id, token_id]

@@ -118,7 +118,7 @@ interface CategoriesConfig {
 interface ApiToken {
   id: number;
   subject: string;
-  group_name: "registered" | "premium" | "operator" | "admin";
+  group_name: string;
   token_type: "standard" | "service";
   is_active: boolean;
   created_at: string | null;
@@ -130,7 +130,7 @@ interface ApiToken {
 
 interface CreateApiTokenRequest {
   subject: string;
-  group_name: ApiToken["group_name"];
+  group_name: "registered" | "premium" | "operator" | "admin";
   token_type: ApiToken["token_type"];
   expires_at: string | null;
   confirm_service: boolean;
@@ -1978,7 +1978,7 @@ function ApiTokensTab() {
 
   const [showCreate, setShowCreate] = useState(false);
   const [newSubject, setNewSubject] = useState("");
-  const [newGroup, setNewGroup] = useState<ApiToken["group_name"]>("registered");
+  const [newGroup, setNewGroup] = useState<CreateApiTokenRequest["group_name"]>("registered");
   const [tokenType, setTokenType] = useState<ApiToken["token_type"]>("standard");
   const [expiryDays, setExpiryDays] = useState("7");
   const [customExpiry, setCustomExpiry] = useState("");
@@ -2097,7 +2097,7 @@ function ApiTokensTab() {
               </div>
               <div>
                 <label htmlFor="select-token-group" className="text-xs text-muted-foreground mb-1 block">{t("settings.token_group")}</label>
-                <select id="select-token-group" value={isService ? "admin" : newGroup} onChange={(e) => setNewGroup(e.target.value as ApiToken["group_name"])} disabled={isService}
+                <select id="select-token-group" value={isService ? "admin" : newGroup} onChange={(e) => setNewGroup(e.target.value as CreateApiTokenRequest["group_name"])} disabled={isService}
                   className="w-full min-h-[48px] px-3 py-2 rounded-lg border border-border bg-background text-sm" data-testid="select-token-group">
                   <option value="registered">Registered</option>
                   <option value="premium">Premium</option>

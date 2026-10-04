@@ -73,3 +73,15 @@ it("does not offer service creation for API-token identity", async () => {
   await openTokens();
   expect(screen.queryByTestId("select-token-type")).not.toBeInTheDocument();
 });
+it("displays persisted group names while keeping creation canonical", async () => {
+  apiGet.mockImplementation(async (url: string) => url === "/api/auth/tokens" ? { tokens: [metadata, ...["guest", "catalog_only", "unknown-group"].map((group_name, i) => ({ ...metadata, id: 20 + i, group_name }))] } : {});
+  const user = await openTokens();
+  for (const [i, group] of ["guest", "catalog_only", "unknown-group"].entries()) {
+    expect(screen.getByTestId(`token-row-${20 + i}`)).toHaveTextContent(group);
+  }
+  const groups = screen.getByTestId("select-token-group");
+  expect(Array.from(groups.querySelectorAll("option")).map(o => o.value)).toEqual(["registered", "premium", "operator", "admin"]);
+  await user.click(screen.getByTestId("button-submit-token"));
+  await screen.findByTestId("text-created-token");
+  expect(apiPost.mock.calls.at(-1)![1].group_name).toBe("registered");
+});
