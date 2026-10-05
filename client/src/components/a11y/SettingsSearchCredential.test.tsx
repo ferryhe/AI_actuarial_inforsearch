@@ -192,6 +192,79 @@ it("associates failed routing save with only the routing Save action", async () 
   expect(screen.getByTestId("button-add-model-route")).not.toHaveAttribute("aria-describedby");
 });
 
+it("omits an unresolved saved credential from an unchanged routing save", async () => {
+  apiGet.mockImplementation((url: string) => {
+    if (url === "/api/config/providers") return Promise.resolve({ providers: [{ provider_id: "openai", display_name: "OpenAI", supports: { chat: true } }] });
+    if (url === "/api/config/provider-credentials") return Promise.resolve({ credentials: [] });
+    if (url === "/api/config/model-catalog") return Promise.resolve({ available: { openai: [{ name: "gpt-smoke", types: ["chatbot"] }] } });
+    if (url === "/api/config/ai-routing") return Promise.resolve({ bindings: [{ function_name: "chat", provider: "openai", model: "gpt-smoke", credential_id: null, stable_credential_id: null, credential_error: "credential_not_found", configured: false }] });
+    return Promise.resolve({ defaults: {}, engines: [] });
+  });
+  const user = userEvent.setup();
+  render(<Layout><Settings /></Layout>);
+  expect(await screen.findByTestId("model-row-chat")).toBeInTheDocument();
+  await user.click(await screen.findByTestId("button-edit-model-chat"));
+  await user.click(screen.getByTestId("button-save-models"));
+  const routingCall = apiPost.mock.calls.find(([url]) => url === "/api/config/ai-routing");
+  expect(routingCall).toBeDefined();
+  expect(routingCall![1].bindings).toEqual([
+    { function_name: "chat", provider: "openai", model: "gpt-smoke" },
+  ]);
+});
+
+function mockConfiguredChatRoute(rawConfig: Record<string, unknown>) {
+  const credentialId = "openai:llm:instance:primary";
+  apiGet.mockImplementation((url: string) => {
+    if (url === "/api/config/providers") return Promise.resolve({ providers: [{ provider_id: "openai", display_name: "OpenAI", supports: { chat: true } }] });
+    if (url === "/api/config/provider-credentials") return Promise.resolve({ credentials: [{ provider_id: "openai", credential_id: credentialId, stable_credential_id: credentialId, category: "llm", source: "db", status: "active", is_default: true }] });
+    if (url === "/api/config/model-catalog") return Promise.resolve({ available: { openai: [{ name: "gpt-smoke", types: ["chatbot"] }] } });
+    if (url === "/api/config/ai-routing") return Promise.resolve({ bindings: [{ function_name: "chat", provider: "openai", model: "gpt-smoke", credential_id: credentialId, stable_credential_id: credentialId, credential_error: null, configured: true, raw_config: rawConfig }] });
+    return Promise.resolve({ defaults: {}, engines: [] });
+  });
+}
+
+async function editConfiguredChatRoute(rawConfig: Record<string, unknown>) {
+  mockConfiguredChatRoute(rawConfig);
+  const user = userEvent.setup();
+  render(<Layout><Settings /></Layout>);
+  await user.click(await screen.findByTestId("button-edit-model-chat"));
+  return user;
+}
+
+it("does not pin an inherited default credential on a no-op route save", async () => {
+  const user = await editConfiguredChatRoute({ provider: "openai", model: "gpt-smoke" });
+  expect(screen.getByTestId("select-credential-chat")).toHaveValue("");
+  await user.click(screen.getByTestId("button-save-models"));
+  const call = apiPost.mock.calls.find(([url]) => url === "/api/config/ai-routing");
+  expect(call![1].bindings).toEqual([
+    { function_name: "chat", provider: "openai", model: "gpt-smoke" },
+  ]);
+});
+
+it("sends a credential when the user explicitly selects it", async () => {
+  const user = await editConfiguredChatRoute({ provider: "openai", model: "gpt-smoke" });
+  await user.selectOptions(screen.getByTestId("select-credential-chat"), "openai:llm:instance:primary");
+  await user.click(screen.getByTestId("button-save-models"));
+  const call = apiPost.mock.calls.find(([url]) => url === "/api/config/ai-routing");
+  expect(call![1].bindings).toEqual([
+    { function_name: "chat", provider: "openai", model: "gpt-smoke", credential_id: "openai:llm:instance:primary" },
+  ]);
+});
+
+it("sends an empty credential when the user explicitly clears it", async () => {
+  const user = await editConfiguredChatRoute({
+    provider: "openai",
+    model: "gpt-smoke",
+    credential_id: "openai:llm:instance:primary",
+  });
+  await user.selectOptions(screen.getByTestId("select-credential-chat"), "");
+  await user.click(screen.getByTestId("button-save-models"));
+  const call = apiPost.mock.calls.find(([url]) => url === "/api/config/ai-routing");
+  expect(call![1].bindings).toEqual([
+    { function_name: "chat", provider: "openai", model: "gpt-smoke", credential_id: "" },
+  ]);
+});
+
 it("associates failed credential re-encryption with its submit action", async () => {
   apiPost.mockRejectedValueOnce({ detail: "re-encryption failed" });
   const user = userEvent.setup();

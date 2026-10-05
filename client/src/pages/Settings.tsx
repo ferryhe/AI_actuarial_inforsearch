@@ -245,6 +245,7 @@ function AiConfigTab() {
     api_base_url?: string | null;
     embedding_dimension?: number;
     embedding_fingerprint?: string;
+    raw_config?: Record<string, unknown>;
   }>>({});
 
   const [editingProvider, setEditingProvider] = useState<string | null>(null);
@@ -448,13 +449,9 @@ function AiConfigTab() {
     }
   }
 
-  function updateModelEdit(functionName: string, field: "provider" | "model" | "credential_id", value: string) {
+  function updateModelEdit(functionName: AiRoutingKey, field: "provider" | "model" | "credential_id", value: string) {
     setModelEdits((prev) => {
-      const current = prev[functionName] || {
-        provider: routing[functionName]?.provider || "",
-        model: routing[functionName]?.model || "",
-        credential_id: routing[functionName]?.stable_credential_id || routing[functionName]?.credential_id || "",
-      };
+      const current = prev[functionName] || currentRoutingDraft(functionName);
       const next = { ...current, [field]: value };
       if (field === "provider") {
         next.credential_id = "";
@@ -533,10 +530,16 @@ function AiConfigTab() {
   }
 
   function currentRoutingDraft(functionName: AiRoutingKey): ModelEdit {
+    const current = routing[functionName];
+    const hasExplicitCredential = Boolean(
+      current?.raw_config?.credential_id || current?.raw_config?.provider_credential_id,
+    );
     return modelEdits[functionName] || {
-      provider: routing[functionName]?.provider || "",
-      model: routing[functionName]?.model || "",
-      credential_id: routing[functionName]?.credential_error ? "" : routing[functionName]?.stable_credential_id || routing[functionName]?.credential_id || "",
+      provider: current?.provider || "",
+      model: current?.model || "",
+      ...(!current?.credential_error && hasExplicitCredential ? {
+        credential_id: current?.stable_credential_id || current?.credential_id || "",
+      } : {}),
     };
   }
 
@@ -589,7 +592,7 @@ function AiConfigTab() {
   }
   const configuredProviders = llmProviders.filter((provider) => Boolean(providerCredential(provider.provider_id)));
   const configuredRoutingCount = routingCards.filter((card) => routingIsConfigured(card.key)).length;
-  const configuredRoutingCards = routingCards.filter((card) => routingIsConfigured(card.key) || Boolean(modelEdits[card.key]));
+  const configuredRoutingCards = routingCards.filter((card) => routingIsConfigured(card.key) || Boolean(modelEdits[card.key]) || Boolean(routing[card.key]?.credential_error));
 
   return (
     <div className="space-y-8">
