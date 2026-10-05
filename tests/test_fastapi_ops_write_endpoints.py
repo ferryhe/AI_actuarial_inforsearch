@@ -633,6 +633,342 @@ def test_categories_and_ai_models_write_roundtrip_is_native_fastapi(
     )
 
 
+def test_ai_models_noop_roundtrip_skips_discovery_but_changed_model_is_validated(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _patch_available_models(monkeypatch)
+    import ai_actuarial.llm_models as llm_models
+
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
+    headers = {"X-Auth-Token": seed["admin_token"]}
+    config_path = Path(os.environ["CONFIG_PATH"])
+    config_data = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    config_data.setdefault("ai_config", {})["chatbot"] = {
+        "provider": "openai",
+        "model": "legacy-chat-model",
+    }
+    config_path.write_text(yaml.safe_dump(config_data, sort_keys=False), encoding="utf-8")
+
+    fetched = client.get("/api/config/ai-models", headers=headers)
+    assert fetched.status_code == 200, fetched.text
+    assert fetched.json()["current"]["chatbot"]["model"] == "legacy-chat-model"
+
+    get_available_models = llm_models.get_available_models
+    monkeypatch.setattr(
+        llm_models,
+        "get_available_models",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("unexpected model discovery")),
+    )
+    saved = client.post(
+        "/api/config/ai-models",
+        json={"chatbot": {"provider": "openai", "model": "legacy-chat-model"}},
+        headers=headers,
+    )
+    assert saved.status_code == 200, saved.text
+    written = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    assert written["ai_config"]["chatbot"]["model"] == "legacy-chat-model"
+
+    prompt_saved = client.post(
+        "/api/config/ai-models",
+        json={"chatbot": {"prompts": {"expert": "prompt-only update"}}},
+        headers=headers,
+    )
+    assert prompt_saved.status_code == 200, prompt_saved.text
+    prompted = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    assert prompted["ai_config"]["chatbot"]["prompts"]["expert"] == "prompt-only update"
+
+    monkeypatch.setattr(llm_models, "get_available_models", get_available_models)
+    rejected = client.post(
+        "/api/config/ai-models",
+        json={"chatbot": {"provider": "openai", "model": "unavailable-chat-model"}},
+        headers=headers,
+    )
+    assert rejected.status_code == 400, rejected.text
+    unchanged = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    assert unchanged["ai_config"]["chatbot"]["model"] == "legacy-chat-model"
+
+
+def test_ai_models_default_roundtrip_skips_discovery_without_materializing_defaults(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _patch_available_models(monkeypatch)
+    import ai_actuarial.llm_models as llm_models
+
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
+    headers = {"X-Auth-Token": seed["admin_token"]}
+    config_path = Path(os.environ["CONFIG_PATH"])
+    config_data = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    chatbot = config_data.setdefault("ai_config", {}).setdefault("chatbot", {})
+    chatbot.pop("provider", None)
+    chatbot.pop("model", None)
+    config_path.write_text(yaml.safe_dump(config_data, sort_keys=False), encoding="utf-8")
+
+    fetched = client.get("/api/config/ai-models", headers=headers)
+    assert fetched.status_code == 200, fetched.text
+    defaults = fetched.json()["current"]["chatbot"]
+    assert defaults["provider"] == "openai"
+    assert defaults["model"] == "gpt-4-turbo"
+
+    monkeypatch.setattr(
+        llm_models,
+        "get_available_models",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("unexpected model discovery")),
+    )
+    saved = client.post(
+        "/api/config/ai-models",
+        json={"chatbot": {"provider": defaults["provider"], "model": defaults["model"]}},
+        headers=headers,
+    )
+    assert saved.status_code == 200, saved.text
+    written = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    assert "provider" not in written["ai_config"]["chatbot"]
+    assert "model" not in written["ai_config"]["chatbot"]
+
+
+def test_ai_routing_save_without_unresolved_credential_preserves_yaml_id(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _patch_available_models(monkeypatch)
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
+    headers = {"X-Auth-Token": seed["admin_token"]}
+    config_path = Path(os.environ["CONFIG_PATH"])
+    config_data = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    config_data.setdefault("ai_config", {})["chatbot"] = {
+        "provider": "openai",
+        "model": "gpt-4o-mini",
+        "credential_id": "openai:llm:instance:missing",
+    }
+    config_path.write_text(yaml.safe_dump(config_data, sort_keys=False), encoding="utf-8")
+
+    current = client.get("/api/config/ai-routing", headers=headers)
+    assert current.status_code == 200, current.text
+    chat = next(item for item in current.json()["bindings"] if item["function_name"] == "chat")
+    assert chat["credential_error"]
+    saved = client.post(
+        "/api/config/ai-routing",
+        json={
+            "bindings": [
+                {
+                    "function_name": "chat",
+                    "provider": chat["provider"],
+                    "model": chat["model"],
+                }
+            ]
+        },
+        headers=headers,
+    )
+    assert saved.status_code == 200, saved.text
+    written = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    assert written["ai_config"]["chatbot"]["credential_id"] == "openai:llm:instance:missing"
+
+    cleared = client.post(
+        "/api/config/ai-routing",
+        json={"bindings": [{"function_name": "chat", "credential_id": ""}]},
+        headers=headers,
+    )
+    assert cleared.status_code == 200, cleared.text
+    cleared_config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    assert "credential_id" not in cleared_config["ai_config"]["chatbot"]
+
+
+def test_ai_routing_roundtrip_resolves_legacy_llm_provider_alias(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _patch_available_models(monkeypatch)
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
+    headers = {"X-Auth-Token": seed["admin_token"]}
+    config_path = Path(os.environ["CONFIG_PATH"])
+    config_data = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    config_data.setdefault("ai_config", {})["chatbot"] = {
+        "provider": None,
+        "llm_provider": "deepseek",
+        "model": "deepseek-chat",
+        "credential_id": "deepseek:llm:instance:missing",
+    }
+    config_path.write_text(yaml.safe_dump(config_data, sort_keys=False), encoding="utf-8")
+
+    current = client.get("/api/config/ai-routing", headers=headers)
+    assert current.status_code == 200, current.text
+    chat = next(item for item in current.json()["bindings"] if item["function_name"] == "chat")
+    assert (chat["provider"], chat["model"]) == ("deepseek", "deepseek-chat")
+    assert chat["credential_error"]
+    saved = client.post(
+        "/api/config/ai-routing",
+        json={
+            "bindings": [
+                {"function_name": "chat", "provider": chat["provider"], "model": chat["model"]}
+            ]
+        },
+        headers=headers,
+    )
+    assert saved.status_code == 200, saved.text
+    unchanged = yaml.safe_load(config_path.read_text(encoding="utf-8"))["ai_config"]["chatbot"]
+    assert unchanged["provider"] is None
+    assert unchanged["llm_provider"] == "deepseek"
+    assert unchanged["model"] == "deepseek-chat"
+    assert unchanged["credential_id"] == "deepseek:llm:instance:missing"
+
+    changed = client.post(
+        "/api/config/ai-routing",
+        json={
+            "bindings": [{"function_name": "chat", "provider": "openai", "model": "gpt-4o-mini"}]
+        },
+        headers=headers,
+    )
+    assert changed.status_code == 200, changed.text
+    changed_config = yaml.safe_load(config_path.read_text(encoding="utf-8"))["ai_config"]["chatbot"]
+    assert changed_config["provider"] == "openai"
+    assert "credential_id" not in changed_config
+
+
+def test_ai_routing_roundtrip_preserves_existing_static_incompatible_model(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _patch_available_models(monkeypatch)
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
+    headers = {"X-Auth-Token": seed["admin_token"]}
+    config_path = Path(os.environ["CONFIG_PATH"])
+    config_data = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    config_data.setdefault("ai_config", {})["chatbot"] = {
+        "provider": "openai",
+        "model": "text-embedding-3-large",
+    }
+    config_path.write_text(yaml.safe_dump(config_data, sort_keys=False), encoding="utf-8")
+
+    current = client.get("/api/config/ai-routing", headers=headers)
+    assert current.status_code == 200, current.text
+    chat = next(item for item in current.json()["bindings"] if item["function_name"] == "chat")
+    assert (chat["provider"], chat["model"]) == ("openai", "text-embedding-3-large")
+
+    unchanged = client.post(
+        "/api/config/ai-routing",
+        json={
+            "bindings": [
+                {"function_name": "chat", "provider": chat["provider"], "model": chat["model"]}
+            ]
+        },
+        headers=headers,
+    )
+    assert unchanged.status_code == 200, unchanged.text
+
+    changed = client.post(
+        "/api/config/ai-routing",
+        json={
+            "bindings": [
+                {"function_name": "chat", "provider": "openai", "model": "text-embedding-3-small"}
+            ]
+        },
+        headers=headers,
+    )
+    assert changed.status_code == 400, changed.text
+
+
+def test_ai_routing_default_roundtrip_does_not_materialize_missing_route(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _patch_available_models(monkeypatch)
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
+    headers = {"X-Auth-Token": seed["admin_token"]}
+    config_path = Path(os.environ["CONFIG_PATH"])
+    config_data = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    ai_config = config_data.setdefault("ai_config", {})
+    ai_config.pop("chatbot", None)
+    config_path.write_text(yaml.safe_dump(config_data, sort_keys=False), encoding="utf-8")
+
+    current = client.get("/api/config/ai-routing", headers=headers)
+    assert current.status_code == 200, current.text
+    chat = next(item for item in current.json()["bindings"] if item["function_name"] == "chat")
+    assert (chat["provider"], chat["model"]) == ("openai", "gpt-4-turbo")
+    saved = client.post(
+        "/api/config/ai-routing",
+        json={
+            "bindings": [
+                {"function_name": "chat", "provider": chat["provider"], "model": chat["model"]}
+            ]
+        },
+        headers=headers,
+    )
+    assert saved.status_code == 200, saved.text
+    written = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    assert "chatbot" not in written["ai_config"]
+
+
+def test_ai_routing_roundtrip_matches_runtime_defaults_for_empty_fields(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _patch_available_models(monkeypatch)
+    client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
+    headers = {"X-Auth-Token": seed["admin_token"]}
+    create_kb = client.post(
+        "/api/rag/knowledge-bases",
+        json={"kb_id": "kb-noop-route", "name": "No-op route", "kb_mode": "manual"},
+        headers=headers,
+    )
+    assert create_kb.status_code == 201, create_kb.text
+    storage = Storage(str(app.state.db_path))
+    try:
+        storage._conn.execute(
+            "UPDATE rag_knowledge_bases SET chunk_count = 1 WHERE kb_id = ?",
+            ("kb-noop-route",),
+        )
+        storage._conn.commit()
+    finally:
+        storage.close()
+
+    config_path = Path(os.environ["CONFIG_PATH"])
+    config_data = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    config_data.setdefault("ai_config", {})["chatbot"] = {
+        "provider": None,
+        "model": None,
+        "credential_id": "openai:llm:instance:missing",
+    }
+    config_data["ai_config"]["embeddings"] = {
+        "provider": "",
+        "model": "",
+        "batch_size": 7,
+        "similarity_threshold": 0.03,
+    }
+    config_path.write_text(yaml.safe_dump(config_data, sort_keys=False), encoding="utf-8")
+
+    current = client.get("/api/config/ai-routing", headers=headers)
+    assert current.status_code == 200, current.text
+    bindings = {item["function_name"]: item for item in current.json()["bindings"]}
+    assert (bindings["chat"]["provider"], bindings["chat"]["model"]) == (
+        "openai",
+        "gpt-4-turbo",
+    )
+    assert bindings["chat"]["credential_error"]
+    assert (bindings["embeddings"]["provider"], bindings["embeddings"]["model"]) == (
+        "openai",
+        "text-embedding-3-large",
+    )
+
+    saved = client.post(
+        "/api/config/ai-routing",
+        json={
+            "bindings": [
+                {
+                    "function_name": function_name,
+                    "provider": bindings[function_name]["provider"],
+                    "model": bindings[function_name]["model"],
+                }
+                for function_name in ("chat", "embeddings")
+            ]
+        },
+        headers=headers,
+    )
+    assert saved.status_code == 200, saved.text
+    assert saved.json().get("rebuild_required") is not True
+    written = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    assert written["ai_config"]["chatbot"]["provider"] is None
+    assert written["ai_config"]["chatbot"]["model"] is None
+    assert written["ai_config"]["chatbot"]["credential_id"] == "openai:llm:instance:missing"
+    assert written["ai_config"]["embeddings"]["provider"] == ""
+    assert written["ai_config"]["embeddings"]["model"] == ""
+    assert written["ai_config"]["embeddings"]["batch_size"] == 7
+    assert written["ai_config"]["embeddings"]["similarity_threshold"] == 0.03
+
+
 def test_scheduled_tasks_write_and_schedule_reinit_roundtrip(tmp_path: Path, monkeypatch) -> None:
     _patch_available_models(monkeypatch)
     client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)

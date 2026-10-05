@@ -5071,3 +5071,75 @@
   `95c52029ee0fc85bc04f4001a04ef94224918db7`; all six required checks passed
   on that head and all four inline review threads are resolved. F2-F5 were not
   implemented. Merge is pending final head verification.
+
+# Issue #313 no-op Settings save preflight — 2026-10-05
+
+- On `codex/issue-313-noop-save` in the managed Issue #313 worktree. Only this
+  repository was accessed; sibling repositories, production writes/deployments,
+  production credentials/data, and cleanup of backups were out of scope.
+- `update_ai_models_config` now loads model discovery only when a submitted
+  provider/model differs from its saved value. Unchanged legacy models can
+  round-trip during discovery outages; changed routes retain discovery checks.
+  Settings omits `credential_id` on a no-op edit when the saved credential has
+  `credential_error`, while an explicit empty string still clears it. Weekly
+  route inheritance and prompt/runtime settings are unchanged.
+- Focused Python validation passed: `python -m pytest
+  tests/test_fastapi_ops_write_endpoints.py tests/test_issue_267_weekly_explanations.py
+  tests/test_settings_react_source.py --no-cov -q` (66 passed). Focused Settings
+  Vitest passed (19 tests), `npm run typecheck`, focused ESLint, Black, isort,
+  and `git diff --check` passed. `npm ci --no-audit --no-fund` was used to
+  install locked dependencies in this worktree because node_modules was absent.
+- Implementation remains uncommitted for independent fresh review. No PR,
+  production operation, or production data access occurred.
+
+- Follow-up review added the effective-default route case: when persisted
+  `provider`/`model` are absent, the legacy GET defaults round-trip without model
+  discovery and without materializing those fields. The Python focused suite was
+  rerun after this fix: 67 passed across ops write endpoints, Weekly explanation
+  behavior, and Settings source guards. Black, isort, and `git diff --check` pass.
+
+- Follow-up: `/api/config/ai-routing` now runs static model capability validation
+  only when the effective provider or model changes. It uses route defaults for
+  comparison and preserves missing route sections on a no-op save. Regressions
+  prove an existing Chat route using an embeddings-only model can round-trip,
+  changing it to another incompatible model still returns 400, and default
+  routes stay unmaterialized. Final focused Python suite: 69 passed; Black,
+  isort, and `git diff --check` passed.
+
+- Fresh-review fixes: AI routing comparison now treats explicit `null`/empty
+  provider/model fields as the runtime GET defaults, preserving an unresolved
+  credential ID on a no-op round-trip and avoiding a false indexed-embeddings
+  rebuild. Settings now shows routes with `credential_error` even when
+  `configured` is false; unchanged save omits the unresolved ID. Regressions
+  cover real GET→POST for Chat null fields and Embeddings empty fields with an
+  indexed KB, as well as the configured-false UI row/edit/save flow. Final
+  focused validation: Python suite 70 passed, Settings Vitest 19 passed,
+  TypeScript and focused ESLint passed; Black/isort/diff checks passed.
+
+- Second Sol review follow-up: TypeSafe Jev adjudicated the credential-default
+  round-trip finding as `fix` (P(fix)=0.97, confidence 0.96). Settings now uses
+  existing `raw_config` presence to distinguish an explicit credential from a
+  provider's resolved default. No-op and model-only edits omit inherited
+  credentials; explicit selection sends the ID and explicit clearing sends an
+  empty string. The configured-false credential-error route remains visible and
+  editable. Added Vitest coverage for omission, explicit selection, explicit
+  clearing, and unresolved route editing. Final checks: Python focused suite
+  70 passed; Settings Vitest 22 passed; typecheck, focused ESLint, Black,
+  isort, and `git diff --check` passed.
+
+- Third fresh-review scope decision: Jev chose `reject_scope` (probability 0.99,
+  confidence 0.98) for clearing legacy `provider_credential_id`. That behavior is
+  outside Issue #313's no-op round-trip and credential-preservation acceptance
+  criteria and predates this change, so no code was broadened.
+
+- Canary-precondition scope decision: Jev chose `synthetic_canary` (probability
+  0.97, confidence 0.96). Keep the UI change out of scope; if a browser canary
+  route is hidden, use only an isolated canary DB with a synthetic default
+  provider credential matching the copied route identity, a fake secret, and
+  network egress disabled. Never copy the production credential DB.
+
+- Follow-up: Jev selected `fix` for the legacy chatbot `llm_provider` no-op drift
+  (probability/confidence 1.00). `update_ai_routing` now compares against the
+  existing runtime resolver, preserving unresolved credential identity when a
+  GET-resolved DeepSeek route is posted unchanged. Changed provider behavior is
+  covered and remains active. The focused Python suite passed (71 tests).

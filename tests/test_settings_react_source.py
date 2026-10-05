@@ -21,7 +21,8 @@ def test_settings_model_routing_does_not_round_trip_failed_credentials():
 
     assert "function credentialUsable" in src
     assert "credential.decrypt_ok === false" in src
-    assert 'routing[functionName]?.credential_error ? ""' in src
+    assert "hasExplicitCredential" in src
+    assert "!current?.credential_error && hasExplicitCredential" in src
     assert "credentialUsable(credential)" in src
 
 
