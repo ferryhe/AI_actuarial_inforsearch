@@ -29,6 +29,7 @@ from ai_actuarial.ai_runtime import (
     build_embedding_fingerprint,
     build_model_discovery_credentials,
     build_stable_credential_id,
+    get_ai_function_section,
     get_ai_routing,
     is_catalog_provider_supported,
     is_chat_provider_supported,
@@ -1311,20 +1312,19 @@ def update_ai_models_config(
     config_data = _load_config_data()
     config_data.setdefault("ai_config", {})
     previous_embeddings = dict(config_data["ai_config"].get("embeddings") or {})
-    storage = Storage(db_path)
-    try:
-        provider_credentials = build_model_discovery_credentials(storage=storage)
-    finally:
-        storage.close()
-    available_models_map = llm_models.get_available_models(
-        provider_credentials=provider_credentials
-    )
+    available_models_map: dict[str, list[dict[str, Any]]] | None = None
 
     for function in ["catalog", "embeddings", "chatbot", "weekly_explanation", "ocr"]:
         func_cfg = payload.get(function)
         if not isinstance(func_cfg, dict):
             continue
         config_data["ai_config"].setdefault(function, {})
+        current_cfg = config_data["ai_config"][function]
+        defaults = DEFAULT_AI_FUNCTION_CONFIG.get(function, {})
+        current_provider = (
+            str(current_cfg.get("provider", defaults.get("provider")) or "").strip().lower()
+        )
+        current_model = str(current_cfg.get("model", defaults.get("model")) or "").strip()
 
         if function == "weekly_explanation":
             forbidden_fields = WEEKLY_EXPLANATION_ROUTE_FIELDS.intersection(func_cfg)
@@ -1340,28 +1340,44 @@ def update_ai_models_config(
                 raise OpsWriteError(
                     f"Invalid provider '{provider}' for function '{function}'. Supported providers: {sorted(AI_SUPPORTED_PROVIDERS)}"
                 )
-            config_data["ai_config"][function]["provider"] = provider
+            if provider != current_provider:
+                current_cfg["provider"] = provider
 
         if "model" in func_cfg:
             model = str(func_cfg.get("model") or "").strip()
             if not model:
                 raise OpsWriteError(f"Model for function '{function}' must be a non-empty string.")
-            provider = str(config_data["ai_config"][function].get("provider") or "").strip().lower()
-            provider_models = available_models_map.get(provider, [])
-            compatible_models = [
-                item for item in provider_models if function in (item.get("types") or [])
-            ]
-            valid_model_names = [
-                str(item.get("name") or "")
-                for item in compatible_models
-                if str(item.get("name") or "")
-            ]
-            if valid_model_names and model not in valid_model_names:
-                raise OpsWriteError(
-                    f"Model '{model}' is not compatible with function '{function}' "
-                    f"for provider '{provider}'. Valid models: {valid_model_names}"
-                )
-            config_data["ai_config"][function]["model"] = model
+            provider = (
+                str(current_cfg.get("provider", defaults.get("provider")) or "").strip().lower()
+            )
+            provider_changed = provider != current_provider
+            model_changed = model != current_model
+            if provider_changed or model_changed:
+                if available_models_map is None:
+                    storage = Storage(db_path)
+                    try:
+                        provider_credentials = build_model_discovery_credentials(storage=storage)
+                    finally:
+                        storage.close()
+                    available_models_map = llm_models.get_available_models(
+                        provider_credentials=provider_credentials
+                    )
+                provider_models = available_models_map.get(provider, [])
+                compatible_models = [
+                    item for item in provider_models if function in (item.get("types") or [])
+                ]
+                valid_model_names = [
+                    str(item.get("name") or "")
+                    for item in compatible_models
+                    if str(item.get("name") or "")
+                ]
+                if valid_model_names and model not in valid_model_names:
+                    raise OpsWriteError(
+                        f"Model '{model}' is not compatible with function '{function}' "
+                        f"for provider '{provider}'. Valid models: {valid_model_names}"
+                    )
+            if provider_changed or model_changed:
+                current_cfg["model"] = model
 
         if function == "catalog" and "system_prompt" in func_cfg:
             system_prompt = func_cfg.get("system_prompt")
@@ -1869,8 +1885,9 @@ def update_ai_routing(
         section = config_data["ai_config"].get(section_name) or {}
         if not isinstance(section, dict):
             section = {}
-        old_provider = str(section.get("provider") or "").strip().lower()
-        old_model = str(section.get("model") or "").strip()
+        effective_section = get_ai_function_section(section_name, yaml_config=config_data)
+        old_provider = str(effective_section.get("provider") or "").strip().lower()
+        old_model = str(effective_section.get("model") or "").strip()
         provider_norm = old_provider
         provider = item.get("provider")
         provider_changed = False
@@ -1902,7 +1919,8 @@ def update_ai_routing(
                     f"Provider '{provider_norm}' does not support embeddings binding"
                 )
             provider_changed = provider_norm != old_provider
-            section["provider"] = provider_norm
+            if provider_changed:
+                section["provider"] = provider_norm
             if provider_changed:
                 section.pop("credential_id", None)
         if binding_name == "embeddings" and provider_changed and "model" not in item:
@@ -1949,9 +1967,10 @@ def update_ai_routing(
             model = str(item.get("model") or "").strip()
             if not model:
                 raise OpsWriteError(f"Model for binding '{binding_name}' must be non-empty")
-            _validate_ai_routing_model(binding_name, provider_norm, model)
             model_changed = model != old_model
-            section["model"] = model
+            if provider_changed or model_changed:
+                _validate_ai_routing_model(binding_name, provider_norm, model)
+                section["model"] = model
         if binding_name == "embeddings" and (provider_changed or model_changed):
             model = str(section.get("model") or "").strip()
             defaults = get_embedding_model_defaults(provider_norm, model)
@@ -1976,7 +1995,8 @@ def update_ai_routing(
             for field in ["temperature", "max_tokens", "timeout_seconds"]:
                 if field in item and item.get(field) not in (None, ""):
                     section[field] = item.get(field)
-        config_data["ai_config"][section_name] = section
+        if section or section_name in config_data["ai_config"]:
+            config_data["ai_config"][section_name] = section
 
     _write_config_data(config_data)
     _notify_site_config_updated(bridge, config_data)
