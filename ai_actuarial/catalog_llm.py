@@ -12,6 +12,7 @@ from ai_actuarial.ai_runtime import (
     is_catalog_provider_supported,
     resolve_ai_function_runtime,
 )
+from ai_actuarial.openai_capabilities import is_openai_gpt6_model
 
 from .catalog import CATEGORY_RULES
 
@@ -21,7 +22,9 @@ logger = logging.getLogger(__name__)
 def _uses_default_temperature_only(provider: str | None, model: str | None) -> bool:
     provider_norm = str(provider or "").strip().lower()
     model_norm = str(model or "").strip().lower().split("/")[-1]
-    return provider_norm in {"openai", "azure_openai"} and model_norm.startswith("gpt-5")
+    return provider_norm in {"openai", "azure_openai"} and (
+        model_norm.startswith("gpt-5") or is_openai_gpt6_model(provider, model)
+    )
 
 
 @dataclass(frozen=True)

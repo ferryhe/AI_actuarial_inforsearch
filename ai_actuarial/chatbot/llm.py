@@ -21,6 +21,7 @@ from ai_actuarial.chatbot.exceptions import (
     LLMUpstreamError,
 )
 from ai_actuarial.chatbot.prompts import build_full_prompt
+from ai_actuarial.openai_capabilities import is_openai_gpt6_model
 
 logger = logging.getLogger(__name__)
 
@@ -73,9 +74,11 @@ def _uses_max_completion_tokens(provider: str | None, model: str | None) -> bool
     if provider_norm not in {"openai", "azure_openai"}:
         return False
     model_norm = str(model or "").strip().lower().split("/")[-1]
-    return model_norm.startswith(
-        _OPENAI_MAX_COMPLETION_TOKENS_PREFIXES
-    ) or _is_explicit_azure_gpt5_deployment(provider, model)
+    return (
+        model_norm.startswith(_OPENAI_MAX_COMPLETION_TOKENS_PREFIXES)
+        or _is_explicit_azure_gpt5_deployment(provider, model)
+        or is_openai_gpt6_model(provider, model)
+    )
 
 
 def _uses_default_temperature_only(provider: str | None, model: str | None) -> bool:
@@ -83,13 +86,17 @@ def _uses_default_temperature_only(provider: str | None, model: str | None) -> b
     provider_norm = str(provider or "").strip().lower()
     model_norm = str(model or "").strip().lower().split("/")[-1]
     return provider_norm in {"openai", "azure_openai"} and (
-        model_norm.startswith("gpt-5") or _is_explicit_azure_gpt5_deployment(provider, model)
+        model_norm.startswith("gpt-5")
+        or _is_explicit_azure_gpt5_deployment(provider, model)
+        or is_openai_gpt6_model(provider, model)
     )
 
 
 def _supports_reasoning_effort(provider: str | None, model: str | None) -> bool:
     """Return True when recovery may safely send the reasoning_effort parameter."""
-    return _uses_max_completion_tokens(provider, model)
+    return _uses_max_completion_tokens(provider, model) and not is_openai_gpt6_model(
+        provider, model
+    )
 
 
 def _matches_known_model(

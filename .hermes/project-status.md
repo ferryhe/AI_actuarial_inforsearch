@@ -1,3 +1,21 @@
+# Latest work — PR #405 CI formatting repair — 2026-10-06 EDT
+
+- Project: `AI_actuarial_inforsearch`; branch: `fix/gpt6-parameter-compat`.
+  Scope is the existing PR's CI failure; sibling repositories are off-limits.
+- Failed run `37496604567` passed 2,402 Python tests (one skipped). Its only
+  gate failures were Black formatting in `catalog_llm.py`, `chatbot/llm.py`,
+  and `openai_capabilities.py`, plus isort spacing in the last file.
+- Simple repair: ran the CI-pinned Black 26.3.1 and isort 8.0.1 on those three
+  files. Their Python ASTs are identical before and after formatting.
+- Verification passed: all 128 existing GPT-6/chatbot/catalog/Weekly/recovery
+  regression tests; repository-wide Black/isort scans (zero violations and
+  zero baseline differences); changed-file Pylint errors-only; diff check.
+- Publish this repair to PR #405, then verify all six checks on its new head.
+  The existing Copilot docstring suggestion is nonblocking and outside this
+  CI-only repair. No merge or deployment is authorized by this task.
+- Existing unrelated untracked directories remain: `.codex-tmp-agentic-rag/`,
+  `.hermes/research/`, `diagrams/`, and `graphify-out/`.
+
 # Latest work — Issue #350 knowledge-base list pagination
 
 - Updated: 2026-10-04 EDT. Repository: AI_actuarial_inforsearch; branch:
