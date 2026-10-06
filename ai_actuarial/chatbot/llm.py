@@ -74,10 +74,10 @@ def _uses_max_completion_tokens(provider: str | None, model: str | None) -> bool
     if provider_norm not in {"openai", "azure_openai"}:
         return False
     model_norm = str(model or "").strip().lower().split("/")[-1]
-    return model_norm.startswith(
-        _OPENAI_MAX_COMPLETION_TOKENS_PREFIXES
-    ) or _is_explicit_azure_gpt5_deployment(provider, model) or is_openai_gpt6_model(
-        provider, model
+    return (
+        model_norm.startswith(_OPENAI_MAX_COMPLETION_TOKENS_PREFIXES)
+        or _is_explicit_azure_gpt5_deployment(provider, model)
+        or is_openai_gpt6_model(provider, model)
     )
 
 

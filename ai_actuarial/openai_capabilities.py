@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import re
 
-
 _OPENAI_PROVIDERS = {"openai", "azure_openai"}
 _GPT6_NAME = re.compile(r"^gpt-6(?:$|[.-])")
 _AZURE_GPT6_DEPLOYMENT = re.compile(r"(?:^|-)gpt-6(?:$|[.-])")
