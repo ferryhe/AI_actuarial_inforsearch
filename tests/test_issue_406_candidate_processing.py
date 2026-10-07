@@ -85,11 +85,11 @@ def _run_mock_catalog(
         category_filter=category_filter,
         skip_existing=False,
         max_workers=1,
-        progress_callback=(lambda current, total, message: progress.append(
-            (current, total, message)
-        ))
-        if progress is not None
-        else None,
+        progress_callback=(
+            (lambda current, total, message: progress.append((current, total, message)))
+            if progress is not None
+            else None
+        ),
     )
     stats["calls"] = calls
     return stats
@@ -150,9 +150,7 @@ def test_catalog_exhaustion_reports_actual_checked_success_failed_and_skipped_co
         monkeypatch,
         urls,
         lambda index: (
-            "skipped"
-            if index >= 70
-            else ("error:catalog_failed" if index >= 50 else "ok")
+            "skipped" if index >= 70 else ("error:catalog_failed" if index >= 50 else "ok")
         ),
         limit=100,
         progress=progress,
@@ -200,9 +198,7 @@ def test_catalog_stop_mid_batch_counts_only_consumed_outcomes(tmp_path: Path, mo
     assert stats["scanned"] == stats["processed"] + stats["errors"] + stats["skipped_ai"]
 
 
-def test_catalog_candidate_start_is_relative_to_candidate_list(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_catalog_candidate_start_is_relative_to_candidate_list(tmp_path: Path, monkeypatch) -> None:
     db_path = tmp_path / "catalog-offset.db"
     urls = _seed_files(db_path, 30)
     stats = _run_mock_catalog(
@@ -349,9 +345,7 @@ def test_markdown_stats_and_execution_use_filtered_candidate_positions(
             lambda: {"limits": {"default_scan_count": 50, "max_scan_count": 100}},
         )
         candidates = runtime._markdown_candidate_files(storage, {"scan_start_index": 1})
-        past_candidates = runtime._markdown_candidate_files(
-            storage, {"scan_start_index": 2}
-        )
+        past_candidates = runtime._markdown_candidate_files(storage, {"scan_start_index": 2})
     finally:
         storage.close()
 
@@ -398,6 +392,7 @@ def test_catalog_final_task_preserves_success_progress_and_safe_parameters(
             items_found=80,
             items_downloaded=50,
             items_skipped=10,
+            errors=[],
             metadata={
                 "catalog_scanned": 80,
                 "catalog_ok": 50,

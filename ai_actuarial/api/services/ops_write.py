@@ -2613,7 +2613,9 @@ def get_catalog_stats(
         )
         should_retry_errors = coerce_bool(retry_errors, default=False)
         catalog_version = f"{base_catalog_version}:{selected_provider}:{selected_input_source}"
-        candidates_where = "f.local_path IS NOT NULL AND f.local_path != '' AND f.deleted_at IS NULL"
+        candidates_where = (
+            "f.local_path IS NOT NULL AND f.local_path != '' AND f.deleted_at IS NULL"
+        )
         candidate_params: list[Any] = []
         if use_skip_existing:
             candidates_where += " AND " + _catalog_candidate_predicate(

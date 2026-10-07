@@ -241,11 +241,7 @@ def _fetch_candidates(
     """
     cur = conn.execute(
         sql,
-        candidate_params
-        + params
-        + seen_params
-        + start_params
-        + [batch, max(0, int(offset or 0))],
+        candidate_params + params + seen_params + start_params + [batch, max(0, int(offset or 0))],
     )
     return list(cur.fetchall())
 
@@ -1128,6 +1124,7 @@ def run_catalog_for_urls(
             ordered_rows.append(r)
         else:
             stats["errors"] += 1
+            stats["scanned"] += 1
             if len(stats["error_samples"]) < 20:
                 stats["error_samples"].append("file_not_found")
             stats["missing_files"] += 1
@@ -1152,10 +1149,12 @@ def run_catalog_for_urls(
         )
 
     candidates = [r for r in ordered_rows if is_candidate(r)]
-    stats["scanned"] = len(candidates)
+    progress_total = max(len(candidates) + stats["scanned"], 1)
 
     if progress_callback:
-        progress_callback(0, max(len(candidates), 1), f"Catalog candidates: {len(candidates)}")
+        progress_callback(
+            stats["scanned"], progress_total, f"Catalog candidates: {len(candidates)}"
+        )
 
     batch_items: list[CatalogItem] = []
     batch_jsonl: list[dict] = []
@@ -1198,6 +1197,7 @@ def run_catalog_for_urls(
                 shutdown_without_wait = True
                 break
             url = future_to_url[future]
+            stats["scanned"] += 1
             try:
                 r_data, item, status, suggested_title = future.result()
                 processed_at = datetime.now(timezone.utc).isoformat()
@@ -1248,11 +1248,10 @@ def run_catalog_for_urls(
                         storage=storage,
                     )
                 if progress_callback:
-                    completed = stats["processed"] + stats["skipped_ai"] + stats["errors"]
                     progress_callback(
-                        completed,
-                        max(len(candidates), completed, 1),
-                        f"Cataloging {completed}/{max(len(candidates), 1)}",
+                        stats["scanned"],
+                        progress_total,
+                        f"Cataloging {stats['scanned']}/{progress_total}",
                     )
             except Exception:
                 logger.error("Catalog worker failed: catalog_failed")
@@ -1273,11 +1272,10 @@ def run_catalog_for_urls(
 
     storage.close()
     if progress_callback:
-        completed = stats["processed"] + stats["skipped_ai"] + stats["errors"]
         if stats["stopped"]:
             progress_callback(
-                completed,
-                max(len(candidates), completed, 1),
+                stats["scanned"],
+                progress_total,
                 (
                     f"Catalog stopped: processed={stats['processed']} "
                     f"skipped={stats['skipped_ai']} errors={stats['errors']}"
@@ -1285,8 +1283,8 @@ def run_catalog_for_urls(
             )
             return stats
         progress_callback(
-            max(len(candidates), completed, 1),
-            max(len(candidates), completed, 1),
+            progress_total,
+            progress_total,
             f"Catalog finished: processed={stats['processed']} skipped={stats['skipped_ai']} errors={stats['errors']}",
         )
     return stats

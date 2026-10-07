@@ -1357,6 +1357,7 @@ class NativeTaskRuntime:
                     or None,
                     "output_language": str(data.get("output_language") or "auto").strip() or "auto",
                     "progress_callback": self._progress_callback(task_id),
+                    "stop_check": lambda: self._stop_requested(task_id),
                     "task_id": task_id,
                 }
                 file_urls = [
@@ -1392,6 +1393,7 @@ class NativeTaskRuntime:
                         "provider": provider,
                         "input_source": input_source,
                         "catalog_version": catalog_version,
+                        "stopped": bool(stats.get("stopped", False)),
                         "catalog_scanned": int(stats.get("scanned", 0)),
                         "catalog_ok": int(stats.get("processed", 0)),
                         "catalog_skipped": int(stats.get("skipped_ai", 0)),
@@ -3178,6 +3180,10 @@ class NativeTaskRuntime:
                 items_processed = result.items_downloaded
                 items_total = catalog_target
                 progress = min(100, int((items_processed / items_total) * 100))
+            elif stopped and collection_type == "catalog":
+                items_processed = int(task_data.get("items_processed") or 0)
+                items_total = int(task_data.get("items_total") or 0)
+                progress = int(task_data.get("progress") or 0)
             if stopped and collection_type == "embedding_generation":
                 items_processed = max(
                     0,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -58,8 +59,144 @@ def test_run_catalog_for_urls_respects_immediate_stop(tmp_path) -> None:
     )
 
     assert stats["stopped"] is True
+    assert stats["scanned"] == 0
     assert stats["processed"] == 0
     assert stats["written"] == 0
+
+
+def test_run_catalog_for_urls_counts_only_consumed_outcomes_when_stopped(
+    tmp_path, monkeypatch
+) -> None:
+    db_path = tmp_path / "catalog-midbatch-stop.db"
+    _seed_catalog_files(db_path, count=4)
+    stop_state = {"stop": False}
+
+    def fake_process(row, *_args, **_kwargs):
+        item = CatalogItem(
+            source_site=row["source_site"],
+            title=row["title"],
+            original_filename=row["original_filename"],
+            url=row["url"],
+            local_path=row["local_path"],
+            keywords=["ai"],
+            summary="summary",
+            category="AI",
+        )
+        return row, item, "ok", None
+
+    def progress(current, _total, _message):
+        if current >= 1:
+            stop_state["stop"] = True
+
+    monkeypatch.setattr("ai_actuarial.catalog_incremental._process_single_row", fake_process)
+    stats = run_catalog_for_urls(
+        db_path=str(db_path),
+        file_urls=[f"https://example.com/catalog-stop-{idx}.pdf" for idx in range(4)],
+        out_jsonl=tmp_path / "catalog.jsonl",
+        out_md=tmp_path / "catalog.md",
+        max_workers=1,
+        skip_existing=False,
+        stop_check=lambda: stop_state["stop"],
+        progress_callback=progress,
+    )
+
+    assert stats["stopped"] is True
+    assert stats["scanned"] == 1
+    assert stats["processed"] == 1
+
+
+def test_run_catalog_for_urls_counts_missing_urls_as_checked_failures(tmp_path) -> None:
+    db_path = tmp_path / "catalog-missing-stop.db"
+    existing_url = _seed_catalog_files(db_path, count=1)[0]
+    storage = Storage(str(db_path))
+    try:
+        storage._conn.execute(
+            """
+            INSERT INTO catalog_items (
+                file_url, file_sha256, sha256, catalog_version, pipeline_version, summary, status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (existing_url, "sha-0", "sha-0", "catalog_v1", "catalog_v1", "Existing", "ok"),
+        )
+        storage._conn.commit()
+    finally:
+        storage.close()
+
+    stats = run_catalog_for_urls(
+        db_path=str(db_path),
+        file_urls=[existing_url, "https://example.com/missing.pdf"],
+        out_jsonl=tmp_path / "catalog.jsonl",
+        out_md=tmp_path / "catalog.md",
+    )
+
+    assert stats["scanned"] == stats["errors"] == stats["missing_files"] == 1
+    assert stats["processed"] == 0
+
+
+@pytest.mark.parametrize(
+    ("explicit_urls", "progress", "stats", "expected_metrics"),
+    [
+        pytest.param(
+            True,
+            (1, 4, "Cataloging 1/4"),
+            {"scanned": 1, "processed": 1},
+            (1, 4, 25),
+            id="explicit-partial",
+        ),
+        pytest.param(
+            True,
+            (0, 4, "Catalog stopped"),
+            {"scanned": 0, "processed": 0},
+            (0, 4, 0),
+            id="explicit-immediate",
+        ),
+        pytest.param(
+            False,
+            (3, 10, "Cataloging 3/10"),
+            {"scanned": 4, "processed": 3, "target_successes": 10},
+            (3, 10, 30),
+            id="candidate-scan-target",
+        ),
+    ],
+)
+def test_native_catalog_runtime_propagates_stop_and_finalizes_stopped(
+    tmp_path, monkeypatch, explicit_urls, progress, stats, expected_metrics
+) -> None:
+    from ai_actuarial.task_runtime import NativeTaskRuntime
+
+    runtime = NativeTaskRuntime.__new__(NativeTaskRuntime)
+    runtime.task_lock = threading.RLock()
+    runtime.active_tasks = {"catalog-stop": {"stop_requested": True}}
+    runtime.task_history = []
+    runtime._append_history_to_disk = lambda _task: None
+    runtime._load_site_config = lambda: {
+        "paths": {
+            "db": str(tmp_path / "runtime-catalog-stop.db"),
+            "download_dir": str(tmp_path / "files"),
+            "updates_dir": str(tmp_path / "updates"),
+        }
+    }
+    monkeypatch.setattr("ai_actuarial.task_runtime.append_task_log", lambda *_args: None)
+    target = (
+        "ai_actuarial.task_runtime.run_catalog_for_urls"
+        if explicit_urls
+        else "ai_actuarial.task_runtime.run_incremental_catalog"
+    )
+
+    def fake_run(**kwargs):
+        assert kwargs["stop_check"]() is True
+        kwargs["progress_callback"](*progress)
+        return {"skipped_ai": 0, "errors": 0, "stopped": True, **stats}
+
+    with patch(target, side_effect=fake_run):
+        data = {"file_urls": ["https://example.com/a.pdf"]} if explicit_urls else {"scan_count": 10}
+        result = runtime._run_collection("catalog-stop", "catalog", data)
+        runtime._finalize_task_success("catalog-stop", "catalog", result)
+
+    assert result.metadata["stopped"] is True
+    task = runtime.task_history[-1]
+    assert task["status"] == "stopped"
+    assert (task["items_processed"], task["items_total"], task["progress"]) == expected_metrics
 
 
 def test_run_incremental_catalog_flushes_partial_batch_before_stop(tmp_path) -> None:

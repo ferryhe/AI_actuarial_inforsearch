@@ -1,3 +1,46 @@
+# Latest work — PR #409/#410 completion repairs — 2026-10-07 UTC
+
+- Project: `AI_actuarial_inforsearch`; branch: `codex/fix-comments-from-review-thread`;
+  isolated checkout: `.codex-worktrees/pr-410`. Continue the existing stacked PRs
+  from #410 head `ff4215f`; no duplicate PR or sibling-repository work.
+  The user authorized repair and the order #410 into #409's branch, then #409
+  into main. Branch deletion, deployment, and unrelated cleanup are excluded.
+- Selected a simple Luna/medium worker for the reproduced missing `errors=[]`
+  test fixture and four CI-pinned Black 26.3.1 format violations. The formatting
+  preserves Python ASTs; no quality baseline or dependency lockfile changed.
+- Catalog tasks pass the existing stop callback to both execution paths and
+  preserve stopped metadata. Explicit-file runs count consumed outcomes and
+  classified missing-URL failures; candidate-prefilter exclusions remain
+  uncounted. Stopped runs without a success target retain callback progress,
+  including 1/4 at 25 percent and 0/4 at zero percent. Target-based scans retain
+  their successful-outcome calculations. No framework was added.
+- Current focused verification: all 91 Python cases pass across Issue #406,
+  task React source, task metrics, and task-stop/nonregression suites. Black,
+  isort, Pylint errors-only, and diff check pass on the six touched Python files.
+  TaskMetrics Vitest, frontend typecheck/build, and ESLint pass (zero errors;
+  four existing Hook warnings and the existing build chunk-size advisory).
+- Real Chromium smoke against the local built UI and mock API passes: category
+  Insurance survives skip/overwrite/retry changes; start is 1 and target 100;
+  actual checked/success/failure/skip metrics are 80/50/20/10 with an error label.
+  No production requests or writes occurred.
+- Fresh independent Sol/high final review is PASS with no accepted findings.
+  Two earlier completed local cycles produced the AC7 repairs. TypeSafe
+  jev-latest selected repair_then_review (0.98; confidence 0.97), then confirmed
+  rejection of a retracted historical-row claim as scope expansion (1.0).
+  Evidence is in ignored root `reports/pr409410/`; implementation stayed with
+  the original Luna/medium worker. No review or CI gate was bypassed.
+- The broader Windows quality gate also passed: 2,404 tests passed, 11 skipped,
+  and no Black/isort/Pylint baseline differences. Its test process began before
+  the final cancellation-progress repair; the final behavior is covered by the
+  91 focused tests and must receive full GitHub Linux CI before merge.
+- Next: commit/push this repair to #410 and require all six GitHub checks before
+  each authorized merge. The
+  earlier Windows sandbox FAISS/Vitest errors were environment failures; the
+  final head must still receive GitHub's full Linux validation.
+- Root checkout remains on `fix/gpt6-parameter-compat` with its uncommitted
+  advisory status entry and four existing untracked directories preserved:
+  `.codex-tmp-agentic-rag/`, `.hermes/research/`, `diagrams/`, `graphify-out/`.
+
 # Latest work — PR #409 review-thread fixes — 2026-10-07 UTC
 
 - Project: `AI_actuarial_inforsearch`; branch: `codex/fix-comments-from-review-thread`.
