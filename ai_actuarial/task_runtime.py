@@ -839,16 +839,27 @@ class NativeTaskRuntime:
                     scan_count = max(0, int(data["scan_count"]))
                 except (TypeError, ValueError):
                     pass
-            if collection_type == "catalog" and scan_count is None:
+            explicit_file_urls = (
+                [
+                    str(file_url).strip()
+                    for file_url in list(data.get("file_urls") or [])
+                    if str(file_url).strip()
+                ]
+                if collection_type == "catalog"
+                else []
+            )
+            if collection_type == "catalog" and scan_count is None and not explicit_file_urls:
                 scan_count = 100
             scope_mode = (
                 "category" if str(data.get("scope_mode") or "").lower() == "category" else "index"
             )
+            overwrite_existing = bool(data.get("overwrite_existing", False))
+            skip_existing = bool(data.get("skip_existing", True)) and not overwrite_existing
             parameters: dict[str, Any] = {
                 "scope_mode": scope_mode,
                 "scan_start_index": start_index,
-                "skip_existing": bool(data.get("skip_existing", True)),
-                "overwrite_existing": bool(data.get("overwrite_existing", False)),
+                "skip_existing": skip_existing,
+                "overwrite_existing": overwrite_existing,
             }
             if scan_count is not None:
                 parameters["scan_count"] = scan_count
@@ -856,7 +867,8 @@ class NativeTaskRuntime:
             if category:
                 parameters["category"] = category
             if collection_type == "catalog":
-                parameters["target_successes"] = scan_count
+                if scan_count is not None and not explicit_file_urls:
+                    parameters["target_successes"] = scan_count
                 parameters["input_source"] = (
                     "source"
                     if str(data.get("input_source") or "markdown").lower() == "source"

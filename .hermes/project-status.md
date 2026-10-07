@@ -1,3 +1,25 @@
+# Latest work — PR #409 review-thread fixes — 2026-10-07 UTC
+
+- Project: `AI_actuarial_inforsearch`; branch: `codex/fix-comments-from-review-thread`.
+  Scope is PR #409 review `pullrequestreview-5449172841` only; sibling repositories
+  remain off-limits.
+- Applied all five requested fixes from that review thread only:
+  checked/scanned accounting now advances per consumed worker outcome; catalog
+  parameter persistence omits synthetic scan target for explicit `file_urls` runs
+  and stores effective `skip_existing`; catalog failure count now renders as
+  `errors` in Task metrics; and Catalog form stats reload keeps active category
+  scope when option toggles retrigger loading.
+- Added focused regression coverage for stop-mid-batch consumed-outcome accounting
+  and explicit-file catalog parameter persistence, plus source/runtime assertions
+  for metrics label and category-scoped stats reload wiring.
+- Validation in this runner:
+  `python -m compileall ai_actuarial/catalog_incremental.py ai_actuarial/task_runtime.py` PASS,
+  `npm exec -- vitest run client/src/pages/tasks/TaskMetrics.test.tsx` PASS,
+  `git diff --check` PASS.
+  `python -m pytest ...` could not run because `pytest` is not installed in this environment.
+- `npm ci --no-audit --no-fund` installed locked dependencies only (no manifest/lockfile edits).
+  No production actions, deployments, or cross-repository changes were made.
+
 # Latest work — Issue #406 catalog candidate processing — 2026-10-07 UTC
 
 - Project: `AI_actuarial_inforsearch`; branch: `copilot/bugfix-unify-batch-processing`.

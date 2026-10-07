@@ -796,9 +796,9 @@ def run_incremental_catalog(
             stats["candidate_exhausted"] = True
             break
 
-        stats["scanned"] += len(rows)
         batch_items: list[CatalogItem] = []
         batch_jsonl: list[dict] = []
+        scanned_this_batch = 0
 
         # Convert sqlite rows to dicts for thread safety (sqlite3.Row might bind to thread?)
         row_dicts = [dict(r) for r in rows]
@@ -849,6 +849,8 @@ def run_incremental_catalog(
                     shutdown_without_wait = True
                     break
                 url = future_to_url[future]
+                stats["scanned"] += 1
+                scanned_this_batch += 1
                 try:
                     r_data, item, status, suggested_title = future.result()
                     processed_at = datetime.now(timezone.utc).isoformat()
@@ -960,7 +962,7 @@ def run_incremental_catalog(
 
         logger.info(
             "Batch done: scanned=%d processed=%d written=%d skipped_ai=%d errors=%d missing=%d",
-            len(rows),
+            scanned_this_batch,
             stats["processed"],
             stats["written"],
             stats["skipped_ai"],

@@ -56,7 +56,9 @@ export function CatalogForm({
     finally { setStatsLoading(false); }
   }, [inputSource, overwriteExisting, retryErrors, skipExisting]);
 
-  useEffect(() => { loadStats(); }, [loadStats]);
+  useEffect(() => {
+    loadStats(scopeMode === "category" ? category.trim() || undefined : undefined);
+  }, [category, loadStats, scopeMode]);
 
   useEffect(() => {
     if (!settingsMode && stats && startIndex === "1") {

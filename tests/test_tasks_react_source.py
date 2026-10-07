@@ -437,6 +437,7 @@ def test_catalog_pipeline_settings_can_save_without_provider_discovery():
     assert 'params.set("skip_existing", String(skipExisting))' in src
     assert 'params.set("overwrite_existing", String(overwriteExisting))' in src
     assert 'params.set("retry_errors", String(retryErrors))' in src
+    assert 'loadStats(scopeMode === "category" ? category.trim() || undefined : undefined);' in src
 
 
 def test_markdown_form_start_index_uses_first_filtered_candidate():

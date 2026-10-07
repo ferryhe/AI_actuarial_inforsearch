@@ -168,6 +168,38 @@ def test_catalog_exhaustion_reports_actual_checked_success_failed_and_skipped_co
     assert "candidates exhausted" in progress[-1][2]
 
 
+def test_catalog_stop_mid_batch_counts_only_consumed_outcomes(tmp_path: Path, monkeypatch) -> None:
+    db_path = tmp_path / "catalog-stop-mid-batch.db"
+    _seed_files(db_path, 10)
+
+    def process(row: dict[str, Any], *_args: Any, **_kwargs: Any) -> tuple[Any, ...]:
+        return row, _catalog_item(row), "ok", None
+
+    stop_state = {"stop": False}
+
+    def progress(current: int, _total: int, _message: str) -> None:
+        if current >= 1:
+            stop_state["stop"] = True
+
+    monkeypatch.setattr("ai_actuarial.catalog_incremental._process_single_row", process)
+    stats = run_incremental_catalog(
+        db_path=str(db_path),
+        out_jsonl=tmp_path / "catalog-stop-mid-batch.jsonl",
+        out_md=tmp_path / "catalog-stop-mid-batch.md",
+        batch=10,
+        limit=10,
+        skip_existing=False,
+        max_workers=4,
+        progress_callback=progress,
+        stop_check=lambda: bool(stop_state["stop"]),
+    )
+
+    assert stats["stopped"] is True
+    assert stats["processed"] == 1
+    assert stats["scanned"] == 1
+    assert stats["scanned"] == stats["processed"] + stats["errors"] + stats["skipped_ai"]
+
+
 def test_catalog_candidate_start_is_relative_to_candidate_list(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -399,3 +431,39 @@ def test_catalog_final_task_preserves_success_progress_and_safe_parameters(
         "retry_errors": False,
     }
     assert "must-not-be-persisted" not in str(task)
+
+
+def test_catalog_task_parameters_use_effective_skip_and_no_default_target_for_file_urls(
+    monkeypatch,
+) -> None:
+    class _UnstartedThread:
+        def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+            pass
+
+        def start(self) -> None:
+            pass
+
+    monkeypatch.setattr("ai_actuarial.task_runtime.threading.Thread", _UnstartedThread)
+    monkeypatch.setattr("ai_actuarial.task_runtime.append_task_log", lambda *_args: None)
+    runtime = NativeTaskRuntime.__new__(NativeTaskRuntime)
+    runtime.task_lock = threading.RLock()
+    runtime.active_tasks = {}
+    runtime.task_history = []
+    runtime._append_history_to_disk = lambda _task: None
+    task_id = runtime.start_background_task(
+        "catalog",
+        {
+            "file_urls": ["https://example.com/a.pdf"],
+            "overwrite_existing": True,
+        },
+    )
+
+    task = runtime.active_tasks[task_id]
+    assert task["parameters"] == {
+        "scope_mode": "index",
+        "scan_start_index": 1,
+        "skip_existing": False,
+        "overwrite_existing": True,
+        "input_source": "markdown",
+        "retry_errors": False,
+    }
