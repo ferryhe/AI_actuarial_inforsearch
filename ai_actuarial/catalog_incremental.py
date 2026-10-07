@@ -169,6 +169,7 @@ def _fetch_candidates(
     seen_urls: set[str] | None = None,
     max_id: int | None = None,
     site_filter: Optional[str],
+    category_filter: Optional[str] = None,
     catalog_version: str,
     retry_errors: bool = False,
     skip_existing: bool = True,
@@ -183,7 +184,9 @@ def _fetch_candidates(
     Set retry_errors=True to reprocess files with status='error'.
     Deterministic order: files.id DESC.
     """
-    where_extra, params, status_cond = _candidate_filter_sql(site_filter, retry_errors)
+    where_extra, params, status_cond = _candidate_filter_sql(
+        site_filter, retry_errors, category_filter
+    )
     seen_urls = seen_urls or set()
     seen_filter = ""
     seen_params: list[str] = []
@@ -250,6 +253,7 @@ def _fetch_candidates(
 def _candidate_filter_sql(
     site_filter: Optional[str],
     retry_errors: bool,
+    category_filter: Optional[str] = None,
 ) -> tuple[str, list[object], str]:
     filters: list[str] = []
     params: list[object] = []
@@ -260,6 +264,20 @@ def _candidate_filter_sql(
             filters.append("(" + " OR ".join(["LOWER(f.source_site) LIKE ?"] * len(sites)) + ")")
             params.extend([f"%{s}%" for s in sites])
 
+    category_name = str(category_filter or "").strip()
+    if category_name:
+        filters.append(
+            "(c.category = ? OR c.category LIKE ? OR c.category LIKE ? OR c.category LIKE ?)"
+        )
+        params.extend(
+            [
+                category_name,
+                f"{category_name};%",
+                f"%; {category_name}",
+                f"%; {category_name};%",
+            ]
+        )
+
     where_extra = (" AND " + " AND ".join(filters)) if filters else ""
     status_cond = "OR c.status = 'error'" if retry_errors else ""
     return where_extra, params, status_cond
@@ -269,11 +287,14 @@ def _count_candidates(
     conn: sqlite3.Connection,
     *,
     site_filter: Optional[str],
+    category_filter: Optional[str] = None,
     catalog_version: str,
     retry_errors: bool = False,
     skip_existing: bool = True,
 ) -> int:
-    where_extra, params, status_cond = _candidate_filter_sql(site_filter, retry_errors)
+    where_extra, params, status_cond = _candidate_filter_sql(
+        site_filter, retry_errors, category_filter
+    )
     candidate_pred = ""
     candidate_params: list[object] = []
     if skip_existing:
@@ -606,6 +627,7 @@ def run_incremental_catalog(
     out_md: Path,
     batch: int = 200,
     site_filter: Optional[str] = None,
+    category_filter: Optional[str] = None,
     ai_only: bool = False,
     catalog_version: str = "catalog_v1",
     max_chars: int = 20000,
@@ -713,6 +735,7 @@ def run_incremental_catalog(
     candidate_count = _count_candidates(
         conn,
         site_filter=site_filter,
+        category_filter=category_filter,
         catalog_version=catalog_version,
         retry_errors=retry_errors,
         skip_existing=skip_existing,
@@ -724,6 +747,7 @@ def run_incremental_catalog(
             batch=1,
             offset=candidate_offset,
             site_filter=site_filter,
+            category_filter=category_filter,
             catalog_version=catalog_version,
             retry_errors=retry_errors,
             skip_existing=skip_existing,
@@ -763,6 +787,7 @@ def run_incremental_catalog(
             seen_urls=seen_urls,
             max_id=candidate_start_id,
             site_filter=site_filter,
+            category_filter=category_filter,
             catalog_version=catalog_version,
             retry_errors=retry_errors,
             skip_existing=skip_existing,

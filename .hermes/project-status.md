@@ -7,14 +7,16 @@
   batch by remaining successful target, and reports checked/success/failed/
   skipped counts without forcing an exhausted run to 100%.
 - Catalog and Markdown automatic starts use filtered candidate coordinates;
-  catalog stats reflect skip/overwrite/retry options. Tasks persist only
-  allowlisted scope/count/options, not raw payloads or credentials.
-- Added focused catalog pagination, offset, accounting, stats and task-history
-  regressions, plus task metrics/form assertions. Frontend typecheck, build,
-  TaskMetrics Vitest, ESLint, Python compileall, diff check, and an extracted
-  SQLite candidate-query smoke passed. Vite reported its existing large-chunk
-  warning. Python pytest is blocked in this runner (`No module named pytest`),
-  and application test dependencies such as FastAPI are also missing.
+  catalog stats and execution share category plus skip/overwrite/retry filters.
+  Tasks persist only allowlisted scope/count/options, not raw payloads or
+  credentials.
+- Added focused catalog pagination, category, offset, accounting, stats and
+  task-history regressions, plus task metrics/form assertions. Frontend
+  typecheck, build, TaskMetrics Vitest, ESLint, Python compileall, diff check,
+  and extracted SQLite candidate-query smokes passed. Vite reported its
+  existing large-chunk warning. Python pytest is blocked in this runner
+  (`No module named pytest`), and application test dependencies such as FastAPI
+  are also missing.
 - `npm ci` installed from the existing lockfile and reported 18 audit alerts;
   no dependency manifests or lockfiles were changed or auto-fixed.
 - Commit `259f1a3` was pushed to the issue branch/PR #409. CodeQL reported zero

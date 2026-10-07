@@ -1361,6 +1361,7 @@ class NativeTaskRuntime:
                     stats = run_incremental_catalog(
                         batch=int(data.get("batch") or 50),
                         site_filter=str(data.get("site") or "").strip() or None,
+                        category_filter=category,
                         limit=limit,
                         candidate_offset=candidate_offset,
                         **common_catalog_kwargs,

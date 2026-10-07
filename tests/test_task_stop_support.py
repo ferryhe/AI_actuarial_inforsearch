@@ -890,6 +890,7 @@ def test_native_task_runtime_catalog_scan_uses_stats_version_and_scan_window(
             {
                 "scan_count": scan_count,
                 "scan_start_index": "3",
+                "category": "Insurance",
                 "input_source": "source",
                 "skip_existing": False,
             },
@@ -903,6 +904,7 @@ def test_native_task_runtime_catalog_scan_uses_stats_version_and_scan_window(
     assert kwargs["provider"] == "mistral"
     assert kwargs["limit"] == expected_limit
     assert kwargs["candidate_offset"] == 2
+    assert kwargs["category_filter"] == "Insurance"
     assert kwargs["skip_existing"] is False
 
 

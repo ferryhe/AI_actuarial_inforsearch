@@ -62,6 +62,7 @@ def _run_mock_catalog(
     limit: int,
     batch: int = 50,
     candidate_offset: int = 0,
+    category_filter: str | None = None,
     progress: list[tuple[int, int, str]] | None = None,
 ) -> dict[str, Any]:
     by_url = {url: index for index, url in enumerate(urls)}
@@ -81,6 +82,7 @@ def _run_mock_catalog(
         batch=batch,
         limit=limit,
         candidate_offset=candidate_offset,
+        category_filter=category_filter,
         skip_existing=False,
         max_workers=1,
         progress_callback=(lambda current, total, message: progress.append(
@@ -184,6 +186,60 @@ def test_catalog_candidate_start_is_relative_to_candidate_list(
     assert stats["scanned"] == 20
     assert set(stats["calls"]) == set(urls[:20])
     assert stats["candidate_exhausted"] is True
+
+
+def test_catalog_category_scope_matches_stats_and_candidate_start(
+    tmp_path: Path, monkeypatch
+) -> None:
+    db_path = tmp_path / "catalog-category.db"
+    urls = _seed_files(db_path, 5)
+    storage = Storage(str(db_path))
+    try:
+        for index, url in enumerate(urls):
+            category = "Insurance" if index in {0, 2, 4} else "Other"
+            storage._conn.execute(
+                """
+                INSERT INTO catalog_items (
+                    file_url, file_sha256, sha256, catalog_version, pipeline_version,
+                    summary, category, status
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    url,
+                    f"sha-{index}",
+                    f"sha-{index}",
+                    f"{CATALOG_VERSION}:local:source",
+                    f"{CATALOG_VERSION}:local:source",
+                    "cataloged",
+                    category,
+                    "ok",
+                ),
+            )
+        storage._conn.commit()
+    finally:
+        storage.close()
+
+    stats = get_catalog_stats(
+        db_path=str(db_path),
+        provider="local",
+        input_source="source",
+        category="Insurance",
+        skip_existing=False,
+    )
+    run_stats = _run_mock_catalog(
+        db_path,
+        tmp_path,
+        monkeypatch,
+        urls,
+        lambda _index: "ok",
+        limit=2,
+        candidate_offset=1,
+        category_filter="Insurance",
+    )
+
+    assert stats["candidate_total"] == 3
+    assert stats["first_candidate_index"] == 1
+    assert set(run_stats["calls"]) == {urls[0], urls[2]}
 
 
 def test_catalog_empty_candidate_range_finishes_without_processing(
