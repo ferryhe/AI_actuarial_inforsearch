@@ -27,6 +27,7 @@ export interface TaskMetricData {
   catalog_ok?: number;
   catalog_skipped?: number;
   catalog_errors?: number;
+  catalog_candidate_exhausted?: boolean;
   failed_items?: number;
   errors?: string[];
   result?: TaskContractResult;
@@ -164,17 +165,19 @@ export function TaskMetrics({
 }: TaskMetricsProps) {
   const metrics = getTaskMetrics(task);
   const type = String(task.type || "").toLowerCase();
+  const candidatesExhausted = type === "catalog" && task.catalog_candidate_exhausted === true;
   const embeddingIdentity = EMBEDDING_TYPES.has(type) && task.result && (
     task.result.provider || task.result.model || task.result.dimension != null
   )
     ? `${task.result.provider || "?"} / ${task.result.model || "?"} / ${task.result.dimension ?? "?"}`
     : null;
 
-  if (metrics.length === 0 && !embeddingIdentity) return null;
+  if (metrics.length === 0 && !embeddingIdentity && !candidatesExhausted) return null;
 
   return (
     <div className={className} data-testid={`task-metrics-${type || "unknown"}`}>
       {embeddingIdentity && <div className={metricClassName}>{embeddingIdentity}</div>}
+      {candidatesExhausted && <div>{t("tasks.stats.candidates_exhausted")}</div>}
       {metrics.map((row) => (
         <div className={metricClassName} key={row.labelKey}>
           <span className={labelClassName}>{t(row.labelKey)}:</span>

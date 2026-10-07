@@ -52,6 +52,8 @@ export interface Task {
   catalog_ok?: number;
   catalog_skipped?: number;
   catalog_errors?: number;
+  catalog_candidate_exhausted?: boolean;
+  parameters?: Record<string, unknown>;
   failed_items?: number;
   item_errors?: TaskItemError[];
   item_errors_truncated?: boolean;
@@ -86,6 +88,8 @@ export interface HistoryTask {
   catalog_ok?: number;
   catalog_skipped?: number;
   catalog_errors?: number;
+  catalog_candidate_exhausted?: boolean;
+  parameters?: Record<string, unknown>;
   failed_items?: number;
   item_errors?: TaskItemError[];
   item_errors_truncated?: boolean;

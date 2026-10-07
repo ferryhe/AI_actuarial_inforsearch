@@ -1,3 +1,24 @@
+# Latest work — Issue #406 catalog candidate processing — 2026-10-07 UTC
+
+- Project: `AI_actuarial_inforsearch`; branch: `copilot/bugfix-unify-batch-processing`.
+  Scope is issue #406 only; sibling repositories remain off-limits.
+- Catalog batching now excludes this-run `seen_urls` in SQL before `LIMIT`,
+  keeps nonzero candidate starts bounded to the chosen candidate ID, caps each
+  batch by remaining successful target, and reports checked/success/failed/
+  skipped counts without forcing an exhausted run to 100%.
+- Catalog and Markdown automatic starts use filtered candidate coordinates;
+  catalog stats reflect skip/overwrite/retry options. Tasks persist only
+  allowlisted scope/count/options, not raw payloads or credentials.
+- Added focused catalog pagination, offset, accounting, stats and task-history
+  regressions, plus task metrics/form assertions. Frontend typecheck, build,
+  TaskMetrics Vitest, ESLint, Python compileall, diff check, and an extracted
+  SQLite candidate-query smoke passed. Vite reported its existing large-chunk
+  warning. Python pytest is blocked in this runner (`No module named pytest`),
+  and application test dependencies such as FastAPI are also missing.
+- `npm ci` installed from the existing lockfile and reported 18 audit alerts;
+  no dependency manifests or lockfiles were changed or auto-fixed.
+- No production changes, deployments, or cross-repository access.
+
 # Latest work — PR #405 CI formatting repair — 2026-10-06 EDT
 
 - Project: `AI_actuarial_inforsearch`; branch: `fix/gpt6-parameter-compat`.

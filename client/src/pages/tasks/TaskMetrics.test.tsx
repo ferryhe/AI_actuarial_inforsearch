@@ -221,18 +221,24 @@ assert.doesNotMatch(zeroEmbedding, /tasks\.stats\.(?:processed|downloaded)/);
 
 const catalog = renderMetrics({
   type: "catalog",
-  items_processed: 8,
-  items_downloaded: 6,
-  items_skipped: 1,
+  items_processed: 50,
+  items_downloaded: 50,
+  items_skipped: 10,
   errors: ["catalog failed"],
-  failed_items: 4,
+  catalog_scanned: 80,
+  catalog_ok: 50,
+  catalog_skipped: 10,
+  catalog_errors: 20,
+  catalog_candidate_exhausted: true,
+  failed_items: 20,
 });
-assertTableItemCount(catalog, 6);
-assert.match(catalog, /tasks\.stats\.scanned[^0-9]*8/);
-assert.match(catalog, /tasks\.stats\.ok[^0-9]*6/);
-assert.match(catalog, /tasks\.stats\.skipped[^0-9]*1/);
-assert.match(catalog, /tasks\.stats\.error_reasons[^0-9]*1/);
-assert.match(catalog, /tasks\.stats\.failed_items[^0-9]*4/);
+assertTableItemCount(catalog, 50);
+assert.match(catalog, /tasks\.stats\.scanned[^0-9]*80/);
+assert.match(catalog, /tasks\.stats\.ok[^0-9]*50/);
+assert.match(catalog, /tasks\.stats\.skipped[^0-9]*10/);
+assert.match(catalog, /tasks\.stats\.error_reasons[^0-9]*20/);
+assert.match(catalog, /tasks\.stats\.failed_items[^0-9]*20/);
+assert.match(catalog, /tasks\.stats\.candidates_exhausted/);
 
 const catalogZeroOverrides = renderMetrics({
   type: "catalog",
