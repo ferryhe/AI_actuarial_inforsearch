@@ -276,7 +276,7 @@ def test_moby_config_only_metadata_is_rejected_even_with_matching_loaded_id(
     monkeypatch.setattr(
         production_recovery.subprocess,
         "run",
-        lambda argv, **kw: subprocess.CompletedProcess(argv, 0, content, b""),
+        lambda argv, **_kwargs: subprocess.CompletedProcess(argv, 0, content, b""),
     )
     with pytest.raises(ValueError, match="manifest"):
         production_recovery._image_digests({"Id": config_id, "RepoDigests": []}, metadata)
