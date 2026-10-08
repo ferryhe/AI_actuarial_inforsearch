@@ -232,8 +232,22 @@ def test_release_record_rejects_frontend_mismatch_and_matches_safe_runtime(tmp_p
     }
 
 
-@pytest.mark.parametrize("ready", [True, False])
-def test_fake_deploy_builds_both_images_before_digest_and_runtime_handoff(tmp_path, ready):
+@pytest.mark.parametrize(
+    "ready,include_config_digest,builder_state",
+    [
+        (True, True, "missing"),
+        (True, False, "existing"),
+        (False, True, "existing"),
+        (False, False, "missing"),
+        (True, True, "wrong-driver"),
+        (True, True, "create-failed"),
+        (True, False, "bootstrap-failed"),
+        (True, True, "moby"),
+    ],
+)
+def test_fake_deploy_builds_both_images_before_digest_and_runtime_handoff(
+    tmp_path, ready, include_config_digest, builder_state
+):
     """Run the real shell flow using only isolated files and fake Docker/Git."""
     import pytest
 
@@ -253,6 +267,28 @@ def test_fake_deploy_builds_both_images_before_digest_and_runtime_handoff(tmp_pa
         conn.execute("PRAGMA user_version=15")
     (tmp_path / "backups").mkdir()
     log = tmp_path / "commands.log"
+    blobs = tmp_path / "buildkit-blobs"
+    blobs.mkdir()
+    identities = {}
+    labels = {
+        "com.aiinforsearch.release-id": "fixture-canary",
+        "org.opencontainers.image.revision": "a" * 40,
+        "org.opencontainers.image.created": "2026-10-04T12:00:00Z",
+        "org.opencontainers.image.source": "https://github.com/ferryhe/AI_actuarial_inforsearch",
+        "com.aiinforsearch.git-dirty": "false",
+    }
+
+    def blob(document):
+        payload = json.dumps(document, separators=(",", ":")).encode()
+        digest = hashlib.sha256(payload).hexdigest()
+        (blobs / digest).write_bytes(payload)
+        return {"digest": "sha256:" + digest, "size": len(payload)}
+
+    for target in ("api", "frontend"):
+        config_blob = blob({"config": {"Labels": labels}, "role": target})
+        manifest_blob = blob({"schemaVersion": 2, "config": config_blob, "layers": []})
+        index_blob = blob({"schemaVersion": 2, "manifests": [manifest_blob]})
+        identities[target] = (index_blob["digest"][7:], config_blob["digest"][7:])
 
     def executable(name, body):
         path = commands / name
@@ -276,6 +312,20 @@ def test_fake_deploy_builds_both_images_before_digest_and_runtime_handoff(tmp_pa
         "    with open(os.environ['FIXTURE_LOG'], 'a') as log: log.write('docker:image inspect '+image+'\\n')\n"
         "    return {'Id':'sha256:'+os.environ['FIXTURE_API_CONFIG' if image==os.environ['API_IMAGE'] else 'FIXTURE_FRONTEND_CONFIG'],'RepoDigests':[],'Config':{'Labels':{'com.aiinforsearch.release-id':os.environ['BUILD_RELEASE_ID'],'org.opencontainers.image.revision':os.environ['BUILD_GIT_SHA'],'org.opencontainers.image.created':os.environ['BUILD_UTC'],'org.opencontainers.image.source':os.environ['BUILD_SOURCE_URL'],'com.aiinforsearch.git-dirty':'false'}}}\n"
         "recovery.create_release_record.__kwdefaults__['inspect_image'] = inspect\n"
+        "native_run = recovery.subprocess.run\n"
+        "def fixture_run(argv, **kwargs):\n"
+        "    if sys.platform == 'win32' and argv[0] == 'docker':\n"
+        f"        argv = [{bash!r}, {(commands / 'docker').as_posix()!r}, *argv[1:]]\n"
+        "    try:\n"
+        "        result = native_run(argv, **kwargs)\n"
+        "    except recovery.subprocess.CalledProcessError as exc:\n"
+        "        Path(os.environ['FIXTURE_LOG']+'.stderr').write_bytes(exc.stderr or b'')\n"
+        "        raise\n"
+        "    if result.returncode and result.stderr:\n"
+        "        error = result.stderr.encode() if isinstance(result.stderr,str) else result.stderr\n"
+        "        Path(os.environ['FIXTURE_LOG']+'.stderr').write_bytes(error)\n"
+        "    return result\n"
+        "recovery.subprocess.run = fixture_run\n"
         "raise SystemExit(recovery.main(sys.argv[1:]))\n",
         encoding="utf-8",
     )
@@ -295,15 +345,41 @@ exec "{Path(sys.executable).as_posix()}" "$@"''',
         "docker",
         """printf 'docker:%s digest=%s release=%s\\n' "$*" "${API_IMAGE_DIGEST:-unset}" "$BUILD_RELEASE_ID" >> "$FIXTURE_LOG"
 if [[ "$1 $2" == "volume inspect" ]]; then echo "$FIXTURE_DATA"; exit; fi
+if [[ "$1 $2" == "buildx inspect" ]]; then
+  if [[ "$3" == "--bootstrap" ]]; then
+    [[ "$4" == "$BUILD_BUILDER" ]]
+    [[ "$FIXTURE_BUILDER_STATE" != "bootstrap-failed" ]] || exit 96
+  else
+    [[ "$3" == "$BUILD_BUILDER" ]]
+    [[ "$FIXTURE_BUILDER_STATE" != "missing" || -f "$FIXTURE_BUILDER_CREATED" ]] || exit 1
+    [[ "$FIXTURE_BUILDER_STATE" != "create-failed" ]] || exit 1
+  fi
+  if [[ "$FIXTURE_BUILDER_STATE" == "wrong-driver" ]]; then echo 'Driver: docker'; else echo 'Driver: docker-container'; fi
+  exit
+fi
+if [[ "$1 $2" == "buildx create" ]]; then
+  [[ "$*" != *--use* ]]
+  [[ "$*" == *"--driver docker-container"* ]]
+  [[ "$*" == *"memory=$BUILD_BUILDER_MEMORY,memory-swap=$BUILD_BUILDER_MEMORY"* ]]
+  [[ "$FIXTURE_BUILDER_STATE" != "create-failed" ]] || exit 97
+  touch "$FIXTURE_BUILDER_CREATED"
+  exit
+fi
 if [[ "$1 $2" == "buildx bake" ]]; then
+  shift 2
+  [[ "$1 $2" == "--builder $BUILD_BUILDER" ]]
   shift 2
   while [[ "$1" == "-f" ]]; do shift 2; done
   [[ "$1 $2 $3" == "--pull --load --metadata-file" ]]
   metadata="$4"
   shift 4
   [[ "$*" == "api frontend" ]]
-  python3 -c 'import json,os,sys; from pathlib import Path; Path(sys.argv[1]).write_text(json.dumps({target:{"containerimage.digest":"sha256:"+os.environ["FIXTURE_"+target.upper()+"_HASH"],"containerimage.config.digest":"sha256:"+os.environ["FIXTURE_"+target.upper()+"_CONFIG"]} for target in ("api","frontend")}))' "$metadata"
+  python3 -c 'import json,os,sys; from pathlib import Path; Path(sys.argv[1]).write_text(json.dumps({target:{"containerimage.digest":"sha256:"+os.environ["FIXTURE_"+target.upper()+("_CONFIG" if os.environ["FIXTURE_BUILDER_STATE"]=="moby" else "_HASH")],"buildx.build.ref":"fixture/fixture/"+target,**({"containerimage.config.digest":"sha256:"+os.environ["FIXTURE_"+target.upper()+"_CONFIG"]} if os.environ["FIXTURE_INCLUDE_CONFIG"]=="true" else {})} for target in ("api","frontend")}))' "$metadata"
   touch "$FIXTURE_BUILT"
+  exit
+fi
+if [[ "${1:-} ${2:-} ${3:-} ${4:-}" == "buildx history inspect attachment" ]]; then
+  python3 -c 'import os,sys; from pathlib import Path; sys.stdout.buffer.write((Path(os.environ["FIXTURE_BLOBS"])/sys.argv[1][7:]).read_bytes())' "${@: -1}"
   exit
 fi
 if [[ "$1 $2" == "image inspect" ]]; then
@@ -340,10 +416,17 @@ exit 93""",
         "FIXTURE_LOG": log.as_posix(),
         "FIXTURE_DATA": data.as_posix(),
         "FIXTURE_BUILT": f"{fixture}/built",
-        "FIXTURE_API_HASH": "b" * 64,
-        "FIXTURE_FRONTEND_HASH": "c" * 64,
-        "FIXTURE_API_CONFIG": "d" * 64,
-        "FIXTURE_FRONTEND_CONFIG": "e" * 64,
+        "FIXTURE_API_HASH": identities["api"][0],
+        "FIXTURE_FRONTEND_HASH": identities["frontend"][0],
+        "FIXTURE_API_CONFIG": identities["api"][1],
+        "FIXTURE_FRONTEND_CONFIG": identities["frontend"][1],
+        "FIXTURE_BLOBS": blobs.as_posix(),
+        "FIXTURE_INCLUDE_CONFIG": "true" if include_config_digest else "false",
+        "FIXTURE_BUILDER_STATE": builder_state,
+        "FIXTURE_BUILDER_CREATED": f"{fixture}/builder-created",
+        "BUILD_BUILDER": "fixture-provenance",
+        "BUILD_BUILDER_MEMORY": "384m",
+        "BUILD_BUILDER_CPU_QUOTA": "20000",
         "FIXTURE_READY": "true" if ready else "false",
     }
     environment.pop("API_IMAGE_DIGEST", None)
@@ -361,6 +444,15 @@ exit 93""",
         text=True,
         capture_output=True,
     )
+    if builder_state in ("wrong-driver", "create-failed", "bootstrap-failed", "moby"):
+        assert result.returncode != 0, result.stdout + result.stderr
+        assert "Deployment completed" not in result.stdout
+        events = log.read_text()
+        assert "up -d" not in events
+        assert not (tmp_path / "releases/fixture-canary.json").exists()
+        if builder_state != "moby":
+            assert "buildx bake" not in events
+        return
     if not ready:
         assert result.returncode == 94, result.stdout + result.stderr
         assert "Deployment completed" not in result.stdout
@@ -369,14 +461,22 @@ exit 93""",
         assert result.returncode == 0, result.stdout + result.stderr
         assert "Deployment completed" in result.stdout
     record = json.loads((tmp_path / "releases/fixture-canary.json").read_text())
-    assert record["image_digest"] == "sha256:" + "b" * 64
-    assert record["frontend_image_digest"] == "sha256:" + "c" * 64
-    assert record["image_config_id"] == "sha256:" + "d" * 64
-    assert record["frontend_image_config_id"] == "sha256:" + "e" * 64
+    assert record["image_digest"] == "sha256:" + identities["api"][0]
+    assert record["frontend_image_digest"] == "sha256:" + identities["frontend"][0]
+    assert record["image_config_id"] == "sha256:" + identities["api"][1]
+    assert record["frontend_image_config_id"] == "sha256:" + identities["frontend"][1]
     events = log.read_text()
+    assert "--use" not in events
+    assert events.index("buildx inspect --bootstrap") < events.index("buildx bake")
+    assert ("buildx create" in events) == (builder_state == "missing")
     assert (
         events.index("buildx bake")
         < events.index("image inspect")
         < events.index("up -d --wait --wait-timeout 180 api frontend")
     )
-    assert "up -d --wait --wait-timeout 180 api frontend digest=sha256:" + "b" * 64 in events
+    assert (
+        "up -d --wait --wait-timeout 180 api frontend digest=sha256:" + identities["api"][0]
+        in events
+    )
+    if not include_config_digest:
+        assert events.count("buildx history inspect attachment") == 6

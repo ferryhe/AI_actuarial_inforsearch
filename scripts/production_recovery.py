@@ -42,6 +42,12 @@ OCI_LABELS = (
     "org.opencontainers.image.source",
     "com.aiinforsearch.git-dirty",
 )
+MANIFEST_MEDIA_TYPES = (
+    "application/vnd.oci.image.manifest.v1+json",
+    "application/vnd.oci.image.index.v1+json",
+    "application/vnd.docker.distribution.manifest.v2+json",
+    "application/vnd.docker.distribution.manifest.list.v2+json",
+)
 
 
 def _utc_now() -> datetime:
@@ -494,19 +500,92 @@ def inspect_docker_image(image: str) -> dict[str, Any]:
     return payload[0]
 
 
+def _classic_build_config(metadata: dict[str, Any], image_id: str) -> str:
+    """Bind a classic-store config ID to the actual post-build OCI content."""
+    build_ref = str(metadata.get("buildx.build.ref") or "")
+    parts = build_ref.split("/")
+    if len(parts) != 3 or not all(parts):
+        raise ValueError("Missing config digest requires the post-build Buildx build reference")
+    builder, _node, build_id = parts
+
+    def document(descriptor: dict[str, Any]) -> dict[str, Any]:
+        digest = str(descriptor.get("digest") or "")
+        if not re.fullmatch(r"sha256:[a-f0-9]{64}", digest):
+            raise ValueError("Build content has an invalid digest")
+        result = subprocess.run(
+            [
+                "docker",
+                "buildx",
+                "history",
+                "inspect",
+                "attachment",
+                "--builder",
+                builder,
+                build_id,
+                digest,
+            ],
+            check=True,
+            capture_output=True,
+            timeout=30,
+        )
+        payload = result.stdout
+        if "sha256:" + hashlib.sha256(payload).hexdigest() != digest:
+            raise ValueError("Build content does not match its digest")
+        if "size" in descriptor and len(payload) != descriptor["size"]:
+            raise ValueError("Build content does not match its descriptor size")
+        value = json.loads(payload)
+        if not isinstance(value, dict):
+            raise ValueError("Build content must be an OCI document")
+        return value
+
+    root_descriptor = {"digest": metadata["containerimage.digest"]}
+    root = document(root_descriptor)
+    if root.get("schemaVersion") != 2 or not (
+        isinstance(root.get("manifests"), list)
+        or (isinstance(root.get("config"), dict) and root["config"].get("digest"))
+    ):
+        raise ValueError("Build content is not an OCI manifest or index")
+    if image_id == root_descriptor["digest"]:
+        return "unknown"
+    manifests = root.get("manifests")
+    if manifests is None:
+        candidates = [root]
+    elif isinstance(manifests, list):
+        candidates = (document(descriptor) for descriptor in manifests)
+    else:
+        raise ValueError("Build content has an invalid manifest index")
+    for manifest in candidates:
+        config = manifest.get("config") or {}
+        if config.get("digest") == image_id:
+            document(config)
+            return image_id
+    raise ValueError("Build manifest does not match the loaded image config")
+
+
 def _image_digests(image_data: dict[str, Any], metadata: dict[str, Any] | None) -> tuple[str, str]:
     repo_digests = [str(value).rsplit("@", 1)[-1] for value in image_data.get("RepoDigests") or []]
     if metadata is not None:
         digest = str(metadata.get("containerimage.digest") or "")
+        if not re.fullmatch(r"sha256:[a-f0-9]{64}", digest):
+            raise ValueError("Image has no manifest digest; provide post-build Buildx metadata")
         config_digest = "unknown"
         if "containerimage.config.digest" in metadata:
             config_digest = str(metadata["containerimage.config.digest"])
             if not re.fullmatch(r"sha256:[a-f0-9]{64}", config_digest):
                 raise ValueError("Build metadata has an invalid config digest")
+            if config_digest == digest:
+                raise ValueError("Build metadata contains a config ID, not an OCI manifest digest")
+        descriptor_type = (metadata.get("containerimage.descriptor") or {}).get("mediaType")
+        if descriptor_type and descriptor_type not in MANIFEST_MEDIA_TYPES:
+            raise ValueError("Build metadata descriptor is not an OCI manifest or index")
+        if config_digest == "unknown" and image_data.get("Id") == digest and not descriptor_type:
+            config_digest = _classic_build_config(metadata, digest)
         # Classic stores expose the config ID; containerd can expose the manifest ID.
         identities = (digest, config_digest) if config_digest != "unknown" else (digest,)
         if image_data.get("Id") not in identities and digest not in repo_digests:
-            raise ValueError("Build metadata does not match the loaded image identity")
+            if config_digest != "unknown":
+                raise ValueError("Build metadata does not match the loaded image identity")
+            config_digest = _classic_build_config(metadata, str(image_data.get("Id") or ""))
     else:
         digest = repo_digests[0] if repo_digests else ""
         config_digest = "unknown"

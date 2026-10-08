@@ -55,6 +55,7 @@ def test_tilde_config_provenance_matches_loaded_file(tmp_path, monkeypatch):
         ("invalid-config", "containerd"),
         ("missing-digest", "classic"),
         ("stale-config", "classic"),
+        ("config-as-manifest", "classic"),
         ("missing-target", "classic"),
     ],
 )
@@ -87,6 +88,10 @@ def test_local_build_metadata_uses_manifest_digest_and_checks_loaded_image(
         }
         if store == "containerd":
             images[target]["Id"] = metadata[target]["containerimage.digest"]
+            metadata[target]["containerimage.descriptor"] = {
+                "mediaType": "application/vnd.oci.image.index.v1+json",
+                "digest": metadata[target]["containerimage.digest"],
+            }
         elif store == "repository":
             images[target]["Id"] = "sha256:" + "f" * 64
             images[target]["RepoDigests"] = [
@@ -96,6 +101,8 @@ def test_local_build_metadata_uses_manifest_digest_and_checks_loaded_image(
         del metadata["api"]["containerimage.digest"]
     elif problem == "stale-config":
         metadata["api"]["containerimage.config.digest"] = "sha256:" + "f" * 64
+    elif problem == "config-as-manifest":
+        metadata["api"]["containerimage.digest"] = metadata["api"]["containerimage.config.digest"]
     elif problem == "missing-target":
         del metadata["frontend"]
     elif problem == "missing-config":
@@ -163,3 +170,113 @@ def test_image_config_id_is_never_a_manifest_digest(tmp_path, monkeypatch):
             },
         )
     assert not output.exists()
+
+
+@pytest.mark.parametrize(
+    "problem", [None, "wrong-loaded-config", "corrupted-manifest", "missing-ref"]
+)
+def test_raw_bake_metadata_binds_classic_config_through_buildkit_content(
+    tmp_path, monkeypatch, problem
+):
+    """Actual default Bake shape: index digest/build ref, with no config digest."""
+    labels = {
+        "com.aiinforsearch.release-id": "fixture-release",
+        "org.opencontainers.image.revision": "a" * 40,
+        "org.opencontainers.image.created": "2026-10-08T00:00:00Z",
+        "org.opencontainers.image.source": "https://example.test/fixture",
+        "com.aiinforsearch.git-dirty": "false",
+    }
+    blobs = {}
+
+    def blob(document):
+        data = json.dumps(document, separators=(",", ":")).encode()
+        digest = "sha256:" + hashlib.sha256(data).hexdigest()
+        blobs[digest] = data
+        return {"digest": digest, "size": len(data)}
+
+    config_descriptor = blob({"config": {"Labels": labels}})
+    manifest_descriptor = blob({"schemaVersion": 2, "config": config_descriptor, "layers": []})
+    index_descriptor = blob({"schemaVersion": 2, "manifests": [manifest_descriptor]})
+    metadata = {
+        "api": {
+            "containerimage.digest": index_descriptor["digest"],
+            "containerimage.descriptor": index_descriptor,
+            "buildx.build.ref": "fixture/fixture/build-ref",
+        }
+    }
+    if problem == "missing-ref":
+        del metadata["api"]["buildx.build.ref"]
+    if problem == "corrupted-manifest":
+        blobs[manifest_descriptor["digest"]] = b"{}"
+    metadata_path = tmp_path / "build.json"
+    metadata_path.write_text(json.dumps(metadata))
+    config = tmp_path / "sites.yaml"
+    config.write_text("sites: []\n")
+    db = tmp_path / "index.db"
+    with sqlite3.connect(db):
+        pass
+    calls = []
+
+    def fetch(argv, **kwargs):
+        assert argv[:5] == ["docker", "buildx", "history", "inspect", "attachment"]
+        assert argv[5:8] == ["--builder", "fixture", "build-ref"]
+        calls.append(argv[8])
+        return subprocess.CompletedProcess(argv, 0, blobs[argv[8]], b"")
+
+    monkeypatch.setattr(production_recovery.subprocess, "run", fetch)
+    output = tmp_path / "record.json"
+    arguments = dict(
+        image="api",
+        config_path=config,
+        db_path=db,
+        output_path=output,
+        build_metadata_path=metadata_path,
+        inspect_image=lambda _: {
+            "Id": (
+                "sha256:" + "f" * 64
+                if problem == "wrong-loaded-config"
+                else config_descriptor["digest"]
+            ),
+            "RepoDigests": [],
+            "Config": {"Labels": labels},
+        },
+    )
+    if problem:
+        with pytest.raises(ValueError):
+            production_recovery.create_release_record(**arguments)
+        assert not output.exists()
+    else:
+        record = production_recovery.create_release_record(**arguments)
+        assert record["image_digest"] == index_descriptor["digest"]
+        assert record["image_config_id"] == config_descriptor["digest"]
+        assert calls == [
+            index_descriptor["digest"],
+            manifest_descriptor["digest"],
+            config_descriptor["digest"],
+        ]
+
+
+@pytest.mark.parametrize("include_config", [True, False])
+def test_moby_config_only_metadata_is_rejected_even_with_matching_loaded_id(
+    tmp_path, monkeypatch, include_config
+):
+    """Reproduce the actual Docker28/default-driver config-only exporter shape."""
+    content = json.dumps(
+        {
+            "architecture": "amd64",
+            "config": {"Labels": {}},
+            "rootfs": {"type": "layers", "diff_ids": []},
+            "history": [],
+        }
+    ).encode()
+    config_id = "sha256:" + hashlib.sha256(content).hexdigest()
+    metadata = {"containerimage.digest": config_id, "buildx.build.ref": "default/default/build-id"}
+    if include_config:
+        metadata["containerimage.config.digest"] = config_id
+    monkeypatch.setattr(
+        production_recovery.subprocess,
+        "run",
+        lambda argv, **kw: subprocess.CompletedProcess(argv, 0, content, b""),
+    )
+    with pytest.raises(ValueError, match="manifest"):
+        production_recovery._image_digests({"Id": config_id, "RepoDigests": []}, metadata)

@@ -378,6 +378,38 @@ builds and publishes both the API and static frontend. The production frontend
 serves image-built `/opt/frontend`, so an old host `dist/public` cannot replace
 the newly built assets. This does not change the separate #313 config rollout.
 
+Use the project-owned `docker-container` builder, default name
+`aiinforsearch-provenance`. The server's classic/default Docker driver was
+observed to return the config ID as `containerimage.digest`; release-record now
+rejects that shape. The dedicated driver produces a real manifest digest with
+an independent classic-store config ID and keeps the existing `--load` handoff.
+`scripts/deploy_update.sh` creates or reuses this named builder, rejects an
+existing wrong driver and requires successful bootstrap before building.
+It selects `--builder` only for that Bake command, without changing the default
+builder, Docker daemon or image store. Every failure precedes Compose `up`.
+
+First creation requires explicit `BUILD_BUILDER_MEMORY` (Docker memory syntax)
+and `BUILD_BUILDER_CPU_QUOTA` (microseconds per100000us period) chosen for the
+full API/frontend build alongside running services. There is no inferred app
+budget: the tested384MiB/20000us limits proved only the tiny scratch producer.
+The first bootstrap pulls the official pinned image
+`moby/buildkit@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea`
+and creates the builder container plus its dedicated persistent state/cache
+volume. `memory-swap` equals memory (no additional swap). Cache consumes Docker
+filesystem space and persists across runs; no automatic prune/removal is added.
+`BUILD_BUILDER` and `BUILD_BUILDKIT_IMAGE` allow an explicitly reviewed name/image.
+An existing approved builder reuses its driver/resource configuration.
+
+For the manual flow below, create that builder once (with the same approved
+budgets), then retain it for later runs:
+
+```bash
+: "${BUILD_BUILDER_MEMORY:?Set the approved full-build memory budget}"
+: "${BUILD_BUILDER_CPU_QUOTA:?Set the approved quota for a 100000us period}"
+docker buildx create --name aiinforsearch-provenance --driver docker-container \
+  --driver-opt "image=moby/buildkit@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea,memory=$BUILD_BUILDER_MEMORY,memory-swap=$BUILD_BUILDER_MEMORY,cpu-quota=$BUILD_BUILDER_CPU_QUOTA,cpu-period=100000"
+```
+
 ```bash
 export BUILD_GIT_SHA=$(git rev-parse HEAD)
 export BUILD_RELEASE_ID=$(python3 -c 'import uuid; print(uuid.uuid4())')
@@ -386,9 +418,11 @@ export BUILD_UTC=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 export BUILD_SOURCE_URL=https://github.com/ferryhe/AI_actuarial_inforsearch
 export API_IMAGE=ai_actuarial_inforsearch-api:latest
 export FRONTEND_IMAGE=ai_actuarial_inforsearch-frontend:latest
+export BUILD_BUILDER=aiinforsearch-provenance
 mkdir -p /var/lib/aiinforsearch/releases
 BUILD_METADATA=/var/lib/aiinforsearch/releases/"$BUILD_RELEASE_ID".build.json
-docker buildx bake -f docker-compose.yml -f docker-compose.override.yml \
+docker buildx inspect --bootstrap "$BUILD_BUILDER"
+docker buildx bake --builder "$BUILD_BUILDER" -f docker-compose.yml -f docker-compose.override.yml \
   --pull --load --metadata-file "$BUILD_METADATA" api frontend
 ```
 
@@ -416,10 +450,19 @@ or source URLs before startup. It records both image digests after building;
 local unpushed images use Buildx's post-build `containerimage.digest` manifest
 digest. The freshly loaded tag must match the metadata's manifest/repository
 digest (containerd store) or config ID (classic store); the record stores
-`containerimage.config.digest` separately when present (otherwise `unknown`,
-as with some OCI index/provenance outputs) and never substitutes
-one for a manifest digest. Missing or stale metadata fails before startup.
-Buildx with `bake --metadata-file` and Compose with `up --wait` are required.
+`containerimage.config.digest` separately when present. When raw metadata omits
+it and a classic store exposes only a config ID, the record uses that build's
+`buildx.build.ref` to read native BuildKit content through
+`docker buildx history inspect attachment`. It verifies the metadata's index or
+manifest hash, the referenced manifest and config hashes, and the loaded tag's
+config ID before recording that separately verified config digest. It never
+substitutes a config ID for a manifest digest. Containerd/repository identities
+that already match the manifest may retain an absent config as `unknown`.
+Missing/stale metadata or unavailable build content fails before startup.
+Buildx with `bake --metadata-file` and `history inspect attachment` support
+(tested with Buildx0.30.1), and Compose with `up --wait`, are required. Create the
+release record on the building host before pruning BuildKit history/content;
+preserve the raw metadata and paired release record for later image transfers.
 The deployment waits up to `DEPLOY_WAIT_TIMEOUT` seconds (default 180) for both
 API and frontend healthchecks; timeout/failure prevents its success message.
 A digest is never a build argument. `/api/health` exposes only
