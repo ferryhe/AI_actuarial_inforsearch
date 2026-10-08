@@ -5,6 +5,7 @@ import json
 import sqlite3
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -282,6 +283,132 @@ def test_kb_list_rejects_binding_for_non_member_file(
     assert coverage["binding_error"] == "KB chunk binding metadata is invalid"
 
 
+def test_kb_list_coverage_index_hints_preserve_output_and_support_legacy_indexes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_path = tmp_path / "coverage-index-hints.db"
+    identity = _identity(dimension=3)
+    _seed_shared_kbs(
+        db_path,
+        tmp_path,
+        identity=identity,
+        kb_ids=("kb-issue-407",),
+        chunk_count=3,
+        embedding_kinds=("ready", "wrong-config", "missing"),
+    )
+    _patch_identity(monkeypatch, identity)
+    original_has_index = rag_admin._KBListStorageView._index_exists
+    original_open = rag_admin._open_kb_list_read_only_connection
+    statements: list[str] = []
+
+    def traced_open(path: str):
+        conn = original_open(path)
+        conn.set_trace_callback(statements.append)
+        return conn
+
+    monkeypatch.setattr(rag_admin, "_open_kb_list_read_only_connection", traced_open)
+
+    def assert_hint_equivalent() -> dict[str, Any]:
+        hinted = rag_admin.list_knowledge_bases(db_path=str(db_path), query={})
+        monkeypatch.setattr(
+            rag_admin._KBListStorageView,
+            "_index_exists",
+            lambda *_args, **_kwargs: False,
+        )
+        unhinted = rag_admin.list_knowledge_bases(db_path=str(db_path), query={})
+        monkeypatch.setattr(rag_admin._KBListStorageView, "_index_exists", original_has_index)
+        assert unhinted == hinted
+        return hinted
+
+    ready_payload = assert_hint_equivalent()
+    ready_coverage = ready_payload["knowledge_bases"][0]["index_coverage"]
+    assert ready_coverage["ready_embeddings"] == 1
+    assert ready_coverage["missing_embeddings"] == 2
+
+    coverage_sql = next(statement for statement in statements if "WITH targets(" in statement)
+    with sqlite3.connect(db_path) as conn:
+        plan = "\n".join(str(row[3]) for row in conn.execute(f"EXPLAIN QUERY PLAN {coverage_sql}"))
+    assert "USING COVERING INDEX idx_global_chunks_stats_metadata" in plan
+    assert "USING COVERING INDEX idx_chunk_embeddings_stats_metadata" in plan
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "UPDATE rag_knowledge_bases SET embedding_identity_key = ? WHERE kb_id = ?",
+            ("wrong-identity", "kb-issue-407"),
+        )
+        conn.commit()
+    wrong_identity_payload = assert_hint_equivalent()
+    wrong_identity_coverage = wrong_identity_payload["knowledge_bases"][0]["index_coverage"]
+    assert wrong_identity_coverage["ready_embeddings"] == 0
+    assert wrong_identity_coverage["missing_embeddings"] == 3
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "UPDATE rag_knowledge_bases SET embedding_identity_key = ? WHERE kb_id = ?",
+            (identity.embedding_identity_key, "kb-issue-407"),
+        )
+        conn.execute("UPDATE file_chunk_sets SET status = 'building'")
+        conn.commit()
+    invalid_payload = assert_hint_equivalent()
+    assert invalid_payload["knowledge_bases"][0]["index_coverage"]["invalid_bindings"] == 1
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("DROP INDEX idx_global_chunks_stats_metadata")
+        conn.execute("DROP INDEX idx_chunk_embeddings_stats_metadata")
+        conn.commit()
+    assert rag_admin.list_knowledge_bases(db_path=str(db_path), query={}) == invalid_payload
+
+
+def test_admin_kb_list_can_return_category_projection_without_diagnostics(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_path = tmp_path / "category-projection.db"
+    identity = _identity(dimension=3)
+    _seed_shared_kbs(
+        db_path,
+        tmp_path,
+        identity=identity,
+        kb_ids=("kb-category-407",),
+        chunk_count=1,
+        embedding_kinds=("missing",),
+    )
+    storage = Storage(str(db_path))
+    try:
+        manager = _manager(storage, tmp_path)
+        manager._ensure_category_mapping_table()
+        storage._conn.execute(
+            "INSERT INTO rag_kb_category_mappings (kb_id, category, auto_sync, created_at) VALUES (?, ?, 1, ?)",
+            ("kb-category-407", "Insurance", storage.now()),
+        )
+        storage._conn.commit()
+    finally:
+        storage.close()
+
+    def fail(*_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("lightweight category projection built KB diagnostics")
+
+    monkeypatch.setattr(rag_admin, "_build_kb_embedding_status", fail)
+    payload = rag_admin.list_knowledge_bases(
+        db_path=str(db_path),
+        query={"include_diagnostics": "false"},
+        auth=SimpleNamespace(permissions=frozenset({"tasks.run"})),
+    )
+
+    assert payload == {
+        "knowledge_bases": [
+            {
+                "kb_id": "kb-category-407",
+                "name": "kb-category-407",
+                "description": "",
+                "categories": ["Insurance"],
+                "file_count": 1,
+            }
+        ]
+    }
+
+
 def test_large_multi_kb_list_is_bounded_and_never_selects_vector_json(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -317,7 +444,29 @@ def test_large_multi_kb_list_is_bounded_and_never_selects_vector_json(
     warm_seconds = time.perf_counter() - started
     warm_queries = len([sql for sql in statements if sql.lstrip().upper().startswith("SELECT")])
 
+    monkeypatch.setattr(
+        rag_admin._KBListStorageView,
+        "_index_exists",
+        lambda *_args, **_kwargs: False,
+    )
+    statements.clear()
+    started = time.perf_counter()
+    unhinted_cold = rag_admin.list_knowledge_bases(db_path=str(db_path), query={})
+    unhinted_cold_seconds = time.perf_counter() - started
+    unhinted_cold_queries = len(
+        [sql for sql in statements if sql.lstrip().upper().startswith("SELECT")]
+    )
+    statements.clear()
+    started = time.perf_counter()
+    unhinted_warm = rag_admin.list_knowledge_bases(db_path=str(db_path), query={})
+    unhinted_warm_seconds = time.perf_counter() - started
+    unhinted_warm_queries = len(
+        [sql for sql in statements if sql.lstrip().upper().startswith("SELECT")]
+    )
+
     assert len(cold["knowledge_bases"]) == len(warm["knowledge_bases"]) == 2
+    assert unhinted_cold == cold
+    assert unhinted_warm == warm
     for kb in cold["knowledge_bases"]:
         assert kb["index_coverage"]["bound_chunk_count"] == LARGE_CHUNK_COUNT
         assert kb["index_coverage"]["ready_embeddings"] == LARGE_CHUNK_COUNT
@@ -325,13 +474,19 @@ def test_large_multi_kb_list_is_bounded_and_never_selects_vector_json(
     assert all("vector_json" not in sql.lower() for sql in statements)
     assert cold_queries <= 160
     assert warm_queries <= 160
+    assert unhinted_cold_queries <= 160
+    assert unhinted_warm_queries <= 160
     assert cold_seconds < 1.0
     assert warm_seconds < 0.5
     print(
         "issue256-kb-list-metrics "
         f"rows={LARGE_CHUNK_COUNT} dimension={LARGE_EMBEDDING_DIMENSION} "
         f"cold_queries={cold_queries} warm_queries={warm_queries} "
-        f"cold_ms={cold_seconds * 1000:.1f} warm_ms={warm_seconds * 1000:.1f}"
+        f"hinted_cold_ms={cold_seconds * 1000:.1f} hinted_warm_ms={warm_seconds * 1000:.1f} "
+        f"unhinted_cold_ms={unhinted_cold_seconds * 1000:.1f} "
+        f"unhinted_warm_ms={unhinted_warm_seconds * 1000:.1f} "
+        f"unhinted_queries={unhinted_cold_queries}/{unhinted_warm_queries} "
+        f"payload_bytes={len(json.dumps(cold, separators=(',', ':')).encode('utf-8'))}"
     )
 
 

@@ -403,14 +403,22 @@ def test_knowledge_list_bounds_busy_automation_polling_and_deduplicates_loads():
     assert "readyDataListBusy" in src
     assert "readyDataListPollAttempts.current" in src
     assert "loadDataInFlight.current" in src
-    assert "if (loadDataInFlight.current) return loadDataInFlight.current" in src
+    assert "if (!force && loadDataInFlight.current) return loadDataInFlight.current" in src
+    assert "const requestManifestVersion = ++readyDataListManifestVersion.current" in src
+    assert (
+        src.count("if (requestManifestVersion !== readyDataListManifestVersion.current) return")
+        >= 2
+    )
     assert "window.setTimeout" in src
     assert "window.clearTimeout" in src
     assert "readyDataListPollAttempts.current >= READY_DATA_LIST_MAX_POLL_ATTEMPTS" in src
     assert "void loadData(false).finally" in src
     assert "isReadyDataAutomationBusy(kb.agentic_ready_manifest)" in src
     assert "if (!isReadyDataAutomationBusy(effectiveManifest))" in detail_src
-    assert "if (kbPayload)" in src
+    assert (
+        "const kbList: KnowledgeBase[] = kbPayload.knowledge_bases || kbPayload.data?.knowledge_bases || [];"
+        in src
+    )
     assert "if (profilePayload)" in src
     assert "if (usedCategoriesResp)" in src
     assert "void loadAgenticManifest({ preserveCurrentOnError: true }).finally" in detail_src

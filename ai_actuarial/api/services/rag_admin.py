@@ -2036,6 +2036,7 @@ class _KBListStorageView:
         self._conn = conn
         self._agentic_ready_publication_columns_cache: frozenset[str] | None = None
         self._table_names_cache: frozenset[str] | None = None
+        self._index_names_cache: frozenset[str] | None = None
         self._prepared = False
         self._chunk_profiles: dict[str, dict[str, Any]] = {}
         self._binding_profiles: dict[str, list[dict[str, Any]]] = {}
@@ -2382,9 +2383,20 @@ class _KBListStorageView:
             )
         values_sql = ",".join("(?,?,?,?,?,?,?,?)" for _ in identity_rows)
         params = tuple(value for row in identity_rows for value in row)
+        embedding_index_hint = (
+            " INDEXED BY idx_chunk_embeddings_stats_metadata"
+            if has_embeddings and self._index_exists("idx_chunk_embeddings_stats_metadata")
+            else ""
+        )
         embedding_join = (
-            "LEFT JOIN chunk_embeddings e ON e.chunk_id = g.chunk_id AND e.embedding_identity_key = t.identity_key"
+            f"LEFT JOIN chunk_embeddings e{embedding_index_hint} "
+            "ON e.chunk_id = g.chunk_id AND e.embedding_identity_key = t.identity_key"
             if has_embeddings
+            else ""
+        )
+        global_chunks_index_hint = (
+            " INDEXED BY idx_global_chunks_stats_metadata"
+            if self._index_exists("idx_global_chunks_stats_metadata")
             else ""
         )
         ready_sql = (
@@ -2397,8 +2409,9 @@ class _KBListStorageView:
         for row in self._conn.execute(
             f"""WITH targets(kb_id, selected_profile_id, allow_ready, provider, model,
                                dimension, fingerprint, identity_key) AS (VALUES {values_sql}),
-                     counts AS (SELECT chunk_set_id, COUNT(*) AS actual_count
-                                FROM global_chunks GROUP BY chunk_set_id),
+                     counts AS (SELECT g.chunk_set_id, COUNT(*) AS actual_count
+                                FROM global_chunks g{global_chunks_index_hint}
+                                GROUP BY g.chunk_set_id),
                      members AS (SELECT kb_id, COUNT(*) AS member_count
                                  FROM rag_kb_files GROUP BY kb_id),
                      bindings AS (SELECT kb_id, COUNT(*) AS binding_count
@@ -2415,7 +2428,8 @@ class _KBListStorageView:
                 LEFT JOIN rag_kb_files kf ON kf.kb_id = b.kb_id AND kf.file_url = b.file_url
                 LEFT JOIN file_chunk_sets s ON s.chunk_set_id = b.chunk_set_id
                 LEFT JOIN counts ON counts.chunk_set_id = s.chunk_set_id
-                LEFT JOIN global_chunks g ON g.chunk_set_id = s.chunk_set_id
+                LEFT JOIN global_chunks g{global_chunks_index_hint}
+                  ON g.chunk_set_id = s.chunk_set_id
                 {embedding_join}
                 LEFT JOIN members m ON m.kb_id = t.kb_id
                 LEFT JOIN bindings bc ON bc.kb_id = t.kb_id
@@ -2694,6 +2708,14 @@ class _KBListStorageView:
                 for row in self._conn.execute("SELECT name FROM sqlite_schema WHERE type = 'table'")
             )
         return table in self._table_names_cache
+
+    def _index_exists(self, index: str) -> bool:
+        if self._index_names_cache is None:
+            self._index_names_cache = frozenset(
+                str(row[0])
+                for row in self._conn.execute("SELECT name FROM sqlite_schema WHERE type = 'index'")
+            )
+        return index in self._index_names_cache
 
     def _table_columns(self, table: str) -> frozenset[str]:
         if not self._table_exists(table):
@@ -3699,9 +3721,9 @@ def _kb_file_customer_projection(file_payload: Mapping[str, Any]) -> dict[str, A
     }
 
 
-def _empty_kb_list_result(auth: Any | None) -> dict[str, Any]:
+def _empty_kb_list_result(auth: Any | None, *, include_diagnostics: bool = True) -> dict[str, Any]:
     result: dict[str, Any] = {"knowledge_bases": []}
-    if _can_view_kb_diagnostics(auth):
+    if include_diagnostics and _can_view_kb_diagnostics(auth):
         result["current_embeddings"] = _current_embeddings_payload(storage=None)
     return result
 
@@ -3732,9 +3754,9 @@ def _list_knowledge_bases_customer(
     """Lightweight customer list: basic KB fields + real taxonomy category only.
 
     Uses the read-only connection (no RAG runtime import, no vector reads, no
-    manifest/coverage decoration) so the list stays fast for anonymous/reader
-    roles. Search filters on name/description/kb_id; ``kb_mode`` is a hidden
-    diagnostic and is not filterable here.
+    manifest/coverage decoration) so callers that only need category mappings
+    can avoid the diagnostic list. Search filters on name/description/kb_id;
+    ``kb_mode`` is a hidden diagnostic and is not filterable here.
     """
     search = _norm(query.get("search")).lower()
     rows = storage._conn.execute(
@@ -3771,21 +3793,26 @@ def list_knowledge_bases(
     query: Mapping[str, Any],
     auth: Any | None = None,
 ) -> dict[str, Any]:
+    requested_diagnostics = _norm(query.get("include_diagnostics")).lower() not in {
+        "false",
+        "0",
+        "no",
+    }
     connection_local = db_path in _KB_LIST_CONNECTION_LOCAL_PATHS
     if connection_local or not _kb_list_db_has_user_schema_objects(db_path):
-        return _empty_kb_list_result(auth)
+        return _empty_kb_list_result(auth, include_diagnostics=requested_diagnostics)
     conn = _open_kb_list_read_only_connection(db_path)
     storage = _KBListStorageView(db_path, conn)
     try:
         read_schema_problem = _kb_list_read_schema_problem(storage._conn)
         if read_schema_problem == "missing_kb_table":
-            return _empty_kb_list_result(auth)
+            return _empty_kb_list_result(auth, include_diagnostics=requested_diagnostics)
         if read_schema_problem is not None:
             raise RagAdminError(
                 "Knowledge base list schema requires explicit schema apply",
                 status_code=409,
             )
-        if not _can_view_kb_diagnostics(auth):
+        if not _can_view_kb_diagnostics(auth) or not requested_diagnostics:
             return _list_knowledge_bases_customer(storage, query)
         kb_mode = _norm(query.get("kb_mode"))
         search = _norm(query.get("search")).lower()

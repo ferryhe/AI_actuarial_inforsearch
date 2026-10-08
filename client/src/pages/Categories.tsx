@@ -62,6 +62,7 @@ export default function Categories() {
   const { t, lang } = useTranslation();
   const { permissions } = useAuth();
   const canAskAi = permissions.includes("chat.view") && permissions.includes("chat.query");
+  const canLoadAskAi = canAskAi && permissions.includes("catalog.read");
   const [, navigate] = useLocation();
   const [categories, setCategories] = useState<CategoryOption[]>([]);
   const [categorizedKnowledgeBases, setCategorizedKnowledgeBases] = useState<CategorizedKnowledgeBase[]>([]);
@@ -69,29 +70,18 @@ export default function Categories() {
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [lookupError, setLookupError] = useState("");
+  const [categoryRetry, setCategoryRetry] = useState(0);
+  const [lookupRetry, setLookupRetry] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setError("");
-
-    Promise.all([
-      apiGet<CategoriesResponse>("/api/categories?mode=used"),
-      apiGet<KnowledgeBasesResponse>("/api/rag/knowledge-bases")
-        .catch((): KnowledgeBasesResponse => ({})),
-      canAskAi
-        ? fetchChatKnowledgeBases().catch(() => [] as ChatKnowledgeBase[])
-        : Promise.resolve([] as ChatKnowledgeBase[]),
-    ])
-      .then(([result, knowledgeBaseResult, chatKbList]) => {
+    apiGet<CategoriesResponse>("/api/categories?mode=used")
+      .then((result) => {
         if (!cancelled) {
           setCategories(normalizeCategories(result.categories));
-          setCategorizedKnowledgeBases(
-            knowledgeBaseResult.knowledge_bases
-              || knowledgeBaseResult.data?.knowledge_bases
-              || [],
-          );
-          setChatKnowledgeBases(chatKbList);
         }
       })
       .catch((err) => {
@@ -108,7 +98,44 @@ export default function Categories() {
     return () => {
       cancelled = true;
     };
-  }, [canAskAi, t]);
+  }, [categoryRetry, t]);
+
+  useEffect(() => {
+    if (!canLoadAskAi) {
+      setCategorizedKnowledgeBases([]);
+      setChatKnowledgeBases([]);
+      setLookupError("");
+      return;
+    }
+    let cancelled = false;
+    setLookupError("");
+    Promise.allSettled([
+      apiGet<KnowledgeBasesResponse>("/api/rag/knowledge-bases?include_diagnostics=false"),
+      fetchChatKnowledgeBases(),
+    ]).then(([mappingResult, readinessResult]) => {
+      if (cancelled) return;
+      const errors: string[] = [];
+      if (mappingResult.status === "fulfilled") {
+        const result = mappingResult.value;
+        setCategorizedKnowledgeBases(
+          result.knowledge_bases || result.data?.knowledge_bases || [],
+        );
+      } else {
+        errors.push(formatApiErrorDetail(mappingResult.reason));
+      }
+      if (readinessResult.status === "fulfilled") {
+        setChatKnowledgeBases(readinessResult.value);
+      } else {
+        errors.push(formatApiErrorDetail(readinessResult.reason));
+      }
+      if (errors.length) {
+        setLookupError(errors.filter(Boolean).join("; ") || t("categories.kb_load_error"));
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [canLoadAskAi, lookupRetry, t]);
 
   const visibleCategories = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -146,18 +173,29 @@ export default function Categories() {
       </div>
 
       {error && (
-        <div className="rounded-xl border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive" data-testid="categories-error">
-          {error}
+        <div className="flex items-center justify-between gap-3 rounded-xl border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive" data-testid="categories-error" role="alert">
+          <span>{t("categories.load_error")}: {error}</span>
+          <button type="button" className="shrink-0 underline" onClick={() => setCategoryRetry((value) => value + 1)}>
+            {t("common.refresh")}
+          </button>
+        </div>
+      )}
+      {lookupError && (
+        <div className="flex items-center justify-between gap-3 rounded-xl border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive" data-testid="categories-kb-error" role="alert">
+          <span>{t("categories.kb_load_error")}: {lookupError}</span>
+          <button type="button" className="shrink-0 underline" onClick={() => setLookupRetry((value) => value + 1)}>
+            {t("common.refresh")}
+          </button>
         </div>
       )}
 
       {loading ? (
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3" data-testid="categories-loading">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3" data-testid="categories-loading" role="status" aria-live="polite" aria-busy="true">
           {[...Array(6)].map((_, index) => (
             <div key={index} className="h-28 rounded-xl bg-muted animate-pulse" />
           ))}
         </div>
-      ) : visibleCategories.length === 0 ? (
+      ) : error ? null : visibleCategories.length === 0 ? (
         <div className="rounded-xl border border-dashed border-border bg-card p-10 text-center" data-testid="categories-empty">
           <Tags className="w-12 h-12 mx-auto text-muted-foreground/40 mb-3" />
           <p className="font-medium text-muted-foreground">{t("categories.no_categories")}</p>
@@ -165,7 +203,7 @@ export default function Categories() {
       ) : (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3" data-testid="categories-grid">
           {visibleCategories.map((category) => {
-            const dedicatedKbId = canAskAi
+            const dedicatedKbId = canLoadAskAi
               ? findDedicatedCategoryKnowledgeBaseId(
                 category.name,
                 categorizedKnowledgeBases,
