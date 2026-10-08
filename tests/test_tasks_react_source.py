@@ -432,8 +432,11 @@ def test_catalog_pipeline_settings_can_save_without_provider_discovery():
     assert src.count("!settingsMode && catalogProviders.length === 0") >= 2
     assert "!settingsMode && (" not in src
     assert 't("tasks.form.catalog_success_target")' in src
-    assert "stats.first_candidate_index" in src
-    assert "setStartIndex(String(first))" in src
+    assert "stats.first_candidate_index" not in src
+    assert 'data-testid="input-start-index"' not in src
+    assert "scan_start_index: settingsMode ? parseInt(startIndex) || 1 : 1" in src
+    assert 't("tasks.form.no_catalog_candidates")' in src
+    assert "Number(stats.candidate_total) === 0" in src
     assert 'params.set("skip_existing", String(skipExisting))' in src
     assert 'params.set("overwrite_existing", String(overwriteExisting))' in src
     assert 'params.set("retry_errors", String(retryErrors))' in src

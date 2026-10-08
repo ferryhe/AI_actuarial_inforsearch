@@ -73,7 +73,11 @@ from ai_actuarial.shared_runtime import (
     task_log_path,
 )
 from ai_actuarial.storage import Storage
-from ai_actuarial.task_item_errors import normalize_item_errors, record_item_error
+from ai_actuarial.task_item_errors import (
+    normalize_item_errors,
+    record_item_error,
+    resolve_item_error_file_ids,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -3165,9 +3169,16 @@ class NativeTaskRuntime:
                 failed_items = max(0, int(result_metadata.get("failed_items") or 0))
             except (TypeError, ValueError):
                 failed_items = 0
+            db_path = str(getattr(self, "_ready_data_db_path", "") or "")
+            file_ids_by_digest = (
+                resolve_item_error_file_ids(result_metadata.get("item_errors"), db_path)
+                if db_path
+                else None
+            )
             item_errors = normalize_item_errors(
                 result_metadata.get("item_errors"),
                 task_id=task_id,
+                file_ids_by_digest=file_ids_by_digest,
             )
             persisted_metadata = dict(result_metadata)
             for key in ("failed_items", "item_errors", "item_errors_truncated"):

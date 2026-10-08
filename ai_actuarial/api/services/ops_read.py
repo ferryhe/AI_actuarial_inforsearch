@@ -36,6 +36,7 @@ from ai_actuarial.shared_runtime import (
     task_log_path,
 )
 from ai_actuarial.storage import Storage
+from ai_actuarial.task_item_errors import normalize_item_errors, resolve_item_error_file_ids
 
 _SEARCH_ENGINE_DISPLAY = {
     "brave": "Brave Search",
@@ -364,8 +365,16 @@ def _build_task_display_summary(task_data: dict[str, Any]) -> dict[str, Any]:
     return {"primary": primary, "secondary": secondary, "error_count": error_count}
 
 
-def _serialize_task_for_api(task_data: dict[str, Any]) -> dict[str, Any]:
+def _serialize_task_for_api(
+    task_data: dict[str, Any], *, file_ids_by_digest: dict[str, int] | None = None
+) -> dict[str, Any]:
     row = dict(task_data)
+    if "item_errors" in row:
+        row["item_errors"] = normalize_item_errors(
+            row.get("item_errors"),
+            task_id=str(row.get("id") or ""),
+            file_ids_by_digest=file_ids_by_digest,
+        )
     for field in ("started_at", "completed_at"):
         value = row.get(field)
         if isinstance(value, str):
@@ -380,14 +389,34 @@ def _serialize_task_for_api(task_data: dict[str, Any]) -> dict[str, Any]:
     return row
 
 
+def _task_item_errors(tasks: list[dict[str, Any]]) -> list[object]:
+    return [
+        error
+        for task in tasks
+        for errors in [task.get("item_errors")]
+        if isinstance(errors, list)
+        for error in errors
+    ]
+
+
 def list_active_tasks(
-    active_tasks_ref: dict[str, dict[str, Any]], task_lock: Any
+    active_tasks_ref: dict[str, dict[str, Any]],
+    task_lock: Any,
+    *,
+    db_path: str = "",
+    can_read_files: bool = False,
 ) -> dict[str, list[dict[str, Any]]]:
     if task_lock is None:
-        tasks = [_serialize_task_for_api(task) for task in active_tasks_ref.values()]
+        raw_tasks = list(active_tasks_ref.values())
     else:
         with task_lock:
-            tasks = [_serialize_task_for_api(task) for task in active_tasks_ref.values()]
+            raw_tasks = [dict(task) for task in active_tasks_ref.values()]
+    file_ids_by_digest = (
+        resolve_item_error_file_ids(_task_item_errors(raw_tasks), db_path) if can_read_files else {}
+    )
+    tasks = [
+        _serialize_task_for_api(task, file_ids_by_digest=file_ids_by_digest) for task in raw_tasks
+    ]
     return {"tasks": tasks}
 
 
@@ -403,11 +432,18 @@ def _task_history_sort_key(task_data: dict[str, Any]) -> tuple[bool, float]:
 
 
 def list_task_history(
-    task_history_ref: list[dict[str, Any]], limit: int
+    task_history_ref: list[dict[str, Any]],
+    limit: int,
+    *,
+    db_path: str = "",
+    can_read_files: bool = False,
 ) -> dict[str, list[dict[str, Any]]]:
+    raw_tasks = sorted(task_history_ref, key=_task_history_sort_key, reverse=True)[:limit]
+    file_ids_by_digest = (
+        resolve_item_error_file_ids(_task_item_errors(raw_tasks), db_path) if can_read_files else {}
+    )
     tasks = [
-        _serialize_task_for_api(task)
-        for task in sorted(task_history_ref, key=_task_history_sort_key, reverse=True)[:limit]
+        _serialize_task_for_api(task, file_ids_by_digest=file_ids_by_digest) for task in raw_tasks
     ]
     return {"tasks": tasks}
 

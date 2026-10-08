@@ -70,7 +70,7 @@ def test_file_detail_gates_protected_option_and_diagnostic_fetches():
         "const conversionPoller", 1
     )[0]
     assert "if (canRunTasks && query)" in coverage_block
-    assert "}, [beginChunksRequest, canRunTasks, fileUrl]);" in coverage_block
+    assert "}, [beginChunksRequest, canRunTasks, resolvedFileUrl]);" in coverage_block
 
 
 def test_disabled_task_options_hide_stale_operator_cache_and_finish_loading():
@@ -329,11 +329,14 @@ def test_query_navigation_reloads_detail_and_preview():
     preview_src = FILE_PREVIEW_TSX.read_text(encoding="utf-8")
 
     assert "const searchParams = useRawSearchParams();" in detail_src
-    assert "}, [beginFileRequest, fileUrl]);" in detail_src
-    assert "}, [beginMarkdownRequest, fileUrl]);" in detail_src
-    assert "}, [beginChunksRequest, canRunTasks, fileUrl]);" in detail_src
+    assert 'const hasFileId = searchParams.has("file_id");' in detail_src
+    assert "}, [beginFileRequest, fileId, fileRequestIdentity, hasFileId]);" in detail_src
+    assert "}, [beginMarkdownRequest, resolvedFileUrl]);" in detail_src
+    assert "}, [beginChunksRequest, canRunTasks, resolvedFileUrl]);" in detail_src
     assert "useEffect(() => { fetchFile(); }, [fetchFile]);" in detail_src
+    assert "`/api/files/detail?file_id=${encodeURIComponent(fileId)}`" in detail_src
     assert "`/api/files/detail?url=${encodeURIComponent(requestIdentity)}`" in detail_src
+    assert "if (!resolvedFileUrl) return;" in detail_src
     assert "const searchParams = useRawSearchParams();" in preview_src
     assert "}, [beginPreviewRequest, fileUrl, t]);" in preview_src
     assert (
@@ -506,9 +509,13 @@ def test_file_detail_and_preview_guard_every_query_dependent_request_state():
 
     assert "identityRef.current === requestIdentity" in hook_src
     assert "generationRef.current === generation" in hook_src
-    for request_name in ("File", "Markdown", "Chunks"):
-        assert f"const begin{request_name}Request = useLatestRequestGuard(fileUrl);" in detail_src
-    assert "const beginChunkSubmission = useLatestRequestGuard(fileUrl);" in detail_src
+    assert "const beginFileRequest = useLatestRequestGuard(fileRequestIdentity);" in detail_src
+    for request_name in ("Markdown", "Chunks"):
+        assert (
+            f"const begin{request_name}Request = useLatestRequestGuard(resolvedFileUrl);"
+            in detail_src
+        )
+    assert "const beginChunkSubmission = useLatestRequestGuard(resolvedFileUrl);" in detail_src
     assert detail_src.count("if (!requestIdentity || !isLatest()) return;") >= 3
     assert "const isLatest = beginChunkSubmission(requestIdentity);" in detail_src
     assert "if (isLatest()) setChunkSubmitting(false);" in detail_src

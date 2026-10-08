@@ -26,7 +26,7 @@ export function CatalogForm({
   const [scopeMode, setScopeMode] = useState(String(initialTask.scope_mode || "index"));
   const [category, setCategory] = useState(String(initialTask.category || ""));
   const [scanCount, setScanCount] = useState(String(initialTask.scan_count || 100));
-  const [startIndex, setStartIndex] = useState(String(initialTask.scan_start_index || 1));
+  const startIndex = String(initialTask.scan_start_index || 1);
   const [inputSource, setInputSource] = useState(String(initialTask.input_source || "markdown"));
   const [retryErrors, setRetryErrors] = useState(Boolean(initialTask.retry_errors));
   const [skipExisting, setSkipExisting] = useState(initialTask.skip_existing == null ? true : Boolean(initialTask.skip_existing));
@@ -60,13 +60,6 @@ export function CatalogForm({
     loadStats(scopeMode === "category" ? category.trim() || undefined : undefined);
   }, [category, loadStats, scopeMode]);
 
-  useEffect(() => {
-    if (!settingsMode && stats && startIndex === "1") {
-      const first = stats.first_candidate_index;
-      if (first != null) setStartIndex(String(first));
-    }
-  }, [settingsMode, stats, startIndex]);
-
   const changeCategory = (value: string) => {
     setCategory(value);
     if (value.trim()) loadStats(value.trim());
@@ -80,7 +73,7 @@ export function CatalogForm({
       scope_mode: scopeMode,
       category: scopeMode === "category" ? category : undefined,
       scan_count: parseInt(scanCount) || 100,
-      scan_start_index: parseInt(startIndex) || 1,
+      scan_start_index: settingsMode ? parseInt(startIndex) || 1 : 1,
       input_source: inputSource,
       retry_errors: retryErrors,
       skip_existing: skipExisting,
@@ -96,12 +89,18 @@ export function CatalogForm({
       {statsLoading ? (
         <div className="flex items-center gap-2 text-xs text-muted-foreground py-2"><Loader2 className="w-3.5 h-3.5 animate-spin" />{t("tasks.form.loading_stats")}</div>
       ) : stats && (
-        <StatsBanner items={[
-          { label: t("tasks.form.stat_local_files"), value: stats.total_local_files as number },
-          { label: t("tasks.form.stat_cataloged"), value: stats.total_catalog_ok as number },
-          { label: t("tasks.form.stat_candidates"), value: stats.candidate_total as number },
-          { label: t("tasks.form.stat_first_candidate"), value: stats.first_candidate_index as number },
-        ]} />
+        <>
+          <StatsBanner items={[
+            { label: t("tasks.form.stat_local_files"), value: stats.total_local_files as number },
+            { label: t("tasks.form.stat_cataloged"), value: stats.total_catalog_ok as number },
+            { label: t("tasks.form.stat_candidates"), value: stats.candidate_total as number },
+          ]} />
+          {Number(stats.candidate_total) === 0 && (
+            <p className="text-xs text-muted-foreground" data-testid="text-no-catalog-candidates">
+              {t("tasks.form.no_catalog_candidates")}
+            </p>
+          )}
+        </>
       )}
       <FormField label={t("tasks.form.provider")}>
         {catalogProviders.length > 0 ? (
@@ -135,9 +134,6 @@ export function CatalogForm({
           />
         </FormField>
       )}
-      <FormField label={t("tasks.form.start_index")} hint={t("tasks.form.start_index_hint")}>
-        <InputField value={startIndex} onChange={setStartIndex} placeholder="1" type="number" testId="input-start-index" />
-      </FormField>
       <FormField label={t("tasks.form.input_source")}>
         <SelectField value={inputSource} onChange={(value) => { setInputSource(value); loadStats(scopeMode === "category" ? category : undefined, value); }} testId="select-input-source"
           options={[{ value: "markdown", label: "Markdown" }, { value: "source", label: "Source" }]} />

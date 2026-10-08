@@ -1907,18 +1907,23 @@ function SystemTab() {
                     </span>
                   ) : (
                     <button
+                      type="button"
                       onClick={() => toggleFeature(key)}
-                      className={cn(
-                        "relative inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-full transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                        val ? "bg-emerald-500" : "bg-muted border border-border"
-                      )}
+                      role="switch"
+                      aria-checked={val}
+                      className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-full bg-transparent focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                       data-testid={`toggle-system-flag-${key}`}
                       aria-label={label}
                     >
                       <span className={cn(
-                        "inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform shadow-sm",
-                        val ? "translate-x-4" : "translate-x-1"
-                      )} />
+                        "relative inline-flex h-5 w-9 items-center rounded-full border border-border transition-colors",
+                        val ? "bg-emerald-500" : "bg-muted"
+                      )}>
+                        <span className={cn(
+                          "absolute left-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
+                          val && "translate-x-4"
+                        )} />
+                      </span>
                     </button>
                   )}
                 </div>

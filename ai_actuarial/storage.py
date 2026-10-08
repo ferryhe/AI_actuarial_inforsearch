@@ -1724,6 +1724,31 @@ class Storage:
         columns = [desc[0] for desc in cur.description]
         return dict(zip(columns, row))
 
+    def get_file_ids_by_url_sha256(self, digests: set[str]) -> dict[str, int]:
+        """Resolve URL identity digests to unique, non-deleted file IDs."""
+        requested = set(digests)
+        if not requested:
+            return {}
+
+        # ponytail: one file-table scan per response; index URL digests if polling cost matters.
+        matches: dict[str, tuple[int, bool]] = {}
+        counts: dict[str, int] = {}
+        for file_id, url, deleted_at in self._conn.execute(
+            "SELECT id, url, deleted_at FROM files WHERE url IS NOT NULL"
+        ):
+            digest = hashlib.sha256(str(url).encode("utf-8")).hexdigest()
+            if digest not in requested:
+                continue
+            counts[digest] = counts.get(digest, 0) + 1
+            if counts[digest] == 1:
+                matches[digest] = (int(file_id), not bool(deleted_at))
+
+        return {
+            digest: file_id
+            for digest, (file_id, active) in matches.items()
+            if active and counts[digest] == 1
+        }
+
     @staticmethod
     def _canonical_ready_data_keywords(raw: object) -> str:
         """Canonicalize keywords exactly as the ready-data builder consumes them."""

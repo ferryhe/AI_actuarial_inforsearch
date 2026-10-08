@@ -342,7 +342,7 @@ def test_fastapi_native_read_routes_keep_public_reads_available_under_require_au
 def test_fastapi_sources_file_detail_and_markdown_match_legacy_contract(
     tmp_path: Path, monkeypatch
 ) -> None:
-    client, _app, _seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
+    client, app, _seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
 
     sources = client.get("/api/sources")
     assert sources.status_code == 200
@@ -359,6 +359,24 @@ def test_fastapi_sources_file_detail_and_markdown_match_legacy_contract(
     assert "local_path" not in detail_body["file"]
     assert "sha256" not in detail_body["file"]
     assert "markdown_content" not in detail_body["file"]
+
+    storage = Storage(str(app.state.db_path))
+    try:
+        alpha_id = int(storage.get_file_by_url("https://alpha.example/doc-a.pdf")["id"])
+        deleted_id = int(storage.get_file_by_url("https://gamma.example/doc-c.pdf")["id"])
+    finally:
+        storage.close()
+    by_id = client.get(f"/api/files/detail?file_id={alpha_id}")
+    assert by_id.status_code == 200
+    assert by_id.json()["file"]["url"] == "https://alpha.example/doc-a.pdf"
+    invalid_id = client.get("/api/files/detail?file_id=not-a-number")
+    assert invalid_id.status_code == 400
+    mixed_identity = client.get(
+        f"/api/files/detail?file_id={alpha_id}&url=https%3A%2F%2Falpha.example%2Fdoc-a.pdf"
+    )
+    assert mixed_identity.status_code == 400
+    deleted_by_id = client.get(f"/api/files/detail?file_id={deleted_id}")
+    assert deleted_by_id.status_code == 404
 
     missing_param = client.get("/api/files/detail")
     assert missing_param.status_code == 400
