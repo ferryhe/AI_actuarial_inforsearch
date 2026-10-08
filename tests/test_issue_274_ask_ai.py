@@ -188,7 +188,11 @@ def test_ask_ai_entry_points_permissions_and_i18n_source_contracts() -> None:
     assert "data-testid={`button-ask-ai-kb-${kbId}`}" in knowledge
     assert 'data-testid="button-ask-ai-kb-detail"' in detail
     assert categories.count("button-ask-ai-category-") == 1
-    assert 'apiGet<KnowledgeBasesResponse>("/api/rag/knowledge-bases")' in categories
+    assert (
+        'apiGet<KnowledgeBasesResponse>("/api/rag/knowledge-bases?include_diagnostics=false")'
+        in categories
+    )
+    assert 'const canLoadAskAi = canAskAi && permissions.includes("catalog.read")' in categories
     assert "findDedicatedCategoryKnowledgeBaseId" in categories
     assert "fetchChatKnowledgeBases" in knowledge
     assert "fetchChatKnowledgeBases" in detail

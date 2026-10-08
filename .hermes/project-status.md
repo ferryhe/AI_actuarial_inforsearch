@@ -1,3 +1,58 @@
+# Active work — Issue #407 KB / Category loading — 2026-10-07 EDT
+
+- Project: `AI_actuarial_inforsearch`; branch:
+  `codex/issue-407-kb-category-loading`; isolated checkout:
+  `.codex-worktrees/issue-407`; baseline `b867dda976f580c947850f09b75d499f73af5a63`.
+  Scope is KB and Category list/API loading, focused regressions and performance
+  evidence. Sibling repositories are off-limits. Root checkout and its unrelated
+  modified status/untracked directories are preserved.
+- Pre-implementation assessment selected a persistent Sol/high worker because
+  scoped SQL aggregation must preserve binding validity and readiness metadata,
+  while independent React loading/retry must preserve manifest episode authority,
+  polling and permission projections. Fresh Sol/high review is PASS with no
+  confirmed in-scope findings; its focused backend module passed 11/11.
+  Ponytail full and karpathy-guidelines apply; graphify located the relevant code.
+- The user's production read-only profiling isolates the root cause in
+  `_prepare_coverage`: full service 57.29/46.62 s, coverage SQL 57.07/46.41 s.
+  SQLite selects a noncovering index and visits large vector-table data pages.
+  Keeping SQL logic identical while using the existing metadata covering index
+  gives service 0.54–0.64 s and coverage SQL 0.35–0.45 s. These measurements
+  were supplied by the user; full production output equivalence remains pending.
+- Final backend scope is guarded existing-index hints, following the existing
+  ops_write stats pattern. Original aggregate and source-fallback logic are
+  retained. Category cards render independently of KB/Chat lookups; KB errors
+  receive explicit failure/retry state. No deep vector read or external model
+  call is the diagnosed cause. No index creation or schema migration is planned.
+- Existing 8,704-chunk / 3,072-dimension / two-KB local baseline passed: 37 SELECTs,
+  cold 190.7 ms and warm 184.3 ms, no vector JSON reads. Final same-data comparison
+  gives hinted 52.2/44.4 ms versus unhinted 182.0/170.7 ms and identical complete
+  8,957-byte payloads. These fixtures do not reproduce the production minute-long
+  timeout and are not production-root-cause evidence.
+- Production read-only samples: anonymous Category 200 / 1.057 s first and
+  0.763 s repeated; anonymous KB 200 / 1.051 s first and 0.704 s repeated.
+  Admin Category remained loading at 24.8 s then cards appeared by 83.1 s;
+  a repeat remained loading at 23.1 s then cards appeared by 57.0 s. These are
+  sparse UI observation bounds, not precise API durations or P95 estimates.
+  Admin KB repeat showed two KBs by 35.9 s: 580 bound files and 14,306 chunks.
+  Category search/navigation worked for guest/admin; public AI files API was
+  200 / 1.002 s first and 0.947 s repeated, 35,577 bytes, 213 matching files.
+- Current stage: final local quality gate PASS: 2,411 passed, 11 skipped;
+  Black, isort and Pylint have zero violations. Vitest 3/3, typecheck, lint,
+  build and both dead-code gates PASS. Lint has four existing Hook warnings.
+  Built-bundle Chromium/API-fixture smoke PASS across guest/registered/admin,
+  with category grids visible in 237–357 ms despite delayed auxiliary requests;
+  search/filter and error/retry flows pass. Performance evidence and commands
+  are in `docs/issue-407-performance.md`. Fresh independent review is PASS.
+  The earlier interrupted review is not a failed cycle. No deployment,
+  migration, production writes or post-deployment improvement is claimed.
+- Delivery: PR #412 is open at
+  https://github.com/ferryhe/AI_actuarial_inforsearch/pull/412
+  with implementation commit `698928f`. Local checks and independent review
+  are complete. GitHub checks and remote feedback are tracked on this PR;
+  the 15-minute checkpoint is due at 2026-10-08 01:34 UTC.
+  The task authorizes commit/push/PR, not merge or deployment. Keep #407 open
+  until remaining production acceptance is verified.
+
 # Latest work — PR #409/#410 completion repairs — 2026-10-07 UTC
 
 - Project: `AI_actuarial_inforsearch`; branch: `codex/fix-comments-from-review-thread`;

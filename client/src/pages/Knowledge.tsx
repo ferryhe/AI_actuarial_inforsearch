@@ -337,6 +337,7 @@ export default function Knowledge() {
   const [chatKnowledgeBases, setChatKnowledgeBases] = useState<ChatKnowledgeBase[]>([]);
   const [profiles, setProfiles] = useState<ChunkProfile[]>([]);
   const [loading, setLoading] = useState(true);
+  const [kbLoadError, setKbLoadError] = useState("");
   const [showCreateKB, setShowCreateKB] = useState(false);
   const [showCreateProfile, setShowCreateProfile] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -402,30 +403,20 @@ export default function Knowledge() {
     tokenizer: "cl100k_base",
   });
 
-  const loadData = useCallback((showLoading = true): Promise<void> => {
-    if (loadDataInFlight.current) return loadDataInFlight.current;
+  const loadData = useCallback((showLoading = true, force = false): Promise<void> => {
+    if (!force && loadDataInFlight.current) return loadDataInFlight.current;
     const requestManifestVersion = ++readyDataListManifestVersion.current;
     if (showLoading) setLoading(true);
+    setKbLoadError("");
     const request = Promise.all([
-      apiGet<Record<string, unknown>>("/api/rag/knowledge-bases").catch(() => null),
-      (canManageCatalog || canRunKnowledgeTasks)
-        ? apiGet<Record<string, unknown>>("/api/chunk/profiles").catch(() => null)
-        : Promise.resolve(null),
-      canManageCatalog
-        ? apiGet<Record<string, unknown>>("/api/rag/categories/mapping").catch(() => null)
-        : Promise.resolve(null),
-      apiGet<Record<string, unknown>>("/api/categories?mode=used").catch(() => null),
-      canAskAi
-        ? fetchChatKnowledgeBases().catch(() => [] as ChatKnowledgeBase[])
-        : Promise.resolve([] as ChatKnowledgeBase[]),
-    ])
-      .then(([kbResp, profileResp, ragCategoriesResp, usedCategoriesResp, chatKbList]) => {
-        const kbPayload = kbResp as {
-          knowledge_bases?: KnowledgeBase[];
-          current_embeddings?: CurrentEmbedding;
-          data?: { knowledge_bases?: KnowledgeBase[]; current_embeddings?: CurrentEmbedding };
-        } | null;
-        if (kbPayload) {
+      apiGet<Record<string, unknown>>("/api/rag/knowledge-bases")
+        .then((kbResp) => {
+          if (requestManifestVersion !== readyDataListManifestVersion.current) return;
+          const kbPayload = kbResp as {
+            knowledge_bases?: KnowledgeBase[];
+            current_embeddings?: CurrentEmbedding;
+            data?: { knowledge_bases?: KnowledgeBase[]; current_embeddings?: CurrentEmbedding };
+          };
           const kbList: KnowledgeBase[] = kbPayload.knowledge_bases || kbPayload.data?.knowledge_bases || [];
           const manifestAuthorityByKb = new Map<string, boolean>();
           for (const item of kbList) {
@@ -448,8 +439,27 @@ export default function Knowledge() {
             (kbId) => manifestAuthorityByKb.get(kbId) ?? false,
           ));
           setCurrentEmbedding(kbPayload.current_embeddings || kbPayload.data?.current_embeddings || null);
-        }
-
+          setKbLoadError("");
+          if (showLoading) setLoading(false);
+        })
+        .catch((err) => {
+          if (requestManifestVersion !== readyDataListManifestVersion.current) return;
+          setKbLoadError(formatApiErrorDetail(err) || t("knowledge.load_error"));
+          if (showLoading) setLoading(false);
+        }),
+      (canManageCatalog || canRunKnowledgeTasks)
+        ? apiGet<Record<string, unknown>>("/api/chunk/profiles").catch(() => null)
+        : Promise.resolve(null),
+      canManageCatalog
+        ? apiGet<Record<string, unknown>>("/api/rag/categories/mapping").catch(() => null)
+        : Promise.resolve(null),
+      apiGet<Record<string, unknown>>("/api/categories?mode=used").catch(() => null),
+      canAskAi
+        ? fetchChatKnowledgeBases().catch(() => [] as ChatKnowledgeBase[])
+        : Promise.resolve([] as ChatKnowledgeBase[]),
+    ])
+      .then(([, profileResp, ragCategoriesResp, usedCategoriesResp, chatKbList]) => {
+        if (requestManifestVersion !== readyDataListManifestVersion.current) return;
         const profilePayload = profileResp as { profiles?: ChunkProfile[]; data?: ChunkProfile[] | { profiles?: ChunkProfile[] } } | null;
         if (profilePayload) {
           const legacyProfiles = profilePayload.data;
@@ -473,12 +483,13 @@ export default function Knowledge() {
         setChatKnowledgeBases(chatKbList);
       })
       .then(() => undefined);
-    loadDataInFlight.current = request.finally(() => {
-      if (showLoading) setLoading(false);
-      loadDataInFlight.current = null;
+    const trackedRequest = request.finally(() => {
+      if (showLoading && requestManifestVersion === readyDataListManifestVersion.current) setLoading(false);
+      if (loadDataInFlight.current === trackedRequest) loadDataInFlight.current = null;
     });
-    return loadDataInFlight.current;
-  }, [applyReadyDataListManifestEpisode, canAskAi, canManageCatalog, canRunKnowledgeTasks]);
+    loadDataInFlight.current = trackedRequest;
+    return trackedRequest;
+  }, [applyReadyDataListManifestEpisode, canAskAi, canManageCatalog, canRunKnowledgeTasks, t]);
 
   const readyDataListBusy = kbs.some((kb) => (
     isReadyDataAutomationBusy(kb.agentic_ready_manifest)
@@ -1250,13 +1261,22 @@ export default function Knowledge() {
         )}
       </AnimatePresence>
 
+      {kbLoadError && (
+        <div className="flex items-center justify-between gap-3 rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive" data-testid="knowledge-list-error" role="alert">
+          <span>{t("knowledge.load_error")}: {kbLoadError}</span>
+          <button type="button" className="shrink-0 underline" onClick={() => void loadData(true, true)}>
+            {t("common.refresh")}
+          </button>
+        </div>
+      )}
+
       {loading ? (
-        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4" role="status" aria-live="polite" aria-busy="true">
           {[...Array(3)].map((_, i) => (
             <div key={i} className="h-52 rounded-xl bg-muted animate-pulse" />
           ))}
         </div>
-      ) : kbs.length === 0 ? (
+      ) : kbLoadError && kbs.length === 0 ? null : kbs.length === 0 ? (
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
