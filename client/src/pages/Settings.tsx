@@ -35,6 +35,7 @@ import { apiGet, apiPost, apiDelete } from "@/lib/api";
 import { formatSettingsMutationError } from "@/lib/settings-errors";
 import { MarkdownConversionTab } from "./settings/MarkdownConversionTab";
 import { IconButton } from "@/components/a11y/IconButton";
+import { BuildInfo } from "@/components/BuildInfo";
 
 type SettingsTab = "ai" | "search" | "categories" | "tokens" | "system" | "prompts" | "markdown";
 
@@ -2207,6 +2208,8 @@ export default function SettingsPage() {
           </button>
         </div>
       </motion.div>
+
+      <BuildInfo />
 
       <div className="flex items-center gap-1 overflow-x-auto pb-1 border-b border-border" data-testid="settings-tabs">
         <TabButton active={activeTab === "ai"} onClick={() => setActiveTab("ai")} icon={Bot} label={t("settings.tab_ai")} testId="tab-ai" />

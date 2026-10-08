@@ -107,7 +107,7 @@ def test_fastapi_production_meta_and_docs_policy(monkeypatch) -> None:
 
     health = client.get("/api/health")
     assert health.status_code == 200, health.text
-    assert set(health.json()) == {"status", "backend", "timestamp"}
+    assert set(health.json()) == {"status", "backend", "timestamp", "build_info"}
 
     protected_paths = (
         "/api/health/detailed",

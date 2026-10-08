@@ -1,6 +1,7 @@
 FROM python:3.11-slim
 
 ARG BUILD_GIT_SHA=unknown
+ARG BUILD_RELEASE_ID=unknown
 ARG BUILD_GIT_DIRTY=unknown
 ARG BUILD_UTC=unknown
 ARG BUILD_SOURCE_URL=https://github.com/ferryhe/AI_actuarial_inforsearch
@@ -9,6 +10,9 @@ LABEL org.opencontainers.image.revision="${BUILD_GIT_SHA}" \
       org.opencontainers.image.created="${BUILD_UTC}" \
       org.opencontainers.image.source="${BUILD_SOURCE_URL}" \
       com.aiinforsearch.git-dirty="${BUILD_GIT_DIRTY}"
+
+LABEL com.aiinforsearch.release-id="${BUILD_RELEASE_ID}"
+ENV BUILD_RELEASE_ID=${BUILD_RELEASE_ID} BUILD_GIT_SHA=${BUILD_GIT_SHA} BUILD_UTC=${BUILD_UTC}
 
 WORKDIR /app
 

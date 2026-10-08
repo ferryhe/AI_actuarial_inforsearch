@@ -15,7 +15,12 @@ BACKUP_LOCK_FILE="${BACKUP_LOCK_FILE:-/run/aiinforsearch-backup.lock}"
 RELEASE_DIR="${RELEASE_DIR:-/var/lib/aiinforsearch/releases}"
 CAPACITY_THRESHOLD="${CAPACITY_THRESHOLD:-80}"
 API_IMAGE="${API_IMAGE:-ai_actuarial_inforsearch-api:latest}"
+FRONTEND_IMAGE="${FRONTEND_IMAGE:-ai_actuarial_inforsearch-frontend:latest}"
+FRONTEND_SERVICE_NAME="${FRONTEND_SERVICE_NAME:-frontend}"
+DEPLOY_WAIT_TIMEOUT="${DEPLOY_WAIT_TIMEOUT:-180}"
 BUILD_SOURCE_URL="${BUILD_SOURCE_URL:-https://github.com/ferryhe/AI_actuarial_inforsearch}"
+BUILD_BUILDER="${BUILD_BUILDER:-aiinforsearch-provenance}"
+BUILD_BUILDKIT_IMAGE="${BUILD_BUILDKIT_IMAGE:-moby/buildkit@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea}"
 CONFIG_PATH="${CONFIG_PATH:?Set CONFIG_PATH to the external production sites.yaml}"
 
 if [[ ! -f "$CONFIG_PATH" ]]; then
@@ -58,12 +63,14 @@ if [[ ! -f "$COMPOSE_FILE" ]]; then
 fi
 
 compose=(docker compose -f "$COMPOSE_FILE")
+build=(docker buildx bake --builder "$BUILD_BUILDER" -f "$COMPOSE_FILE")
 if [[ -n "$COMPOSE_OVERRIDE_FILE" ]]; then
   if [[ ! -f "$COMPOSE_OVERRIDE_FILE" ]]; then
     echo "Compose override not found: $REPO_DIR/$COMPOSE_OVERRIDE_FILE"
     exit 1
   fi
   compose+=(-f "$COMPOSE_OVERRIDE_FILE")
+  build+=(-f "$COMPOSE_OVERRIDE_FILE")
 fi
 
 echo "[1/7] Refuse to overwrite local production changes"
@@ -126,18 +133,42 @@ export BUILD_GIT_SHA="${BUILD_GIT_SHA:-$(git rev-parse HEAD)}"
 export BUILD_GIT_DIRTY="${BUILD_GIT_DIRTY:-false}"
 export BUILD_UTC="${BUILD_UTC:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
 export BUILD_SOURCE_URL
+export API_IMAGE FRONTEND_IMAGE
+export BUILD_RELEASE_ID="${BUILD_RELEASE_ID:-$(python3 -c 'import uuid; print(uuid.uuid4())')}"
 
-echo "[5/7] Build and restart service: $APP_SERVICE_NAME"
-"${compose[@]}" build --pull "$APP_SERVICE_NAME"
-"${compose[@]}" up -d "$APP_SERVICE_NAME"
+echo "[5/7] Build API and static frontend with the same release manifest ID"
+if ! builder_info=$(docker buildx inspect "$BUILD_BUILDER" 2>/dev/null); then
+  : "${BUILD_BUILDER_MEMORY:?Set BUILD_BUILDER_MEMORY to the approved full-build memory budget}"
+  : "${BUILD_BUILDER_CPU_QUOTA:?Set BUILD_BUILDER_CPU_QUOTA to the approved quota for a 100000us period}"
+  docker buildx create --name "$BUILD_BUILDER" --driver docker-container \
+    --driver-opt "image=$BUILD_BUILDKIT_IMAGE,memory=$BUILD_BUILDER_MEMORY,memory-swap=$BUILD_BUILDER_MEMORY,cpu-quota=$BUILD_BUILDER_CPU_QUOTA,cpu-period=100000" >/dev/null
+  builder_info=$(docker buildx inspect "$BUILD_BUILDER")
+fi
+builder_driver=$(printf '%s\n' "$builder_info" | sed -n 's/^Driver:[[:space:]]*//p')
+if [[ "$builder_driver" != "docker-container" ]]; then
+  echo "Provenance builder must use docker-container: $BUILD_BUILDER ($builder_driver)"
+  exit 1
+fi
+docker buildx inspect --bootstrap "$BUILD_BUILDER" >/dev/null
+mkdir -p "$RELEASE_DIR"
+build_metadata="$RELEASE_DIR/$BUILD_RELEASE_ID.build.json"
+"${build[@]}" --pull --load --metadata-file "$build_metadata" "$APP_SERVICE_NAME" "$FRONTEND_SERVICE_NAME"
+# Inspect the freshly built tags, not images of still-running old containers.
+# Digests are read by release-record only after both builds complete.
 
 echo "[6/7] Write the release traceability record"
 mkdir -p "$RELEASE_DIR"
 python3 scripts/production_recovery.py release-record \
   --image "$API_IMAGE" \
+  --frontend-image "$FRONTEND_IMAGE" \
+  --build-metadata "$build_metadata" \
+  --api-build-target "$APP_SERVICE_NAME" \
+  --frontend-build-target "$FRONTEND_SERVICE_NAME" \
   --config "$CONFIG_PATH" \
   --db "$DATA_DIR/index.db" \
-  --output "$RELEASE_DIR/$BUILD_GIT_SHA.json"
+  --output "$RELEASE_DIR/$BUILD_RELEASE_ID.json"
+export API_IMAGE_DIGEST="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["image_digest"].rsplit("@", 1)[-1])' "$RELEASE_DIR/$BUILD_RELEASE_ID.json")"
+"${compose[@]}" up -d --wait --wait-timeout "$DEPLOY_WAIT_TIMEOUT" "$APP_SERVICE_NAME" "$FRONTEND_SERVICE_NAME"
 
 if [[ "$RELOAD_CADDY" == "true" ]]; then
   echo "[7/7] Reload Caddy: $CADDY_CONTAINER"

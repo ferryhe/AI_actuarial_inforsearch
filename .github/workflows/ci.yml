@@ -156,10 +156,16 @@ jobs:
         run: npm ci
 
       - name: Lint, type-check, and build frontend
+        env:
+          BUILD_RELEASE_ID: ci-${{ github.run_id }}-${{ github.run_attempt }}
+          BUILD_GIT_SHA: ${{ github.sha }}
         run: |
+          export BUILD_UTC=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           npm run lint
           npm run typecheck
           npm run build
+          grep -R -q "$BUILD_RELEASE_ID" dist/public/assets
+          npm exec -- vitest run client/src/components/BuildInfo.test.tsx
 
   python-smoke:
     needs: dead-code-symbols
