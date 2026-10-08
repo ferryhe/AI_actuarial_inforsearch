@@ -40,6 +40,7 @@ import {
   fetchDocumentCategories,
   fetchDocumentMarkdown,
   fetchKnowledgeBases,
+  clearChatDocumentScope,
   queryChat,
 } from "./chat/api";
 import { useChatSession } from "./chat/useChatSession";
@@ -56,6 +57,7 @@ import type {
   ChatRouteState,
   Citation,
   DocumentContext,
+  DocumentScopeSource,
   KnowledgeBase,
   Message,
   RagMode,
@@ -433,6 +435,7 @@ const FAILED_TURN_CODES = new Set([
   "CHAT_AGENTIC_UNAVAILABLE",
   "CHAT_PROCESSING_FAILED",
   "CHAT_DOCUMENT_EMPTY",
+  "CHAT_DOCUMENT_SCOPE_MISMATCH",
   "KB_EMBEDDING_MISMATCH",
 ]);
 
@@ -454,6 +457,10 @@ export default function Chat() {
     setActiveConvId,
     messages,
     setMessages,
+    documentScope,
+    setDocumentScope,
+    loadingConversation,
+    conversationLoadError,
     loadingConvs,
     resetSession,
     loadConversations,
@@ -470,6 +477,8 @@ export default function Chat() {
   const [selectedKbs, setSelectedKbs] = useState<string[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
+  const [clearingDocumentScope, setClearingDocumentScope] = useState(false);
+  const [documentScopeClearPending, setDocumentScopeClearPending] = useState(false);
   const [isMobile, setIsMobile] = useState(() => (
     typeof window !== "undefined" && window.matchMedia("(max-width: 767px)").matches
   ));
@@ -500,6 +509,9 @@ export default function Chat() {
   const mobileDrawerWasOpenRef = useRef(false);
   const routeExplainKeyRef = useRef<string | null>(null);
   const processedAskAiTargetKeyRef = useRef<string | null>(null);
+  const sessionEpochRef = useRef(0);
+  const scopeClearRequestRef = useRef(0);
+  const documentScopeSwitchPendingRef = useRef(false);
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -549,6 +561,9 @@ export default function Chat() {
       setSidebarTab("conversations");
       loadConversations();
     } else {
+      sessionEpochRef.current += 1;
+      setDocumentScopeClearPending(false);
+      documentScopeSwitchPendingRef.current = false;
       resetSession();
       setSidebarTab("documents");
     }
@@ -613,11 +628,21 @@ export default function Chat() {
   }
 
   async function loadConversation(id: string) {
+    sessionEpochRef.current += 1;
+    scopeClearRequestRef.current += 1;
+    setDocumentScopeClearPending(false);
+    documentScopeSwitchPendingRef.current = false;
+    setClearingDocumentScope(false);
     setErrorMsg(null);
     await loadSessionConversation(id);
   }
 
   async function createConversation() {
+    sessionEpochRef.current += 1;
+    scopeClearRequestRef.current += 1;
+    setDocumentScopeClearPending(false);
+    documentScopeSwitchPendingRef.current = false;
+    setClearingDocumentScope(false);
     setErrorMsg(null);
     const created = await createSessionConversation();
     if (created) {
@@ -626,7 +651,42 @@ export default function Chat() {
   }
 
   async function deleteConversation(id: string) {
+    if (id === activeConvId) {
+      sessionEpochRef.current += 1;
+      scopeClearRequestRef.current += 1;
+      setDocumentScopeClearPending(false);
+      documentScopeSwitchPendingRef.current = false;
+      setClearingDocumentScope(false);
+    }
     await removeConversation(id);
+  }
+
+  async function clearDocumentScope() {
+    if (sending || clearingDocumentScope || !documentScope.length) return;
+    if (!activeConvId || !canUseConversations) {
+      setDocumentScope([]);
+      documentScopeSwitchPendingRef.current = false;
+      setDocumentScopeClearPending(true);
+      return;
+    }
+    const epoch = sessionEpochRef.current;
+    const requestId = ++scopeClearRequestRef.current;
+    setClearingDocumentScope(true);
+    setErrorMsg(null);
+    try {
+      await clearChatDocumentScope(activeConvId);
+      if (epoch === sessionEpochRef.current && requestId === scopeClearRequestRef.current) {
+        setDocumentScope([]);
+        documentScopeSwitchPendingRef.current = false;
+        setDocumentScopeClearPending(false);
+      }
+    } catch (err: unknown) {
+      if (epoch === sessionEpochRef.current && requestId === scopeClearRequestRef.current) {
+        setErrorMsg(err instanceof Error ? err.message : t("chat.error_sending"));
+      }
+    } finally {
+      if (requestId === scopeClearRequestRef.current) setClearingDocumentScope(false);
+    }
   }
 
   async function askAboutDocument(doc: AvailableDocument) {
@@ -698,13 +758,15 @@ export default function Chat() {
       };
     }
 
-    if (!doc.file_url) {
-      throw new Error(t("chat.document_content_unavailable"));
+    let content = "";
+    if (doc.file_url) {
+      try {
+        const res = await fetchDocumentMarkdown(doc.file_url);
+        content = (res.markdown?.markdown_content || "").trim();
+      } catch {
+        // Let /chat/query persist a structured source-unavailable turn.
+      }
     }
-
-    const res = await fetchDocumentMarkdown(doc.file_url);
-    const markdown = res.markdown;
-    const content = (markdown?.markdown_content || "").trim();
 
     return {
       content,
@@ -728,13 +790,38 @@ export default function Chat() {
 
   async function sendMessage(options?: SendMessageOptions): Promise<boolean> {
     const text = (options?.text ?? input).trim();
-    if (!text || sending) return false;
+    if (!text || sending || loadingConversation || conversationLoadError || clearingDocumentScope) return false;
 
-    const documentInputs = options?.documents?.length
+    const sessionEpoch = sessionEpochRef.current;
+    const explicitlySelectedDocuments = options?.documents?.length
       ? options.documents
       : options?.document
         ? [options.document]
         : [];
+    const documentInputs = explicitlySelectedDocuments.length
+      ? explicitlySelectedDocuments
+      : documentScope.map((source) => ({
+          file_url: source.file_url,
+          filename: source.filename || "",
+          title: source.title || "",
+          category: "",
+          keywords: [],
+        }));
+    const requestDocumentScope: DocumentScopeSource[] = documentInputs
+      .filter((document) => Boolean(document.file_url))
+      .map((document) => ({
+        file_url: document.file_url,
+        filename: document.filename,
+        title: document.title,
+      }));
+    if (explicitlySelectedDocuments.length) {
+      setDocumentScope(requestDocumentScope);
+      documentScopeSwitchPendingRef.current = true;
+      setDocumentScopeClearPending(false);
+    }
+    const clearScopeForRequest = (
+      documentScopeClearPending && explicitlySelectedDocuments.length === 0
+    );
     const requestRagMode = options?.ragModeOverride || ragMode;
     const requestKbIds = options?.kbIds || selectedKbs;
     const shouldUseAgentic = requestRagMode === "agentic" && documentInputs.length === 0;
@@ -781,10 +868,15 @@ export default function Chat() {
           conversation_id: activeConvId,
           message: text,
           rag_mode: "agentic",
+          document_scope: requestDocumentScope,
+          document_scope_clear: clearScopeForRequest,
           kb_ids: [agenticKb.kb_id],
           mode: activeMode,
           limit: 10,
         });
+        if (sessionEpoch !== sessionEpochRef.current) return false;
+        documentScopeSwitchPendingRef.current = false;
+        if (clearScopeForRequest) setDocumentScopeClearPending(false);
         const responseText =
           res.data?.response || res.response || t("chat.agentic_no_evidence");
         const citations = res.data?.citations || res.citations || [];
@@ -814,13 +906,17 @@ export default function Chat() {
       const documentContexts = documentInputs.length > 0
         ? await Promise.all(documentInputs.map((doc) => loadDocumentMarkdown(doc)))
         : [];
+      if (sessionEpoch !== sessionEpochRef.current) return false;
       const activeMode = options?.modeOverride || mode;
       const res = await queryChat({
         conversation_id: activeConvId,
         message: text,
         kb_ids: requestKbIds.length > 0 ? requestKbIds : undefined,
-        mode: activeMode,
-        ...(documentContexts.length > 0
+          mode: activeMode,
+          document_scope: requestDocumentScope,
+          document_scope_switch: documentScopeSwitchPendingRef.current,
+          document_scope_clear: clearScopeForRequest,
+          ...(documentContexts.length > 0
           ? {
               document_content: documentContexts[0].content,
               document_title: documentContexts[0].title,
@@ -837,8 +933,11 @@ export default function Chat() {
                   }
                 : {}),
             }
-          : {}),
+            : {}),
       });
+      if (sessionEpoch !== sessionEpochRef.current) return false;
+      documentScopeSwitchPendingRef.current = false;
+      if (clearScopeForRequest) setDocumentScopeClearPending(false);
 
       const responseText =
         res.data?.response || res.response || t("chat.no_response");
@@ -867,12 +966,21 @@ export default function Chat() {
       setMessages((prev) => [...prev, assistantMsg]);
       return true;
     } catch (err: unknown) {
+      if (sessionEpoch !== sessionEpochRef.current) return false;
       const detail = chatFailurePayload(err);
       const code = typeof detail?.code === "string" ? detail.code : "";
+      const errorData = detail?.data && typeof detail.data === "object"
+        ? detail.data as Record<string, unknown>
+        : null;
+      const scopeAcceptedFailure = FAILED_TURN_CODES.has(code)
+        && code !== "CHAT_DOCUMENT_SCOPE_MISMATCH"
+        && typeof errorData?.conversation_id === "string"
+        && typeof errorData?.message_id === "string";
+      if (scopeAcceptedFailure) {
+        documentScopeSwitchPendingRef.current = false;
+        setDocumentScopeClearPending(false);
+      }
       if (FAILED_TURN_CODES.has(code)) {
-        const errorData = detail?.data && typeof detail.data === "object"
-          ? detail.data as Record<string, unknown>
-          : null;
         const failedMessageId = typeof errorData?.message_id === "string"
           ? errorData.message_id
           : typeof detail?.message_id === "string" ? detail.message_id : "";
@@ -1334,6 +1442,58 @@ export default function Chat() {
           </div>
         )}
 
+        {documentScope.length > 0 && (
+          <div
+            className="mx-4 sm:mx-6 mt-3 flex min-w-0 items-center gap-2 rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-xs"
+            data-testid="chat-document-scope"
+          >
+            <FileText className="h-3.5 w-3.5 shrink-0 text-primary" />
+            <span className="shrink-0 font-medium text-muted-foreground">
+              {t("chat.current_document_scope")}
+            </span>
+            <span className="min-w-0 flex-1 truncate font-medium" title={documentScope.map((source) => source.title || source.filename).join(", ")}>
+              {documentScope.map((source) => source.title || source.filename || t("chat.document_fallback")).join(", ")}
+            </span>
+            <button
+              type="button"
+              onClick={clearDocumentScope}
+              disabled={sending || clearingDocumentScope}
+              aria-busy={clearingDocumentScope}
+              className="shrink-0 rounded-md px-2 py-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
+              aria-label={t("chat.clear_document_scope")}
+              data-testid="button-clear-document-scope"
+            >
+              {clearingDocumentScope ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : t("chat.clear_document_scope")}
+            </button>
+          </div>
+        )}
+
+        {conversationLoadError && activeConvId && (
+          <div
+            role="alert"
+            className="mx-4 sm:mx-6 mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs"
+            data-testid="conversation-load-error"
+          >
+            <span className="min-w-0 flex-1">{t("chat.conversation_load_failed")}</span>
+            <button
+              type="button"
+              onClick={() => { void loadConversation(activeConvId); }}
+              className="rounded-md px-2 py-1 font-medium text-foreground hover:bg-muted"
+              data-testid="button-retry-load-conversation"
+            >
+              {t("chat.retry_loading_conversation")}
+            </button>
+            <button
+              type="button"
+              onClick={() => { void createConversation(); }}
+              className="rounded-md px-2 py-1 font-medium text-foreground hover:bg-muted"
+              data-testid="button-new-conversation-after-load-error"
+            >
+              {t("chat.start_new_conversation")}
+            </button>
+          </div>
+        )}
+
         <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-6 space-y-4">
           {messages.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full text-center">
@@ -1568,6 +1728,7 @@ export default function Chat() {
               ref={inputRef}
               value={input}
               onChange={(e) => setInput(e.target.value)}
+              disabled={loadingConversation || conversationLoadError || clearingDocumentScope}
               onFocus={() => { setShowKbDropdown(false); setQuotaWarning(null); }}
               onKeyDown={handleKeyDown}
               placeholder={t("chat.input_placeholder")}
@@ -1585,7 +1746,7 @@ export default function Chat() {
               type="button"
               label={t("a11y.send_message")}
               onClick={() => sendMessage()}
-              disabled={!input.trim() || sending}
+              disabled={!input.trim() || sending || loadingConversation || conversationLoadError || clearingDocumentScope}
               className={cn(
                 "p-2.5 rounded-xl transition-colors shrink-0",
                 input.trim() && !sending

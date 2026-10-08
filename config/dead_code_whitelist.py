@@ -58,6 +58,7 @@ api_user_activity  # reason: FastAPI registers this decorated route.
 
 from ai_actuarial.api.routers.chat import (
     api_chat_query,
+    api_clear_conversation_document_scope,
     api_create_conversation,
     api_delete_conversation,
     api_get_conversation,
@@ -70,6 +71,7 @@ api_list_conversations  # reason: FastAPI registers this decorated route.
 api_create_conversation  # reason: FastAPI registers this decorated route.
 api_get_conversation  # reason: FastAPI registers this decorated route.
 api_delete_conversation  # reason: FastAPI registers this decorated route.
+api_clear_conversation_document_scope  # reason: FastAPI registers this decorated route.
 api_list_chat_knowledge_bases  # reason: FastAPI registers this decorated route.
 api_list_available_documents  # reason: FastAPI registers this decorated route.
 api_chat_query  # reason: FastAPI registers this decorated route.

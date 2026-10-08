@@ -13,6 +13,7 @@ const errorKeys: Record<string, string> = {
   CHAT_AGENTIC_UNAVAILABLE: "chat.error.agentic_unavailable",
   CHAT_PROCESSING_FAILED: "chat.error.processing_failed",
   CHAT_DOCUMENT_EMPTY: "chat.document_content_unavailable",
+  CHAT_DOCUMENT_SCOPE_MISMATCH: "chat.document_scope_changed",
   KB_EMBEDDING_MISMATCH: "chat.error.embedding_mismatch",
 };
 

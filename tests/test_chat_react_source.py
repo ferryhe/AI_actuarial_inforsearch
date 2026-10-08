@@ -399,9 +399,12 @@ def test_chat_comparison_submission_is_explicit_and_failure_safe():
     chat_src = CHAT_TSX.read_text(encoding="utf-8")
 
     # sendMessage now reports success/failure so the comparison flow can react
-    assert "async function sendMessage(options?: SendMessageOptions): Promise<boolean>" in chat_src
+    send_block = _brace_block(
+        chat_src,
+        "async function sendMessage(options?: SendMessageOptions): Promise<boolean>",
+    )
     # the catch path must return false (surfaced failure), not swallow it silently
-    assert "return false" in _brace_block(chat_src, "catch (err")
+    assert "return false" in _brace_block(send_block, "catch (err")
 
     # compareSelectedDocuments captures the result and only clears selection on success
     assert (
