@@ -326,6 +326,14 @@ def test_auth_me_allows_anonymous_database_and_chat_browse_when_auth_required(
     )
     assert authorized_metrics.status_code == 200, authorized_metrics.text
 
+    for headers, status in (
+        ({}, 401),
+        ({"X-Auth-Token": seed["guest_token"]}, 403),
+        ({"X-Auth-Token": seed["admin_token"]}, 200),
+    ):
+        detailed = client.get("/api/health/detailed", headers=headers)
+        assert detailed.status_code == status, detailed.text
+
     files = client.get("/api/files")
     assert files.status_code == 200, files.text
 

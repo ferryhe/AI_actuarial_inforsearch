@@ -302,13 +302,14 @@ def test_release_record_captures_image_config_and_schema_versions(tmp_path: Path
     output = tmp_path / "release.json"
     inspect_payload = {
         "Id": "sha256:image-id",
-        "RepoDigests": ["example/api@sha256:digest"],
+        "RepoDigests": ["example/api@sha256:" + "d" * 64],
         "Config": {
             "Labels": {
                 "org.opencontainers.image.revision": "abc123",
                 "org.opencontainers.image.created": "2026-08-16T12:00:00Z",
                 "org.opencontainers.image.source": "https://github.com/ferryhe/AI_actuarial_inforsearch",
                 "com.aiinforsearch.git-dirty": "false",
+                "com.aiinforsearch.release-id": "release-fixture-1",
             }
         },
     }
@@ -322,7 +323,7 @@ def test_release_record_captures_image_config_and_schema_versions(tmp_path: Path
         now=lambda: datetime(2026, 8, 16, 12, 0, tzinfo=timezone.utc),
     )
 
-    assert record["image_digest"] == "example/api@sha256:digest"
+    assert record["image_digest"] == "sha256:" + "d" * 64
     assert record["git_sha"] == "abc123"
     assert record["git_dirty"] is False
     assert record["schema_user_version"] == CURRENT_SQLITE_SCHEMA_VERSION

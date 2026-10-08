@@ -372,14 +372,24 @@ restore. Record its image digest and results in the recovery rehearsal log.
 
 ### Release traceability
 
-Builds must supply the Git SHA, dirty flag, UTC timestamp, and source URL:
+Builds must supply one unique release manifest ID, Git SHA, dirty flag, UTC
+timestamp, and source URL. `scripts/deploy_update.sh` generates the ID once and
+builds and publishes both the API and static frontend. The production frontend
+serves image-built `/opt/frontend`, so an old host `dist/public` cannot replace
+the newly built assets. This does not change the separate #313 config rollout.
 
 ```bash
 export BUILD_GIT_SHA=$(git rev-parse HEAD)
+export BUILD_RELEASE_ID=$(python3 -c 'import uuid; print(uuid.uuid4())')
 export BUILD_GIT_DIRTY=false
 export BUILD_UTC=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 export BUILD_SOURCE_URL=https://github.com/ferryhe/AI_actuarial_inforsearch
-docker compose build api
+export API_IMAGE=ai_actuarial_inforsearch-api:latest
+export FRONTEND_IMAGE=ai_actuarial_inforsearch-frontend:latest
+mkdir -p /var/lib/aiinforsearch/releases
+BUILD_METADATA=/var/lib/aiinforsearch/releases/"$BUILD_RELEASE_ID".build.json
+docker buildx bake -f docker-compose.yml -f docker-compose.override.yml \
+  --pull --load --metadata-file "$BUILD_METADATA" api frontend
 ```
 
 After the image is built, write a release record containing its digest, safe OCI
@@ -390,11 +400,59 @@ DATA_VOLUME=ai_actuarial_inforsearch_ai-data
 DATA_DIR=$(docker volume inspect "$DATA_VOLUME" --format '{{ .Mountpoint }}')
 CONFIG_PATH=/var/lib/aiinforsearch/config/sites.yaml
 python3 scripts/production_recovery.py release-record \
-  --image ai_actuarial_inforsearch-api:latest \
+  --image "$API_IMAGE" \
+  --frontend-image "$FRONTEND_IMAGE" \
+  --build-metadata "$BUILD_METADATA" \
   --config "$CONFIG_PATH" \
   --db "$DATA_DIR/index.db" \
-  --output /var/lib/aiinforsearch/releases/"$BUILD_GIT_SHA".json
+  --output /var/lib/aiinforsearch/releases/"$BUILD_RELEASE_ID".json
+export API_IMAGE_DIGEST=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["image_digest"].rsplit("@", 1)[-1])' /var/lib/aiinforsearch/releases/"$BUILD_RELEASE_ID".json)
+docker compose -f docker-compose.yml -f docker-compose.override.yml \
+  up -d --wait --wait-timeout 180 api frontend
 ```
+
+The record rejects different frontend/API release IDs, SHAs, build timestamps,
+or source URLs before startup. It records both image digests after building;
+local unpushed images use Buildx's post-build `containerimage.digest` manifest
+digest. The freshly loaded tag must match the metadata's manifest/repository
+digest (containerd store) or config ID (classic store); the record stores
+`containerimage.config.digest` separately when present (otherwise `unknown`,
+as with some OCI index/provenance outputs) and never substitutes
+one for a manifest digest. Missing or stale metadata fails before startup.
+Buildx with `bake --metadata-file` and Compose with `up --wait` are required.
+The deployment waits up to `DEPLOY_WAIT_TIMEOUT` seconds (default 180) for both
+API and frontend healthchecks; timeout/failure prevents its success message.
+A digest is never a build argument. `/api/health` exposes only
+the release ID and short SHA; `/api/health/detailed` and `/api/metrics` require
+authenticated `logs.system.read`. Their explicit build projection includes
+the full SHA, build timestamp, post-build API digest, config hash, and the
+logical config source `external` or `tracked-development`, with no config
+contents or host paths. Metrics reports a storage backend label rather than
+a connection URI. The Settings page compares the complete
+`release_manifest_id`, warns on mismatch, and continues to operate; unknown
+identities are reported as unavailable rather than treated as a match.
+
+Non-production provenance rehearsal (no production configuration or credentials):
+
+```bash
+python -m pytest tests/test_issue_364_build_info.py --no-cov -q
+BUILD_RELEASE_ID=fixture-browser-release BUILD_GIT_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa BUILD_UTC=2026-10-04T12:00:00Z npm run build
+npm run preview -- --host 127.0.0.1 --port 5184
+# In a second local shell (set CHROME_PATH to a local Chromium executable):
+node client/src/components/BuildInfo.browser-smoke.mjs
+```
+
+The deploy test uses fake Git, Docker/Compose, capacity, and backup operations
+plus an isolated SQLite/config fixture. It executes the actual shell deploy
+flow and release-record implementation, checks both builds precede image
+inspection, and checks the runtime digest handoff. The browser fixture exercises
+canary mismatch and a return to the previous frontend identity. For a live
+canary or rollback, retain and select the paired API/frontend images and their
+release record together; preserve the record's build identity and pass its
+post-build digest in the deployment environment. A schema rollback still
+requires the paired database restore described below. Production observations
+and live canary/rollback remain an unverified gate until separately authorized;
+these local fixtures do not claim a live rollout succeeded.
 
 `PRAGMA user_version` is the current explicit schema-version field. Legacy
 databases may still report `0` until the reviewed migration runner assigns the

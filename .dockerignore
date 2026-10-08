@@ -1,0 +1,11 @@
+.git
+.codex-worktrees
+.env*
+.venv
+node_modules
+client/.vite
+data
+reports
+dist
+__pycache__
+.pytest_cache

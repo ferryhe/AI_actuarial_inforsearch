@@ -57,8 +57,17 @@ services:
 
   # ── Frontend — Production (static build) ─────────────────────────────────────
   frontend:
+    image: ${FRONTEND_IMAGE:-ai_actuarial_inforsearch-frontend:latest}
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+      args:
+        BUILD_RELEASE_ID: ${BUILD_RELEASE_ID:-unknown}
+        BUILD_GIT_SHA: ${BUILD_GIT_SHA:-unknown}
+        BUILD_UTC: ${BUILD_UTC:-unknown}
+        BUILD_SOURCE_URL: ${BUILD_SOURCE_URL:-https://github.com/ferryhe/AI_actuarial_inforsearch}
     restart: on-failure
-    command: sh -c "npm install -g serve && serve -s /app/dist/public -l 5173 --no-clipboard"
+    command: serve -s /opt/frontend -l 5173 --no-clipboard
     environment:
       - VITE_API_BASE_URL=${VITE_API_BASE_URL:?VITE_API_BASE_URL is required in production}
       - NODE_ENV=production

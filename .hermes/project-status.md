@@ -5289,6 +5289,78 @@
   on that head and all four inline review threads are resolved. F2-F5 were not
   implemented. Merge is pending final head verification.
 
+### Issue #364 runtime provenance — assessment — 2026-10-04
+
+- Issue #364 is still OPEN. The assigned worktree is `codex/issue-364-runtime-provenance`, based on current `origin/main` `24a07096ba597c4835d354d5d576618d4de12d93`; startup status was clean.
+- Pre-implementation evidence confirms API and metrics still report fixed `0.1.0`; Docker labels and build args already carry SHA/time/source; `deploy_update.sh` currently rebuilds only the API before writing the release record; Vite produces the static frontend in `dist/public`; and protected detailed health/metrics routes already require `logs.system.read`.
+- Selected `complex` / `senior_worker` because the accepted change spans the API, Vite/admin UI, OCI digest handoff, Compose, deployment/release recording, and cross-layer tests. Validation will cover safe public/protected projections, build-time frontend identity and mismatch reporting, post-build digest and release-record consistency, local Compose/deploy flows, frontend build, and focused plus repository checks.
+- Router evidence needs an explicit correction: this repository's AGENTS.md specifies `gpt-6-sol/high` for a complex senior worker, while the initial per-Issue runtime snapshot selected `gpt-6.1-sol/high`. The first agent using the latter was interrupted before editing; the implementation worker must use the AGENTS.md route. Do not change shared runtime preferences to resolve it.
+- Related Issue #313 remains OPEN as a separate production config rollout. #364 will expose only a safe config hash/source identifier and will not perform #313's migration. Production canary, rollback, writes, deployment, and data cleanup remain prohibited; any live-only acceptance evidence must be reported as pending rather than claimed.
+
+
+### Issue #364 runtime provenance — non-production implementation checkpoint — 2026-10-04
+
+- Project `AI_actuarial_inforsearch`, branch `codex/issue-364-runtime-provenance`,
+  baseline/current uncommitted HEAD `24a07096ba597c4835d354d5d576618d4de12d93`.
+  Only this issue worktree was edited; sibling repositories remain off-limits.
+  No production writes/configuration/credentials, deployment, backup/restore,
+  cleanup, canary/rollback, commit/push/PR/merge were performed by the worker.
+- Added validated build-info ENV projections with one `release_manifest_id`,
+  public short SHA/release and authenticated `logs.system.read` details/metrics.
+  Config provenance reuses the current authoritative file contract and exposes
+  only logical source/hash. Metrics no longer returns a credential-bearing
+  storage connection URI. #313 configuration rollout remains separate.
+- API labels/ENV and Vite/static frontend share the release ID. Production
+  frontend rebuilds in its image and serves `/opt/frontend`; Settings gives a
+  bilingual nonblocking mismatch/unavailable warning. Deployment builds both
+  images, verifies matching labels in release-record, reads digests after build,
+  and passes the API digest at runtime before starting both services.
+- Final focused validation passed: 57 Python tests (7 provenance tests), 3 Vitest
+  cases, frontend build, Chromium English/Chinese identity mismatch/return
+  fixture, typecheck, lint (4 existing warnings), all dead-code gates, actual
+  frontend Docker build and container artifact checks, API Dockerfile build
+  check, actual Compose fixture config, and diff check. Full Vitest: 119 pass,
+  one unchanged FilterBar task-label failure.
+- Full `python scripts/quality_gate.py` exited 1: the worker terminated its own
+  pytest child after whole-process RSS reached 24,035,385,344 bytes during an
+  unchanged #263 call. Full pytest is incomplete; no full-suite PASS is claimed.
+  Whole-repo Black (273 files), isort and Pylint all passed with zero findings.
+  The precise #263 test independently passed in 1.88 seconds, exit 0; this does
+  not prove a full retry is safe. Manager paused further full/#263 testing under
+  resource limits; code and fixtures are fixed for review.
+- Complete report/logs: `reports/issue-364-evidence/worker-implementation.md`.
+  Production observations/canary/rollback remain unverified gates. Next: fresh
+  independent review and manager decision on full-suite/CI validation before
+  the authorized PR lifecycle. All scoped code remains uncommitted.
+
+### Issue #364 runtime provenance — review round 1 — 2026-10-04
+
+- Implementation worker: `/root/issue_364_manager/issue364_worker_corrected` (`gpt-6-sol/high`), completed. Manager: `/root/issue_364_manager`. Fresh reviewer: `/root/issue_364_manager/issue364_fresh_reviewer_1` (`gpt-6-sol/high`), completed.
+- Reviewer report: `reports/issue-364-evidence/reviewer-round-1.md`. Result: PASS, no actionable findings. It independently inspected the complete tracked/untracked diff and relevant tests.
+- TypeSafe `jev-latest` assessment succeeded (`jev-1.13.0`): review-summary coverage probability 0.96, no candidate findings. Input is `reports/issue-364-evidence/typesafe-review-round-1-input.json`; output is the ignored project-local `C:\Project\AI_actuarial_inforsearch\.codex-worktrees\issue-364-typesafe-review.json`.
+- Reviewer bounded checks: Issue #364 Python 7/7, BuildInfo Vitest 3/3, auth/entrypoint 2/2, `git diff --check` passed. Worker final focused suite: Python 57 passed, frontend 3 passed, typecheck/build/Compose/frontend Docker/browser smoke and static checks passed as detailed in `reports/issue-364-evidence/worker-implementation.md`.
+- Full `python scripts/quality_gate.py` remains incomplete/exit 1: the worker stopped its own pytest process after aggregate RSS reached 24,035,385,344 bytes around the existing #263 test; full pytest did not pass. Full Vitest has the separately documented pre-existing FilterBar task-label failure (119 passed, 1 failed). No rerun was started.
+- No production deployment, canary, rollback, or #313 configuration rollout occurred. Those production acceptance items remain UNVERIFIED and are not claimed as passed.
+- Review-cycle lifecycle state was not backfilled: the earlier external state file is left untouched under the project boundary, and historical transitions will not be fabricated. This note plus immutable agent reports, Git state, and TypeSafe result provide current in-repository evidence. The incomplete full gate and unverified production acceptance remain merge blockers; after focused validation and local review PASS, manager may prepare a PR for independent GitHub CI/review under the user's existing authorization.
+
+### Issue #364 runtime provenance — Draft PR opened — 2026-10-04
+
+- Committed and pushed scoped implementation as `0bbf110b7409317b26aee8c414737ec92b5dcd5b` on `codex/issue-364-runtime-provenance`.
+- Draft PR: https://github.com/ferryhe/AI_actuarial_inforsearch/pull/403 (`Closes #364`). PR #403 is intentionally kept Draft. GitHub check `dead-code-files` was pending at initial observation; other check jobs had not yet appeared. Worktree was clean after push.
+- No deployment/production action occurred. Do not merge while the full required CI result is unknown/incomplete or production canary/rollback acceptance remains unverified and unauthorized.
+
+### Issue #364 runtime provenance — initial GitHub CI and feedback check — 2026-10-04
+
+- Initial GitHub CI completed on PR #403 HEAD `039167624d376eaf85d4b126849d5b0c741879c7`: `quality-gate` PASS (9m43s), `frontend-check` PASS, `python-smoke` PASS, `dead-code-files` PASS, `dead-code-symbols` PASS, `office-conversion-smoke` PASS.
+- At the approximately 15-minute check after Draft PR creation, pull request reviews, PR/Issue comments, and inline review threads were all empty; unresolved thread count was 0. The PR remains Draft, so Ready-for-review remote-feedback timing has not started.
+- Local full quality gate remains recorded as incomplete due to resource termination; GitHub CI is the independent full-gate result for its current HEAD. Production canary/rollback and #313 rollout remain unverified and not authorized. No merge or production action.
+
+### Issue #364 runtime provenance — latest PR head checks — 2026-10-04
+
+- After the project-status PR note commit, PR #403 head `6bf4fa574b107af62a8bf0121a3cfad0412c9999` completed all required GitHub checks successfully. `quality-gate` passed in 9m41s; frontend-check, python-smoke, dead-code-files, dead-code-symbols, and office-conversion-smoke also passed.
+- PR #403 remains Draft/OPEN. Initial review/comment/thread fetch was empty. Ready-for-review timer has not started. Worktree is clean at the recorded checked commit.
+- No live production canary, rollback, deployment, or #313 configuration rollout was authorized or performed; no merge.
+
 # Issue #313 no-op Settings save preflight — 2026-10-05
 
 - On `codex/issue-313-noop-save` in the managed Issue #313 worktree. Only this
@@ -5389,8 +5461,9 @@
   independent v15 DB, synthetic credentials only when required, blocked egress,
   real auth/CSRF and unchanged Settings save followed by canary restart/recreate.
 - No production write, deployment, service restart or data/backup cleanup was
-  performed. #313 remains open and #364/PR #403 remains blocked behind its full
-  acceptance. The #313-to-#364 heartbeat remains active.
+  performed. This historical checkpoint was superseded by controller-confirmed #313
+  acceptance at 2026-10-08 06:31 UTC. #364/PR #403 closeout is now in progress;
+  #364 production canary/rollback remain an independent authorization gate.
 
 ### Catalog settings and task error file links — 2026-10-08
 
@@ -5419,3 +5492,39 @@
   is untracked in this worktree and was not edited by the implementation worker.
 
 - Fresh independent `gpt-6-sol/high` review PASS with no accepted findings; reviewer independently passed 72 Python and 11 Vitest cases. Stable Chromium smoke rerun passed at 390px/1280px. Black repair was format-only with unchanged ASTs. Full local quality gate is running; controller will publish the tested branch and check remote feedback about 15 minutes after PR creation. No merge or deployment is authorized.
+
+### PR #403 main conflict resolution — 2026-10-05
+
+- Branch `codex/issue-364-runtime-provenance` merged `origin/main`
+  `4cffa39677a124b5446328038d22bce2b653d8a1`. The sole manual conflict was
+  this append-only status file; both #364 and #313 histories were retained.
+  Settings code merged automatically, preserving BuildInfo and no-op credential
+  handling. No additional application behavior was changed.
+- Focused integration checks passed: 78 Python tests covering build info,
+  Settings writes, Weekly behavior and source guards; 25 Vitest tests covering
+  BuildInfo and Settings credentials; TypeScript typecheck and staged diff check.
+- Pre-existing uncommitted status notes were backed up and stashed separately;
+  they are excluded from this merge commit and will be restored after push.
+- PR #403 is currently Ready/OPEN. This conflict repair does not satisfy pending
+  #313 operational acceptance or authorize #364 merge/canary/production rollout.
+  No production action was performed; new-head GitHub CI must finish separately.
+
+### Issue #364 / PR #403 closeout — 2026-10-08
+
+- Assigned branch `codex/issue-364-closeout`, isolated worktree `issue-364-closeout`.
+  Manager integrated old PR head `46b2248` into main baseline `381ac1d`; only
+  this append-only status file conflicted. Both main and old PR histories remain.
+- Same complex Sol/high worker; three reproduced Copilot findings and AC5
+  manifest-versus-config digest correction are in scope. Production writes,
+  canary/rollback and sibling repositories are outside worker authorization.
+- Regression-first checkpoint: 8 closeout cases failed on the old PR behavior.
+  Implementation and focused verification are in progress. Lifecycle commit,
+  push and GitHub actions belong to the manager.
+
+### Issue #364 / PR #403 — final local review snapshot — 2026-10-08
+
+- Integrated old PR head `46b2248` into baseline `381ac1d`; the sole status-file conflict is resolved and both histories are preserved. Final code changes remain uncommitted in `codex/issue-364-closeout`.
+- Final focused Python suite: 50 passed, with three existing SWIG deprecation warnings. Native local Docker Compose + Buildx default-provenance rehearsal passed and recorded actual API/frontend manifest digests `sha256:05a5d7194a0e4eabc27b210b73ed681e596562d73d48f7b17a12424339f0635d` and `sha256:c286d33c64bfbaa8b2756e4a8c22037312942670cc0919ddf857b1cbd2ed4687`; optional config digest was absent and honestly recorded as unknown. Frontend build, typecheck, lint, 3/3 BuildInfo tests, bilingual browser smoke, dead-code/style checks and `git diff --check` passed.
+- Fresh independent gpt-6-sol/high review round 2 passed with no accepted findings. Jev 1.13.0 TypeSafe assessment returned no findings; its review-summary coverage probability was 0.94. The sidecar records one verified historical review plus this completed current review; no lifecycle timestamps or feedback fetches were fabricated.
+- Final-head GitHub required checks and isolated production-host paired-release canary/rollback remain pending. The local rehearsal is not production evidence. No live production deployment, restart, config write, or database write was performed.
+- Detailed logs and review artifacts are retained at `C:/Project/AI_actuarial_inforsearch/.codex-worktrees/issue364-closeout-evidence`. The cross-store server import path remains to be validated before any isolated host canary; server is classic overlay2 while local builder uses the containerd store.
