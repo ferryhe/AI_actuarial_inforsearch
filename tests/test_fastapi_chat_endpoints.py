@@ -3121,3 +3121,272 @@ def test_fastapi_chat_query_enforces_anonymous_ip_quota(tmp_path: Path, monkeypa
         "/api/chat/query", json=payload, headers={"X-Forwarded-For": "203.0.113.11"}
     )
     assert other_client.status_code == 200, other_client.text
+
+
+def test_document_scope_persists_across_followups_switch_and_clear_without_storing_source_text(
+    tmp_path: Path, monkeypatch
+) -> None:
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch)
+    generated_chunks: list[list[dict[str, object]]] = []
+    _install_guest_chat_fakes(monkeypatch, generated_chunks=generated_chunks)
+    import ai_actuarial.api.services.chat as chat_service
+
+    monkeypatch.setattr(
+        chat_service,
+        "AI_CHAT_QUOTA",
+        {**chat_service.AI_CHAT_QUOTA, "guest": 20, "anonymous": 20},
+    )
+    headers = {"X-Auth-Token": "operator-token"}
+    scope_a = [
+        {"file_url": seed["alpha_url"], "filename": "cas-primer.pdf", "title": "The CAS AI Primer"}
+    ]
+    scope_b = [{"file_url": seed["beta_url"], "filename": "soa-guide.pdf", "title": "SOA Guide"}]
+
+    def ask(message: str, scope, *, conversation_id=None, switch=False, kb_ids=None):
+        payload = {
+            "message": message,
+            "mode": "expert",
+            "document_scope": scope,
+            "kb_ids": kb_ids,
+        }
+        if conversation_id:
+            payload["conversation_id"] = conversation_id
+        if switch:
+            payload["document_scope_switch"] = True
+        if scope:
+            payload.update(
+                document_content=f"Original source text for {scope[0]['title']}",
+                document_file_url=scope[0]["file_url"],
+                document_filename=scope[0]["filename"],
+                document_title=scope[0]["title"],
+            )
+        return client.post("/api/chat/query", json=payload, headers=headers)
+
+    first = ask("Explain the CAS AI Primer", scope_a)
+    assert first.status_code == 200, first.text
+    conversation_id = first.json()["data"]["conversation_id"]
+    for message in ("Follow-up one", "Follow-up two"):
+        response = ask(message, scope_a, conversation_id=conversation_id)
+        assert response.status_code == 200, response.text
+
+    assert len(generated_chunks) == 3
+    for chunks in generated_chunks:
+        assert chunks[0]["content"] == "Original source text for The CAS AI Primer"
+        assert chunks[0]["metadata"]["file_url"] == seed["alpha_url"]
+
+    detail = client.get(f"/api/chat/conversations/{conversation_id}", headers=headers)
+    assert detail.status_code == 200, detail.text
+    saved_conversation = detail.json()["data"]["conversation"]
+    assert saved_conversation["metadata"]["document_scope"] == scope_a
+    assert "Original source text" not in json.dumps(saved_conversation["metadata"])
+    user_turns = [
+        message for message in detail.json()["data"]["messages"] if message["role"] == "user"
+    ]
+    assert all(
+        "Original source text" not in json.dumps(message.get("metadata", {}).get("retry_request"))
+        for message in user_turns
+    )
+
+    switched = ask("Explain the SOA Guide", scope_b, conversation_id=conversation_id, switch=True)
+    assert switched.status_code == 200, switched.text
+    assert generated_chunks[3][0]["content"] == "Original source text for SOA Guide"
+    assert generated_chunks[3][0]["metadata"]["file_url"] == seed["beta_url"]
+    switched_detail = client.get(f"/api/chat/conversations/{conversation_id}", headers=headers)
+    assert switched_detail.json()["data"]["conversation"]["metadata"]["document_scope"] == scope_b
+
+    cleared = client.delete(
+        f"/api/chat/conversations/{conversation_id}/document-scope", headers=headers
+    )
+    assert cleared.status_code == 200, cleared.text
+    cleared_detail = client.get(f"/api/chat/conversations/{conversation_id}", headers=headers)
+    assert cleared_detail.json()["data"]["conversation"]["metadata"]["document_scope"] == []
+
+    unscoped = ask(
+        "Search library after clear", [], conversation_id=conversation_id, kb_ids=["chat-kb-b"]
+    )
+    assert unscoped.status_code == 200, unscoped.text
+    assert generated_chunks[4][0]["metadata"]["kb_id"] == "chat-kb-b"
+    assert generated_chunks[4][0]["metadata"]["file_url"] == seed["beta_url"]
+
+
+def test_document_scope_missing_source_mismatch_retry_and_agentic_stay_structured(
+    tmp_path: Path, monkeypatch
+) -> None:
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch)
+    generated_chunks: list[list[dict[str, object]]] = []
+    _install_guest_chat_fakes(monkeypatch, generated_chunks=generated_chunks)
+    import ai_actuarial.api.services.chat as chat_service
+
+    monkeypatch.setattr(
+        chat_service,
+        "AI_CHAT_QUOTA",
+        {**chat_service.AI_CHAT_QUOTA, "guest": 20, "anonymous": 20},
+    )
+    headers = {"X-Auth-Token": "operator-token"}
+    scope_a = [{"file_url": seed["alpha_url"], "filename": "alpha.pdf", "title": "Alpha"}]
+    initial = client.post(
+        "/api/chat/query",
+        headers=headers,
+        json={
+            "message": "Explain Alpha",
+            "mode": "expert",
+            "document_scope": scope_a,
+            "document_content": "Alpha source text.",
+            "document_file_url": seed["alpha_url"],
+        },
+    )
+    assert initial.status_code == 200, initial.text
+    conversation_id = initial.json()["data"]["conversation_id"]
+
+    unavailable = client.post(
+        "/api/chat/query",
+        headers=headers,
+        json={
+            "message": "Follow-up after another tab selected a document",
+            "conversation_id": conversation_id,
+            "document_scope": [],
+            "document_scope_switch": False,
+            "kb_ids": ["chat-kb-b"],
+        },
+    )
+    assert unavailable.status_code == 422
+    assert unavailable.json()["code"] == "CHAT_DOCUMENT_EMPTY"
+    assert unavailable.json()["retryable"] is True
+    assert len(generated_chunks) == 1
+    detail = client.get(f"/api/chat/conversations/{conversation_id}", headers=headers)
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["data"]["conversation"]["metadata"]["document_scope"] == scope_a
+    retry_request = detail.json()["data"]["messages"][-1]["metadata"]["retry_request"]
+    assert retry_request["document_sources"] == scope_a
+
+    wrong_source = client.post(
+        "/api/chat/query",
+        headers=headers,
+        json={
+            "message": "Use a different file",
+            "conversation_id": conversation_id,
+            "document_scope": scope_a,
+            "document_content": "Beta source text.",
+            "document_file_url": seed["beta_url"],
+        },
+    )
+    assert wrong_source.status_code == 409
+    assert wrong_source.json()["code"] == "CHAT_DOCUMENT_SCOPE_MISMATCH"
+    assert wrong_source.json()["retryable"] is False
+    assert len(generated_chunks) == 1
+
+    silent_switch = client.post(
+        "/api/chat/query",
+        headers=headers,
+        json={
+            "message": "Silently drift to Beta",
+            "conversation_id": conversation_id,
+            "document_scope": [
+                {"file_url": seed["beta_url"], "filename": "beta.pdf", "title": "Beta"}
+            ],
+            "document_content": "Beta source text.",
+            "document_file_url": seed["beta_url"],
+        },
+    )
+    assert silent_switch.status_code == 409
+    assert silent_switch.json()["code"] == "CHAT_DOCUMENT_SCOPE_MISMATCH"
+    assert len(generated_chunks) == 1
+
+    retried = client.post(
+        "/api/chat/query",
+        headers=headers,
+        json={
+            "message": "Follow-up without accessible Markdown",
+            "conversation_id": conversation_id,
+            "document_scope": retry_request["document_sources"],
+            "document_content": "Alpha source text.",
+            "document_file_url": seed["alpha_url"],
+        },
+    )
+    assert retried.status_code == 200, retried.text
+    assert generated_chunks[1][0]["content"] == "Alpha source text."
+
+    agentic = client.post(
+        "/api/chat/query",
+        headers=headers,
+        json={
+            "message": "Use agentic retrieval while still scoped",
+            "conversation_id": conversation_id,
+            "rag_mode": "agentic",
+            "kb_ids": ["chat-kb-a"],
+        },
+    )
+    assert agentic.status_code == 400
+    assert "direct document context" in agentic.json()["error"]
+    assert len(generated_chunks) == 2
+
+
+def test_guest_explicit_clear_is_persisted_and_followups_retrieve_library_afterward(
+    tmp_path: Path, monkeypatch
+) -> None:
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch)
+    generated_chunks: list[list[dict[str, object]]] = []
+    _install_guest_chat_fakes(monkeypatch, generated_chunks=generated_chunks)
+    import ai_actuarial.api.services.chat as chat_service
+
+    monkeypatch.setattr(
+        chat_service,
+        "AI_CHAT_QUOTA",
+        {**chat_service.AI_CHAT_QUOTA, "guest": 10, "anonymous": 10},
+    )
+    headers = {"X-Auth-Token": ""}
+    scope_a = [{"file_url": seed["alpha_url"], "filename": "alpha.pdf", "title": "Alpha"}]
+    first = client.post(
+        "/api/chat/query",
+        headers=headers,
+        json={
+            "message": "Explain Alpha",
+            "mode": "expert",
+            "document_scope": scope_a,
+            "document_scope_switch": True,
+            "document_content": "Alpha source text.",
+            "document_file_url": seed["alpha_url"],
+        },
+    )
+    assert first.status_code == 200, first.text
+    conversation_id = first.json()["data"]["conversation_id"]
+    assert generated_chunks[0][0]["content"] == "Alpha source text."
+
+    cleared = client.post(
+        "/api/chat/query",
+        headers=headers,
+        json={
+            "message": "Search the library after clearing",
+            "conversation_id": conversation_id,
+            "document_scope": [],
+            "document_scope_clear": True,
+            "kb_ids": ["chat-kb-b"],
+        },
+    )
+    assert cleared.status_code == 200, cleared.text
+    assert generated_chunks[1][0]["metadata"]["kb_id"] == "chat-kb-b"
+    assert cleared.json()["data"]["citations"][0]["file_url"] == seed["beta_url"]
+
+    storage = Storage(str(tmp_path / "index.db"))
+    try:
+        row = storage._conn.execute(
+            "SELECT metadata FROM conversations WHERE conversation_id = ?", (conversation_id,)
+        ).fetchone()
+    finally:
+        storage.close()
+    assert json.loads(row[0])["document_scope"] == []
+
+    followup = client.post(
+        "/api/chat/query",
+        headers=headers,
+        json={
+            "message": "Another ordinary library question",
+            "conversation_id": conversation_id,
+            "document_scope": [],
+            "document_scope_clear": False,
+            "kb_ids": ["chat-kb-b"],
+        },
+    )
+    assert followup.status_code == 200, followup.text
+    assert generated_chunks[2][0]["metadata"]["kb_id"] == "chat-kb-b"
+    assert followup.json()["data"]["citations"][0]["file_url"] == seed["beta_url"]

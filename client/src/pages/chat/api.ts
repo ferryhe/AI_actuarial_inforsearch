@@ -3,9 +3,11 @@ import type { FilePage, FilePageFilters } from "@/hooks/use-paged-files";
 import type {
   AvailableDocument,
   CategoryOption,
+  ChatConversationDetail,
   ChatMode,
   Citation,
   Conversation,
+  DocumentScopeSource,
   KnowledgeBase,
   MarkdownResponse,
   Message,
@@ -21,11 +23,25 @@ export async function fetchChatConversations(): Promise<Conversation[]> {
   }));
 }
 
-export async function fetchChatConversation(id: string): Promise<Message[]> {
+export async function fetchChatConversation(id: string): Promise<ChatConversationDetail> {
   const res = await apiGet<{ success?: boolean; data?: { messages?: Message[]; conversation?: Conversation }; messages?: Message[] }>(
     `/api/chat/conversations/${id}`
   );
-  return res.data?.messages || res.messages || [];
+  const metadata = res.data?.conversation?.metadata;
+  const rawScope = metadata && Array.isArray(metadata.document_scope)
+    ? metadata.document_scope
+    : [];
+  const documentScope: DocumentScopeSource[] = rawScope.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const source = item as Record<string, unknown>;
+    if (typeof source.file_url !== "string" || !source.file_url.trim()) return [];
+    return [{
+      file_url: source.file_url,
+      filename: typeof source.filename === "string" ? source.filename : "",
+      title: typeof source.title === "string" ? source.title : "",
+    }];
+  });
+  return { messages: res.data?.messages || res.messages || [], documentScope };
 }
 
 export async function createChatConversation(mode: ChatMode): Promise<string | null> {
@@ -37,6 +53,10 @@ export async function createChatConversation(mode: ChatMode): Promise<string | n
 
 export async function deleteChatConversation(id: string): Promise<void> {
   await apiDelete(`/api/chat/conversations/${id}`);
+}
+
+export async function clearChatDocumentScope(id: string): Promise<void> {
+  await apiDelete(`/api/chat/conversations/${id}/document-scope`);
 }
 
 export async function fetchKnowledgeBases(): Promise<KnowledgeBase[]> {

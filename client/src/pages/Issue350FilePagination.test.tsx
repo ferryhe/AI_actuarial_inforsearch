@@ -5,7 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 const state = vi.hoisted(() => ({
   apiGet: vi.fn(), apiDelete: vi.fn(), kbId: "kb-350",
-  session: { setActiveConvId: vi.fn(), setMessages: vi.fn(), resetSession: vi.fn(), loadConversations: vi.fn(),
+  session: { setActiveConvId: vi.fn(), setMessages: vi.fn(), setDocumentScope: vi.fn(), documentScope: [], loadingConversation: false, resetSession: vi.fn(), loadConversations: vi.fn(),
     loadConversation: vi.fn(), createConversation: vi.fn(), removeConversation: vi.fn() },
 }));
 vi.mock("@/components/Layout", () => ({ useTranslation: () => ({ t: (key: string) => key === "chat.compare_selected_count" ? "{count} selected" : key }) }));

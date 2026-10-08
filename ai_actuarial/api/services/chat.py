@@ -417,6 +417,33 @@ def create_conversation(
         storage.close()
 
 
+def clear_conversation_document_scope(
+    *, db_path: str, request, auth: AuthContext, conversation_id: str
+) -> tuple[dict[str, Any], SessionUpdate | None]:
+    user_id, session_update = _resolve_chat_user(request, auth)
+    storage = Storage(db_path)
+    try:
+        _ensure_conversation_schema(storage)
+        row = storage._conn.execute(
+            "SELECT user_id, metadata FROM conversations WHERE conversation_id = ?",
+            (conversation_id,),
+        ).fetchone()
+        if not row:
+            raise ChatApiError("Conversation not found", status_code=404)
+        if row[0] != user_id:
+            raise ChatApiError("Access denied", status_code=403)
+        metadata = json.loads(row[1]) if row[1] else {}
+        _save_conversation_document_scope(
+            storage,
+            conversation_id=conversation_id,
+            metadata=metadata,
+            sources=[],
+        )
+        return {"success": True}, session_update
+    finally:
+        storage.close()
+
+
 def get_conversation_detail(
     *, db_path: str, request, auth: AuthContext, conversation_id: str
 ) -> tuple[dict[str, Any], SessionUpdate | None]:
@@ -1212,6 +1239,75 @@ def _bounded_document_source_url(
     return text, False
 
 
+def _document_scope_sources(value: Any) -> tuple[list[dict[str, str]], bool]:
+    if not isinstance(value, list) or len(value) > MAX_DOCUMENT_SOURCES:
+        return [], True
+    sources: list[dict[str, str]] = []
+    seen_urls: set[str] = set()
+    invalid = False
+    for item in value:
+        if not isinstance(item, Mapping):
+            invalid = True
+            continue
+        file_url, omitted = _bounded_document_source_url(item.get("file_url"))
+        if omitted or not file_url:
+            invalid = True
+            continue
+        if file_url in seen_urls:
+            continue
+        seen_urls.add(file_url)
+        sources.append(
+            {
+                "file_url": file_url,
+                "filename": _bounded_source_text(item.get("filename")),
+                "title": _bounded_source_text(item.get("title")),
+            }
+        )
+    return sources, invalid
+
+
+def _document_scope_from_request(payload: Mapping[str, Any]) -> tuple[list[dict[str, str]], bool]:
+    raw_sources = payload.get("document_sources")
+    if isinstance(raw_sources, list) and raw_sources:
+        return _document_scope_sources(raw_sources)
+    if not payload.get("document_file_url"):
+        return [], False
+    return _document_scope_sources(
+        [
+            {
+                "file_url": payload.get("document_file_url"),
+                "filename": payload.get("document_filename"),
+                "title": payload.get("document_title"),
+            }
+        ]
+    )
+
+
+def _document_scope_urls(sources: list[Mapping[str, Any]]) -> set[str]:
+    return {str(source.get("file_url") or "") for source in sources if source.get("file_url")}
+
+
+def _document_scope_matches(left: list[Mapping[str, Any]], right: list[Mapping[str, Any]]) -> bool:
+    return len(left) == len(right) and _document_scope_urls(left) == _document_scope_urls(right)
+
+
+def _save_conversation_document_scope(
+    storage: Storage,
+    *,
+    conversation_id: str,
+    metadata: Any,
+    sources: list[dict[str, str]],
+) -> dict[str, Any]:
+    updated = dict(metadata) if isinstance(metadata, dict) else {}
+    updated["document_scope"] = sources
+    storage._conn.execute(
+        "UPDATE conversations SET metadata = ? WHERE conversation_id = ?",
+        (json.dumps(updated), conversation_id),
+    )
+    storage._conn.commit()
+    return updated
+
+
 def _prepare_document_source_chunks(
     *,
     document_content: str,
@@ -1391,9 +1487,14 @@ def _turn_metadata(
     code: str | None = None,
     retryable: bool | None = None,
 ) -> dict[str, Any]:
+    raw_scope = payload.get("document_scope")
     raw_sources = payload.get("document_sources")
-    sources = raw_sources if isinstance(raw_sources, list) else []
-    if not sources and payload.get("document_file_url"):
+    sources = (
+        raw_scope
+        if isinstance(raw_scope, list)
+        else raw_sources if isinstance(raw_sources, list) else []
+    )
+    if not sources and not isinstance(raw_scope, list) and payload.get("document_file_url"):
         sources = [payload]
     document_sources = [
         {
@@ -1568,11 +1669,29 @@ def query_chat(
     document_sources = raw_document_sources if isinstance(raw_document_sources, list) else []
     if len(document_sources) > MAX_DOCUMENT_SOURCES:
         raise ChatApiError("Too many files selected; choose up to 3.", status_code=400)
-    if rag_mode == "agentic" and (document_content or document_sources):
+    document_scope_supplied = "document_scope" in payload
+    document_scope_clear = payload.get("document_scope_clear") is True
+    requested_document_scope: list[dict[str, str]] | None = None
+    if document_scope_supplied:
+        requested_document_scope, invalid_scope = _document_scope_sources(
+            payload.get("document_scope")
+        )
+        if invalid_scope:
+            raise ChatApiError("Invalid document_scope; select up to 3 files.", status_code=400)
+    if document_scope_clear and (
+        not document_scope_supplied
+        or requested_document_scope
+        or document_content
+        or document_sources
+        or document_file_url
+    ):
+        raise ChatApiError("Invalid document scope clear request.", status_code=400)
+    if rag_mode == "agentic" and (
+        document_content or document_sources or document_file_url or requested_document_scope
+    ):
         raise ChatApiError(
             "Agentic RAG cannot be combined with direct document context", status_code=400
         )
-    direct_document_requested = bool(document_content or document_sources or document_file_url)
     has_document_content = (
         all(
             isinstance(source, Mapping) and _normalize_text(source.get("content"))
@@ -1580,6 +1699,10 @@ def query_chat(
         )
         if document_sources
         else bool(document_content)
+    )
+    request_scope_sources, request_scope_invalid = _document_scope_from_request(payload)
+    direct_document_requested = bool(
+        document_content or document_sources or document_file_url or requested_document_scope
     )
     agentic_kb_id = _selected_agentic_kb_id(kb_ids) if rag_mode == "agentic" else None
 
@@ -1659,11 +1782,116 @@ def query_chat(
                 },
             )
 
+        conversation = conversation_manager.get_conversation(conversation_id) or {}
+        conversation_metadata = conversation.get("metadata")
+        conversation_metadata = (
+            conversation_metadata if isinstance(conversation_metadata, dict) else {}
+        )
+        stored_scope_present = "document_scope" in conversation_metadata
+        stored_scope: list[dict[str, str]] = []
+        stored_scope_invalid = False
+        if stored_scope_present:
+            stored_scope, stored_scope_invalid = _document_scope_sources(
+                conversation_metadata.get("document_scope")
+            )
+
+        scope_mismatch = False
+        if document_scope_supplied:
+            effective_document_scope = requested_document_scope or []
+            if effective_document_scope:
+                scope_switch = payload.get("document_scope_switch") is True
+                if (
+                    stored_scope_present
+                    and not scope_switch
+                    and not _document_scope_matches(stored_scope, effective_document_scope)
+                ):
+                    scope_mismatch = True
+                if document_content or document_sources or document_file_url:
+                    scope_mismatch = scope_mismatch or bool(
+                        request_scope_invalid
+                        or not _document_scope_matches(
+                            effective_document_scope, request_scope_sources
+                        )
+                    )
+            elif document_scope_clear:
+                effective_document_scope = []
+            elif stored_scope:
+                effective_document_scope = stored_scope
+                if document_content or document_sources or document_file_url:
+                    scope_mismatch = bool(
+                        request_scope_invalid
+                        or not _document_scope_matches(stored_scope, request_scope_sources)
+                    )
+            elif request_scope_sources:
+                scope_mismatch = True
+        elif stored_scope:
+            effective_document_scope = stored_scope
+            if document_content or document_sources or document_file_url:
+                scope_mismatch = bool(
+                    request_scope_invalid
+                    or not _document_scope_matches(stored_scope, request_scope_sources)
+                )
+        else:
+            effective_document_scope = request_scope_sources
+
+        if requested_rag_mode == "agentic" and (
+            effective_document_scope or (stored_scope_invalid and not document_scope_supplied)
+        ):
+            raise ChatApiError(
+                "Agentic RAG cannot be combined with direct document context", status_code=400
+            )
+
+        turn_payload = dict(payload)
+        turn_payload["document_scope"] = effective_document_scope
         user_message_id = conversation_manager.add_message(
             conversation_id,
             "user",
             message,
-            metadata=_turn_metadata(payload, "pending"),
+            metadata=_turn_metadata(turn_payload, "pending"),
+        )
+        if scope_mismatch:
+            raise ChatApiError(
+                "The supplied document content does not match this conversation's document scope.",
+                status_code=409,
+                payload={
+                    "success": False,
+                    "code": "CHAT_DOCUMENT_SCOPE_MISMATCH",
+                    "error": "The supplied document content does not match this conversation's document scope.",
+                    "retryable": False,
+                    "data": {
+                        "conversation_id": conversation_id,
+                        "message_id": user_message_id,
+                    },
+                },
+            )
+        if stored_scope_invalid and not document_scope_supplied:
+            raise ChatApiError(
+                "The selected document has no usable Markdown content.",
+                status_code=422,
+                payload={
+                    "success": False,
+                    "code": "CHAT_DOCUMENT_EMPTY",
+                    "error": "The selected document has no usable Markdown content.",
+                    "retryable": True,
+                    "data": {
+                        "conversation_id": conversation_id,
+                        "message_id": user_message_id,
+                    },
+                },
+            )
+        if document_scope_supplied or effective_document_scope or stored_scope_present:
+            _save_conversation_document_scope(
+                storage,
+                conversation_id=conversation_id,
+                metadata=conversation_metadata,
+                sources=effective_document_scope,
+            )
+        direct_document_requested = bool(
+            document_content
+            or document_sources
+            or document_file_url
+            or effective_document_scope
+            or stored_scope_invalid
         )
         if config_error is not None:
             logger.warning(
@@ -1781,7 +2009,7 @@ def query_chat(
                 citations=citations,
                 metadata=assistant_metadata,
             )
-            _mark_turn(storage, user_message_id, _turn_metadata(payload, "succeeded"))
+            _mark_turn(storage, user_message_id, _turn_metadata(turn_payload, "succeeded"))
             return {
                 "success": True,
                 "data": {
@@ -2079,7 +2307,7 @@ def query_chat(
             citations=citations,
             metadata=assistant_metadata,
         )
-        _mark_turn(storage, user_message_id, _turn_metadata(payload, "succeeded"))
+        _mark_turn(storage, user_message_id, _turn_metadata(turn_payload, "succeeded"))
 
         return {
             "success": True,
@@ -2117,7 +2345,7 @@ def query_chat(
                 storage,
                 user_message_id,
                 _turn_metadata(
-                    payload,
+                    turn_payload,
                     "failed",
                     code=str(exc.payload["code"]),
                     retryable=bool(exc.payload.get("retryable", True)),
@@ -2144,7 +2372,7 @@ def query_chat(
                     storage,
                     user_message_id,
                     _turn_metadata(
-                        payload,
+                        turn_payload,
                         "failed",
                         code="CHAT_KB_UNAVAILABLE",
                         retryable=False,
@@ -2171,7 +2399,7 @@ def query_chat(
                     storage,
                     user_message_id,
                     _turn_metadata(
-                        payload,
+                        turn_payload,
                         "failed",
                         code="CHAT_CONVERSATION_FAILED",
                         retryable=True,
@@ -2217,7 +2445,7 @@ def query_chat(
             _mark_turn(
                 storage,
                 user_message_id,
-                _turn_metadata(payload, "failed", code=code, retryable=retryable),
+                _turn_metadata(turn_payload, "failed", code=code, retryable=retryable),
             )
             logger.warning(
                 "Chat provider failure active_model=%s provider_error_type=%s classification=%s",
@@ -2254,7 +2482,7 @@ def query_chat(
                     storage,
                     user_message_id,
                     _turn_metadata(
-                        payload,
+                        turn_payload,
                         "failed",
                         code="CHAT_RETRIEVAL_FAILED",
                         retryable=True,
@@ -2280,7 +2508,7 @@ def query_chat(
                 storage,
                 user_message_id,
                 _turn_metadata(
-                    payload,
+                    turn_payload,
                     "failed",
                     code="CHAT_PROCESSING_FAILED",
                     retryable=True,

@@ -5,6 +5,18 @@ export interface Conversation {
   created_at?: string;
   updated_at?: string;
   mode?: string;
+  metadata?: Record<string, unknown> | null;
+}
+
+export interface DocumentScopeSource {
+  file_url: string;
+  filename?: string;
+  title?: string;
+}
+
+export interface ChatConversationDetail {
+  messages: Message[];
+  documentScope: DocumentScopeSource[];
 }
 
 export interface Citation {

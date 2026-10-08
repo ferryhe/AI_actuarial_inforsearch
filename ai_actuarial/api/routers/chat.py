@@ -7,6 +7,7 @@ from ..deps import AuthContext, require_permissions
 from ..services.chat import (
     ChatApiError,
     apply_session_update,
+    clear_conversation_document_scope,
     create_conversation,
     delete_conversation,
     get_conversation_detail,
@@ -120,6 +121,26 @@ def api_delete_conversation(
         )
         apply_session_update(response, request, session_update)
         return payload
+    except ChatApiError as exc:
+        return _error_response(exc)
+
+
+@router.delete("/chat/conversations/{conversation_id}/document-scope")
+def api_clear_conversation_document_scope(
+    conversation_id: str,
+    request: Request,
+    response: Response,
+    auth: AuthContext = Depends(require_permissions("chat.conversations")),
+):
+    try:
+        result, session_update = clear_conversation_document_scope(
+            db_path=_db_path(request),
+            request=request,
+            auth=auth,
+            conversation_id=conversation_id,
+        )
+        apply_session_update(response, request, session_update)
+        return result
     except ChatApiError as exc:
         return _error_response(exc)
 

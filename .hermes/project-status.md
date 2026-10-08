@@ -1,3 +1,43 @@
+# 最新工作 — Issue #408 文档追问范围 — 2026-10-07 EDT
+
+- 项目 `AI_actuarial_inforsearch`；分支 `codex/issue-408-document-scope`；
+  独立 checkout `.codex-worktrees/issue-408`；最新 main 基线 `4192205`。
+  范围为 Chat 请求、会话范围/恢复、直接文档上下文、错误与回归。
+  同级仓库不可读写；未改生产模型路由、凭据或部署。
+- 实施评估为 complex：范围跨前端请求/会话恢复、后端持久化、权限、预算和失败重试。
+  已选定并始终保留 `gpt-6-sol/high` worker；审查使用 fresh `gpt-6-sol/high`。
+  复用已有文档预算、Markdown 权限检查、会话 metadata 和结构化失败路径；无新增依赖。
+- 根因证据：真实 Chromium 154 + Vite 5184 / 本地 API fixture 捕获到首次
+  FileDetail Explain 带原文/URL，而同一会话两次普通追问都不带原文/URL/scope。
+  此证据证明前端参数丢失，不代表生产模型回答。
+- 修复：会话只保存最多三个 URL/name selectors；每次文档追问读取当前文档
+  Markdown，并校验其与持久 scope 一致；引用来自本轮实际生成 chunks。
+  UI 显示当前范围。注册用户明确清除通过 owner/permission checked DELETE；
+  guest 下一请求带独立 clear 意图。切换、新建、恢复和删除重置本地待确认意图。
+- 普通空 scope 继承已保存非空范围；缺原文返回可重试 `CHAT_DOCUMENT_EMPTY`，
+  不进入库检索。不同范围的非显式请求返回 `CHAT_DOCUMENT_SCOPE_MISMATCH`。
+  恢复失败禁发并提供重试/新建。quota/预检/传输失败保留未确认切换；成功或已接受
+  scope 的结构化失败清除 switch/clear 意图，防止再次覆盖其他标签页的选择。
+- 验证：完整 Python quality gate PASS，2,414 passed / 11 skipped，
+  Black/isort/Pylint PASS；最后的前端修改后 Chat source guard 21/21 PASS。
+  相关四个 Vitest 文件 26/26 PASS；typecheck/build PASS；lint 0 errors、
+  4 条既有 Hook warnings；两个 dead-code gate 与 diff-check PASS。
+  补充全量 Vitest 131/132，唯一失败为既有 FilterBar a11y 的 Status 标签测试；
+  该测试、组件、Layout 默认翻译上下文和 setup 均与 origin/main 一致，超出 #408 范围。
+- Chromium 生命周期 smoke PASS：12 query / 9 Markdown fetch，覆盖首次解释、
+  两次追问、切换、清除、新建、恢复及失败重试、双标签 stale scope、quota 恢复、
+  provider 接受范围后失败。浏览器使用本地 API/回答 fixtures；后端 TestClient
+  独立捕获实际 direct/retrieved chunks、citations、持久 scope 和 retry 元数据。
+  未声称生产模型或部署后验收。
+- 独立审查最终 PASS（review4，无确认的范围内 finding）。此前三个可复现失败路径
+  均交同一 worker 修复；累计失败两轮及三轮时分别使用 TypeSafe `jev-latest`
+  （实际 `jev-1.13.0`）只读裁决，均接受最小修复和 fresh review 路由。
+  本地 ignored reports/issue-408 保存原始审查、裁决与验证证据。
+- 根 checkout 既有 `.hermes/project-status.md` 修改及 `.codex-tmp-agentic-rag/`、
+  `.hermes/research/`、`diagrams/`、`graphify-out/` 未触碰。
+  当前实现/必要本地检查完成，准备按项目授权 commit/push/PR；创建后约 15 分钟
+  核对 GitHub checks 和远端/Copilot 评论。merge 和生产部署未授权。
+
 # Active work — Issue #407 KB / Category loading — 2026-10-07 EDT
 
 - Project: `AI_actuarial_inforsearch`; branch:
