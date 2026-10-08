@@ -2562,7 +2562,12 @@ def _category_sql(category_filter: str, *, alias: str = "c") -> tuple[str, list[
     )
 
 
-def _catalog_candidate_predicate(*, file_alias: str = "f", catalog_alias: str = "c") -> str:
+def _catalog_candidate_predicate(
+    *,
+    file_alias: str = "f",
+    catalog_alias: str = "c",
+    retry_errors: bool = False,
+) -> str:
     conditions = [
         f"{catalog_alias}.file_url IS NULL",
         f"IFNULL(IFNULL({catalog_alias}.file_sha256, {catalog_alias}.sha256), '') = ''",
@@ -2570,6 +2575,8 @@ def _catalog_candidate_predicate(*, file_alias: str = "f", catalog_alias: str = 
         f"IFNULL(IFNULL({catalog_alias}.catalog_version, {catalog_alias}.pipeline_version), '') != ?",
         f"TRIM(IFNULL({catalog_alias}.summary, '')) = ''",
     ]
+    if retry_errors:
+        conditions.append(f"{catalog_alias}.status = 'error'")
     return "(" + " OR ".join(conditions) + ")"
 
 
@@ -2579,6 +2586,9 @@ def get_catalog_stats(
     provider: str | None = None,
     input_source: str | None = None,
     category: str | None = None,
+    skip_existing: bool | str = True,
+    overwrite_existing: bool | str = False,
+    retry_errors: bool | str = False,
 ) -> dict[str, Any]:
     storage = Storage(db_path)
     try:
@@ -2598,12 +2608,22 @@ def get_catalog_stats(
         selected_provider = str(provider or get_default_catalog_provider()).strip().lower()
         selected_input_source = str(input_source or "source").strip().lower()
         category_filter = str(category or "").strip()
+        use_skip_existing = coerce_bool(skip_existing, default=True) and not coerce_bool(
+            overwrite_existing, default=False
+        )
+        should_retry_errors = coerce_bool(retry_errors, default=False)
         catalog_version = f"{base_catalog_version}:{selected_provider}:{selected_input_source}"
         candidates_where = (
-            "f.local_path IS NOT NULL AND f.local_path != '' AND f.deleted_at IS NULL AND "
-            + _catalog_candidate_predicate(file_alias="f", catalog_alias="c")
+            "f.local_path IS NOT NULL AND f.local_path != '' AND f.deleted_at IS NULL"
         )
-        candidate_params: list[Any] = [catalog_version]
+        candidate_params: list[Any] = []
+        if use_skip_existing:
+            candidates_where += " AND " + _catalog_candidate_predicate(
+                file_alias="f",
+                catalog_alias="c",
+                retry_errors=should_retry_errors,
+            )
+            candidate_params.append(catalog_version)
         category_sql, category_params = _category_sql(category_filter, alias="c")
         candidates_where += category_sql
         candidate_params.extend(category_params)
@@ -2618,44 +2638,7 @@ def get_catalog_stats(
             tuple(candidate_params),
         ).fetchone()[0]
 
-        first_candidate_index = None
-        try:
-            first_candidate_params: list[Any] = []
-            if category_filter:
-                first_candidate_params.extend(category_params)
-            first_candidate_params.append(catalog_version)
-            row = conn.execute(
-                f"""
-                WITH ordered AS (
-                    SELECT
-                        ROW_NUMBER() OVER (ORDER BY f.id DESC) AS rn,
-                        c.file_url AS c_url,
-                        f.sha256 AS f_sha,
-                        IFNULL(c.file_sha256, c.sha256) AS c_sha,
-                        IFNULL(c.catalog_version, c.pipeline_version) AS c_ver,
-                        c.summary AS c_summary
-                    FROM files f
-                    LEFT JOIN catalog_items c ON c.file_url = f.url
-                    WHERE f.local_path IS NOT NULL AND f.local_path != ''
-                      AND f.deleted_at IS NULL
-                      {category_sql if category_filter else ''}
-                )
-                SELECT rn
-                FROM ordered
-                WHERE c_url IS NULL
-                   OR IFNULL(c_sha,'') = ''
-                   OR c_sha != f_sha
-                   OR IFNULL(c_ver,'') != ?
-                   OR TRIM(IFNULL(c_summary, '')) = ''
-                ORDER BY rn
-                LIMIT 1
-                """,
-                tuple(first_candidate_params),
-            ).fetchone()
-            if row:
-                first_candidate_index = int(row[0])
-        except Exception:
-            first_candidate_index = None
+        first_candidate_index = 1 if int(candidate_total or 0) > 0 else None
 
         return {
             "success": True,
@@ -2688,6 +2671,7 @@ def get_markdown_conversion_stats(*, db_path: str, category: str | None = None) 
                 OR LOWER(IFNULL(f.content_type,'')) LIKE '%image%'
                 OR LOWER(IFNULL(f.original_filename,'')) LIKE '%.pdf'
                 OR LOWER(IFNULL(f.original_filename,'')) LIKE '%.docx'
+                OR LOWER(IFNULL(f.original_filename,'')) LIKE '%.ppt'
                 OR LOWER(IFNULL(f.original_filename,'')) LIKE '%.pptx'
                 OR LOWER(IFNULL(f.original_filename,'')) LIKE '%.png'
                 OR LOWER(IFNULL(f.original_filename,'')) LIKE '%.jpg'
@@ -2723,27 +2707,20 @@ def get_markdown_conversion_stats(*, db_path: str, category: str | None = None) 
         ).fetchone()[0]
 
         first_missing = None
-        try:
-            row = conn.execute(
-                f"""
-                WITH ordered AS (
-                    SELECT ROW_NUMBER() OVER (ORDER BY f.id DESC) AS rn, c.markdown_content AS md
-                    FROM files f
-                    LEFT JOIN catalog_items c ON c.file_url = f.url
-                    WHERE {where}
-                )
-                SELECT rn
-                FROM ordered
-                WHERE md IS NULL OR md = ''
-                ORDER BY rn
-                LIMIT 1
-                """,
-                tuple(params),
-            ).fetchone()
-            if row:
-                first_missing = int(row[0])
-        except Exception:
-            first_missing = None
+        row = conn.execute(
+            f"""
+            SELECT 1
+            FROM files f
+            LEFT JOIN catalog_items c ON c.file_url = f.url
+            WHERE {where}
+              AND (c.markdown_content IS NULL OR c.markdown_content = '')
+            ORDER BY f.id DESC
+            LIMIT 1
+            """,
+            tuple(params),
+        ).fetchone()
+        if row:
+            first_missing = int(row[0])
 
         return {
             "success": True,

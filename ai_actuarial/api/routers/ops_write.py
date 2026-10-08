@@ -576,6 +576,9 @@ def api_catalog_stats(
             provider=request.query_params.get("provider"),
             input_source=request.query_params.get("input_source"),
             category=request.query_params.get("category"),
+            skip_existing=request.query_params.get("skip_existing", "true"),
+            overwrite_existing=request.query_params.get("overwrite_existing", "false"),
+            retry_errors=request.query_params.get("retry_errors", "false"),
         )
     except OpsWriteError as exc:
         return _handle_ops_error(exc)

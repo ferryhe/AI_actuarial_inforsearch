@@ -27,6 +27,7 @@ export interface TaskMetricData {
   catalog_ok?: number;
   catalog_skipped?: number;
   catalog_errors?: number;
+  catalog_candidate_exhausted?: boolean;
   failed_items?: number;
   errors?: string[];
   result?: TaskContractResult;
@@ -120,7 +121,7 @@ function getTaskMetrics(task: TaskMetricData): TaskMetric[] {
       ...optionalMetric("scanned", task.catalog_scanned ?? task.items_processed),
       ...optionalMetric("ok", task.catalog_ok ?? task.items_downloaded),
       ...optionalMetric("skipped", task.catalog_skipped ?? task.items_skipped),
-      ...optionalMetric("error_reasons", task.catalog_errors ?? task.errors?.length),
+      ...optionalMetric("errors", task.catalog_errors ?? task.errors?.length),
       ...optionalMetric("failed_items", task.failed_items),
     ];
   }
@@ -164,17 +165,19 @@ export function TaskMetrics({
 }: TaskMetricsProps) {
   const metrics = getTaskMetrics(task);
   const type = String(task.type || "").toLowerCase();
+  const candidatesExhausted = type === "catalog" && task.catalog_candidate_exhausted === true;
   const embeddingIdentity = EMBEDDING_TYPES.has(type) && task.result && (
     task.result.provider || task.result.model || task.result.dimension != null
   )
     ? `${task.result.provider || "?"} / ${task.result.model || "?"} / ${task.result.dimension ?? "?"}`
     : null;
 
-  if (metrics.length === 0 && !embeddingIdentity) return null;
+  if (metrics.length === 0 && !embeddingIdentity && !candidatesExhausted) return null;
 
   return (
     <div className={className} data-testid={`task-metrics-${type || "unknown"}`}>
       {embeddingIdentity && <div className={metricClassName}>{embeddingIdentity}</div>}
+      {candidatesExhausted && <div>{t("tasks.stats.candidates_exhausted")}</div>}
       {metrics.map((row) => (
         <div className={metricClassName} key={row.labelKey}>
           <span className={labelClassName}>{t(row.labelKey)}:</span>

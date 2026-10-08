@@ -46,14 +46,19 @@ export function CatalogForm({
       const params = new URLSearchParams();
       if (cat) params.set("category", cat);
       if (source) params.set("input_source", source);
+      params.set("skip_existing", String(skipExisting));
+      params.set("overwrite_existing", String(overwriteExisting));
+      params.set("retry_errors", String(retryErrors));
       const q = params.toString() ? `?${params}` : "";
       const res = await apiGet<{ data?: Record<string, unknown> } & Record<string, unknown>>(`/api/catalog/stats${q}`);
       setStats(res.data || res);
     } catch { setStats(null); }
     finally { setStatsLoading(false); }
-  }, [inputSource]);
+  }, [inputSource, overwriteExisting, retryErrors, skipExisting]);
 
-  useEffect(() => { loadStats(); }, [loadStats]);
+  useEffect(() => {
+    loadStats(scopeMode === "category" ? category.trim() || undefined : undefined);
+  }, [category, loadStats, scopeMode]);
 
   useEffect(() => {
     if (!settingsMode && stats && startIndex === "1") {
@@ -116,7 +121,7 @@ export function CatalogForm({
           <SelectField value={scopeMode} onChange={(v) => { setScopeMode(v); if (v === "index") loadStats(); }} testId="select-scope"
             options={[{ value: "index", label: t("tasks.form.scope_all") }, { value: "category", label: t("tasks.form.scope_category") }]} />
         </FormField>
-        <FormField label={t("tasks.form.scan_count")} hint={t("tasks.form.max_hint") + " 2000"}>
+        <FormField label={t("tasks.form.catalog_success_target")} hint={t("tasks.form.max_hint") + " 2000"}>
           <InputField value={scanCount} onChange={setScanCount} placeholder="100" type="number" testId="input-scan-count" />
         </FormField>
       </div>

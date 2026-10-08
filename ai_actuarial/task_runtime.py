@@ -828,6 +828,54 @@ class NativeTaskRuntime:
             "log_file": str(task_log_path(task_id)),
             "errors": [],
         }
+        if collection_type in {"catalog", "markdown_conversion"}:
+            try:
+                start_index = max(1, int(data.get("scan_start_index") or 1))
+            except (TypeError, ValueError):
+                start_index = 1
+            scan_count = None
+            if data.get("scan_count") not in (None, ""):
+                try:
+                    scan_count = max(0, int(data["scan_count"]))
+                except (TypeError, ValueError):
+                    pass
+            explicit_file_urls = (
+                [
+                    str(file_url).strip()
+                    for file_url in list(data.get("file_urls") or [])
+                    if str(file_url).strip()
+                ]
+                if collection_type == "catalog"
+                else []
+            )
+            if collection_type == "catalog" and scan_count is None and not explicit_file_urls:
+                scan_count = 100
+            scope_mode = (
+                "category" if str(data.get("scope_mode") or "").lower() == "category" else "index"
+            )
+            overwrite_existing = bool(data.get("overwrite_existing", False))
+            skip_existing = bool(data.get("skip_existing", True)) and not overwrite_existing
+            parameters: dict[str, Any] = {
+                "scope_mode": scope_mode,
+                "scan_start_index": start_index,
+                "skip_existing": skip_existing,
+                "overwrite_existing": overwrite_existing,
+            }
+            if scan_count is not None:
+                parameters["scan_count"] = scan_count
+            category = str(data.get("category") or "").strip()
+            if category:
+                parameters["category"] = category
+            if collection_type == "catalog":
+                if scan_count is not None and not explicit_file_urls:
+                    parameters["target_successes"] = scan_count
+                parameters["input_source"] = (
+                    "source"
+                    if str(data.get("input_source") or "markdown").lower() == "source"
+                    else "markdown"
+                )
+                parameters["retry_errors"] = bool(data.get("retry_errors", False))
+            task_data["parameters"] = parameters
         if extra_fields:
             task_data.update(extra_fields)
         with self.task_lock:
@@ -1309,6 +1357,7 @@ class NativeTaskRuntime:
                     or None,
                     "output_language": str(data.get("output_language") or "auto").strip() or "auto",
                     "progress_callback": self._progress_callback(task_id),
+                    "stop_check": lambda: self._stop_requested(task_id),
                     "task_id": task_id,
                 }
                 file_urls = [
@@ -1325,6 +1374,7 @@ class NativeTaskRuntime:
                     stats = run_incremental_catalog(
                         batch=int(data.get("batch") or 50),
                         site_filter=str(data.get("site") or "").strip() or None,
+                        category_filter=category,
                         limit=limit,
                         candidate_offset=candidate_offset,
                         **common_catalog_kwargs,
@@ -1343,10 +1393,15 @@ class NativeTaskRuntime:
                         "provider": provider,
                         "input_source": input_source,
                         "catalog_version": catalog_version,
+                        "stopped": bool(stats.get("stopped", False)),
                         "catalog_scanned": int(stats.get("scanned", 0)),
                         "catalog_ok": int(stats.get("processed", 0)),
                         "catalog_skipped": int(stats.get("skipped_ai", 0)),
-                        "catalog_errors": 1 if int(stats.get("errors", 0)) else 0,
+                        "catalog_errors": int(stats.get("errors", 0)),
+                        "catalog_target": int(stats.get("target_successes", 0) or 0),
+                        "catalog_candidate_exhausted": bool(
+                            stats.get("candidate_exhausted", False)
+                        ),
                         "failed_items": int(stats.get("failed_items", 0)),
                         "item_errors": list(stats.get("item_errors") or []),
                         "item_errors_truncated": bool(stats.get("item_errors_truncated", False)),
@@ -3120,6 +3175,15 @@ class NativeTaskRuntime:
             items_processed = result.items_found
             items_total = result.items_found
             progress = 100
+            catalog_target = max(0, int(result_metadata.get("catalog_target") or 0))
+            if collection_type == "catalog" and catalog_target > 0:
+                items_processed = result.items_downloaded
+                items_total = catalog_target
+                progress = min(100, int((items_processed / items_total) * 100))
+            elif stopped and collection_type == "catalog":
+                items_processed = int(task_data.get("items_processed") or 0)
+                items_total = int(task_data.get("items_total") or 0)
+                progress = int(task_data.get("progress") or 0)
             if stopped and collection_type == "embedding_generation":
                 items_processed = max(
                     0,
@@ -3168,6 +3232,10 @@ class NativeTaskRuntime:
             ):
                 if key in result_metadata:
                     task_data[key] = int(result_metadata[key] or 0)
+            if "catalog_candidate_exhausted" in result_metadata:
+                task_data["catalog_candidate_exhausted"] = bool(
+                    result_metadata["catalog_candidate_exhausted"]
+                )
             canonical_result = result_metadata.get("result")
             if isinstance(canonical_result, dict):
                 task_data["result"] = canonical_result

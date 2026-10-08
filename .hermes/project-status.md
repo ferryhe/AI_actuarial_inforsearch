@@ -1,3 +1,101 @@
+# Latest work — PR #409/#410 completion repairs — 2026-10-07 UTC
+
+- Project: `AI_actuarial_inforsearch`; branch: `codex/fix-comments-from-review-thread`;
+  isolated checkout: `.codex-worktrees/pr-410`. Continue the existing stacked PRs
+  from #410 head `ff4215f`; no duplicate PR or sibling-repository work.
+  The user authorized repair and the order #410 into #409's branch, then #409
+  into main. Branch deletion, deployment, and unrelated cleanup are excluded.
+- Selected a simple Luna/medium worker for the reproduced missing `errors=[]`
+  test fixture and four CI-pinned Black 26.3.1 format violations. The formatting
+  preserves Python ASTs; no quality baseline or dependency lockfile changed.
+- Catalog tasks pass the existing stop callback to both execution paths and
+  preserve stopped metadata. Explicit-file runs count consumed outcomes and
+  classified missing-URL failures; candidate-prefilter exclusions remain
+  uncounted. Stopped runs without a success target retain callback progress,
+  including 1/4 at 25 percent and 0/4 at zero percent. Target-based scans retain
+  their successful-outcome calculations. No framework was added.
+- Current focused verification: all 91 Python cases pass across Issue #406,
+  task React source, task metrics, and task-stop/nonregression suites. Black,
+  isort, Pylint errors-only, and diff check pass on the six touched Python files.
+  TaskMetrics Vitest, frontend typecheck/build, and ESLint pass (zero errors;
+  four existing Hook warnings and the existing build chunk-size advisory).
+- Real Chromium smoke against the local built UI and mock API passes: category
+  Insurance survives skip/overwrite/retry changes; start is 1 and target 100;
+  actual checked/success/failure/skip metrics are 80/50/20/10 with an error label.
+  No production requests or writes occurred.
+- Fresh independent Sol/high final review is PASS with no accepted findings.
+  Two earlier completed local cycles produced the AC7 repairs. TypeSafe
+  jev-latest selected repair_then_review (0.98; confidence 0.97), then confirmed
+  rejection of a retracted historical-row claim as scope expansion (1.0).
+  Evidence is in ignored root `reports/pr409410/`; implementation stayed with
+  the original Luna/medium worker. No review or CI gate was bypassed.
+- The broader Windows quality gate also passed: 2,404 tests passed, 11 skipped,
+  and no Black/isort/Pylint baseline differences. Its test process began before
+  the final cancellation-progress repair; the final behavior is covered by the
+  91 focused tests and must receive full GitHub Linux CI before merge.
+- Next: commit/push this repair to #410 and require all six GitHub checks before
+  each authorized merge. The
+  earlier Windows sandbox FAISS/Vitest errors were environment failures; the
+  final head must still receive GitHub's full Linux validation.
+- Root checkout remains on `fix/gpt6-parameter-compat` with its uncommitted
+  advisory status entry and four existing untracked directories preserved:
+  `.codex-tmp-agentic-rag/`, `.hermes/research/`, `diagrams/`, `graphify-out/`.
+
+# Latest work — PR #409 review-thread fixes — 2026-10-07 UTC
+
+- Project: `AI_actuarial_inforsearch`; branch: `codex/fix-comments-from-review-thread`.
+  Scope is PR #409 review `pullrequestreview-5449172841` only; sibling repositories
+  remain off-limits.
+- Applied all five requested fixes from that review thread only:
+  checked/scanned accounting now advances per consumed worker outcome; catalog
+  parameter persistence omits synthetic scan target for explicit `file_urls` runs
+  and stores effective `skip_existing`; catalog failure count now renders as
+  `errors` in Task metrics; and Catalog form stats reload keeps active category
+  scope when option toggles retrigger loading.
+- Added focused regression coverage for stop-mid-batch consumed-outcome accounting
+  and explicit-file catalog parameter persistence, plus source/runtime assertions
+  for metrics label and category-scoped stats reload wiring.
+- Validation in this runner:
+  `python -m compileall ai_actuarial/catalog_incremental.py ai_actuarial/task_runtime.py` PASS,
+  `npm exec -- vitest run client/src/pages/tasks/TaskMetrics.test.tsx` PASS,
+  `git diff --check` PASS.
+  `python -m pytest ...` could not run because `pytest` is not installed in this environment.
+- `npm ci --no-audit --no-fund` installed locked dependencies only (no manifest/lockfile edits).
+- Commit `37503b2` is pushed on `codex/fix-comments-from-review-thread`; PR #410
+  is open: https://github.com/ferryhe/AI_actuarial_inforsearch/pull/410.
+  Current remote feedback check shows no reviews, no review threads, and no
+  PR conversation comments. Current CI run `37698134023` concluded
+  `action_required` with zero jobs created.
+- No production actions, deployments, or cross-repository changes were made.
+
+# Latest work — Issue #406 catalog candidate processing — 2026-10-07 UTC
+
+- Project: `AI_actuarial_inforsearch`; branch: `copilot/bugfix-unify-batch-processing`.
+  Scope is issue #406 only; sibling repositories remain off-limits.
+- Catalog batching now excludes this-run `seen_urls` in SQL before `LIMIT`,
+  keeps nonzero candidate starts bounded to the chosen candidate ID, caps each
+  batch by remaining successful target, and reports checked/success/failed/
+  skipped counts without forcing an exhausted run to 100%.
+- Catalog and Markdown automatic starts use filtered candidate coordinates;
+  catalog stats and execution share category plus skip/overwrite/retry filters.
+  Tasks persist only allowlisted scope/count/options, not raw payloads or
+  credentials.
+- Added focused catalog pagination, category, offset, accounting, stats and
+  task-history regressions, plus task metrics/form assertions. Frontend
+  typecheck, build, TaskMetrics Vitest, ESLint, Python compileall, diff check,
+  and extracted SQLite candidate-query smokes passed. Vite reported its
+  existing large-chunk warning. Python pytest is blocked in this runner
+  (`No module named pytest`), and application test dependencies such as FastAPI
+  are also missing.
+- `npm ci` installed from the existing lockfile and reported 18 audit alerts;
+  no dependency manifests or lockfiles were changed or auto-fixed.
+- Commits `259f1a3` and `72361e9` were pushed to issue branch/PR #409. CodeQL
+  reported zero Python alerts; JavaScript had no new changes. The latest PR CI
+  run `37695605207` ended `action_required` without creating jobs; its logs
+  report zero failed jobs. No review threads were present; the Code Review
+  binary was unavailable in this environment.
+- No production changes, deployments, or cross-repository access.
+
 # Latest work — PR #405 CI formatting repair — 2026-10-06 EDT
 
 - Project: `AI_actuarial_inforsearch`; branch: `fix/gpt6-parameter-compat`.

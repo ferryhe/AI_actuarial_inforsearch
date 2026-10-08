@@ -431,6 +431,20 @@ def test_catalog_pipeline_settings_can_save_without_provider_discovery():
 
     assert src.count("!settingsMode && catalogProviders.length === 0") >= 2
     assert "!settingsMode && (" not in src
+    assert 't("tasks.form.catalog_success_target")' in src
+    assert "stats.first_candidate_index" in src
+    assert "setStartIndex(String(first))" in src
+    assert 'params.set("skip_existing", String(skipExisting))' in src
+    assert 'params.set("overwrite_existing", String(overwriteExisting))' in src
+    assert 'params.set("retry_errors", String(retryErrors))' in src
+    assert 'loadStats(scopeMode === "category" ? category.trim() || undefined : undefined);' in src
+
+
+def test_markdown_form_start_index_uses_first_filtered_candidate():
+    src = (ROOT / "pages" / "tasks" / "MarkdownForm.tsx").read_text(encoding="utf-8")
+
+    assert "stats.first_without_markdown_index" in src
+    assert "setStartIndex(String(first))" in src
 
 
 def test_tasks_page_refreshes_history_on_completion_and_exposes_global_logs():

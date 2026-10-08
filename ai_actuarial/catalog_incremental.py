@@ -166,7 +166,10 @@ def _fetch_candidates(
     *,
     batch: int,
     offset: int = 0,
+    seen_urls: set[str] | None = None,
+    max_id: int | None = None,
     site_filter: Optional[str],
+    category_filter: Optional[str] = None,
     catalog_version: str,
     retry_errors: bool = False,
     skip_existing: bool = True,
@@ -179,9 +182,19 @@ def _fetch_candidates(
 
     By default, already-processed files (including errors) are NOT retried.
     Set retry_errors=True to reprocess files with status='error'.
-    Deterministic order: files.id ASC.
+    Deterministic order: files.id DESC.
     """
-    where_extra, params, status_cond = _candidate_filter_sql(site_filter, retry_errors)
+    where_extra, params, status_cond = _candidate_filter_sql(
+        site_filter, retry_errors, category_filter
+    )
+    seen_urls = seen_urls or set()
+    seen_filter = ""
+    seen_params: list[str] = []
+    if seen_urls:
+        seen_filter = f"AND f.url NOT IN ({','.join('?' for _ in seen_urls)})"
+        seen_params = list(seen_urls)
+    start_filter = "AND f.id <= ?" if max_id is not None else ""
+    start_params = [max_id] if max_id is not None else []
 
     # Sort newest first (descending ID) so we process recent content first.
     # Deterministic order: files.id DESC.
@@ -218,18 +231,25 @@ def _fetch_candidates(
     WHERE
         f.local_path IS NOT NULL
         AND f.local_path != ''
+        AND f.deleted_at IS NULL
         {candidate_pred}
         {where_extra}
+        {seen_filter}
+        {start_filter}
     ORDER BY f.id DESC
     LIMIT ? OFFSET ?
     """
-    cur = conn.execute(sql, candidate_params + params + [batch, max(0, int(offset or 0))])
+    cur = conn.execute(
+        sql,
+        candidate_params + params + seen_params + start_params + [batch, max(0, int(offset or 0))],
+    )
     return list(cur.fetchall())
 
 
 def _candidate_filter_sql(
     site_filter: Optional[str],
     retry_errors: bool,
+    category_filter: Optional[str] = None,
 ) -> tuple[str, list[object], str]:
     filters: list[str] = []
     params: list[object] = []
@@ -240,6 +260,20 @@ def _candidate_filter_sql(
             filters.append("(" + " OR ".join(["LOWER(f.source_site) LIKE ?"] * len(sites)) + ")")
             params.extend([f"%{s}%" for s in sites])
 
+    category_name = str(category_filter or "").strip()
+    if category_name:
+        filters.append(
+            "(c.category = ? OR c.category LIKE ? OR c.category LIKE ? OR c.category LIKE ?)"
+        )
+        params.extend(
+            [
+                category_name,
+                f"{category_name};%",
+                f"%; {category_name}",
+                f"%; {category_name};%",
+            ]
+        )
+
     where_extra = (" AND " + " AND ".join(filters)) if filters else ""
     status_cond = "OR c.status = 'error'" if retry_errors else ""
     return where_extra, params, status_cond
@@ -249,11 +283,14 @@ def _count_candidates(
     conn: sqlite3.Connection,
     *,
     site_filter: Optional[str],
+    category_filter: Optional[str] = None,
     catalog_version: str,
     retry_errors: bool = False,
     skip_existing: bool = True,
 ) -> int:
-    where_extra, params, status_cond = _candidate_filter_sql(site_filter, retry_errors)
+    where_extra, params, status_cond = _candidate_filter_sql(
+        site_filter, retry_errors, category_filter
+    )
     candidate_pred = ""
     candidate_params: list[object] = []
     if skip_existing:
@@ -276,6 +313,7 @@ def _count_candidates(
     WHERE
         f.local_path IS NOT NULL
         AND f.local_path != ''
+        AND f.deleted_at IS NULL
         {candidate_pred}
         {where_extra}
     """
@@ -585,6 +623,7 @@ def run_incremental_catalog(
     out_md: Path,
     batch: int = 200,
     site_filter: Optional[str] = None,
+    category_filter: Optional[str] = None,
     ai_only: bool = False,
     catalog_version: str = "catalog_v1",
     max_chars: int = 20000,
@@ -670,6 +709,8 @@ def run_incremental_catalog(
         "item_errors": [],
         "item_errors_truncated": False,
         "stopped": False,
+        "candidate_exhausted": False,
+        "target_successes": max(0, int(limit or 0)),
     }
     failed_object_ids: set[str] = set()
 
@@ -685,70 +726,78 @@ def run_incremental_catalog(
             stats["failed_items"] += 1
         stats["item_errors_truncated"] = stats["failed_items"] > len(stats["item_errors"])
 
-    seen_urls = set()
-    total_candidates = _count_candidates(
+    candidate_offset = max(0, int(candidate_offset or 0))
+    seen_urls: set[str] = set()
+    candidate_count = _count_candidates(
         conn,
         site_filter=site_filter,
+        category_filter=category_filter,
         catalog_version=catalog_version,
         retry_errors=retry_errors,
         skip_existing=skip_existing,
     )
     if candidate_offset > 0:
-        total_candidates = max(0, total_candidates - int(candidate_offset))
-    if limit > 0:
-        total_candidates = min(total_candidates, limit)
+        candidate_count = max(0, candidate_count - int(candidate_offset))
+        start_rows = _fetch_candidates(
+            conn,
+            batch=1,
+            offset=candidate_offset,
+            site_filter=site_filter,
+            category_filter=category_filter,
+            catalog_version=catalog_version,
+            retry_errors=retry_errors,
+            skip_existing=skip_existing,
+        )
+        candidate_start_id = int(start_rows[0]["id"]) if start_rows else None
+    else:
+        candidate_start_id = None
+    progress_total = max(limit if limit > 0 else candidate_count, 1)
     if progress_callback:
         progress_callback(
             0,
-            max(total_candidates, 1),
-            f"Catalog candidates: {total_candidates}",
+            progress_total,
+            f"Catalog candidates: {candidate_count}; target successes: {limit or candidate_count}",
         )
 
-    remaining_offset = max(0, int(candidate_offset or 0))
     while True:
         if stop_check and stop_check():
             logger.info("Catalog stop requested before next batch")
             stats["stopped"] = True
             break
 
-        # Check global limit
         if limit > 0 and stats["processed"] >= limit:
             logger.info(f"Reached limit of {limit} items")
             break
 
-        current_batch_size = batch
-        # We generally want to fetch enough to make progress, even if we discard duplicates
-        # But we don't want to fetch too many.
+        if candidate_offset > 0 and candidate_start_id is None:
+            stats["candidate_exhausted"] = True
+            break
+
+        current_batch_size = max(1, int(batch or 1))
+        if limit > 0:
+            current_batch_size = min(current_batch_size, limit - stats["processed"])
 
         rows = _fetch_candidates(
             conn,
             batch=current_batch_size,
-            offset=remaining_offset,
+            seen_urls=seen_urls,
+            max_id=candidate_start_id,
             site_filter=site_filter,
+            category_filter=category_filter,
             catalog_version=catalog_version,
             retry_errors=retry_errors,
             skip_existing=skip_existing,
         )
-        remaining_offset = 0
+        if not rows:
+            stats["candidate_exhausted"] = True
+            break
 
-        # Filter already seen URLs to prevent infinite loops when retrying errors
-        new_rows = [r for r in rows if r["url"] not in seen_urls]
-
-        if not new_rows:
-            if not rows:
-                # No more candidates at all
-                break
-            else:
-                # Candidates exist but we've seen them all in this run = loop detected
-                logger.info("Infinite loop detected (all duplicates), stopping")
-                break
-
-        stats["scanned"] += len(new_rows)
         batch_items: list[CatalogItem] = []
         batch_jsonl: list[dict] = []
+        scanned_this_batch = 0
 
         # Convert sqlite rows to dicts for thread safety (sqlite3.Row might bind to thread?)
-        row_dicts = [dict(r) for r in new_rows]
+        row_dicts = [dict(r) for r in rows]
 
         # Mark as seen
         for r in row_dicts:
@@ -796,6 +845,8 @@ def run_incremental_catalog(
                     shutdown_without_wait = True
                     break
                 url = future_to_url[future]
+                stats["scanned"] += 1
+                scanned_this_batch += 1
                 try:
                     r_data, item, status, suggested_title = future.result()
                     processed_at = datetime.now(timezone.utc).isoformat()
@@ -817,11 +868,15 @@ def run_incremental_catalog(
                             suggested_title=(suggested_title if update_title else None),
                         )
                         if progress_callback:
-                            completed = stats["processed"] + stats["skipped_ai"] + stats["errors"]
                             progress_callback(
-                                completed,
-                                max(total_candidates, completed, 1),
-                                f"Cataloging {completed}/{max(total_candidates, 1)}",
+                                stats["processed"],
+                                progress_total,
+                                (
+                                    f"Cataloging successes={stats['processed']}/"
+                                    f"{limit or candidate_count} "
+                                    f"checked={stats['scanned']} failed={stats['errors']} "
+                                    f"skipped={stats['skipped_ai']}"
+                                ),
                             )
 
                     elif status == "skipped":
@@ -838,11 +893,15 @@ def run_incremental_catalog(
                             storage=storage,
                         )
                         if progress_callback:
-                            completed = stats["processed"] + stats["skipped_ai"] + stats["errors"]
                             progress_callback(
-                                completed,
-                                max(total_candidates, completed, 1),
-                                f"Cataloging {completed}/{max(total_candidates, 1)}",
+                                stats["processed"],
+                                progress_total,
+                                (
+                                    f"Cataloging successes={stats['processed']}/"
+                                    f"{limit or candidate_count} "
+                                    f"checked={stats['scanned']} failed={stats['errors']} "
+                                    f"skipped={stats['skipped_ai']}"
+                                ),
                             )
 
                     elif status.startswith("error:"):
@@ -868,11 +927,15 @@ def run_incremental_catalog(
                             storage=storage,
                         )
                         if progress_callback:
-                            completed = stats["processed"] + stats["skipped_ai"] + stats["errors"]
                             progress_callback(
-                                completed,
-                                max(total_candidates, completed, 1),
-                                f"Cataloging {completed}/{max(total_candidates, 1)}",
+                                stats["processed"],
+                                progress_total,
+                                (
+                                    f"Cataloging successes={stats['processed']}/"
+                                    f"{limit or candidate_count} "
+                                    f"checked={stats['scanned']} failed={stats['errors']} "
+                                    f"skipped={stats['skipped_ai']}"
+                                ),
                             )
 
                 except Exception:
@@ -895,7 +958,7 @@ def run_incremental_catalog(
 
         logger.info(
             "Batch done: scanned=%d processed=%d written=%d skipped_ai=%d errors=%d missing=%d",
-            len(new_rows),
+            scanned_this_batch,
             stats["processed"],
             stats["written"],
             stats["skipped_ai"],
@@ -914,21 +977,28 @@ def run_incremental_catalog(
         stats["missing_files"],
     )
     if progress_callback:
-        completed = stats["processed"] + stats["skipped_ai"] + stats["errors"]
         if stats["stopped"]:
             progress_callback(
-                completed,
-                max(total_candidates, completed, 1),
+                stats["processed"],
+                progress_total,
                 (
-                    f"Catalog stopped: processed={stats['processed']} "
+                    f"Catalog stopped: successes={stats['processed']}/"
+                    f"{limit or candidate_count} "
+                    f"checked={stats['scanned']} "
                     f"skipped={stats['skipped_ai']} errors={stats['errors']}"
                 ),
             )
             return stats
         progress_callback(
-            max(total_candidates, completed, 1),
-            max(total_candidates, completed, 1),
-            f"Catalog finished: processed={stats['processed']} skipped={stats['skipped_ai']} errors={stats['errors']}",
+            stats["processed"],
+            progress_total,
+            (
+                f"Catalog finished: successes={stats['processed']}/"
+                f"{limit or candidate_count} "
+                f"checked={stats['scanned']} failed={stats['errors']} "
+                f"skipped={stats['skipped_ai']}"
+                f"{'; candidates exhausted' if stats['candidate_exhausted'] else ''}"
+            ),
         )
     return stats
 
@@ -1054,6 +1124,7 @@ def run_catalog_for_urls(
             ordered_rows.append(r)
         else:
             stats["errors"] += 1
+            stats["scanned"] += 1
             if len(stats["error_samples"]) < 20:
                 stats["error_samples"].append("file_not_found")
             stats["missing_files"] += 1
@@ -1078,10 +1149,12 @@ def run_catalog_for_urls(
         )
 
     candidates = [r for r in ordered_rows if is_candidate(r)]
-    stats["scanned"] = len(candidates)
+    progress_total = max(len(candidates) + stats["scanned"], 1)
 
     if progress_callback:
-        progress_callback(0, max(len(candidates), 1), f"Catalog candidates: {len(candidates)}")
+        progress_callback(
+            stats["scanned"], progress_total, f"Catalog candidates: {len(candidates)}"
+        )
 
     batch_items: list[CatalogItem] = []
     batch_jsonl: list[dict] = []
@@ -1124,6 +1197,7 @@ def run_catalog_for_urls(
                 shutdown_without_wait = True
                 break
             url = future_to_url[future]
+            stats["scanned"] += 1
             try:
                 r_data, item, status, suggested_title = future.result()
                 processed_at = datetime.now(timezone.utc).isoformat()
@@ -1174,11 +1248,10 @@ def run_catalog_for_urls(
                         storage=storage,
                     )
                 if progress_callback:
-                    completed = stats["processed"] + stats["skipped_ai"] + stats["errors"]
                     progress_callback(
-                        completed,
-                        max(len(candidates), completed, 1),
-                        f"Cataloging {completed}/{max(len(candidates), 1)}",
+                        stats["scanned"],
+                        progress_total,
+                        f"Cataloging {stats['scanned']}/{progress_total}",
                     )
             except Exception:
                 logger.error("Catalog worker failed: catalog_failed")
@@ -1199,11 +1272,10 @@ def run_catalog_for_urls(
 
     storage.close()
     if progress_callback:
-        completed = stats["processed"] + stats["skipped_ai"] + stats["errors"]
         if stats["stopped"]:
             progress_callback(
-                completed,
-                max(len(candidates), completed, 1),
+                stats["scanned"],
+                progress_total,
                 (
                     f"Catalog stopped: processed={stats['processed']} "
                     f"skipped={stats['skipped_ai']} errors={stats['errors']}"
@@ -1211,8 +1283,8 @@ def run_catalog_for_urls(
             )
             return stats
         progress_callback(
-            max(len(candidates), completed, 1),
-            max(len(candidates), completed, 1),
+            progress_total,
+            progress_total,
             f"Catalog finished: processed={stats['processed']} skipped={stats['skipped_ai']} errors={stats['errors']}",
         )
     return stats

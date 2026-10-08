@@ -91,7 +91,7 @@ def test_task_metric_aliases_and_canonical_fields_are_wired() -> None:
         assert fallback in helper
 
     assert "task.catalog_ok ?? task.items_downloaded ?? task.items_processed ?? 0" in helper
-    assert 'optionalMetric("error_reasons", task.catalog_errors ?? task.errors?.length)' in helper
+    assert 'optionalMetric("errors", task.catalog_errors ?? task.errors?.length)' in helper
     assert 'optionalMetric("failed_items", task.failed_items)' in helper
     assert 'const LOCAL_IMPORT_TYPES = new Set(["file", "file_import"]);' in helper
     assert "if (LOCAL_IMPORT_TYPES.has(type)) return processedMetrics(task);" in helper
