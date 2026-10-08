@@ -45,9 +45,11 @@
   are in `docs/issue-407-performance.md`. Fresh independent review is PASS.
   The earlier interrupted review is not a failed cycle. No deployment,
   migration, production writes or post-deployment improvement is claimed.
-- GitHub CLI credentials are expired; GitHub connector reads and Git push dry
-  run work. Local checks and independent review are complete; publish through
-  the connector and perform the 15-minute checks/remote-feedback checkpoint.
+- Delivery: PR #412 is open at
+  https://github.com/ferryhe/AI_actuarial_inforsearch/pull/412
+  with implementation commit `698928f`. Local checks and independent review
+  are complete. GitHub checks and remote feedback are tracked on this PR;
+  the 15-minute checkpoint is due at 2026-10-08 01:34 UTC.
   The task authorizes commit/push/PR, not merge or deployment. Keep #407 open
   until remaining production acceptance is verified.
 
