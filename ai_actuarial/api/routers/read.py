@@ -130,12 +130,26 @@ def api_file_detail(
     auth: AuthContext = Depends(require_permissions("files.read")),
 ) -> dict[str, object]:
     url = str(request.query_params.get("url", "") or "").strip()
-    if not url:
+    raw_file_id = request.query_params.get("file_id")
+    file_id: int | None = None
+    if raw_file_id is not None:
+        try:
+            file_id = int(raw_file_id)
+        except ValueError:
+            return JSONResponse(
+                status_code=400, content={"error": "file_id must be a positive integer"}
+            )
+        if file_id < 1 or file_id > 2**63 - 1 or str(file_id) != raw_file_id or url:
+            return JSONResponse(
+                status_code=400, content={"error": "file_id must be a positive integer"}
+            )
+    elif not url:
         return JSONResponse(status_code=400, content={"error": "url parameter is required"})
 
     file_data = get_file_detail(
         db_path=_get_db_path(request),
         url=url,
+        file_id=file_id,
         include_sensitive=_can_view_sensitive_file_fields(auth),
     )
     if not file_data:

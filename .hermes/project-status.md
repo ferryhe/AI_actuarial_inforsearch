@@ -5391,3 +5391,31 @@
 - No production write, deployment, service restart or data/backup cleanup was
   performed. #313 remains open and #364/PR #403 remains blocked behind its full
   acceptance. The #313-to-#364 heartbeat remains active.
+
+### Catalog settings and task error file links — 2026-10-08
+
+- Complex implementation tier: three user-requested surfaces cross Catalog
+  scheduling, Settings state, task history persistence/API permissions, and
+  FileDetail request identity. Work is on `codex/catalog-settings-error-links`
+  in the isolated worktree. Only this repository was accessed; siblings,
+  production writes, credentials and deployment are out of scope.
+- Catalog hides the first-candidate control/statistic while new tasks submit
+  `scan_start_index=1`; existing settings-mode values, filters, targets and
+  candidate count remain. Settings runtime flags use a 44px semantic switch
+  target and remain local until the existing save action. Task errors resolve
+  file URL hashes to unique active numeric IDs, persist those IDs through
+  normalization/finalization, and re-resolve them on authorized API reads;
+  FileDetail loads by ID before issuing requests with the authorized URL.
+  No producer traversal, success-counting or schedule logic was changed.
+- Focused checks passed: `python -m pytest
+  tests/test_issue_368_task_item_errors.py tests/test_fastapi_read_endpoints.py
+  tests/test_tasks_react_source.py tests/test_file_detail_react_source.py -q`
+  (72 passed); Vitest for CatalogForm, TaskErrors and Settings.tokens (11 passed).
+  The controller's mocked browser smoke passed at 390px and 1280px. The parent
+  also reports typecheck, lint, build and dead-code gates passed. The shared
+  read-only DB had no rows in `files`, so no production file-ID examples were
+  claimed as verified. Implementation remains uncommitted for fresh review.
+- The controller-owned `client/src/pages/tasks/CatalogSettingsErrors.browser-smoke.mjs`
+  is untracked in this worktree and was not edited by the implementation worker.
+
+- Fresh independent `gpt-6-sol/high` review PASS with no accepted findings; reviewer independently passed 72 Python and 11 Vitest cases. Stable Chromium smoke rerun passed at 390px/1280px. Black repair was format-only with unchanged ASTs. Full local quality gate is running; controller will publish the tested branch and check remote feedback about 15 minutes after PR creation. No merge or deployment is authorized.

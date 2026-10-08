@@ -207,11 +207,21 @@ def list_sources(*, db_path: str) -> dict[str, list[str]]:
 
 
 def get_file_detail(
-    *, db_path: str, url: str, include_sensitive: bool = False
+    *, db_path: str, url: str = "", file_id: int | None = None, include_sensitive: bool = False
 ) -> dict[str, Any] | None:
     storage = Storage(db_path)
     try:
-        file_data = storage.get_file_with_catalog(url)
+        if file_id is not None:
+            row = storage._conn.execute(
+                "SELECT url, deleted_at FROM files WHERE id = ?", (file_id,)
+            ).fetchone()
+            file_data = (
+                storage.get_file_with_catalog(str(row[0]))
+                if row and row[0] and not row[1]
+                else None
+            )
+        else:
+            file_data = storage.get_file_with_catalog(url)
     finally:
         storage.close()
     if not file_data:

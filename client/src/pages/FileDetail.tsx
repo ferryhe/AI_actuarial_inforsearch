@@ -322,7 +322,10 @@ export default function FileDetail() {
   const canRunTasks = permissions.includes("tasks.run");
   const [, navigate] = useLocation();
   const searchParams = useRawSearchParams();
-  const fileUrl = searchParams.get("url") || "";
+  const hasFileId = searchParams.has("file_id");
+  const fileId = searchParams.get("file_id") || "";
+  const fileUrl = hasFileId ? "" : searchParams.get("url") || "";
+  const fileRequestIdentity = hasFileId ? `file_id:${fileId}` : fileUrl;
   const fromParam = sanitizeReturnPath(searchParams.get("from"));
 
   function goBack() {
@@ -399,19 +402,30 @@ export default function FileDetail() {
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
-  const beginFileRequest = useLatestRequestGuard(fileUrl);
-  const beginMarkdownRequest = useLatestRequestGuard(fileUrl);
-  const beginChunksRequest = useLatestRequestGuard(fileUrl);
-  const beginChunkSubmission = useLatestRequestGuard(fileUrl);
+  const loadedFileIdentity = useRef("");
+  const resolvedFileUrl = hasFileId
+    ? loadedFileIdentity.current === fileRequestIdentity ? file?.url || "" : ""
+    : fileUrl;
+  const beginFileRequest = useLatestRequestGuard(fileRequestIdentity);
+  const beginMarkdownRequest = useLatestRequestGuard(resolvedFileUrl);
+  const beginChunksRequest = useLatestRequestGuard(resolvedFileUrl);
+  const beginChunkSubmission = useLatestRequestGuard(resolvedFileUrl);
 
   const fetchFile = useCallback(async () => {
-    const requestIdentity = fileUrl;
+    const requestIdentity = fileRequestIdentity;
     const isLatest = beginFileRequest(requestIdentity);
     if (!requestIdentity || !isLatest()) return;
+    if (loadedFileIdentity.current !== requestIdentity) {
+      loadedFileIdentity.current = requestIdentity;
+      setFile(null);
+    }
     setLoading(true);
     setError(null);
     try {
-      const res = await apiGet<{ file: FileData }>(`/api/files/detail?url=${encodeURIComponent(requestIdentity)}`);
+      const detailPath = hasFileId
+        ? `/api/files/detail?file_id=${encodeURIComponent(fileId)}`
+        : `/api/files/detail?url=${encodeURIComponent(requestIdentity)}`;
+      const res = await apiGet<{ file: FileData }>(detailPath);
       if (!isLatest()) return;
       setFile(res.file);
     } catch (e) {
@@ -420,10 +434,10 @@ export default function FileDetail() {
     } finally {
       if (isLatest()) setLoading(false);
     }
-  }, [beginFileRequest, fileUrl]);
+  }, [beginFileRequest, fileId, fileRequestIdentity, hasFileId]);
 
   const refreshMarkdown = useCallback(async () => {
-    const requestIdentity = fileUrl;
+    const requestIdentity = resolvedFileUrl;
     const isLatest = beginMarkdownRequest(requestIdentity);
     if (!requestIdentity || !isLatest()) return;
     setMdLoading(true);
@@ -442,10 +456,10 @@ export default function FileDetail() {
     } finally {
       if (isLatest()) setMdLoading(false);
     }
-  }, [beginMarkdownRequest, fileUrl]);
+  }, [beginMarkdownRequest, resolvedFileUrl]);
 
   const refreshChunks = useCallback(async () => {
-    const requestIdentity = fileUrl;
+    const requestIdentity = resolvedFileUrl;
     const isLatest = beginChunksRequest(requestIdentity);
     if (!requestIdentity || !isLatest()) return;
     setChunkSetsLoading(true);
@@ -469,7 +483,7 @@ export default function FileDetail() {
     } finally {
       if (isLatest()) setChunkSetsLoading(false);
     }
-  }, [beginChunksRequest, canRunTasks, fileUrl]);
+  }, [beginChunksRequest, canRunTasks, resolvedFileUrl]);
 
   const conversionPoller = useTaskPoller(refreshMarkdown);
   const catalogPoller = useTaskPoller(fetchFile);
@@ -494,14 +508,14 @@ export default function FileDetail() {
   useEffect(() => { fetchFile(); }, [fetchFile]);
 
   useEffect(() => {
-    if (!fileUrl) return;
+    if (!resolvedFileUrl) return;
     void refreshMarkdown();
-  }, [fileUrl, refreshMarkdown]);
+  }, [resolvedFileUrl, refreshMarkdown]);
 
   useEffect(() => {
-    if (!fileUrl) return;
+    if (!resolvedFileUrl) return;
     void refreshChunks();
-  }, [fileUrl, refreshChunks]);
+  }, [resolvedFileUrl, refreshChunks]);
 
   useEffect(() => {
     if (!canRunTasks) return;
@@ -560,11 +574,11 @@ export default function FileDetail() {
   }
 
   async function saveMarkdown() {
-    if (!fileUrl) return;
+    if (!resolvedFileUrl) return;
     setMutationError(null);
     setMdSaving(true);
     try {
-      const res = await apiPost<{ markdown?: MarkdownData }>(`/api/files/${encodeURIComponent(fileUrl)}/markdown`, {
+      const res = await apiPost<{ markdown?: MarkdownData }>(`/api/files/${encodeURIComponent(resolvedFileUrl)}/markdown`, {
         markdown_content: mdEditContent,
         markdown_source: "manual",
       });

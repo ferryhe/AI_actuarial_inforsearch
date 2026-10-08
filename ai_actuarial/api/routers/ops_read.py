@@ -130,7 +130,7 @@ def api_pipeline_baton_config(
 @router.get("/tasks/active")
 def api_tasks_active(
     request: Request,
-    _auth: AuthContext = Depends(require_permissions("tasks.view")),
+    auth: AuthContext = Depends(require_permissions("tasks.view")),
 ) -> dict[str, object]:
     """
     Return currently running tasks (in-progress collections/crawls).
@@ -145,7 +145,12 @@ def api_tasks_active(
     """
     active_tasks_ref = getattr(request.app.state, "active_tasks_ref", {}) or {}
     task_lock = getattr(request.app.state, "task_lock", None)
-    return list_active_tasks(active_tasks_ref, task_lock)
+    return list_active_tasks(
+        active_tasks_ref,
+        task_lock,
+        db_path=_get_db_path(request),
+        can_read_files="files.read" in auth.permissions,
+    )
 
 
 @router.get("/embeddings/coverage")
@@ -168,7 +173,7 @@ def api_embedding_coverage(
 @router.get("/tasks/history")
 def api_tasks_history(
     request: Request,
-    _auth: AuthContext = Depends(require_permissions("tasks.view")),
+    auth: AuthContext = Depends(require_permissions("tasks.view")),
 ) -> dict[str, object]:
     """
     Return historical (completed or failed) task records.
@@ -188,9 +193,19 @@ def api_tasks_history(
     task_history_ref = getattr(request.app.state, "task_history_ref", []) or []
     task_lock = getattr(request.app.state, "task_lock", None)
     if task_lock is None:
-        return list_task_history(task_history_ref, limit)
+        return list_task_history(
+            task_history_ref,
+            limit,
+            db_path=_get_db_path(request),
+            can_read_files="files.read" in auth.permissions,
+        )
     with task_lock:
-        return list_task_history(task_history_ref, limit)
+        return list_task_history(
+            task_history_ref,
+            limit,
+            db_path=_get_db_path(request),
+            can_read_files="files.read" in auth.permissions,
+        )
 
 
 @router.get("/tasks/log/{task_id}")

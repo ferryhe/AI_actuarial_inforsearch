@@ -24,6 +24,7 @@ interface TaskItemError {
   stage: "catalog" | "embedding" | "markdown";
   code: string;
   summary: string;
+  file_id?: string;
   context_url?: string;
 }
 

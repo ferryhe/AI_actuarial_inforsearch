@@ -14,7 +14,12 @@ from ai_actuarial.catalog_incremental import run_catalog_for_urls, run_increment
 from ai_actuarial.collectors.base import CollectionResult
 from ai_actuarial.embedding_service import ensure_chunk_embeddings
 from ai_actuarial.storage import Storage
-from ai_actuarial.task_item_errors import ITEM_ERROR_LIMIT, make_item_error
+from ai_actuarial.task_item_errors import (
+    ITEM_ERROR_LIMIT,
+    make_item_error,
+    normalize_item_errors,
+    resolve_item_error_file_ids,
+)
 from ai_actuarial.task_runtime import NativeTaskRuntime
 
 NATIVE_TASK_ID = "task_1780000000000_0123456789abcdef"
@@ -84,13 +89,18 @@ def test_item_error_schema_is_closed_stable_and_uses_only_native_task_context() 
         task_id="external-task-id",
     )
     fallback = make_item_error("embedding", "unknown", "chunk-secret")
+    chunk_context = make_item_error(
+        "embedding", "provider_error", "chunk-secret", task_id=NATIVE_TASK_ID
+    )
 
     assert first == repeated
     assert first["object_id"].startswith("file:")
     assert first["display_name"] == f"File {first['object_id'][5:17]}"
-    assert first["context_url"] == f"/tasks?task_id={NATIVE_TASK_ID}"
+    assert "context_url" not in first
+    assert "file_id" not in first
     assert changed_query["object_id"] != first["object_id"]
     assert "context_url" not in changed_query
+    assert chunk_context["context_url"] == f"/tasks?task_id={NATIVE_TASK_ID}"
     assert fallback["code"] == "provider_error"
     assert fallback["stage"] == "embedding"
     assert fallback["summary"] == "Embedding provider failed."
@@ -100,7 +110,6 @@ def test_item_error_schema_is_closed_stable_and_uses_only_native_task_context() 
         "stage",
         "code",
         "summary",
-        "context_url",
     }
     assert len(first["summary"]) <= 160
     assert "report" not in json.dumps(first)
@@ -152,7 +161,7 @@ def test_catalog_url_and_incremental_producers_keep_distinct_bounded_failures(
     assert stats["failed_items"] == 1
     assert stats["item_errors_truncated"] is False
     assert stats["item_errors"][0]["code"] == "catalog_failed"
-    assert stats["item_errors"][0]["context_url"].endswith(NATIVE_TASK_ID)
+    assert "context_url" not in stats["item_errors"][0]
     serialized = json.dumps(stats["item_errors"])
     assert all(part not in serialized for part in UNSAFE_PARTS)
 
@@ -499,6 +508,77 @@ def test_finalized_task_persists_bounded_contract_and_restart_api_reads_it(
     assert task["catalog_errors"] == 1
     assert task["catalog_errors"] != task["failed_items"]
     assert len(json.dumps(task)) < 30_000
+
+
+def test_file_error_links_survive_history_reload_and_are_revalidated(tmp_path: Path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    db_path = tmp_path / "files.db"
+    file_url = "https://user:pass@example.test/report.pdf?api_key=private"
+    storage = Storage(str(db_path))
+    try:
+        storage.insert_file(
+            url=file_url,
+            sha256="content-hash",
+            title="Secret title",
+            source_site="example.test",
+            source_page_url="https://example.test",
+            original_filename="report.pdf",
+            local_path="C:\\private\\report.pdf",
+            bytes=10,
+            content_type="application/pdf",
+        )
+        file_id = int(storage.get_file_by_url(file_url)["id"])
+    finally:
+        storage.close()
+
+    error = make_item_error("catalog", "catalog_failed", file_url, task_id=NATIVE_TASK_ID)
+    runtime = NativeTaskRuntime.__new__(NativeTaskRuntime)
+    runtime._ready_data_db_path = str(db_path)
+    runtime.task_lock = threading.RLock()
+    runtime.active_tasks = {NATIVE_TASK_ID: {"id": NATIVE_TASK_ID, "type": "catalog"}}
+    runtime.task_history = []
+    monkeypatch.setattr("ai_actuarial.task_runtime.append_task_log", lambda *_args: None)
+    runtime._finalize_task_success(
+        NATIVE_TASK_ID,
+        "catalog",
+        CollectionResult(
+            success=False,
+            items_found=1,
+            items_downloaded=0,
+            items_skipped=0,
+            errors=["Catalog processing failed."],
+            metadata={"failed_items": 1, "item_errors": [error]},
+        ),
+    )
+
+    saved = runtime.task_history[0]["item_errors"][0]
+    assert saved["file_id"] == str(file_id)
+    assert saved["context_url"] == f"/file-detail?file_id={file_id}"
+    assert file_url not in json.dumps(saved)
+    reloaded = NativeTaskRuntime.__new__(NativeTaskRuntime)._load_history_from_disk()
+    assert normalize_item_errors(reloaded[0]["item_errors"])[0]["file_id"] == str(file_id)
+
+    # API projection rebinds stale IDs from the full digest and hides links without file access.
+    reloaded[0]["item_errors"][0]["file_id"] = "999"
+    reloaded[0]["item_errors"][0]["context_url"] = "/file-detail?file_id=999"
+    visible = list_task_history(reloaded, 20, db_path=str(db_path), can_read_files=True)["tasks"][0]
+    assert visible["item_errors"][0]["file_id"] == str(file_id)
+    assert visible["item_errors"][0]["context_url"] == f"/file-detail?file_id={file_id}"
+    hidden = list_task_history(reloaded, 20, db_path=str(db_path), can_read_files=False)["tasks"][0]
+    assert "file_id" not in hidden["item_errors"][0]
+    assert "context_url" not in hidden["item_errors"][0]
+
+    storage = Storage(str(db_path))
+    try:
+        storage.mark_file_deleted(file_url, "2026-10-08T00:00:00+00:00")
+    finally:
+        storage.close()
+    deleted = list_task_history(reloaded, 20, db_path=str(db_path), can_read_files=True)["tasks"][0]
+    assert "file_id" not in deleted["item_errors"][0]
+    assert "context_url" not in deleted["item_errors"][0]
+
+    missing_error = make_item_error("catalog", "catalog_failed", "https://missing.example/x")
+    assert resolve_item_error_file_ids([missing_error], str(db_path)) == {}
 
 
 @pytest.mark.parametrize("count", [0, 1, 50, 51])

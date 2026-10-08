@@ -9,19 +9,29 @@ export function trustedTaskIdFromSearch(search: string): string | null {
   return params.size === 1 && NATIVE_TASK_ID.test(taskId) ? taskId : null;
 }
 
-function trustedContextUrl(value: string | undefined): string | null {
-  if (!value?.startsWith("/tasks?")) return null;
-  const taskId = trustedTaskIdFromSearch(value.slice(value.indexOf("?")));
-  return taskId && value === `/tasks?task_id=${taskId}` ? value : null;
+function trustedContextUrl(
+  value: string | undefined,
+  stage: string,
+  fileId?: string,
+): string | null {
+  if (stage === "embedding" && value?.startsWith("/tasks?")) {
+    const taskId = trustedTaskIdFromSearch(value.slice(value.indexOf("?")));
+    return taskId && value === `/tasks?task_id=${taskId}` ? value : null;
+  }
+  const match = /^\/file-detail\?file_id=([1-9][0-9]*)$/.exec(value || "");
+  return match && (stage === "catalog" || stage === "markdown") && match[1] === fileId
+    ? value!
+    : null;
 }
 
 interface TaskErrorDetailsProps {
   task: HistoryTask;
   t: (key: string) => string;
   canInspectRaw?: boolean;
+  canReadFiles?: boolean;
 }
 
-export function TaskErrorDetails({ task, t, canInspectRaw = false }: TaskErrorDetailsProps) {
+export function TaskErrorDetails({ task, t, canInspectRaw = false, canReadFiles = false }: TaskErrorDetailsProps) {
   const errors = task.item_errors || [];
   const failedItems = task.failed_items ?? 0;
   if (failedItems === 0 && errors.length === 0) return null;
@@ -33,11 +43,12 @@ export function TaskErrorDetails({ task, t, canInspectRaw = false }: TaskErrorDe
       </div>
       <ul className="space-y-2">
         {errors.map((error) => {
-          const contextUrl = trustedContextUrl(error.context_url);
+          const contextUrl = trustedContextUrl(error.context_url, error.stage, error.file_id);
+          const canOpenContext = error.stage === "embedding" || canReadFiles;
           return (
             <li key={error.object_id} className="rounded border border-border p-2 text-xs">
               <div className="font-medium break-all">
-                {contextUrl ? <a href={contextUrl} className="underline">{error.display_name}</a> : error.display_name}
+                {contextUrl && canOpenContext ? <a href={contextUrl} className="underline">{error.display_name}</a> : error.display_name}
               </div>
               <div className="text-muted-foreground">
                 <EnumDisplay category="error_stage" value={error.stage} t={t} /> · <EnumDisplay category="error_code" value={error.code} t={t} />

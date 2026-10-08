@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import Layout from "@/components/Layout";
@@ -123,4 +123,33 @@ it("shows historical token role codes only in collapsed privileged diagnostics",
   const row = screen.getByTestId("token-row-31");
   expect(row.querySelector("details")).not.toHaveAttribute("open");
   expect(row.querySelector("details")).toHaveTextContent("catalog_only");
+});
+
+it("uses a keyboard switch for local runtime edits and preserves environment locks", async () => {
+  apiGet.mockImplementation(async (url: string) => url === "/api/config/backend-settings" ? {
+    features: { sources: { require_auth: "env" } },
+    runtime: { file_deletion_enabled: false, require_auth: true },
+  } : {});
+  const user = userEvent.setup();
+  render(<Layout><Settings /></Layout>);
+  await user.click(screen.getByTestId("tab-system"));
+
+  const toggle = await screen.findByRole("switch", { name: "File Deletion" });
+  expect(toggle).toHaveAttribute("aria-checked", "false");
+  expect(toggle).toHaveClass("min-h-[44px]", "min-w-[44px]", "bg-transparent");
+  expect(toggle.firstElementChild).toHaveClass("h-5", "w-9");
+  expect(screen.queryByTestId("toggle-system-flag-require_auth")).not.toBeInTheDocument();
+  expect(screen.getByTestId("system-flag-require_auth")).toHaveTextContent("Enabled");
+  expect(screen.queryByTestId("button-save-system")).not.toBeInTheDocument();
+
+  toggle.focus();
+  await user.keyboard(" ");
+  expect(toggle).toHaveAttribute("aria-checked", "true");
+  expect(toggle.firstElementChild?.firstElementChild).toHaveClass("translate-x-4");
+  expect(apiPost).not.toHaveBeenCalled();
+  await user.click(screen.getByTestId("button-save-system"));
+  await waitFor(() => expect(apiPost).toHaveBeenCalledWith(
+    "/api/config/backend-settings",
+    expect.objectContaining({ features: expect.objectContaining({ enable_file_deletion: true }) }),
+  ));
 });

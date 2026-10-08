@@ -626,7 +626,7 @@ export default function Tasks() {
                   ) : (
                     <p className="text-xs text-muted-foreground">{t("tasks.log_no_errors") || "No errors"}</p>
                   )}
-                  {logModal.task && <TaskErrorDetails task={logModal.task} t={t} canInspectRaw={canInspectEnumRaw(user?.role)} />}
+                  {logModal.task && <TaskErrorDetails task={logModal.task} t={t} canInspectRaw={canInspectEnumRaw(user?.role)} canReadFiles={permissions.includes("files.read")} />}
                 </div>
 
                 {/* Box 3: Application log */}
