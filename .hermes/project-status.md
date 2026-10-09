@@ -1,3 +1,28 @@
+# 最新工作 — Docker 构建上下文与旧覆盖文件核查 — 2026-10-09
+
+- 项目 `AI_actuarial_inforsearch`；隔离分支 `codex/fix-docker-build-context`；
+  基线 `origin/main` 为 `e9ad04c`。只处理本次三项核查及确认的构建问题，
+  同级仓库不可访问。根 checkout 的既有状态修改和四个未跟踪目录保留。
+- 实施评估为 simple：上下文排除规则、一个实际 Docker 回归测试和部署说明；
+  使用同一个 `gpt-6-luna/medium` worker。未改应用查询、迁移或后台任务。
+- 当前单 KB 与批量统计的实际 SQL 均使用关联子查询，EXPLAIN 均命中
+  `idx_file_chunk_sets_latest` 覆盖索引。现有 v15/v16 与 service-token 回归
+  通过；当前建表、迁移和查询保留 `token_type`。未获得服务器旧覆盖文件，
+  不宣称复现原始 CTE 性能数字、文件字节一致或物理数据库列删除。
+- 确认旧 `.dockerignore` 会复制嵌套环境文件、SQLite/sidecar、运行配置及
+  临时工作目录。合成上下文的实际 BuildKit 导出在修复前失败、修复后通过。
+  已排除这些路径，保留开发模板、配置代码、API 和前端构建输入。
+- 文件范围：`.dockerignore`、`tests/test_docker_build_context.py`、
+  `docs/deployment-runbook.md` 与本状态记录。已有相关回归 17 项和新增
+  Docker 回归 1 项通过；Black/isort/Pylint 与 diff-check 通过。
+- 独立 Sol/high 复审 PASS，无确认的范围内问题；PR 发布及当前 HEAD 的
+  GitHub CI/反馈核查待完成。Copilot 按用户要求禁用。未执行生产部署、
+  迁移、重启、合并或删除。
+- 下一步：提交、推送并创建 PR；约 15 分钟后核查 CI 与
+  非 Copilot 反馈。生产实际覆盖目录仍需由部署环境提供。
+
+---
+
 # 最新工作 — Issue #408 文档追问范围 — 2026-10-07 EDT
 
 - 项目 `AI_actuarial_inforsearch`；分支 `codex/issue-408-document-scope`；

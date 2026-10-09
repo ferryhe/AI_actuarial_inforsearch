@@ -1,6 +1,13 @@
 .git
-.codex-worktrees
+.codex*
+.hermes
+.runtime
+runtime-config
+graphify-out
 .env*
+**/.env*
+**/*.db*
+**/*.sqlite*
 .venv
 node_modules
 client/.vite

@@ -551,6 +551,15 @@ curl -H "Authorization: Bearer $ADMIN_API_TOKEN" http://localhost:5000/api/healt
 
 ## Updating the Service
 
+Before pulling and building, remove or rebase old whole-file overrides against
+the current tracked source; a complete-file override can drop newer code and
+migration definitions. Keep `auth_tokens.token_type` in the v16 migration and
+the v15 latest-chunk index when reconciling storage changes. Both current KB
+status paths already use the latest-row query, so do not restore the obsolete
+window-CTE version. Keep production `CONFIG_PATH` outside the checkout and the
+database in its Docker volume; `.dockerignore` excludes nested environment
+files, SQLite files, and runtime/work directories from image builds.
+
 ```bash
 # The guarded updater refuses a dirty worktree or root-disk use >=80%, creates a
 # quiesced full snapshot, fast-forwards main, builds with OCI revision labels,
