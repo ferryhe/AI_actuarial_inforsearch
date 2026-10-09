@@ -1345,6 +1345,30 @@ def _build_kb_embedding_status(
     }
 
 
+def _sqlite_index_exists(storage: Any, index: str) -> bool:
+    """Whether ``index`` exists on the storage connection.
+
+    Optional ``INDEXED BY`` hints must never break an older database that
+    predates the index, so callers emit the hint only when the index is really
+    present (the bulk list path gates the same hint the same way).
+    """
+    checker = getattr(storage, "_index_exists", None)
+    if callable(checker):
+        return bool(checker(index))
+    conn = getattr(storage, "_conn", None)
+    if conn is None:
+        return False
+    try:
+        return bool(
+            conn.execute(
+                "SELECT 1 FROM sqlite_schema WHERE type = 'index' AND name = ? LIMIT 1",
+                (index,),
+            ).fetchone()
+        )
+    except sqlite3.Error:
+        return False
+
+
 def _kb_embedding_metadata_coverage(
     storage: Any,
     kb_id: str,
@@ -1406,7 +1430,12 @@ def _kb_embedding_metadata_coverage(
                         AND e.config_fingerprint = ?
                         AND e.status = 'ready'
                        THEN 1 ELSE 0 END), 0)"""
-        embedding_join = """LEFT JOIN chunk_embeddings e
+        embedding_index_hint = (
+            " INDEXED BY idx_chunk_embeddings_stats_metadata"
+            if _sqlite_index_exists(storage, "idx_chunk_embeddings_stats_metadata")
+            else ""
+        )
+        embedding_join = f"""LEFT JOIN chunk_embeddings e{embedding_index_hint}
               ON e.chunk_id = g.chunk_id AND e.embedding_identity_key = ?"""
         embedding_params = (
             allow_ready,
