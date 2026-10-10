@@ -263,6 +263,23 @@ AI_actuarial_inforsearch/
 
 ## Diagnostics
 
+### Offline tokenizer image smoke
+
+After building a disposable Issue #420 image, verify its pre-resolved `tiktoken`
+cache without network access. The probe explicitly replaces the image API
+entrypoint, so it runs the packaged tokenizer and chunking check rather than
+starting the application. It resolves every tokenizer/model mapping warmed by
+the image build, then creates a real semantic chunk; a cache miss fails because
+the container has no network:
+
+```bash
+docker build -t issue420-image:v2 .
+tests/issue_420/smoke.sh
+```
+
+Pass a different disposable `issue420-*` tag as the script's first argument if
+needed.
+
 Diagnose secret and credential state without printing secret values:
 
 ```bash

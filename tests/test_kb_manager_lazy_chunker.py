@@ -1,3 +1,4 @@
+import threading
 from concurrent.futures import ThreadPoolExecutor
 
 import tiktoken
@@ -69,8 +70,28 @@ def test_chunker_is_cached_and_matches_eager_chunking(tmp_path):
 def test_chunker_first_access_is_thread_safe(tmp_path):
     storage, manager = _manager(tmp_path)
     try:
-        with ThreadPoolExecutor(max_workers=8) as pool:
-            chunkers = list(pool.map(lambda _: manager.chunker, range(8)))
-        assert len({id(chunker) for chunker in chunkers}) == 1
+        init_count = 0
+        init_lock = threading.Lock()
+        property_ = type(manager).chunker
+        original_func = property_.func
+
+        def counting_func(manager_self):
+            nonlocal init_count
+            with init_lock:
+                init_count += 1
+            return original_func(manager_self)
+
+        property_.func = counting_func
+        try:
+            with ThreadPoolExecutor(max_workers=8) as pool:
+                chunkers = list(pool.map(lambda _: manager.chunker, range(64)))
+            # All threads must see the SAME chunker identity; under shipped
+            # Python 3.11, cached_property gates construction behind an RLock,
+            # so the counter must reflect exactly one eager init regardless
+            # of concurrent access.
+            assert len({id(chunker) for chunker in chunkers}) == 1
+            assert init_count == 1, f"expected single chunker init, observed {init_count}"
+        finally:
+            property_.func = original_func
     finally:
         storage.close()

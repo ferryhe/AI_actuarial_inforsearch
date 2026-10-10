@@ -49,6 +49,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY . .
+# Keep the hermetic image acceptance probe available even when future build
+# context rules narrow the application copy.
+COPY ./tests /app/tests
 
 # Make entrypoint executable
 RUN chmod +x docker-entrypoint.sh
