@@ -24,7 +24,7 @@ Pillow>=10.2.0
 # AI providers: ChatGPT/OpenAI-compatible and Mistral
 openai>=1.68.0
 mistralai==1.12.4
-tiktoken>=0.5.0
+tiktoken>=0.12.0  # raised by Issue #420: o200k_base/o200k_harmony/gpt-5 added in 0.12.0; offline build warm requires all of them
 
 # Markdown/OCR conversion engines for standard runtime
 # System prerequisite: OpenDataLoader requires Java 11+ on PATH.
