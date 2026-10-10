@@ -1,5 +1,11 @@
 # 最新工作 — Docker 构建上下文与旧覆盖文件核查 — 2026-10-09
 
+# Active work — Issue #420 offline tokenizer — 2026-10-10
+
+- Project `AI_actuarial_inforsearch`; branch `fix/issue-420-offline-tokenizer`; scope is lazy KB tokenizer/embedding runtime construction, Docker tokenizer cache setup, and focused regressions only. Sibling repositories remain off-limits.
+- `KnowledgeBaseManager.chunker` and `embedding_generator` are cached properties, preserving indexing first-access behavior while removing read-only manager-construction tokenizer work. Docker now pins a writable `/app/.tiktoken-cache`, exports it as `TIKTOKEN_CACHE_DIR`, and resolves supported built-in encodings at build time.
+- Focused new regressions pass (9 tests); baseline pre-fix evidence and result are in `reports/issue-420/worker/sabotage.md`. Docker was not built or run, per task constraint. The complete existing `test_fastapi_rag_admin_endpoints.py` invocation exceeded this runner's 30-second command window after its first passing test; it remains for reviewer/CI execution.
+
 - 项目 `AI_actuarial_inforsearch`；隔离分支 `codex/fix-docker-build-context`；
   基线 `origin/main` 为 `e9ad04c`。只处理本次三项核查及确认的构建问题，
   同级仓库不可访问。根 checkout 的既有状态修改和四个未跟踪目录保留。

@@ -15,6 +15,7 @@ LABEL com.aiinforsearch.release-id="${BUILD_RELEASE_ID}"
 ENV BUILD_RELEASE_ID=${BUILD_RELEASE_ID} BUILD_GIT_SHA=${BUILD_GIT_SHA} BUILD_UTC=${BUILD_UTC}
 
 WORKDIR /app
+ENV TIKTOKEN_CACHE_DIR=/app/.tiktoken-cache
 
 # Install system dependencies for PDF conversion and OpenDataLoader.
 RUN apt-get update && apt-get install -y \
@@ -52,8 +53,14 @@ COPY . .
 # Make entrypoint executable
 RUN chmod +x docker-entrypoint.sh
 
+# Keep tokenizer cache writable for current and older tiktoken releases.
+RUN mkdir -p /app/.tiktoken-cache && chmod 777 /app/.tiktoken-cache && chown -R root:root /app/.tiktoken-cache
+
 # Create data directory
 RUN mkdir -p /app/data
+
+# Verify all supported built-in tokenizers resolve without network access.
+RUN python -c "import tiktoken, os; os.environ['TIKTOKEN_CACHE_DIR']='/app/.tiktoken-cache'; [tiktoken.get_encoding(n) for n in ('cl100k_base','p50k_base','p50k_edit','o200k_base','o200k_harmony','gpt2','r50k_base')]; [tiktoken.encoding_for_model(m) for m in ('gpt-4','gpt-4o','gpt-4.1','gpt-5','o1','o3','o4-mini','text-embedding-3-large','text-embedding-3-small','text-embedding-ada-002')]; print('tiktoken warm', tiktoken.__version__)"
 
 # Expose port
 EXPOSE 5000

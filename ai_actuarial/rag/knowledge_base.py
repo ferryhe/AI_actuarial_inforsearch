@@ -14,6 +14,7 @@ Features:
 
 import logging
 from datetime import datetime, timezone
+from functools import cached_property
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -105,8 +106,10 @@ class KnowledgeBaseManager:
         # Ensure RAG tables exist
         self._ensure_rag_tables()
 
-        # Initialize components
-        self.chunker = SemanticChunker(
+    @cached_property
+    def chunker(self) -> SemanticChunker:
+        """Initialize the tokenizer-backed chunker when indexing needs it."""
+        return SemanticChunker(
             max_tokens=self.config.max_chunk_tokens,
             min_tokens=self.config.min_chunk_tokens,
             preserve_headers=self.config.preserve_headers,
@@ -114,11 +117,14 @@ class KnowledgeBaseManager:
             include_hierarchy=self.config.include_hierarchy,
         )
 
+    @cached_property
+    def embedding_generator(self) -> Optional[EmbeddingGenerator]:
+        """Initialize the embedding runtime when an operation needs it."""
         try:
-            self.embedding_generator = EmbeddingGenerator(self.config)
+            return EmbeddingGenerator(self.config)
         except Exception as exc:
             logger.warning("EmbeddingGenerator init failed: %s", exc)
-            self.embedding_generator = None
+            return None
 
     def _ensure_rag_tables(self) -> None:
         """Create RAG-specific tables if they don't exist."""
