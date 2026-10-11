@@ -479,6 +479,80 @@ def cmd_schema(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_content_hub(args: argparse.Namespace) -> int:
+    from .content_hub import (
+        ContentHubError,
+        apply_content_hub_schema,
+        content_hub_schema_plan,
+        content_hub_show_url,
+        content_hub_status,
+        import_content_snapshot,
+    )
+    from .source_stage import SourceStageError, source_stage_schema_plan, stage_sqlite_v16
+
+    try:
+        if args.hub_cmd == "schema":
+            if args.schema_cmd == "plan":
+                payload = content_hub_schema_plan(schema=args.schema)
+            else:
+                payload = apply_content_hub_schema(schema=args.schema)
+        elif args.hub_cmd == "stage":
+            payload = stage_sqlite_v16(
+                args.source,
+                args.source_name,
+                hub_database_url=os.getenv("CONTENT_HUB_DATABASE_URL", "").strip() or None,
+                schema=args.schema,
+            )
+        elif args.hub_cmd == "stage-plan":
+            payload = source_stage_schema_plan(schema=args.schema)
+        elif args.hub_cmd == "import":
+            payload = import_content_snapshot(
+                args.source,
+                args.manifest,
+                args.artifact_root,
+                args.data_root,
+                schema=args.schema,
+                expected_source_name=args.source_name,
+            )
+        elif args.hub_cmd == "status":
+            payload = content_hub_status(schema=args.schema)
+        elif args.hub_cmd == "show":
+            payload = content_hub_show_url(args.url, schema=args.schema)
+        else:  # pragma: no cover - argparse enforces a valid subcommand
+            raise AssertionError(args.hub_cmd)
+    except (ContentHubError, SourceStageError, ValueError, OSError) as exc:
+        payload = {"success": False, "error": str(exc)}
+        if args.json:
+            print(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
+        else:
+            print(f"Content hub operation failed: {exc}")
+        return 2
+    except psycopg2.Error:
+        payload = {"success": False, "error": "PostgreSQL content hub operation failed"}
+        if args.json:
+            print(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
+        else:
+            print(payload["error"])
+        return 2
+
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
+    elif args.hub_cmd == "stage":
+        print(
+            f"Lossless source stage {payload['state']}: {payload['source_name']} "
+            f"({payload['table_count']} tables, {payload['snapshot_sha256']})"
+        )
+    elif args.hub_cmd == "import":
+        state = "already imported" if payload["already_imported"] else "imported"
+        print(
+            f"Content snapshot {state}: {payload['source_name']} "
+            f"({payload['table_count']} source tables, {payload['file_observation_count']} files)"
+        )
+    else:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+    return 0
+
+
 def _weekly_snapshot_database(args: argparse.Namespace):
     config = _load_config(args.config)
     return resolve_database_config(config)
@@ -1054,6 +1128,70 @@ def build_parser() -> argparse.ArgumentParser:
         "--append", action="store_true", help="[legacy] Append to existing outputs"
     )
     p_catalog.set_defaults(func=cmd_catalog)
+
+    p_content_hub = sub.add_parser(
+        "content-hub",
+        help="Stage complete SQLite-v16 source rows and import verified content projections",
+    )
+    p_content_hub_sub = p_content_hub.add_subparsers(dest="hub_cmd", required=True)
+
+    p_content_hub_schema = p_content_hub_sub.add_parser(
+        "schema", help="Plan or apply the isolated PostgreSQL content-hub schema"
+    )
+    p_content_hub_schema_sub = p_content_hub_schema.add_subparsers(dest="schema_cmd", required=True)
+    for action in ("plan", "apply"):
+        p_action = p_content_hub_schema_sub.add_parser(action)
+        p_action.add_argument("--schema", default="content_hub")
+        p_action.add_argument("--json", action="store_true")
+    p_content_hub_schema.set_defaults(func=cmd_content_hub)
+
+    p_content_hub_stage = p_content_hub_sub.add_parser(
+        "stage",
+        help="Stage every validated v16 table row losslessly in a separate PostgreSQL database",
+    )
+    p_content_hub_stage.add_argument("--source-name", required=True)
+    p_content_hub_stage.add_argument(
+        "--source", required=True, help="Checkpointed SQLite-v16 snapshot"
+    )
+    p_content_hub_stage.add_argument("--schema", default="raw_source")
+    p_content_hub_stage.add_argument("--json", action="store_true")
+    p_content_hub_stage.set_defaults(func=cmd_content_hub)
+
+    p_content_hub_stage_plan = p_content_hub_sub.add_parser(
+        "stage-plan", help="Show the versioned lossless source-stage schema plan"
+    )
+    p_content_hub_stage_plan.add_argument("--schema", default="raw_source")
+    p_content_hub_stage_plan.add_argument("--json", action="store_true")
+    p_content_hub_stage_plan.set_defaults(func=cmd_content_hub)
+
+    p_content_hub_import = p_content_hub_sub.add_parser(
+        "import", help="Import one manifest-verified SQLite-v16 content projection"
+    )
+    p_content_hub_import.add_argument("--source-name", required=True)
+    p_content_hub_import.add_argument(
+        "--source", required=True, help="Checkpointed SQLite-v16 snapshot"
+    )
+    p_content_hub_import.add_argument("--manifest", required=True)
+    p_content_hub_import.add_argument("--artifact-root", required=True)
+    p_content_hub_import.add_argument("--data-root", required=True)
+    p_content_hub_import.add_argument("--schema", default="content_hub")
+    p_content_hub_import.add_argument("--json", action="store_true")
+    p_content_hub_import.set_defaults(func=cmd_content_hub)
+
+    p_content_hub_status = p_content_hub_sub.add_parser(
+        "status", help="Summarize source and content counts"
+    )
+    p_content_hub_status.add_argument("--schema", default="content_hub")
+    p_content_hub_status.add_argument("--json", action="store_true")
+    p_content_hub_status.set_defaults(func=cmd_content_hub)
+
+    p_content_hub_show = p_content_hub_sub.add_parser(
+        "show", help="Show every stored version and text for one exact URL"
+    )
+    p_content_hub_show.add_argument("--url", required=True)
+    p_content_hub_show.add_argument("--schema", default="content_hub")
+    p_content_hub_show.add_argument("--json", action="store_true")
+    p_content_hub_show.set_defaults(func=cmd_content_hub)
 
     p_schema = sub.add_parser("schema", help="Inspect or apply PostgreSQL schema migrations")
     p_schema_sub = p_schema.add_subparsers(dest="schema_cmd", required=True)

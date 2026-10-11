@@ -1,0 +1,2 @@
+ai_actuarial/content_hub_migrations/*.sql text eol=lf
+ai_actuarial/source_stage_migrations/*.sql text eol=lf
