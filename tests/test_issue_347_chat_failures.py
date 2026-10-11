@@ -19,6 +19,7 @@ from ai_actuarial.chatbot.retrieval import RAGRetriever
 from ai_actuarial.chatbot.router import QueryRouter
 from ai_actuarial.rag.knowledge_base import KnowledgeBase
 from ai_actuarial.storage import Storage
+from tests.postgres_helpers import postgres_url_for_path
 
 
 def _request() -> SimpleNamespace:
@@ -154,7 +155,7 @@ def test_direct_document_budget_drops_oldest_history_before_tiny_evidence(
         _apply_env_defaults=False,
     )
     _install_chat_modules(monkeypatch, HistoryBudgetLLMClient, config)
-    db_path = str(tmp_path / "chat.db")
+    db_path = postgres_url_for_path(str(tmp_path / "chat.db"))
     storage = Storage(db_path)
     try:
         manager = ConversationManager(storage, config)
@@ -239,7 +240,7 @@ def test_standard_rag_uses_newest_successful_history_after_effective_limit(
     config = _config()
     config.max_messages = 2
     _install_chat_modules(monkeypatch, BudgetLLMClient, config)
-    db_path = str(tmp_path / "chat.db")
+    db_path = postgres_url_for_path(str(tmp_path / "chat.db"))
     storage = Storage(db_path)
     try:
         manager = ConversationManager(storage, config)
@@ -309,7 +310,7 @@ def test_direct_document_budget_counts_full_prompt_and_preserves_untrusted_bound
     document = "精算" * 500
 
     result, _session = chat_service.query_chat(
-        db_path=str(tmp_path / "chat.db"),
+        db_path=postgres_url_for_path(str(tmp_path / "chat.db")),
         request=_request(),
         auth=None,
         payload={
@@ -363,7 +364,7 @@ def test_context_rejection_retries_once_then_persists_safe_failed_turn(
 
     with pytest.raises(chat_service.ChatApiError) as exc_info:
         chat_service.query_chat(
-            db_path=str(tmp_path / "chat.db"),
+            db_path=postgres_url_for_path(str(tmp_path / "chat.db")),
             request=_request(),
             auth=None,
             payload={
@@ -384,7 +385,7 @@ def test_context_rejection_retries_once_then_persists_safe_failed_turn(
     assert len(RejectingClient.calls) == 2
     assert RejectingClient.calls[1] < RejectingClient.calls[0]
 
-    storage = Storage(str(tmp_path / "chat.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "chat.db")))
     try:
         rows = storage._conn.execute(
             "SELECT role, content, metadata FROM messages ORDER BY created_at"
@@ -393,7 +394,7 @@ def test_context_rejection_retries_once_then_persists_safe_failed_turn(
         storage.close()
 
     assert len(rows) == 1
-    assert rows[0][0:2] == ("user", "Explain safely")
+    assert tuple(rows[0][0:2]) == ("user", "Explain safely")
     failed = json.loads(rows[0][2])
     assert failed["status"] == "failed"
     assert failed["error_code"] == "CHAT_CONTEXT_TOO_LARGE"
@@ -433,7 +434,7 @@ def test_agentic_synthesis_fallback_does_not_log_chained_provider_detail(tmp_pat
                     retryable=True,
                 ) from cause
 
-    storage = Storage(str(tmp_path / "chat.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "chat.db")))
     try:
         answer, source = chat_service._synthesize_agentic_response(
             modules={"llm": SimpleNamespace(LLMClient=FailingAgenticLLM)},
@@ -465,7 +466,7 @@ def test_standard_rag_path_keeps_existing_generate_response_contract(tmp_path, m
     _install_chat_modules(monkeypatch, BudgetLLMClient, _config())
 
     result, _session = chat_service.query_chat(
-        db_path=str(tmp_path / "chat.db"),
+        db_path=postgres_url_for_path(str(tmp_path / "chat.db")),
         request=_request(),
         auth=None,
         payload={"message": "ordinary question", "kb_ids": ["kb-1"]},
@@ -492,7 +493,7 @@ def test_failed_turn_is_not_replayed_to_direct_document_llm_but_success_history_
 
     RecordingClient.calls = []
     _install_chat_modules(monkeypatch, RecordingClient, _config())
-    db_path = str(tmp_path / "chat.db")
+    db_path = postgres_url_for_path(str(tmp_path / "chat.db"))
     document_payload = {
         "message": query,
         "document_content": "ALPHA actuarial evidence",
@@ -644,7 +645,7 @@ def test_standard_rag_retrieval_failure_persists_retryable_failed_turn(
 
     with pytest.raises(chat_service.ChatApiError) as exc_info:
         chat_service.query_chat(
-            db_path=str(tmp_path / "chat.db"),
+            db_path=postgres_url_for_path(str(tmp_path / "chat.db")),
             request=_request(),
             auth=None,
             payload={"message": "Find indexed evidence", "kb_ids": ["kb-1"]},
@@ -659,7 +660,7 @@ def test_standard_rag_retrieval_failure_persists_retryable_failed_turn(
     assert raw_detail not in json.dumps(error.payload)
     assert raw_detail not in caplog.text
 
-    storage = Storage(str(tmp_path / "chat.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "chat.db")))
     try:
         rows = storage._conn.execute(
             "SELECT role, metadata FROM messages ORDER BY created_at"
@@ -694,7 +695,7 @@ def test_auto_kb_selection_failure_persists_nonretryable_failed_turn(
         _config(),
         router_class=DeletedKBRouter,
     )
-    db_path = str(tmp_path / "chat.db")
+    db_path = postgres_url_for_path(str(tmp_path / "chat.db"))
 
     with pytest.raises(chat_service.ChatApiError) as exc_info:
         chat_service.query_chat(
@@ -742,7 +743,7 @@ def test_assistant_persistence_conversation_failure_finalizes_real_user_turn(
 
     monkeypatch.setattr(ConversationManager, "add_message", fail_assistant)
     _install_chat_modules(monkeypatch, BudgetLLMClient, _config())
-    db_path = str(tmp_path / "chat.db")
+    db_path = postgres_url_for_path(str(tmp_path / "chat.db"))
 
     with pytest.raises(chat_service.ChatApiError) as exc_info:
         chat_service.query_chat(
@@ -790,7 +791,7 @@ def test_agentic_ready_data_failure_finalizes_real_user_turn(tmp_path, monkeypat
         chat_service, "_agentic_source_fallback_reason", lambda storage, **kwargs: None
     )
     monkeypatch.setattr(agentic_service, "chat_agentic_rag", fail_agentic)
-    db_path = str(tmp_path / "chat.db")
+    db_path = postgres_url_for_path(str(tmp_path / "chat.db"))
 
     with pytest.raises(chat_service.ChatApiError) as exc_info:
         chat_service.query_chat(
@@ -846,7 +847,7 @@ def test_unknown_post_insert_failure_uses_safe_structured_finalizer(
         _config(),
         retriever_class=FailingRetriever,
     )
-    db_path = str(tmp_path / "chat.db")
+    db_path = postgres_url_for_path(str(tmp_path / "chat.db"))
 
     with pytest.raises(chat_service.ChatApiError) as exc_info:
         chat_service.query_chat(
@@ -903,7 +904,7 @@ def test_real_auto_query_router_logs_only_query_shape(tmp_path, monkeypatch, cap
 
     with caplog.at_level(logging.DEBUG, logger="ai_actuarial.chatbot.router"):
         result, _session = chat_service.query_chat(
-            db_path=str(tmp_path / "chat.db"),
+            db_path=postgres_url_for_path(str(tmp_path / "chat.db")),
             request=_request(),
             auth=None,
             payload={"message": f"{sentinel} risk regulation", "kb_ids": "auto"},
@@ -937,7 +938,7 @@ def test_missing_provider_key_is_nonretryable_auth_failed_turn_before_provider_c
 
     with pytest.raises(chat_service.ChatApiError) as exc_info:
         chat_service.query_chat(
-            db_path=str(tmp_path / "chat.db"),
+            db_path=postgres_url_for_path(str(tmp_path / "chat.db")),
             request=_request(),
             auth=None,
             payload=payload,
@@ -951,7 +952,7 @@ def test_missing_provider_key_is_nonretryable_auth_failed_turn_before_provider_c
     assert error.payload["data"]["message_id"]
     assert provider_factory.call_count == 0
 
-    storage = Storage(str(tmp_path / "chat.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "chat.db")))
     try:
         rows = storage._conn.execute(
             "SELECT role, metadata FROM messages ORDER BY created_at"
@@ -1029,7 +1030,7 @@ def test_injected_invalid_chatbot_config_persists_nonretryable_auth_failed_turn(
 
     with pytest.raises(chat_service.ChatApiError) as exc_info:
         chat_service.query_chat(
-            db_path=str(tmp_path / "chat.db"),
+            db_path=postgres_url_for_path(str(tmp_path / "chat.db")),
             request=_request(),
             auth=None,
             payload={"message": "Use configured chat", "kb_ids": ["kb-1"]},
@@ -1046,7 +1047,7 @@ def test_injected_invalid_chatbot_config_persists_nonretryable_auth_failed_turn(
     assert "347.125" not in caplog.text
     assert "local-test-key" not in caplog.text
 
-    storage = Storage(str(tmp_path / "chat.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "chat.db")))
     try:
         rows = storage._conn.execute(
             "SELECT role, metadata FROM messages ORDER BY created_at"
@@ -1093,7 +1094,7 @@ def test_embedding_mismatch_keeps_actionable_nonretryable_failed_turn(
 
     with pytest.raises(chat_service.ChatApiError) as exc_info:
         chat_service.query_chat(
-            db_path=str(tmp_path / "chat.db"),
+            db_path=postgres_url_for_path(str(tmp_path / "chat.db")),
             request=_request(),
             auth=None,
             payload={"message": "Explain the indexed evidence", "kb_ids": ["kb-1"]},
@@ -1110,7 +1111,7 @@ def test_embedding_mismatch_keeps_actionable_nonretryable_failed_turn(
     assert error.payload["conversation_id"] == error.payload["data"]["conversation_id"]
     assert error.payload["message_id"] == error.payload["data"]["message_id"]
 
-    storage = Storage(str(tmp_path / "chat.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "chat.db")))
     try:
         rows = storage._conn.execute(
             "SELECT role, metadata FROM messages ORDER BY created_at"
@@ -1149,7 +1150,7 @@ def test_provider_failures_map_to_stable_api_codes_and_persist_identity(
 
     with pytest.raises(chat_service.ChatApiError) as exc_info:
         chat_service.query_chat(
-            db_path=str(tmp_path / "chat.db"),
+            db_path=postgres_url_for_path(str(tmp_path / "chat.db")),
             request=_request(),
             auth=None,
             payload={"message": "ordinary failure", "kb_ids": ["kb-1"]},
@@ -1219,7 +1220,7 @@ def test_empty_direct_markdown_has_stable_error_before_provider(tmp_path, monkey
 
     with pytest.raises(chat_service.ChatApiError) as exc_info:
         chat_service.query_chat(
-            db_path=str(tmp_path / "chat.db"),
+            db_path=postgres_url_for_path(str(tmp_path / "chat.db")),
             request=_request(),
             auth=None,
             payload={
@@ -1264,7 +1265,7 @@ def test_mixed_explicit_document_sources_fail_without_false_citation(tmp_path, m
 
     with pytest.raises(chat_service.ChatApiError) as exc_info:
         chat_service.query_chat(
-            db_path=str(tmp_path / "chat.db"),
+            db_path=postgres_url_for_path(str(tmp_path / "chat.db")),
             request=_request(),
             auth=None,
             payload={
@@ -1294,7 +1295,7 @@ def test_mixed_explicit_document_sources_fail_without_false_citation(tmp_path, m
     assert error.payload["data"]["message_id"]
     assert BudgetLLMClient.generated_messages == []
 
-    storage = Storage(str(tmp_path / "chat.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "chat.db")))
     try:
         rows = storage._conn.execute(
             "SELECT role, metadata, citations FROM messages ORDER BY created_at"

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -10,6 +11,7 @@ import yaml
 from ai_actuarial.api.services.ops_read import get_schedule_status
 from ai_actuarial.shared_runtime import append_task_log
 from ai_actuarial.task_runtime import NativeTaskRuntime, _FallbackScheduler
+from tests.postgres_helpers import postgres_url_for_path
 from tests.test_fastapi_ops_read_endpoints import _build_test_client, _patch_available_models
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -31,6 +33,31 @@ def _system_job_objects(runtime: NativeTaskRuntime) -> dict[str, object]:
         if metadata.get("kind") != "configured_task":
             jobs[str(metadata.get("job_key") or "")] = job
     return jobs
+
+
+def test_postgres_api_test_client_registers_jobs_without_scheduler_daemon(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _patch_available_models(monkeypatch)
+    started_scheduler_threads: list[threading.Thread] = []
+    original_thread_start = threading.Thread.start
+
+    def record_scheduler_thread_start(thread: threading.Thread) -> None:
+        target = getattr(thread, "_target", None)
+        if getattr(target, "__name__", "") == "_scheduler_loop":
+            started_scheduler_threads.append(thread)
+        original_thread_start(thread)
+
+    monkeypatch.setattr(threading.Thread, "start", record_scheduler_thread_start)
+    _client, app, _seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
+    runtime = app.state.native_task_runtime
+
+    assert runtime._scheduler_loop_started is True
+    assert any(
+        getattr(job, "_ops_metadata", {}).get("kind") == "ready_data"
+        for job in runtime.scheduler.jobs
+    )
+    assert started_scheduler_threads == []
 
 
 def test_scheduler_status_has_stable_sanitized_identity_for_every_job_kind(
@@ -145,7 +172,10 @@ def test_scheduler_reinitialize_is_atomic_when_registration_fails(
     tmp_path: Path, monkeypatch
 ) -> None:
     monkeypatch.setattr("ai_actuarial.task_runtime._new_scheduler", _FallbackScheduler)
-    runtime = NativeTaskRuntime(pipeline_baton_state_path=str(tmp_path / "pipeline.json"))
+    runtime = NativeTaskRuntime(
+        ready_data_database=postgres_url_for_path(tmp_path / "runtime.db"),
+        pipeline_baton_state_path=str(tmp_path / "pipeline.json"),
+    )
     runtime._scheduler_loop_started = True
     runtime.active_tasks["active-307"] = {"id": "active-307", "status": "running"}
     runtime.task_history.append({"id": "history-307", "status": "completed"})

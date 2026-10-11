@@ -12,6 +12,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from tests.postgres_helpers import postgres_url_for_path
+
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from ai_actuarial.collectors import CollectionConfig, WebPageCollector
@@ -53,7 +55,7 @@ SAMPLE_HTML = """\
 def _make_storage(tmp_dir: str) -> Storage:
     """Create a fresh in-memory-backed Storage in *tmp_dir*."""
     db_path = os.path.join(tmp_dir, "test.db")
-    return Storage(db_path)
+    return Storage(postgres_url_for_path(db_path))
 
 
 def _make_collector(storage: Storage, download_dir: str) -> WebPageCollector:
@@ -371,7 +373,7 @@ class TestCrawlerHandlePageContent(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.mkdtemp()
         db_path = os.path.join(self._tmp, "test.db")
-        self.storage = Storage(db_path)
+        self.storage = Storage(postgres_url_for_path(db_path))
 
         from ai_actuarial.crawler import Crawler
 

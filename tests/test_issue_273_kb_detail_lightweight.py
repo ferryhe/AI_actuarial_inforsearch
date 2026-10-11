@@ -9,6 +9,7 @@ import pytest
 from ai_actuarial.api.services import rag_admin
 from ai_actuarial.embedding_service import EmbeddingIdentity
 from ai_actuarial.storage import Storage
+from tests.postgres_helpers import postgres_url_for_path, record_sql
 from tests.test_issue_256_lightweight_list_apis import (
     _identity,
     _manager,
@@ -39,7 +40,7 @@ def _patch_lightweight_manager(
     monkeypatch: pytest.MonkeyPatch, db_path: Path, tmp_path: Path
 ) -> None:
     def manager_and_storage(_path: str) -> Any:
-        storage = Storage(str(db_path))
+        storage = Storage(postgres_url_for_path(str(db_path)))
         return None, _manager(storage, tmp_path), storage
 
     monkeypatch.setattr(rag_admin, "_manager_and_storage", manager_and_storage)
@@ -65,7 +66,9 @@ def test_kb_detail_uses_metadata_coverage_without_deep_reads(
         fail,
     )
 
-    payload = rag_admin.get_knowledge_base(db_path=str(db_path), kb_id="kb-273")
+    payload = rag_admin.get_knowledge_base(
+        db_path=postgres_url_for_path(str(db_path)), kb_id="kb-273"
+    )
 
     kb = payload["knowledge_base"]
     assert kb["index_coverage"] == {
@@ -100,7 +103,7 @@ def test_kb_detail_deep_path_preserves_vector_validation(
     monkeypatch.setattr(Storage, "read_valid_chunk_embeddings", spy)
 
     payload = rag_admin.get_knowledge_base(
-        db_path=str(db_path),
+        db_path=postgres_url_for_path(str(db_path)),
         kb_id="kb-273",
         deep=True,
     )
@@ -131,7 +134,7 @@ def test_manifest_endpoint_default_skips_ready_build_input(
     )
 
     payload = rag_admin.get_agentic_ready_manifest(
-        db_path=str(db_path),
+        db_path=postgres_url_for_path(str(db_path)),
         kb_id="kb-273",
         query={},
     )
@@ -162,7 +165,7 @@ def test_kb_detail_build_fetches_fresh_selector_before_posting() -> None:
 
 
 @pytest.mark.parametrize("empty", (False, True), ids=("populated", "empty"))
-def test_kb_detail_coverage_uses_covering_index_hint(
+def test_kb_detail_coverage_tolerates_missing_index_without_changing_output(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     empty: bool,
@@ -172,7 +175,7 @@ def test_kb_detail_coverage_uses_covering_index_hint(
     _seed(db_path, tmp_path, identity, kb_id="kb-issue-407")
     _patch_identity(monkeypatch, identity)
 
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     manager = _manager(storage, tmp_path)
     kb_id = "kb-empty" if empty else "kb-issue-407"
     if empty:
@@ -190,14 +193,16 @@ def test_kb_detail_coverage_uses_covering_index_hint(
     monkeypatch.setattr(manager, "get_kb_categories", lambda _kb_id: [])
 
     def traced_manager_and_storage(_path: str) -> Any:
-        storage._conn.set_trace_callback(statements.append)
+        record_sql(storage._conn, statements)
         return None, manager, storage
 
     monkeypatch.setattr(storage, "close", lambda: None)
     monkeypatch.setattr(rag_admin, "_manager_and_storage", traced_manager_and_storage)
 
     try:
-        hinted = rag_admin.get_knowledge_base(db_path=str(db_path), kb_id=kb_id)
+        hinted = rag_admin.get_knowledge_base(
+            db_path=postgres_url_for_path(str(db_path)), kb_id=kb_id
+        )
         coverage = hinted["knowledge_base"]["index_coverage"]
         if empty:
             assert coverage == {
@@ -210,13 +215,10 @@ def test_kb_detail_coverage_uses_covering_index_hint(
             }
         else:
             assert coverage["ready_embeddings"] == 1
-        hinted_sql = next(
-            statement for statement in statements if "chunk_embeddings e INDEXED BY" in statement
+        coverage_sql = next(
+            statement for statement in statements if "JOIN chunk_embeddings e" in statement
         )
-        plan = "\n".join(
-            str(row[3]) for row in storage._conn.execute(f"EXPLAIN QUERY PLAN {hinted_sql}")
-        )
-        assert "USING COVERING INDEX idx_chunk_embeddings_stats_metadata" in plan
+        assert "INDEXED BY" not in coverage_sql
 
         # Drop after Storage initialization on this exact connection: a detail
         # request cannot recreate it through schema initialization.
@@ -225,7 +227,9 @@ def test_kb_detail_coverage_uses_covering_index_hint(
         assert not rag_admin._sqlite_index_exists(storage, "idx_chunk_embeddings_stats_metadata")
 
         statements.clear()
-        unhinted = rag_admin.get_knowledge_base(db_path=str(db_path), kb_id=kb_id)
+        unhinted = rag_admin.get_knowledge_base(
+            db_path=postgres_url_for_path(str(db_path)), kb_id=kb_id
+        )
         assert unhinted == hinted
         fallback_sql = next(
             statement for statement in statements if "JOIN chunk_embeddings" in statement
@@ -280,7 +284,7 @@ def test_kb_detail_coverage_hint_preserves_metadata_edge_cases(
     identity = _identity(dimension=3)
     _seed(db_path, tmp_path, identity, kb_id="kb-issue-407")
     _patch_identity(monkeypatch, identity)
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     manager = _manager(storage, tmp_path)
     close = storage.close
     statements: list[str] = []
@@ -291,24 +295,31 @@ def test_kb_detail_coverage_hint_preserves_metadata_edge_cases(
         storage._conn.commit()
 
     def traced_manager_and_storage(_path: str) -> Any:
-        storage._conn.set_trace_callback(statements.append)
+        record_sql(storage._conn, statements)
         return None, manager, storage
 
     monkeypatch.setattr(storage, "close", lambda: None)
     monkeypatch.setattr(rag_admin, "_manager_and_storage", traced_manager_and_storage)
     try:
-        hinted = rag_admin.get_knowledge_base(db_path=str(db_path), kb_id="kb-issue-407")
+        hinted = rag_admin.get_knowledge_base(
+            db_path=postgres_url_for_path(str(db_path)), kb_id="kb-issue-407"
+        )
         coverage = hinted["knowledge_base"]["index_coverage"]
         for key, expected in expected_coverage.items():
             assert coverage[key] == expected
-        assert any("chunk_embeddings e INDEXED BY" in statement for statement in statements)
+        assert any("JOIN chunk_embeddings e" in statement for statement in statements)
 
         storage._conn.execute("DROP INDEX idx_chunk_embeddings_stats_metadata")
         storage._conn.commit()
         assert not rag_admin._sqlite_index_exists(storage, "idx_chunk_embeddings_stats_metadata")
         statements.clear()
 
-        assert rag_admin.get_knowledge_base(db_path=str(db_path), kb_id="kb-issue-407") == hinted
+        assert (
+            rag_admin.get_knowledge_base(
+                db_path=postgres_url_for_path(str(db_path)), kb_id="kb-issue-407"
+            )
+            == hinted
+        )
         assert not any("INDEXED BY" in statement for statement in statements)
     finally:
         close()

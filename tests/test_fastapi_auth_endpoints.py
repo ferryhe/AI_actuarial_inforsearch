@@ -12,6 +12,7 @@ from ai_actuarial.api.app import create_app
 from ai_actuarial.api.middleware import rate_limit
 from ai_actuarial.shared_auth import hash_password
 from ai_actuarial.storage import Storage
+from tests.postgres_helpers import postgres_url_for_path
 
 PDF_BYTES = b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n"
 
@@ -55,7 +56,7 @@ def _seed_storage(db_path: Path, files_dir: Path) -> SeedData:
     alpha_path = files_dir / "alpha.pdf"
     alpha_path.write_bytes(PDF_BYTES)
 
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         alpha_url = "https://alpha.example/doc-a.pdf"
         alpha_sha = hashlib.sha256(alpha_path.read_bytes()).hexdigest()
@@ -694,6 +695,23 @@ def test_fastapi_admin_user_and_token_management_surfaces_work(tmp_path: Path, m
     assert revoke.status_code == 200, revoke.text
 
 
+def test_admin_user_search_is_case_insensitive_on_postgresql(tmp_path: Path) -> None:
+    storage = Storage(postgres_url_for_path(tmp_path / "user-search.db"))
+    marker = "ControllerAlice"
+    try:
+        storage.create_user(
+            f"{marker}@example.test",
+            hash_password("password123"),
+            display_name=marker,
+        )
+        users, total, _active_admin_count = storage.list_users(search=marker.upper())
+    finally:
+        storage.close()
+
+    assert total == 1
+    assert users[0]["email"] == f"{marker.lower()}@example.test"
+
+
 def test_fastapi_auth_activity_uses_normalized_trusted_proxy_ip(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -741,8 +759,7 @@ def test_fastapi_auth_activity_uses_normalized_trusted_proxy_ip(
     assert role_success.status_code == 200, role_success.text
     assert active_success.status_code == 200, active_success.text
 
-    db_path = Path(app.state.db_path)
-    storage = Storage(str(db_path))
+    storage = Storage(app.state.database)
     try:
         only_admin_id = storage.create_user(
             "only-admin@example.com", hash_password("password123"), role="admin"
@@ -764,7 +781,7 @@ def test_fastapi_auth_activity_uses_normalized_trusted_proxy_ip(
     assert [response.status_code for response in (role_missing, active_missing)] == [404, 404]
     assert reset.status_code == 200, reset.text
 
-    storage = Storage(str(db_path))
+    storage = Storage(app.state.database)
     try:
         activity_rows = storage._conn.execute(
             "SELECT action, ip_address FROM user_activity_logs WHERE action IN "
@@ -816,7 +833,7 @@ def test_token_canonical_contract_and_expiry(tmp_path: Path, monkeypatch) -> Non
     row = next(row for row in listing if row["id"] == metadata["id"])
     assert row["last_used_at"]
     assert all("token" not in row and "token_hash" not in row for row in listing)
-    storage = Storage(app.state.db_path)
+    storage = Storage(app.state.database)
     storage._conn.execute(
         "UPDATE auth_tokens SET expires_at=? WHERE id=?",
         ((datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat(), metadata["id"]),
@@ -872,7 +889,7 @@ def test_token_creation_validation_and_legacy_read(tmp_path: Path, monkeypatch) 
             "/api/auth/tokens", json={"subject": "Invalid", **payload}, headers=headers
         )
         assert response.status_code in (400, 422), (payload, response.text)
-    storage = Storage(app.state.db_path)
+    storage = Storage(app.state.database)
     try:
         for alias, canonical in (("reader", "registered"), ("operator_ai", "operator")):
             token_id = storage.create_auth_token(
@@ -895,7 +912,7 @@ def test_token_list_preserves_other_stored_groups_and_permissions(
     from ai_actuarial.shared_auth import hash_token, permissions_for_group
 
     client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
-    storage = Storage(app.state.db_path)
+    storage = Storage(app.state.database)
     try:
         token_ids = {
             group: storage.create_auth_token(
@@ -928,7 +945,7 @@ def test_service_tokens_require_confirmed_admin_email_session(tmp_path: Path, mo
     assert client.post("/api/auth/tokens", json=payload, headers=headers).status_code == 403
     client.cookies.set("session", _make_session_cookie(app, {"email_user_id": seed["user_id"]}))
     assert client.post("/api/auth/tokens", json=payload).status_code == 403
-    storage = Storage(app.state.db_path)
+    storage = Storage(app.state.database)
     storage._conn.execute("UPDATE users SET role='admin' WHERE id=?", (seed["user_id"],))
     storage._conn.commit()
     storage.close()
@@ -988,7 +1005,7 @@ def test_token_auth_survives_last_used_persistence_failure(tmp_path: Path, monke
     import sqlite3
 
     client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
-    storage = Storage(app.state.db_path)
+    storage = Storage(app.state.database)
     try:
         token_id = storage.get_auth_token_by_hash(
             hashlib.sha256(seed["admin_token"].encode("utf-8")).hexdigest()

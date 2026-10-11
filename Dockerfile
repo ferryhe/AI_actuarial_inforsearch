@@ -18,9 +18,16 @@ WORKDIR /app
 ENV TIKTOKEN_CACHE_DIR=/app/.tiktoken-cache
 
 # Install system dependencies for PDF conversion and OpenDataLoader.
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y ca-certificates curl gnupg \
+    && curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc -o /tmp/pgdg.asc \
+    && gpg --dearmor -o /usr/share/keyrings/postgresql-pgdg.gpg /tmp/pgdg.asc \
+    && rm /tmp/pgdg.asc \
+    && . /etc/os-release \
+    && echo "deb [signed-by=/usr/share/keyrings/postgresql-pgdg.gpg] https://apt.postgresql.org/pub/repos/apt ${VERSION_CODENAME}-pgdg main" > /etc/apt/sources.list.d/pgdg.list \
+    && apt-get update && apt-get install -y \
+    # Native tools must match the PostgreSQL 16 server used in production.
+    postgresql-client-16 \
     # Basic utilities
-    curl \
     # OpenDataLoader requires Java 11+ on PATH
     default-jre-headless \
     # For docling PDF conversion (X11 libraries)
@@ -53,8 +60,9 @@ COPY . .
 # context rules narrow the application copy.
 COPY ./tests /app/tests
 
-# Make entrypoint executable
-RUN chmod +x docker-entrypoint.sh
+# Make the entrypoint executable and normalize Windows checkout line endings
+# so its shebang remains valid inside the Linux image.
+RUN sed -i 's/\r$//' docker-entrypoint.sh && chmod +x docker-entrypoint.sh
 
 # Keep tokenizer cache writable for current and older tiktoken releases.
 RUN mkdir -p /app/.tiktoken-cache && chmod 777 /app/.tiktoken-cache && chown -R root:root /app/.tiktoken-cache

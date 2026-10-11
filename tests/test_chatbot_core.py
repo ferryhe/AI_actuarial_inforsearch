@@ -16,6 +16,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, Mock, patch
 
+from tests.postgres_helpers import postgres_url_for_path
+
 # Mock schedule module
 if "schedule" not in sys.modules:
     sys.modules["schedule"] = types.ModuleType("schedule")
@@ -480,7 +482,7 @@ class TestConversationManager(unittest.TestCase):
         """Set up test database and manager."""
         self.temp_dir = tempfile.mkdtemp()
         self.db_path = os.path.join(self.temp_dir, "test.db")
-        self.storage = Storage(self.db_path)
+        self.storage = Storage(postgres_url_for_path(self.db_path))
         self.config = ChatbotConfig(api_key="test-key")
         self.manager = ConversationManager(self.storage, self.config)
 
@@ -697,7 +699,7 @@ class TestQueryRouter(unittest.TestCase):
         """Set up test database and router."""
         self.temp_dir = tempfile.mkdtemp()
         self.db_path = os.path.join(self.temp_dir, "test.db")
-        self.storage = Storage(self.db_path)
+        self.storage = Storage(postgres_url_for_path(self.db_path))
         self.config = ChatbotConfig(api_key="test-key")
 
         # Initialize RAG schema
@@ -754,11 +756,12 @@ class TestQueryRouter(unittest.TestCase):
         for kb_id, name, desc in kbs:
             conn.execute(
                 """
-                INSERT INTO rag_knowledge_bases 
-                (kb_id, name, description, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO rag_knowledge_bases
+                (kb_id, name, description, embedding_model, chunk_size, chunk_overlap,
+                 index_type, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-                (kb_id, name, desc, now, now),
+                (kb_id, name, desc, "text-embedding-3-small", 512, 50, "flat", now, now),
             )
 
         conn.commit()
@@ -868,7 +871,7 @@ class TestDefaultStoragePropagation(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.mkdtemp()
         self.db_path = os.path.join(self.temp_dir, "test.db")
-        self.storage = Storage(self.db_path)
+        self.storage = Storage(postgres_url_for_path(self.db_path))
 
     def tearDown(self):
         self.storage.close()

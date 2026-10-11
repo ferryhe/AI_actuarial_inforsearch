@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import sqlite3
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -18,9 +17,19 @@ from ai_actuarial.embedding_service import EmbeddingIdentity
 from ai_actuarial.rag.config import RAGConfig
 from ai_actuarial.rag.knowledge_base import KnowledgeBaseManager
 from ai_actuarial.storage import Storage
+from tests.postgres_helpers import postgres_url_for_path, record_sql
 
 LARGE_CHUNK_COUNT = 8_704
 LARGE_EMBEDDING_DIMENSION = 3_072
+
+
+def _execute_postgres(db_path: Path, statement: str, parameters: tuple[Any, ...] = ()) -> None:
+    storage = Storage(postgres_url_for_path(str(db_path)))
+    try:
+        storage._conn.execute(statement, parameters)
+        storage._conn.commit()
+    finally:
+        storage.close()
 
 
 def _identity(*, dimension: int) -> EmbeddingIdentity:
@@ -61,7 +70,7 @@ def _seed_shared_kbs(
     embedding_kinds: tuple[str, ...] | None = None,
     create_ready_index: bool = False,
 ) -> None:
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         manager = _manager(storage, tmp_path)
         file_url = "https://issue-256.test/shared.pdf"
@@ -227,7 +236,7 @@ def test_kb_list_uses_metadata_coverage_without_deep_reads(
         fail,
     )
 
-    payload = rag_admin.list_knowledge_bases(db_path=str(db_path), query={})
+    payload = rag_admin.list_knowledge_bases(db_path=postgres_url_for_path(str(db_path)), query={})
 
     assert len(payload["knowledge_bases"]) == 1
     kb = payload["knowledge_bases"][0]
@@ -241,10 +250,11 @@ def test_kb_list_uses_metadata_coverage_without_deep_reads(
     }
     assert kb["agentic_ready_manifest"].get("ready_build_input") is None
 
-    with sqlite3.connect(db_path) as conn:
-        conn.execute("UPDATE file_chunk_sets SET status = 'building'")
+    _execute_postgres(db_path, "UPDATE file_chunk_sets SET status = 'building'")
 
-    invalid_payload = rag_admin.list_knowledge_bases(db_path=str(db_path), query={})
+    invalid_payload = rag_admin.list_knowledge_bases(
+        db_path=postgres_url_for_path(str(db_path)), query={}
+    )
     invalid_coverage = invalid_payload["knowledge_bases"][0]["index_coverage"]
     assert invalid_coverage["ready_embeddings"] == 0
     assert invalid_coverage["invalid_bindings"] == 1
@@ -264,20 +274,37 @@ def test_kb_list_rejects_binding_for_non_member_file(
         chunk_count=1,
     )
     _patch_identity(monkeypatch, identity)
-
-    with sqlite3.connect(db_path) as conn:
-        conn.execute(
-            "UPDATE file_chunk_sets SET file_url = ?",
-            ("https://issue-256.test/non-member.pdf",),
+    nonmember_url = "https://issue-256.test/non-member.pdf"
+    storage = Storage(postgres_url_for_path(str(db_path)))
+    try:
+        storage.insert_file(
+            url=nonmember_url,
+            sha256="nonmember-sha",
+            title="Nonmember",
+            source_site="issue-256.test",
+            source_page_url="https://issue-256.test",
+            original_filename="non-member.pdf",
+            local_path="files/non-member.pdf",
+            bytes=1,
+            content_type="application/pdf",
         )
-        conn.execute(
-            "UPDATE kb_chunk_bindings SET file_url = ?",
-            ("https://issue-256.test/non-member.pdf",),
-        )
+    finally:
+        storage.close()
 
-    coverage = rag_admin.list_knowledge_bases(db_path=str(db_path), query={})["knowledge_bases"][0][
-        "index_coverage"
-    ]
+    _execute_postgres(
+        db_path,
+        "UPDATE file_chunk_sets SET file_url = ?",
+        (nonmember_url,),
+    )
+    _execute_postgres(
+        db_path,
+        "UPDATE kb_chunk_bindings SET file_url = ?",
+        (nonmember_url,),
+    )
+
+    coverage = rag_admin.list_knowledge_bases(
+        db_path=postgres_url_for_path(str(db_path)), query={}
+    )["knowledge_bases"][0]["index_coverage"]
 
     assert coverage["invalid_bindings"] == 1
     assert coverage["binding_error"] == "KB chunk binding metadata is invalid"
@@ -304,19 +331,23 @@ def test_kb_list_coverage_index_hints_preserve_output_and_support_legacy_indexes
 
     def traced_open(path: str):
         conn = original_open(path)
-        conn.set_trace_callback(statements.append)
+        record_sql(conn, statements)
         return conn
 
     monkeypatch.setattr(rag_admin, "_open_kb_list_read_only_connection", traced_open)
 
     def assert_hint_equivalent() -> dict[str, Any]:
-        hinted = rag_admin.list_knowledge_bases(db_path=str(db_path), query={})
+        hinted = rag_admin.list_knowledge_bases(
+            db_path=postgres_url_for_path(str(db_path)), query={}
+        )
         monkeypatch.setattr(
             rag_admin._KBListStorageView,
             "_index_exists",
             lambda *_args, **_kwargs: False,
         )
-        unhinted = rag_admin.list_knowledge_bases(db_path=str(db_path), query={})
+        unhinted = rag_admin.list_knowledge_bases(
+            db_path=postgres_url_for_path(str(db_path)), query={}
+        )
         monkeypatch.setattr(rag_admin._KBListStorageView, "_index_exists", original_has_index)
         assert unhinted == hinted
         return hinted
@@ -327,37 +358,47 @@ def test_kb_list_coverage_index_hints_preserve_output_and_support_legacy_indexes
     assert ready_coverage["missing_embeddings"] == 2
 
     coverage_sql = next(statement for statement in statements if "WITH targets(" in statement)
-    with sqlite3.connect(db_path) as conn:
-        plan = "\n".join(str(row[3]) for row in conn.execute(f"EXPLAIN QUERY PLAN {coverage_sql}"))
-    assert "USING COVERING INDEX idx_global_chunks_stats_metadata" in plan
-    assert "USING COVERING INDEX idx_chunk_embeddings_stats_metadata" in plan
+    assert "INDEXED BY" not in coverage_sql
+    storage = Storage(postgres_url_for_path(str(db_path)))
+    try:
+        indexes = {
+            row[0]
+            for row in storage._conn.execute(
+                "SELECT indexname FROM pg_indexes WHERE schemaname = current_schema()"
+            )
+        }
+        assert {
+            "idx_global_chunks_stats_metadata",
+            "idx_chunk_embeddings_stats_metadata",
+        } <= indexes
+    finally:
+        storage.close()
 
-    with sqlite3.connect(db_path) as conn:
-        conn.execute(
-            "UPDATE rag_knowledge_bases SET embedding_identity_key = ? WHERE kb_id = ?",
-            ("wrong-identity", "kb-issue-407"),
-        )
-        conn.commit()
+    _execute_postgres(
+        db_path,
+        "UPDATE rag_knowledge_bases SET embedding_identity_key = ? WHERE kb_id = ?",
+        ("wrong-identity", "kb-issue-407"),
+    )
     wrong_identity_payload = assert_hint_equivalent()
     wrong_identity_coverage = wrong_identity_payload["knowledge_bases"][0]["index_coverage"]
     assert wrong_identity_coverage["ready_embeddings"] == 0
     assert wrong_identity_coverage["missing_embeddings"] == 3
 
-    with sqlite3.connect(db_path) as conn:
-        conn.execute(
-            "UPDATE rag_knowledge_bases SET embedding_identity_key = ? WHERE kb_id = ?",
-            (identity.embedding_identity_key, "kb-issue-407"),
-        )
-        conn.execute("UPDATE file_chunk_sets SET status = 'building'")
-        conn.commit()
+    _execute_postgres(
+        db_path,
+        "UPDATE rag_knowledge_bases SET embedding_identity_key = ? WHERE kb_id = ?",
+        (identity.embedding_identity_key, "kb-issue-407"),
+    )
+    _execute_postgres(db_path, "UPDATE file_chunk_sets SET status = 'building'")
     invalid_payload = assert_hint_equivalent()
     assert invalid_payload["knowledge_bases"][0]["index_coverage"]["invalid_bindings"] == 1
 
-    with sqlite3.connect(db_path) as conn:
-        conn.execute("DROP INDEX idx_global_chunks_stats_metadata")
-        conn.execute("DROP INDEX idx_chunk_embeddings_stats_metadata")
-        conn.commit()
-    assert rag_admin.list_knowledge_bases(db_path=str(db_path), query={}) == invalid_payload
+    _execute_postgres(db_path, "DROP INDEX idx_global_chunks_stats_metadata")
+    _execute_postgres(db_path, "DROP INDEX idx_chunk_embeddings_stats_metadata")
+    assert (
+        rag_admin.list_knowledge_bases(db_path=postgres_url_for_path(str(db_path)), query={})
+        == invalid_payload
+    )
 
 
 def test_admin_kb_list_can_return_category_projection_without_diagnostics(
@@ -374,7 +415,7 @@ def test_admin_kb_list_can_return_category_projection_without_diagnostics(
         chunk_count=1,
         embedding_kinds=("missing",),
     )
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         manager = _manager(storage, tmp_path)
         manager._ensure_category_mapping_table()
@@ -391,7 +432,7 @@ def test_admin_kb_list_can_return_category_projection_without_diagnostics(
 
     monkeypatch.setattr(rag_admin, "_build_kb_embedding_status", fail)
     payload = rag_admin.list_knowledge_bases(
-        db_path=str(db_path),
+        db_path=postgres_url_for_path(str(db_path)),
         query={"include_diagnostics": "false"},
         auth=SimpleNamespace(permissions=frozenset({"tasks.run"})),
     )
@@ -429,18 +470,18 @@ def test_large_multi_kb_list_is_bounded_and_never_selects_vector_json(
 
     def traced_open(path: str):
         conn = original_open(path)
-        conn.set_trace_callback(statements.append)
+        record_sql(conn, statements)
         return conn
 
     monkeypatch.setattr(rag_admin, "_open_kb_list_read_only_connection", traced_open)
 
     started = time.perf_counter()
-    cold = rag_admin.list_knowledge_bases(db_path=str(db_path), query={})
+    cold = rag_admin.list_knowledge_bases(db_path=postgres_url_for_path(str(db_path)), query={})
     cold_seconds = time.perf_counter() - started
     cold_queries = len([sql for sql in statements if sql.lstrip().upper().startswith("SELECT")])
     statements.clear()
     started = time.perf_counter()
-    warm = rag_admin.list_knowledge_bases(db_path=str(db_path), query={})
+    warm = rag_admin.list_knowledge_bases(db_path=postgres_url_for_path(str(db_path)), query={})
     warm_seconds = time.perf_counter() - started
     warm_queries = len([sql for sql in statements if sql.lstrip().upper().startswith("SELECT")])
 
@@ -451,14 +492,18 @@ def test_large_multi_kb_list_is_bounded_and_never_selects_vector_json(
     )
     statements.clear()
     started = time.perf_counter()
-    unhinted_cold = rag_admin.list_knowledge_bases(db_path=str(db_path), query={})
+    unhinted_cold = rag_admin.list_knowledge_bases(
+        db_path=postgres_url_for_path(str(db_path)), query={}
+    )
     unhinted_cold_seconds = time.perf_counter() - started
     unhinted_cold_queries = len(
         [sql for sql in statements if sql.lstrip().upper().startswith("SELECT")]
     )
     statements.clear()
     started = time.perf_counter()
-    unhinted_warm = rag_admin.list_knowledge_bases(db_path=str(db_path), query={})
+    unhinted_warm = rag_admin.list_knowledge_bases(
+        db_path=postgres_url_for_path(str(db_path)), query={}
+    )
     unhinted_warm_seconds = time.perf_counter() - started
     unhinted_warm_queries = len(
         [sql for sql in statements if sql.lstrip().upper().startswith("SELECT")]
@@ -511,11 +556,13 @@ def test_kb_list_select_count_is_invariant_for_multiple_kbs(
 
         def traced_open(path: str):
             conn = original_open(path)
-            conn.set_trace_callback(statements.append)
+            record_sql(conn, statements)
             return conn
 
         monkeypatch.setattr(rag_admin, "_open_kb_list_read_only_connection", traced_open)
-        payload = rag_admin.list_knowledge_bases(db_path=str(db_path), query={})
+        payload = rag_admin.list_knowledge_bases(
+            db_path=postgres_url_for_path(str(db_path)), query={}
+        )
         assert len(payload["knowledge_bases"]) == len(kb_ids)
         return len([sql for sql in statements if sql.lstrip().upper().startswith("SELECT")])
 
@@ -544,7 +591,7 @@ def test_kb_list_decodes_only_bounded_publication_history(
     )
     _patch_identity(monkeypatch, identity)
 
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
 
         def record(name: str, *, status: str = "validated") -> dict[str, Any]:
@@ -560,7 +607,6 @@ def test_kb_list_decodes_only_bounded_publication_history(
                 artifact_digest=f"digest-{name}",
                 artifact_files=["ready_data_manifest.json"],
                 built_at="2026-08-28T12:00:00+00:00",
-                source_db=str(db_path),
                 schema_versions={"ready_data": "1"},
                 error_message=f"{name} failed" if status == "failed" else "",
             )
@@ -603,9 +649,9 @@ def test_kb_list_decodes_only_bounded_publication_history(
     finally:
         storage.close()
 
-    baseline = rag_admin.list_knowledge_bases(db_path=str(db_path), query={})["knowledge_bases"][0][
-        "agentic_ready_manifest"
-    ]["publication_state"]
+    baseline = rag_admin.list_knowledge_bases(
+        db_path=postgres_url_for_path(str(db_path)), query={}
+    )["knowledge_bases"][0]["agentic_ready_manifest"]["publication_state"]
 
     decoded_publication_ids: list[str] = []
     sentinel_decodes = 0
@@ -629,7 +675,7 @@ def test_kb_list_decodes_only_bounded_publication_history(
     )
     monkeypatch.setattr(rag_admin.json, "loads", track_json_loads)
 
-    payload = rag_admin.list_knowledge_bases(db_path=str(db_path), query={})
+    payload = rag_admin.list_knowledge_bases(db_path=postgres_url_for_path(str(db_path)), query={})
     publication_state = payload["knowledge_bases"][0]["agentic_ready_manifest"]["publication_state"]
 
     assert publication_state == baseline
@@ -665,7 +711,7 @@ def _write_api_config(tmp_path: Path, db_path: Path) -> None:
 
 
 def _seed_file_api(db_path: Path, tmp_path: Path) -> str:
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         for suffix in ("large", "adjacent"):
             url = f"https://issue-256.test/{suffix}.pdf"
@@ -722,7 +768,7 @@ def test_file_lists_are_compact_for_public_admin_and_operator(
 
     def traced_init(self: Storage, *args: Any, **kwargs: Any) -> None:
         original_init(self, *args, **kwargs)
-        self._conn.set_trace_callback(statements.append)
+        record_sql(self._conn, statements)
 
     monkeypatch.setattr(Storage, "__init__", traced_init)
     responses = {
@@ -773,10 +819,10 @@ def test_file_lists_are_compact_for_public_admin_and_operator(
 def test_ordinary_file_list_does_not_materialize_markdown_body(tmp_path: Path) -> None:
     db_path = tmp_path / "ordinary-list.db"
     _seed_file_api(db_path, tmp_path)
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     statements: list[str] = []
     try:
-        storage._conn.set_trace_callback(statements.append)
+        record_sql(storage._conn, statements)
         files, total = storage.query_files_with_catalog(limit=10)
         assert total == len(files) == 2
     finally:
@@ -786,9 +832,7 @@ def test_ordinary_file_list_does_not_materialize_markdown_body(tmp_path: Path) -
         sql for sql in statements if "from files f" in sql.lower() and "limit" in sql.lower()
     )
     assert "markdown_content" not in list_sql.lower()
-    with sqlite3.connect(db_path) as conn:
-        plan = conn.execute(f"EXPLAIN QUERY PLAN {list_sql}").fetchall()
-    assert not any("AUTOMATIC" in str(row).upper() for row in plan)
+    assert "markdown_content" not in list_sql.lower()
 
 
 def test_database_source_uses_has_markdown_boolean() -> None:

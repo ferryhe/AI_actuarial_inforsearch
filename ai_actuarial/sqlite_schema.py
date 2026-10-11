@@ -321,6 +321,7 @@ def _init_schema_on_connection(conn: sqlite3.Connection, db_path: str = "") -> N
     storage = Storage.__new__(Storage)
     storage.db_path = db_path
     storage._conn = conn
+    storage._schema_only = True
     storage._tx_depth = 0
     storage._agentic_ready_publication_columns_cache = None
     storage._defer_schema_commits = True
@@ -1607,10 +1608,6 @@ def _user_schema_objects(conn: sqlite3.Connection) -> tuple[SchemaObject, ...]:
     )
 
 
-def has_user_schema_objects(conn: sqlite3.Connection) -> bool:
-    return bool(_user_schema_objects(conn))
-
-
 def _captured_index_names(
     conn: sqlite3.Connection,
     tables: dict[str, TableSignature],
@@ -1666,7 +1663,7 @@ def _unexpected_schema_object_counts(
 def _current_storage_signature() -> dict[str, TableSignature]:
     from ai_actuarial.storage import Storage
 
-    storage = Storage(":memory:")
+    storage = Storage._legacy_sqlite_schema_for_validation()
     try:
         return _schema_signature(storage._conn)
     finally:

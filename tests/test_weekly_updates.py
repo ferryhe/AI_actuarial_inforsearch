@@ -13,22 +13,25 @@ from ai_actuarial.api.services.weekly_updates import (
 )
 from ai_actuarial.storage import Storage
 from ai_actuarial.task_runtime import NativeTaskRuntime
+from tests.postgres_helpers import postgres_url_for_path
 
 PERIOD_START = "2026-03-09T00:00:00+00:00"
 PERIOD_END = "2026-03-16T00:00:00+00:00"
 
 
-def _write_config(tmp_path: Path) -> tuple[Path, Path]:
+def _write_config(tmp_path: Path) -> tuple[Path, Path, str]:
     db_path = tmp_path / "index.db"
+    database_url = postgres_url_for_path(str(db_path))
     config_path = tmp_path / "sites.yaml"
     config_path.write_text(
         yaml.safe_dump(
             {
                 "paths": {
-                    "db": str(db_path),
+                    "data": str(tmp_path),
                     "download_dir": str(tmp_path / "files"),
                     "updates_dir": str(tmp_path / "updates"),
                 },
+                "database": {"type": "postgresql", "url_env": "DATABASE_URL"},
                 "defaults": {"file_exts": [".pdf"]},
                 "sites": [],
             },
@@ -36,11 +39,11 @@ def _write_config(tmp_path: Path) -> tuple[Path, Path]:
         ),
         encoding="utf-8",
     )
-    return db_path, config_path
+    return db_path, config_path, database_url
 
 
-def _seed_weekly_files(db_path: Path) -> None:
-    storage = Storage(str(db_path))
+def _seed_weekly_files(database_url: str) -> None:
+    storage = Storage(database_url)
     try:
         storage.insert_file(
             url="https://old-first-seen.example/old.pdf",
@@ -97,11 +100,11 @@ def _seed_weekly_files(db_path: Path) -> None:
 
 
 def test_weekly_summary_uses_first_seen_not_last_seen(tmp_path: Path) -> None:
-    db_path, _config_path = _write_config(tmp_path)
-    _seed_weekly_files(db_path)
+    _db_path, _config_path, database_url = _write_config(tmp_path)
+    _seed_weekly_files(database_url)
 
     summary = generate_weekly_update_summary(
-        db_path=str(db_path),
+        db_path=database_url,
         period_start=PERIOD_START,
         period_end=PERIOD_END,
     )
@@ -123,9 +126,10 @@ def test_previous_utc_iso_week_period_returns_completed_iso_week() -> None:
 
 
 def test_weekly_updates_api_lists_summaries_and_empty_latest(tmp_path: Path, monkeypatch) -> None:
-    db_path, config_path = _write_config(tmp_path)
-    _seed_weekly_files(db_path)
+    _db_path, config_path, database_url = _write_config(tmp_path)
+    _seed_weekly_files(database_url)
     monkeypatch.setenv("CONFIG_PATH", str(config_path))
+    monkeypatch.setenv("DATABASE_URL", database_url)
     monkeypatch.delenv("REQUIRE_AUTH", raising=False)
 
     client = TestClient(create_app())
@@ -135,7 +139,7 @@ def test_weekly_updates_api_lists_summaries_and_empty_latest(tmp_path: Path, mon
     assert empty_latest.json() == {"summary": None}
 
     generate_weekly_update_summary(
-        db_path=str(db_path),
+        db_path=database_url,
         period_start=PERIOD_START,
         period_end=PERIOD_END,
     )
@@ -154,8 +158,9 @@ def test_weekly_updates_api_lists_summaries_and_empty_latest(tmp_path: Path, mon
 def test_weekly_updates_api_is_public_readable_when_auth_required(
     tmp_path: Path, monkeypatch
 ) -> None:
-    _db_path, config_path = _write_config(tmp_path)
+    _db_path, config_path, database_url = _write_config(tmp_path)
     monkeypatch.setenv("CONFIG_PATH", str(config_path))
+    monkeypatch.setenv("DATABASE_URL", database_url)
     monkeypatch.setenv("REQUIRE_AUTH", "true")
 
     client = TestClient(create_app())
@@ -165,9 +170,10 @@ def test_weekly_updates_api_is_public_readable_when_auth_required(
 
 
 def test_native_task_runtime_runs_weekly_summary(tmp_path: Path, monkeypatch) -> None:
-    db_path, config_path = _write_config(tmp_path)
-    _seed_weekly_files(db_path)
+    db_path, config_path, database_url = _write_config(tmp_path)
+    _seed_weekly_files(database_url)
     monkeypatch.setenv("CONFIG_PATH", str(config_path))
+    monkeypatch.setenv("DATABASE_URL", database_url)
 
     runtime = NativeTaskRuntime()
     result = runtime._run_collection(
@@ -180,7 +186,7 @@ def test_native_task_runtime_runs_weekly_summary(tmp_path: Path, monkeypatch) ->
     assert result.items_found == 1
     assert result.metadata["file_count"] == 1
 
-    storage = Storage(str(db_path))
+    storage = Storage(database_url)
     try:
         latest = storage.get_latest_weekly_update_summary()
     finally:
@@ -193,9 +199,10 @@ def test_native_task_runtime_runs_weekly_summary(tmp_path: Path, monkeypatch) ->
 def test_native_task_runtime_weekly_summary_clamps_invalid_max_files(
     tmp_path: Path, monkeypatch
 ) -> None:
-    db_path, config_path = _write_config(tmp_path)
-    _seed_weekly_files(db_path)
+    _db_path, config_path, database_url = _write_config(tmp_path)
+    _seed_weekly_files(database_url)
     monkeypatch.setenv("CONFIG_PATH", str(config_path))
+    monkeypatch.setenv("DATABASE_URL", database_url)
 
     runtime = NativeTaskRuntime()
     result = runtime._run_collection(
@@ -225,12 +232,12 @@ def test_default_config_includes_previous_weekly_summary_schedule() -> None:
 
 
 def test_generate_weekly_summary_can_reuse_existing_storage(tmp_path: Path) -> None:
-    db_path, _config_path = _write_config(tmp_path)
-    _seed_weekly_files(db_path)
-    storage = Storage(str(db_path))
+    _db_path, _config_path, database_url = _write_config(tmp_path)
+    _seed_weekly_files(database_url)
+    storage = Storage(database_url)
     try:
         summary = generate_weekly_update_summary(
-            db_path=str(db_path),
+            db_path=database_url,
             storage=storage,
             period_start=PERIOD_START,
             period_end=PERIOD_END,

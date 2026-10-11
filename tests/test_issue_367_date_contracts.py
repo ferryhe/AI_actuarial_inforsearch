@@ -29,7 +29,7 @@ def test_native_task_start_success_and_failure_timestamps_are_utc(monkeypatch) -
             pass
 
     monkeypatch.setattr(task_runtime_module.threading, "Thread", DeferredThread)
-    monkeypatch.setattr(task_runtime_module, "append_task_log", lambda *args: None)
+    monkeypatch.setattr(task_runtime_module, "append_task_log", lambda *args, **_kwargs: None)
     runtime = NativeTaskRuntime.__new__(NativeTaskRuntime)
     runtime.active_tasks = {}
     runtime.task_history = []
@@ -52,8 +52,8 @@ def test_native_task_start_success_and_failure_timestamps_are_utc(monkeypatch) -
 
 
 def test_rejected_task_timestamps_are_utc(monkeypatch) -> None:
-    monkeypatch.setattr(ops_write, "append_task_log", lambda *args: None)
-    monkeypatch.setattr(ops_write, "_append_history_to_disk", lambda _task: None)
+    monkeypatch.setattr(ops_write, "append_task_log", lambda *args, **_kwargs: None)
+    monkeypatch.setattr(ops_write, "_append_history_to_disk", lambda *_args, **_kwargs: None)
     history: list[dict[str, object]] = []
     bridge = SimpleNamespace(task_history_ref=history, task_lock=None)
 

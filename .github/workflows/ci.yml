@@ -76,7 +76,23 @@ jobs:
 
   quality-gate:
     needs: dead-code-symbols
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: ai_actuarial_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d ai_actuarial_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      POSTGRES_TEST_URL: postgresql://postgres:postgres@localhost:5432/ai_actuarial_test
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -99,6 +115,9 @@ jobs:
 
       - name: Install quality dependencies
         run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client-16
+          pg_dump --version | grep -E '^pg_dump \(PostgreSQL\) 16\.'
           npm ci
           python -m pip install --upgrade pip
           python - <<'PY'
@@ -169,7 +188,23 @@ jobs:
 
   python-smoke:
     needs: dead-code-symbols
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: ai_actuarial_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d ai_actuarial_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      POSTGRES_TEST_URL: postgresql://postgres:postgres@localhost:5432/ai_actuarial_test
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -186,6 +221,9 @@ jobs:
 
       - name: Install test dependencies
         run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client-16
+          pg_dump --version | grep -E '^pg_dump \(PostgreSQL\) 16\.'
           python -m pip install --upgrade pip
           python - <<'PY'
           from pathlib import Path
@@ -224,17 +262,23 @@ jobs:
           -q
 
       - name: Run Agentic RAG eval tests
+        env:
+          FASTAPI_SESSION_SECRET: ci-fastapi-session-secret
+          TOKEN_ENCRYPTION_KEY: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
         run: >-
           python -m pytest
           tests/agentic_rag/test_eval.py
           -q
 
       - name: Run Agentic RAG eval smoke
+        env:
+          FASTAPI_SESSION_SECRET: ci-fastapi-session-secret
+          TOKEN_ENCRYPTION_KEY: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
         run: >-
           python -m ai_actuarial.agentic_rag.eval
           --mode agentic
           --cases eval/agentic_cases.jsonl
-          --output-dir eval/fixtures/agentic_ready_data
+          --output-dir ${{ github.workspace }}/eval/fixtures/agentic_ready_data
           --profile formula
           --json
 

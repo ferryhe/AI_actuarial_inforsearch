@@ -130,10 +130,7 @@ def _latest_build_attempt(
     prefetched = getattr(storage, "get_agentic_ready_latest_build_attempt", None)
     if callable(prefetched):
         return prefetched(kb_id, profile)
-    columns = frozenset(
-        str(row[1])
-        for row in storage._conn.execute("PRAGMA table_info(agentic_ready_publications)").fetchall()
-    )
+    columns = frozenset(storage._conn.table_columns("agentic_ready_publications"))
     required = {
         "publication_id",
         "kb_id",
@@ -901,7 +898,7 @@ def read_public_ready_data_snapshot(
     include_legacy_output_dir: bool = True,
     include_ready_build_input: bool = True,
 ) -> dict[str, Any]:
-    with storage.transaction():
+    with storage.transaction(read_snapshot=True):
         return _read_public_ready_data_snapshot_in_current_transaction(
             storage,
             kb_id=kb_id,
@@ -970,7 +967,7 @@ def publish_ready_data_publication(
 
         from ai_actuarial.agentic_rag import ready_data_builder
 
-        allowed_output_root = str(Path(db_path).resolve().parent / "agentic_ready_data")
+        allowed_output_root = str(storage.data_root / "agentic_ready_data")
         validation = _validate_recorded_ready_publication(
             candidate,
             validator=ready_data_builder.validate,
@@ -1137,7 +1134,7 @@ def rollback_ready_data_publication(
 
         from ai_actuarial.agentic_rag import ready_data_builder
 
-        allowed_output_root = str(Path(db_path).resolve().parent / "agentic_ready_data")
+        allowed_output_root = str(storage.data_root / "agentic_ready_data")
 
         def validate_previous(candidate: dict[str, Any]) -> bool:
             if (

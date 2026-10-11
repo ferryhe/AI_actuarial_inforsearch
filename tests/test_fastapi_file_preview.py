@@ -11,6 +11,7 @@ from ai_actuarial.api.app import create_app
 from ai_actuarial.api.services.files_write import get_rag_file_preview
 from ai_actuarial.api.services.read import SENSITIVE_FILE_FIELDS
 from ai_actuarial.storage import Storage
+from tests.postgres_helpers import postgres_url_for_path
 
 PDF_BYTES = b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n"
 
@@ -51,7 +52,7 @@ def _seed_storage(db_path: Path, files_dir: Path) -> dict[str, str]:
     alpha_path = files_dir / "alpha.pdf"
     alpha_path.write_bytes(PDF_BYTES)
 
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         file_url = "https://alpha.example/doc-a.pdf"
         file_sha = hashlib.sha256(PDF_BYTES).hexdigest()

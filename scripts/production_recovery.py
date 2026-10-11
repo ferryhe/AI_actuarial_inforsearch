@@ -13,20 +13,21 @@ import hashlib
 import json
 import re
 import shutil
-import sqlite3
 import subprocess
 import sys
 from collections.abc import Callable, Sequence
-from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 # Also support direct execution from scripts/ without an installed package.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from ai_actuarial.build_info import config_provenance  # noqa: E402
 
-BACKUP_FORMAT_VERSION = 1
+if TYPE_CHECKING:
+    from ai_actuarial.postgres import DatabaseConfig
+
+BACKUP_FORMAT_VERSION = 2
 # ``files`` holds re-crawlable source documents (PDF/PPTX/DOCX); it is excluded
 # from full snapshots. Its metadata lives in the ``files`` table and is still
 # captured by the online database backup, so a restore reports missing file
@@ -147,54 +148,54 @@ def _restored_file_path(data_root: Path, raw_path: Any) -> Path:
     return data_root.joinpath(*parts)
 
 
-def _database_report(db_path: Path, *, include_counts: bool = False) -> dict[str, Any]:
-    uri = f"{db_path.resolve().as_uri()}?mode=ro"
-    with closing(sqlite3.connect(uri, uri=True)) as conn:
-        quick_rows = [str(row[0]) for row in conn.execute("PRAGMA quick_check")]
-        quick_check = "ok" if quick_rows == ["ok"] else "; ".join(quick_rows)
-        schema_user_version = int(conn.execute("PRAGMA user_version").fetchone()[0])
+def _database_report(
+    database_url: DatabaseConfig | str,
+    *,
+    schema: str | None = None,
+    include_counts: bool = False,
+    data_root: Path | None = None,
+) -> dict[str, Any]:
+    from ai_actuarial.postgres import PostgresConnection
+
+    connection = PostgresConnection(database_url, read_only=True)
+    try:
+        schema = schema or str(connection.execute("SELECT current_schema()").fetchone()[0])
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", schema):
+            raise ValueError("Invalid PostgreSQL schema name")
+        connection.execute(f'SET search_path TO "{schema}"')
+        version = 0
+        if connection.table_exists("ai_actuarial_schema_migrations"):
+            version = int(
+                connection.execute(
+                    "SELECT COALESCE(MAX(version), 0) FROM ai_actuarial_schema_migrations"
+                ).fetchone()[0]
+            )
         report: dict[str, Any] = {
-            "quick_check": quick_check,
-            "schema_user_version": schema_user_version,
+            "connectivity_check": "ok",
+            "schema": schema,
+            "schema_version": version,
         }
         if include_counts:
-            existing = {
-                str(row[0])
-                for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
-            }
-            missing_tables = sorted(set(RESTORE_COUNT_TABLES) - existing)
+            existing = {table for table in RESTORE_COUNT_TABLES if connection.table_exists(table)}
             report["counts"] = {
-                table: int(conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0])
+                table: int(connection.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0])
                 for table in RESTORE_COUNT_TABLES
                 if table in existing
             }
-            report["missing_tables"] = missing_tables
+            report["missing_tables"] = sorted(set(RESTORE_COUNT_TABLES) - existing)
             missing_paths = 0
             if "files" in existing:
-                rows = conn.execute(
+                rows = connection.execute(
                     "SELECT local_path FROM files WHERE local_path IS NOT NULL AND local_path != ''"
                 )
-                data_root = db_path.parent
-                for (raw_path,) in rows:
-                    candidate = _restored_file_path(data_root, raw_path)
+                for row in rows:
+                    candidate = _restored_file_path(data_root or Path.cwd(), row[0])
                     if not candidate.exists():
                         missing_paths += 1
             report["missing_file_paths"] = missing_paths
         return report
-
-
-def _online_sqlite_backup(source_path: Path, destination_path: Path) -> dict[str, int]:
-    destination_path.parent.mkdir(parents=True, exist_ok=True)
-    with closing(sqlite3.connect(source_path)) as source:
-        checkpoint = source.execute("PRAGMA wal_checkpoint(PASSIVE)").fetchone()
-        with closing(sqlite3.connect(destination_path)) as destination:
-            source.backup(destination)
-    values = tuple(int(value) for value in (checkpoint or (0, 0, 0)))
-    return {
-        "busy": values[0],
-        "wal_frames": values[1],
-        "checkpointed_frames": values[2],
-    }
+    finally:
+        connection.close()
 
 
 def _next_backup_path(backup_root: Path, timestamp: str) -> Path:
@@ -207,6 +208,33 @@ def _next_backup_path(backup_root: Path, timestamp: str) -> Path:
     return candidate
 
 
+def _database_url(database_url: DatabaseConfig | str | None = None) -> DatabaseConfig:
+    from ai_actuarial.postgres import DatabaseConfig, resolve_database_config
+
+    if isinstance(database_url, DatabaseConfig):
+        return database_url
+    if isinstance(database_url, str):
+        return DatabaseConfig(database_url)
+    from ai_actuarial.shared_runtime import load_sites_config
+
+    return resolve_database_config(load_sites_config(default={}))
+
+
+def _database_from_env(environment_name: str | None) -> DatabaseConfig:
+    if not environment_name:
+        return _database_url()
+    import os
+
+    from ai_actuarial.postgres import DatabaseConfig
+
+    value = os.getenv(environment_name, "").strip()
+    if not value:
+        raise ValueError(
+            f"PostgreSQL URL environment variable {environment_name} is not configured"
+        )
+    return DatabaseConfig(value)
+
+
 def create_backup(
     *,
     data_dir: Path,
@@ -214,8 +242,15 @@ def create_backup(
     backup_root: Path,
     include_data: bool = False,
     quiesced: bool = False,
+    database_url: DatabaseConfig | str | None = None,
     now: Callable[[], datetime] = _utc_now,
 ) -> Path:
+    from ai_actuarial.postgres import (
+        PostgresConnection,
+        run_postgres_dump,
+        verify_postgres_dump,
+    )
+
     """Create an online DB backup or a quiesced DB+file snapshot.
 
     ``include_data`` requires an explicit acknowledgement that all application
@@ -248,7 +283,12 @@ def create_backup(
                 "Full data snapshots require quiesced=True after stopping application writers"
             )
         config_path = _require_file(config_path, "configuration file")
-        db_path = _require_file(data_dir / "index.db", "SQLite database index.db")
+        database = _database_url(database_url)
+        connection = PostgresConnection(database, read_only=True)
+        try:
+            schema = str(connection.execute("SELECT current_schema()").fetchone()[0])
+        finally:
+            connection.close()
 
         included_directories: list[str] = []
         source_stats: dict[str, dict[str, Any]] = {}
@@ -258,17 +298,16 @@ def create_backup(
                 source_stats[name] = _directory_stats(source)
 
         staging.mkdir(mode=0o700)
-        backup_db = staging / "database" / "index.db"
-        checkpoint = _online_sqlite_backup(db_path, backup_db)
-        database = _database_report(backup_db)
-        if database["quick_check"] != "ok":
-            raise RuntimeError(f"Backup database quick_check failed: {database['quick_check']}")
-        database.update(
+        backup_db = staging / "database" / "postgresql.dump"
+        backup_db.parent.mkdir(parents=True, exist_ok=True)
+        run_postgres_dump(database, backup_db, schema=schema)
+        verify_postgres_dump(backup_db)
+        database_report = _database_report(database, schema=schema)
+        database_report.update(
             {
-                "path": "database/index.db",
+                "path": "database/postgresql.dump",
                 "bytes": backup_db.stat().st_size,
                 "sha256": _sha256(backup_db),
-                "wal_checkpoint": checkpoint,
             }
         )
 
@@ -299,7 +338,7 @@ def create_backup(
             "scope": event_base["scope"],
             "started_at": event_base["started_at"],
             "finished_at": _iso_utc(finished),
-            "database": database,
+            "database": database_report,
             "configuration": {
                 "path": "config/sites.yaml",
                 "bytes": backup_config.stat().st_size,
@@ -378,6 +417,8 @@ def prune_old_backups(
 
 
 def verify_backup(backup_dir: Path) -> dict[str, Any]:
+    from ai_actuarial.postgres import verify_postgres_dump
+
     backup_dir = _require_directory(backup_dir, "backup directory")
     manifest_path = _require_file(backup_dir / "manifest.json", "backup manifest")
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -387,15 +428,18 @@ def verify_backup(backup_dir: Path) -> dict[str, Any]:
         raise ValueError("Only successful backup manifests can be verified")
 
     database_spec = manifest["database"]
-    db_path = _require_file(
+    dump_path = _require_file(
         _safe_manifest_path(backup_dir, str(database_spec["path"])),
-        "backup database",
+        "backup PostgreSQL dump",
     )
-    if _sha256(db_path) != database_spec["sha256"]:
-        raise ValueError("Backup database checksum does not match manifest")
-    database = _database_report(db_path)
-    if database["quick_check"] != "ok":
-        raise RuntimeError(f"Backup database quick_check failed: {database['quick_check']}")
+    if _sha256(dump_path) != database_spec["sha256"]:
+        raise ValueError("Backup PostgreSQL dump checksum does not match manifest")
+    verify_postgres_dump(dump_path)
+    database = {
+        key: value
+        for key, value in database_spec.items()
+        if key in {"connectivity_check", "schema", "schema_version", "path", "bytes", "sha256"}
+    }
 
     config_spec = manifest["configuration"]
     config_path = _require_file(
@@ -422,8 +466,18 @@ def verify_backup(backup_dir: Path) -> dict[str, Any]:
     }
 
 
-def restore_to_isolated_directory(backup_dir: Path, restore_dir: Path) -> dict[str, Any]:
-    """Restore a verified snapshot without replacing any live production path."""
+def restore_to_isolated_directory(
+    backup_dir: Path,
+    restore_dir: Path,
+    *,
+    database_url: DatabaseConfig | str,
+) -> dict[str, Any]:
+    """Restore into a caller-provisioned empty PostgreSQL database and file tree."""
+
+    from ai_actuarial.postgres import (
+        PostgresConnection,
+        run_postgres_restore,
+    )
 
     verification = verify_backup(backup_dir)
     backup_dir = backup_dir.expanduser().resolve()
@@ -436,16 +490,43 @@ def restore_to_isolated_directory(backup_dir: Path, restore_dir: Path) -> dict[s
 
     restored_data = restore_dir / "data"
     restored_data.mkdir()
-    shutil.copy2(backup_dir / "database" / "index.db", restored_data / "index.db")
+    restored_database = restore_dir / "database" / "postgresql.dump"
+    restored_database.parent.mkdir(parents=True)
+    shutil.copy2(backup_dir / "database" / "postgresql.dump", restored_database)
     for name in verification["included_data_directories"]:
         shutil.copytree(backup_dir / "data" / name, restored_data / name)
     restored_config = restore_dir / "config"
     restored_config.mkdir()
     shutil.copy2(backup_dir / "config" / "sites.yaml", restored_config / "sites.yaml")
 
-    database = _database_report(restored_data / "index.db", include_counts=True)
-    if database["quick_check"] != "ok":
-        raise RuntimeError(f"Restored database quick_check failed: {database['quick_check']}")
+    schema = str(verification["database"]["schema"])
+    target_connection = PostgresConnection(database_url)
+    try:
+        tables = target_connection.execute(
+            "SELECT COUNT(*) FROM information_schema.tables "
+            "WHERE table_schema = ? AND table_type = 'BASE TABLE'",
+            (schema,),
+        ).fetchone()[0]
+        if int(tables):
+            raise ValueError(
+                "Restore database must not already contain tables in the target schema"
+            )
+        schema_exists = target_connection.execute(
+            "SELECT 1 FROM pg_namespace WHERE nspname = ?", (schema,)
+        ).fetchone()
+        if not schema_exists:
+            target_connection.execute(f'CREATE SCHEMA "{schema}"')
+    finally:
+        target_connection.close()
+    run_postgres_restore(database_url, restored_database, schema=schema)
+    database = _database_report(
+        database_url,
+        schema=schema,
+        include_counts=True,
+        data_root=restored_data,
+    )
+    if database["connectivity_check"] != "ok":
+        raise RuntimeError("Restored PostgreSQL database check failed")
     if database["missing_tables"]:
         raise RuntimeError(
             "Restored database is missing required smoke tables: "
@@ -598,7 +679,7 @@ def create_release_record(
     *,
     image: str,
     config_path: Path,
-    db_path: Path,
+    database_url: DatabaseConfig | str | None,
     output_path: Path,
     frontend_image: str | None = None,
     build_metadata_path: Path | None = None,
@@ -608,7 +689,7 @@ def create_release_record(
     now: Callable[[], datetime] = _utc_now,
 ) -> dict[str, Any]:
     config_path = _require_file(config_path, "configuration file")
-    db_path = _require_file(db_path, "SQLite database")
+    database_url = _database_url(database_url)
     image_data = inspect_image(image)
     labels = dict(((image_data.get("Config") or {}).get("Labels") or {}))
     selected_labels = {name: str(labels.get(name) or "unknown") for name in OCI_LABELS}
@@ -632,7 +713,7 @@ def create_release_record(
     missing = [name for name, value in selected_labels.items() if value == "unknown"]
     if missing:
         raise ValueError(f"Image is missing required traceability labels: {', '.join(missing)}")
-    database = _database_report(db_path)
+    database = _database_report(database_url)
     dirty_label = selected_labels["com.aiinforsearch.git-dirty"].lower()
     release_id = str(labels.get("com.aiinforsearch.release-id") or "unknown")
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", release_id) or release_id == "unknown":
@@ -663,7 +744,7 @@ def create_release_record(
         "build_utc": selected_labels["org.opencontainers.image.created"],
         "source_url": selected_labels["org.opencontainers.image.source"],
         **config_provenance(config_path),
-        "schema_user_version": database["schema_user_version"],
+        "schema_version": database["schema_version"],
     }
     if frontend_image:
         record.update(
@@ -692,6 +773,7 @@ def _parser() -> argparse.ArgumentParser:
     backup.add_argument("--data-dir", type=Path, required=True)
     backup.add_argument("--config", type=Path, required=True)
     backup.add_argument("--backup-root", type=Path, required=True)
+    backup.add_argument("--database-url-env", default="")
     backup.add_argument("--include-data", action="store_true")
     backup.add_argument("--quiesced", action="store_true")
     backup.add_argument(
@@ -713,6 +795,11 @@ def _parser() -> argparse.ArgumentParser:
     )
     restore.add_argument("backup_dir", type=Path)
     restore.add_argument("--restore-dir", type=Path, required=True)
+    restore.add_argument(
+        "--database-url-env",
+        default="POSTGRES_RESTORE_URL",
+        help="Environment variable for a pre-provisioned empty restore database",
+    )
     restore.add_argument(
         "--json", action="store_true", help="Emit the machine-readable JSON result"
     )
@@ -737,7 +824,7 @@ def _parser() -> argparse.ArgumentParser:
     release.add_argument("--api-build-target", default="api")
     release.add_argument("--frontend-build-target", default="frontend")
     release.add_argument("--config", type=Path, required=True)
-    release.add_argument("--db", type=Path, required=True)
+    release.add_argument("--database-url-env", default="")
     release.add_argument("--output", type=Path, required=True)
     release.add_argument(
         "--json", action="store_true", help="Emit the machine-readable JSON result"
@@ -754,6 +841,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             backup_root=args.backup_root,
             include_data=args.include_data,
             quiesced=args.quiesced,
+            database_url=_database_from_env(args.database_url_env),
         )
         payload: dict[str, Any] = {"status": "success", "backup_dir": str(path)}
         if args.retention_days is not None:
@@ -763,7 +851,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     elif args.command == "verify":
         payload = verify_backup(args.backup_dir)
     elif args.command == "restore-smoke":
-        payload = restore_to_isolated_directory(args.backup_dir, args.restore_dir)
+        payload = restore_to_isolated_directory(
+            args.backup_dir,
+            args.restore_dir,
+            database_url=_database_from_env(args.database_url_env),
+        )
     elif args.command == "capacity-check":
         payload = capacity_status(args.path, threshold_percent=args.threshold)
     elif args.command == "release-record":
@@ -774,7 +866,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             api_build_target=args.api_build_target,
             frontend_build_target=args.frontend_build_target,
             config_path=args.config,
-            db_path=args.db,
+            database_url=_database_from_env(args.database_url_env),
             output_path=args.output,
         )
     else:  # pragma: no cover - argparse enforces a valid subcommand

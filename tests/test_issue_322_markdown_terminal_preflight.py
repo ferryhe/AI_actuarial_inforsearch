@@ -13,8 +13,14 @@ from ai_actuarial.collectors.base import CollectionResult
 from ai_actuarial.sqlite_schema import apply_schema, schema_status
 from ai_actuarial.storage import Storage
 from ai_actuarial.task_runtime import NativeTaskRuntime
+from tests.postgres_helpers import postgres_url_for_path
 
 OLE_HEADER = bytes.fromhex("d0cf11e0a1b11ae1")
+
+
+@pytest.fixture(autouse=True)
+def _isolated_postgres_database(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DATABASE_URL", postgres_url_for_path(tmp_path / "runtime.db"))
 
 
 def _configure_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path]:
@@ -38,6 +44,7 @@ def _configure_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple
     )
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("CONFIG_PATH", str(config_path))
+    monkeypatch.setenv("DATABASE_URL", postgres_url_for_path(db_path))
     monkeypatch.delenv("MARKDOWN_CONVERSION_CONFIG_PATH", raising=False)
     return db_path, download_dir
 
@@ -96,7 +103,7 @@ def test_terminal_preflight_classifies_before_conversion_and_persists_exclusion(
         "html_magic": "https://example.test/html-magic.pdf",
         "valid": "https://example.test/valid.pdf",
     }
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         _seed_file(
             storage,
@@ -176,12 +183,15 @@ def test_terminal_preflight_classifies_before_conversion_and_persists_exclusion(
     assert second.metadata["result"]["outcomes"] == []
     assert calls == []
 
-    with sqlite3.connect(db_path) as conn:
+    storage = Storage(postgres_url_for_path(db_path))
+    try:
         states = dict(
-            conn.execute(
+            storage._conn.execute(
                 "SELECT file_url, terminal_code FROM markdown_terminal_source_state"
             ).fetchall()
         )
+    finally:
+        storage.close()
     assert states == {
         urls["legacy"]: "unsupported_legacy_ppt",
         urls["missing"]: "repair_required",
@@ -199,7 +209,7 @@ def test_ordinary_backlog_preflights_legacy_ppt_with_missing_or_generic_mime(
         ("https://example.test/missing-mime.ppt", ""),
         ("https://example.test/generic-mime.ppt", "application/octet-stream"),
     )
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         for file_url, content_type in cases:
             source_path = tmp_path / file_url.rsplit("/", 1)[-1]
@@ -236,12 +246,15 @@ def test_ordinary_backlog_preflights_legacy_ppt_with_missing_or_generic_mime(
     assert {str(outcome["terminal_code"]) for outcome in outcomes.values()} == {
         "unsupported_legacy_ppt"
     }
-    with sqlite3.connect(db_path) as conn:
+    storage = Storage(postgres_url_for_path(db_path))
+    try:
         states = dict(
-            conn.execute(
+            storage._conn.execute(
                 "SELECT file_url, terminal_code FROM markdown_terminal_source_state"
             ).fetchall()
         )
+    finally:
+        storage.close()
     assert states == {file_url: "unsupported_legacy_ppt" for file_url, _content_type in cases}
 
 
@@ -252,7 +265,7 @@ def test_source_change_and_explicit_selection_reenter_under_narrow_rules(
     db_path, _download_dir = _configure_runtime(tmp_path, monkeypatch)
     missing_path = tmp_path / "missing.pdf"
     file_url = "https://example.test/missing.pdf"
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         _seed_file(
             storage,
@@ -300,14 +313,17 @@ def test_source_change_and_explicit_selection_reenter_under_narrow_rules(
     assert repaired.metadata["items_terminal_skipped"] == 0
     assert _outcomes(repaired)[file_url]["outcome"] == "converted"
     assert calls == ["missing.pdf"]
-    with sqlite3.connect(db_path) as conn:
+    storage = Storage(postgres_url_for_path(db_path))
+    try:
         assert (
-            conn.execute(
+            storage._conn.execute(
                 "SELECT COUNT(*) FROM markdown_terminal_source_state WHERE file_url = ?",
                 (file_url,),
             ).fetchone()[0]
             == 0
         )
+    finally:
+        storage.close()
 
 
 def test_same_path_replacement_reenters_without_database_metadata_change(
@@ -319,7 +335,7 @@ def test_same_path_replacement_reenters_without_database_metadata_change(
     source_path.write_bytes(OLE_HEADER + b"legacy")
     original_stat = source_path.stat()
     file_url = "https://example.test/replacement.ppt"
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         _seed_file(
             storage,
@@ -371,7 +387,7 @@ def test_terminal_backlog_paginates_before_applying_logical_offset_and_limit(
     newer_valid_path = tmp_path / "newer-valid.pdf"
     older_valid_path.write_bytes(b"%PDF-1.7\nolder")
     newer_valid_path.write_bytes(b"%PDF-1.7\nnewer")
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         _seed_file(
             storage,
@@ -435,7 +451,7 @@ def test_retryable_converter_failure_stays_eligible_and_has_safe_item_error(
     source_path = tmp_path / "retry.pdf"
     source_path.write_bytes(b"%PDF-1.7\nretry")
     file_url = "https://example.test/retry.pdf"
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         _seed_file(
             storage,
@@ -507,7 +523,7 @@ def test_terminal_only_finalization_and_both_api_summaries_stay_visible(
     }
     runtime.task_history = []
     runtime._append_history_to_disk = lambda _task: None
-    monkeypatch.setattr("ai_actuarial.task_runtime.append_task_log", lambda *_args: None)
+    monkeypatch.setattr("ai_actuarial.task_runtime.append_task_log", lambda *_args, **_kwargs: None)
 
     runtime._finalize_task_success("terminal-task", "markdown_conversion", result)
     task = runtime.task_history[0]
@@ -589,7 +605,7 @@ def test_auto_long_failure_details_are_omitted_from_public_result(
     source_path = tmp_path / "control.pdf"
     source_path.write_bytes(b"%PDF-1.7\n")
     file_url = "https://example.test/control.pdf"
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         _seed_file(
             storage,
@@ -696,7 +712,7 @@ def test_schema_v14_migrates_terminal_state_table_and_reopens_idempotently(
     tmp_path: Path,
 ) -> None:
     db_path = tmp_path / "schema-v13.db"
-    storage = Storage(str(db_path))
+    storage = Storage._legacy_sqlite_schema_for_validation(db_path)
     storage.close()
     with sqlite3.connect(db_path) as conn:
         conn.execute("DROP TABLE IF EXISTS markdown_terminal_source_state")
@@ -717,7 +733,7 @@ def test_schema_v14_migrates_terminal_state_table_and_reopens_idempotently(
         }
     assert columns == {"file_url", "terminal_code", "source_fingerprint", "updated_at"}
 
-    reopened = Storage(str(db_path))
+    reopened = Storage._legacy_sqlite_schema_for_validation(db_path)
     reopened.close()
     repeated = apply_schema(db_path)
     assert repeated["state"] == "current"

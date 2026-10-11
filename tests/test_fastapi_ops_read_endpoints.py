@@ -15,11 +15,12 @@ from ai_actuarial.api.app import create_app
 from ai_actuarial.api.middleware.rate_limit import RateLimitStore
 from ai_actuarial.services.token_encryption import TokenEncryption
 from ai_actuarial.storage import Storage
+from tests.postgres_helpers import postgres_url_for_path
 
 
 def _task_log_path(base_dir: Path, task_id: str) -> Path:
     safe_id = "".join(ch if ch.isalnum() or ch in "_.-" else "_" for ch in (task_id or "unknown"))
-    return base_dir / "data" / "task_logs" / f"{safe_id}.log"
+    return base_dir / "task_logs" / f"{safe_id}.log"
 
 
 def _write_config_files(base_dir: Path) -> tuple[Path, Path, Path]:
@@ -135,7 +136,7 @@ def _write_config_files(base_dir: Path) -> tuple[Path, Path, Path]:
 
 
 def _seed_storage(db_path: Path) -> dict[str, object]:
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         token_encryption = TokenEncryption()
         storage.insert_file(
@@ -245,6 +246,8 @@ def _build_test_client(
     tmp_path: Path, monkeypatch, *, require_auth: bool
 ) -> tuple[TestClient, object, dict[str, object]]:
     db_path, config_path, categories_path = _write_config_files(tmp_path)
+    database_url = postgres_url_for_path(db_path)
+    monkeypatch.setenv("DATABASE_URL", database_url)
     TokenEncryption._instance = None
     monkeypatch.setenv("TOKEN_ENCRYPTION_KEY", Fernet.generate_key().decode())
     seed = _seed_storage(db_path)
@@ -597,9 +600,7 @@ def test_fastapi_global_logs_read_endpoint_is_native(tmp_path: Path, monkeypatch
     client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
     monkeypatch.chdir(tmp_path)
     app.state.enable_global_logs_api = True
-    data_dir = tmp_path / "data"
-    data_dir.mkdir(parents=True, exist_ok=True)
-    (data_dir / "app.log").write_text(
+    (tmp_path / "app.log").write_text(
         "2026-04-17 10:00:00 INFO first\n2026-04-17 10:01:00 ERROR second\n",
         encoding="utf-8",
     )

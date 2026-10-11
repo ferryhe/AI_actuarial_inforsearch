@@ -10,6 +10,7 @@ from ai_actuarial.cli import _site_configs, cmd_update
 from ai_actuarial.collectors.base import CollectionConfig
 from ai_actuarial.collectors.url import URLCollector
 from ai_actuarial.task_runtime import NativeTaskRuntime
+from tests.postgres_helpers import postgres_url_for_path
 
 
 def test_cli_site_config_preserves_acquisition_tools() -> None:
@@ -29,7 +30,8 @@ def test_cli_site_config_preserves_acquisition_tools() -> None:
     assert sites[0].acquisition_tools == ["search"]
 
 
-def test_cli_update_does_not_crawl_search_only_site(tmp_path: Path) -> None:
+def test_cli_update_does_not_crawl_search_only_site(tmp_path: Path, monkeypatch) -> None:
+    database_url = postgres_url_for_path(tmp_path / "cli.db")
     config_path = tmp_path / "sites.yaml"
     config_path.write_text(
         yaml.safe_dump(
@@ -61,6 +63,7 @@ def test_cli_update_does_not_crawl_search_only_site(tmp_path: Path) -> None:
         max_depth=None,
         no_search=True,
     )
+    monkeypatch.setenv("DATABASE_URL", database_url)
 
     with patch("ai_actuarial.cli.Crawler") as crawler_cls:
         assert cmd_update(args) == 0
@@ -106,11 +109,13 @@ def test_native_url_collection_preserves_zero_default_delay(tmp_path: Path, monk
         encoding="utf-8",
     )
     monkeypatch.setenv("CONFIG_PATH", str(config_path))
+    database_url = postgres_url_for_path(tmp_path / "runtime.db")
+    monkeypatch.setenv("DATABASE_URL", database_url)
     fake_crawler = MagicMock(default_delay_seconds=0)
     fake_crawler.scan_page_for_files.return_value = []
 
     with patch("ai_actuarial.task_runtime.Crawler", return_value=fake_crawler) as crawler_cls:
-        result = NativeTaskRuntime()._run_collection(
+        result = NativeTaskRuntime(ready_data_database=database_url)._run_collection(
             "task-url-zero-delay",
             "url",
             {

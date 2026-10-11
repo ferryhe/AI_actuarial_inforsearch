@@ -7,6 +7,7 @@ import pytest
 from ai_actuarial.api.services import rag_admin
 from ai_actuarial.rag.knowledge_base import KnowledgeBaseManager
 from ai_actuarial.storage import Storage
+from tests.postgres_helpers import postgres_url_for_path, record_sql
 from tests.test_fastapi_rag_admin_endpoints import _build_test_client
 
 
@@ -23,7 +24,7 @@ def paged_client(tmp_path, monkeypatch):
     )
     assert created.status_code == 201, created.text
     db_path = tmp_path / "index.db"
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         urls = [f"https://fixture.test/{i:04d}.pdf" for i in range(1101)]
         storage._conn.executemany(
@@ -112,7 +113,7 @@ def test_operator_chunk_versions_use_one_grouped_count_query(paged_client, monke
 
     def traced_storage(db_path):
         storage = original(db_path)
-        storage._conn.set_trace_callback(statements.append)
+        record_sql(storage._conn, statements)
         return storage
 
     monkeypatch.setattr(rag_admin, "Storage", traced_storage)
@@ -144,7 +145,7 @@ def test_chat_documents_expose_total_and_reach_beyond_1000(paged_client):
 def test_customer_page_preserves_safe_projection_without_chunk_diagnostics(paged_client):
     _client, db_path, urls = paged_client
     page = rag_admin.list_knowledge_base_files(
-        db_path=str(db_path),
+        db_path=postgres_url_for_path(db_path),
         kb_id="kb-350",
         query={"offset": "50"},
         auth=SimpleNamespace(permissions=frozenset({"catalog.read"})),
@@ -160,7 +161,7 @@ def test_customer_page_preserves_safe_projection_without_chunk_diagnostics(paged
 @pytest.mark.parametrize("term", ["%", "_", "!"])
 def test_chat_query_matches_literal_metadata_characters(paged_client, term):
     client, db_path, urls = paged_client
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         storage._conn.execute("UPDATE files SET title = ? WHERE url = ?", ("Rate 100%", urls[0]))
         storage._conn.execute(
@@ -183,7 +184,7 @@ def test_chat_query_matches_literal_metadata_characters(paged_client, term):
 def test_kb_query_matches_literal_title_category_and_url(paged_client, term):
     client, db_path, urls = paged_client
     literal_url = "https://fixture.test/literal%_!.pdf"
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         storage._conn.execute("UPDATE files SET title = ? WHERE url = ?", ("Rate 100%!", urls[0]))
         storage._conn.execute(

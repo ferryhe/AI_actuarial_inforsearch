@@ -16,6 +16,7 @@ from ai_actuarial.api.services.auth import (
     set_user_role,
 )
 from ai_actuarial.storage import Storage
+from tests.postgres_helpers import postgres_url_for_path
 
 
 def _create_user(storage: Storage, email: str, *, role: str = "admin") -> int:
@@ -24,7 +25,7 @@ def _create_user(storage: Storage, email: str, *, role: str = "admin") -> int:
 
 def _request(db_path: Path, **query_params: str) -> SimpleNamespace:
     return SimpleNamespace(
-        app=SimpleNamespace(state=SimpleNamespace(db_path=str(db_path))),
+        app=SimpleNamespace(state=SimpleNamespace(db_path=postgres_url_for_path(str(db_path)))),
         query_params=query_params,
         client=SimpleNamespace(host="127.0.0.1"),
         headers=Headers(),
@@ -56,7 +57,7 @@ def test_single_active_email_admin_cannot_be_disabled_by_credential_principal(
     tmp_path: Path,
 ) -> None:
     db_path = tmp_path / "users.db"
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         admin_id = _create_user(storage, "only@example.com")
     finally:
@@ -68,7 +69,7 @@ def test_single_active_email_admin_cannot_be_disabled_by_credential_principal(
         )
     assert exc_info.value.status_code == 409
 
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         assert storage.get_user_by_id(admin_id)["is_active"] == 1
         assert _audit_event(storage) == {
@@ -84,7 +85,7 @@ def test_single_active_email_admin_cannot_be_disabled_by_credential_principal(
 
 def test_email_session_admin_cannot_demote_or_disable_self_with_two_admins(tmp_path: Path) -> None:
     db_path = tmp_path / "users.db"
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         first_admin_id = _create_user(storage, "first@example.com")
         _create_user(storage, "second@example.com")
@@ -109,7 +110,7 @@ def test_email_session_admin_cannot_demote_or_disable_self_with_two_admins(tmp_p
             action()
         assert exc_info.value.status_code == 409
 
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         assert storage.get_user_by_id(first_admin_id)["role"] == "admin"
         entries = storage._conn.execute(
@@ -122,7 +123,7 @@ def test_email_session_admin_cannot_demote_or_disable_self_with_two_admins(tmp_p
 
 def test_two_admins_allow_one_demotion_and_records_success(tmp_path: Path) -> None:
     db_path = tmp_path / "users.db"
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         first_admin_id = _create_user(storage, "first@example.com")
         second_admin_id = _create_user(storage, "second@example.com")
@@ -137,7 +138,7 @@ def test_two_admins_allow_one_demotion_and_records_success(tmp_path: Path) -> No
     )
     assert result["success"] is True
 
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         assert storage.get_user_by_id(second_admin_id)["role"] == "registered"
         assert _audit_event(storage) == {
@@ -155,7 +156,7 @@ def test_two_admins_allow_one_demotion_and_records_success(tmp_path: Path) -> No
 
 def test_admin_protection_records_supplied_ip_in_both_atomic_logs(tmp_path: Path) -> None:
     db_path = tmp_path / "users.db"
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         first_admin_id = _create_user(storage, "first@example.com")
         second_admin_id = _create_user(storage, "second@example.com")
@@ -185,15 +186,21 @@ def test_admin_protection_records_supplied_ip_in_both_atomic_logs(tmp_path: Path
             "SELECT ip_address FROM user_activity_logs ORDER BY id"
         ).fetchall()
         audit_ips = storage._conn.execute("SELECT ip FROM audit_events ORDER BY id").fetchall()
-        assert activity_ips == [("198.51.100.73",), ("198.51.100.73",)]
-        assert audit_ips == [("198.51.100.73",), ("198.51.100.73",)]
+        assert [tuple(row) for row in activity_ips] == [
+            ("198.51.100.73",),
+            ("198.51.100.73",),
+        ]
+        assert [tuple(row) for row in audit_ips] == [
+            ("198.51.100.73",),
+            ("198.51.100.73",),
+        ]
     finally:
         storage.close()
 
 
 def test_inactive_admin_is_not_counted_as_a_recovery_principal(tmp_path: Path) -> None:
     db_path = tmp_path / "users.db"
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         active_admin_id = _create_user(storage, "active@example.com")
         inactive_admin_id = _create_user(storage, "inactive@example.com")
@@ -221,7 +228,7 @@ def test_inactive_admin_is_not_counted_as_a_recovery_principal(tmp_path: Path) -
 
 def test_concurrent_demotions_leave_one_active_email_admin(tmp_path: Path) -> None:
     db_path = tmp_path / "users.db"
-    initializer = Storage(str(db_path))
+    initializer = Storage(postgres_url_for_path(str(db_path)))
     try:
         first_admin_id = _create_user(initializer, "first@example.com")
         second_admin_id = _create_user(initializer, "second@example.com")
@@ -232,7 +239,7 @@ def test_concurrent_demotions_leave_one_active_email_admin(tmp_path: Path) -> No
     outcomes: list[dict[str, str]] = []
 
     def demote(user_id: int) -> None:
-        storage = Storage(str(db_path))
+        storage = Storage(postgres_url_for_path(str(db_path)))
         barrier.wait()
         try:
             outcomes.append(
@@ -257,7 +264,7 @@ def test_concurrent_demotions_leave_one_active_email_admin(tmp_path: Path) -> No
         thread.join()
     assert sorted(outcome["result"] for outcome in outcomes) == ["blocked", "success"]
 
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         count = storage._conn.execute(
             "SELECT COUNT(*) FROM users WHERE role = 'admin' AND is_active = 1"
@@ -269,7 +276,7 @@ def test_concurrent_demotions_leave_one_active_email_admin(tmp_path: Path) -> No
 
 def test_list_users_reports_global_active_admin_count_beyond_page(tmp_path: Path) -> None:
     db_path = tmp_path / "users.db"
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         _create_user(storage, "first-admin@example.com")
         _create_user(storage, "second-admin@example.com")
@@ -287,7 +294,7 @@ def test_list_users_reports_global_active_admin_count_beyond_page(tmp_path: Path
 
 def test_list_users_refreshes_active_admin_count_after_role_changes(tmp_path: Path) -> None:
     db_path = tmp_path / "users.db"
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         _create_user(storage, "admin@example.com")
         member_id = _create_user(storage, "member@example.com", role="registered")

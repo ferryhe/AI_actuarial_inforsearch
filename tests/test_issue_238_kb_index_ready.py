@@ -18,6 +18,7 @@ from ai_actuarial.rag.kb_index import (
 from ai_actuarial.rag.knowledge_base import KnowledgeBaseManager
 from ai_actuarial.storage import Storage
 from ai_actuarial.task_runtime import NativeTaskRuntime
+from tests.postgres_helpers import postgres_url_for_path
 
 
 def _identity() -> EmbeddingIdentity:
@@ -133,7 +134,7 @@ def test_create_kb_defaults_to_current_server_embedding_identity(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    storage = Storage(str(tmp_path / "identity.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "identity.db")))
     try:
         manager = KnowledgeBaseManager.__new__(KnowledgeBaseManager)
         manager.storage = storage
@@ -175,7 +176,7 @@ def test_create_kb_defaults_to_current_server_embedding_identity(
 
 
 def test_binding_resolver_is_deterministic_complete_and_read_only(tmp_path: Path) -> None:
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         _manager, _chunk_set, _identity_value = _seed_bound_kb(storage, tmp_path=tmp_path)
         before = storage._conn.total_changes
@@ -194,7 +195,7 @@ def test_binding_resolver_is_deterministic_complete_and_read_only(tmp_path: Path
 
 
 def test_binding_resolver_rejects_partial_binding_and_partial_file_selector(tmp_path: Path) -> None:
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         manager, _chunk_set, _identity_value = _seed_bound_kb(storage, tmp_path=tmp_path)
         second_url = "https://example.test/unbound.pdf"
@@ -224,7 +225,7 @@ def test_binding_resolver_rejects_partial_binding_and_partial_file_selector(tmp_
 
 
 def test_kb_index_uses_persisted_embeddings_and_commits_ordinal_mapping(tmp_path: Path) -> None:
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         manager, _chunk_set, identity = _seed_bound_kb(
             storage,
@@ -271,7 +272,7 @@ def test_kb_index_uses_persisted_embeddings_and_commits_ordinal_mapping(tmp_path
             "SELECT index_version_id, artifact_digest FROM kb_ready_index_state WHERE kb_id = ?",
             ("kb-238",),
         ).fetchone()
-        assert ready == (result["index_version_id"], result["artifact_digest"])
+        assert tuple(ready) == (result["index_version_id"], result["artifact_digest"])
         assert Path(
             storage._conn.execute(
                 "SELECT artifact_path FROM kb_index_versions WHERE index_version_id = ?",
@@ -294,7 +295,7 @@ def test_create_kb_index_version_rejects_incomplete_mapping_without_publication(
     invalid_mapping: str,
     error_match: str,
 ) -> None:
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         _manager, _chunk_set, _identity_value = _seed_bound_kb(
             storage,
@@ -346,7 +347,7 @@ def test_create_kb_index_version_rejects_incomplete_mapping_without_publication(
 
 
 def test_stale_snapshot_and_stop_preserve_previous_ready_pointer(tmp_path: Path) -> None:
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         manager, _chunk_set, identity = _seed_bound_kb(storage, tmp_path=tmp_path)
         snapshot = resolve_kb_bound_chunks(storage, "kb-238")
@@ -395,7 +396,7 @@ def test_stale_snapshot_and_stop_preserve_previous_ready_pointer(tmp_path: Path)
 def test_cleanup_retains_removed_file_chunks_referenced_by_immutable_index(
     tmp_path: Path,
 ) -> None:
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         manager, chunk_set, identity = _seed_bound_kb(storage, tmp_path=tmp_path)
         snapshot = resolve_kb_bound_chunks(storage, "kb-238")
@@ -465,7 +466,7 @@ def test_queued_ready_input_for_replaced_index_is_stale_snapshot(tmp_path: Path)
         get_builder_source_fingerprint,
     )
 
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         manager, _chunk_set, identity = _seed_bound_kb(storage, tmp_path=tmp_path)
         snapshot = resolve_kb_bound_chunks(storage, "kb-238")
@@ -524,7 +525,7 @@ def test_runtime_index_stop_finishes_stopped_and_preserves_ready_index(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         manager, _chunk_set, identity = _seed_bound_kb(storage, tmp_path=tmp_path)
         snapshot = resolve_kb_bound_chunks(storage, "kb-238")
@@ -549,7 +550,9 @@ def test_runtime_index_stop_finishes_stopped_and_preserves_ready_index(
             "ai_actuarial.rag.kb_index.resolve_server_embedding_identity",
             lambda *_args, **_kwargs: identity,
         )
-        monkeypatch.setattr("ai_actuarial.task_runtime.append_task_log", lambda *_args: None)
+        monkeypatch.setattr(
+            "ai_actuarial.task_runtime.append_task_log", lambda *_args, **_kwargs: None
+        )
 
         result = runtime._run_rag_indexing(
             "index-stop",
@@ -587,7 +590,7 @@ def test_runtime_index_stop_finishes_stopped_and_preserves_ready_index(
 def test_ready_data_requires_complete_bindings_and_exact_committed_index(tmp_path: Path) -> None:
     from ai_actuarial.agentic_rag import ready_data_builder
 
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         manager, _chunk_set, identity = _seed_bound_kb(storage, tmp_path=tmp_path)
         snapshot = resolve_kb_bound_chunks(storage, "kb-238")
@@ -600,14 +603,14 @@ def test_ready_data_requires_complete_bindings_and_exact_committed_index(tmp_pat
             config=manager.config,
         )
         source = ready_data_builder.get_builder_source_fingerprint(
-            db_path=str(tmp_path / "index.db"),
+            db_path=storage.db_path,
             kb_id="kb-238",
             profile="general",
             index_version_id=index_result["index_version_id"],
         )
         output_dir = tmp_path / "ready"
         manifest = ready_data_builder.build_l0(
-            db_path=str(tmp_path / "index.db"),
+            db_path=storage.db_path,
             output_dir=str(output_dir),
             profile="general",
             kb_id="kb-238",
@@ -626,7 +629,7 @@ def test_ready_data_requires_complete_bindings_and_exact_committed_index(tmp_pat
         storage._conn.commit()
         with pytest.raises(ValueError, match="binding"):
             ready_data_builder.get_builder_source_fingerprint(
-                db_path=str(tmp_path / "index.db"),
+                db_path=storage.db_path,
                 kb_id="kb-238",
                 profile="general",
                 index_version_id=index_result["index_version_id"],
@@ -638,7 +641,7 @@ def test_ready_data_requires_complete_bindings_and_exact_committed_index(tmp_pat
 def test_ready_data_doc_chunk_count_tracks_exact_pinned_rebinding(tmp_path: Path) -> None:
     from ai_actuarial.agentic_rag import ready_data_builder
 
-    storage = Storage(str(tmp_path / "ready-count.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "ready-count.db")))
     try:
         manager, first_set, identity = _seed_bound_kb(storage, tmp_path=tmp_path)
         file_url = "https://example.test/issue-238.pdf"
@@ -746,7 +749,7 @@ def test_ready_data_doc_chunk_count_tracks_exact_pinned_rebinding(tmp_path: Path
 
 
 def test_rebind_switches_effective_snapshot_without_mutating_old_chunk_set(tmp_path: Path) -> None:
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         _manager, first_set, _identity_value = _seed_bound_kb(storage, tmp_path=tmp_path)
         first = resolve_kb_bound_chunks(storage, "kb-238")
@@ -784,7 +787,7 @@ def test_rebind_switches_effective_snapshot_without_mutating_old_chunk_set(tmp_p
 
 
 def test_cross_kb_reuses_same_identity_embeddings(tmp_path: Path) -> None:
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         manager, chunk_set, identity = _seed_bound_kb(
             storage, tmp_path=tmp_path, persist_embeddings=False
@@ -854,7 +857,7 @@ def test_identity_race_and_commit_failure_preserve_ready_pointer(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         manager, _chunk_set, identity = _seed_bound_kb(storage, tmp_path=tmp_path)
         snapshot = resolve_kb_bound_chunks(storage, "kb-238")
@@ -935,7 +938,7 @@ def test_embedding_and_faiss_failure_preserve_ready_pointer(
     failure: str,
     expected_code: str,
 ) -> None:
-    storage = Storage(str(tmp_path / f"{failure}.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / f"{failure}.db")))
     try:
         manager, _chunk_set, identity = _seed_bound_kb(storage, tmp_path=tmp_path)
         snapshot = resolve_kb_bound_chunks(storage, "kb-238")
@@ -997,7 +1000,7 @@ def test_embedding_provider_initialization_failure_is_canonical_and_preserves_re
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    storage = Storage(str(tmp_path / "provider-init.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "provider-init.db")))
     try:
         manager, _chunk_set, identity = _seed_bound_kb(storage, tmp_path=tmp_path)
         snapshot = resolve_kb_bound_chunks(storage, "kb-238")
@@ -1054,7 +1057,7 @@ def test_api_launch_adapters_return_real_jobs_and_small_contracts(tmp_path: Path
         create_index_task,
     )
 
-    db_path = str(tmp_path / "index.db")
+    db_path = postgres_url_for_path(str(tmp_path / "index.db"))
     storage = Storage(db_path)
     try:
         manager, _chunk_set, identity = _seed_bound_kb(storage, tmp_path=tmp_path)
@@ -1148,7 +1151,7 @@ def test_successful_standalone_index_launches_independent_ready_task(
         return "ready-task"
 
     runtime.start_background_task = launch
-    monkeypatch.setattr("ai_actuarial.task_runtime.append_task_log", lambda *_args: None)
+    monkeypatch.setattr("ai_actuarial.task_runtime.append_task_log", lambda *_args, **_kwargs: None)
     result = CollectionResult(
         success=True,
         items_found=3,
@@ -1225,7 +1228,7 @@ def test_index_terminal_history_waits_for_ready_handoff_outcome(
         return "ready-task"
 
     runtime.start_background_task = launch
-    monkeypatch.setattr("ai_actuarial.task_runtime.append_task_log", lambda *_args: None)
+    monkeypatch.setattr("ai_actuarial.task_runtime.append_task_log", lambda *_args, **_kwargs: None)
     result = CollectionResult(
         success=True,
         items_found=1,
@@ -1511,7 +1514,7 @@ def test_ready_task_manual_and_auto_publish_are_both_successful(
     publication_id: str | None,
     publish_status: str,
 ) -> None:
-    storage = Storage(str(tmp_path / "ready-task.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "ready-task.db")))
     try:
         manager, _chunk_set, _identity_value = _seed_bound_kb(
             storage,
@@ -1578,7 +1581,7 @@ def test_ready_task_rejects_idempotent_state_without_valid_active_publication(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    storage = Storage(str(tmp_path / "ready-uncommitted.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "ready-uncommitted.db")))
     try:
         _seed_bound_kb(storage, tmp_path=tmp_path)
         storage.set_agentic_ready_automation(

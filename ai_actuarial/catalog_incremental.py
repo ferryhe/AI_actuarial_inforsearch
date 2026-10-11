@@ -11,13 +11,12 @@ from __future__ import annotations
 
 import json
 import logging
-import sqlite3
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 from .catalog import (
     CatalogItem,
@@ -28,6 +27,7 @@ from .catalog import (
     summarize,
     write_catalog_md,
 )
+from .postgres import PostgresConnection
 from .storage import Storage
 from .task_item_errors import record_item_error
 
@@ -38,28 +38,6 @@ logger = logging.getLogger(__name__)
 # Ideally each thread gets its own connection or we write centrally.
 # To be safe and simple: process in parallel, write sequentially.
 _db_lock = threading.Lock()
-
-CATALOG_TABLE_DDL = """
-CREATE TABLE IF NOT EXISTS catalog_items (
-    file_url TEXT PRIMARY KEY,
-    file_sha256 TEXT,
-    title TEXT,
-    source_site TEXT,
-    original_filename TEXT,
-    local_path TEXT,
-    keywords_json TEXT,
-    summary TEXT,
-    category TEXT,
-    catalog_version TEXT,
-    processed_at TEXT,
-    status TEXT,
-    error TEXT
-);
-"""
-
-CATALOG_INDEX_DDL = """
-CREATE INDEX IF NOT EXISTS idx_catalog_items_status ON catalog_items(status);
-"""
 
 CATALOG_OPTIONAL_COLUMNS = {
     "file_sha256": "TEXT",
@@ -86,12 +64,11 @@ CATALOG_OPTIONAL_COLUMNS = {
 # ---------------------------------------------------------------------------
 
 
-def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
-    cur = conn.execute(f"PRAGMA table_info({table})")
-    return {row[1] for row in cur.fetchall()}
+def _table_columns(conn: PostgresConnection, table: str) -> set[str]:
+    return conn.table_columns(table)
 
 
-def _ensure_catalog_schema(conn: sqlite3.Connection) -> None:
+def _ensure_catalog_schema(conn: PostgresConnection) -> None:
     """Ensure catalog_items supports both legacy and incremental schemas."""
     existing = _table_columns(conn, "catalog_items")
 
@@ -147,22 +124,12 @@ def _ensure_catalog_schema(conn: sqlite3.Connection) -> None:
             """)
 
 
-def _connect(db_path: str) -> sqlite3.Connection:
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL;")
-    conn.execute("PRAGMA synchronous=NORMAL;")
-    conn.execute("PRAGMA temp_store=MEMORY;")
-    # Ensure table exists (fallback if Storage didn't create it)
-    conn.execute(CATALOG_TABLE_DDL)
-    conn.execute(CATALOG_INDEX_DDL)
-    _ensure_catalog_schema(conn)
-    conn.commit()
-    return conn
+def _connect(database: str) -> PostgresConnection:
+    return PostgresConnection(database)
 
 
 def _fetch_candidates(
-    conn: sqlite3.Connection,
+    conn: PostgresConnection,
     *,
     batch: int,
     offset: int = 0,
@@ -173,7 +140,7 @@ def _fetch_candidates(
     catalog_version: str,
     retry_errors: bool = False,
     skip_existing: bool = True,
-) -> list[sqlite3.Row]:
+) -> list[Any]:
     """
     Select files that are:
     - not in catalog_items, OR
@@ -207,7 +174,7 @@ def _fetch_candidates(
             OR c.file_sha256 IS NULL
             OR c.file_sha256 != f.sha256
             OR c.catalog_version != ?
-            OR TRIM(IFNULL(c.summary, '')) = ''
+            OR TRIM(COALESCE(c.summary, '')) = ''
             {status_cond}
         )
         """
@@ -280,7 +247,7 @@ def _candidate_filter_sql(
 
 
 def _count_candidates(
-    conn: sqlite3.Connection,
+    conn: PostgresConnection,
     *,
     site_filter: Optional[str],
     category_filter: Optional[str] = None,
@@ -300,7 +267,7 @@ def _count_candidates(
             OR c.file_sha256 IS NULL
             OR c.file_sha256 != f.sha256
             OR c.catalog_version != ?
-            OR TRIM(IFNULL(c.summary, '')) = ''
+            OR TRIM(COALESCE(c.summary, '')) = ''
             {status_cond}
         )
         """
@@ -323,7 +290,7 @@ def _count_candidates(
 
 
 def _upsert_catalog_row(
-    conn: sqlite3.Connection,
+    conn: PostgresConnection,
     *,
     item: CatalogItem,
     file_sha256: str,
@@ -395,8 +362,9 @@ def _upsert_catalog_row(
             """
         else:
             sql = f"""
-                INSERT OR IGNORE INTO catalog_items ({", ".join(insert_columns)})
+                INSERT INTO catalog_items ({", ".join(insert_columns)})
                 VALUES ({placeholders})
+                ON CONFLICT(file_url) DO NOTHING
             """
         if storage is None:
             write_conn.execute(sql, values)
@@ -463,12 +431,11 @@ def _resolve_path(path_str: str, base_dirs: list[Path] | None = None) -> Path:
 _thread_local = threading.local()
 
 
-def _thread_db_conn(db_path: str) -> sqlite3.Connection:
-    """Thread-local SQLite connection for read-only lookups (e.g. markdown_content)."""
+def _thread_db_conn(db_path: str) -> PostgresConnection:
+    """Thread-local PostgreSQL connection for lookups such as markdown_content."""
     conn = getattr(_thread_local, "conn", None)
     if conn is None:
-        conn = sqlite3.connect(db_path)
-        conn.row_factory = sqlite3.Row
+        conn = PostgresConnection(db_path)
         _thread_local.conn = conn
     return conn
 
@@ -664,9 +631,7 @@ def run_incremental_catalog(
     """
     storage = Storage(db_path)
     conn = storage._conn
-    conn.row_factory = sqlite3.Row
     _ensure_catalog_schema(conn)
-    conn.commit()
     provider_norm = (provider or "local").strip().lower()
     catalog_model: str | None = None
     catalog_api_key: str | None = None
@@ -1027,9 +992,7 @@ def run_catalog_for_urls(
     """Catalog a specific list of file URLs (used by File Details actions)."""
     storage = Storage(db_path)
     conn = storage._conn
-    conn.row_factory = sqlite3.Row
     _ensure_catalog_schema(conn)
-    conn.commit()
     provider_norm = (provider or "local").strip().lower()
     catalog_model: str | None = None
     catalog_api_key: str | None = None

@@ -2,7 +2,6 @@ import hashlib
 import json
 import os
 import shutil
-import sqlite3
 import subprocess
 import sys
 from pathlib import Path
@@ -12,18 +11,21 @@ from fastapi.testclient import TestClient
 
 from ai_actuarial.api.app import create_app
 from scripts import production_recovery
+from tests.postgres_helpers import postgres_url_for_path
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_runtime_provenance_is_safe_and_permission_gated(monkeypatch, tmp_path):
     config = tmp_path / "secret-host-path.yaml"
+    database_url = postgres_url_for_path(tmp_path / "index.db")
     config.write_text(
         f"paths:\n  db: {tmp_path / 'index.db'}\nfeatures:\n  require_auth: true\n"
         "sites: []\nscheduled_tasks: []\nprovider_secret: never-expose-this\n",
         encoding="utf-8",
     )
     monkeypatch.setenv("CONFIG_PATH", str(config))
+    monkeypatch.setenv("DATABASE_URL", database_url)
     monkeypatch.setenv("FASTAPI_SESSION_SECRET", "fixture-secret")
     monkeypatch.setenv("BOOTSTRAP_ADMIN_TOKEN", "fixture-admin")
     monkeypatch.setenv("BUILD_RELEASE_ID", "release-fixture-1")
@@ -116,6 +118,7 @@ def test_vite_only_injects_safe_build_fields():
 def test_compose_build_and_runtime_provenance_contract():
     environment = {
         **os.environ,
+        "DATABASE_URL": "postgresql://fixture:fixture@127.0.0.1:5432/fixture",
         "FASTAPI_SESSION_SECRET": "fixture-compose-secret",
         "TOKEN_ENCRYPTION_KEY": "fixture-key",
         "CONFIG_WRITE_AUTH_TOKEN": "fixture-write-token",
@@ -164,8 +167,7 @@ def test_release_record_rejects_frontend_mismatch_and_matches_safe_runtime(tmp_p
     config = tmp_path / "private-config.yaml"
     config.write_text("secret: never-expose-this\n", encoding="utf-8")
     db = tmp_path / "index.db"
-    with sqlite3.connect(db) as conn:
-        conn.execute("PRAGMA user_version=15")
+    database_url = postgres_url_for_path(db)
     labels = {
         "com.aiinforsearch.release-id": "release-one",
         "org.opencontainers.image.revision": "a" * 40,
@@ -191,7 +193,7 @@ def test_release_record_rejects_frontend_mismatch_and_matches_safe_runtime(tmp_p
             image="api",
             frontend_image="frontend",
             config_path=config,
-            db_path=db,
+            database_url=database_url,
             output_path=output,
             inspect_image=images.__getitem__,
         )
@@ -201,7 +203,7 @@ def test_release_record_rejects_frontend_mismatch_and_matches_safe_runtime(tmp_p
         image="api",
         frontend_image="frontend",
         config_path=config,
-        db_path=db,
+        database_url=database_url,
         output_path=output,
         inspect_image=images.__getitem__,
     )
@@ -263,8 +265,7 @@ def test_fake_deploy_builds_both_images_before_digest_and_runtime_handoff(
     config.write_text("sites: []\n", encoding="utf-8")
     data = tmp_path / "data"
     data.mkdir()
-    with sqlite3.connect(data / "index.db") as conn:
-        conn.execute("PRAGMA user_version=15")
+    database_url = postgres_url_for_path(data / "index.db")
     (tmp_path / "backups").mkdir()
     log = tmp_path / "commands.log"
     blobs = tmp_path / "buildkit-blobs"
@@ -406,6 +407,7 @@ exit 93""",
         "PATH": commands.as_posix() + os.pathsep + os.environ["PATH"],
         "REPO_DIR": ROOT.as_posix(),
         "CONFIG_PATH": config.as_posix(),
+        "DATABASE_URL": database_url,
         "BACKUP_ROOT": f"{fixture}/backups",
         "BACKUP_LOCK_FILE": f"{fixture}/backup.lock",
         "RELEASE_DIR": f"{fixture}/releases",

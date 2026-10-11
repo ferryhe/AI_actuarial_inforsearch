@@ -11,6 +11,7 @@ from itsdangerous import URLSafeSerializer
 
 from ai_actuarial.api.app import create_app
 from ai_actuarial.storage import Storage
+from tests.postgres_helpers import postgres_url_for_path
 
 
 def _write_config_files(base_dir: Path) -> tuple[Path, Path, Path]:
@@ -47,7 +48,7 @@ def _write_config_files(base_dir: Path) -> tuple[Path, Path, Path]:
 
 
 def _seed_storage(db_path: Path) -> dict[str, object]:
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         storage.insert_file(
             url="https://alpha.example/doc-a.pdf",
@@ -360,7 +361,7 @@ def test_fastapi_sources_file_detail_and_markdown_match_legacy_contract(
     assert "sha256" not in detail_body["file"]
     assert "markdown_content" not in detail_body["file"]
 
-    storage = Storage(str(app.state.db_path))
+    storage = Storage(app.state.database)
     try:
         alpha_id = int(storage.get_file_by_url("https://alpha.example/doc-a.pdf")["id"])
         deleted_id = int(storage.get_file_by_url("https://gamma.example/doc-c.pdf")["id"])
@@ -409,7 +410,7 @@ def test_fastapi_markdown_route_preserves_percent_encoded_file_urls(
 ) -> None:
     client, app, _seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
 
-    storage = Storage(str(app.state.db_path))
+    storage = Storage(app.state.database)
     try:
         encoded_url = "https://encoded.example/doc%20space.pdf"
         storage.insert_file(

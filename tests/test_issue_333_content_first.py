@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import sqlite3
 import subprocess
 from pathlib import Path
 
@@ -14,6 +13,7 @@ from fastapi.testclient import TestClient
 from ai_actuarial.api.app import create_app
 from ai_actuarial.api.services.weekly_updates import generate_weekly_update_summary
 from ai_actuarial.storage import Storage
+from tests.postgres_helpers import postgres_url_for_path, record_sql
 
 ROOT = Path(__file__).resolve().parents[1]
 NPM_COMMAND = "npm.cmd" if os.name == "nt" else "npm"
@@ -48,7 +48,7 @@ def _build_weekly_client(
         "https://example.test/missing-catalog.pdf",
         "https://example.test/malformed-keywords.pdf",
     )
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         for index, url in enumerate(urls):
             storage.insert_file(
@@ -104,7 +104,7 @@ def _build_weekly_client(
         storage.close()
 
     snapshot = generate_weekly_update_summary(
-        db_path=str(db_path),
+        db_path=postgres_url_for_path(db_path),
         period_start=PERIOD_START,
         period_end=PERIOD_END,
     )
@@ -140,8 +140,8 @@ def test_weekly_public_projection_joins_catalog_without_sensitive_fields(
     client, db_path, snapshot_id, _reader_token = _build_weekly_client(tmp_path, monkeypatch)
 
     statements: list[str] = []
-    storage = Storage(str(db_path))
-    storage._conn.set_trace_callback(statements.append)
+    storage = Storage(postgres_url_for_path(db_path))
+    stop_recording = record_sql(storage._conn, statements)
     try:
         rows, total = storage.list_weekly_snapshot_files(
             snapshot_id=snapshot_id,
@@ -149,6 +149,7 @@ def test_weekly_public_projection_joins_catalog_without_sensitive_fields(
             offset=0,
         )
     finally:
+        stop_recording()
         storage.close()
 
     assert total == 3

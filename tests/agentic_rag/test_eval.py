@@ -437,31 +437,70 @@ def _write_agentic_ready_data(output_dir):
 
 
 def _write_retrieval_eval_db(db_path):
-    import sqlite3
+    return _seed_keyword_retrieval_db(
+        db_path,
+        files=[("https://example.test/retrieval.pdf", "Retrieval Eval Bulletin", "SOA")],
+        catalog=[
+            (
+                "https://example.test/retrieval.pdf",
+                "Retrieval Eval Bulletin",
+                "Retrieval eval fixture for actuarial AI.",
+                "AI",
+                '["retrieval","eval","actuarial"]',
+            )
+        ],
+    )
 
-    conn = sqlite3.connect(db_path)
-    conn.executescript("""
-        CREATE TABLE files(url TEXT PRIMARY KEY, title TEXT, source_site TEXT, published_time TEXT);
-        CREATE TABLE catalog_items(file_url TEXT PRIMARY KEY, status TEXT, summary TEXT, category TEXT, keywords TEXT, rag_chunk_count INTEGER);
-        CREATE TABLE rag_chunks(chunk_id TEXT PRIMARY KEY, kb_id TEXT, file_url TEXT, chunk_index INTEGER, content TEXT, token_count INTEGER, section_hierarchy TEXT, embedding_hash TEXT, created_at TEXT);
-    """)
-    conn.execute(
-        "INSERT INTO files(url,title,source_site) VALUES(?,?,?)",
-        ("https://example.test/retrieval.pdf", "Retrieval Eval Bulletin", "SOA"),
-    )
-    conn.execute(
-        "INSERT INTO catalog_items(file_url,status,summary,category,keywords,rag_chunk_count) VALUES(?,?,?,?,?,?)",
-        (
-            "https://example.test/retrieval.pdf",
-            "ok",
-            "Retrieval eval fixture for actuarial AI.",
-            "AI",
-            '["retrieval","eval","actuarial"]',
-            1,
-        ),
-    )
-    conn.commit()
-    conn.close()
+
+def _seed_keyword_retrieval_db(db_path, *, files=(), catalog=(), chunks=()):
+    from ai_actuarial.storage import Storage
+    from tests.postgres_helpers import postgres_url_for_path
+
+    database_url = postgres_url_for_path(db_path)
+    storage = Storage(database_url)
+    now = storage.now()
+    file_rows = {row[0]: (row[1], row[2] if len(row) > 2 else None) for row in files}
+    for row in catalog:
+        file_rows.setdefault(row[0], (row[1], None))
+    for row in chunks:
+        file_rows.setdefault(row[1], (row[5] if len(row) > 5 else row[1], None))
+
+    for url, (title, source_site) in file_rows.items():
+        storage._conn.execute(
+            "INSERT INTO files (url, title, source_site) VALUES (?, ?, ?) "
+            "ON CONFLICT (url) DO NOTHING",
+            (url, title, source_site),
+        )
+    for row in catalog:
+        url, title, summary, category, keywords = row
+        storage._conn.execute(
+            """INSERT INTO catalog_items
+               (file_url, title, sha256, pipeline_version, status, summary, category, keywords)
+               VALUES (?, ?, '', 'test', 'ok', ?, ?, ?)""",
+            (url, title, summary, category, keywords),
+        )
+    if chunks:
+        storage._conn.execute(
+            """INSERT INTO rag_knowledge_bases
+               (kb_id, name, embedding_model, chunk_size, chunk_overlap, index_type,
+                created_at, updated_at)
+               VALUES ('kb-eval', 'Eval KB', 'test', 128, 0, 'flat', ?, ?)
+               ON CONFLICT (kb_id) DO NOTHING""",
+            (now, now),
+        )
+        for row in chunks:
+            chunk_id, url, content, chunk_index = row[:4]
+            section = row[4] if len(row) > 4 else None
+            storage._conn.execute(
+                """INSERT INTO rag_chunks
+                   (chunk_id, kb_id, file_url, chunk_index, content, token_count,
+                    section_hierarchy, created_at)
+                   VALUES (?, 'kb-eval', ?, ?, ?, 5, ?, ?)""",
+                (chunk_id, url, chunk_index, content, section, now),
+            )
+    storage._conn.commit()
+    storage.close()
+    return database_url
 
 
 def test_agentic_evaluator_scores_evidence_citations_refusal_and_unsupported_guard(tmp_path):
@@ -796,8 +835,6 @@ def test_retrieval_cli_json_with_temp_db(tmp_path):
             "ai_actuarial.agentic_rag.eval",
             "--mode",
             "retrieval",
-            "--db",
-            str(db_path),
             "--cases",
             str(cases_path),
             "--json",
@@ -817,44 +854,30 @@ def test_retrieval_cli_json_with_temp_db(tmp_path):
 
 
 def test_simple_keyword_retriever_with_test_db(tmp_path):
-    """Integration: retriever against a minimal SQLite DB."""
-    import sqlite3
-
-    db_path = str(tmp_path / "test.db")
-    conn = sqlite3.connect(db_path)
-
-    conn.executescript("""
-        CREATE TABLE files(url TEXT PRIMARY KEY, title TEXT, source_site TEXT, published_time TEXT);
-        CREATE TABLE catalog_items(file_url TEXT PRIMARY KEY, status TEXT, summary TEXT, category TEXT, keywords TEXT, rag_chunk_count INTEGER);
-        CREATE TABLE file_chunk_sets(chunk_set_id TEXT PRIMARY KEY, file_url TEXT, chunk_count INTEGER, status TEXT);
-        CREATE TABLE global_chunks(chunk_id TEXT PRIMARY KEY, chunk_set_id TEXT, chunk_index INTEGER, content TEXT, token_count INTEGER, section_hierarchy TEXT);
-        CREATE TABLE rag_chunks(chunk_id TEXT PRIMARY KEY, kb_id TEXT, file_url TEXT, chunk_index INTEGER, content TEXT, token_count INTEGER, section_hierarchy TEXT, embedding_hash TEXT, created_at TEXT);
-    """)
-
-    conn.execute(
-        "INSERT INTO files(url,title,source_site) VALUES(?,?,?)",
-        ("https://example.com/doc1", "Actuarial Intelligence Bulletin", "SOA"),
+    """Integration: retriever reads catalog and chunks from PostgreSQL."""
+    database_url = _seed_keyword_retrieval_db(
+        tmp_path / "test.db",
+        files=[("https://example.com/doc1", "Actuarial Intelligence Bulletin", "SOA")],
+        catalog=[
+            (
+                "https://example.com/doc1",
+                "Actuarial Intelligence Bulletin",
+                "Quarterly bulletin on AI in actuarial science",
+                "AI",
+                '["AI","actuarial","bulletin"]',
+            )
+        ],
+        chunks=[
+            (
+                "c1",
+                "https://example.com/doc2",
+                "machine learning for insurance",
+                0,
+            )
+        ],
     )
-    conn.execute(
-        "INSERT INTO catalog_items(file_url,status,summary,category,keywords,rag_chunk_count) VALUES(?,?,?,?,?,?)",
-        (
-            "https://example.com/doc1",
-            "ok",
-            "Quarterly bulletin on AI in actuarial science",
-            "AI",
-            '["AI","actuarial","bulletin"]',
-            5,
-        ),
-    )
-    conn.execute(
-        "INSERT INTO rag_chunks(chunk_id,kb_id,file_url,chunk_index,content,token_count) VALUES(?,?,?,?,?,?)",
-        ("c1", "kb1", "https://example.com/doc2", 0, "machine learning for insurance", 10),
-    )
-    conn.commit()
 
-    conn.close()
-
-    with SimpleKeywordRetriever(db_path) as retriever:
+    with SimpleKeywordRetriever(database_url) as retriever:
         results = retriever("actuarial bulletin", top_k=5)
 
     assert len(results) >= 1
@@ -864,24 +887,20 @@ def test_simple_keyword_retriever_with_test_db(tmp_path):
 
 def test_simple_keyword_retriever_no_match(tmp_path):
     """No results when query matches nothing."""
-    import sqlite3
-
-    db_path = str(tmp_path / "empty.db")
-    conn = sqlite3.connect(db_path)
-    conn.executescript("""
-        CREATE TABLE catalog_items(file_url TEXT PRIMARY KEY, status TEXT, summary TEXT, category TEXT, keywords TEXT, rag_chunk_count INTEGER);
-        CREATE TABLE files(url TEXT PRIMARY KEY, title TEXT, source_site TEXT, published_time TEXT);
-        CREATE TABLE rag_chunks(chunk_id TEXT PRIMARY KEY, kb_id TEXT, file_url TEXT, chunk_index INTEGER, content TEXT, token_count INTEGER, section_hierarchy TEXT, embedding_hash TEXT, created_at TEXT);
-    """)
-    conn.execute(
-        "INSERT INTO catalog_items(file_url,status,summary,category) VALUES(?,?,?,?)",
-        ("https://x.com/doc", "ok", "completely unrelated text", "general"),
+    database_url = _seed_keyword_retrieval_db(
+        tmp_path / "empty.db",
+        catalog=[
+            (
+                "https://x.com/doc",
+                "Unrelated document",
+                "completely unrelated text",
+                "general",
+                "[]",
+            )
+        ],
     )
-    conn.commit()
 
-    conn.close()
-
-    with SimpleKeywordRetriever(db_path) as retriever:
+    with SimpleKeywordRetriever(database_url) as retriever:
         results = retriever("quantum physics", top_k=5)
 
     assert results == []
@@ -889,36 +908,25 @@ def test_simple_keyword_retriever_no_match(tmp_path):
 
 def test_simple_keyword_retriever_deduplicates(tmp_path):
     """Multiple matches to same doc_id are deduplicated."""
-    import sqlite3
+    database_url = _seed_keyword_retrieval_db(
+        tmp_path / "test.db",
+        files=[("https://example.com/doc1", "Actuarial Report", None)],
+        catalog=[
+            (
+                "https://example.com/doc1",
+                "Actuarial Report",
+                "actuarial report summary",
+                "AI",
+                '["actuarial"]',
+            )
+        ],
+        chunks=[
+            ("c1", "https://example.com/doc1", "actuarial report content", 0),
+            ("c2", "https://example.com/doc1", "more actuarial content", 1),
+        ],
+    )
 
-    db_path = str(tmp_path / "test.db")
-    conn = sqlite3.connect(db_path)
-    conn.executescript("""
-        CREATE TABLE files(url TEXT PRIMARY KEY, title TEXT, source_site TEXT, published_time TEXT);
-        CREATE TABLE catalog_items(file_url TEXT PRIMARY KEY, status TEXT, summary TEXT, category TEXT, keywords TEXT, rag_chunk_count INTEGER);
-        CREATE TABLE rag_chunks(chunk_id TEXT PRIMARY KEY, kb_id TEXT, file_url TEXT, chunk_index INTEGER, content TEXT, token_count INTEGER, section_hierarchy TEXT, embedding_hash TEXT, created_at TEXT);
-    """)
-    conn.execute(
-        "INSERT INTO files(url,title) VALUES(?,?)",
-        ("https://example.com/doc1", "Actuarial Report"),
-    )
-    conn.execute(
-        "INSERT INTO catalog_items(file_url,status,summary,category,keywords) VALUES(?,?,?,?,?)",
-        ("https://example.com/doc1", "ok", "actuarial report summary", "AI", '["actuarial"]'),
-    )
-    conn.execute(
-        "INSERT INTO rag_chunks(chunk_id,kb_id,file_url,chunk_index,content,token_count) VALUES(?,?,?,?,?,?)",
-        ("c1", "kb1", "https://example.com/doc1", 0, "actuarial report content", 5),
-    )
-    conn.execute(
-        "INSERT INTO rag_chunks(chunk_id,kb_id,file_url,chunk_index,content,token_count) VALUES(?,?,?,?,?,?)",
-        ("c2", "kb1", "https://example.com/doc1", 1, "more actuarial content", 5),
-    )
-    conn.commit()
-
-    conn.close()
-
-    with SimpleKeywordRetriever(db_path) as retriever:
+    with SimpleKeywordRetriever(database_url) as retriever:
         results = retriever("actuarial", top_k=5)
 
     # Should not return the same doc_id twice
@@ -928,31 +936,25 @@ def test_simple_keyword_retriever_deduplicates(tmp_path):
 
 def test_simple_keyword_retriever_chunk_score_matches_ranking(tmp_path):
     """Chunk result score includes the same boost used for ranking."""
-    import sqlite3
+    database_url = _seed_keyword_retrieval_db(
+        tmp_path / "ranking.db",
+        files=[
+            ("https://example.com/catalog", "Actuarial Catalog", None),
+            ("https://example.com/chunk", "Actuarial Chunk", None),
+        ],
+        catalog=[
+            (
+                "https://example.com/catalog",
+                "Actuarial Catalog",
+                "actuarial",
+                "AI",
+                '["actuarial"]',
+            )
+        ],
+        chunks=[("c1", "https://example.com/chunk", "actuarial", 0)],
+    )
 
-    db_path = str(tmp_path / "ranking.db")
-    conn = sqlite3.connect(db_path)
-    conn.executescript("""
-        CREATE TABLE files(url TEXT PRIMARY KEY, title TEXT, source_site TEXT, published_time TEXT);
-        CREATE TABLE catalog_items(file_url TEXT PRIMARY KEY, status TEXT, summary TEXT, category TEXT, keywords TEXT, rag_chunk_count INTEGER);
-        CREATE TABLE rag_chunks(chunk_id TEXT PRIMARY KEY, kb_id TEXT, file_url TEXT, chunk_index INTEGER, content TEXT, token_count INTEGER, section_hierarchy TEXT, embedding_hash TEXT, created_at TEXT);
-    """)
-    conn.execute(
-        "INSERT INTO files(url,title) VALUES(?,?)",
-        ("https://example.com/catalog", "Actuarial Catalog"),
-    )
-    conn.execute(
-        "INSERT INTO catalog_items(file_url,status,summary,category,keywords) VALUES(?,?,?,?,?)",
-        ("https://example.com/catalog", "ok", "actuarial", "AI", '["actuarial"]'),
-    )
-    conn.execute(
-        "INSERT INTO rag_chunks(chunk_id,kb_id,file_url,chunk_index,content,token_count) VALUES(?,?,?,?,?,?)",
-        ("c1", "kb1", "https://example.com/chunk", 0, "actuarial", 5),
-    )
-    conn.commit()
-    conn.close()
-
-    with SimpleKeywordRetriever(db_path) as retriever:
+    with SimpleKeywordRetriever(database_url) as retriever:
         results = retriever("actuarial", top_k=5)
 
     assert results[0].doc_id == "https://example.com/chunk"
@@ -960,47 +962,33 @@ def test_simple_keyword_retriever_chunk_score_matches_ranking(tmp_path):
 
 
 def test_simple_keyword_retriever_context_manager_closes_connection(tmp_path):
-    import sqlite3
+    import psycopg2
 
-    db_path = str(tmp_path / "close.db")
-    conn = sqlite3.connect(db_path)
-    conn.executescript("""
-        CREATE TABLE catalog_items(file_url TEXT PRIMARY KEY, status TEXT, summary TEXT, category TEXT, keywords TEXT, rag_chunk_count INTEGER);
-        CREATE TABLE files(url TEXT PRIMARY KEY, title TEXT, source_site TEXT, published_time TEXT);
-        CREATE TABLE rag_chunks(chunk_id TEXT PRIMARY KEY, kb_id TEXT, file_url TEXT, chunk_index INTEGER, content TEXT, token_count INTEGER, section_hierarchy TEXT, embedding_hash TEXT, created_at TEXT);
-    """)
-    conn.commit()
-    conn.close()
+    database_url = _seed_keyword_retrieval_db(tmp_path / "close.db")
 
-    with SimpleKeywordRetriever(db_path) as retriever:
+    with SimpleKeywordRetriever(database_url) as retriever:
         assert retriever("nothing", top_k=5) == []
 
-    with pytest.raises(sqlite3.ProgrammingError):
+    with pytest.raises(psycopg2.InterfaceError):
         retriever("nothing", top_k=5)
 
 
 def test_simple_keyword_retriever_top_k_zero_returns_empty(tmp_path):
-    import sqlite3
-
-    db_path = str(tmp_path / "top_k.db")
-    conn = sqlite3.connect(db_path)
-    conn.executescript("""
-        CREATE TABLE files(url TEXT PRIMARY KEY, title TEXT, source_site TEXT, published_time TEXT);
-        CREATE TABLE catalog_items(file_url TEXT PRIMARY KEY, status TEXT, summary TEXT, category TEXT, keywords TEXT, rag_chunk_count INTEGER);
-        CREATE TABLE rag_chunks(chunk_id TEXT PRIMARY KEY, kb_id TEXT, file_url TEXT, chunk_index INTEGER, content TEXT, token_count INTEGER, section_hierarchy TEXT, embedding_hash TEXT, created_at TEXT);
-    """)
-    conn.execute(
-        "INSERT INTO files(url,title) VALUES(?,?)",
-        ("https://example.com/doc", "Actuarial Bulletin"),
+    database_url = _seed_keyword_retrieval_db(
+        tmp_path / "top_k.db",
+        files=[("https://example.com/doc", "Actuarial Bulletin", None)],
+        catalog=[
+            (
+                "https://example.com/doc",
+                "Actuarial Bulletin",
+                "actuarial bulletin",
+                "AI",
+                '["actuarial"]',
+            )
+        ],
     )
-    conn.execute(
-        "INSERT INTO catalog_items(file_url,status,summary,category,keywords) VALUES(?,?,?,?,?)",
-        ("https://example.com/doc", "ok", "actuarial bulletin", "AI", '["actuarial"]'),
-    )
-    conn.commit()
-    conn.close()
 
-    with SimpleKeywordRetriever(db_path) as retriever:
+    with SimpleKeywordRetriever(database_url) as retriever:
         assert retriever("actuarial", top_k=0) == []
         assert retriever("actuarial", top_k=-1) == []
 

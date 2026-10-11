@@ -2,6 +2,12 @@
 
 This guide covers the current FastAPI + React service shape.
 
+PostgreSQL 16 is required for every application process. Set `DATABASE_URL`
+before starting the API or database-backed CLI. The `paths.data` setting in the
+active YAML independently controls downloads, logs, upload batches, and RAG
+artifacts; use an absolute path such as `D:/AI_actuarial_inforsearch/data` to
+store local files on another drive.
+
 ## Local Development
 
 Use Node.js `^20.19.0` or `>=22.12.0`; the Vite 7 frontend toolchain no longer supports Node 18.
@@ -32,6 +38,7 @@ npm install
 Use port `8000` for local Vite proxy compatibility:
 
 ```powershell
+$env:DATABASE_URL = 'postgresql://<user>:<password>@127.0.0.1:5432/ai_actuarial'
 python -m ai_actuarial api --host 127.0.0.1 --port 8000
 ```
 
@@ -62,9 +69,9 @@ If Vite selects a different port, keep the browser on that printed URL. The API 
 After the API has a populated database with knowledge-base chunk data, build a KB-scoped ready_data manifest:
 
 ```powershell
-python -m ai_actuarial.agentic_rag.ready_data_builder --db data/index.db --kb-id <kb-id> --profile general --validate
-python -m ai_actuarial.agentic_rag.ready_data_builder --db data/index.db --kb-id <kb-id> --profile regulation --validate
-python -m ai_actuarial.agentic_rag.ready_data_builder --db data/index.db --kb-id <kb-id> --profile formula --validate
+python -m ai_actuarial.agentic_rag.ready_data_builder --kb-id <kb-id> --profile general --validate
+python -m ai_actuarial.agentic_rag.ready_data_builder --kb-id <kb-id> --profile regulation --validate
+python -m ai_actuarial.agentic_rag.ready_data_builder --kb-id <kb-id> --profile formula --validate
 ```
 
 Run the deterministic Agentic eval smoke, which does not require provider keys:

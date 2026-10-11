@@ -247,11 +247,12 @@ def _build_catalog_stats_filters(
     filters: list[str] = []
     params: list[Any] = []
     if provider:
-        filters.append("c.category LIKE ?")
+        filters.append("LOWER(c.category) LIKE LOWER(?)")
         params.append(f"%{provider}%")
     if input_source:
         filters.append(
-            "EXISTS (SELECT 1 FROM files f WHERE f.url = c.file_url AND f.source_site LIKE ?)"
+            "EXISTS (SELECT 1 FROM files f WHERE f.url = c.file_url "
+            "AND LOWER(f.source_site) LIKE LOWER(?))"
         )
         params.append(f"%{input_source}%")
     if category:

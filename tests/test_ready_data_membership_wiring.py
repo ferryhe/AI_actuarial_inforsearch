@@ -7,6 +7,7 @@ import pytest
 from ai_actuarial.rag.config import RAGConfig
 from ai_actuarial.rag.knowledge_base import KnowledgeBaseManager
 from ai_actuarial.storage import Storage
+from tests.postgres_helpers import postgres_url_for_path
 
 
 def _manager_with_files(
@@ -16,7 +17,7 @@ def _manager_with_files(
     manifest_profile: str = "general",
     file_count: int = 2,
 ) -> tuple[Storage, KnowledgeBaseManager, list[str]]:
-    storage = Storage(str(tmp_path / f"{kb_id}.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / f"{kb_id}.db")))
     manager = KnowledgeBaseManager(
         storage,
         config=RAGConfig(data_dir=str(tmp_path / "rag-data")),

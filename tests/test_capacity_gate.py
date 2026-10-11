@@ -4,10 +4,17 @@ import pytest
 
 from ai_actuarial.capacity import CapacityBlockedError, capacity_status, ensure_capacity
 from ai_actuarial.task_runtime import NativeTaskRuntime
+from tests.postgres_helpers import postgres_url_for_path
 
 
 class _SentinelError(Exception):
     pass
+
+
+@pytest.fixture
+def native_runtime_database(tmp_path, monkeypatch):
+    database_url = postgres_url_for_path(tmp_path / "capacity.db")
+    monkeypatch.setenv("DATABASE_URL", database_url)
 
 
 def test_capacity_status_blocks_at_threshold() -> None:
@@ -58,7 +65,9 @@ def test_ensure_capacity_returns_status_when_ok() -> None:
     assert status["blocked"] is False
 
 
-def test_run_collection_blocks_write_heavy_types_when_full(monkeypatch) -> None:
+def test_run_collection_blocks_write_heavy_types_when_full(
+    monkeypatch, native_runtime_database
+) -> None:
     runtime = NativeTaskRuntime()
     calls: list[str] = []
 
@@ -86,7 +95,9 @@ def test_run_collection_blocks_write_heavy_types_when_full(monkeypatch) -> None:
     "collection_type",
     ["url", "file", "search", "scheduled", "catalog", "markdown_conversion"],
 )
-def test_run_collection_skips_gate_for_non_write_heavy_types(monkeypatch, collection_type) -> None:
+def test_run_collection_skips_gate_for_non_write_heavy_types(
+    monkeypatch, collection_type, native_runtime_database
+) -> None:
     runtime = NativeTaskRuntime()
     calls: list[str] = []
 
@@ -94,7 +105,7 @@ def test_run_collection_skips_gate_for_non_write_heavy_types(monkeypatch, collec
         calls.append(operation)
         return {"blocked": False}
 
-    def boom(db_path: str):
+    def boom(db_path: str, **kwargs):
         raise _SentinelError("storage reached")
 
     monkeypatch.setattr("ai_actuarial.task_runtime.ensure_capacity", fake_ensure)

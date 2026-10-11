@@ -3,6 +3,7 @@ from ai_actuarial.api.services import rag_admin as rag_admin_service
 from ai_actuarial.api.services.ready_data_publication import publish_ready_data_publication
 from ai_actuarial.rag.knowledge_base import KnowledgeBaseManager
 from ai_actuarial.storage import Storage
+from tests.postgres_helpers import postgres_url_for_path
 from tests.test_fastapi_rag_admin_endpoints import _build_test_client
 
 
@@ -28,11 +29,12 @@ def _disable_tokenizer_initialization(monkeypatch, tmp_path):
 
 def _kb_db(tmp_path, monkeypatch):
     db_path = tmp_path / "index.db"
+    db_url = postgres_url_for_path(str(db_path))
     _client, _app, _seed = _build_test_client(tmp_path, monkeypatch)
-    storage = Storage(str(db_path))
+    storage = Storage(db_url)
     try:
         KnowledgeBaseManager(storage)
-        storage._conn.executescript("""
+        storage._conn.execute("""
             INSERT INTO rag_knowledge_bases (
                 kb_id, name, description, kb_mode, chunk_profile_id, manifest_profile,
                 embedding_provider, embedding_model, embedding_dimension, embedding_identity_key,
@@ -41,13 +43,14 @@ def _kb_db(tmp_path, monkeypatch):
                 'kb-lazy', 'Lazy KB', '', 'manual', '', 'general', 'openai',
                 'text-embedding-3-large', 3072, '', 800, 100, 'Flat',
                 '2026-10-10T00:00:00+00:00', '2026-10-10T00:00:00+00:00', 0, 0
-            );
+            )
+            ON CONFLICT (kb_id) DO NOTHING
             """)
         storage._conn.commit()
     finally:
         storage.close()
     _disable_tokenizer_initialization(monkeypatch, tmp_path)
-    return str(db_path)
+    return db_url
 
 
 def _admin():

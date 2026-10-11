@@ -11,6 +11,7 @@ from itsdangerous import URLSafeSerializer
 
 from ai_actuarial.shared_auth import hash_token
 from ai_actuarial.storage import Storage
+from tests.postgres_helpers import postgres_url_for_path
 from tests.test_fastapi_chat_endpoints import _build_test_client as _build_chat_test_client
 from tests.test_fastapi_chat_endpoints import (
     _install_guest_chat_fakes,
@@ -54,7 +55,7 @@ def _assert_mutation_uses_settings_error_formatter(source: str, marker: str) -> 
 
 
 def _seeded_token_id(app, presented_token: object) -> int:
-    storage = Storage(app.state.db_path)
+    storage = Storage(app.state.database)
     try:
         token = storage.get_auth_token_by_hash(hash_token(str(presented_token)))
     finally:
@@ -209,7 +210,7 @@ def test_non_admin_email_and_active_admin_token_session_fail_closed(
         "MARKDOWN_CONVERSION_CONFIG_PATH", str(tmp_path / "markdown_conversion.yaml")
     )
     client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
-    storage = Storage(app.state.db_path)
+    storage = Storage(app.state.database)
     try:
         registered_user_id = storage.create_user(
             "cross-mode-registered@example.com",
@@ -325,7 +326,7 @@ def test_unusable_token_session_does_not_mask_unique_active_admin_in_either_orde
         "MARKDOWN_CONVERSION_CONFIG_PATH", str(tmp_path / "markdown_conversion.yaml")
     )
     client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
-    storage = Storage(app.state.db_path)
+    storage = Storage(app.state.database)
     try:
         if stale_kind == "inactive":
             stale_id: object = storage.upsert_auth_token_by_hash(
@@ -377,7 +378,7 @@ def test_different_active_email_sessions_fail_closed_in_both_cookie_orders(
 ) -> None:
     _patch_available_models(monkeypatch)
     client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
-    storage = Storage(app.state.db_path)
+    storage = Storage(app.state.database)
     try:
         registered_user_id = storage.create_user(
             "ambiguous-registered@example.com",
@@ -413,7 +414,7 @@ def test_duplicate_same_email_and_invalid_or_disabled_identity_keep_valid_admin(
 ) -> None:
     _patch_available_models(monkeypatch)
     client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
-    storage = Storage(app.state.db_path)
+    storage = Storage(app.state.database)
     try:
         disabled_user_id = storage.create_user(
             "disabled-duplicate@example.com",
@@ -461,7 +462,7 @@ def test_non_admin_settings_write_remains_forbidden(tmp_path: Path, monkeypatch)
         assert response.status_code == 403
         assert response.json()["detail"] == "Forbidden"
 
-    storage = Storage(app.state.db_path)
+    storage = Storage(app.state.database)
     try:
         registered_user_id = storage.create_user(
             "registered-settings@example.com",

@@ -22,6 +22,7 @@ from ai_actuarial.ai_runtime import (  # noqa: E402
     get_ai_routing,
     list_provider_credentials,
 )
+from ai_actuarial.postgres import DatabaseConfig  # noqa: E402
 from ai_actuarial.shared_runtime import get_sites_config_path, load_yaml  # noqa: E402
 from ai_actuarial.storage import Storage  # noqa: E402
 
@@ -77,14 +78,6 @@ def _valid_fernet_key(value: str) -> bool:
     return True
 
 
-def _resolve_db_path(config: dict[str, Any], raw_path: str | None) -> Path:
-    if raw_path:
-        return Path(raw_path).expanduser()
-    paths = config.get("paths") or {}
-    database = config.get("database") or {}
-    return Path(str(paths.get("db") or database.get("path") or "data/index.db"))
-
-
 def _provider_env_status(env_values: dict[str, str]) -> dict[str, Any]:
     configured: list[dict[str, str]] = []
     empty: list[dict[str, str]] = []
@@ -105,22 +98,22 @@ def _provider_env_status(env_values: dict[str, str]) -> dict[str, Any]:
 
 
 def _db_report(
-    db_path: Path,
+    database_url: str | None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]], str | None]:
-    if not db_path.exists():
+    if not database_url:
         return (
-            {"path": str(db_path), "exists": False, "credential_count": 0, "usable_count": 0},
+            {"engine": "postgresql", "configured": False, "credential_count": 0, "usable_count": 0},
             [],
             [],
-            "database_not_found",
+            "database_url_not_configured",
         )
-    storage = Storage(str(db_path))
+    storage = Storage(DatabaseConfig(database_url))
     try:
         credentials = list_provider_credentials(storage=storage).get("credentials", [])
         routing = get_ai_routing(storage=storage).get("bindings", [])
     except Exception as exc:  # noqa: BLE001
         return (
-            {"path": str(db_path), "exists": True, "credential_count": 0, "usable_count": 0},
+            {"engine": "postgresql", "configured": True, "credential_count": 0, "usable_count": 0},
             [],
             [],
             f"database_report_failed: {type(exc).__name__}",
@@ -162,8 +155,8 @@ def _db_report(
     )
     return (
         {
-            "path": str(db_path),
-            "exists": True,
+            "engine": "postgresql",
+            "configured": True,
             "credential_count": len(safe_credentials),
             "usable_count": usable_count,
             "routing_configured_count": sum(1 for row in safe_routing if row.get("configured")),
@@ -180,9 +173,8 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
     env_values = _merged_env(dotenv_values)
     config_path = Path(args.config).expanduser() if args.config else Path(get_sites_config_path())
     config = load_yaml(str(config_path), default={})
-    db_path = _resolve_db_path(config, args.db)
-
-    db_summary, credentials, routing, db_error = _db_report(db_path)
+    database_url = env_values.get(args.database_url_env)
+    db_summary, credentials, routing, db_error = _db_report(database_url)
 
     db_provider_pairs = {
         (str(row.get("provider_id") or ""), str(row.get("category") or ""))
@@ -256,7 +248,9 @@ def main(argv: list[str] | None = None) -> int:
         "--config", help="Path to sites.yaml. Defaults to the active project config."
     )
     parser.add_argument(
-        "--db", help="Path to SQLite database. Defaults to sites.yaml paths.db/database.path."
+        "--database-url-env",
+        default="DATABASE_URL",
+        help="Environment variable containing the PostgreSQL URL",
     )
     parser.add_argument("--json", action="store_true", help="Print JSON output.")
     args = parser.parse_args(argv)

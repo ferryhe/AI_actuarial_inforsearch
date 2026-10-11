@@ -6,6 +6,7 @@ import pytest
 
 from ai_actuarial.rag.knowledge_base import KnowledgeBaseManager
 from ai_actuarial.storage import Storage
+from tests.postgres_helpers import postgres_url_for_path, record_sql
 
 
 def _create_kb(storage: Storage, kb_id: str, *, profile: str = "general") -> None:
@@ -197,7 +198,7 @@ def _seed_bound_context(
 def test_identical_canonical_overwrite_is_zero_write_and_zero_generation(
     tmp_path: Path,
 ) -> None:
-    storage = Storage(str(tmp_path / "identical.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "identical.db")))
     try:
         kb_id, _file_url, chunk_set_id = _seed_bound_context(
             storage,
@@ -242,7 +243,7 @@ def test_identical_canonical_overwrite_is_zero_write_and_zero_generation(
 def test_section_hierarchy_uses_sqlite_text_affinity_for_canonical_noop(
     tmp_path: Path,
 ) -> None:
-    storage = Storage(str(tmp_path / "section-affinity.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "section-affinity.db")))
     try:
         kb_id, _file_url, chunk_set_id = _seed_bound_context(
             storage,
@@ -269,7 +270,7 @@ def test_section_hierarchy_uses_sqlite_text_affinity_for_canonical_noop(
 
 
 def test_bound_selected_ready_chunk_content_change_is_immutable_noop(tmp_path: Path) -> None:
-    storage = Storage(str(tmp_path / "bound-soft.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "bound-soft.db")))
     try:
         kb_id, _file_url, chunk_set_id = _seed_bound_context(
             storage,
@@ -295,7 +296,7 @@ def test_bound_selected_ready_chunk_content_change_is_immutable_noop(tmp_path: P
 
 
 def test_fallback_visible_chunk_content_change_marks_soft_stale_once(tmp_path: Path) -> None:
-    storage = Storage(str(tmp_path / "fallback-soft.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "fallback-soft.db")))
     try:
         file_url = "https://example.com/fallback-soft.pdf"
         _create_file(storage, tmp_path, file_url)
@@ -324,8 +325,10 @@ def test_fallback_visible_chunk_content_change_marks_soft_stale_once(tmp_path: P
         storage.close()
 
 
-def test_compare_and_write_use_begin_immediate(tmp_path: Path) -> None:
-    storage = Storage(str(tmp_path / "begin-immediate.db"))
+def test_compare_and_write_locks_chunk_set_row(tmp_path: Path) -> None:
+    storage = Storage(postgres_url_for_path(str(tmp_path / "begin-immediate.db")))
+    statements: list[str] = []
+    stop_recording = record_sql(storage._conn, statements)
     try:
         file_url = "https://example.com/begin-immediate.pdf"
         _create_file(storage, tmp_path, file_url)
@@ -337,24 +340,25 @@ def test_compare_and_write_use_begin_immediate(tmp_path: Path) -> None:
             version="begin-immediate",
             chunks=[_chunk("Before")],
         )
-        statements: list[str] = []
-        storage._conn.set_trace_callback(statements.append)
-
         storage.replace_global_chunks(
             chunk_set_id=chunk_set_id,
             chunks=[_chunk("After")],
             overwrite=True,
         )
 
-        assert any(statement.strip().upper() == "BEGIN IMMEDIATE" for statement in statements)
+        assert any(
+            "FROM file_chunk_sets" in statement and "FOR UPDATE" in statement.upper()
+            for statement in statements
+        )
     finally:
+        stop_recording()
         storage.close()
 
 
 def test_selected_nonempty_ready_chunk_set_cannot_become_empty(
     tmp_path: Path,
 ) -> None:
-    storage = Storage(str(tmp_path / "hard-empty.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "hard-empty.db")))
     try:
         kb_id, _file_url, chunk_set_id = _seed_bound_context(
             storage,
@@ -381,7 +385,7 @@ def test_selected_nonempty_ready_chunk_set_cannot_become_empty(
 
 
 def test_ready_empty_chunk_set_is_immutable_and_fails_closed(tmp_path: Path) -> None:
-    storage = Storage(str(tmp_path / "empty-noop.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "empty-noop.db")))
     try:
         kb_id, _file_url, chunk_set_id = _seed_bound_context(
             storage,
@@ -426,7 +430,7 @@ def test_non_builder_inputs_and_orphan_bindings_do_not_emit_content_events(
     add_membership: bool,
     catalog_status: str,
 ) -> None:
-    storage = Storage(str(tmp_path / f"{case}.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / f"{case}.db")))
     try:
         kb_id = f"kb-{case}"
         file_url = f"https://example.com/{case}.pdf"
@@ -466,7 +470,7 @@ def test_non_builder_inputs_and_orphan_bindings_do_not_emit_content_events(
 
 
 def test_bound_mode_ignores_an_unselected_chunk_set(tmp_path: Path) -> None:
-    storage = Storage(str(tmp_path / "bound-unselected.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "bound-unselected.db")))
     try:
         file_url = "https://example.com/bound-unselected.pdf"
         _create_file(storage, tmp_path, file_url)
@@ -510,7 +514,7 @@ def test_affected_kb_lookup_does_not_materialize_each_full_bound_selection(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    storage = Storage(str(tmp_path / "set-based-affected-kbs.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "set-based-affected-kbs.db")))
     try:
         kb_id, _file_url, chunk_set_id = _seed_bound_context(
             storage,
@@ -540,7 +544,7 @@ def test_affected_kb_lookup_does_not_materialize_each_full_bound_selection(
 
 
 def test_multiple_affected_kbs_each_advance_once(tmp_path: Path) -> None:
-    storage = Storage(str(tmp_path / "multiple-kbs.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "multiple-kbs.db")))
     try:
         file_url = "https://example.com/multiple-kbs.pdf"
         _create_file(storage, tmp_path, file_url)
@@ -577,7 +581,7 @@ def test_multiple_affected_kbs_each_advance_once(tmp_path: Path) -> None:
 
 
 def test_all_known_ready_data_profiles_advance_once(tmp_path: Path) -> None:
-    storage = Storage(str(tmp_path / "multiple-profiles.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "multiple-profiles.db")))
     try:
         kb_id, _file_url, chunk_set_id = _seed_bound_context(
             storage,
@@ -650,7 +654,7 @@ def test_ready_chunk_immutability_skips_content_event_markers(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    storage = Storage(str(tmp_path / "marker-rollback.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "marker-rollback.db")))
     try:
         file_url = "https://example.com/marker-rollback.pdf"
         _create_file(storage, tmp_path, file_url)
@@ -697,7 +701,7 @@ def test_ready_chunk_immutability_skips_content_event_markers(
 
 
 def test_overwrite_false_with_existing_chunks_is_a_complete_noop(tmp_path: Path) -> None:
-    storage = Storage(str(tmp_path / "overwrite-false.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "overwrite-false.db")))
     try:
         kb_id, _file_url, chunk_set_id = _seed_bound_context(
             storage,
@@ -725,7 +729,7 @@ def test_overwrite_false_with_existing_chunks_is_a_complete_noop(tmp_path: Path)
 
 
 def test_duplicate_chunk_indexes_compare_the_final_persisted_rows(tmp_path: Path) -> None:
-    storage = Storage(str(tmp_path / "duplicate-index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "duplicate-index.db")))
     try:
         kb_id, _file_url, chunk_set_id = _seed_bound_context(
             storage,
@@ -757,14 +761,14 @@ def test_duplicate_chunk_indexes_compare_the_final_persisted_rows(tmp_path: Path
         assert changed["replaced"] is False
         assert changed["inserted"] == 0
         assert len(rows) == 1
-        assert rows[0][2:4] == ("Final", 2)
+        assert tuple(rows[0][2:4]) == ("Final", 2)
         assert _state(storage, kb_id)["event_generation"] == 0
     finally:
         storage.close()
 
 
 def test_same_ready_set_overwrite_emits_no_content_reason(tmp_path: Path) -> None:
-    storage = Storage(str(tmp_path / "content-only.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "content-only.db")))
     try:
         kb_id, _file_url, chunk_set_id = _seed_bound_context(
             storage,
@@ -787,7 +791,7 @@ def test_same_ready_set_overwrite_emits_no_content_reason(tmp_path: Path) -> Non
 def test_follow_latest_new_set_emits_binding_event_without_duplicate_content_event(
     tmp_path: Path,
 ) -> None:
-    storage = Storage(str(tmp_path / "follow-latest.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "follow-latest.db")))
     try:
         file_url = "https://example.com/follow-latest.pdf"
         _create_file(storage, tmp_path, file_url)
@@ -841,7 +845,7 @@ def test_follow_latest_new_set_emits_binding_event_without_duplicate_content_eve
 def test_content_events_do_not_move_publication_pointers_or_enable_automation(
     tmp_path: Path,
 ) -> None:
-    storage = Storage(str(tmp_path / "publication-pointers.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "publication-pointers.db")))
     try:
         kb_id, _file_url, chunk_set_id = _seed_bound_context(
             storage,
@@ -906,7 +910,7 @@ def test_content_events_do_not_move_publication_pointers_or_enable_automation(
 
 
 def test_ready_chunk_immutability_ignores_invalid_replacement_input(tmp_path: Path) -> None:
-    storage = Storage(str(tmp_path / "invalid-input.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "invalid-input.db")))
     try:
         kb_id, _file_url, chunk_set_id = _seed_bound_context(
             storage,

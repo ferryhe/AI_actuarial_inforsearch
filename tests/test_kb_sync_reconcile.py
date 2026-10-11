@@ -5,6 +5,7 @@ from pathlib import Path
 from ai_actuarial.rag.config import RAGConfig
 from ai_actuarial.rag.knowledge_base import KnowledgeBaseManager
 from ai_actuarial.storage import Storage
+from tests.postgres_helpers import postgres_url_for_path
 
 
 def _setup_file(storage: Storage, *, file_url: str, title: str, category: str) -> None:
@@ -38,7 +39,7 @@ def _setup_file(storage: Storage, *, file_url: str, title: str, category: str) -
 
 
 def _category_kb(tmp_path: Path) -> tuple[Storage, KnowledgeBaseManager]:
-    storage = Storage(str(tmp_path / "kb.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "kb.db")))
     manager = KnowledgeBaseManager(
         storage,
         config=RAGConfig(data_dir=str(tmp_path / "rag-data")),
@@ -108,7 +109,7 @@ def test_sync_category_files_unchanged_is_idempotent(tmp_path: Path) -> None:
 
 
 def test_sync_all_files_removes_deleted_files(tmp_path: Path) -> None:
-    storage = Storage(str(tmp_path / "kb-all.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "kb-all.db")))
     manager = KnowledgeBaseManager(
         storage,
         config=RAGConfig(data_dir=str(tmp_path / "rag-data")),
@@ -145,7 +146,7 @@ def test_sync_all_files_removes_deleted_files(tmp_path: Path) -> None:
 
 
 def test_sync_category_files_incremental_add_keeps_other_categories(tmp_path: Path) -> None:
-    storage = Storage(str(tmp_path / "kb-multi.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "kb-multi.db")))
     manager = KnowledgeBaseManager(
         storage,
         config=RAGConfig(data_dir=str(tmp_path / "rag-data")),
@@ -203,7 +204,7 @@ def test_sync_marks_ready_data_stale_on_add_and_remove(tmp_path: Path) -> None:
 
 
 def test_sync_category_files_tolerates_mapping_whitespace(tmp_path: Path) -> None:
-    storage = Storage(str(tmp_path / "kb-ws.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "kb-ws.db")))
     manager = KnowledgeBaseManager(
         storage,
         config=RAGConfig(data_dir=str(tmp_path / "rag-data")),
@@ -237,7 +238,7 @@ def test_sync_category_files_tolerates_mapping_whitespace(tmp_path: Path) -> Non
 
 
 def test_sync_category_files_removes_all_when_unmapped(tmp_path: Path) -> None:
-    storage = Storage(str(tmp_path / "kb-unmap.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "kb-unmap.db")))
     manager = KnowledgeBaseManager(
         storage,
         config=RAGConfig(data_dir=str(tmp_path / "rag-data")),

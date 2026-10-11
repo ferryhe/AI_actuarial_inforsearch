@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import json
 import multiprocessing
-import sqlite3
 from pathlib import Path
 from typing import Any
 
@@ -18,93 +17,73 @@ from ai_actuarial.agentic_rag.staging_smoke import (
     run_staging_smoke,
     select_staging_smoke_query,
 )
+from ai_actuarial.storage import Storage
+from tests.postgres_helpers import postgres_url_for_path
 
 
 def _build_source_db(tmp_path: Path) -> Path:
     db_path = tmp_path / "source.db"
-    conn = sqlite3.connect(db_path)
-    conn.executescript("""
-        CREATE TABLE files (
-            url TEXT PRIMARY KEY,
-            title TEXT,
-            source_site TEXT,
-            published_time TEXT
-        );
-        CREATE TABLE catalog_items (
-            file_url TEXT PRIMARY KEY,
-            status TEXT DEFAULT 'ok',
-            summary TEXT,
-            category TEXT,
-            keywords TEXT,
-            rag_chunk_count INTEGER DEFAULT 0,
-            markdown_content TEXT
-        );
-        CREATE TABLE file_chunk_sets (
-            chunk_set_id TEXT PRIMARY KEY,
-            file_url TEXT NOT NULL,
-            chunk_count INTEGER DEFAULT 0,
-            status TEXT DEFAULT 'ready'
-        );
-        CREATE TABLE global_chunks (
-            chunk_id TEXT PRIMARY KEY,
-            chunk_set_id TEXT NOT NULL,
-            chunk_index INTEGER NOT NULL,
-            content TEXT NOT NULL,
-            token_count INTEGER DEFAULT 0,
-            section_hierarchy TEXT
-        );
-        """)
-    conn.execute(
-        "INSERT INTO files(url, title, source_site, published_time) VALUES (?, ?, ?, ?)",
-        (
-            "https://example.com/valuation-rule",
-            "Deterministic Valuation Rule",
-            "example.com",
-            "2026-08-19",
-        ),
-    )
-    conn.execute(
-        """
-        INSERT INTO catalog_items(
-            file_url, status, summary, category, keywords,
-            rag_chunk_count, markdown_content
-        ) VALUES (?, 'ok', ?, ?, ?, 1, ?)
-        """,
-        (
-            "https://example.com/valuation-rule",
-            "A deterministic reserve valuation summary.",
-            "regulation",
-            '["reserve", "valuation"]',
+    storage = Storage(postgres_url_for_path(str(db_path)))
+    try:
+        file_url = "https://example.com/valuation-rule"
+        storage.insert_file(
+            url=file_url,
+            sha256="sha-smoke",
+            title="Deterministic Valuation Rule",
+            source_site="example.com",
+            source_page_url="https://example.com",
+            original_filename="valuation-rule.pdf",
+            local_path=str(tmp_path / "valuation-rule.pdf"),
+            bytes=1,
+            content_type="application/pdf",
+            published_time="2026-08-19",
+        )
+        storage.upsert_catalog_item(
+            {
+                "url": file_url,
+                "sha256": "sha-smoke",
+                "keywords": ["reserve", "valuation"],
+                "summary": "A deterministic reserve valuation summary.",
+                "category": "regulation",
+            },
+            pipeline_version="staging-smoke-v1",
+            status="ok",
+        )
+        storage.update_file_markdown(
+            file_url,
             "# Reserve Formula\n| Item | Value |\n| --- | --- |\n| Reserve | 100 |",
-        ),
-    )
-    conn.execute(
-        "INSERT INTO file_chunk_sets(chunk_set_id, file_url, chunk_count) VALUES (?, ?, 1)",
-        ("cs-smoke", "https://example.com/valuation-rule"),
-    )
-    conn.execute(
-        """
-        INSERT INTO global_chunks(
-            chunk_id, chunk_set_id, chunk_index, content,
-            token_count, section_hierarchy
-        ) VALUES (?, ?, 0, ?, 12, ?)
-        """,
-        (
-            "chunk-smoke",
-            "cs-smoke",
-            "Reserve = premium + interest. | Item | Value | Reserve | 100 |",
-            "Reserve Formula > Calculation",
-        ),
-    )
-    conn.commit()
-    conn.close()
+        )
+        profile = storage.create_chunk_profile(
+            name="Staging smoke",
+            chunk_size=100,
+            chunk_overlap=10,
+            splitter="semantic",
+            tokenizer="test",
+        )
+        chunk_set = storage.get_or_create_file_chunk_set(
+            file_url=file_url,
+            profile_id=profile["profile_id"],
+            markdown_hash="smoke-markdown",
+        )
+        storage.replace_global_chunks(
+            chunk_set_id=chunk_set["chunk_set_id"],
+            chunks=[
+                {
+                    "content": "Reserve = premium + interest. | Item | Value | Reserve | 100 |",
+                    "token_count": 12,
+                    "section_hierarchy": "Reserve Formula > Calculation",
+                }
+            ],
+        )
+    finally:
+        storage.close()
     return db_path
 
 
 def _build_ready_data(tmp_path: Path, profile: str) -> Path:
     output_dir = tmp_path / profile
     manifest = ready_data_builder.build_l0(
-        db_path=str(_build_source_db(tmp_path)),
+        db_path=postgres_url_for_path(str(_build_source_db(tmp_path))),
         output_dir=str(output_dir),
         profile=profile,
     )

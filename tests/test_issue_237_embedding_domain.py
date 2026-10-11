@@ -12,10 +12,11 @@ import pytest
 
 from ai_actuarial.rag.config import RAGConfig
 from ai_actuarial.storage import Storage
+from tests.postgres_helpers import postgres_url_for_path
 
 
 def _downgrade_chunk_tables_to_v7(db_path: Path, *, with_rows: bool) -> dict[str, str]:
-    storage = Storage(str(db_path))
+    storage = Storage._legacy_sqlite_schema_for_validation(db_path)
     seeded: dict[str, object] | None = None
     try:
         if with_rows:
@@ -114,21 +115,54 @@ def _seed_chunks(
         markdown_hash="markdown-v1",
         profile_config_hash=str(profile["config_hash"]),
     )
-    storage.replace_global_chunks(
-        chunk_set_id=str(chunk_set["chunk_set_id"]),
-        chunks=[
-            {"chunk_index": 0, "content": "alpha", "token_count": 1},
-            {"chunk_index": 1, "content": "beta", "token_count": 1},
-            {"chunk_index": 2, "content": "gamma", "token_count": 1},
-        ],
-    )
+    chunks = [
+        {"chunk_index": 0, "content": "alpha", "token_count": 1},
+        {"chunk_index": 1, "content": "beta", "token_count": 1},
+        {"chunk_index": 2, "content": "gamma", "token_count": 1},
+    ]
+    if isinstance(storage._conn, sqlite3.Connection):
+        # This explicit legacy fixture builds a v7 SQLite source. Use its old
+        # schema directly rather than routing the current PostgreSQL runtime
+        # locking method through a legacy connection.
+        now = storage._utcnow_iso()
+        for chunk in chunks:
+            content = str(chunk["content"])
+            chunk_index = int(chunk["chunk_index"])
+            storage._conn.execute(
+                """
+                INSERT INTO global_chunks (
+                    chunk_id, chunk_set_id, chunk_index, content, token_count,
+                    section_hierarchy, content_hash, created_at
+                ) VALUES (?, ?, ?, ?, ?, NULL, ?, ?)
+                """,
+                (
+                    f"{chunk_set['chunk_set_id']}:{chunk_index}",
+                    chunk_set["chunk_set_id"],
+                    chunk_index,
+                    content,
+                    int(chunk["token_count"]),
+                    hashlib.sha256(content.encode("utf-8")).hexdigest(),
+                    now,
+                ),
+            )
+        storage._conn.execute(
+            "UPDATE file_chunk_sets SET status = 'ready', chunk_count = 3, updated_at = ? "
+            "WHERE chunk_set_id = ?",
+            (now, chunk_set["chunk_set_id"]),
+        )
+        storage._conn.commit()
+    else:
+        storage.replace_global_chunks(
+            chunk_set_id=str(chunk_set["chunk_set_id"]),
+            chunks=chunks,
+        )
     return {"profile": profile, "chunk_set": chunk_set}
 
 
 def test_chunk_set_identity_includes_actual_profile_contract_and_ready_rows_are_immutable(
     tmp_path: Path,
 ) -> None:
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         seeded = _seed_chunks(storage)
         profile = seeded["profile"]
@@ -177,9 +211,9 @@ def test_chunk_generation_failure_leaves_building_set_and_retry_publishes_ready(
     from ai_actuarial.api.services.files_write import generate_file_chunk_sets
     from ai_actuarial.rag.exceptions import ChunkingException
 
-    db_path = tmp_path / "retry.db"
+    db_path = postgres_url_for_path(tmp_path / "retry.db")
     file_url = "https://example.test/retry.pdf"
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         storage.insert_file(
             file_url,
@@ -207,17 +241,17 @@ def test_chunk_generation_failure_leaves_building_set_and_retry_publishes_ready(
     )
     with pytest.raises(Exception, match="boom"):
         generate_file_chunk_sets(
-            db_path=str(db_path),
+            db_path=db_path,
             file_url=file_url,
             payload={"profile_id": profile["profile_id"]},
         )
 
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         failed_row = storage._conn.execute(
             "SELECT chunk_set_id, status, chunk_count FROM file_chunk_sets"
         ).fetchone()
-        assert failed_row[1:] == ("building", 0)
+        assert tuple(failed_row[1:]) == ("building", 0)
     finally:
         storage.close()
 
@@ -233,7 +267,7 @@ def test_chunk_generation_failure_leaves_building_set_and_retry_publishes_ready(
         ],
     )
     retried = generate_file_chunk_sets(
-        db_path=str(db_path),
+        db_path=db_path,
         file_url=file_url,
         payload={"profile_id": profile["profile_id"]},
     )
@@ -241,13 +275,13 @@ def test_chunk_generation_failure_leaves_building_set_and_retry_publishes_ready(
     assert retried["chunk_set_id"] == failed_row[0]
     assert retried["chunk_count"] == 1
     assert retried["reused_existing"] is False
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         ready_row = storage._conn.execute(
             "SELECT status, chunk_count FROM file_chunk_sets WHERE chunk_set_id = ?",
             (failed_row[0],),
         ).fetchone()
-        assert ready_row == ("ready", 1)
+        assert tuple(ready_row) == ("ready", 1)
     finally:
         storage.close()
 
@@ -412,7 +446,7 @@ def test_embedding_coverage_exposes_server_owned_qwen_identity(
     from ai_actuarial.api.services.ops_read import get_embedding_coverage
 
     db_path = tmp_path / "qwen-coverage.db"
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         seeded = _seed_chunks(storage)
         chunk_set_id = str(seeded["chunk_set"]["chunk_set_id"])
@@ -431,7 +465,7 @@ def test_embedding_coverage_exposes_server_owned_qwen_identity(
     )
 
     coverage = get_embedding_coverage(
-        db_path=str(db_path),
+        db_path=postgres_url_for_path(db_path),
         chunk_set_ids=[chunk_set_id],
         file_urls=[],
         profile_id=None,
@@ -460,7 +494,7 @@ def test_ensure_embeddings_reuses_valid_rows_and_repairs_only_one_invalid_row(
 ) -> None:
     from ai_actuarial.embedding_service import compute_embedding_identity, ensure_chunk_embeddings
 
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         seeded = _seed_chunks(storage)
         chunk_set_id = str(seeded["chunk_set"]["chunk_set_id"])
@@ -524,7 +558,7 @@ def test_ensure_embeddings_persists_completed_batch_then_stops_before_next_batch
 ) -> None:
     from ai_actuarial.embedding_service import compute_embedding_identity, ensure_chunk_embeddings
 
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         seeded = _seed_chunks(storage)
         chunks = storage.list_chunks_for_embedding([str(seeded["chunk_set"]["chunk_set_id"])])
@@ -567,7 +601,7 @@ def test_ensure_embeddings_rechecks_stop_after_only_persisted_batch(
 ) -> None:
     from ai_actuarial.embedding_service import compute_embedding_identity, ensure_chunk_embeddings
 
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         seeded = _seed_chunks(storage)
         chunks = storage.list_chunks_for_embedding([str(seeded["chunk_set"]["chunk_set_id"])])[:1]
@@ -606,7 +640,7 @@ def test_provider_count_mismatch_fails_whole_batch_without_persisting(
 ) -> None:
     from ai_actuarial.embedding_service import compute_embedding_identity, ensure_chunk_embeddings
 
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         seeded = _seed_chunks(storage)
         chunks = storage.list_chunks_for_embedding([str(seeded["chunk_set"]["chunk_set_id"])])[:2]
@@ -633,7 +667,7 @@ def test_concurrent_embedding_upserts_keep_one_identity_row(tmp_path: Path) -> N
     from ai_actuarial.embedding_service import compute_embedding_identity
 
     db_path = tmp_path / "index.db"
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         seeded = _seed_chunks(storage)
         chunk_id = str(
@@ -649,7 +683,7 @@ def test_concurrent_embedding_upserts_keep_one_identity_row(tmp_path: Path) -> N
     )
 
     def upsert(_: int) -> None:
-        worker = Storage(str(db_path))
+        worker = Storage(postgres_url_for_path(str(db_path)))
         try:
             worker.batch_upsert_chunk_embeddings(
                 [{"chunk_id": chunk_id, "vector": [1.0, 2.0, 3.0]}],
@@ -661,17 +695,18 @@ def test_concurrent_embedding_upserts_keep_one_identity_row(tmp_path: Path) -> N
     with ThreadPoolExecutor(max_workers=4) as pool:
         list(pool.map(upsert, range(8)))
 
-    with sqlite3.connect(db_path) as conn:
-        assert (
-            conn.execute(
-                """
+    storage = Storage(postgres_url_for_path(str(db_path)))
+    try:
+        count = storage._conn.execute(
+            """
             SELECT COUNT(*) FROM chunk_embeddings
             WHERE chunk_id = ? AND embedding_identity_key = ?
             """,
-                (chunk_id, identity.embedding_identity_key),
-            ).fetchone()[0]
-            == 1
-        )
+            (chunk_id, identity.embedding_identity_key),
+        ).fetchone()[0]
+    finally:
+        storage.close()
+    assert count == 1
 
 
 def test_openai_provider_response_order_is_validated() -> None:
@@ -729,7 +764,7 @@ def test_openai_provider_requires_explicit_exact_integer_indices(
 
 
 def test_ready_zero_chunk_set_is_immutable_in_storage(tmp_path: Path) -> None:
-    storage = Storage(str(tmp_path / "ready-zero.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "ready-zero.db")))
     try:
         storage.insert_file(
             "https://example.test/zero.pdf",
@@ -750,10 +785,12 @@ def test_ready_zero_chunk_set_is_immutable_in_storage(tmp_path: Path) -> None:
             profile_config_hash=str(profile["config_hash"]),
             status="ready",
         )
-        before = storage._conn.execute(
-            "SELECT status, chunk_count, updated_at FROM file_chunk_sets WHERE chunk_set_id = ?",
-            (chunk_set["chunk_set_id"],),
-        ).fetchone()
+        before = tuple(
+            storage._conn.execute(
+                "SELECT status, chunk_count, updated_at FROM file_chunk_sets WHERE chunk_set_id = ?",
+                (chunk_set["chunk_set_id"],),
+            ).fetchone()
+        )
 
         with pytest.raises(ValueError, match="ready chunk set"):
             storage.replace_global_chunks(
@@ -765,7 +802,7 @@ def test_ready_zero_chunk_set_is_immutable_in_storage(tmp_path: Path) -> None:
             "SELECT status, chunk_count, updated_at FROM file_chunk_sets WHERE chunk_set_id = ?",
             (chunk_set["chunk_set_id"],),
         ).fetchone()
-        assert after == before == ("ready", 0, chunk_set["updated_at"])
+        assert tuple(after) == before == ("ready", 0, chunk_set["updated_at"])
         assert (
             storage._conn.execute(
                 "SELECT COUNT(*) FROM global_chunks WHERE chunk_set_id = ?",
@@ -783,10 +820,10 @@ def test_ready_zero_chunk_set_is_not_repaired_by_generation(
 ) -> None:
     from ai_actuarial.api.services.files_write import generate_file_chunk_sets
 
-    db_path = tmp_path / "ready-zero-service.db"
+    db_path = postgres_url_for_path(tmp_path / "ready-zero-service.db")
     file_url = "https://example.test/zero.pdf"
     markdown = "# Zero"
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         storage.insert_file(
             file_url,
@@ -818,18 +855,18 @@ def test_ready_zero_chunk_set_is_not_repaired_by_generation(
     )
     with pytest.raises(Exception, match="ready chunk set"):
         generate_file_chunk_sets(
-            db_path=str(db_path),
+            db_path=db_path,
             file_url=file_url,
             payload={"profile_id": profile["profile_id"]},
         )
 
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         after = storage._conn.execute(
             "SELECT status, chunk_count, updated_at FROM file_chunk_sets WHERE chunk_set_id = ?",
             (chunk_set["chunk_set_id"],),
         ).fetchone()
-        assert after == before
+        assert tuple(after) == before
         assert storage._conn.execute("SELECT COUNT(*) FROM global_chunks").fetchone()[0] == 0
     finally:
         storage.close()
@@ -851,7 +888,7 @@ def test_provider_invalid_item_is_not_persisted_and_error_is_sanitized(
     from ai_actuarial.embedding_service import compute_embedding_identity, ensure_chunk_embeddings
     from ai_actuarial.task_item_errors import make_item_error
 
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         seeded = _seed_chunks(storage)
         chunks = storage.list_chunks_for_embedding([str(seeded["chunk_set"]["chunk_set_id"])])[:1]
@@ -888,7 +925,7 @@ def test_oversized_vector_json_is_rejected_before_json_parsing(
 ) -> None:
     from ai_actuarial.embedding_service import compute_embedding_identity
 
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         seeded = _seed_chunks(storage)
         chunk_set_id = str(seeded["chunk_set"]["chunk_set_id"])
@@ -929,7 +966,7 @@ def test_oversized_vector_json_is_rejected_before_json_parsing(
         class ConnectionProbe:
             def execute(self, statement: str, params: tuple[object, ...]) -> CursorProbe:
                 assert "CASE" in statement
-                assert "length(CAST(vector_json AS BLOB))" in statement
+                assert "octet_length(vector_json)" in statement
                 return CursorProbe(real_conn.execute(statement, params))
 
         storage._conn = ConnectionProbe()  # type: ignore[assignment]

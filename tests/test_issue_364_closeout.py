@@ -2,7 +2,6 @@
 
 import hashlib
 import json
-import sqlite3
 import subprocess
 import sys
 from pathlib import Path
@@ -11,6 +10,7 @@ import pytest
 
 from ai_actuarial import build_info
 from scripts import production_recovery
+from tests.postgres_helpers import postgres_url_for_path
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -65,8 +65,7 @@ def test_local_build_metadata_uses_manifest_digest_and_checks_loaded_image(
     config = tmp_path / "sites.yaml"
     config.write_text("sites: []\n", encoding="utf-8")
     db = tmp_path / "index.db"
-    with sqlite3.connect(db):
-        pass
+    database_url = postgres_url_for_path(db)
     labels = {
         "com.aiinforsearch.release-id": "fixture-release",
         "org.opencontainers.image.revision": "a" * 40,
@@ -117,7 +116,7 @@ def test_local_build_metadata_uses_manifest_digest_and_checks_loaded_image(
         image="api",
         frontend_image="frontend",
         config_path=config,
-        db_path=db,
+        database_url=database_url,
         output_path=output,
         build_metadata_path=metadata_path,
         inspect_image=images.__getitem__,
@@ -161,7 +160,7 @@ def test_image_config_id_is_never_a_manifest_digest(tmp_path, monkeypatch):
         production_recovery.create_release_record(
             image="api",
             config_path=Path("fixture"),
-            db_path=Path("fixture"),
+            database_url=postgres_url_for_path(tmp_path / "fixture.db"),
             output_path=output,
             inspect_image=lambda _: {
                 "Id": "sha256:" + "c" * 64,
@@ -213,8 +212,7 @@ def test_raw_bake_metadata_binds_classic_config_through_buildkit_content(
     config = tmp_path / "sites.yaml"
     config.write_text("sites: []\n")
     db = tmp_path / "index.db"
-    with sqlite3.connect(db):
-        pass
+    database_url = postgres_url_for_path(db)
     calls = []
 
     def fetch(argv, **kwargs):
@@ -228,7 +226,7 @@ def test_raw_bake_metadata_binds_classic_config_through_buildkit_content(
     arguments = dict(
         image="api",
         config_path=config,
-        db_path=db,
+        database_url=database_url,
         output_path=output,
         build_metadata_path=metadata_path,
         inspect_image=lambda _: {

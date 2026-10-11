@@ -11,9 +11,11 @@ from itsdangerous import BadSignature, URLSafeSerializer
 
 from ai_actuarial.build_info import public_build_info
 from ai_actuarial.config import settings
+from ai_actuarial.postgres import resolve_data_root, resolve_database_config
 from ai_actuarial.shared_auth import hash_token
 from ai_actuarial.shared_runtime import (
     load_sites_config,
+    resolve_data_path,
     resolve_fastapi_env,
     resolve_runtime_features,
 )
@@ -54,9 +56,9 @@ def _native_paths(app: FastAPI) -> list[str]:
     return collect_fastapi_api_paths(app)
 
 
-def _resolve_db_path() -> str:
+def _resolve_database():
     config_data = load_sites_config()
-    return settings.resolve_db_path(config_data)
+    return resolve_database_config(config_data)
 
 
 def _env_bool(key: str, default: bool) -> bool:
@@ -118,12 +120,12 @@ def _apply_runtime_feature_state(app: FastAPI, features: dict[str, object]) -> N
     app.state.content_security_policy = str(features.get("content_security_policy") or "")
 
 
-def _bootstrap_admin_token(db_path: str) -> None:
+def _bootstrap_admin_token(database) -> None:
     token = os.getenv("BOOTSTRAP_ADMIN_TOKEN", "").strip()
     if not token:
         return
     subject = os.getenv("BOOTSTRAP_ADMIN_SUBJECT", "").strip() or "bootstrap-admin"
-    storage = Storage(db_path)
+    storage = Storage(database)
     try:
         storage.upsert_auth_token_by_hash(
             subject=subject,
@@ -282,13 +284,17 @@ def create_app() -> FastAPI:
     )
     app.state.fastapi_session_cookie_httponly = True
     app.state.fastapi_session_cookie_samesite = "Lax"
-    app.state.db_path = _resolve_db_path()
+    app.state.database = _resolve_database()
+    app.state.db_path = app.state.database  # Compatibility for existing service signatures.
+    app.state.data_root = resolve_data_root(config_data)
     try:
-        _bootstrap_admin_token(app.state.db_path)
+        _bootstrap_admin_token(app.state.database)
     except Exception:  # noqa: BLE001
         logger.exception("Failed to bootstrap admin auth token")
     _apply_runtime_feature_state(app, runtime_features)
-    native_runtime = NativeTaskRuntime(ready_data_db_path=app.state.db_path)
+    native_runtime = NativeTaskRuntime(
+        ready_data_database=app.state.database, data_root=app.state.data_root
+    )
     native_refs = native_runtime.refs()
     app.state.native_task_runtime = native_runtime
     app.state.active_tasks_ref = native_refs.active_tasks_ref
@@ -345,7 +351,11 @@ def create_app() -> FastAPI:
 def run_server(host: str = "127.0.0.1", port: int = 5000, reload: bool = False) -> None:
     import uvicorn
 
-    configure_application_logging(log_file=settings.LOG_FILE, level=settings.LOG_LEVEL)
+    config_data = load_sites_config()
+    configure_application_logging(
+        log_file=resolve_data_path(settings.LOG_FILE, data_root=resolve_data_root(config_data)),
+        level=settings.LOG_LEVEL,
+    )
     uvicorn.run(
         "ai_actuarial.api.app:create_app",
         factory=True,

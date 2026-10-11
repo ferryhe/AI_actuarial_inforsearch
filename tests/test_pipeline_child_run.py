@@ -8,14 +8,19 @@ from ai_actuarial.collectors.base import CollectionResult
 from ai_actuarial.crawler import SiteConfig
 from ai_actuarial.storage import Storage
 from ai_actuarial.task_runtime import NativeTaskRuntime
+from tests.postgres_helpers import postgres_url_for_path
 
 
 def _make_runtime(monkeypatch: pytest.MonkeyPatch, db: str) -> NativeTaskRuntime:
-    runtime = NativeTaskRuntime()
+    database_url = postgres_url_for_path(db)
+    runtime = NativeTaskRuntime(ready_data_database=database_url)
     monkeypatch.setattr(
         runtime,
         "_load_site_config",
-        lambda: {"paths": {"db": db, "download_dir": db + ".files"}, "search": {"enabled": True}},
+        lambda: {
+            "paths": {"db": database_url, "download_dir": db + ".files"},
+            "search": {"enabled": True},
+        },
     )
     return runtime
 
@@ -59,13 +64,13 @@ def test_enqueue_search_fallback_creates_child_run_linked_to_parent(monkeypatch,
     result = _result(success=False, metadata={"site_results": []})
 
     # child_run.parent_run_id is a FK to pipeline_run; create the parent run first.
-    storage = Storage(db)
+    storage = Storage(postgres_url_for_path(db))
     storage.create_pipeline_run("run-1", correlation_id="corr")
     storage.close()
 
     runtime._enqueue_site_query_search_fallbacks(
         "task-parent",
-        {"paths": {"db": db}, "search": {"enabled": True}},
+        {"paths": {"db": postgres_url_for_path(db)}, "search": {"enabled": True}},
         result,
         site_configs,
         {"_pipeline_run_id": "run-1"},
@@ -75,9 +80,9 @@ def test_enqueue_search_fallback_creates_child_run_linked_to_parent(monkeypatch,
     assert seen_task_id["parent_run_id"] == "run-1"
     assert seen_task_id["child_run_id"] == seen_task_id["task_id"]
     assert seen_task_id["child_run_id"]
-    assert seen_task_id["db_path"]  # stable per-task db reference carried into child data
+    assert not seen_task_id["db_path"]  # database credentials stay out of serialized task data
 
-    storage = Storage(db)
+    storage = Storage(postgres_url_for_path(db))
     try:
         children = storage.get_child_runs("run-1")
         assert len(children) == 1
@@ -108,7 +113,7 @@ def test_enqueue_search_fallback_without_parent_run_skips_child_run(monkeypatch,
 def test_finalize_child_run_success(monkeypatch, tmp_path) -> None:
     db = str(tmp_path / "pipeline.db")
     runtime = _make_runtime(monkeypatch, db)
-    storage = Storage(db)
+    storage = Storage(postgres_url_for_path(db))
     storage.create_pipeline_run("run-1")
     storage.create_child_run("child-1", "run-1")
     storage.close()
@@ -117,7 +122,7 @@ def test_finalize_child_run_success(monkeypatch, tmp_path) -> None:
         {"child_run_id": "child-1", "parent_run_id": "run-1"}, result=_result(success=True)
     )
 
-    storage = Storage(db)
+    storage = Storage(postgres_url_for_path(db))
     try:
         child = storage.get_child_runs("run-1")[0]
         assert child["status"] == "succeeded"
@@ -129,7 +134,7 @@ def test_finalize_child_run_success(monkeypatch, tmp_path) -> None:
 def test_finalize_child_run_unsuccessful_marks_partial(monkeypatch, tmp_path) -> None:
     db = str(tmp_path / "pipeline.db")
     runtime = _make_runtime(monkeypatch, db)
-    storage = Storage(db)
+    storage = Storage(postgres_url_for_path(db))
     storage.create_pipeline_run("run-1")
     storage.create_child_run("child-1", "run-1")
     storage.close()
@@ -139,7 +144,7 @@ def test_finalize_child_run_unsuccessful_marks_partial(monkeypatch, tmp_path) ->
         result=_result(success=False, errors=["no results"]),
     )
 
-    storage = Storage(db)
+    storage = Storage(postgres_url_for_path(db))
     try:
         child = storage.get_child_runs("run-1")[0]
         assert child["status"] == "failed"
@@ -152,14 +157,14 @@ def test_finalize_child_run_unsuccessful_marks_partial(monkeypatch, tmp_path) ->
 def test_finalize_child_run_exception_marks_hard_fail(monkeypatch, tmp_path) -> None:
     db = str(tmp_path / "pipeline.db")
     runtime = _make_runtime(monkeypatch, db)
-    storage = Storage(db)
+    storage = Storage(postgres_url_for_path(db))
     storage.create_pipeline_run("run-1")
     storage.create_child_run("child-1", "run-1")
     storage.close()
 
     runtime._finalize_child_run({"child_run_id": "child-1", "parent_run_id": "run-1"}, error="boom")
 
-    storage = Storage(db)
+    storage = Storage(postgres_url_for_path(db))
     try:
         child = storage.get_child_runs("run-1")[0]
         assert child["status"] == "failed"
@@ -171,9 +176,10 @@ def test_finalize_child_run_exception_marks_hard_fail(monkeypatch, tmp_path) -> 
 
 def test_finalize_child_run_uses_carried_db_path_not_config(monkeypatch, tmp_path) -> None:
     db_real = str(tmp_path / "real.db")
+    db_real_url = postgres_url_for_path(db_real)
     db_wrong = str(tmp_path / "wrong.db")
     runtime = _make_runtime(monkeypatch, db_real)
-    storage = Storage(db_real)
+    storage = Storage(postgres_url_for_path(db_real))
     storage.create_pipeline_run("run-1")
     storage.create_child_run("child-1", "run-1")
     storage.close()
@@ -182,11 +188,11 @@ def test_finalize_child_run_uses_carried_db_path_not_config(monkeypatch, tmp_pat
     # child_run row in the real DB is updated, not one in the wrong DB.
     monkeypatch.setattr(runtime, "_load_site_config", lambda: {"paths": {"db": db_wrong}})
     runtime._finalize_child_run(
-        {"child_run_id": "child-1", "parent_run_id": "run-1", "_db_path": db_real},
+        {"child_run_id": "child-1", "parent_run_id": "run-1", "_db_path": db_real_url},
         result=_result(success=True),
     )
 
-    storage = Storage(db_real)
+    storage = Storage(postgres_url_for_path(db_real))
     try:
         child = storage.get_child_runs("run-1")[0]
         assert child["status"] == "succeeded"
@@ -197,7 +203,7 @@ def test_finalize_child_run_uses_carried_db_path_not_config(monkeypatch, tmp_pat
 def test_wait_and_summarize_buckets_terminal_children(monkeypatch, tmp_path) -> None:
     db = str(tmp_path / "pipeline.db")
     runtime = _make_runtime(monkeypatch, db)
-    storage = Storage(db)
+    storage = Storage(postgres_url_for_path(db))
     try:
         storage.create_pipeline_run("run-1", correlation_id="corr")
         storage.create_child_run("c-ok", "run-1")
@@ -222,7 +228,7 @@ def test_wait_and_summarize_buckets_terminal_children(monkeypatch, tmp_path) -> 
 def test_wait_and_summarize_no_children(monkeypatch, tmp_path) -> None:
     db = str(tmp_path / "pipeline.db")
     runtime = _make_runtime(monkeypatch, db)
-    storage = Storage(db)
+    storage = Storage(postgres_url_for_path(db))
     try:
         summary = runtime._wait_and_summarize_child_runs(storage, "run-missing", "task-1")
         assert summary == {"children": [], "failed": [], "partial": [], "pending": []}

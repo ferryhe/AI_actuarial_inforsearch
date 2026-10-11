@@ -26,6 +26,7 @@ from ai_actuarial.rag.kb_index import resolve_kb_bound_chunks
 from ai_actuarial.rag.knowledge_base import KnowledgeBaseManager
 from ai_actuarial.storage import Storage
 from ai_actuarial.task_runtime import NativeTaskRuntime
+from tests.postgres_helpers import postgres_url_for_path
 
 UTC = timezone.utc
 
@@ -50,7 +51,7 @@ def _create_kb(storage: Storage, kb_id: str = "kb-auto") -> None:
         source_site="example.com",
         source_page_url="https://example.com",
         original_filename=f"{kb_id}.pdf",
-        local_path=str(Path(storage.db_path).resolve().parent / f"{kb_id}.pdf"),
+        local_path=str(storage.data_root / f"{kb_id}.pdf"),
         bytes=10,
         content_type="application/pdf",
     )
@@ -166,10 +167,10 @@ def _record_candidate(
     index_version_id: str = "idx-test",
     empty: bool = False,
 ) -> dict[str, Any]:
-    storage = Storage(db_path)
+    storage = Storage(postgres_url_for_path(db_path))
     try:
         output_dir = (
-            Path(db_path).resolve().parent
+            storage.data_root
             / "agentic_ready_data"
             / "staging"
             / f"auto-{kb_id}-{generation}-{source_version_id or 'source'}"
@@ -196,7 +197,6 @@ def _record_candidate(
             section_count=0 if empty else 1,
             built_at="2026-08-19T00:00:00+00:00",
             artifact_digest=artifact_digest,
-            source_db=db_path,
             smoke_result={
                 "contract_version": "ready-data-staging-smoke.v1",
                 "status": "skipped_empty" if empty else "passed",
@@ -264,7 +264,7 @@ def _builder(
         expected_source_snapshot_fingerprint: str,
     ) -> dict[str, Any]:
         assert profile == "general"
-        storage = Storage(db_path)
+        storage = Storage(postgres_url_for_path(db_path))
         try:
             source_state = storage.get_agentic_ready_source_state(
                 kb_id=kb_id,
@@ -302,16 +302,17 @@ def _setup_pending(
     publish: bool = False,
     reason: str = "membership_added",
     kb_id: str = "kb-auto",
-) -> Path:
+) -> str:
     db_path = tmp_path / "index.db"
-    storage = Storage(str(db_path))
+    database_url = postgres_url_for_path(str(db_path))
+    storage = Storage(database_url)
     try:
         _create_kb(storage, kb_id)
         _set_automation(storage, kb_id=kb_id, build=build, publish=publish)
         _mark_event(storage, kb_id=kb_id, reason=reason)
     finally:
         storage.close()
-    return db_path
+    return database_url
 
 
 def test_default_off_runner_does_not_build_or_write_attempt_state(tmp_path: Path) -> None:
@@ -327,7 +328,7 @@ def test_default_off_runner_does_not_build_or_write_attempt_state(tmp_path: Path
 
     assert result["status"] == "idle"
     assert calls == []
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         assert (
             storage._conn.execute("SELECT COUNT(*) FROM agentic_ready_publications").fetchone()[0]
@@ -343,11 +344,12 @@ def test_default_off_runner_does_not_build_or_write_attempt_state(tmp_path: Path
 
 def test_runner_is_idle_before_any_knowledge_base_exists(tmp_path: Path) -> None:
     db_path = tmp_path / "index.db"
-    storage = Storage(str(db_path))
+    database_url = postgres_url_for_path(str(db_path))
+    storage = Storage(database_url)
     storage.close()
 
     result = run_ready_data_automation_once(
-        db_path=str(db_path),
+        db_path=database_url,
         heartbeat_interval_seconds=0,
     )
 
@@ -355,7 +357,7 @@ def test_runner_is_idle_before_any_knowledge_base_exists(tmp_path: Path) -> None
 
 
 def test_publish_without_build_is_rejected(tmp_path: Path) -> None:
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         _create_kb(storage)
         with pytest.raises(ValueError, match="automatic publish requires automatic build"):
@@ -366,7 +368,7 @@ def test_publish_without_build_is_rejected(tmp_path: Path) -> None:
 
 def test_runner_coalesces_events_and_attempts_only_latest_generation(tmp_path: Path) -> None:
     db_path = _setup_pending(tmp_path)
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         _mark_event(storage)
         latest = _mark_event(storage)
@@ -400,7 +402,7 @@ def test_new_generation_supersedes_prior_awaiting_publish_candidate(tmp_path: Pa
         validator=_valid,
         heartbeat_interval_seconds=0,
     )
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         _mark_event(storage)
     finally:
@@ -413,7 +415,7 @@ def test_new_generation_supersedes_prior_awaiting_publish_candidate(tmp_path: Pa
         heartbeat_interval_seconds=0,
     )
 
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         prior = storage.get_agentic_ready_publication(
             str(first["candidate_publication"]["publication_id"])
@@ -427,7 +429,7 @@ def test_new_generation_supersedes_prior_awaiting_publish_candidate(tmp_path: Pa
 
 def test_build_only_keeps_validated_candidate_and_active_slot(tmp_path: Path) -> None:
     db_path = _setup_pending(tmp_path)
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         active = _publish_seed(storage, tmp_path)
     finally:
@@ -443,7 +445,7 @@ def test_build_only_keeps_validated_candidate_and_active_slot(tmp_path: Path) ->
 
     assert result["status"] == "awaiting_publish"
     assert result["candidate_publication"]["status"] == "validated"
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         state = storage.get_agentic_ready_publication_state(kb_id="kb-auto", profile="general")
         automation = storage.get_agentic_ready_automation_state(kb_id="kb-auto", profile="general")
@@ -464,7 +466,7 @@ def test_default_runner_reuses_internal_staging_build_core(tmp_path: Path) -> No
     assert result["status"] == "awaiting_publish"
     assert result["candidate_publication"]["status"] == "validated"
     assert Path(result["candidate_publication"]["output_dir"]).is_dir()
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         manifest = _build_agentic_manifest_status(
             storage=storage,
@@ -485,7 +487,7 @@ def test_enabling_publish_revalidates_and_publishes_existing_candidate(tmp_path:
         validator=_valid,
         heartbeat_interval_seconds=0,
     )
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         _set_automation(storage, build=True, publish=True)
     finally:
@@ -505,7 +507,7 @@ def test_enabling_publish_revalidates_and_publishes_existing_candidate(tmp_path:
         second["publication_state"]["active_publication_id"]
         == first["candidate_publication"]["publication_id"]
     )
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         automation = storage.get_agentic_ready_automation_state(
             kb_id="kb-auto",
@@ -530,7 +532,7 @@ def test_manual_operation_evidence_does_not_unblock_empty_candidate_confirmation
     tmp_path: Path,
 ) -> None:
     db_path = _setup_pending(tmp_path, publish=True)
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         claimed = storage.claim_next_agentic_ready_automation(claim_token="empty-build")
         assert claimed and claimed["mode"] == "build"
@@ -582,7 +584,7 @@ def test_manual_operation_evidence_does_not_unblock_empty_candidate_confirmation
 
 def test_build_and_publish_preserves_previous_slot_and_settles_generation(tmp_path: Path) -> None:
     db_path = _setup_pending(tmp_path, publish=True)
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         previous_active = _publish_seed(storage, tmp_path)
     finally:
@@ -596,7 +598,7 @@ def test_build_and_publish_preserves_previous_slot_and_settles_generation(tmp_pa
     )
 
     assert result["status"] == "published"
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         state = storage.get_agentic_ready_publication_state(kb_id="kb-auto", profile="general")
         source = storage.get_agentic_ready_source_state(kb_id="kb-auto", profile="general")
@@ -609,14 +611,14 @@ def test_build_and_publish_preserves_previous_slot_and_settles_generation(tmp_pa
 
 def test_generation_change_supersedes_candidate_without_moving_slots(tmp_path: Path) -> None:
     db_path = _setup_pending(tmp_path, publish=True)
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         active = _publish_seed(storage, tmp_path)
     finally:
         storage.close()
 
     def advance(db_path: str, kb_id: str, _generation: int) -> None:
-        changing = Storage(db_path)
+        changing = Storage(postgres_url_for_path(db_path))
         try:
             _mark_event(changing, kb_id=kb_id)
         finally:
@@ -630,7 +632,7 @@ def test_generation_change_supersedes_candidate_without_moving_slots(tmp_path: P
     )
 
     assert result["status"] == "superseded"
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         candidate = storage.get_agentic_ready_publication(
             str(result["candidate_publication"]["publication_id"])
@@ -649,7 +651,7 @@ def test_disabling_automation_during_build_prevents_publication(tmp_path: Path) 
     db_path = _setup_pending(tmp_path, publish=True)
 
     def disable(db_path: str, kb_id: str, _generation: int) -> None:
-        changing = Storage(db_path)
+        changing = Storage(postgres_url_for_path(db_path))
         try:
             _set_automation(changing, kb_id=kb_id, build=False, publish=False)
         finally:
@@ -663,7 +665,7 @@ def test_disabling_automation_during_build_prevents_publication(tmp_path: Path) 
     )
 
     assert result["status"] == "awaiting_publish"
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         state = storage.get_agentic_ready_publication_state(kb_id="kb-auto", profile="general")
         assert state["active_publication_id"] is None
@@ -673,7 +675,7 @@ def test_disabling_automation_during_build_prevents_publication(tmp_path: Path) 
 
 def test_concurrent_runners_allow_only_one_claim_owner(tmp_path: Path) -> None:
     db_path = _setup_pending(tmp_path)
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         _create_kb(storage, "kb-second")
         _set_automation(storage, kb_id="kb-second", build=True, publish=False)
@@ -721,7 +723,7 @@ def test_lost_claim_owner_cannot_publish(tmp_path: Path) -> None:
     db_path = _setup_pending(tmp_path, publish=True)
 
     def steal_claim(db_path: str, kb_id: str, _generation: int) -> None:
-        storage = Storage(db_path)
+        storage = Storage(postgres_url_for_path(db_path))
         try:
             with storage.transaction(immediate=True):
                 storage._conn.execute(
@@ -740,7 +742,7 @@ def test_lost_claim_owner_cannot_publish(tmp_path: Path) -> None:
     )
 
     assert result["status"] == "claim_lost"
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         assert (
             storage.get_agentic_ready_publication_state(kb_id="kb-auto", profile="general")[
@@ -759,7 +761,7 @@ def test_failures_do_not_move_serving_slots_or_retry_same_generation(
     failure_kind: str,
 ) -> None:
     db_path = _setup_pending(tmp_path, publish=True)
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         active = _publish_seed(storage, tmp_path)
     finally:
@@ -783,7 +785,7 @@ def test_failures_do_not_move_serving_slots_or_retry_same_generation(
                 generation=99,
                 source_version_id="cas-winner",
             )
-            other = Storage(self.db_path)
+            other = Storage(postgres_url_for_path(self.db_path))
             try:
                 other.publish_agentic_ready_publication(
                     str(winner["publication_id"]),
@@ -810,7 +812,7 @@ def test_failures_do_not_move_serving_slots_or_retry_same_generation(
 
     assert first["status"] == "failed"
     assert second["status"] == "idle"
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         state = storage.get_agentic_ready_publication_state(kb_id="kb-auto", profile="general")
         if failure_kind != "cas":
@@ -834,7 +836,7 @@ def test_new_generation_can_run_after_prior_failure(tmp_path: Path) -> None:
         validator=_valid,
         heartbeat_interval_seconds=0,
     )
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         latest = _mark_event(storage)
     finally:
@@ -855,7 +857,7 @@ def test_new_generation_can_run_after_prior_failure(tmp_path: Path) -> None:
 def test_expired_crash_claim_is_recovered_without_sleep(tmp_path: Path) -> None:
     db_path = _setup_pending(tmp_path)
     started = datetime(2026, 8, 19, 12, 0, tzinfo=UTC)
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         abandoned = storage.claim_next_agentic_ready_automation(
             now=started,
@@ -900,7 +902,8 @@ def test_build_only_keeps_existing_soft_or_hard_stale_serving_rule(
     serving_allowed: bool,
 ) -> None:
     db_path = tmp_path / "index.db"
-    storage = Storage(str(db_path))
+    database_url = postgres_url_for_path(str(db_path))
+    storage = Storage(database_url)
     try:
         _create_kb(storage)
         active = _publish_seed(storage, tmp_path)
@@ -910,13 +913,13 @@ def test_build_only_keeps_existing_soft_or_hard_stale_serving_rule(
         storage.close()
 
     run_ready_data_automation_once(
-        db_path=str(db_path),
+        db_path=database_url,
         build_candidate=_builder([]),
         validator=_valid,
         heartbeat_interval_seconds=0,
     )
 
-    storage = Storage(str(db_path))
+    storage = Storage(database_url)
     try:
         publication = storage.get_agentic_ready_publication_state(
             kb_id="kb-auto", profile="general"
@@ -938,7 +941,7 @@ def test_automatic_execution_never_enables_or_runs_gc(tmp_path: Path) -> None:
         heartbeat_interval_seconds=0,
     )
 
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         candidate = storage.get_agentic_ready_publication(
             str(result["candidate_publication"]["publication_id"])
@@ -956,15 +959,16 @@ def test_automatic_execution_never_enables_or_runs_gc(tmp_path: Path) -> None:
 def test_scheduler_registers_nonblocking_injected_automation_wakeup(tmp_path: Path) -> None:
     invoked = threading.Event()
     release = threading.Event()
+    database_url = postgres_url_for_path(tmp_path / "index.db")
 
     def runner(*, db_path: str) -> dict[str, Any]:
-        assert db_path == str(tmp_path / "index.db")
+        assert db_path == database_url
         invoked.set()
         assert release.wait(timeout=5)
         return {"status": "idle"}
 
     runtime = NativeTaskRuntime(
-        ready_data_db_path=str(tmp_path / "index.db"),
+        ready_data_db_path=database_url,
         ready_data_poll_interval_seconds=7,
         ready_data_runner=runner,
     )
@@ -984,6 +988,7 @@ def test_scheduler_loop_honors_injected_automation_poll_interval(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     observed_sleeps: list[float] = []
+    database_url = postgres_url_for_path(tmp_path / "index.db")
 
     class StopSchedulerLoop(Exception):
         pass
@@ -993,7 +998,7 @@ def test_scheduler_loop_honors_injected_automation_poll_interval(
         raise StopSchedulerLoop
 
     runtime = NativeTaskRuntime(
-        ready_data_db_path=str(tmp_path / "index.db"),
+        ready_data_db_path=database_url,
         ready_data_poll_interval_seconds=7,
     )
     monkeypatch.setattr(task_runtime_module.time, "sleep", stop_after_first_sleep)
@@ -1009,6 +1014,7 @@ def test_automation_api_is_permission_protected_and_kb_scoped(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     db_path = tmp_path / "index.db"
+    database_url = postgres_url_for_path(str(db_path))
     config_path = tmp_path / "sites.yaml"
     config_path.write_text(
         yaml.safe_dump(
@@ -1023,7 +1029,8 @@ def test_automation_api_is_permission_protected_and_kb_scoped(
     )
     monkeypatch.setenv("CONFIG_PATH", str(config_path))
     monkeypatch.setenv("FASTAPI_SESSION_SECRET", "automation-test-secret")
-    storage = Storage(str(db_path))
+    monkeypatch.setenv("DATABASE_URL", database_url)
+    storage = Storage(database_url)
     try:
         _create_kb(storage, "kb-one")
         _create_kb(storage, "kb-two")
@@ -1049,7 +1056,7 @@ def test_automation_api_is_permission_protected_and_kb_scoped(
     assert response.status_code == 200
     assert response.json()["automation"]["automatic_build_enabled"] is True
     assert response.json()["automation"]["claim_token"] is None
-    storage = Storage(str(db_path))
+    storage = Storage(database_url)
     try:
         assert (
             storage.get_agentic_ready_publication_state(kb_id="kb-one", profile="general")[

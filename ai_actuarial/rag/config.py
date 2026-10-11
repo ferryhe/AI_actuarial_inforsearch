@@ -26,6 +26,7 @@ from ai_actuarial.rag.defaults import (
     get_embedding_batch_size_default,
     get_similarity_threshold_default,
 )
+from ai_actuarial.shared_runtime import resolve_data_path
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +78,7 @@ class RAGConfig:
 
     def __post_init__(self) -> None:
         """Record configured values without applying hidden runtime overrides."""
+        self.data_dir = str(resolve_data_path(self.data_dir))
         if self.embedding_batch_size_configured is None:
             self.embedding_batch_size_configured = self.embedding_batch_size
         if self.similarity_threshold_configured is None:
@@ -259,7 +261,12 @@ class RAGConfig:
                 credential_label=runtime.credential_label or "",
                 credential_configured=runtime.configured,
                 credential_error=runtime.credential_error or "",
-                data_dir=os.getenv("RAG_DATA_DIR", "data/rag"),
+                data_dir=str(
+                    resolve_data_path(
+                        os.getenv("RAG_DATA_DIR", "data/rag"),
+                        data_root=getattr(storage, "data_root", None),
+                    )
+                ),
             )
         except ValueError:
             raise

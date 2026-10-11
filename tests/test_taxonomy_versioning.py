@@ -7,6 +7,7 @@ import pytest
 
 from ai_actuarial.storage import Storage
 from ai_actuarial.utils import taxonomy_hash
+from tests.postgres_helpers import postgres_url_for_path
 
 
 def test_taxonomy_hash_order_insensitive() -> None:
@@ -57,9 +58,9 @@ def test_taxonomy_hash_missing_equals_explicit_empty() -> None:
 
 
 def test_taxonomy_state_get_set_roundtrip() -> None:
-    # :memory: Storage skips baseline seeding, so we can test the raw upsert.
-    storage = Storage(":memory:")
+    storage = Storage(postgres_url_for_path(":memory:"))
     try:
+        storage._conn.execute("DELETE FROM taxonomy_state WHERE id = 1")
         assert storage.get_applied_taxonomy_hash() is None
         storage.set_applied_taxonomy_hash("deadbeef")
         assert storage.get_applied_taxonomy_hash() == "deadbeef"
@@ -70,7 +71,7 @@ def test_taxonomy_state_get_set_roundtrip() -> None:
 
 
 def test_seed_baseline_on_first_run(tmp_path: Path) -> None:
-    storage = Storage(str(tmp_path / "seed.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "seed.db")))
     try:
         # A fresh file-backed DB establishes applied = current immediately.
         assert storage.get_applied_taxonomy_hash() == storage.current_taxonomy_hash()
@@ -80,7 +81,7 @@ def test_seed_baseline_on_first_run(tmp_path: Path) -> None:
 
 
 def test_taxonomy_needs_recategory_flags_mismatch(tmp_path: Path) -> None:
-    storage = Storage(str(tmp_path / "needs.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "needs.db")))
     try:
         assert storage.taxonomy_needs_recategory() is False  # seeded baseline
         storage.set_applied_taxonomy_hash("stale")
@@ -93,7 +94,7 @@ def test_current_taxonomy_hash_tolerates_missing_config(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("CATEGORIES_CONFIG_PATH", str(tmp_path / "missing.yaml"))
-    storage = Storage(str(tmp_path / "cfg.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "cfg.db")))
     try:
         result = storage.current_taxonomy_hash()
         assert isinstance(result, str) and len(result) == 64
@@ -106,7 +107,7 @@ def test_migration_v1_to_v2_creates_taxonomy_state(tmp_path: Path) -> None:
     from ai_actuarial.sqlite_schema import apply_schema, schema_status
 
     db_path = tmp_path / "v1.db"
-    storage = Storage(str(db_path))
+    storage = Storage._legacy_sqlite_schema_for_validation(str(db_path))
     try:
         storage._conn.execute("DROP INDEX idx_file_chunk_sets_latest")
         storage._conn.execute("DROP TABLE taxonomy_state")
@@ -152,7 +153,7 @@ def test_migration_v1_to_v2_creates_taxonomy_state(tmp_path: Path) -> None:
 def test_get_config_categories_includes_version_fields(tmp_path: Path) -> None:
     from ai_actuarial.api.services.ops_read import get_config_categories
 
-    storage = Storage(str(tmp_path / "cfg.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "cfg.db")))
     try:
         result = get_config_categories(storage=storage)
         assert "current_hash" in result

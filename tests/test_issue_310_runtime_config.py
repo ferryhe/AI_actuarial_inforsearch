@@ -273,19 +273,21 @@ def test_schema_status_does_not_require_sites_config(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     from ai_actuarial import cli
+    from tests.postgres_helpers import uninitialized_postgres_url_for_path
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("CONFIG_PATH", raising=False)
     monkeypatch.delenv("FASTAPI_ENV", raising=False)
+    monkeypatch.setenv("DATABASE_URL", uninitialized_postgres_url_for_path(tmp_path / "schema.db"))
     monkeypatch.setattr(cli, "_load_dotenv", lambda _path: None)
     monkeypatch.setattr(
         sys,
         "argv",
-        ["ai-actuarial", "schema", "status", "--db", str(tmp_path / "schema.db"), "--json"],
+        ["ai-actuarial", "schema", "status", "--json"],
     )
 
     assert cli.main() == 0
-    assert json.loads(capsys.readouterr().out)["state"] == "missing"
+    assert json.loads(capsys.readouterr().out)["state"] == "empty"
 
 
 def test_legacy_env_migration_refuses_existing_external_config(tmp_path: Path) -> None:

@@ -7,6 +7,7 @@ import pytest
 
 from ai_actuarial.api.services.rag_admin import _KBListStorageView
 from ai_actuarial.kb_status import classify_kb_status
+from ai_actuarial.postgres import PostgresConnection
 from ai_actuarial.sqlite_schema import (
     CURRENT_SQLITE_SCHEMA_VERSION,
     apply_schema,
@@ -14,6 +15,7 @@ from ai_actuarial.sqlite_schema import (
     schema_status,
 )
 from ai_actuarial.storage import Storage
+from tests.postgres_helpers import postgres_url_for_path
 
 LATEST_INDEX = "idx_file_chunk_sets_latest"
 LATEST_INDEX_COLUMNS = (
@@ -26,7 +28,7 @@ LATEST_INDEX_COLUMNS = (
 
 
 def _seed_tied_chunk_sets(db_path: Path) -> tuple[str, str, str]:
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         file_url = "https://issue-376.test/tied.pdf"
         storage.insert_file(
@@ -86,30 +88,6 @@ def _seed_tied_chunk_sets(db_path: Path) -> tuple[str, str, str]:
             """,
             (file_url, tied_at, profile_id),
         )
-        storage._conn.execute("""
-            CREATE TABLE rag_knowledge_bases (
-                kb_id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                description TEXT,
-                kb_mode TEXT DEFAULT 'category',
-                manifest_profile TEXT DEFAULT 'general',
-                embedding_provider TEXT NOT NULL DEFAULT 'openai',
-                embedding_model TEXT NOT NULL,
-                embedding_dimension INTEGER,
-                embedding_identity_key TEXT NOT NULL DEFAULT '',
-                chunk_profile_id TEXT,
-                chunk_size INTEGER NOT NULL,
-                chunk_overlap INTEGER NOT NULL,
-                index_type TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                chunk_count INTEGER DEFAULT 0,
-                file_count INTEGER DEFAULT 0,
-                updated_at TEXT NOT NULL,
-                index_dirty_at TEXT,
-                index_path TEXT,
-                metadata_path TEXT
-            )
-            """)
         storage._conn.execute(
             """
             INSERT INTO rag_knowledge_bases (
@@ -135,7 +113,7 @@ def _index_columns(conn: sqlite3.Connection) -> tuple[tuple[str, int], ...]:
 
 def test_v15_migration_plan_apply_and_strict_source_validation(tmp_path: Path) -> None:
     db_path = tmp_path / "v14.db"
-    storage = Storage(str(db_path))
+    storage = Storage._legacy_sqlite_schema_for_validation(db_path)
     storage.close()
     with sqlite3.connect(db_path) as conn:
         conn.execute(f"DROP INDEX IF EXISTS {LATEST_INDEX}")
@@ -163,7 +141,7 @@ def test_v15_migration_plan_apply_and_strict_source_validation(tmp_path: Path) -
         assert _index_columns(conn) == LATEST_INDEX_COLUMNS
 
     invalid_path = tmp_path / "premature-index.db"
-    invalid_storage = Storage(str(invalid_path))
+    invalid_storage = Storage._legacy_sqlite_schema_for_validation(invalid_path)
     invalid_storage.close()
     with sqlite3.connect(invalid_path) as conn:
         conn.execute("PRAGMA user_version=14")
@@ -174,7 +152,7 @@ def test_v15_migration_plan_apply_and_strict_source_validation(tmp_path: Path) -
 
 def test_version_zero_pre_v15_source_migrates_and_preserves_data(tmp_path: Path) -> None:
     db_path = tmp_path / "version-zero-pre-v15.db"
-    storage = Storage(str(db_path))
+    storage = Storage._legacy_sqlite_schema_for_validation(db_path)
     try:
         storage.insert_file(
             url="https://issue-376.test/version-zero.pdf",
@@ -251,7 +229,7 @@ def test_v15_latest_index_contract_rejects_impostors(
     tmp_path: Path, version: int, replacement: str
 ) -> None:
     db_path = tmp_path / f"impostor-{version}.db"
-    storage = Storage(str(db_path))
+    storage = Storage._legacy_sqlite_schema_for_validation(db_path)
     storage.close()
     with sqlite3.connect(db_path) as conn:
         conn.execute(f"DROP INDEX {LATEST_INDEX}")
@@ -266,7 +244,7 @@ def test_v15_latest_index_contract_rejects_impostors(
 
 def test_v15_unknown_index_remains_fail_closed(tmp_path: Path) -> None:
     db_path = tmp_path / "unknown-index.db"
-    storage = Storage(str(db_path))
+    storage = Storage._legacy_sqlite_schema_for_validation(db_path)
     storage.close()
     with sqlite3.connect(db_path) as conn:
         conn.execute("CREATE INDEX issue_376_unknown ON files(title)")
@@ -276,9 +254,8 @@ def test_v15_unknown_index_remains_fail_closed(tmp_path: Path) -> None:
     assert "schema_signature_mismatch" in status["problems"]
 
 
-def test_fresh_schema_includes_latest_covering_index(tmp_path: Path) -> None:
-    db_path = tmp_path / "fresh.db"
-    storage = Storage(str(db_path))
+def test_fresh_legacy_schema_includes_latest_covering_index(tmp_path: Path) -> None:
+    storage = Storage._legacy_sqlite_schema_for_validation(tmp_path / "fresh.db")
     try:
         assert int(storage._conn.execute("PRAGMA user_version").fetchone()[0]) == 16
         assert _index_columns(storage._conn) == LATEST_INDEX_COLUMNS
@@ -286,55 +263,26 @@ def test_fresh_schema_includes_latest_covering_index(tmp_path: Path) -> None:
         storage.close()
 
 
-def test_orm_metadata_includes_latest_covering_index() -> None:
-    pytest.importorskip("sqlalchemy")
-    from ai_actuarial.db_models import FileChunkSet
-
-    orm_index = next(
-        index for index in FileChunkSet.__table__.indexes if index.name == LATEST_INDEX
+def test_postgresql_schema_includes_latest_covering_index(tmp_path: Path) -> None:
+    storage = Storage(postgres_url_for_path(tmp_path / "latest-index.db"))
+    try:
+        indexdef = storage._conn.execute(
+            "SELECT indexdef FROM pg_indexes "
+            "WHERE schemaname = current_schema() AND indexname = ?",
+            (LATEST_INDEX,),
+        ).fetchone()[0]
+    finally:
+        storage.close()
+    normalized = " ".join(str(indexdef).lower().split())
+    assert (
+        "(file_url, profile_id, updated_at desc, created_at desc, chunk_set_id desc)" in normalized
     )
-    assert tuple(column.name for column in orm_index.columns) == tuple(
-        column for column, _descending in LATEST_INDEX_COLUMNS
-    )
-    assert tuple(str(expression).endswith(" DESC") for expression in orm_index.expressions) == (
-        False,
-        False,
-        True,
-        True,
-        True,
-    )
-
-
-def test_latest_lookup_query_plan_uses_covering_index_without_temp_btree(tmp_path: Path) -> None:
-    db_path = tmp_path / "plan.db"
-    _file_url, profile_id, _kb_id = _seed_tied_chunk_sets(db_path)
-    with sqlite3.connect(db_path) as conn:
-        details = [
-            str(row[3])
-            for row in conn.execute(
-                """
-                EXPLAIN QUERY PLAN
-                SELECT b.chunk_set_id, (
-                    SELECT s2.chunk_set_id
-                    FROM file_chunk_sets s2
-                    WHERE s2.file_url = b.file_url AND s2.profile_id = ?
-                    ORDER BY s2.updated_at DESC, s2.created_at DESC, s2.chunk_set_id DESC
-                    LIMIT 1
-                ) AS latest_chunk_set_id
-                FROM kb_chunk_bindings b
-                WHERE b.kb_id = ?
-                """,
-                (profile_id, "kb-376"),
-            )
-        ]
-    assert any(f"USING COVERING INDEX {LATEST_INDEX}" in detail for detail in details)
-    assert not any("USE TEMP B-TREE" in detail for detail in details)
 
 
 def test_storage_latest_selectors_break_timestamp_ties_by_chunk_set_id(tmp_path: Path) -> None:
     db_path = tmp_path / "storage.db"
     _file_url, _profile_id, kb_id = _seed_tied_chunk_sets(db_path)
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         binding = storage.list_kb_chunk_bindings(kb_id)[0]
         composition = storage.get_kb_composition_status(kb_id)
@@ -349,7 +297,7 @@ def test_storage_latest_selectors_break_timestamp_ties_by_chunk_set_id(tmp_path:
 def test_latest_any_status_isolated_composition_matrix(tmp_path: Path) -> None:
     db_path = tmp_path / "composition-matrix.db"
     file_url, profile_id, stale_kb = _seed_tied_chunk_sets(db_path)
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         other_profile = storage.create_chunk_profile(
             name="issue-376-other-profile", chunk_size=256, chunk_overlap=32
@@ -470,9 +418,11 @@ def test_latest_any_status_isolated_composition_matrix(tmp_path: Path) -> None:
 @pytest.mark.parametrize("prepared", (False, True), ids=("fallback", "batch"))
 def test_kb_list_view_latest_selectors_break_timestamp_ties(tmp_path: Path, prepared: bool) -> None:
     db_path = tmp_path / f"list-{prepared}.db"
+    database_url = postgres_url_for_path(str(db_path))
     _file_url, _profile_id, kb_id = _seed_tied_chunk_sets(db_path)
-    conn = sqlite3.connect(db_path)
-    view = _KBListStorageView(str(db_path), conn)
+    conn = PostgresConnection(database_url, read_only=True)
+    conn.execute("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
+    view = _KBListStorageView(database_url, conn)
     try:
         if prepared:
             view.prepare(({"kb_id": kb_id, "manifest_profile": "general"},))
@@ -487,18 +437,3 @@ def test_kb_list_view_latest_selectors_break_timestamp_ties(tmp_path: Path, prep
         assert bindings[0]["is_latest"] is False
     assert composition["outdated_binding_count"] == 1
     assert composition["new_chunk_versions_available"] is True
-
-
-def test_storage_v2_latest_selector_breaks_timestamp_ties(tmp_path: Path) -> None:
-    pytest.importorskip("sqlalchemy")
-    from ai_actuarial.storage_v2_full import StorageV2Full
-
-    db_path = tmp_path / "storage-v2.db"
-    _file_url, _profile_id, kb_id = _seed_tied_chunk_sets(db_path)
-    storage = StorageV2Full({"type": "sqlite", "path": str(db_path)})
-    try:
-        binding = storage.list_kb_chunk_bindings(kb_id)[0]
-    finally:
-        storage.close()
-    assert binding["latest_chunk_set_id"] == "cs-z"
-    assert binding["is_latest_for_profile"] is False

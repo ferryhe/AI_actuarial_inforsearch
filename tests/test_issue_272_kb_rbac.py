@@ -16,6 +16,7 @@ from ai_actuarial.api.services.rag_admin import (
     _require_tasks_run,
 )
 from ai_actuarial.storage import Storage
+from tests.postgres_helpers import postgres_url_for_path
 from tests.test_fastapi_rag_admin_endpoints import (
     _build_test_client,
     _make_session_cookie,
@@ -66,7 +67,7 @@ def _catalog_only_client(app, monkeypatch) -> TestClient:
         "catalog_only",
         frozenset({"catalog.read", "catalog.write"}),
     )
-    storage = Storage(app.state.db_path)
+    storage = Storage(app.state.database)
     try:
         storage.upsert_auth_token_by_hash(
             subject="catalog-only-token",
@@ -356,7 +357,7 @@ def test_catalog_only_can_update_detail_and_bind_without_task_diagnostics(
     assert updated.status_code == 200, updated.text
     assert updated.json()["knowledge_base"]["name"] == "Renamed catalog KB"
 
-    storage = Storage(app.state.db_path)
+    storage = Storage(app.state.database)
     try:
         chunk_set = storage._conn.execute(
             "SELECT chunk_set_id FROM file_chunk_sets WHERE file_url = ? AND profile_id = ?",

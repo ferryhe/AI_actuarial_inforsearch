@@ -12,11 +12,16 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
 from ai_actuarial.ai_runtime import infer_embedding_dimension, infer_embedding_provider
+from ai_actuarial.postgres import (
+    DatabaseConfig,
+    PostgresConnection,
+    initialize_postgresql_schema,
+    resolve_data_root,
+    resolve_database_config,
+)
 from ai_actuarial.shared_auth import AuthTokenRecord, canonical_token_group
 from ai_actuarial.sqlite_schema import (
     CURRENT_SQLITE_SCHEMA_VERSION,
-    has_user_schema_objects,
-    storage_startup_status,
 )
 
 AGENTIC_READY_PUBLICATION_PROFILES = frozenset({"general", "regulation", "formula"})
@@ -130,110 +135,97 @@ class Storage:
         }
     )
 
-    def __init__(self, db_path: str) -> None:
-        self.db_path = db_path
-        Path(os.path.dirname(db_path)).mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(db_path)
-        try:
-            self._conn.execute("PRAGMA foreign_keys=ON;")
-            user_version = int(self._conn.execute("PRAGMA user_version").fetchone()[0])
-            if user_version > CURRENT_SQLITE_SCHEMA_VERSION:
-                self._conn.close()
-                raise RuntimeError("SQLite schema version is newer than this code")
-            has_schema_objects = has_user_schema_objects(self._conn)
-            fresh_schema = False
-            if has_schema_objects:
-                status = storage_startup_status(self._conn)
-                state = str(status.get("state") or "")
-                if state == "newer_than_code":
-                    self._conn.close()
-                    raise RuntimeError("SQLite schema version is newer than this code")
-                if state == "needs_migration":
-                    self._conn.close()
-                    if user_version == 0:
-                        raise RuntimeError(
-                            "SQLite schema user_version=0 requires explicit schema apply before Storage startup"
-                        )
-                    raise RuntimeError(
-                        "SQLite schema requires explicit schema apply before Storage startup"
-                    )
-                if state != "current":
-                    self._conn.close()
-                    raise RuntimeError("SQLite schema preflight failed before Storage startup")
-                self._tx_depth = 0
-                self._agentic_ready_publication_columns_cache = None
-                self._defer_schema_commits = False
-                self._seed_taxonomy_state_if_empty()
-                return
-            else:
-                if user_version != 0:
-                    self._conn.close()
-                    raise RuntimeError("SQLite schema preflight failed before Storage startup")
-                fresh_schema = True
-            self._conn.execute("PRAGMA journal_mode=WAL;")
-            self._tx_depth = 0
-            self._agentic_ready_publication_columns_cache: frozenset[str] | None = None
-            self._defer_schema_commits = False
-            self._init_schema()
-            if fresh_schema:
-                self._conn.execute(f"PRAGMA user_version={CURRENT_SQLITE_SCHEMA_VERSION}")
-                self._conn.commit()
-            self._seed_taxonomy_state_if_empty()
-        except sqlite3.Error:
-            self._conn.close()
-            raise
+    def __init__(
+        self,
+        database: DatabaseConfig | str | None = None,
+        *,
+        data_root: str | Path | None = None,
+    ) -> None:
+        self.database = (
+            database
+            if isinstance(database, DatabaseConfig)
+            else DatabaseConfig(database) if database is not None else resolve_database_config()
+        )
+        self.db_path = self.database  # Kept as an opaque compatibility name for service callers.
+        self.data_root = (
+            Path(data_root).expanduser().resolve() if data_root else resolve_data_root()
+        )
+        self._schema_only = False
+        initialize_postgresql_schema(self.database)
+        self._conn = PostgresConnection(self.database)
+        self._tx_depth = 0
+        self._agentic_ready_publication_columns_cache: frozenset[str] | None = None
+        self._defer_schema_commits = False
+        self._seed_taxonomy_state_if_empty()
 
     @classmethod
-    def open_read_only(cls, db_path: str) -> "Storage":
-        """Load a stable checkpointed database snapshot without filesystem writes."""
-        path = Path(db_path)
-        if not path.is_file():
-            raise ValueError("ready-data GC requires an existing database")
-        before_state = cls._read_only_snapshot_state(path)
-        if before_state[1][0] and before_state[1][1] > 0:
-            raise ValueError(
-                "ready-data GC dry-run requires a checkpointed database with an empty WAL"
-            )
+    def _legacy_sqlite_schema_for_validation(cls, db_path: str | Path = ":memory:") -> "Storage":
+        """Build the frozen SQLite schema for explicit schema tests/import fixtures only."""
         instance = cls.__new__(cls)
-        instance.db_path = str(path)
-        uri = f"{path.resolve().as_uri()}?mode=ro&immutable=1"
-        instance._conn = sqlite3.connect(uri, uri=True)
-        instance._conn.execute("PRAGMA foreign_keys=ON;")
-        instance._conn.execute("PRAGMA query_only=ON;")
+        instance.database = None
+        instance.db_path = str(db_path)
+        instance.data_root = Path.cwd()
+        instance._schema_only = True
+        instance._conn = sqlite3.connect(str(db_path))
+        instance._conn.execute("PRAGMA foreign_keys=ON")
         instance._tx_depth = 0
         instance._agentic_ready_publication_columns_cache = None
         instance._defer_schema_commits = False
-        instance._read_only_snapshot = before_state
+        instance._init_schema()
+        instance._conn.execute("PRAGMA user_version=16")
+        instance._conn.commit()
         return instance
 
-    @staticmethod
-    def _read_only_snapshot_state(
-        path: Path,
-    ) -> tuple[tuple[bool, int, int, str], ...]:
-        def file_state(candidate: Path) -> tuple[bool, int, int, str]:
-            try:
-                details = candidate.stat()
-            except FileNotFoundError:
-                return False, 0, 0, ""
-            digest = hashlib.sha256()
-            with candidate.open("rb") as handle:
-                for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-                    digest.update(chunk)
-            return True, int(details.st_size), int(details.st_mtime_ns), digest.hexdigest()
-
-        return tuple(
-            file_state(candidate) for candidate in (path, Path(f"{path}-wal"), Path(f"{path}-shm"))
+    @classmethod
+    def open_read_only(
+        cls,
+        database: DatabaseConfig | str | None = None,
+        *,
+        data_root: str | Path | None = None,
+    ) -> "Storage":
+        """Load a repeatable-read PostgreSQL snapshot for non-mutating inspection."""
+        instance = cls.__new__(cls)
+        instance.database = (
+            database
+            if isinstance(database, DatabaseConfig)
+            else DatabaseConfig(database) if database is not None else resolve_database_config()
         )
+        instance.db_path = instance.database
+        instance.data_root = (
+            Path(data_root).expanduser().resolve() if data_root else resolve_data_root()
+        )
+        instance._schema_only = False
+        instance._conn = PostgresConnection(instance.database, read_only=True)
+        instance._conn.execute("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
+        instance._tx_depth = 0
+        instance._agentic_ready_publication_columns_cache = None
+        instance._defer_schema_commits = False
+        instance._read_only_snapshot = instance._publication_slot_snapshot()
+        return instance
 
     def assert_read_only_snapshot_unchanged(self) -> None:
+        self._conn.assert_read_only()
         expected = getattr(self, "_read_only_snapshot", None)
-        if expected is None:
-            raise RuntimeError("storage is not a read-only snapshot")
-        current = self._read_only_snapshot_state(Path(self.db_path))
-        if current != expected or (current[1][0] and current[1][1] > 0):
-            raise ValueError(
-                "ready-data GC dry-run requires a stable checkpointed database snapshot"
-            )
+        if expected is None or self._publication_slot_snapshot() != expected:
+            raise ValueError("ready-data inspection snapshot is unavailable or changed")
+        current = PostgresConnection(self.database)
+        try:
+            slots = current.execute(
+                "SELECT kb_id, profile, active_publication_id, previous_publication_id, "
+                "publication_revision FROM agentic_ready_slots ORDER BY kb_id, profile"
+            ).fetchall()
+            latest = tuple(tuple(row) for row in slots)
+        finally:
+            current.close()
+        if latest != expected:
+            raise ValueError("ready-data publication changed during the inspection snapshot")
+
+    def _publication_slot_snapshot(self) -> tuple[tuple[Any, ...], ...]:
+        rows = self._conn.execute(
+            "SELECT kb_id, profile, active_publication_id, previous_publication_id, "
+            "publication_revision FROM agentic_ready_slots ORDER BY kb_id, profile"
+        ).fetchall()
+        return tuple(tuple(row) for row in rows)
 
     def _init_schema(self) -> None:
         self._conn.execute("""
@@ -1100,12 +1092,12 @@ class Storage:
                     SELECT 1
                     FROM rag_knowledge_bases AS kb
                     WHERE kb.kb_id = kb_ready_index_state.kb_id
-                      AND julianday(kb_ready_index_state.updated_at)
-                          < julianday(kb.created_at)
+                      AND ai_julianday(kb_ready_index_state.updated_at)
+                          < ai_julianday(kb.created_at)
                     )
                     """)
             lifecycle_predicate = (
-                "AND julianday(current.created_at) >= julianday(kb.created_at)"
+                "AND ai_julianday(current.created_at) >= ai_julianday(kb.created_at)"
                 if kb_has_created_at
                 else ""
             )
@@ -1257,16 +1249,25 @@ class Storage:
     def _ensure_columns(self, table: str, columns: dict[str, str]) -> None:
         if table not in self._SCHEMA_TABLES:
             raise ValueError(f"Invalid table name for schema migration: {table!r}")
-        cur = self._conn.execute(f"PRAGMA table_info({table})")
-        existing = {row[1] for row in cur.fetchall()}
+        if self._schema_only:
+            existing = {
+                str(row[1]) for row in self._conn.execute(f"PRAGMA table_info({table})").fetchall()
+            }
+        else:
+            existing = self._conn.table_columns(table)
         for name, col_type in columns.items():
             if name not in existing:
                 self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {col_type}")
         self._schema_commit()
 
     def _ensure_rag_kb_embedding_columns(self) -> None:
-        cur = self._conn.execute("PRAGMA table_info(rag_knowledge_bases)")
-        existing = {row[1] for row in cur.fetchall()}
+        if self._schema_only:
+            existing = {
+                str(row[1])
+                for row in self._conn.execute("PRAGMA table_info(rag_knowledge_bases)").fetchall()
+            }
+        else:
+            existing = self._conn.table_columns("rag_knowledge_bases")
         if not existing:
             return
         changed = False
@@ -1326,21 +1327,32 @@ class Storage:
         self._conn.commit()
 
     def _table_exists(self, table: str) -> bool:
-        row = self._conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
-            (table,),
-        ).fetchone()
-        return row is not None
+        if self._schema_only:
+            row = self._conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
+                (table,),
+            ).fetchone()
+            return row is not None
+        return self._conn.table_exists(table)
 
     def _maybe_commit(self) -> None:
         if self._tx_depth == 0:
             self._conn.commit()
 
     @contextmanager
-    def transaction(self, *, immediate: bool = False):
+    def transaction(self, *, immediate: bool = False, read_snapshot: bool = False):
+        """Open a transaction or nested savepoint.
+
+        ``immediate`` remains accepted for legacy callers. PostgreSQL has no
+        SQLite-style database-wide immediate writer reservation; workflows
+        that need to serialize a logical key take a scoped advisory or row lock.
+        """
         sp_name = None
         if self._tx_depth == 0:
-            self._conn.execute("BEGIN IMMEDIATE" if immediate else "BEGIN")
+            if read_snapshot:
+                self._conn.execute("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            else:
+                self._conn.execute("BEGIN")
         else:
             sp_name = f"sp_{self._tx_depth}"
             self._conn.execute(f"SAVEPOINT {sp_name}")
@@ -1362,9 +1374,22 @@ class Storage:
             else:
                 self._conn.execute(f"RELEASE SAVEPOINT {sp_name}")
 
+    def _lock_postgres_key(self, namespace: str, key: str) -> None:
+        """Serialize mutations for one absent-or-present logical key."""
+        if not self._schema_only:
+            self._conn.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended(?, 0))",
+                (f"{namespace}:{key}",),
+            )
+
     def _migrate_catalog_items(self) -> None:
-        cur = self._conn.execute("PRAGMA table_info(catalog_items)")
-        existing = {row[1] for row in cur.fetchall()}
+        if self._schema_only:
+            existing = {
+                str(row[1])
+                for row in self._conn.execute("PRAGMA table_info(catalog_items)").fetchall()
+            }
+        else:
+            existing = self._conn.table_columns("catalog_items")
 
         # Map legacy columns into the unified schema without dropping data.
         if "sha256" in existing and "file_sha256" in existing:
@@ -1488,11 +1513,13 @@ class Storage:
             """
             INSERT INTO auth_tokens (subject, group_name, token_hash, is_active, created_at, expires_at, token_type)
             VALUES (?, ?, ?, 1, ?, ?, ?)
+            RETURNING id
             """,
             (str(subject), str(group_name), str(token_hash), ts, expires_at, token_type),
         )
+        token_id = int(cur.fetchone()[0])
         self._maybe_commit()
-        return int(cur.lastrowid)
+        return token_id
 
     def upsert_auth_token_by_hash(
         self,
@@ -1872,6 +1899,7 @@ class Storage:
         # Note: Parameter 'bytes' shadows built-in, but this is intentional
         # to match the database column name 'bytes' for consistency
         with self.transaction(immediate=True):
+            self._lock_postgres_key("file", url)
             before = self._ready_data_builder_metadata_snapshot(url)
             ts = self.now()
             self._conn.execute(
@@ -1920,6 +1948,7 @@ class Storage:
         content_kind: str = "file",
     ) -> None:
         with self.transaction(immediate=True):
+            self._lock_postgres_key("file", url)
             before = self._ready_data_builder_metadata_snapshot(url)
             ts = self.now()
             self._conn.execute(
@@ -2549,6 +2578,7 @@ class Storage:
     ) -> None:
         file_url = item.get("url")
         with self.transaction(immediate=True):
+            self._lock_postgres_key("file", str(file_url or ""))
             before = self._ready_data_builder_metadata_snapshot(file_url)
             processed_ts = processed_at or self.now()
             updated_ts = self.now()
@@ -2700,6 +2730,7 @@ class Storage:
     def update_catalog_item_category(self, file_url: str, category: str) -> None:
         """Update one catalog item's category and mark its ready-data metadata change."""
         with self.transaction(immediate=True):
+            self._lock_postgres_key("file", file_url)
             before = self._ready_data_builder_metadata_snapshot(file_url)
             self._conn.execute(
                 "UPDATE catalog_items SET category = ?, updated_at = CURRENT_TIMESTAMP WHERE file_url = ?",
@@ -2800,7 +2831,7 @@ class Storage:
         Also backfills applied_categories when a v2->v3 upgrade left the hash
         present but the category set NULL (the only case where the two diverge).
         """
-        if self.db_path == ":memory:":
+        if self._schema_only:
             return
         current_categories = self.current_taxonomy_categories()
         if self.get_applied_taxonomy_hash() is None:
@@ -2900,13 +2931,13 @@ class Storage:
         if query:
             join_clause = catalog_join_clause
             filters.append(
-                "(LOWER(IFNULL(f.title, '')) LIKE ? "
-                f"OR LOWER(IFNULL({snapshot_original_filename}, '')) LIKE ? "
-                f"OR LOWER(IFNULL({snapshot_url}, '')) LIKE ? "
-                "OR LOWER(IFNULL(c.summary, '')) LIKE ? "
-                "OR LOWER(IFNULL(c.keywords, '')) LIKE ? "
-                "OR LOWER(IFNULL(c.category, '')) LIKE ? "
-                "OR LOWER(IFNULL(c.markdown_content, '')) LIKE ?)"
+                "(LOWER(COALESCE(f.title, '')) LIKE ? "
+                f"OR LOWER(COALESCE({snapshot_original_filename}, '')) LIKE ? "
+                f"OR LOWER(COALESCE({snapshot_url}, '')) LIKE ? "
+                "OR LOWER(COALESCE(c.summary, '')) LIKE ? "
+                "OR LOWER(COALESCE(c.keywords, '')) LIKE ? "
+                "OR LOWER(COALESCE(c.category, '')) LIKE ? "
+                "OR LOWER(COALESCE(c.markdown_content, '')) LIKE ?)"
             )
             search_term = f"%{query.lower()}%"
             params.extend([search_term] * 7)
@@ -2921,9 +2952,9 @@ class Storage:
                 filters.append(
                     "("
                     "c.file_url IS NULL "
-                    "OR TRIM(IFNULL(c.category, '')) = '' "
-                    "OR TRIM(IFNULL(c.summary, '')) = '' "
-                    "OR (TRIM(IFNULL(c.category, '')) != '' AND TRIM(IFNULL(c.category, '')) LIKE '(%)')"
+                    "OR TRIM(COALESCE(c.category, '')) = '' "
+                    "OR TRIM(COALESCE(c.summary, '')) = '' "
+                    "OR (TRIM(COALESCE(c.category, '')) != '' AND TRIM(COALESCE(c.category, '')) LIKE '(%)')"
                     ")"
                 )
             else:
@@ -2937,12 +2968,12 @@ class Storage:
 
         if first_seen_from is not None:
             filters.append(
-                f"{snapshot_first_seen} IS NOT NULL AND julianday({snapshot_first_seen}) >= julianday(?)"
+                f"{snapshot_first_seen} IS NOT NULL AND ai_julianday({snapshot_first_seen}) >= ai_julianday(?)"
             )
             params.append(first_seen_from)
         if first_seen_before is not None:
             filters.append(
-                f"{snapshot_first_seen} IS NOT NULL AND julianday({snapshot_first_seen}) < julianday(?)"
+                f"{snapshot_first_seen} IS NOT NULL AND ai_julianday({snapshot_first_seen}) < ai_julianday(?)"
             )
             params.append(first_seen_before)
 
@@ -2972,7 +3003,7 @@ class Storage:
                    f.last_seen, f.crawl_time, f.deleted_at,
                    c.category, c.summary, c.keywords,
                    CASE
-                       WHEN TRIM(IFNULL(c.markdown_source, '')) != ''
+                       WHEN TRIM(COALESCE(c.markdown_source, '')) != ''
                          OR c.markdown_updated_at IS NOT NULL
                        THEN 1 ELSE 0
                    END AS has_markdown,
@@ -3050,8 +3081,8 @@ class Storage:
             FROM files
             WHERE deleted_at IS NULL
               AND first_seen IS NOT NULL
-              AND julianday(first_seen) >= julianday(?)
-              AND julianday(first_seen) < julianday(?)
+              AND ai_julianday(first_seen) >= ai_julianday(?)
+              AND ai_julianday(first_seen) < ai_julianday(?)
             """,
             (period_start, period_end),
         ).fetchone()
@@ -3070,8 +3101,8 @@ class Storage:
             FROM files
             WHERE deleted_at IS NULL
               AND first_seen IS NOT NULL
-              AND julianday(first_seen) >= julianday(?)
-              AND julianday(first_seen) < julianday(?)
+              AND ai_julianday(first_seen) >= ai_julianday(?)
+              AND ai_julianday(first_seen) < ai_julianday(?)
             ORDER BY first_seen DESC, url ASC
             """,
             (period_start, period_end),
@@ -3104,8 +3135,8 @@ class Storage:
             LEFT JOIN catalog_items ci ON ci.file_url = f.url
             WHERE f.deleted_at IS NULL
               AND f.first_seen IS NOT NULL
-              AND julianday(f.first_seen) >= julianday(?)
-              AND julianday(f.first_seen) < julianday(?)
+              AND ai_julianday(f.first_seen) >= ai_julianday(?)
+              AND ai_julianday(f.first_seen) < ai_julianday(?)
             ORDER BY f.first_seen DESC, f.url ASC
             LIMIT ?
             """,
@@ -3207,6 +3238,10 @@ class Storage:
             raise ValueError("period_start and period_end are required")
 
         with self.transaction(immediate=True):
+            self._conn.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended(?, 0))",
+                (f"weekly-snapshot:{period_start}:{period_end}",),
+            )
             existing = self.get_published_weekly_snapshot_for_period(
                 period_start=period_start,
                 period_end=period_end,
@@ -3444,13 +3479,14 @@ class Storage:
                     "explanation": existing,
                 }
             if existing is None:
-                self._conn.execute(
+                inserted = self._conn.execute(
                     """
                     INSERT INTO weekly_explanations (
                         snapshot_id, input_fingerprint, explanation_zh, explanation_en,
                         provider, model, prompt_version, generated_at, status, error,
                         coverage_json, claim_fingerprint, claim_token, claim_expires_at
                     ) VALUES (?, ?, '', '', ?, ?, ?, ?, 'failed', '', ?, ?, ?, ?)
+                    ON CONFLICT(snapshot_id) DO NOTHING
                     """,
                     (
                         snapshot_id,
@@ -3465,7 +3501,7 @@ class Storage:
                         claim_expires_at,
                     ),
                 )
-                state = "claimed"
+                state = "claimed" if inserted.rowcount == 1 else "busy"
             else:
                 updated = self._conn.execute(
                     """
@@ -3474,7 +3510,7 @@ class Storage:
                     WHERE snapshot_id = ?
                       AND (
                           claim_token = '' OR claim_expires_at = ''
-                          OR julianday(claim_expires_at) <= julianday(?)
+                          OR ai_julianday(claim_expires_at) <= ai_julianday(?)
                       )
                     """,
                     (
@@ -3638,8 +3674,8 @@ class Storage:
             SELECT id, period_start, period_end, generated_at, file_count,
                    files_json, summary_markdown, metadata_json
             FROM weekly_update_summaries
-            WHERE julianday(period_end) <= julianday(?)
-            ORDER BY julianday(period_end) DESC, julianday(generated_at) DESC
+            WHERE ai_julianday(period_end) <= ai_julianday(?)
+            ORDER BY ai_julianday(period_end) DESC, ai_julianday(generated_at) DESC
             LIMIT 1
             """,
             (datetime.now(timezone.utc).isoformat(),),
@@ -3659,8 +3695,8 @@ class Storage:
                   AND (
                       snapshot.id = legacy.id
                       OR (
-                          julianday(snapshot.period_start) = julianday(legacy.period_start)
-                          AND julianday(snapshot.period_end) = julianday(legacy.period_end)
+                          ai_julianday(snapshot.period_start) = ai_julianday(legacy.period_start)
+                          AND ai_julianday(snapshot.period_end) = ai_julianday(legacy.period_end)
                       )
                   )
             )
@@ -3721,6 +3757,7 @@ class Storage:
             deleted_time: ISO timestamp for deletion
         """
         with self.transaction(immediate=True):
+            self._lock_postgres_key("file", url)
             before = self._ready_data_builder_metadata_snapshot(url)
             self._conn.execute(
                 "UPDATE files SET deleted_at = ? WHERE url = ?",
@@ -3806,6 +3843,7 @@ class Storage:
     ) -> tuple[bool, str | None]:
         """Update builder-visible file/Catalog metadata as one source mutation."""
         with self.transaction(immediate=True):
+            self._lock_postgres_key("file", url)
             before = self._ready_data_builder_metadata_snapshot(url)
             file_exists = self._conn.execute(
                 "SELECT 1 FROM files WHERE url = ?",
@@ -3897,6 +3935,7 @@ class Storage:
             - (False, "file_not_found") if file doesn't exist
         """
         with self.transaction(immediate=True):
+            self._lock_postgres_key("file", url)
             before = self._ready_data_builder_metadata_snapshot(url)
             file_exists = self._conn.execute(
                 "SELECT 1 FROM files WHERE url = ?",
@@ -4306,7 +4345,7 @@ class Storage:
         """
         with self.transaction(immediate=True):
             parent = self._conn.execute(
-                "SELECT status FROM file_chunk_sets WHERE chunk_set_id = ?",
+                "SELECT status FROM file_chunk_sets WHERE chunk_set_id = ? FOR UPDATE",
                 (chunk_set_id,),
             ).fetchone()
             if parent is None:
@@ -4624,10 +4663,10 @@ class Storage:
             SELECT chunk_id, embedding_provider, embedding_model, dimension,
                    config_fingerprint,
                    CASE
-                       WHEN length(CAST(vector_json AS BLOB)) <= ? THEN vector_json
+                       WHEN octet_length(vector_json) <= ? THEN vector_json
                        ELSE NULL
                    END AS bounded_vector_json,
-                   length(CAST(vector_json AS BLOB)) AS vector_json_bytes,
+                   octet_length(vector_json) AS vector_json_bytes,
                    status
             FROM chunk_embeddings
             WHERE embedding_identity_key = ?
@@ -4797,6 +4836,7 @@ class Storage:
         if mode not in {"pin", "follow_latest"}:
             raise ValueError("binding_mode must be 'pin' or 'follow_latest'")
         with self.transaction(immediate=True):
+            self._lock_postgres_key("file-binding", file_url)
             # Validate chunk_set belongs to this file and get profile relation.
             rel = self._conn.execute(
                 """
@@ -4924,6 +4964,7 @@ class Storage:
         affected_kb_ids: set[str] = set()
         synced = 0
         with self.transaction(immediate=True):
+            self._lock_postgres_key("file-binding", file_url)
             rows = self._conn.execute(matching_rows_sql, matching_params).fetchall()
             if not rows:
                 return noop_response
@@ -5423,7 +5464,6 @@ class Storage:
         doc_count: int = 0,
         section_count: int = 0,
         built_at: str | None = None,
-        source_db: str = "",
         schema_versions: dict[str, Any] | None = None,
         error_message: str = "",
         publication_id: str = "",
@@ -5467,7 +5507,6 @@ class Storage:
                 doc_count = excluded.doc_count,
                 section_count = excluded.section_count,
                 built_at = excluded.built_at,
-                source_db = excluded.source_db,
                 schema_versions_json = excluded.schema_versions_json,
                 error_message = excluded.error_message,
                 publication_id = excluded.publication_id,
@@ -5488,7 +5527,7 @@ class Storage:
                 int(doc_count or 0),
                 int(section_count or 0),
                 built_at,
-                source_db,
+                "postgresql",
                 schema_versions_json,
                 error_message,
                 created_at,
@@ -5544,7 +5583,7 @@ class Storage:
             "doc_count": row[7] or 0,
             "section_count": row[8] or 0,
             "built_at": row[9],
-            "source_db": row[10] or "",
+            "source_db": "postgresql",
             "schema_versions": schema_versions if isinstance(schema_versions, dict) else {},
             "error_message": row[12] or "",
             "created_at": row[13],
@@ -5654,7 +5693,6 @@ class Storage:
         doc_count: int = 0,
         section_count: int = 0,
         built_at: str | None = None,
-        source_db: str = "",
         schema_versions: dict[str, Any] | None = None,
         smoke_result: dict[str, Any] | None = None,
         error_message: str = "",
@@ -5714,7 +5752,7 @@ class Storage:
                     int(section_count or 0),
                     built_at,
                     normalized_digest,
-                    source_db,
+                    "postgresql",
                     json.dumps(schema_versions or {}, ensure_ascii=False, sort_keys=True),
                     json.dumps(normalized_smoke_result, ensure_ascii=False, sort_keys=True),
                     error_message,
@@ -5937,12 +5975,7 @@ class Storage:
     def _agentic_ready_publication_columns(self) -> frozenset[str]:
         cached = self._agentic_ready_publication_columns_cache
         if cached is None:
-            cached = frozenset(
-                str(row[1])
-                for row in self._conn.execute(
-                    "PRAGMA table_info(agentic_ready_publications)"
-                ).fetchall()
-            )
+            cached = frozenset(self._conn.table_columns("agentic_ready_publications"))
             self._agentic_ready_publication_columns_cache = cached
         return cached
 
@@ -6003,7 +6036,7 @@ class Storage:
             "section_count": row[11] or 0,
             "built_at": row[12],
             "artifact_digest": row[13] or "",
-            "source_db": row[14] or "",
+            "source_db": "postgresql",
             "schema_versions": schema_versions if isinstance(schema_versions, dict) else {},
             "smoke_result": smoke_result if isinstance(smoke_result, dict) else {},
             "error_message": row[16] or "",
@@ -6614,7 +6647,7 @@ class Storage:
                         )
                         AND (
                             ss.pending_evaluation_generation
-                                > IFNULL(a.last_attempted_generation, 0)
+                                > COALESCE(a.last_attempted_generation, 0)
                             OR (
                                 a.automation_state = 'running'
                                 AND a.running_generation = ss.pending_evaluation_generation
@@ -6629,35 +6662,35 @@ class Storage:
                                     = ss.pending_evaluation_generation
                                 AND s.automatic_publish_enabled = 1
                                 AND p.status = 'validated'
-                                AND json_extract(
-                                    CASE WHEN json_valid(p.smoke_result_json)
+                                AND ai_json_extract(
+                                    CASE WHEN ai_json_valid(p.smoke_result_json)
                                         THEN p.smoke_result_json ELSE '{}'
                                     END,
                                     '$.contract_version'
                                 ) = 'ready-data-staging-smoke.v1'
                                 AND (
                                     (
-                                        json_extract(
-                                            CASE WHEN json_valid(p.smoke_result_json)
+                                        ai_json_extract(
+                                            CASE WHEN ai_json_valid(p.smoke_result_json)
                                                 THEN p.smoke_result_json ELSE '{}'
                                             END,
                                             '$.status'
                                         ) = 'passed'
-                                        AND CAST(json_extract(
-                                            CASE WHEN json_valid(p.smoke_result_json)
+                                        AND CAST(ai_json_extract(
+                                            CASE WHEN ai_json_valid(p.smoke_result_json)
                                                 THEN p.smoke_result_json ELSE '{}'
                                             END,
                                             '$.catalog_doc_count'
                                         ) AS INTEGER) > 0
                                         AND (
-                                            IFNULL(TRIM(CAST(json_extract(
-                                                CASE WHEN json_valid(p.smoke_result_json)
+                                            COALESCE(TRIM(CAST(ai_json_extract(
+                                                CASE WHEN ai_json_valid(p.smoke_result_json)
                                                     THEN p.smoke_result_json ELSE '{}'
                                                 END,
                                                 '$.matched_doc_id'
                                             ) AS TEXT)), '') <> ''
-                                            OR IFNULL(TRIM(CAST(json_extract(
-                                                CASE WHEN json_valid(p.smoke_result_json)
+                                            OR COALESCE(TRIM(CAST(ai_json_extract(
+                                                CASE WHEN ai_json_valid(p.smoke_result_json)
                                                     THEN p.smoke_result_json ELSE '{}'
                                                 END,
                                                 '$.matched_file_url'
@@ -6665,24 +6698,24 @@ class Storage:
                                         )
                                     )
                                     OR (
-                                        json_extract(
-                                            CASE WHEN json_valid(p.smoke_result_json)
+                                        ai_json_extract(
+                                            CASE WHEN ai_json_valid(p.smoke_result_json)
                                                 THEN p.smoke_result_json ELSE '{}'
                                             END,
                                             '$.status'
                                         ) = 'skipped_empty'
-                                        AND COALESCE(CAST(json_extract(
-                                            CASE WHEN json_valid(p.smoke_result_json)
+                                        AND COALESCE(CAST(ai_json_extract(
+                                            CASE WHEN ai_json_valid(p.smoke_result_json)
                                                 THEN p.smoke_result_json ELSE '{}'
                                             END,
                                             '$.catalog_doc_count'
                                         ) AS INTEGER), -1) = 0
-                                        AND IFNULL(a.last_error, '') <>
+                                        AND COALESCE(a.last_error, '') <>
                                             'empty ready_data requires manual publish confirmation'
                                     )
                                 )
-                                AND IFNULL(p.attempt_disposition, '') = ''
-                                AND IFNULL(g.state, '') NOT IN (
+                                AND COALESCE(p.attempt_disposition, '') = ''
+                                AND COALESCE(g.state, '') NOT IN (
                                     'claimed', 'delete_failed', 'deleted'
                                 )
                             )
@@ -7166,7 +7199,7 @@ class Storage:
                 SET automation_state = ?, running_generation = NULL,
                     claim_token = NULL, claimed_at = NULL, lease_expires_at = NULL,
                     last_attempt_publication_id = ?,
-                    last_success_at = CASE WHEN ? THEN ? ELSE last_success_at END,
+                    last_success_at = CASE WHEN ? != 0 THEN ? ELSE last_success_at END,
                     last_error = ?, updated_at = ?
                 WHERE kb_id = ? AND profile = ?
                   AND automation_state = 'running'
@@ -7738,7 +7771,6 @@ class Storage:
             doc_count=int(publication["doc_count"]),
             section_count=int(publication["section_count"]),
             built_at=publication.get("built_at"),
-            source_db=str(publication["source_db"]),
             schema_versions=dict(publication["schema_versions"]),
             error_message="",
             publication_id=str(publication["publication_id"]),
@@ -7822,7 +7854,7 @@ class Storage:
                 SET active_publication_id = ?, previous_publication_id = ?,
                     publication_revision = publication_revision + 1,
                     updated_at = ?
-                WHERE kb_id = ? AND profile = ? AND active_publication_id IS ?
+                WHERE kb_id = ? AND profile = ? AND active_publication_id IS NOT DISTINCT FROM ?
                 """,
                 (
                     publication_id,
@@ -8365,16 +8397,17 @@ class Storage:
         """
         now = self.now()
         try:
-            cur = self._conn.execute(
-                """
-                INSERT INTO users (email, password_hash, role, is_active, email_verified,
-                                   display_name, created_at)
-                VALUES (?, ?, ?, 1, 0, ?, ?)
-                """,
-                (email.lower().strip(), password_hash, role, display_name, now),
-            )
-            self._maybe_commit()
-            return cur.lastrowid  # type: ignore[return-value]
+            with self.transaction():
+                cur = self._conn.execute(
+                    """
+                    INSERT INTO users (email, password_hash, role, is_active, email_verified,
+                                       display_name, created_at)
+                    VALUES (?, ?, ?, 1, 0, ?, ?)
+                    RETURNING id
+                    """,
+                    (email.lower().strip(), password_hash, role, display_name, now),
+                )
+                return int(cur.fetchone()[0])
         except Exception as exc:
             if "UNIQUE" in str(exc).upper():
                 raise ValueError(f"Email already registered: {email}") from exc
@@ -8443,6 +8476,7 @@ class Storage:
             raise ValueError("Exactly one user state change is required")
 
         with self.transaction(immediate=True):
+            self._lock_postgres_key("active-admin-count", "all")
             target = self.get_user_by_id(user_id)
             result = "success"
             reason: str | None = None
@@ -8557,7 +8591,7 @@ class Storage:
             filters.append("role = ?")
             params.append(role)
         if search:
-            filters.append("(email LIKE ? OR display_name LIKE ?)")
+            filters.append("(LOWER(email) LIKE LOWER(?) OR LOWER(display_name) LIKE LOWER(?))")
             params.extend([f"%{search}%", f"%{search}%"])
         where = ("WHERE " + " AND ".join(filters)) if filters else ""
         total = self._conn.execute(f"SELECT COUNT(*) FROM users {where}", params).fetchone()[0]
@@ -8639,16 +8673,18 @@ class Storage:
                 self._maybe_commit()
                 return True, int(row[0]) if row else 1
             # Row didn't exist yet — try to insert (first query of the day).
-            # Use INSERT OR IGNORE so a concurrent insert loses gracefully.
-            self._conn.execute(
+            # A unique index wins the first-insert race; RETURNING reports which caller won.
+            inserted = self._conn.execute(
                 """
-                INSERT OR IGNORE INTO user_quotas
+                INSERT INTO user_quotas
                     (user_id, quota_date, ai_chat_count, created_at, updated_at)
                 VALUES (?, ?, 1, ?, ?)
+                ON CONFLICT DO NOTHING
+                RETURNING id
                 """,
                 (user_id, quota_date, now, now),
-            )
-            if self._conn.execute("SELECT changes()").fetchone()[0] > 0:
+            ).fetchone()
+            if inserted is not None:
                 # Insert succeeded — we are at count=1.
                 self._maybe_commit()
                 return True, 1
@@ -8698,15 +8734,17 @@ class Storage:
                 ).fetchone()
                 self._maybe_commit()
                 return True, int(row[0]) if row else 1
-            self._conn.execute(
+            inserted = self._conn.execute(
                 """
-                INSERT OR IGNORE INTO user_quotas
+                INSERT INTO user_quotas
                     (ip_address, quota_date, ai_chat_count, created_at, updated_at)
                 VALUES (?, ?, 1, ?, ?)
+                ON CONFLICT DO NOTHING
+                RETURNING id
                 """,
                 (ip_address, quota_date, now, now),
-            )
-            if self._conn.execute("SELECT changes()").fetchone()[0] > 0:
+            ).fetchone()
+            if inserted is not None:
                 self._maybe_commit()
                 return True, 1
             cur2 = self._conn.execute(

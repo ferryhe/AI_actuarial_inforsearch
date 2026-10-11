@@ -9,10 +9,10 @@ Covers the acceptance criteria:
 
 from __future__ import annotations
 
-import sqlite3
 from pathlib import Path
 from typing import Any
 
+import psycopg2
 import pytest
 
 import ai_actuarial.api.services.ops_write as ops_write
@@ -24,6 +24,7 @@ from ai_actuarial.manifest_ingest import ingest_manifest
 from ai_actuarial.rag.knowledge_base import KnowledgeBaseManager
 from ai_actuarial.storage import Storage
 from ai_actuarial.task_runtime import NativeTaskRuntime
+from tests.postgres_helpers import postgres_url_for_path
 
 # ---------------------------------------------------------------------------
 # A. embeddings immutable hard intercept (write entry)
@@ -41,7 +42,7 @@ def _patch_routing_io(monkeypatch: pytest.MonkeyPatch, config_data: dict) -> Non
 def _make_kb_in_use(db_path: str, kb_id: str = "kb-1") -> None:
     """Create a KB that holds indexed content (chunk_count > 0) so the
     embeddings in-use guard treats it as invalidated by a config change."""
-    storage = Storage(db_path)
+    storage = Storage(postgres_url_for_path(db_path))
     try:
         KnowledgeBaseManager(storage).create_kb(
             kb_id=kb_id,
@@ -65,8 +66,9 @@ def test_embeddings_model_change_without_full_reindex_is_rejected(
         "ai_config": {"embeddings": {"provider": "openai", "model": "text-embedding-3-large"}}
     }
     _patch_routing_io(monkeypatch, config)
-    db_path = str(tmp_path / "index.db")
+    db_path = postgres_url_for_path(tmp_path / "index.db")
     _make_kb_in_use(db_path)
+    db_path = postgres_url_for_path(db_path)
     with pytest.raises(OpsWriteError, match="full_reindex"):
         update_ai_routing(
             {
@@ -89,8 +91,9 @@ def test_embeddings_provider_change_without_full_reindex_is_rejected(
         "ai_config": {"embeddings": {"provider": "openai", "model": "text-embedding-3-large"}}
     }
     _patch_routing_io(monkeypatch, config)
-    db_path = str(tmp_path / "index.db")
+    db_path = postgres_url_for_path(tmp_path / "index.db")
     _make_kb_in_use(db_path)
+    db_path = postgres_url_for_path(db_path)
     with pytest.raises(OpsWriteError, match="full_reindex"):
         update_ai_routing(
             {
@@ -107,6 +110,7 @@ def test_embeddings_provider_change_without_full_reindex_is_rejected(
 
 
 def test_embeddings_model_change_with_full_reindex_is_allowed(
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     config = {
@@ -124,7 +128,7 @@ def test_embeddings_model_change_with_full_reindex_is_allowed(
                 }
             ],
         },
-        db_path=":memory:",
+        db_path=postgres_url_for_path(tmp_path / "index.db"),
     )
     assert result["success"] is True
     # Soft info is still returned for the downstream atomic rebuild step.
@@ -132,7 +136,9 @@ def test_embeddings_model_change_with_full_reindex_is_allowed(
     assert result["affected_kb_ids"] == []
 
 
-def test_embeddings_same_model_knob_update_is_not_blocked(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_embeddings_same_model_knob_update_is_not_blocked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     config = {
         "ai_config": {"embeddings": {"provider": "openai", "model": "text-embedding-3-large"}}
     }
@@ -148,7 +154,7 @@ def test_embeddings_same_model_knob_update_is_not_blocked(monkeypatch: pytest.Mo
                 }
             ]
         },
-        db_path=":memory:",
+        db_path=postgres_url_for_path(tmp_path / "index.db"),
     )
     assert result["success"] is True
 
@@ -166,6 +172,16 @@ class _RaisingConnection:
 
     def execute(self, *args: Any, **kwargs: Any) -> None:
         raise self._exc
+
+
+class _UndefinedTableError(psycopg2.Error):
+    @property
+    def pgcode(self) -> str:
+        return "42P01"
+
+
+def _undefined_table_error() -> _UndefinedTableError:
+    return _UndefinedTableError("relation does not exist")
 
 
 class _FakeStorage:
@@ -186,24 +202,25 @@ def test_has_indexed_knowledge_bases_fails_closed_on_generic_error(
 ) -> None:
     _patch_storage_raise(monkeypatch, RuntimeError("database is locked"))
     # A transient/unknown failure must NOT be treated as "nothing indexed".
-    assert ops_write._has_indexed_knowledge_bases(":memory:") is True
+    assert ops_write._has_indexed_knowledge_bases("postgresql://unused@localhost/unused") is True
 
 
 def test_has_indexed_knowledge_bases_fails_closed_on_operational_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _patch_storage_raise(monkeypatch, sqlite3.OperationalError("database is locked"))
-    assert ops_write._has_indexed_knowledge_bases(":memory:") is True
+    _patch_storage_raise(monkeypatch, psycopg2.OperationalError("database is locked"))
+    assert ops_write._has_indexed_knowledge_bases("postgresql://unused@localhost/unused") is True
 
 
 def test_has_indexed_knowledge_bases_allows_missing_table(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _patch_storage_raise(
-        monkeypatch, sqlite3.OperationalError("no such table: rag_knowledge_bases")
+        monkeypatch,
+        _undefined_table_error(),
     )
     # A fresh/empty DB (no such table) is the one safe fail-open case.
-    assert ops_write._has_indexed_knowledge_bases(":memory:") is False
+    assert ops_write._has_indexed_knowledge_bases("postgresql://unused@localhost/unused") is False
 
 
 # ---------------------------------------------------------------------------
@@ -238,7 +255,7 @@ def _make_profile_in_use(storage: Storage, profile_id: str) -> None:
 
 
 def _make_profile(db_path: str, *, chunk_size: int = 800, chunk_overlap: int = 100) -> dict:
-    storage = Storage(db_path)
+    storage = Storage(postgres_url_for_path(db_path))
     try:
         return storage.create_chunk_profile(
             name="profile-a",
@@ -257,9 +274,9 @@ def test_chunk_profile_immutable_change_in_use_requires_full_reindex(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(rag_admin, "_require_config_write", lambda *a, **k: None)
-    db_path = str(tmp_path / "index.db")
+    db_path = postgres_url_for_path(tmp_path / "index.db")
     profile = _make_profile(db_path)
-    storage = Storage(db_path)
+    storage = Storage(postgres_url_for_path(db_path))
     try:
         _make_profile_in_use(storage, profile["profile_id"])
     finally:
@@ -278,9 +295,9 @@ def test_chunk_profile_immutable_change_in_use_rejected_even_with_legacy_full_re
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(rag_admin, "_require_config_write", lambda *a, **k: None)
-    db_path = str(tmp_path / "index.db")
+    db_path = postgres_url_for_path(tmp_path / "index.db")
     profile = _make_profile(db_path)
-    storage = Storage(db_path)
+    storage = Storage(postgres_url_for_path(db_path))
     try:
         _make_profile_in_use(storage, profile["profile_id"])
     finally:
@@ -294,7 +311,7 @@ def test_chunk_profile_immutable_change_in_use_rejected_even_with_legacy_full_re
             headers={},
         )
 
-    storage = Storage(db_path)
+    storage = Storage(postgres_url_for_path(db_path))
     try:
         unchanged = storage.get_chunk_profile(profile["profile_id"])
     finally:
@@ -307,7 +324,7 @@ def test_chunk_profile_immutable_change_not_in_use_is_allowed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(rag_admin, "_require_config_write", lambda *a, **k: None)
-    db_path = str(tmp_path / "index.db")
+    db_path = postgres_url_for_path(tmp_path / "index.db")
     profile = _make_profile(db_path)  # never bound to any chunk data
 
     result = update_chunk_profile(
@@ -323,9 +340,9 @@ def test_chunk_profile_name_change_is_always_allowed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(rag_admin, "_require_config_write", lambda *a, **k: None)
-    db_path = str(tmp_path / "index.db")
+    db_path = postgres_url_for_path(tmp_path / "index.db")
     profile = _make_profile(db_path)
-    storage = Storage(db_path)
+    storage = Storage(postgres_url_for_path(db_path))
     try:
         _make_profile_in_use(storage, profile["profile_id"])
     finally:
@@ -344,9 +361,9 @@ def test_chunk_profile_update_resulting_in_duplicate_config_hash_is_conflict(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(rag_admin, "_require_config_write", lambda *a, **k: None)
-    db_path = str(tmp_path / "index.db")
+    db_path = postgres_url_for_path(tmp_path / "index.db")
     profile = _make_profile(db_path, chunk_size=800)
-    storage = Storage(db_path)
+    storage = Storage(postgres_url_for_path(db_path))
     try:
         # A second profile already holds the exact config the update would
         # collapse into (chunk_size=300 + same splitter/tokenizer/version/
@@ -392,7 +409,7 @@ def test_chunk_profile_update_rejects_non_integer_immutable_field(
     bad_value: Any,
 ) -> None:
     monkeypatch.setattr(rag_admin, "_require_config_write", lambda *a, **k: None)
-    db_path = str(tmp_path / "index.db")
+    db_path = postgres_url_for_path(tmp_path / "index.db")
     profile = _make_profile(db_path)
     with pytest.raises(RagAdminError, match=f"{field} must be an integer") as excinfo:
         update_chunk_profile(
@@ -411,8 +428,8 @@ def test_chunk_profile_update_rejects_non_integer_immutable_field(
 
 
 def test_kb_committed_chunk_profiles_returns_bound_profiles(tmp_path: Path) -> None:
-    db_path = str(tmp_path / "index.db")
-    storage = Storage(db_path)
+    db_path = postgres_url_for_path(tmp_path / "index.db")
+    storage = Storage(postgres_url_for_path(db_path))
     try:
         profile = storage.create_chunk_profile(
             name="p1",
@@ -468,8 +485,8 @@ def _stub_storage(committed: list[dict]) -> object:
     return _Stub()
 
 
-def test_runtime_chunk_fail_closed_on_profile_mismatch() -> None:
-    runtime = NativeTaskRuntime()
+def test_runtime_chunk_fail_closed_on_profile_mismatch(tmp_path: Path) -> None:
+    runtime = NativeTaskRuntime(ready_data_database=postgres_url_for_path(tmp_path / "runtime.db"))
     storage = _stub_storage(
         [
             {
@@ -491,8 +508,8 @@ def test_runtime_chunk_fail_closed_on_profile_mismatch() -> None:
         )
 
 
-def test_runtime_chunk_fail_closed_passes_on_matching_profile() -> None:
-    runtime = NativeTaskRuntime()
+def test_runtime_chunk_fail_closed_passes_on_matching_profile(tmp_path: Path) -> None:
+    runtime = NativeTaskRuntime(ready_data_database=postgres_url_for_path(tmp_path / "runtime.db"))
     storage = _stub_storage(
         [
             {
@@ -514,8 +531,8 @@ def test_runtime_chunk_fail_closed_passes_on_matching_profile() -> None:
     )
 
 
-def test_runtime_chunk_fail_closed_passes_without_committed_chunks() -> None:
-    runtime = NativeTaskRuntime()
+def test_runtime_chunk_fail_closed_passes_without_committed_chunks(tmp_path: Path) -> None:
+    runtime = NativeTaskRuntime(ready_data_database=postgres_url_for_path(tmp_path / "runtime.db"))
     storage = _stub_storage([])
     runtime._ensure_chunk_config_compatible(
         storage,
@@ -532,9 +549,9 @@ def test_runtime_chunk_generation_rejects_legacy_kb_option(
 ) -> None:
     # Removed KB options must be rejected before chunk generation runs, even
     # when the saved data already has committed chunks.
-    db_path = str(tmp_path / "index.db")
+    db_path = postgres_url_for_path(tmp_path / "index.db")
     file_url = "https://example.com/wired.md"
-    storage = Storage(db_path)
+    storage = Storage(postgres_url_for_path(db_path))
     try:
         KnowledgeBaseManager(storage).create_kb(
             kb_id="kb-1",
@@ -591,7 +608,7 @@ def test_runtime_chunk_generation_rejects_legacy_kb_option(
     finally:
         storage.close()
 
-    storage = Storage(db_path)
+    storage = Storage(postgres_url_for_path(db_path))
     runtime = NativeTaskRuntime()
     monkeypatch.setattr(
         "ai_actuarial.task_runtime.generate_file_chunk_sets",
@@ -614,7 +631,7 @@ def _seed_kb_with_committed_chunk(
 ) -> None:
     """Seed a KB with a committed chunk profile at (800, 100) so the runtime
     fail-closed guard sees incompatible committed chunk data."""
-    storage = Storage(db_path)
+    storage = Storage(postgres_url_for_path(db_path))
     try:
         KnowledgeBaseManager(storage).create_kb(
             kb_id=kb_id,
@@ -676,11 +693,11 @@ def test_runtime_chunk_generation_rejects_legacy_full_reindex_and_kb_options(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # Issue #237 removes KB binding/reindex from chunk generation entirely.
-    db_path = str(tmp_path / "index.db")
+    db_path = postgres_url_for_path(tmp_path / "index.db")
     file_url = "https://example.com/wired.md"
     _seed_kb_with_committed_chunk(db_path, tmp_path, file_url=file_url)
 
-    storage = Storage(db_path)
+    storage = Storage(postgres_url_for_path(db_path))
     runtime = NativeTaskRuntime()
     monkeypatch.setattr(
         "ai_actuarial.task_runtime.generate_file_chunk_sets",
@@ -706,11 +723,11 @@ def test_runtime_chunk_generation_overwrite_noop_does_not_allow_legacy_kb_option
 ) -> None:
     # overwrite_same_profile remains a no-op compatibility signal, but it does
     # not make the removed KB option valid.
-    db_path = str(tmp_path / "index.db")
+    db_path = postgres_url_for_path(tmp_path / "index.db")
     file_url = "https://example.com/wired.md"
     _seed_kb_with_committed_chunk(db_path, tmp_path, file_url=file_url)
 
-    storage = Storage(db_path)
+    storage = Storage(postgres_url_for_path(db_path))
     runtime = NativeTaskRuntime()
     monkeypatch.setattr(
         "ai_actuarial.task_runtime.generate_file_chunk_sets",
@@ -739,7 +756,7 @@ def test_runtime_chunk_generation_overwrite_noop_does_not_allow_legacy_kb_option
 
 
 def test_manifest_schema_version_is_recorded_and_traceable(tmp_path: Path) -> None:
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         for suffix in ("1", "2"):
             ingest_manifest(

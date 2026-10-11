@@ -7,6 +7,7 @@ import pytest
 
 from ai_actuarial.manifest_ingest import ManifestIngestError, content_kind_for, ingest_manifest
 from ai_actuarial.storage import Storage
+from tests.postgres_helpers import postgres_url_for_path
 
 
 def _sample_manifest() -> dict:
@@ -52,7 +53,7 @@ def test_content_kind_for() -> None:
 
 
 def test_upsert_file_default_content_kind() -> None:
-    storage = Storage(":memory:")
+    storage = Storage(postgres_url_for_path(":memory:"))
     try:
         storage.upsert_file(
             url="https://example.com/a.pdf",
@@ -77,7 +78,7 @@ def test_upsert_file_default_content_kind() -> None:
 
 
 def test_upsert_file_explicit_web_page_kind() -> None:
-    storage = Storage(":memory:")
+    storage = Storage(postgres_url_for_path(":memory:"))
     try:
         storage.upsert_file(
             url="https://example.com/page",
@@ -106,7 +107,7 @@ def test_v4_migration_adds_content_kind_and_manifest_raw(tmp_path) -> None:
     from ai_actuarial.sqlite_schema import apply_schema
 
     db_path = str(tmp_path / "v3.db")
-    storage = Storage(db_path)
+    storage = Storage._legacy_sqlite_schema_for_validation(db_path)
     try:
         # Downgrade a fresh v4 database back to v3 shape: drop content_kind and
         # manifest_raw, then rewind the user_version so apply_schema migrates it.
@@ -135,7 +136,7 @@ def test_v4_migration_backfills_html_rows_as_web_page(tmp_path) -> None:
     from ai_actuarial.sqlite_schema import apply_schema
 
     db_path = str(tmp_path / "backfill.db")
-    storage = Storage(db_path)
+    storage = Storage._legacy_sqlite_schema_for_validation(db_path)
     try:
         storage._conn.execute(
             "INSERT INTO files (url, sha256, title, content_type, first_seen, last_seen) "
@@ -175,7 +176,7 @@ def test_v4_migration_backfills_html_rows_as_web_page(tmp_path) -> None:
 
 
 def test_ingest_manifest_stores_raw() -> None:
-    storage = Storage(":memory:")
+    storage = Storage(postgres_url_for_path(":memory:"))
     try:
         ingest_manifest(storage, _sample_manifest())
         row = storage._conn.execute(
@@ -189,7 +190,7 @@ def test_ingest_manifest_stores_raw() -> None:
 
 
 def test_ingest_manifest_maps_assets_to_files() -> None:
-    storage = Storage(":memory:")
+    storage = Storage(postgres_url_for_path(":memory:"))
     try:
         ingest_manifest(storage, _sample_manifest())
         rows = storage._conn.execute(
@@ -206,7 +207,7 @@ def test_ingest_manifest_maps_assets_to_files() -> None:
 
 
 def test_ingest_manifest_is_idempotent() -> None:
-    storage = Storage(":memory:")
+    storage = Storage(postgres_url_for_path(":memory:"))
     try:
         first = ingest_manifest(storage, _sample_manifest())
         second = ingest_manifest(storage, _sample_manifest())
@@ -221,7 +222,7 @@ def test_ingest_manifest_is_idempotent() -> None:
 def test_ingest_manifest_rejects_non_sha256_checksum() -> None:
     manifest = _sample_manifest()
     manifest["downloaded_assets"][0]["checksum"] = {"algorithm": "md5", "value": "e" * 32}
-    storage = Storage(":memory:")
+    storage = Storage(postgres_url_for_path(":memory:"))
     try:
         with pytest.raises(ManifestIngestError) as exc_info:
             ingest_manifest(storage, manifest)
@@ -236,7 +237,7 @@ def test_ingest_manifest_rejects_non_sha256_checksum() -> None:
 def test_ingest_manifest_rejects_non_dict_checksum() -> None:
     manifest = _sample_manifest()
     manifest["downloaded_assets"][0]["checksum"] = "not-a-dict"
-    storage = Storage(":memory:")
+    storage = Storage(postgres_url_for_path(":memory:"))
     try:
         with pytest.raises(ManifestIngestError) as exc_info:
             ingest_manifest(storage, manifest)
@@ -250,7 +251,7 @@ def test_ingest_manifest_rejects_non_dict_checksum() -> None:
 def test_ingest_manifest_rejects_missing_manifest_id() -> None:
     manifest = _sample_manifest()
     del manifest["manifest_id"]
-    storage = Storage(":memory:")
+    storage = Storage(postgres_url_for_path(":memory:"))
     try:
         with pytest.raises(ManifestIngestError) as exc_info:
             ingest_manifest(storage, manifest)
@@ -264,7 +265,7 @@ def test_ingest_manifest_rejects_missing_manifest_id() -> None:
 def test_ingest_manifest_empty_assets_still_archives_raw() -> None:
     manifest = _sample_manifest()
     manifest["downloaded_assets"] = []
-    storage = Storage(":memory:")
+    storage = Storage(postgres_url_for_path(":memory:"))
     try:
         result = ingest_manifest(storage, manifest)
         assert result["imported"] == 0
@@ -277,7 +278,7 @@ def test_ingest_manifest_empty_assets_still_archives_raw() -> None:
 def test_ingest_manifest_rejects_asset_without_url() -> None:
     manifest = _sample_manifest()
     del manifest["downloaded_assets"][0]["url"]
-    storage = Storage(":memory:")
+    storage = Storage(postgres_url_for_path(":memory:"))
     try:
         with pytest.raises(ManifestIngestError) as exc_info:
             ingest_manifest(storage, manifest)
@@ -296,7 +297,7 @@ def test_ingest_manifest_stores_raw_text_byte_for_byte() -> None:
         '"site_url":"https://example.com/"},"downloaded_assets": []}'
     )
     manifest = json.loads(raw)
-    storage = Storage(":memory:")
+    storage = Storage(postgres_url_for_path(":memory:"))
     try:
         ingest_manifest(storage, manifest, raw_text=raw)
         row = storage._conn.execute(
@@ -317,7 +318,7 @@ def test_ingest_manifest_rejects_non_dict_assets() -> None:
             "checksum": {"algorithm": "sha256", "value": "a" * 64},
         },
     ]
-    storage = Storage(":memory:")
+    storage = Storage(postgres_url_for_path(":memory:"))
     try:
         with pytest.raises(ManifestIngestError) as exc_info:
             ingest_manifest(storage, manifest)
@@ -331,7 +332,7 @@ def test_ingest_manifest_rejects_non_dict_assets() -> None:
 def test_ingest_manifest_rejects_non_list_assets() -> None:
     manifest = _sample_manifest()
     manifest["downloaded_assets"] = "not-a-list"
-    storage = Storage(":memory:")
+    storage = Storage(postgres_url_for_path(":memory:"))
     try:
         with pytest.raises(ManifestIngestError) as exc_info:
             ingest_manifest(storage, manifest)
@@ -345,7 +346,7 @@ def test_ingest_manifest_rejects_non_list_assets() -> None:
 def test_ingest_manifest_rejects_non_string_media_type() -> None:
     manifest = _sample_manifest()
     manifest["downloaded_assets"][0]["media_type"] = 12345  # non-string
-    storage = Storage(":memory:")
+    storage = Storage(postgres_url_for_path(":memory:"))
     try:
         with pytest.raises(ManifestIngestError) as exc_info:
             ingest_manifest(storage, manifest)

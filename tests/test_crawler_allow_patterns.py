@@ -17,6 +17,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from tests.postgres_helpers import postgres_url_for_path
+
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from ai_actuarial.crawler import Crawler, SiteConfig
@@ -40,7 +42,7 @@ def _index_page(links: list[tuple[str, str]]) -> str:
 
 def _make_storage(tmp_dir: str) -> Storage:
     db_path = os.path.join(tmp_dir, "test.db")
-    return Storage(db_path)
+    return Storage(postgres_url_for_path(db_path))
 
 
 def _make_crawler(storage: Storage, tmp_dir: str) -> Crawler:

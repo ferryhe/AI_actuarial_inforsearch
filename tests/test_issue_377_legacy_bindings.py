@@ -10,10 +10,11 @@ from ai_actuarial.rag.kb_index import (
 )
 from ai_actuarial.rag.knowledge_base import KnowledgeBaseManager
 from ai_actuarial.storage import Storage
+from tests.postgres_helpers import postgres_url_for_path
 
 
 def _seed_legacy_kb(tmp_path: Path, *, kb_id: str, drifted_profile: bool = False) -> Storage:
-    storage = Storage(str(tmp_path / f"{kb_id}.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / f"{kb_id}.db")))
     manager = KnowledgeBaseManager.__new__(KnowledgeBaseManager)
     manager.storage = storage
     manager.config = RAGConfig(data_dir=str(tmp_path / f"{kb_id}-rag"))

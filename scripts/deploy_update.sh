@@ -22,6 +22,8 @@ BUILD_SOURCE_URL="${BUILD_SOURCE_URL:-https://github.com/ferryhe/AI_actuarial_in
 BUILD_BUILDER="${BUILD_BUILDER:-aiinforsearch-provenance}"
 BUILD_BUILDKIT_IMAGE="${BUILD_BUILDKIT_IMAGE:-moby/buildkit@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea}"
 CONFIG_PATH="${CONFIG_PATH:?Set CONFIG_PATH to the external production sites.yaml}"
+DATABASE_URL="${DATABASE_URL:?Set DATABASE_URL for the production PostgreSQL database}"
+export DATABASE_URL
 
 if [[ ! -f "$CONFIG_PATH" ]]; then
   echo "Authoritative production config does not exist: $CONFIG_PATH"
@@ -165,7 +167,7 @@ python3 scripts/production_recovery.py release-record \
   --api-build-target "$APP_SERVICE_NAME" \
   --frontend-build-target "$FRONTEND_SERVICE_NAME" \
   --config "$CONFIG_PATH" \
-  --db "$DATA_DIR/index.db" \
+  --database-url-env DATABASE_URL \
   --output "$RELEASE_DIR/$BUILD_RELEASE_ID.json"
 export API_IMAGE_DIGEST="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["image_digest"].rsplit("@", 1)[-1])' "$RELEASE_DIR/$BUILD_RELEASE_ID.json")"
 "${compose[@]}" up -d --wait --wait-timeout "$DEPLOY_WAIT_TIMEOUT" "$APP_SERVICE_NAME" "$FRONTEND_SERVICE_NAME"

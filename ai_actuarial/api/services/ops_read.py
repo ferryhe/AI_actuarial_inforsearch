@@ -24,6 +24,7 @@ from ai_actuarial.embedding_service import (
     sanitize_legacy_chunk_generation_payload,
 )
 from ai_actuarial.markdown_conversion_config import get_markdown_conversion_options
+from ai_actuarial.postgres import resolve_data_root
 from ai_actuarial.services.token_encryption import TokenEncryption
 from ai_actuarial.shared_runtime import (
     coerce_bool,
@@ -31,6 +32,7 @@ from ai_actuarial.shared_runtime import (
     get_sites_config_path,
     load_yaml,
     parse_int_clamped,
+    resolve_data_path,
     serialize_backend_settings,
     tail_text_file,
     task_log_path,
@@ -93,7 +95,8 @@ def get_global_logs(*, enabled: bool | None = None) -> dict[str, str]:
             "message": "Global logs API is disabled",
         }
 
-    log_file = settings.LOG_FILE
+    config_data = load_yaml(get_sites_config_path(), default={})
+    log_file = resolve_data_path(settings.LOG_FILE, data_root=resolve_data_root(config_data))
     if not log_file.exists() or log_file.stat().st_size == 0:
         return {"logs": ""}
 

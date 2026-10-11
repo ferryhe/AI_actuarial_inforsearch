@@ -19,9 +19,10 @@ from ai_actuarial.api.services.ready_data_automation import (
 )
 from ai_actuarial.rag.kb_index import resolve_kb_bound_chunks
 from ai_actuarial.rag.knowledge_base import KnowledgeBaseManager
-from ai_actuarial.sqlite_schema import schema_status
+from ai_actuarial.sqlite_schema import apply_schema, schema_status
 from ai_actuarial.storage import Storage
 from ai_actuarial.task_runtime import NativeTaskRuntime
+from tests.postgres_helpers import postgres_url_for_path
 
 
 def _create_kb(
@@ -155,7 +156,7 @@ def _setup_db(
     manifest_profile: str = "general",
 ) -> Path:
     db_path = tmp_path / "index.db"
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         _create_kb(
             storage,
@@ -199,7 +200,7 @@ def _failed_smoke(reason: str = "no_evidence") -> dict[str, Any]:
 
 
 def _ready_input(db_path: Path, kb_id: str) -> dict[str, str]:
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         row = storage._conn.execute(
             "SELECT index_version_id FROM kb_ready_index_state WHERE kb_id = ?",
@@ -211,7 +212,7 @@ def _ready_input(db_path: Path, kb_id: str) -> dict[str, str]:
         raise ValueError("invalid_selector: Ready Data requires a committed KB index")
     index_version_id = str(row[0])
     source = ready_data_builder.get_builder_source_fingerprint(
-        db_path=str(db_path),
+        db_path=postgres_url_for_path(str(db_path)),
         kb_id=kb_id,
         profile="general",
         index_version_id=index_version_id,
@@ -229,7 +230,7 @@ def _manual_build(
     should_stop=None,
 ) -> dict[str, Any]:
     return _build_agentic_ready_manifest_core(
-        db_path=str(db_path),
+        db_path=postgres_url_for_path(str(db_path)),
         kb_id=kb_id,
         payload={"profile": "general", **_ready_input(db_path, kb_id)},
         publish=True,
@@ -244,7 +245,7 @@ def _enable_automation(
     publish: bool,
     profile: str = "general",
 ) -> None:
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         storage.set_agentic_ready_automation(
             kb_id=kb_id,
@@ -282,7 +283,7 @@ def _validated_manual_candidate(
 ) -> dict[str, Any]:
     monkeypatch.setattr(rag_admin_service, "run_staging_smoke", lambda **_kwargs: _passed_smoke())
     return _build_agentic_ready_manifest_core(
-        db_path=str(db_path),
+        db_path=postgres_url_for_path(str(db_path)),
         kb_id=kb_id,
         payload={"profile": "general", **_ready_input(db_path, kb_id)},
         publish=False,
@@ -298,7 +299,7 @@ def test_explicit_ready_publish_promotes_validated_manual_candidate(
     candidate_id = str(built["candidate_publication"]["publication_id"])
     expected_ready_input = _ready_input(db_path, "kb-smoke")
 
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         pending = publication_service.read_public_ready_data_snapshot(
             storage,
@@ -319,7 +320,7 @@ def test_explicit_ready_publish_promotes_validated_manual_candidate(
     assert pending["publication_state"]["automatic_publish_enabled"] is False
 
     result = publication_service.publish_ready_data_publication(
-        db_path=str(db_path),
+        db_path=postgres_url_for_path(str(db_path)),
         kb_id="kb-smoke",
         payload={
             "profile": "general",
@@ -335,7 +336,7 @@ def test_explicit_ready_publish_promotes_validated_manual_candidate(
         "publish_status": "published",
         "active_publication_id": candidate_id,
     }
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         published = publication_service.read_public_ready_data_snapshot(
             storage,
@@ -357,7 +358,7 @@ def test_newer_manual_ready_source_supersedes_older_awaiting_candidate(
     db_path = _setup_db(tmp_path)
     first = _validated_manual_candidate(db_path, monkeypatch)
     first_id = str(first["candidate_publication"]["publication_id"])
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         with storage.transaction(immediate=True):
             storage._conn.execute(
@@ -375,7 +376,7 @@ def test_newer_manual_ready_source_supersedes_older_awaiting_candidate(
     second = _validated_manual_candidate(db_path, monkeypatch)
     second_id = str(second["candidate_publication"]["publication_id"])
 
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         prior = storage.get_agentic_ready_publication(first_id)
         automation = storage.get_agentic_ready_automation_state(
@@ -402,7 +403,7 @@ def test_explicit_ready_publish_failure_preserves_active_pointer(
     candidate = dict(built["candidate_publication"])
     expected_active: str | None = active_id
 
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         if failure == "source":
             storage._conn.execute(
@@ -437,7 +438,7 @@ def test_explicit_ready_publish_failure_preserves_active_pointer(
 
     with pytest.raises(rag_admin_service.RagAdminError) as exc_info:
         publication_service.publish_ready_data_publication(
-            db_path=str(db_path),
+            db_path=postgres_url_for_path(str(db_path)),
             kb_id="kb-smoke",
             payload={
                 "profile": "general",
@@ -447,7 +448,7 @@ def test_explicit_ready_publish_failure_preserves_active_pointer(
         )
 
     assert exc_info.value.status_code in {409, 422}
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         state = storage.get_agentic_ready_publication_state(kb_id="kb-smoke", profile="general")
         assert state["active_publication_id"] == active_id
@@ -465,7 +466,7 @@ def test_explicit_ready_publish_rechecks_source_inside_cas_transaction(
     built = _validated_manual_candidate(db_path, monkeypatch)
     candidate_id = str(built["candidate_publication"]["publication_id"])
 
-    service_parts = publication_service._manager_and_storage(str(db_path))
+    service_parts = publication_service._manager_and_storage(postgres_url_for_path(str(db_path)))
     service_storage = service_parts[2]
     original_transaction = service_storage.transaction
 
@@ -488,7 +489,7 @@ def test_explicit_ready_publish_rechecks_source_inside_cas_transaction(
 
     with pytest.raises(rag_admin_service.RagAdminError) as exc_info:
         publication_service.publish_ready_data_publication(
-            db_path=str(db_path),
+            db_path=postgres_url_for_path(str(db_path)),
             kb_id="kb-smoke",
             payload={
                 "profile": "general",
@@ -499,7 +500,7 @@ def test_explicit_ready_publish_rechecks_source_inside_cas_transaction(
 
     assert exc_info.value.status_code == 409
     assert str(exc_info.value).startswith("stale_snapshot:")
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         state = storage.get_agentic_ready_publication_state(kb_id="kb-smoke", profile="general")
         assert state["active_publication_id"] == active_id
@@ -514,7 +515,7 @@ def test_manual_build_rechecks_source_after_smoke_before_publish(
 ) -> None:
     db_path = _setup_db(tmp_path)
     first = _manual_build(db_path, "kb-smoke")
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         storage._conn.execute(
             "UPDATE catalog_items SET summary = ? WHERE file_url = ?",
@@ -525,7 +526,7 @@ def test_manual_build_rechecks_source_after_smoke_before_publish(
         storage.close()
 
     def smoke_then_change_source(**_kwargs: Any) -> dict[str, Any]:
-        concurrent = Storage(str(db_path))
+        concurrent = Storage(postgres_url_for_path(str(db_path)))
         try:
             concurrent._conn.execute(
                 "UPDATE catalog_items SET summary = ? WHERE file_url = ?",
@@ -562,7 +563,7 @@ def test_automatic_publish_rechecks_source_after_smoke(
     _enable_automation(db_path, kb_id="kb-smoke", publish=True)
 
     def smoke_then_change_source(**_kwargs: Any) -> dict[str, Any]:
-        concurrent = Storage(str(db_path))
+        concurrent = Storage(postgres_url_for_path(str(db_path)))
         try:
             concurrent._conn.execute(
                 "UPDATE catalog_items SET summary = ? WHERE file_url = ?",
@@ -580,13 +581,13 @@ def test_automatic_publish_rechecks_source_after_smoke(
     )
 
     raced = run_ready_data_automation_once(
-        str(db_path),
+        postgres_url_for_path(str(db_path)),
         heartbeat_interval_seconds=0,
     )
 
     assert raced["status"] == "failed"
     assert raced["error"] == ("stale_snapshot: Ready Data source changed before publication")
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         state = storage.get_agentic_ready_publication_state(
             kb_id="kb-smoke",
@@ -609,7 +610,7 @@ def test_automation_resolves_source_for_selected_manifest_profile(
     )
 
     result = run_ready_data_automation_once(
-        str(db_path),
+        postgres_url_for_path(str(db_path)),
         heartbeat_interval_seconds=0,
     )
 
@@ -628,7 +629,7 @@ def test_ready_core_requires_explicit_index_and_source_contract(
         "expected_source_snapshot_fingerprint",
     ):
         _build_agentic_ready_manifest_core(
-            db_path=str(db_path),
+            db_path=postgres_url_for_path(str(db_path)),
             kb_id="kb-smoke",
             payload={"profile": "general"},
             publish=True,
@@ -641,7 +642,7 @@ def test_ready_task_stop_preserves_active_publication(
 ) -> None:
     db_path = _setup_db(tmp_path)
     active = _manual_build(db_path, "kb-smoke")
-    source_storage = Storage(str(db_path))
+    source_storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         source_storage._conn.execute(
             "UPDATE catalog_items SET summary = ? WHERE file_url = ?",
@@ -651,7 +652,7 @@ def test_ready_task_stop_preserves_active_publication(
     finally:
         source_storage.close()
     ready_input = _ready_input(db_path, "kb-smoke")
-    runtime = NativeTaskRuntime(ready_data_db_path=str(db_path))
+    runtime = NativeTaskRuntime(ready_data_db_path=postgres_url_for_path(str(db_path)))
     task_id = "task-ready-stop"
     runtime.active_tasks[task_id] = {"stop_requested": False}
 
@@ -661,12 +662,12 @@ def test_ready_task_stop_preserves_active_publication(
 
     monkeypatch.setattr(rag_admin_service, "run_staging_smoke", smoke_then_stop)
 
-    task_storage = Storage(str(db_path))
+    task_storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         stopped = runtime._run_ready_data_build(
             task_id,
             task_storage,
-            str(db_path),
+            postgres_url_for_path(str(db_path)),
             {
                 "contract_version": 1,
                 "kb_id": "kb-smoke",
@@ -679,7 +680,7 @@ def test_ready_task_stop_preserves_active_publication(
 
     assert stopped.success is False
     assert stopped.metadata["stopped"] is True
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         state = storage.get_agentic_ready_publication_state(
             kb_id="kb-smoke",
@@ -698,7 +699,7 @@ def test_builder_classifies_prebuild_source_change_as_stale_snapshot(
 
     with pytest.raises(ValueError, match="^stale_snapshot:"):
         ready_data_builder.build_l0(
-            db_path=str(db_path),
+            db_path=postgres_url_for_path(str(db_path)),
             output_dir=str(tmp_path / "stale-builder"),
             profile="general",
             kb_id="kb-smoke",
@@ -717,7 +718,7 @@ def test_smoke_failure_keeps_active_and_previous_unchanged_and_cleans_staging(
         tmp_path / "agentic_ready_data" / "kbs" / "kb-smoke" / "general" / "1" / "staging"
     )
     staging_before_failure = sorted(staging_root.glob("build-*"))
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         before = storage.get_agentic_ready_publication_state(
             kb_id="kb-smoke",
@@ -737,7 +738,7 @@ def test_smoke_failure_keeps_active_and_previous_unchanged_and_cleans_staging(
 
     failed = _manual_build(db_path, "kb-smoke")
 
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         after = storage.get_agentic_ready_publication_state(
             kb_id="kb-smoke",
@@ -765,7 +766,7 @@ def test_unexpected_smoke_exception_is_fail_closed_and_does_not_leak_details(
 ) -> None:
     db_path = _setup_db(tmp_path)
     first = _manual_build(db_path, "kb-smoke")
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         before = storage.get_agentic_ready_publication_state(
             kb_id="kb-smoke",
@@ -791,7 +792,7 @@ def test_unexpected_smoke_exception_is_fail_closed_and_does_not_leak_details(
 
     failed = _manual_build(db_path, "kb-smoke")
 
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         after = storage.get_agentic_ready_publication_state(
             kb_id="kb-smoke",
@@ -892,7 +893,7 @@ def test_manual_and_automatic_build_share_the_same_smoke_gate(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     db_path = _setup_db(tmp_path, kb_id="kb-manual")
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         _create_kb(storage, tmp_path, kb_id="kb-auto", with_document=True)
     finally:
@@ -908,7 +909,7 @@ def test_manual_and_automatic_build_share_the_same_smoke_gate(
     _manual_build(db_path, "kb-manual")
     _enable_automation(db_path, kb_id="kb-auto", publish=False)
     automatic = run_ready_data_automation_once(
-        str(db_path),
+        postgres_url_for_path(str(db_path)),
         heartbeat_interval_seconds=0,
     )
 
@@ -949,11 +950,11 @@ def test_automatic_smoke_failure_finishes_claim_as_failed(
     )
 
     result = run_ready_data_automation_once(
-        str(db_path),
+        postgres_url_for_path(str(db_path)),
         heartbeat_interval_seconds=0,
     )
 
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         automation = storage.get_agentic_ready_automation_state(
             kb_id="kb-smoke",
@@ -991,15 +992,15 @@ def test_automatic_publish_rejects_empty_kb_without_committed_index(
     _enable_automation(db_path, kb_id="kb-smoke", publish=True)
 
     first = run_ready_data_automation_once(
-        str(db_path),
+        postgres_url_for_path(str(db_path)),
         heartbeat_interval_seconds=0,
     )
     second = run_ready_data_automation_once(
-        str(db_path),
+        postgres_url_for_path(str(db_path)),
         heartbeat_interval_seconds=0,
     )
 
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         automation = storage.get_agentic_ready_automation_state(
             kb_id="kb-smoke",
@@ -1026,10 +1027,10 @@ def test_empty_kb_build_only_fails_closed_before_publish_toggle(
     db_path = _setup_db(tmp_path, with_document=False)
     _enable_automation(db_path, kb_id="kb-smoke", publish=False)
     failed = run_ready_data_automation_once(
-        str(db_path),
+        postgres_url_for_path(str(db_path)),
         heartbeat_interval_seconds=0,
     )
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         storage.set_agentic_ready_automation(
             kb_id="kb-smoke",
@@ -1041,7 +1042,7 @@ def test_empty_kb_build_only_fails_closed_before_publish_toggle(
         storage.close()
 
     idle = run_ready_data_automation_once(
-        str(db_path),
+        postgres_url_for_path(str(db_path)),
         heartbeat_interval_seconds=0,
     )
 
@@ -1079,10 +1080,10 @@ def test_unproven_legacy_candidate_is_not_claimed_for_automatic_publish(
     db_path = _setup_db(tmp_path)
     _enable_automation(db_path, kb_id="kb-smoke", publish=False)
     built = run_ready_data_automation_once(
-        str(db_path),
+        postgres_url_for_path(str(db_path)),
         heartbeat_interval_seconds=0,
     )
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         storage._conn.execute(
             "UPDATE agentic_ready_publications SET smoke_result_json = ? "
@@ -1100,10 +1101,10 @@ def test_unproven_legacy_candidate_is_not_claimed_for_automatic_publish(
         storage.close()
 
     result = run_ready_data_automation_once(
-        str(db_path),
+        postgres_url_for_path(str(db_path)),
         heartbeat_interval_seconds=0,
     )
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         automation = storage.get_agentic_ready_automation_state(
             kb_id="kb-smoke",
@@ -1136,7 +1137,7 @@ def test_automatic_empty_kb_fails_before_custom_builder_is_called(
         raise AssertionError("empty KB must fail before build")
 
     result = run_ready_data_automation_once(
-        str(db_path),
+        postgres_url_for_path(str(db_path)),
         build_candidate=unexpected_builder,
         heartbeat_interval_seconds=0,
     )
@@ -1144,7 +1145,7 @@ def test_automatic_empty_kb_fails_before_custom_builder_is_called(
     assert result["status"] == "failed"
     assert "non-empty KB membership" in result["error"]
     assert called is False
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         state = storage.get_agentic_ready_publication_state(
             kb_id="kb-smoke",
@@ -1167,7 +1168,7 @@ def test_generation_change_during_smoke_is_still_stopped_by_existing_fence(
         nonlocal changed
         if not changed:
             changed = True
-            concurrent = Storage(str(db_path))
+            concurrent = Storage(postgres_url_for_path(str(db_path)))
             try:
                 concurrent.mark_agentic_ready_source_event(
                     kb_id="kb-smoke",
@@ -1185,13 +1186,13 @@ def test_generation_change_during_smoke_is_still_stopped_by_existing_fence(
     )
 
     result = run_ready_data_automation_once(
-        str(db_path),
+        postgres_url_for_path(str(db_path)),
         heartbeat_interval_seconds=0,
     )
 
     assert result["status"] == "superseded"
     assert result["candidate_publication"]["attempt_disposition"] == "superseded_generation"
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         state = storage.get_agentic_ready_publication_state(
             kb_id="kb-smoke",
@@ -1216,14 +1217,14 @@ def test_active_pointer_change_during_smoke_loses_expected_active_cas(
             return _passed_smoke()
         competitor_dir = tmp_path / "agentic_ready_data" / "competitor"
         manifest = ready_data_builder.build_l0(
-            db_path=str(db_path),
+            db_path=postgres_url_for_path(str(db_path)),
             output_dir=str(competitor_dir),
             profile="general",
             kb_id="kb-smoke",
             **_ready_input(db_path, "kb-smoke"),
         )
         artifacts = list(manifest["artifact_files"])
-        storage = Storage(str(db_path))
+        storage = Storage(postgres_url_for_path(str(db_path)))
         try:
             competitor = storage.record_agentic_ready_publication(
                 kb_id="kb-smoke",
@@ -1242,7 +1243,6 @@ def test_active_pointer_change_during_smoke_loses_expected_active_cas(
                     str(competitor_dir),
                     artifacts,
                 ),
-                source_db=str(db_path),
                 schema_versions=dict(manifest["schema_versions"]),
                 smoke_result=_passed_smoke(query="competitor"),
             )
@@ -1262,13 +1262,13 @@ def test_active_pointer_change_during_smoke_loses_expected_active_cas(
     )
 
     result = run_ready_data_automation_once(
-        str(db_path),
+        postgres_url_for_path(str(db_path)),
         heartbeat_interval_seconds=0,
     )
 
     assert result["status"] == "failed"
     assert "expected-active CAS" in result["error"]
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         state = storage.get_agentic_ready_publication_state(
             kb_id="kb-smoke",
@@ -1283,11 +1283,8 @@ def test_active_pointer_change_during_smoke_loses_expected_active_cas(
 def test_legacy_publication_without_smoke_column_is_readable_but_startup_fails_closed(
     tmp_path: Path,
 ) -> None:
-    db_path = _setup_db(tmp_path)
-    built = _manual_build(db_path, "kb-smoke")
-    publication_id = str(built["candidate_publication"]["publication_id"])
-    storage = Storage(str(db_path))
-    storage.close()
+    db_path = tmp_path / "legacy-publication.sqlite"
+    apply_schema(db_path)
 
     import sqlite3
 
@@ -1296,21 +1293,9 @@ def test_legacy_publication_without_smoke_column_is_readable_but_startup_fails_c
     connection.commit()
     connection.close()
 
-    legacy = Storage.open_read_only(str(db_path))
-    try:
-        publication = legacy.get_agentic_ready_publication(publication_id)
-    finally:
-        legacy.close()
-    assert publication is not None
-    assert publication["status"] == "active"
-    assert publication["smoke_result"] == {}
-
     status = schema_status(str(db_path))
     assert status["state"] == "invalid"
     assert status["blocked"] is True
-
-    with pytest.raises(RuntimeError, match="schema preflight failed"):
-        Storage(str(db_path))
 
 
 def test_repeated_identical_manual_build_keeps_active_and_query_identity(
@@ -1348,18 +1333,18 @@ def test_repeated_automatic_ready_task_returns_existing_active_publication(
         **ready_input,
     }
 
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         first = runtime._run_ready_data_build(
             "ready-first",
             storage,
-            str(db_path),
+            postgres_url_for_path(str(db_path)),
             task_input,
         )
         second = runtime._run_ready_data_build(
             "ready-second",
             storage,
-            str(db_path),
+            postgres_url_for_path(str(db_path)),
             task_input,
         )
         state = storage.get_agentic_ready_publication_state(

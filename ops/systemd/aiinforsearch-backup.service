@@ -1,5 +1,5 @@
 [Unit]
-Description=AI InfoSearch verified online SQLite backup
+Description=AI InfoSearch verified PostgreSQL backup
 Requires=docker.service
 After=docker.service
 ConditionPathExists=/opt/ai_actuarial_inforsearch/scripts/production_backup.sh

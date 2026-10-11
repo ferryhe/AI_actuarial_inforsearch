@@ -9,11 +9,13 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from ai_actuarial.embedding_service import validate_chunk_generation_payload
+from ai_actuarial.postgres import resolve_data_root
 from ai_actuarial.rag.exceptions import ChunkingException
 from ai_actuarial.shared_runtime import (
     get_sites_config_path,
     load_yaml,
     parse_int_clamped,
+    resolve_data_path,
     resolve_runtime_features,
 )
 from ai_actuarial.storage import Storage
@@ -46,8 +48,7 @@ def _config_data() -> dict[str, Any]:
 def _download_dir() -> Path:
     config = _config_data()
     raw = str((config.get("paths") or {}).get("download_dir", "data/files"))
-    path = Path(raw)
-    return path.resolve() if path.is_absolute() else path.resolve()
+    return resolve_data_path(raw, data_root=resolve_data_root(config))
 
 
 def _resolve_local_path(local_path: str | None) -> Path | None:

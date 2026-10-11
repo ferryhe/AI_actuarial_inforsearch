@@ -19,6 +19,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable, Protocol
 
+from ai_actuarial.shared_runtime import resolve_data_path
+
 from .agentic_loop import NO_EVIDENCE_ANSWER, run_agentic_rag_loop
 
 logger = logging.getLogger(__name__)
@@ -155,20 +157,19 @@ class Retriever(Protocol):
 
 
 class SimpleKeywordRetriever:
-    """Baseline retriever that searches catalog_items and rag_chunks in SQLite.
+    """Baseline retriever that searches catalog_items and rag_chunks in PostgreSQL.
 
     This is intentionally simple — it represents the pre-ready_data baseline
     so we can measure improvement as agentic tools are added.
     """
 
-    def __init__(self, db_path: str):
-        import sqlite3
+    def __init__(self, database_url):
+        from ..postgres import PostgresConnection
 
-        self._conn = sqlite3.connect(db_path)
-        self._conn.row_factory = sqlite3.Row
+        self._conn = PostgresConnection(database_url, read_only=True)
 
     def close(self) -> None:
-        """Close the SQLite connection held by this retriever."""
+        """Close the read-only PostgreSQL connection held by this retriever."""
         self._conn.close()
 
     def __enter__(self) -> "SimpleKeywordRetriever":
@@ -178,8 +179,6 @@ class SimpleKeywordRetriever:
         self.close()
 
     def __call__(self, query: str, top_k: int = 5) -> list[RetrievedItem]:
-        import sqlite3
-
         if top_k <= 0:
             return []
 
@@ -216,8 +215,9 @@ class SimpleKeywordRetriever:
                             ),
                         )
                     )
-        except sqlite3.OperationalError:
-            pass
+        except Exception:
+            self._conn.rollback()
+            raise
 
         # Search rag_chunks content
         try:
@@ -244,8 +244,9 @@ class SimpleKeywordRetriever:
                             ),
                         )
                     )
-        except sqlite3.OperationalError:
-            pass
+        except Exception:
+            self._conn.rollback()
+            raise
 
         # Sort descending by score, deduplicate by doc_id
         results.sort(key=lambda x: x[0], reverse=True)
@@ -797,18 +798,15 @@ def _agentic_int(
     return value
 
 
-def default_retriever(db_path: str | None = None) -> SimpleKeywordRetriever:
+def default_retriever(database_url=None) -> SimpleKeywordRetriever:
     """Create the default SimpleKeywordRetriever.
 
     Args:
-        db_path: SQLite DB path. Defaults to env DB_PATH or data/index.db.
+        database_url: PostgreSQL URL config. Defaults to DATABASE_URL/sites.yaml.
     """
-    import os
+    from ..postgres import resolve_database_config
 
-    db_path = db_path or os.getenv("DB_PATH", "data/index.db")
-    if not os.path.isabs(db_path):
-        db_path = os.path.abspath(db_path)
-    return SimpleKeywordRetriever(db_path)
+    return SimpleKeywordRetriever(database_url or resolve_database_config())
 
 
 # ── CLI entry point ───────────────────────────────────────────────────────────
@@ -836,7 +834,11 @@ def main():
         default=None,
         help="Path to cases JSONL file (default: <repo_root>/eval/cases.jsonl)",
     )
-    parser.add_argument("--db", default=None, help="SQLite DB path")
+    parser.add_argument(
+        "--db-url-env",
+        default="DATABASE_URL",
+        help="Environment variable containing the PostgreSQL URL (default: DATABASE_URL)",
+    )
     parser.add_argument(
         "--output-dir",
         default=None,
@@ -868,7 +870,7 @@ def main():
             sys.exit(2)
         cases = load_agentic_cases(cases_path)
         evaluator = AgenticEvaluator(
-            output_dir=args.output_dir,
+            output_dir=str(resolve_data_path(args.output_dir)),
             profile=args.profile,
             kb_id=args.kb_id,
         )
@@ -888,7 +890,13 @@ def main():
         sys.exit(0 if agentic_report.failed == 0 else 1)
 
     cases = load_cases(cases_path)
-    with default_retriever(args.db) as retriever:
+    import os
+
+    database_url = os.getenv(args.db_url_env, "").strip()
+    if not database_url:
+        print(f"PostgreSQL is required; configure {args.db_url_env}", file=sys.stderr)
+        sys.exit(2)
+    with default_retriever(database_url) as retriever:
         evaluator = RetrievalEvaluator(retriever)
         report = evaluator.evaluate(cases)
 

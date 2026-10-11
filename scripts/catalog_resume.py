@@ -5,7 +5,8 @@ You can run `python -m ai_actuarial catalog` directly instead of this script.
 
 This script is kept for backward compatibility and as a standalone alternative
 that can be configured via environment variables:
-  - CATALOG_DB: Path to SQLite database (default: data/index.db)
+  - DATABASE_URL: PostgreSQL connection URL (or CATALOG_DATABASE_URL_ENV)
+  - DATA_DIR: Artifact directory (default: data)
   - CATALOG_JSONL: Output JSONL path (default: data/catalog.jsonl)
   - CATALOG_MD: Output Markdown path (default: data/catalog.md)
   - CATALOG_BATCH: Batch size (default: 200)
@@ -27,12 +28,23 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from ai_actuarial.catalog_incremental import run_incremental_catalog
+from ai_actuarial.postgres import resolve_data_root, resolve_database_config
+from ai_actuarial.shared_runtime import load_sites_config, resolve_data_path
 
 
 def main() -> int:
-    db_path = os.getenv("CATALOG_DB", "data/index.db")
-    out_jsonl = Path(os.getenv("CATALOG_JSONL", "data/catalog.jsonl"))
-    out_md = Path(os.getenv("CATALOG_MD", "data/catalog.md"))
+    config = load_sites_config(default={})
+    url_env = os.getenv("CATALOG_DATABASE_URL_ENV", "DATABASE_URL").strip() or "DATABASE_URL"
+    database_config = dict(config)
+    database_config["database"] = {"type": "postgresql", "url_env": url_env}
+    db_path = resolve_database_config(database_config)
+    data_root = resolve_data_root(config)
+    out_jsonl = resolve_data_path(
+        os.getenv("CATALOG_JSONL", str(data_root / "catalog.jsonl")), data_root=data_root
+    )
+    out_md = resolve_data_path(
+        os.getenv("CATALOG_MD", str(data_root / "catalog.md")), data_root=data_root
+    )
     batch = int(os.getenv("CATALOG_BATCH", "200"))
     site_filter = os.getenv("CATALOG_SITE")
     ai_only = os.getenv("CATALOG_AI_ONLY", "0") == "1"

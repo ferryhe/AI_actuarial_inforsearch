@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from ai_actuarial.api.app import create_app
 from ai_actuarial.storage import Storage
+from tests.postgres_helpers import postgres_url_for_path
 
 PDF_BYTES = b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n"
 PNG_BYTES = b"\x89PNG\r\n\x1a\n" + b"\0" * 4
@@ -49,7 +50,7 @@ def _build_client(tmp_path: Path, monkeypatch) -> tuple[TestClient, dict[str, st
     guest_credential = "guest-preview-credential"
     read_only_credential = "read-only-preview-credential"
     admin_credential = "admin-preview-credential"
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         storage.insert_file(
             url=file_url,
@@ -175,7 +176,7 @@ def test_guest_can_preview_inline_png(tmp_path: Path, monkeypatch) -> None:
 
 def test_raw_preview_rejects_unknown_and_mismatched_file_types(tmp_path: Path, monkeypatch) -> None:
     client, seed = _build_client(tmp_path, monkeypatch)
-    storage = Storage(seed["db_path"])
+    storage = Storage(postgres_url_for_path(seed["db_path"]))
     try:
         storage._conn.execute(
             "UPDATE files SET original_filename = ? WHERE url = ?",
@@ -192,7 +193,7 @@ def test_raw_preview_rejects_unknown_and_mismatched_file_types(tmp_path: Path, m
     )
     assert unsupported.status_code == 415
 
-    storage = Storage(seed["db_path"])
+    storage = Storage(postgres_url_for_path(seed["db_path"]))
     try:
         storage._conn.execute(
             "UPDATE files SET original_filename = ? WHERE url = ?",
@@ -212,7 +213,7 @@ def test_raw_preview_rejects_unknown_and_mismatched_file_types(tmp_path: Path, m
 
 def test_raw_preview_rejects_deleted_file(tmp_path: Path, monkeypatch) -> None:
     client, seed = _build_client(tmp_path, monkeypatch)
-    storage = Storage(seed["db_path"])
+    storage = Storage(postgres_url_for_path(seed["db_path"]))
     try:
         storage._conn.execute(
             "UPDATE files SET deleted_at = ? WHERE url = ?",
@@ -236,7 +237,7 @@ def test_raw_preview_rejects_path_outside_managed_data_root(tmp_path: Path, monk
     client, seed = _build_client(tmp_path, monkeypatch)
     outside_path = tmp_path.parent / f"{tmp_path.name}-outside.pdf"
     outside_path.write_bytes(PDF_BYTES)
-    storage = Storage(seed["db_path"])
+    storage = Storage(postgres_url_for_path(seed["db_path"]))
     try:
         storage._conn.execute(
             "UPDATE files SET local_path = ? WHERE url = ?",

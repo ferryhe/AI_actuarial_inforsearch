@@ -58,8 +58,8 @@ fi
 # NativeTaskRuntime.active_tasks (only visible through the authenticated
 # /api/tasks/active endpoint), not in job_history.jsonl, so a file-based check
 # would give a false all-clear. The quiesced guarantee instead comes from
-# ``docker stop`` gracefully halting the writer before the snapshot; SQLite
-# online backup plus copytree stats verification keep the snapshot consistent
+# ``docker stop`` gracefully halting the writer before the snapshot; a native
+# PostgreSQL dump plus copytree stats verification keep the snapshot consistent
 # even if a background task is interrupted. Scheduled collections run at 00:30,
 # so the 04:00 Sunday window is deliberately offset from collection (operator
 # decision: keep this wrapper simple rather than add an authenticated

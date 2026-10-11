@@ -72,10 +72,10 @@ site config + markdown conversion config
 ### Storage and Database
 
 - `ai_actuarial/storage.py`
-- `ai_actuarial/storage_v2.py`
-- `ai_actuarial/storage_v2_full.py`
 - `ai_actuarial/storage_factory.py`
-- `ai_actuarial/db_models.py`
+- `ai_actuarial/postgres.py`
+- `ai_actuarial/migrations/0001_postgresql.sql`
+- `ai_actuarial/postgres_import.py` (explicit SQLite v16 snapshot importer)
 
 ### Web and API
 
@@ -119,7 +119,11 @@ site config + markdown conversion config
 - `ai_actuarial/api/routers/agentic_rag.py`: direct ready_data search/chat APIs.
 - `ai_actuarial/api/services/rag_admin.py`: manifest registry/status/build integration for KBs.
 
-Product API/UI ready_data builds are constrained to the configured SQLite database-adjacent `agentic_ready_data/` directory, for example `data/agentic_ready_data/kbs/<kb_id>/<profile>/1/` when using the default local DB path. CLI runs default to `data/agentic_ready_data/...` unless `--output-dir` is provided.
+Product API/UI ready_data builds use the configured application data root's
+`agentic_ready_data/` directory, for example
+`data/agentic_ready_data/kbs/<kb_id>/<profile>/1/` with the default data root.
+The data root is independent of the PostgreSQL server location. CLI runs use
+the same configured root unless `--output-dir` is provided.
 
 ## RAG Runtime Modes
 
@@ -159,6 +163,6 @@ npm run dev
 Agentic ready_data CLI smoke:
 
 ```bash
-python -m ai_actuarial.agentic_rag.ready_data_builder --db data/index.db --kb-id <kb-id> --profile formula --validate
+python -m ai_actuarial.agentic_rag.ready_data_builder --database-url-env DATABASE_URL --kb-id <kb-id> --profile formula --validate
 python -m ai_actuarial.agentic_rag.eval --mode agentic --cases eval/agentic_cases.jsonl --output-dir eval/fixtures/agentic_ready_data --profile formula --json
 ```

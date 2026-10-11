@@ -105,6 +105,7 @@ flowchart LR
 ### 环境要求
 
 - Python 3.10+
+- PostgreSQL 16 服务和应用数据库
 - Node.js `^20.19.0` 或 `>=22.12.0`，用于 Vite 7 前端工具链
 - 使用 OpenDataLoader PDF 转换时，`PATH` 中需要 Java 11+
 - 启用 session 登录时需要 `FASTAPI_SESSION_SECRET`
@@ -114,8 +115,13 @@ flowchart LR
 
 ```bash
 pip install -r requirements.txt
+export DATABASE_URL='postgresql://<user>:<password>@127.0.0.1:5432/ai_actuarial'
 python -m ai_actuarial api --host 127.0.0.1 --port 8000
 ```
+
+运行时会初始化版本化 PostgreSQL schema。数据库凭据放在私有进程环境或
+secret store。文件数据与 PostgreSQL 分开保存：在当前配置中设置绝对路径
+`paths.data`（或 `DATA_DIR`），例如 `D:/AI_actuarial_inforsearch/data`。
 
 ### 启动 React UI
 
@@ -150,7 +156,10 @@ npm run dev
 
 鉴权、全局日志、文件删除、限流、CSRF、错误详情和安全响应头等功能开关在 `config/sites.yaml -> features` 中，也可以从 Settings 修改。如果进程环境变量设置了同名部署覆盖，Settings 会将该值标记为 locked。
 
-SQLite 路径以 `config/sites.yaml -> paths.db` 为准；`DB_PATH` 只是 YAML 路径缺失时的 fallback。
+PostgreSQL 是唯一应用运行时数据库。通过 `DATABASE_URL` 或
+`database.url_env` 配置连接串。SQLite 文件只由显式
+`schema import-sqlite-v16` 迁移命令读取。独立的 `paths.data`（或
+`DATA_DIR`）控制下载、日志、上传批次、RAG artifact 和任务历史，与数据库位置无关。
 
 ## 鉴权和权限
 
@@ -223,7 +232,7 @@ Agentic RAG 是建立在现有 catalog、chunks、知识库注册表和 Chat 产
 CLI 构建 ready-data 清单：
 
 ```bash
-python -m ai_actuarial.agentic_rag.ready_data_builder --db data/index.db --kb-id <kb-id> --profile formula --validate
+python -m ai_actuarial.agentic_rag.ready_data_builder --kb-id <kb-id> --profile formula --validate
 ```
 
 运行确定性 eval smoke：
@@ -251,7 +260,7 @@ AI_actuarial_inforsearch/
 ├─ ai_actuarial/           # Python 核心包和 FastAPI API
 ├─ client/                 # React + TypeScript 前端
 ├─ config/                 # YAML 配置
-├─ data/                   # 本地运行数据、下载文件、日志和 SQLite DB
+├─ data/                   # 默认本地文件和 artifact；PostgreSQL 独立运行
 ├─ doc_to_md/              # 文档转 Markdown 引擎
 ├─ docs/                   # 当前文档和历史归档
 ├─ scripts/                # 维护脚本
@@ -305,7 +314,5 @@ python -m ai_actuarial.agentic_rag.eval --mode agentic --cases eval/agentic_case
 ## 输出文件
 
 - 下载文件：`data/files/`
-- SQLite 数据库：以 `config/sites.yaml -> paths.db` 为准，缺省 fallback 为 `data/index.db`
-- Agentic ready data：默认位于 DB 邻近的 `agentic_ready_data/` 目录
-- 应用日志：`data/app.log`
-- 任务日志：`data/task_logs/*.log`
+- PostgreSQL：通过 `DATABASE_URL` 或 `database.url_env` 配置
+- 下载、Agentic Ready Data、应用日志和任务历史：位于 `paths.data` 指定的数据根目录

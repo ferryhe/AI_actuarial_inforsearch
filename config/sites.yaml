@@ -22,10 +22,13 @@ defaults:
   - .xls
   - .xlsx
 paths:
+  data: data
   download_dir: data/files
-  db: data/index.db
   last_run_new: data/last_run_new.json
   updates_dir: data/updates
+database:
+  type: postgresql
+  url_env: DATABASE_URL
 search:
   enabled: true
   max_results: 5

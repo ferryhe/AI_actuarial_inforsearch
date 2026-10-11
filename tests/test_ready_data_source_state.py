@@ -14,6 +14,7 @@ from ai_actuarial.api.services.rag_admin import (
 )
 from ai_actuarial.rag.knowledge_base import KnowledgeBaseManager
 from ai_actuarial.storage import Storage
+from tests.postgres_helpers import postgres_url_for_path
 
 
 def _ready_dir(tmp_path: Path, name: str) -> Path:
@@ -57,7 +58,6 @@ def _publish(
         section_count=1,
         built_at="2026-08-18T00:00:00+00:00",
         artifact_digest=f"digest-{source_version_id}",
-        source_db=storage.db_path,
     )
     current_state = storage.get_agentic_ready_publication_state(
         kb_id=kb_id,
@@ -92,7 +92,7 @@ def _mark_and_evaluate(
 
 
 def test_soft_stale_remains_usable_and_is_explicitly_marked(tmp_path: Path) -> None:
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         _create_kb(storage)
         _publish(storage, tmp_path)
@@ -128,7 +128,7 @@ def test_soft_stale_remains_usable_and_is_explicitly_marked(tmp_path: Path) -> N
 
 
 def test_hard_stale_blocks_old_agentic_publication(tmp_path: Path) -> None:
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         _create_kb(storage)
         _publish(storage, tmp_path)
@@ -161,7 +161,7 @@ def test_hard_stale_blocks_old_agentic_publication(tmp_path: Path) -> None:
 def test_prior_hard_is_not_inherited_after_active_catches_up(
     tmp_path: Path,
 ) -> None:
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         _create_kb(storage)
         _publish(storage, tmp_path, source_version_id="rdsnap_a")
@@ -194,7 +194,7 @@ def test_prior_hard_is_not_inherited_after_active_catches_up(
 
 
 def test_addition_and_removal_have_distinct_severity(tmp_path: Path) -> None:
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         _create_kb(storage)
         addition = storage.mark_agentic_ready_source_event(
@@ -220,7 +220,7 @@ def test_addition_and_removal_have_distinct_severity(tmp_path: Path) -> None:
 
 
 def test_index_only_evaluation_does_not_create_false_stale(tmp_path: Path) -> None:
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         _create_kb(storage)
         _publish(storage, tmp_path)
@@ -249,7 +249,7 @@ def test_index_only_evaluation_does_not_create_false_stale(tmp_path: Path) -> No
 
 
 def test_source_evaluation_settles_only_orphan_pending_automation(tmp_path: Path) -> None:
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         _create_kb(storage)
         active = _publish(storage, tmp_path)
@@ -313,7 +313,7 @@ def test_source_evaluation_settles_only_orphan_pending_automation(tmp_path: Path
             profile="general",
         )
         assert evaluated["pending_evaluation_generation"] is None
-        assert raw_automation == ("succeeded", None, None)
+        assert tuple(raw_automation) == ("succeeded", None, None)
         assert automation["automation_state"] == "succeeded"
         assert automation["pending_evaluation_generation"] is None
         assert automation["running_generation"] is None
@@ -338,7 +338,7 @@ def test_source_evaluation_settles_only_orphan_pending_automation(tmp_path: Path
 
 
 def test_source_evaluation_preserves_generation_backed_running_claim(tmp_path: Path) -> None:
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         _create_kb(storage)
         active = _publish(storage, tmp_path)
@@ -402,7 +402,7 @@ def test_source_evaluation_preserves_generation_backed_running_claim(tmp_path: P
 
 
 def test_unchanged_authoritative_source_clears_pending_evaluation(tmp_path: Path) -> None:
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         _create_kb(storage)
         _publish(storage, tmp_path)
@@ -437,7 +437,7 @@ def test_valid_automatic_build_publish_configurations_are_persisted(
     automatic_build_enabled: bool,
     automatic_publish_enabled: bool,
 ) -> None:
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         _create_kb(storage)
         state = storage.set_agentic_ready_automation(
@@ -453,7 +453,7 @@ def test_valid_automatic_build_publish_configurations_are_persisted(
 
 
 def test_automatic_publish_without_build_is_rejected(tmp_path: Path) -> None:
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         _create_kb(storage)
         with pytest.raises(ValueError, match="automatic publish requires automatic build"):
@@ -474,7 +474,7 @@ def test_automatic_publish_without_build_is_rejected(tmp_path: Path) -> None:
 
 
 def test_transaction_rollback_does_not_advance_generation(tmp_path: Path) -> None:
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         _create_kb(storage)
         with pytest.raises(RuntimeError, match="rollback"):
@@ -498,7 +498,7 @@ def test_transaction_rollback_does_not_advance_generation(tmp_path: Path) -> Non
 
 
 def test_legacy_manifest_does_not_bypass_pending_hard_gate(tmp_path: Path) -> None:
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         _create_kb(storage, "kb-legacy")
         output_dir = _ready_dir(tmp_path, "legacy")
@@ -512,7 +512,6 @@ def test_legacy_manifest_does_not_bypass_pending_hard_gate(tmp_path: Path) -> No
             doc_count=1,
             section_count=1,
             built_at="2026-08-18T00:00:00+00:00",
-            source_db=storage.db_path,
         )
         marked = storage.mark_agentic_ready_source_event(
             kb_id="kb-legacy",
@@ -534,7 +533,7 @@ def test_legacy_manifest_does_not_bypass_pending_hard_gate(tmp_path: Path) -> No
 
 
 def test_generation_evaluation_is_rejected_when_a_newer_event_exists(tmp_path: Path) -> None:
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         _create_kb(storage)
         _publish(storage, tmp_path)
@@ -569,7 +568,7 @@ def test_generation_evaluation_is_rejected_when_a_newer_event_exists(tmp_path: P
 
 
 def test_superseded_generation_is_reserved_outside_duplicate_gc(tmp_path: Path) -> None:
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         _create_kb(storage)
         publication = _publish(storage, tmp_path)
@@ -587,7 +586,7 @@ def test_confirmed_hard_stale_is_not_downgraded_by_later_evaluation(
     tmp_path: Path,
     later_reason: str,
 ) -> None:
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         _create_kb(storage)
         _publish(storage, tmp_path)
@@ -612,7 +611,7 @@ def test_confirmed_hard_stale_is_not_downgraded_by_later_evaluation(
 
 
 def test_neutral_legacy_evaluation_does_not_create_false_soft_stale(tmp_path: Path) -> None:
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         _create_kb(storage, "kb-legacy-neutral")
         output_dir = _ready_dir(tmp_path, "legacy-neutral")
@@ -626,7 +625,6 @@ def test_neutral_legacy_evaluation_does_not_create_false_soft_stale(tmp_path: Pa
             doc_count=1,
             section_count=1,
             built_at="2026-08-18T00:00:00+00:00",
-            source_db=storage.db_path,
         )
         marked = storage.mark_agentic_ready_source_event(
             kb_id="kb-legacy-neutral",
@@ -652,7 +650,7 @@ def test_neutral_legacy_evaluation_does_not_create_false_soft_stale(tmp_path: Pa
 
 
 def test_legacy_hard_gate_survives_evaluation_without_comparable_identity(tmp_path: Path) -> None:
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         _create_kb(storage, "kb-legacy-hard")
         output_dir = _ready_dir(tmp_path, "legacy-hard")
@@ -664,7 +662,6 @@ def test_legacy_hard_gate_survives_evaluation_without_comparable_identity(tmp_pa
             output_dir=str(output_dir),
             artifact_files=["ready_data_manifest.json"],
             built_at="2026-08-18T00:00:00+00:00",
-            source_db=storage.db_path,
         )
         marked = storage.mark_agentic_ready_source_event(
             kb_id="kb-legacy-hard",
@@ -693,7 +690,7 @@ def test_registered_explicit_output_dir_cannot_bypass_hard_gate(
     tmp_path: Path,
     legacy: bool,
 ) -> None:
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         kb_id = "kb-explicit-legacy" if legacy else "kb-explicit-active"
         _create_kb(storage, kb_id)
@@ -706,7 +703,6 @@ def test_registered_explicit_output_dir_cannot_bypass_hard_gate(
                 status="ready",
                 output_dir=str(output_dir),
                 artifact_files=["ready_data_manifest.json"],
-                source_db=storage.db_path,
             )
         else:
             manifest = _publish(storage, tmp_path, kb_id=kb_id)
@@ -727,12 +723,13 @@ def test_registered_explicit_output_dir_cannot_bypass_hard_gate(
 
 
 def test_unregistered_explicit_output_dir_keeps_legacy_standalone_behavior(tmp_path: Path) -> None:
-    storage = Storage(str(tmp_path / "index.db"))
+    db_url = postgres_url_for_path(tmp_path / "index.db")
+    storage = Storage(db_url)
     storage.close()
     output_dir = _ready_dir(tmp_path, "standalone")
 
     resolved, kb_id, profile = _resolve_ready_output_dir(
-        db_path=str(tmp_path / "index.db"),
+        db_path=db_url,
         payload={"output_dir": str(output_dir)},
     )
 
@@ -744,7 +741,7 @@ def test_unregistered_explicit_output_dir_keeps_legacy_standalone_behavior(tmp_p
 def test_registered_previous_output_is_rejected_after_hard_state_catches_up(
     tmp_path: Path,
 ) -> None:
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         _create_kb(storage)
         previous_manifest = _publish(
@@ -787,7 +784,7 @@ def test_registered_previous_output_is_rejected_after_hard_state_catches_up(
 def test_bootstrapped_legacy_previous_output_is_not_explicitly_servable(
     tmp_path: Path,
 ) -> None:
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         _create_kb(storage, "kb-legacy-previous")
         legacy_output = _ready_dir(tmp_path, "legacy-previous")
@@ -798,7 +795,6 @@ def test_bootstrapped_legacy_previous_output_is_not_explicitly_servable(
             status="ready",
             output_dir=str(legacy_output),
             artifact_files=["ready_data_manifest.json"],
-            source_db=storage.db_path,
         )
         _bootstrap_legacy_ready_publication(
             storage,
@@ -828,7 +824,7 @@ def test_bootstrapped_legacy_previous_output_is_not_explicitly_servable(
 
 def test_concurrent_marks_serialize_without_losing_generation(tmp_path: Path) -> None:
     db_path = tmp_path / "index.db"
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         _create_kb(storage)
     finally:
@@ -836,7 +832,7 @@ def test_concurrent_marks_serialize_without_losing_generation(tmp_path: Path) ->
     barrier = Barrier(2)
 
     def mark(reason: str) -> int:
-        connection = Storage(str(db_path))
+        connection = Storage(postgres_url_for_path(str(db_path)))
         try:
             barrier.wait(timeout=5)
             state = connection.mark_agentic_ready_source_event(
@@ -855,7 +851,7 @@ def test_concurrent_marks_serialize_without_losing_generation(tmp_path: Path) ->
         ]
         generations = sorted(future.result(timeout=10) for future in futures)
 
-    check = Storage(str(db_path))
+    check = Storage(postgres_url_for_path(str(db_path)))
     try:
         state = check.get_agentic_ready_source_state(
             kb_id="kb-source-state",
@@ -872,7 +868,7 @@ def test_storage_startup_does_not_backfill_legacy_slot_flags(
     tmp_path: Path,
 ) -> None:
     db_path = tmp_path / "index.db"
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         _create_kb(storage)
         storage.set_agentic_ready_automation(
@@ -893,7 +889,7 @@ def test_storage_startup_does_not_backfill_legacy_slot_flags(
     finally:
         storage.close()
 
-    migrated = Storage(str(db_path))
+    migrated = Storage(postgres_url_for_path(str(db_path)))
     try:
         state = migrated.get_agentic_ready_publication_state(
             kb_id="kb-source-state",
@@ -918,7 +914,7 @@ def test_storage_startup_does_not_backfill_legacy_slot_flags(
 
 
 def test_superseded_attempt_cannot_be_classified_as_redundant_duplicate(tmp_path: Path) -> None:
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         _create_kb(storage)
         active_manifest = _publish(storage, tmp_path)
@@ -933,7 +929,6 @@ def test_superseded_attempt_cannot_be_classified_as_redundant_duplicate(tmp_path
             output_dir=str(_ready_dir(tmp_path, "superseded-duplicate")),
             artifact_files=["ready_data_manifest.json"],
             artifact_digest="digest-rdsnap_active",
-            source_db=storage.db_path,
         )
         storage._conn.execute(
             """
@@ -960,7 +955,7 @@ def test_superseded_attempt_cannot_be_classified_as_redundant_duplicate(tmp_path
 
 
 def test_missing_manifest_flattens_hard_source_state_consistently(tmp_path: Path) -> None:
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         _create_kb(storage)
         storage.mark_agentic_ready_source_event(
@@ -992,7 +987,7 @@ def test_missing_manifest_flattens_hard_source_state_consistently(tmp_path: Path
 def test_neutral_legacy_evaluation_keeps_timestamp_fallback_until_identity_is_comparable(
     tmp_path: Path,
 ) -> None:
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         _create_kb(storage, "kb-legacy-heuristic")
         output_dir = _ready_dir(tmp_path, "legacy-heuristic")
@@ -1004,7 +999,6 @@ def test_neutral_legacy_evaluation_keeps_timestamp_fallback_until_identity_is_co
             output_dir=str(output_dir),
             artifact_files=["ready_data_manifest.json"],
             built_at="2026-01-01T00:00:00+00:00",
-            source_db=storage.db_path,
         )
         storage._conn.execute(
             "UPDATE rag_knowledge_bases SET updated_at = ? WHERE kb_id = ?",

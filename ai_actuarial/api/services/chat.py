@@ -3,7 +3,6 @@ from __future__ import annotations
 import importlib
 import json
 import logging
-import sqlite3
 import time
 import uuid
 from datetime import datetime, timezone
@@ -249,10 +248,10 @@ def _canonicalize_file_references(storage: Storage, references: list[dict[str, A
             """
             SELECT url, title, original_filename
             FROM files
-            WHERE url IN (SELECT value FROM json_each(?))
+            WHERE url = ANY(?::text[])
               AND deleted_at IS NULL
             """,
-            (json.dumps(file_urls),),
+            (file_urls,),
         ).fetchall()
         current_files = {str(row[0]): (row[1], row[2]) for row in rows}
 
@@ -484,7 +483,7 @@ def get_conversation_detail(
             SELECT message_id, conversation_id, role, content, citations, created_at, token_count, metadata
             FROM messages
             WHERE conversation_id = ?
-            ORDER BY created_at ASC
+            ORDER BY created_at ASC, message_order ASC
             """,
             (conversation_id,),
         ).fetchall()
@@ -608,24 +607,12 @@ def list_knowledge_bases(*, db_path: str, auth: AuthContext | None = None) -> di
             "credential_error": embeddings_runtime.credential_error,
         }
         knowledge_bases: list[dict[str, Any]] = []
-        has_manifest_profile = True
-        try:
-            rows = storage._conn.execute("""
-                SELECT kb_id, name, description, embedding_provider, embedding_model, embedding_dimension,
-                       file_count, chunk_count, manifest_profile
-                FROM rag_knowledge_bases
-                ORDER BY created_at DESC
-                """).fetchall()
-        except sqlite3.OperationalError as exc:
-            if "no such column: manifest_profile" not in str(exc).lower():
-                raise
-            has_manifest_profile = False
-            rows = storage._conn.execute("""
-                SELECT kb_id, name, description, embedding_provider, embedding_model, embedding_dimension,
-                       file_count, chunk_count
-                FROM rag_knowledge_bases
-                ORDER BY created_at DESC
-                """).fetchall()
+        rows = storage._conn.execute("""
+            SELECT kb_id, name, description, embedding_provider, embedding_model, embedding_dimension,
+                   file_count, chunk_count, manifest_profile
+            FROM rag_knowledge_bases
+            ORDER BY created_at DESC
+            """).fetchall()
         for row in rows:
             kb_id = row[0]
             composition = storage.get_kb_composition_status(kb_id)
@@ -634,10 +621,7 @@ def list_knowledge_bases(*, db_path: str, auth: AuthContext | None = None) -> di
             kb_provider = row[3] or "openai"
             kb_model = row[4]
             kb_dimension = row[5]
-            manifest_profile = (
-                str((row[8] if has_manifest_profile else "general") or "general").strip().lower()
-                or "general"
-            )
+            manifest_profile = str(row[8] or "general").strip().lower() or "general"
             agentic_manifest = storage.get_agentic_ready_manifest(
                 kb_id=kb_id, profile=manifest_profile
             )

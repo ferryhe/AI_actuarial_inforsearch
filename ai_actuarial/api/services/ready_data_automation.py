@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 import threading
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from ai_actuarial.agentic_rag.staging_smoke import STAGING_SMOKE_CONTRACT_VERSION
@@ -14,6 +13,7 @@ from .rag_admin import (
     _build_agentic_ready_manifest_core,
     _kb_id,
     _manifest_profile,
+    _ready_data_root,
     _require_tasks_run,
     _validate_recorded_ready_publication,
 )
@@ -364,9 +364,7 @@ def run_ready_data_automation_once(
                 and str(active.get("source_version_kind") or "").strip().lower() == fingerprint_kind
                 and str(active.get("source_version_id") or "").strip() == fingerprint_id
             )
-            allowed_output_root = str(
-                (Path(db_path).resolve().parent / "agentic_ready_data").resolve()
-            )
+            allowed_output_root = str(_ready_data_root().resolve())
             active_validation = (
                 _validate_recorded_ready_publication(
                     active,
@@ -599,9 +597,7 @@ def run_ready_data_automation_once(
             if non_publish is not None:
                 return non_publish
 
-            allowed_output_root = str(
-                (Path(db_path).resolve().parent / "agentic_ready_data").resolve()
-            )
+            allowed_output_root = str(_ready_data_root().resolve())
             validation = _validate_recorded_ready_publication(
                 candidate,
                 validator=validator,

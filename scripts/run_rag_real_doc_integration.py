@@ -2,7 +2,7 @@
 """Run a real-document RAG indexing integration check.
 
 Usage:
-  python scripts/run_rag_real_doc_integration.py --db-path data/index.db --limit 5
+  DATABASE_URL=postgresql://... python scripts/run_rag_real_doc_integration.py --limit 5
 """
 
 from __future__ import annotations
@@ -11,6 +11,7 @@ import argparse
 from datetime import datetime
 from pathlib import Path
 
+from ai_actuarial.postgres import resolve_database_config
 from ai_actuarial.rag.indexing import IndexingPipeline
 from ai_actuarial.rag.knowledge_base import KnowledgeBaseManager
 from ai_actuarial.storage import Storage
@@ -32,17 +33,18 @@ def find_markdown_files(storage: Storage, limit: int) -> list[str]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run real-doc RAG integration check")
-    parser.add_argument("--db-path", default="data/index.db", help="SQLite DB path")
+    parser.add_argument(
+        "--database-url-env",
+        default="DATABASE_URL",
+        help="Environment variable containing the PostgreSQL URL",
+    )
     parser.add_argument("--limit", type=int, default=5, help="Number of real docs to index")
     parser.add_argument("--kb-id", default="", help="KB ID to use (default: generated)")
     parser.add_argument("--keep-kb", action="store_true", help="Keep KB after run")
     args = parser.parse_args()
 
-    db_path = Path(args.db_path)
-    if not db_path.exists():
-        raise SystemExit(f"DB not found: {db_path}")
-
-    storage = Storage(str(db_path))
+    database = resolve_database_config({"database": {"url_env": args.database_url_env}})
+    storage = Storage(database)
     kb_manager = KnowledgeBaseManager(storage)
 
     file_urls = find_markdown_files(storage, max(1, args.limit))

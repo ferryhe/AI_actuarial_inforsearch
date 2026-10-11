@@ -20,8 +20,10 @@ from ..services.read import (
 router = APIRouter()
 
 
-def _get_db_path(request: Request) -> str:
-    db_path = str(getattr(request.app.state, "db_path", "") or "")
+def _get_db_path(request: Request):
+    db_path = getattr(request.app.state, "database", None) or getattr(
+        request.app.state, "db_path", None
+    )
     if not db_path:
         raise HTTPException(status_code=500, detail="Database path is unavailable")
     return db_path

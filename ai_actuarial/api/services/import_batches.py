@@ -12,7 +12,8 @@ from typing import Any
 
 from fastapi import UploadFile
 
-from ai_actuarial.shared_runtime import load_sites_config
+from ai_actuarial.postgres import resolve_data_root
+from ai_actuarial.shared_runtime import load_sites_config, resolve_data_path
 
 ALLOWED_EXTENSIONS = {
     "csv",
@@ -44,18 +45,17 @@ class ImportBatchError(Exception):
         self.status_code = status_code
 
 
-def _load_config_paths() -> dict[str, Any]:
-    data = load_sites_config(default={})
-    return dict(data.get("paths") or {})
-
-
 def import_batch_root() -> Path:
     env_root = os.getenv("IMPORT_BATCH_ROOT", "").strip()
     if env_root:
         root = Path(env_root)
     else:
-        paths = _load_config_paths()
-        download_dir = Path(str(paths.get("download_dir") or "data/files"))
+        config = load_sites_config(default={})
+        paths = dict(config.get("paths") or {})
+        download_dir = resolve_data_path(
+            str(paths.get("download_dir") or "data/files"),
+            data_root=resolve_data_root(config),
+        )
         base_dir = download_dir.parent if download_dir.name else download_dir
         root = base_dir / "import_batches"
     return root.expanduser().resolve()

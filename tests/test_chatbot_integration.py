@@ -19,6 +19,8 @@ from unittest.mock import MagicMock, Mock, call, patch
 import httpx
 import numpy as np
 
+from tests.postgres_helpers import postgres_url_for_path
+
 # Mock schedule module
 if "schedule" not in sys.modules:
     sys.modules["schedule"] = types.ModuleType("schedule")
@@ -53,7 +55,7 @@ class TestChatbotIntegration(unittest.TestCase):
         """Set up test environment with temp database and mock services."""
         self.temp_dir = tempfile.mkdtemp()
         self.db_path = os.path.join(self.temp_dir, "test.db")
-        self.storage = Storage(self.db_path)
+        self.storage = Storage(postgres_url_for_path(self.db_path))
 
         # Set API key in env for config
         os.environ["OPENAI_API_KEY"] = "test-key-12345"
@@ -179,10 +181,24 @@ class TestChatbotIntegration(unittest.TestCase):
             conn.execute(
                 """
                 INSERT INTO rag_knowledge_bases 
-                (kb_id, name, description, created_at, updated_at, file_count, chunk_count, index_path)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                (kb_id, name, description, embedding_model, chunk_size, chunk_overlap,
+                 index_type, created_at, updated_at, file_count, chunk_count, index_path)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-                (kb_id, name, desc, now, now, 1, 10, f"{self.temp_dir}/index_{kb_id}.faiss"),
+                (
+                    kb_id,
+                    name,
+                    desc,
+                    "text-embedding-3-small",
+                    512,
+                    50,
+                    "flat",
+                    now,
+                    now,
+                    1,
+                    10,
+                    f"{self.temp_dir}/index_{kb_id}.faiss",
+                ),
             )
 
         conn.commit()

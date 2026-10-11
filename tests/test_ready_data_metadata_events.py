@@ -16,6 +16,7 @@ from ai_actuarial.rag.indexing import IndexingPipeline
 from ai_actuarial.rag.kb_index import resolve_kb_bound_chunks
 from ai_actuarial.rag.knowledge_base import KnowledgeBaseManager
 from ai_actuarial.storage import Storage
+from tests.postgres_helpers import postgres_url_for_path
 
 
 def _create_kb(storage: Storage, kb_id: str, *, profile: str = "general") -> None:
@@ -86,7 +87,7 @@ def _seed_member(
     status: str = "ok",
     kb_id: str | None = None,
 ) -> tuple[Storage, str, str]:
-    storage = Storage(str(tmp_path / f"{name}.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / f"{name}.db")))
     resolved_kb_id = kb_id or f"kb-{name}"
     file_url = f"https://example.com/{name}.pdf"
     _create_kb(storage, resolved_kb_id)
@@ -347,7 +348,7 @@ def test_non_ok_to_non_ok_metadata_changes_do_not_mark_events(tmp_path: Path) ->
 
 
 def test_non_member_file_changes_do_not_mark_any_kb(tmp_path: Path) -> None:
-    storage = Storage(str(tmp_path / "non-member.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "non-member.db")))
     try:
         _create_kb(storage, "kb-member")
         _create_file(storage, tmp_path, "https://example.com/non-member.pdf")
@@ -364,7 +365,7 @@ def test_non_member_file_changes_do_not_mark_any_kb(tmp_path: Path) -> None:
 def test_multiple_kbs_and_profiles_are_updated_once_and_only_when_members(
     tmp_path: Path,
 ) -> None:
-    storage = Storage(str(tmp_path / "multiple-kbs.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "multiple-kbs.db")))
     file_url = "https://example.com/shared.pdf"
     try:
         for kb_id in ("kb-one", "kb-two", "kb-unrelated"):
@@ -408,7 +409,7 @@ def test_api_title_and_catalog_update_is_atomic_and_advances_once(tmp_path: Path
         },
     )
 
-    storage = Storage(db_path)
+    storage = Storage(postgres_url_for_path(db_path))
     try:
         assert result["file"]["title"] == "API title"
         assert result["file"]["category"] == "API category"
@@ -421,7 +422,7 @@ def test_marker_failure_rolls_back_combined_api_data_and_all_generations(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    storage = Storage(str(tmp_path / "api-rollback.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "api-rollback.db")))
     file_url = "https://example.com/api-rollback.pdf"
     try:
         for kb_id in ("kb-one", "kb-two"):
@@ -459,7 +460,7 @@ def test_marker_failure_rolls_back_combined_api_data_and_all_generations(
 
     with pytest.raises(RuntimeError, match="injected metadata marker failure"):
         update_file_record(
-            db_path=str(tmp_path / "api-rollback.db"),
+            db_path=postgres_url_for_path(tmp_path / "api-rollback.db"),
             payload={
                 "url": file_url,
                 "title": "Should roll back",
@@ -467,7 +468,7 @@ def test_marker_failure_rolls_back_combined_api_data_and_all_generations(
             },
         )
 
-    storage = Storage(str(tmp_path / "api-rollback.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "api-rollback.db")))
     try:
         after = storage.get_file_with_catalog(file_url)
         assert after is not None
@@ -577,7 +578,7 @@ def test_incremental_catalog_combines_title_and_catalog_event_without_bypass(
     }
 
     catalog_incremental.run_catalog_for_urls(**kwargs)
-    storage = Storage(db_path)
+    storage = Storage(postgres_url_for_path(db_path))
     try:
         _assert_single_event(storage, kb_id)
         assert storage.get_file_by_url(file_url)["title"] == "Incremental suggested title"
@@ -585,7 +586,7 @@ def test_incremental_catalog_combines_title_and_catalog_event_without_bypass(
         storage.close()
 
     catalog_incremental.run_catalog_for_urls(**kwargs)
-    storage = Storage(db_path)
+    storage = Storage(postgres_url_for_path(db_path))
     try:
         assert _state(storage, kb_id)["event_generation"] == 1
     finally:

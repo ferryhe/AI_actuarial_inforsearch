@@ -9,15 +9,17 @@ from ai_actuarial.api.services.ops_write import (
     get_catalog_stats,
     get_markdown_conversion_stats,
 )
+from ai_actuarial.api.services.task_service import get_catalog_stats_summary
 from ai_actuarial.catalog import CATALOG_VERSION, CatalogItem
 from ai_actuarial.catalog_incremental import run_incremental_catalog
 from ai_actuarial.collectors.base import CollectionResult
 from ai_actuarial.storage import Storage
 from ai_actuarial.task_runtime import NativeTaskRuntime
+from tests.postgres_helpers import postgres_url_for_path
 
 
 def _seed_files(db_path: Path, count: int, *, suffix: str = "pdf") -> list[str]:
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     urls: list[str] = []
     try:
         for index in range(count):
@@ -76,7 +78,7 @@ def _run_mock_catalog(
 
     monkeypatch.setattr("ai_actuarial.catalog_incremental._process_single_row", process)
     stats = run_incremental_catalog(
-        db_path=str(db_path),
+        db_path=postgres_url_for_path(str(db_path)),
         out_jsonl=tmp_path / "catalog.jsonl",
         out_md=tmp_path / "catalog.md",
         batch=batch,
@@ -181,7 +183,7 @@ def test_catalog_stop_mid_batch_counts_only_consumed_outcomes(tmp_path: Path, mo
 
     monkeypatch.setattr("ai_actuarial.catalog_incremental._process_single_row", process)
     stats = run_incremental_catalog(
-        db_path=str(db_path),
+        db_path=postgres_url_for_path(str(db_path)),
         out_jsonl=tmp_path / "catalog-stop-mid-batch.jsonl",
         out_md=tmp_path / "catalog-stop-mid-batch.md",
         batch=10,
@@ -221,7 +223,7 @@ def test_catalog_category_scope_matches_stats_and_candidate_start(
 ) -> None:
     db_path = tmp_path / "catalog-category.db"
     urls = _seed_files(db_path, 5)
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         for index, url in enumerate(urls):
             category = "Insurance" if index in {0, 2, 4} else "Other"
@@ -248,7 +250,7 @@ def test_catalog_category_scope_matches_stats_and_candidate_start(
         storage.close()
 
     stats = get_catalog_stats(
-        db_path=str(db_path),
+        db_path=postgres_url_for_path(str(db_path)),
         provider="local",
         input_source="source",
         category="Insurance",
@@ -294,7 +296,7 @@ def test_catalog_empty_candidate_range_finishes_without_processing(
 def test_catalog_stats_first_candidate_index_uses_candidate_coordinates(tmp_path: Path) -> None:
     db_path = tmp_path / "catalog-stats.db"
     urls = _seed_files(db_path, 3)
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         storage._conn.execute(
             """
@@ -317,9 +319,10 @@ def test_catalog_stats_first_candidate_index_uses_candidate_coordinates(tmp_path
     finally:
         storage.close()
 
-    stats = get_catalog_stats(db_path=str(db_path), provider="local", input_source="source")
+    database_url = postgres_url_for_path(str(db_path))
+    stats = get_catalog_stats(db_path=database_url, provider="local", input_source="source")
     overwrite_stats = get_catalog_stats(
-        db_path=str(db_path),
+        db_path=database_url,
         provider="local",
         input_source="source",
         overwrite_existing=True,
@@ -330,15 +333,56 @@ def test_catalog_stats_first_candidate_index_uses_candidate_coordinates(tmp_path
     assert overwrite_stats["candidate_total"] == 3
 
 
+def test_catalog_stats_source_and_provider_filters_are_case_insensitive(tmp_path: Path) -> None:
+    db_path = tmp_path / "catalog-stats-case-insensitive.db"
+    urls = _seed_files(db_path, 1)
+    storage = Storage(postgres_url_for_path(str(db_path)))
+    try:
+        storage._conn.execute(
+            "UPDATE files SET source_site = ? WHERE url = ?",
+            ("MixedCaseSource", urls[0]),
+        )
+        storage._conn.execute(
+            """
+            INSERT INTO catalog_items (
+                file_url, file_sha256, sha256, catalog_version, pipeline_version,
+                summary, category, status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                urls[0],
+                "sha-0",
+                "sha-0",
+                f"{CATALOG_VERSION}:local:source",
+                f"{CATALOG_VERSION}:local:source",
+                "cataloged",
+                "MixedCaseProvider",
+                "ok",
+            ),
+        )
+        storage._conn.commit()
+    finally:
+        storage.close()
+
+    stats = get_catalog_stats_summary(
+        db_path=postgres_url_for_path(str(db_path)),
+        provider="MIXEDCASEPROVIDER",
+        input_source="MIXEDCASESOURCE",
+    )
+
+    assert stats["total"] == 1
+    assert stats["ok"] == 1
+
+
 def test_markdown_stats_and_execution_use_filtered_candidate_positions(
     tmp_path: Path, monkeypatch
 ) -> None:
     db_path = tmp_path / "markdown-candidates.db"
     urls = _seed_files(db_path, 2)
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         assert storage.update_file_markdown(urls[-1], "# Existing Markdown")[0] is True
-        stats = get_markdown_conversion_stats(db_path=str(db_path))
+        stats = get_markdown_conversion_stats(db_path=postgres_url_for_path(str(db_path)))
         runtime = NativeTaskRuntime.__new__(NativeTaskRuntime)
         monkeypatch.setattr(
             "ai_actuarial.task_runtime.load_markdown_conversion_config",
@@ -365,7 +409,7 @@ def test_catalog_final_task_preserves_success_progress_and_safe_parameters(
             pass
 
     monkeypatch.setattr("ai_actuarial.task_runtime.threading.Thread", _UnstartedThread)
-    monkeypatch.setattr("ai_actuarial.task_runtime.append_task_log", lambda *_args: None)
+    monkeypatch.setattr("ai_actuarial.task_runtime.append_task_log", lambda *_args, **_kwargs: None)
     runtime = NativeTaskRuntime.__new__(NativeTaskRuntime)
     runtime.task_lock = threading.RLock()
     runtime.active_tasks = {}
@@ -439,7 +483,7 @@ def test_catalog_task_parameters_use_effective_skip_and_no_default_target_for_fi
             pass
 
     monkeypatch.setattr("ai_actuarial.task_runtime.threading.Thread", _UnstartedThread)
-    monkeypatch.setattr("ai_actuarial.task_runtime.append_task_log", lambda *_args: None)
+    monkeypatch.setattr("ai_actuarial.task_runtime.append_task_log", lambda *_args, **_kwargs: None)
     runtime = NativeTaskRuntime.__new__(NativeTaskRuntime)
     runtime.task_lock = threading.RLock()
     runtime.active_tasks = {}

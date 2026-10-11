@@ -17,6 +17,7 @@ from ai_actuarial.embedding_service import (
 from ai_actuarial.rag.config import RAGConfig
 from ai_actuarial.storage import Storage
 from ai_actuarial.task_runtime import NativeTaskRuntime
+from tests.postgres_helpers import postgres_url_for_path
 
 
 def _seed_chunks(storage: Storage) -> tuple[str, list[dict[str, Any]]]:
@@ -81,7 +82,7 @@ class _SequenceGenerator:
 def test_service_reports_initial_reuse_then_each_provider_batch_once(
     tmp_path: Path,
 ) -> None:
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         _, chunks = _seed_chunks(storage)
         identity = _identity()
@@ -143,7 +144,7 @@ def test_service_reports_initial_reuse_then_each_provider_batch_once(
 def test_service_failed_batches_advance_with_safe_summary_messages(
     tmp_path: Path,
 ) -> None:
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         _, chunks = _seed_chunks(storage)
         generator = _SequenceGenerator(
@@ -190,7 +191,7 @@ def test_service_failed_batches_advance_with_safe_summary_messages(
 def test_service_stop_after_completed_batch_preserves_attempted_progress(
     tmp_path: Path,
 ) -> None:
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         _, chunks = _seed_chunks(storage)
         identity = _identity()
@@ -282,7 +283,7 @@ def _patch_embedding_runtime_inputs(
         "ai_actuarial.task_runtime.embedding_coverage_for_selection",
         lambda **_kwargs: {"per_file": []},
     )
-    monkeypatch.setattr("ai_actuarial.task_runtime.append_task_log", lambda *_args: None)
+    monkeypatch.setattr("ai_actuarial.task_runtime.append_task_log", lambda *_args, **_kwargs: None)
 
 
 def _runtime_with_active_task() -> NativeTaskRuntime:
@@ -404,7 +405,7 @@ def test_non_embedding_stopped_finalizer_contract_is_unchanged(
 ) -> None:
     runtime = _runtime_with_active_task()
     runtime.active_tasks["embedding-task"]["type"] = "chunk_generation"
-    monkeypatch.setattr("ai_actuarial.task_runtime.append_task_log", lambda *_args: None)
+    monkeypatch.setattr("ai_actuarial.task_runtime.append_task_log", lambda *_args, **_kwargs: None)
     result = CollectionResult(
         success=False,
         items_found=3,

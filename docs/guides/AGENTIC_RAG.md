@@ -32,28 +32,28 @@ Ready data is written as JSON/JSONL artifacts. The supported profiles are define
 | `regulation` | General profile plus `title_aliases.jsonl`, `doc_summaries.jsonl`, `sections_structured.jsonl`, `relations_graph.json` | Regulation, standard, and compliance documents |
 | `formula` | Regulation profile plus `formula_cards.jsonl`, `tables_structured.jsonl`, `calculation_terms.jsonl` | Formula-heavy actuarial documents, tables, and calculation terms |
 
-Product API and Knowledge UI builds store KB-scoped ready data under the database-adjacent ready-data directory:
+Product API and Knowledge UI builds store KB-scoped Ready Data under the configured `paths.data` root:
 
 ```text
-<db-parent>/agentic_ready_data/kbs/<kb_id>/<profile>/1/
+<data-root>/agentic_ready_data/kbs/<kb_id>/<profile>/1/
 ```
 
-When using the default local SQLite path, this is normally:
+With the default local data root, this is normally:
 
 ```text
 data/agentic_ready_data/kbs/<kb_id>/<profile>/1/
 ```
 
-The CLI builder defaults to `data/agentic_ready_data/...` when `--output-dir` is omitted. If you run the CLI with a database outside the default `data/` tree and want DB-adjacent storage, pass `--output-dir` explicitly.
+The CLI builder defaults to `paths.data/agentic_ready_data/...` when `--output-dir` is omitted. Set `paths.data` (or `DATA_DIR`) to choose another disk; pass an absolute `--output-dir` only when a specific artifact location is needed.
 
 ## Build Ready Data
 
 Build from the CLI:
 
 ```bash
-python -m ai_actuarial.agentic_rag.ready_data_builder --db data/index.db --kb-id <kb-id> --profile general --validate
-python -m ai_actuarial.agentic_rag.ready_data_builder --db data/index.db --kb-id <kb-id> --profile regulation --validate
-python -m ai_actuarial.agentic_rag.ready_data_builder --db data/index.db --kb-id <kb-id> --profile formula --validate
+python -m ai_actuarial.agentic_rag.ready_data_builder --kb-id <kb-id> --profile general --validate
+python -m ai_actuarial.agentic_rag.ready_data_builder --kb-id <kb-id> --profile regulation --validate
+python -m ai_actuarial.agentic_rag.ready_data_builder --kb-id <kb-id> --profile formula --validate
 ```
 
 Build from the product API:

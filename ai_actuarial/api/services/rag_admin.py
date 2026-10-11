@@ -4,7 +4,6 @@ import hashlib
 import json
 import os
 import shutil
-import sqlite3
 import stat
 import uuid
 from contextlib import contextmanager
@@ -12,6 +11,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path, PureWindowsPath
 from types import SimpleNamespace
 from typing import Any, Callable, Iterable, Mapping
+
+import psycopg2
 
 from ai_actuarial.agentic_rag.manifest_profiles import PROFILES
 from ai_actuarial.agentic_rag.staging_smoke import (
@@ -27,12 +28,13 @@ from ai_actuarial.ai_runtime import (
 from ai_actuarial.config import settings
 from ai_actuarial.embedding_service import resolve_server_embedding_identity
 from ai_actuarial.kb_status import classify_kb_status
+from ai_actuarial.postgres import PostgresConnection, resolve_data_root
 from ai_actuarial.rag.kb_index import (
     KBIndexContractError,
     binding_contract,
     resolve_kb_bound_chunks,
 )
-from ai_actuarial.shared_runtime import parse_int_clamped
+from ai_actuarial.shared_runtime import load_sites_config, parse_int_clamped
 from ai_actuarial.storage import Storage, _split_visible_categories
 
 MAX_CATEGORY_STATS_CATEGORIES = 100
@@ -69,6 +71,13 @@ def _staging_smoke_failed(reason: str) -> dict[str, Any]:
     result = _staging_smoke_not_run(reason)
     result["status"] = "failed"
     return result
+
+
+def _ready_data_root() -> Path:
+    try:
+        return resolve_data_root(load_sites_config()) / "agentic_ready_data"
+    except Exception:  # noqa: BLE001
+        return resolve_data_root() / "agentic_ready_data"
 
 
 def _staging_smoke_count(value: Any) -> int:
@@ -418,7 +427,7 @@ def _resolve_agentic_output_dir(
     profile_version: str,
     requested_output_dir: Any,
 ) -> str:
-    base_dir = (Path(db_path).resolve().parent / "agentic_ready_data").resolve()
+    base_dir = _ready_data_root().resolve()
     safe_kb_id = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in kb_id)
     requested = _norm(requested_output_dir)
     if requested:
@@ -432,7 +441,7 @@ def _resolve_agentic_output_dir(
         resolved.relative_to(base_dir)
     except ValueError as exc:
         raise RagAdminError(
-            "output_dir must stay under the database agentic_ready_data directory", status_code=400
+            "output_dir must stay under the configured data directory", status_code=400
         ) from exc
     return str(resolved)
 
@@ -813,7 +822,6 @@ def _bootstrap_legacy_ready_publication(
         section_count=int(legacy.get("section_count") or 0),
         built_at=legacy.get("built_at"),
         artifact_digest=artifact_digest,
-        source_db=str(legacy.get("source_db") or storage.db_path),
         schema_versions=dict(legacy.get("schema_versions") or {}),
     )
     storage.publish_agentic_ready_publication(
@@ -868,11 +876,7 @@ def _storage_has_table(storage: Any, table: str) -> bool:
     table_exists = getattr(storage, "_table_exists", None)
     if callable(table_exists):
         return bool(table_exists(table))
-    row = storage._conn.execute(
-        "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ? LIMIT 1",
-        (table,),
-    ).fetchone()
-    return row is not None
+    return bool(storage._conn.table_exists(table))
 
 
 def _kb_agentic_source_status(storage: Storage, *, kb_id: str) -> dict[str, Any]:
@@ -1361,11 +1365,12 @@ def _sqlite_index_exists(storage: Any, index: str) -> bool:
     try:
         return bool(
             conn.execute(
-                "SELECT 1 FROM sqlite_schema WHERE type = 'index' AND name = ? LIMIT 1",
+                "SELECT 1 FROM pg_indexes WHERE schemaname = current_schema() "
+                "AND indexname = ? LIMIT 1",
                 (index,),
             ).fetchone()
         )
-    except sqlite3.Error:
+    except psycopg2.Error:
         return False
 
 
@@ -1430,12 +1435,7 @@ def _kb_embedding_metadata_coverage(
                         AND e.config_fingerprint = ?
                         AND e.status = 'ready'
                        THEN 1 ELSE 0 END), 0)"""
-        embedding_index_hint = (
-            " INDEXED BY idx_chunk_embeddings_stats_metadata"
-            if _sqlite_index_exists(storage, "idx_chunk_embeddings_stats_metadata")
-            else ""
-        )
-        embedding_join = f"""LEFT JOIN chunk_embeddings e{embedding_index_hint}
+        embedding_join = """LEFT JOIN chunk_embeddings e
               ON e.chunk_id = g.chunk_id AND e.embedding_identity_key = ?"""
         embedding_params = (
             allow_ready,
@@ -1729,11 +1729,11 @@ def get_categories_mapping(*, db_path: str) -> dict[str, Any]:
     storage = Storage(db_path)
     try:
         table_names = {
-            row[0]
+            str(row[0])
             for row in storage._conn.execute(
-                "SELECT name FROM sqlite_master WHERE type = 'table'"
+                "SELECT table_name FROM information_schema.tables "
+                "WHERE table_schema = current_schema() AND table_type = 'BASE TABLE'"
             ).fetchall()
-            if row and row[0]
         }
         raw_categories: list[Any] = []
         if "source_metadata" in table_names:
@@ -2054,13 +2054,12 @@ _KB_LIST_OPTIONAL_TABLE_COLUMN_REQUIREMENTS = {
         }
     ),
 }
-_KB_LIST_CONNECTION_LOCAL_PATHS = frozenset({"", ":memory:"})
 
 
 class _KBListStorageView:
     """Read-only storage-shaped view for the KB list readiness path."""
 
-    def __init__(self, db_path: str, conn: sqlite3.Connection) -> None:
+    def __init__(self, db_path: Any, conn: Any) -> None:
         self.db_path = db_path
         self._conn = conn
         self._agentic_ready_publication_columns_cache: frozenset[str] | None = None
@@ -2412,20 +2411,10 @@ class _KBListStorageView:
             )
         values_sql = ",".join("(?,?,?,?,?,?,?,?)" for _ in identity_rows)
         params = tuple(value for row in identity_rows for value in row)
-        embedding_index_hint = (
-            " INDEXED BY idx_chunk_embeddings_stats_metadata"
-            if has_embeddings and self._index_exists("idx_chunk_embeddings_stats_metadata")
-            else ""
-        )
         embedding_join = (
-            f"LEFT JOIN chunk_embeddings e{embedding_index_hint} "
+            "LEFT JOIN chunk_embeddings e "
             "ON e.chunk_id = g.chunk_id AND e.embedding_identity_key = t.identity_key"
             if has_embeddings
-            else ""
-        )
-        global_chunks_index_hint = (
-            " INDEXED BY idx_global_chunks_stats_metadata"
-            if self._index_exists("idx_global_chunks_stats_metadata")
             else ""
         )
         ready_sql = (
@@ -2439,7 +2428,7 @@ class _KBListStorageView:
             f"""WITH targets(kb_id, selected_profile_id, allow_ready, provider, model,
                                dimension, fingerprint, identity_key) AS (VALUES {values_sql}),
                      counts AS (SELECT g.chunk_set_id, COUNT(*) AS actual_count
-                                FROM global_chunks g{global_chunks_index_hint}
+                                FROM global_chunks g
                                 GROUP BY g.chunk_set_id),
                      members AS (SELECT kb_id, COUNT(*) AS member_count
                                  FROM rag_kb_files GROUP BY kb_id),
@@ -2457,12 +2446,12 @@ class _KBListStorageView:
                 LEFT JOIN rag_kb_files kf ON kf.kb_id = b.kb_id AND kf.file_url = b.file_url
                 LEFT JOIN file_chunk_sets s ON s.chunk_set_id = b.chunk_set_id
                 LEFT JOIN counts ON counts.chunk_set_id = s.chunk_set_id
-                LEFT JOIN global_chunks g{global_chunks_index_hint}
+                LEFT JOIN global_chunks g
                   ON g.chunk_set_id = s.chunk_set_id
                 {embedding_join}
                 LEFT JOIN members m ON m.kb_id = t.kb_id
                 LEFT JOIN bindings bc ON bc.kb_id = t.kb_id
-                GROUP BY t.kb_id""",
+                GROUP BY t.kb_id, m.member_count, bc.binding_count""",
             params,
         ):
             kb_id = str(row[0])
@@ -2718,7 +2707,7 @@ class _KBListStorageView:
         return self._latest_build_attempts.get(self._list_key(kb_id, profile))
 
     @contextmanager
-    def transaction(self, *, immediate: bool = False):
+    def transaction(self, *, immediate: bool = False, read_snapshot: bool = False):
         if immediate:
             raise ValueError("KB list storage only supports read transactions")
         started = not self._conn.in_transaction
@@ -2734,7 +2723,10 @@ class _KBListStorageView:
         if self._table_names_cache is None:
             self._table_names_cache = frozenset(
                 str(row[0])
-                for row in self._conn.execute("SELECT name FROM sqlite_schema WHERE type = 'table'")
+                for row in self._conn.execute(
+                    "SELECT table_name FROM information_schema.tables "
+                    "WHERE table_schema = current_schema() AND table_type = 'BASE TABLE'"
+                )
             )
         return table in self._table_names_cache
 
@@ -2742,14 +2734,16 @@ class _KBListStorageView:
         if self._index_names_cache is None:
             self._index_names_cache = frozenset(
                 str(row[0])
-                for row in self._conn.execute("SELECT name FROM sqlite_schema WHERE type = 'index'")
+                for row in self._conn.execute(
+                    "SELECT indexname FROM pg_indexes WHERE schemaname = current_schema()"
+                )
             )
         return index in self._index_names_cache
 
     def _table_columns(self, table: str) -> frozenset[str]:
         if not self._table_exists(table):
             return frozenset()
-        return frozenset(str(row[1]) for row in self._conn.execute(f"PRAGMA table_info({table})"))
+        return frozenset(self._conn.table_columns(table))
 
     def get_agentic_ready_manual_operation(
         self,
@@ -3202,7 +3196,7 @@ class _KBListStorageView:
             "section_count": row[11] or 0,
             "built_at": row[12],
             "artifact_digest": row[13] or "",
-            "source_db": row[14] or "",
+            "source_db": "postgresql",
             "schema_versions": schema_versions if isinstance(schema_versions, dict) else {},
             "smoke_result": smoke_result if isinstance(smoke_result, dict) else {},
             "error_message": row[16] or "",
@@ -3565,13 +3559,9 @@ class _KBListStorageView:
 
 def _kb_list_schema_object_type(conn: Any, name: str) -> str | None:
     try:
-        row = conn.execute(
-            "SELECT type FROM sqlite_schema WHERE name = ? LIMIT 1",
-            (name,),
-        ).fetchone()
-    except sqlite3.Error:
+        return "table" if conn.table_exists(name) else None
+    except psycopg2.Error:
         return "probe_error"
-    return str(row[0]) if row else None
 
 
 def _kb_list_table_columns(conn: Any, table: str) -> frozenset[str] | None:
@@ -3581,8 +3571,8 @@ def _kb_list_table_columns(conn: Any, table: str) -> frozenset[str] | None:
     if object_type != "table":
         return None
     try:
-        return frozenset(str(row[1]) for row in conn.execute(f"PRAGMA table_info({table})"))
-    except sqlite3.Error:
+        return frozenset(conn.table_columns(table))
+    except psycopg2.Error:
         return None
 
 
@@ -3617,52 +3607,9 @@ def _kb_list_read_schema_problem(conn: Any) -> str | None:
     return None
 
 
-def _kb_list_db_has_user_schema_objects(db_path: str) -> bool:
-    path = Path(db_path)
-    if not path.exists() or path.stat().st_size == 0:
-        return False
-    try:
-        conn = _open_kb_list_read_only_connection(db_path)
-    except sqlite3.Error as exc:
-        raise RagAdminError(
-            "Knowledge base list schema requires explicit schema apply",
-            status_code=409,
-        ) from exc
-    try:
-        row = conn.execute("""
-            SELECT 1
-            FROM sqlite_schema
-            WHERE name NOT LIKE 'sqlite_%'
-            LIMIT 1
-            """).fetchone()
-        return row is not None
-    except sqlite3.Error as exc:
-        raise RagAdminError(
-            "Knowledge base list schema requires explicit schema apply",
-            status_code=409,
-        ) from exc
-    finally:
-        conn.close()
-
-
-def _open_kb_list_read_only_connection(db_path: str) -> sqlite3.Connection:
-    path = Path(db_path)
-    uri = f"{path.resolve().as_uri()}?mode=ro"
-    wal_path = Path(f"{path}-wal")
-    immutable = not wal_path.exists() or wal_path.stat().st_size == 0
-    if immutable:
-        immutable_conn = sqlite3.connect(f"{uri}&immutable=1", uri=True)
-        immutable_conn.execute("PRAGMA query_only=ON")
-        ready_data_schema = immutable_conn.execute("""
-            SELECT 1 FROM sqlite_schema
-            WHERE type = 'table' AND name = 'kb_ready_index_state'
-            LIMIT 1
-            """).fetchone()
-        if not ready_data_schema or _kb_list_read_schema_problem(immutable_conn) is not None:
-            return immutable_conn
-        immutable_conn.close()
-    conn = sqlite3.connect(uri, uri=True)
-    conn.execute("PRAGMA query_only=ON")
+def _open_kb_list_read_only_connection(db_path: Any) -> PostgresConnection:
+    conn = PostgresConnection(db_path, read_only=True)
+    conn.execute("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
     return conn
 
 
@@ -3766,7 +3713,7 @@ def _kb_customer_categories(conn: Any) -> dict[str, list[str]]:
         rows = conn.execute(
             "SELECT kb_id, category FROM rag_kb_category_mappings ORDER BY category"
         ).fetchall()
-    except sqlite3.Error:
+    except psycopg2.Error:
         return {}
     result: dict[str, list[str]] = {}
     for kb_id, category in rows:
@@ -3827,9 +3774,6 @@ def list_knowledge_bases(
         "0",
         "no",
     }
-    connection_local = db_path in _KB_LIST_CONNECTION_LOCAL_PATHS
-    if connection_local or not _kb_list_db_has_user_schema_objects(db_path):
-        return _empty_kb_list_result(auth, include_diagnostics=requested_diagnostics)
     conn = _open_kb_list_read_only_connection(db_path)
     storage = _KBListStorageView(db_path, conn)
     try:
@@ -4213,7 +4157,7 @@ def _build_agentic_ready_manifest_core(
             profile_version=profile_def.version,
             requested_output_dir=payload.get("output_dir"),
         )
-        allowed_output_root = str((Path(db_path).resolve().parent / "agentic_ready_data").resolve())
+        allowed_output_root = str(_ready_data_root().resolve())
         staging_output_dir, staging_root = _agentic_staging_output_dir(
             output_dir,
             allowed_output_root=allowed_output_root,
@@ -4424,7 +4368,6 @@ def _build_agentic_ready_manifest_core(
                     section_count=int(builder_manifest.get("section_count") or 0),
                     built_at=builder_manifest.get("built_at"),
                     artifact_digest=artifact_digest,
-                    source_db=str(builder_manifest.get("source_db") or db_path),
                     schema_versions=dict(builder_manifest.get("schema_versions") or {}),
                     smoke_result=smoke_result,
                     error_message=error_message or "ready_data validation failed",
@@ -4469,7 +4412,6 @@ def _build_agentic_ready_manifest_core(
                     section_count=int(builder_manifest.get("section_count") or 0),
                     built_at=builder_manifest.get("built_at"),
                     artifact_digest=artifact_digest,
-                    source_db=str(builder_manifest.get("source_db") or db_path),
                     schema_versions=dict(builder_manifest.get("schema_versions") or {}),
                     smoke_result=smoke_result,
                     error_message="",
@@ -4667,7 +4609,6 @@ def _build_agentic_ready_manifest_core(
                     section_count=int(builder_manifest.get("section_count") or 0),
                     built_at=builder_manifest.get("built_at"),
                     artifact_digest=artifact_digest,
-                    source_db=str(builder_manifest.get("source_db") or db_path),
                     schema_versions=dict(builder_manifest.get("schema_versions") or {}),
                     smoke_result=smoke_result,
                     error_message=str(exc),
@@ -5021,9 +4962,7 @@ def _build_ready_data_publication_gc_plan(
                 publication_id=publication_id,
                 output_dir=str(publication["output_dir"]),
                 recorded_quarantine_dir=str(publication["gc_quarantine_dir"]),
-                allowed_output_root=str(
-                    Path(storage.db_path).resolve().parent / "agentic_ready_data"
-                ),
+                allowed_output_root=str(storage.data_root / "agentic_ready_data"),
             )
         except Exception as exc:  # noqa: BLE001
             item = _ready_data_gc_item(publication, reason="unsafe_path")
@@ -5146,9 +5085,7 @@ def execute_ready_data_publication_gc(
                         publication_id=publication_id,
                         output_dir=str(claim["output_dir"]),
                         recorded_quarantine_dir=str(claim["gc_quarantine_dir"]),
-                        allowed_output_root=str(
-                            Path(db_path).resolve().parent / "agentic_ready_data"
-                        ),
+                        allowed_output_root=str(storage.data_root / "agentic_ready_data"),
                     )
                     if output_path.exists():
                         _ready_data_gc_tree_is_safe(output_path)

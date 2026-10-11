@@ -74,7 +74,10 @@ def _legacy_binding_plan(storage: Storage, kb_id: str) -> dict[str, Any]:
     }
     existing_tables = {
         str(row[0])
-        for row in conn.execute("SELECT name FROM sqlite_schema WHERE type = 'table'").fetchall()
+        for row in conn.execute(
+            "SELECT table_name FROM information_schema.tables "
+            "WHERE table_schema = current_schema() AND table_type = 'BASE TABLE'"
+        ).fetchall()
     }
     if not required_tables <= existing_tables:
         return {
@@ -376,7 +379,10 @@ def _binding_snapshot(
     }
     existing_tables = {
         str(row[0])
-        for row in conn.execute("SELECT name FROM sqlite_schema WHERE type = 'table'").fetchall()
+        for row in conn.execute(
+            "SELECT table_name FROM information_schema.tables "
+            "WHERE table_schema = current_schema() AND table_type = 'BASE TABLE'"
+        ).fetchall()
     }
     if not required_tables <= existing_tables:
         raise KBIndexContractError(
