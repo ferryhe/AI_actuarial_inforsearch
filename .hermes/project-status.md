@@ -1,4 +1,4 @@
-# 第 1–3 步实际迁移已验收，PR/CI 发布验证进行中 — 2026-10-11
+# 第 1–3 步实际迁移已验收，发布状态见验收记录 — 2026-10-11
 
 - 项目 AI_actuarial_inforsearch；实现分支 codex/local-content-hub，基于未合并的
   codex/full-postgresql / PR #422。原工作目录 fix/gpt6-parameter-compat 的已有
@@ -21,14 +21,18 @@
 - 主库原生 PG16 dump/隔离 restore PASS，9 表全部计数/内容摘要一致。D 档案保留两份来源库
   dump 和 content-hub.dump；原始文件另在 hub/cas 与原站 archives，不以数据库备份代替文件备份。
 - 重点旧 CLI/import/schema/data-root 回归 116 passed；最终新功能 12 passed。Black/isort/py_compile、
-  Pylint errors-only、Python 文件/符号 dead-code 与 diff-check PASS。独立 fresh Sol/high review-5 PASS（0 findings）。
+  Pylint errors-only、Python 文件/符号 dead-code 与 diff-check PASS。独立 fresh Sol/high review-6 PASS（0 findings）。
   已确认问题和 AC7 验证缺口由同一 Sol/high worker 修复；TypeSafe/Jev-1.13.0 裁定三次。
   Windows Git 检出 SQL 固定 LF，已验收的 SQL/ledger 不变；CAS 哈希错误与中途源库变化的
   隔离故障回归均证明 canonical 与 raw_source 全表计数/内容摘要保持不变。
+- 首次 CI 13 个旧 CLI 配置用例失败已按同顺序复现并用 5 行测试环境恢复修复。
+  最终 content-hub/issue263/weekly 联动 96 passed；并发用例单独六次 PASS，未改业务代码。
+  本地静态/可达性检查与 fresh review-6 PASS，修复提交的当前 HEAD CI 仍待验证。
 - 本次变更：hub/source-stage 模块与 SQL migrations、CLI、tests、langdetect 依赖、操作指南和文档索引。
   本机采集/摘要/翻译 API 调用为 0；不停止或清理生产数据，不切换服务器、不合并 PR。
   现有 API/crawler/RAG 尚不消费新 hub。下一步接入本机采集，按分类/语言发布两站子集及增量同步。
-- 自动提交/push/依赖 PR 后核对当前 HEAD 的 GitHub CI 和约 15 分钟的非 Copilot 反馈；
+- PR #423 已创建并附加（base codex/full-postgresql）；修复 HEAD 的 GitHub CI 待核对。
+  创建后 15 分钟非 Copilot 反馈检查 PASS，无评论/评审/线程；
   Copilot 用户禁用。最终发布状态见 ignored reports/data-hub/github-verification.json 与 D/hub/reports/20261011。
 
 # 执行第 1–3 步：归档与来源暂存完成，主库合并进行中 — 2026-10-11

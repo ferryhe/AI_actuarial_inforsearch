@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import sqlite3
 import subprocess
 import sys
@@ -839,6 +840,8 @@ def test_content_import_retry_recovers_receipt_without_changing_imported_rows(
 
     from ai_actuarial.cli import main
 
+    # Track cli.main()'s direct CONFIG_PATH assignment for teardown.
+    monkeypatch.setenv("CONFIG_PATH", os.environ.get("CONFIG_PATH", ""))
     monkeypatch.setenv("CONTENT_HUB_DATABASE_URL", hub_url)
     monkeypatch.setattr(
         sys,
@@ -939,6 +942,8 @@ def test_content_hub_cli_help_json_errors_and_stage_output(
     source_path = tmp_path / "cli-v16.db"
     source_sha, _ = _create_v16_source(source_path, b"cli source", source_label="cli")
     hub_url = _other_database_name(postgres_url, "content_hub_cli_unconnected")
+    # Track cli.main()'s direct CONFIG_PATH assignment for teardown.
+    monkeypatch.setenv("CONFIG_PATH", os.environ.get("CONFIG_PATH", ""))
     monkeypatch.setenv("CONTENT_HUB_STAGE_DATABASE_URL", postgres_url)
     monkeypatch.setenv("CONTENT_HUB_DATABASE_URL", hub_url)
     monkeypatch.setattr(
