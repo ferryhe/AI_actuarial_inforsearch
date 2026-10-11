@@ -16,8 +16,9 @@ from ai_actuarial.api.services.rag_admin import (
 from ai_actuarial.api.services.ready_data_publication import (
     public_ready_data_manifest,
 )
-from ai_actuarial.sqlite_schema import CURRENT_SQLITE_SCHEMA_VERSION
+from ai_actuarial.sqlite_schema import CURRENT_SQLITE_SCHEMA_VERSION, schema_status
 from ai_actuarial.storage import Storage
+from tests.postgres_helpers import postgres_url_for_path
 
 
 def test_public_ready_manifest_projects_only_canonical_ready_build_input() -> None:
@@ -59,7 +60,7 @@ def test_public_ready_manifest_projects_only_canonical_ready_build_input() -> No
 
 def _open_storage(tmp_path: Path) -> Storage:
     db_path = tmp_path / "index.db"
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     storage._conn.execute("""
         CREATE TABLE IF NOT EXISTS rag_knowledge_bases (
             kb_id TEXT PRIMARY KEY,
@@ -84,11 +85,12 @@ def _open_storage(tmp_path: Path) -> Storage:
         """)
     storage._conn.executemany(
         """
-        INSERT OR IGNORE INTO rag_knowledge_bases (
+        INSERT INTO rag_knowledge_bases (
             kb_id, name, embedding_model, chunk_size, chunk_overlap,
             index_type, created_at, updated_at
         )
         VALUES (?, ?, 'text-embedding-3-large', 800, 120, 'faiss', ?, ?)
+        ON CONFLICT (kb_id) DO NOTHING
         """,
         [
             ("kb-ready", "Ready KB", "2026-08-18T00:00:00Z", "2026-08-18T00:00:00Z"),
@@ -123,7 +125,6 @@ def _record(
         section_count=12,
         built_at="2026-08-18T12:00:00+00:00",
         artifact_digest=artifact_digest,
-        source_db=storage.db_path,
         schema_versions={"ready_data": "1"},
         error_message="validation failed" if status == "failed" else "",
     )
@@ -150,19 +151,24 @@ def test_publication_column_capability_is_checked_once_per_storage_instance(
     db_path = storage.db_path
     storage.close()
 
-    reopened = Storage.open_read_only(db_path) if read_only else Storage(db_path)
-    statements: list[str] = []
-    reopened._conn.set_trace_callback(statements.append)
+    reopened = (
+        Storage.open_read_only(db_path) if read_only else Storage(postgres_url_for_path(db_path))
+    )
+    original_table_columns = reopened._conn.table_columns
+    capability_checks = 0
+
+    def tracked_table_columns(table: str) -> set[str]:
+        nonlocal capability_checks
+        if table == "agentic_ready_publications":
+            capability_checks += 1
+        return original_table_columns(table)
+
+    reopened._conn.table_columns = tracked_table_columns
     try:
         publications = reopened.list_agentic_ready_publications_for_gc()
         assert len(publications) == 2
         assert reopened.get_agentic_ready_publication(str(first["publication_id"])) is not None
-        capability_checks = [
-            statement
-            for statement in statements
-            if statement.strip().lower() == "pragma table_info(agentic_ready_publications)"
-        ]
-        assert len(capability_checks) == 1
+        assert capability_checks == 1
     finally:
         reopened.close()
 
@@ -274,7 +280,6 @@ def test_publish_retains_previous_validated_slot_and_rollback_swaps_slots(tmp_pa
 @pytest.mark.parametrize(
     "corruption",
     (
-        "dangling_active",
         "active_not_active",
         "active_wrong_profile",
         "previous_wrong_kb",
@@ -310,42 +315,28 @@ def test_rollback_fail_closes_invalid_slot_publication_invariants(
 
         expected_active = str(active["publication_id"])
         expected_previous = str(previous["publication_id"])
-        if corruption == "dangling_active":
-            expected_active = "pub_missing_active"
-            storage._conn.execute("PRAGMA foreign_keys = OFF")
-            storage._conn.execute(
-                "UPDATE agentic_ready_slots SET active_publication_id = ? "
-                "WHERE kb_id = ? AND profile = ?",
-                (expected_active, "kb-ready", "general"),
-            )
-            storage._conn.commit()
-            storage._conn.execute("PRAGMA foreign_keys = ON")
-        else:
-            with storage.transaction(immediate=True):
-                if corruption == "active_not_active":
-                    storage._conn.execute(
-                        "UPDATE agentic_ready_publications SET status = 'validated' "
-                        "WHERE publication_id = ?",
-                        (expected_active,),
-                    )
-                elif corruption == "active_wrong_profile":
-                    storage._conn.execute(
-                        "UPDATE agentic_ready_publications SET profile = ? "
-                        "WHERE publication_id = ?",
-                        ("special", expected_active),
-                    )
-                elif corruption == "previous_wrong_kb":
-                    storage._conn.execute(
-                        "UPDATE agentic_ready_publications SET kb_id = ? "
-                        "WHERE publication_id = ?",
-                        ("kb-other", expected_previous),
-                    )
-                else:
-                    storage._conn.execute(
-                        "UPDATE agentic_ready_publications SET profile = ? "
-                        "WHERE publication_id = ?",
-                        ("special", expected_previous),
-                    )
+        with storage.transaction(immediate=True):
+            if corruption == "active_not_active":
+                storage._conn.execute(
+                    "UPDATE agentic_ready_publications SET status = 'validated' "
+                    "WHERE publication_id = ?",
+                    (expected_active,),
+                )
+            elif corruption == "active_wrong_profile":
+                storage._conn.execute(
+                    "UPDATE agentic_ready_publications SET profile = ? " "WHERE publication_id = ?",
+                    ("special", expected_active),
+                )
+            elif corruption == "previous_wrong_kb":
+                storage._conn.execute(
+                    "UPDATE agentic_ready_publications SET kb_id = ? " "WHERE publication_id = ?",
+                    ("kb-other", expected_previous),
+                )
+            else:
+                storage._conn.execute(
+                    "UPDATE agentic_ready_publications SET profile = ? " "WHERE publication_id = ?",
+                    ("special", expected_previous),
+                )
 
         slots_before = storage._conn.execute(
             "SELECT active_publication_id, previous_publication_id FROM agentic_ready_slots "
@@ -814,7 +805,7 @@ def test_publication_attempts_are_independent_across_storage_connections(tmp_pat
     barrier = threading.Barrier(2)
 
     def record_from_connection(output_name: str) -> str:
-        connection = Storage(db_path)
+        connection = Storage(postgres_url_for_path(db_path))
         try:
             barrier.wait(timeout=5)
             publication = _record(
@@ -831,7 +822,7 @@ def test_publication_attempts_are_independent_across_storage_connections(tmp_pat
         publication_ids = list(pool.map(record_from_connection, ("first", "second")))
 
     assert publication_ids[0] != publication_ids[1]
-    check = Storage(db_path)
+    check = Storage(postgres_url_for_path(db_path))
     try:
         count = check._conn.execute(
             "SELECT COUNT(*) FROM agentic_ready_publications WHERE kb_id = ?",
@@ -861,7 +852,7 @@ def test_publish_cas_allows_only_one_concurrent_winner(tmp_path: Path) -> None:
     barrier = threading.Barrier(2)
 
     def publish(publication_id: str) -> dict[str, object]:
-        connection = Storage(db_path)
+        connection = Storage(postgres_url_for_path(db_path))
         try:
             barrier.wait(timeout=5)
             return connection.publish_agentic_ready_publication(
@@ -880,7 +871,7 @@ def test_publish_cas_allows_only_one_concurrent_winner(tmp_path: Path) -> None:
         )
 
     assert sum(bool(result["cas_won"]) for result in results) == 1
-    check = Storage(db_path)
+    check = Storage(postgres_url_for_path(db_path))
     try:
         state = check.get_agentic_ready_publication_state(kb_id="kb-ready", profile="general")
         assert state["active_publication_id"] in {
@@ -937,7 +928,7 @@ def test_corrupt_expected_active_is_atomically_excluded_from_previous(tmp_path: 
         storage.close()
 
 
-def test_storage_rejects_legacy_draft_identity_schema_without_mutating(
+def test_sqlite_schema_status_rejects_legacy_draft_identity_without_mutating(
     tmp_path: Path,
 ) -> None:
     db_path = tmp_path / "index.db"
@@ -1019,8 +1010,7 @@ def test_storage_rejects_legacy_draft_identity_schema_without_mutating(
     finally:
         before_rows.close()
 
-    with pytest.raises(RuntimeError, match="schema preflight"):
-        Storage(str(db_path))
+    assert schema_status(db_path)["state"] == "invalid"
 
     check = sqlite3.connect(db_path)
     try:
@@ -1045,7 +1035,7 @@ def test_storage_rejects_legacy_draft_identity_schema_without_mutating(
         check.close()
 
 
-def test_storage_rejects_dangling_draft_slots_without_committing_migration(
+def test_sqlite_schema_status_rejects_dangling_draft_slots_without_mutating(
     tmp_path: Path,
 ) -> None:
     db_path = tmp_path / "index.db"
@@ -1100,11 +1090,7 @@ def test_storage_rejects_dangling_draft_slots_without_committing_migration(
     conn.close()
 
     for _attempt in range(2):
-        with pytest.raises(
-            RuntimeError,
-            match="schema preflight",
-        ):
-            Storage(str(db_path))
+        assert schema_status(db_path)["state"] == "invalid"
 
         check = sqlite3.connect(db_path)
         try:

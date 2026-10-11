@@ -6,7 +6,7 @@ AI provider credentials use a three-part model:
 - Credential instance: encrypted provider credentials stored in the `api_tokens` table.
 - Function binding: `CONFIG_PATH -> ai_config` selects provider, model, and optional credential id. The tracked `config/sites.yaml` is only the development/bootstrap template.
 
-Do not store provider API keys in `sites.yaml`. Keep `.env` for bootstrap/system values such as `TOKEN_ENCRYPTION_KEY`, `FASTAPI_SESSION_SECRET`, and optional temporary provider keys that can be imported into the database. The active SQLite path should come from `CONFIG_PATH -> paths.db`; `DB_PATH` is only a fallback when that YAML path is absent.
+Do not store provider API keys in `sites.yaml`. Keep `.env` for bootstrap/system values such as `TOKEN_ENCRYPTION_KEY`, `FASTAPI_SESSION_SECRET`, `DATABASE_URL`, and optional temporary provider keys that can be imported into the database. PostgreSQL is the only application database; `DATABASE_URL` or the variable named by `database.url_env` selects it. `paths.data` controls local files independently.
 
 Search engine status, CLI search, and live model discovery prefer encrypted DB credentials. Environment provider keys remain supported as bootstrap/fallback values, but they should not be the long-term source of runtime secrets.
 
@@ -14,7 +14,7 @@ Search engine status, CLI search, and live model discovery prefer encrypted DB c
 
 Agentic RAG does not add a new provider credential type.
 
-- Building ready_data manifests reads the configured SQLite database and existing catalog/chunk records.
+- Building ready_data manifests reads the configured PostgreSQL database and existing catalog/chunk records.
 - Agentic read tools and `/api/agentic-rag/*` endpoints operate on local ready_data artifacts.
 - The current Agentic Chat path uses deterministic ready_data evidence and returns `model="agentic-ready-data"` in metadata; it does not call an external LLM.
 - The Agentic eval smoke in CI uses committed fixtures and does not require provider keys.

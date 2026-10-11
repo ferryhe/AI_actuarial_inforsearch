@@ -9,6 +9,7 @@ from unittest.mock import patch
 from ai_actuarial.crawler import Crawler
 from ai_actuarial.security.url_safety import SafeUrlResolution, UnsafeUrlError, ensure_safe_http_url
 from ai_actuarial.storage import Storage
+from tests.postgres_helpers import postgres_url_for_path
 
 
 class _FakeResponse:
@@ -104,7 +105,7 @@ class TestEnsureSafeHttpUrl(unittest.TestCase):
 
 class TestCrawlerRedirectRevalidation(unittest.TestCase):
     def _make_crawler(self, tmp_dir: str) -> Crawler:
-        storage = Storage(":memory:")
+        storage = Storage(postgres_url_for_path(":memory:"))
         self.addCleanup(storage.close)
         return Crawler(storage=storage, download_dir=tmp_dir, user_agent="TestAgent/1.0")
 

@@ -52,8 +52,10 @@ def _bridge(request: Request) -> BridgeState:
     return BridgeState(request.app.state)
 
 
-def _db_path(request: Request) -> str:
-    db_path = str(getattr(request.app.state, "db_path", "") or "")
+def _db_path(request: Request):
+    db_path = getattr(request.app.state, "database", None) or getattr(
+        request.app.state, "db_path", None
+    )
     if not db_path:
         raise OpsWriteError("Database path is unavailable", status_code=500)
     return db_path

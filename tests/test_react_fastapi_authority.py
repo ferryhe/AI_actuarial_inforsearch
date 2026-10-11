@@ -3,8 +3,17 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import pytest
+
 from ai_actuarial.api.app import create_app
 from ai_actuarial.api.route_inventory import normalize_route_signature
+from tests.postgres_helpers import postgres_url_for_path
+
+
+@pytest.fixture(autouse=True)
+def _isolated_postgres_database(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("DATABASE_URL", postgres_url_for_path(str(tmp_path / "app.db")))
+
 
 ROOT = Path(__file__).resolve().parents[1] / "client" / "src"
 PRODUCT_SOURCE_FILES = [

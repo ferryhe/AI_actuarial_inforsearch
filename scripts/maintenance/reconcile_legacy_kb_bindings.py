@@ -15,16 +15,18 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from ai_actuarial.postgres import resolve_database_config
 from ai_actuarial.rag.kb_index import reconcile_legacy_kb_bindings
 from ai_actuarial.storage import Storage
+from config.yaml_config import load_database_config
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--db",
-        default="data/index.db",
-        help="Path to the SQLite database (default: data/index.db)",
+        "--database-url-env",
+        default="",
+        help="Environment variable containing the PostgreSQL URL (default: configured URL variable)",
     )
     parser.add_argument(
         "--kb-id",
@@ -49,8 +51,10 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.apply and args.dry_run:
         raise SystemExit("--apply and --dry-run cannot be used together")
-    db_path = Path(args.db)
-    storage = Storage(str(db_path))
+    database_settings = load_database_config()
+    if args.database_url_env:
+        database_settings = {**database_settings, "url_env": args.database_url_env}
+    storage = Storage(resolve_database_config({"database": database_settings}))
     try:
         report = reconcile_legacy_kb_bindings(
             storage,

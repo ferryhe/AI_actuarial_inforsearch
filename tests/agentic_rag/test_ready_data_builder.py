@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import sqlite3
 import subprocess
 import sys
 from pathlib import Path
@@ -13,85 +12,153 @@ import pytest
 
 # Import under test
 import ai_actuarial.agentic_rag.ready_data_builder as builder
+from ai_actuarial.storage import Storage
+from tests.postgres_helpers import postgres_url_for_path
+
+_PROFILE_NAME = "ready-data-builder-test"
+
+
+def _profile_id(storage: Storage) -> str:
+    return str(
+        storage._conn.execute(
+            "SELECT profile_id FROM chunk_profiles WHERE name = ?", (_PROFILE_NAME,)
+        ).fetchone()[0]
+    )
+
+
+def _seed_file_and_catalog(
+    storage: Storage,
+    url: str,
+    *,
+    title: str,
+    source_site: str = "CBIRC",
+    status: str = "ok",
+    summary: str = "偿付能力监管规则摘要",
+    category: str = "regulation",
+    keywords: list[str] | None = None,
+) -> None:
+    storage.insert_file(
+        url=url,
+        sha256=f"sha-{url}",
+        title=title,
+        source_site=source_site,
+        source_page_url="https://example.com",
+        original_filename="rule.pdf",
+        local_path="",
+        bytes=0,
+        content_type="application/pdf",
+        published_time="2024-01-01",
+    )
+    storage.upsert_catalog_item(
+        item={
+            "url": url,
+            "sha256": f"sha-{url}",
+            "keywords": keywords or ["偿二代", "偿付能力", "寿险"],
+            "summary": summary,
+            "category": category,
+        },
+        pipeline_version="test-v1",
+        status=status,
+    )
+
+
+def _seed_chunk_set(
+    storage: Storage,
+    url: str,
+    chunks: list[dict[str, object]],
+    *,
+    markdown_hash: str,
+    status: str = "building",
+    profile_id: str | None = None,
+) -> str:
+    chunk_set = storage.get_or_create_file_chunk_set(
+        file_url=url,
+        profile_id=profile_id or _profile_id(storage),
+        markdown_hash=markdown_hash,
+        status=status,
+    )
+    if chunks:
+        storage.replace_global_chunks(
+            chunk_set_id=chunk_set["chunk_set_id"], chunks=chunks, overwrite=True
+        )
+    return str(chunk_set["chunk_set_id"])
+
+
+def _seed_kb(storage: Storage, kb_id: str) -> None:
+    profile_id = _profile_id(storage)
+    storage._conn.execute(
+        """
+        INSERT INTO rag_knowledge_bases (
+            kb_id, name, chunk_profile_id, embedding_model,
+            chunk_size, chunk_overlap, index_type, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            kb_id,
+            kb_id,
+            profile_id,
+            "test-embedding",
+            800,
+            100,
+            "Flat",
+            "2026-08-19T00:00:00+00:00",
+            "2026-08-19T00:00:00+00:00",
+        ),
+    )
+
+
+def _add_kb_member(storage: Storage, kb_id: str, file_url: str) -> None:
+    storage._conn.execute(
+        "INSERT INTO rag_kb_files (kb_id, file_url, added_at) VALUES (?, ?, ?)",
+        (kb_id, file_url, "2026-08-19T00:00:00+00:00"),
+    )
+
+
+def _add_kb_binding(storage: Storage, kb_id: str, file_url: str, chunk_set_id: str) -> None:
+    storage._conn.execute(
+        """
+        INSERT INTO kb_chunk_bindings (kb_id, file_url, chunk_set_id, bound_at)
+        VALUES (?, ?, ?, ?)
+        """,
+        (kb_id, file_url, chunk_set_id, "2026-08-19T00:00:00+00:00"),
+    )
 
 
 @pytest.fixture
 def test_db_path(tmp_path):
-    """Create a file-backed SQLite DB with test catalog + chunk data."""
-    db_path = str(tmp_path / "test.db")
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-
-    conn.executescript("""
-        CREATE TABLE files (
-            url TEXT PRIMARY KEY,
-            title TEXT,
-            source_site TEXT,
-            published_time TEXT
-        );
-        CREATE TABLE catalog_items (
-            file_url TEXT PRIMARY KEY,
-            status TEXT DEFAULT 'ok',
-            summary TEXT,
-            category TEXT,
-            keywords TEXT,
-            rag_chunk_count INTEGER DEFAULT 0
-        );
-        CREATE TABLE file_chunk_sets (
-            chunk_set_id TEXT PRIMARY KEY,
-            file_url TEXT NOT NULL,
-            chunk_count INTEGER DEFAULT 0,
-            status TEXT DEFAULT 'ready'
-        );
-        CREATE TABLE global_chunks (
-            chunk_id TEXT PRIMARY KEY,
-            chunk_set_id TEXT NOT NULL,
-            chunk_index INTEGER NOT NULL,
-            content TEXT NOT NULL,
-            token_count INTEGER DEFAULT 0,
-            section_hierarchy TEXT
-        );
-        CREATE TABLE kb_ready_index_state (
-            kb_id TEXT PRIMARY KEY,
-            index_version_id TEXT NOT NULL,
-            embedding_provider TEXT,
-            embedding_model TEXT,
-            embedding_dimension INTEGER,
-            updated_at TEXT
-        );
-    """)
-
-    # Insert test data
-    conn.execute(
-        "INSERT INTO files(url,title,source_site,published_time) VALUES(?,?,?,?)",
-        ("https://example.com/rule1", "偿付能力监管规则第3号", "CBIRC", "2024-01-01"),
-    )
-    conn.execute(
-        "INSERT INTO catalog_items(file_url,status,summary,category,keywords,rag_chunk_count) VALUES(?,?,?,?,?,?)",
-        (
-            "https://example.com/rule1",
-            "ok",
-            "偿付能力监管规则摘要",
-            "regulation",
-            '["偿二代","偿付能力","寿险"]',
-            2,
-        ),
-    )
-    conn.execute(
-        "INSERT INTO file_chunk_sets(chunk_set_id,file_url,chunk_count) VALUES(?,?,?)",
-        ("cs1", "https://example.com/rule1", 2),
-    )
-    conn.execute(
-        "INSERT INTO global_chunks(chunk_id,chunk_set_id,chunk_index,content,token_count,section_hierarchy) VALUES(?,?,?,?,?,?)",
-        ("c1", "cs1", 0, "第一章 总则，第一条 为规范...", 50, "第一章 总则 > 第一条"),
-    )
-    conn.execute(
-        "INSERT INTO global_chunks(chunk_id,chunk_set_id,chunk_index,content,token_count,section_hierarchy) VALUES(?,?,?,?,?,?)",
-        ("c2", "cs1", 1, "第二章 负债评估，第十九条...", 80, "第二章 负债评估 > 第十九条"),
-    )
-    conn.commit()
-    conn.close()
-    return db_path
+    """Create isolated PostgreSQL catalog and chunk data."""
+    database_url = postgres_url_for_path(tmp_path / "test.db")
+    storage = Storage(database_url)
+    try:
+        storage.create_chunk_profile(
+            name=_PROFILE_NAME, chunk_size=800, chunk_overlap=100, upsert=True
+        )
+        url = "https://example.com/rule1"
+        _seed_file_and_catalog(storage, url, title="偿付能力监管规则第3号")
+        _seed_chunk_set(
+            storage,
+            url,
+            [
+                {
+                    "chunk_id": "c1",
+                    "chunk_index": 0,
+                    "content": "第一章 总则，第一条 为规范...",
+                    "token_count": 50,
+                    "section_hierarchy": "第一章 总则 > 第一条",
+                },
+                {
+                    "chunk_id": "c2",
+                    "chunk_index": 1,
+                    "content": "第二章 负债评估，第十九条...",
+                    "token_count": 80,
+                    "section_hierarchy": "第二章 负债评估 > 第十九条",
+                },
+            ],
+            markdown_hash="fixture-rule1",
+        )
+    finally:
+        storage.close()
+    return database_url
 
 
 def test_build_l0_basic(test_db_path, tmp_path):
@@ -170,12 +237,12 @@ def test_build_l0_source_version_is_stable_and_tracks_consumed_inputs(test_db_pa
     )
     assert same["source_version_id"] == first["source_version_id"]
 
-    conn = sqlite3.connect(test_db_path)
-    conn.execute(
-        "UPDATE global_chunks SET content = ? WHERE chunk_id = ?",
-        ("Changed source chunk", "c1"),
+    conn = Storage(test_db_path)
+    conn._conn.execute(
+        "UPDATE global_chunks SET content = ? WHERE chunk_index = ?",
+        ("Changed source chunk", 0),
     )
-    conn.commit()
+    conn._conn.commit()
     conn.close()
     changed = builder.build_l0(
         db_path=test_db_path,
@@ -186,22 +253,14 @@ def test_build_l0_source_version_is_stable_and_tracks_consumed_inputs(test_db_pa
 
 
 def test_build_l0_kb_scope_requires_persisted_composition(test_db_path, tmp_path):
-    conn = sqlite3.connect(test_db_path)
-    conn.execute("""
-        CREATE TABLE rag_kb_files (
-            kb_id TEXT NOT NULL,
-            file_url TEXT NOT NULL,
-            PRIMARY KEY (kb_id, file_url)
-        )
-        """)
-    conn.execute(
-        "INSERT INTO rag_kb_files(kb_id,file_url) VALUES(?,?)",
-        ("kb-ready", "https://example.com/rule1"),
-    )
-    conn.commit()
-    conn.close()
+    storage = Storage(test_db_path)
+    try:
+        _seed_kb(storage, "kb-ready")
+        _add_kb_member(storage, "kb-ready", "https://example.com/rule1")
+    finally:
+        storage.close()
 
-    with pytest.raises(ValueError, match="persisted KB composition"):
+    with pytest.raises(ValueError, match="one binding for every KB member"):
         builder.build_l0(
             db_path=test_db_path,
             output_dir=str(tmp_path / "without-index"),
@@ -211,21 +270,13 @@ def test_build_l0_kb_scope_requires_persisted_composition(test_db_path, tmp_path
 
 
 def test_build_l0_closes_database_connection_when_build_fails(test_db_path, monkeypatch):
-    real_connect = sqlite3.connect
-    tracked: list[object] = []
+    real_connect = builder.PostgresConnection
+    tracked = []
 
     class TrackingConnection:
-        def __init__(self, path: str):
-            self.inner = real_connect(path)
+        def __init__(self, *args, **kwargs):
+            self.inner = real_connect(*args, **kwargs)
             self.closed = False
-
-        @property
-        def row_factory(self):
-            return self.inner.row_factory
-
-        @row_factory.setter
-        def row_factory(self, value):
-            self.inner.row_factory = value
 
         def close(self):
             self.closed = True
@@ -234,12 +285,12 @@ def test_build_l0_closes_database_connection_when_build_fails(test_db_path, monk
         def __getattr__(self, name: str):
             return getattr(self.inner, name)
 
-    def tracked_connect(path: str):
-        connection = TrackingConnection(path)
+    def tracked_connect(*args, **kwargs):
+        connection = TrackingConnection(*args, **kwargs)
         tracked.append(connection)
         return connection
 
-    monkeypatch.setattr(builder.sqlite3, "connect", tracked_connect)
+    monkeypatch.setattr(builder, "PostgresConnection", tracked_connect)
     with pytest.raises(ValueError, match="Unknown profile"):
         builder.build_l0(db_path=test_db_path, profile="unknown")
 
@@ -306,12 +357,12 @@ def test_build_regulation_profile_emits_l1_alias_and_relation_artifacts(test_db_
 
 def test_build_formula_profile_emits_l2_formula_table_and_term_artifacts(test_db_path, tmp_path):
     """Build L2 formula artifacts from deterministic section text."""
-    conn = sqlite3.connect(test_db_path)
-    conn.execute(
+    conn = Storage(test_db_path)
+    conn._conn.execute(
         """
         UPDATE global_chunks
         SET content = ?, section_hierarchy = ?
-        WHERE chunk_id = ?
+        WHERE chunk_index = ?
         """,
         (
             "\n".join(
@@ -324,10 +375,10 @@ def test_build_formula_profile_emits_l2_formula_table_and_term_artifacts(test_db
                 ]
             ),
             "Actuarial formulas > Net premium",
-            "c2",
+            1,
         ),
     )
-    conn.commit()
+    conn._conn.commit()
     conn.close()
 
     manifest = builder.build_l0(
@@ -383,12 +434,12 @@ def test_build_formula_profile_emits_l2_formula_table_and_term_artifacts(test_db
 
 
 def test_build_formula_profile_preserves_duplicate_and_blank_table_headers(test_db_path, tmp_path):
-    conn = sqlite3.connect(test_db_path)
-    conn.execute(
+    conn = Storage(test_db_path)
+    conn._conn.execute(
         """
         UPDATE global_chunks
         SET content = ?, section_hierarchy = ?
-        WHERE chunk_id = ?
+        WHERE chunk_index = ?
         """,
         (
             "\n".join(
@@ -399,10 +450,10 @@ def test_build_formula_profile_preserves_duplicate_and_blank_table_headers(test_
                 ]
             ),
             "Actuarial formulas > Duplicate table headers",
-            "c2",
+            1,
         ),
     )
-    conn.commit()
+    conn._conn.commit()
     conn.close()
 
     builder.build_l0(db_path=test_db_path, output_dir=str(tmp_path), profile="formula")
@@ -424,8 +475,8 @@ def test_ready_data_builder_cli_accepts_formula_profile(test_db_path, tmp_path):
             sys.executable,
             "-m",
             "ai_actuarial.agentic_rag.ready_data_builder",
-            "--db",
-            test_db_path,
+            "--database-url-env",
+            "DATABASE_URL",
             "--output-dir",
             str(tmp_path),
             "--profile",
@@ -726,74 +777,54 @@ def test_validate_resolves_dict_mapped_l2_artifact_paths(tmp_path):
 
 
 def test_build_l0_kb_scope_does_not_fallback_to_partial_legacy_tables(test_db_path, tmp_path):
-    """KB scoped builds should not leak catalog rows from other KBs."""
-    conn = sqlite3.connect(test_db_path)
-    conn.executescript("""
-        CREATE TABLE rag_kb_files (
-            kb_id TEXT NOT NULL,
-            file_url TEXT NOT NULL,
-            added_at TEXT NOT NULL,
-            PRIMARY KEY (kb_id, file_url)
-        );
-        CREATE TABLE kb_chunk_bindings (
-            kb_id TEXT NOT NULL,
-            file_url TEXT NOT NULL,
-            chunk_set_id TEXT NOT NULL,
-            bound_at TEXT NOT NULL,
-            binding_mode TEXT DEFAULT 'follow_latest'
-        );
-        """)
-    conn.execute(
-        "INSERT INTO files(url,title,source_site,published_time) VALUES(?,?,?,?)",
-        ("https://example.com/rule2", "Other Rule", "Other", "2024-02-01"),
-    )
-    conn.execute(
-        "INSERT INTO catalog_items(file_url,status,summary,category,keywords,rag_chunk_count) VALUES(?,?,?,?,?,?)",
-        (
-            "https://example.com/rule2",
-            "ok",
-            "Other summary",
-            "other",
-            "other",
-            1,
-        ),
-    )
-    conn.execute(
-        "INSERT INTO file_chunk_sets(chunk_set_id,file_url,chunk_count) VALUES(?,?,?)",
-        ("cs2", "https://example.com/rule2", 1),
-    )
-    conn.execute(
-        "INSERT INTO global_chunks(chunk_id,chunk_set_id,chunk_index,content,token_count,section_hierarchy) VALUES(?,?,?,?,?,?)",
-        ("c3", "cs2", 0, "Other content", 20, "Other"),
-    )
-    conn.execute(
-        "INSERT INTO file_chunk_sets(chunk_set_id,file_url,chunk_count) VALUES(?,?,?)",
-        ("cs1_other_profile", "https://example.com/rule1", 1),
-    )
-    conn.execute(
-        "INSERT INTO global_chunks(chunk_id,chunk_set_id,chunk_index,content,token_count,section_hierarchy) VALUES(?,?,?,?,?,?)",
-        ("c4", "cs1_other_profile", 0, "Other profile content", 30, "Wrong Profile"),
-    )
-    conn.execute(
-        "INSERT INTO rag_kb_files(kb_id,file_url,added_at) VALUES(?,?,?)",
-        ("kb_rule_1", "https://example.com/rule1", "2026-06-14T00:00:00+00:00"),
-    )
-    conn.execute(
-        "INSERT INTO rag_kb_files(kb_id,file_url,added_at) VALUES(?,?,?)",
-        ("kb_rule_2", "https://example.com/rule2", "2026-06-14T00:00:00+00:00"),
-    )
-    conn.execute(
-        "INSERT INTO kb_chunk_bindings(kb_id,file_url,chunk_set_id,bound_at) VALUES(?,?,?,?)",
-        ("kb_rule_1", "https://example.com/rule1", "cs1", "2026-06-14T00:00:01+00:00"),
-    )
-    conn.execute(
-        "INSERT INTO kb_chunk_bindings(kb_id,file_url,chunk_set_id,bound_at) VALUES(?,?,?,?)",
-        ("kb_rule_2", "https://example.com/rule2", "cs2", "2026-06-14T00:00:01+00:00"),
-    )
-    conn.commit()
-    conn.close()
+    """An exact KB binding must use its persisted chunk profile."""
+    storage = Storage(test_db_path)
+    try:
+        url_one = "https://example.com/rule1"
+        url_two = "https://example.com/rule2"
+        _seed_file_and_catalog(storage, url_two, title="Other Rule", category="other")
+        other_profile = storage.create_chunk_profile(
+            name="other-ready-data-profile", chunk_size=300, chunk_overlap=40
+        )
+        other_set_id = _seed_chunk_set(
+            storage,
+            url_one,
+            [
+                {
+                    "chunk_id": "c4",
+                    "chunk_index": 0,
+                    "content": "Other profile content",
+                    "token_count": 30,
+                    "section_hierarchy": "Wrong Profile",
+                }
+            ],
+            markdown_hash="other-profile-rule1",
+            profile_id=other_profile["profile_id"],
+        )
+        second_set_id = _seed_chunk_set(
+            storage,
+            url_two,
+            [
+                {
+                    "chunk_id": "c3",
+                    "chunk_index": 0,
+                    "content": "Other content",
+                    "token_count": 20,
+                    "section_hierarchy": "Other",
+                }
+            ],
+            markdown_hash="profile-rule2",
+        )
+        _seed_kb(storage, "kb_rule_1")
+        _seed_kb(storage, "kb_rule_2")
+        _add_kb_member(storage, "kb_rule_1", url_one)
+        _add_kb_member(storage, "kb_rule_2", url_two)
+        _add_kb_binding(storage, "kb_rule_1", url_one, other_set_id)
+        _add_kb_binding(storage, "kb_rule_2", url_two, second_set_id)
+    finally:
+        storage.close()
 
-    with pytest.raises(ValueError, match="persisted KB composition"):
+    with pytest.raises(ValueError, match="wrong chunk profile"):
         builder.build_l0(
             db_path=test_db_path,
             output_dir=str(tmp_path),
@@ -803,45 +834,31 @@ def test_build_l0_kb_scope_does_not_fallback_to_partial_legacy_tables(test_db_pa
 
 
 def test_build_l0_rejects_historical_orphan_binding_without_exact_kb(test_db_path, tmp_path):
-    conn = sqlite3.connect(test_db_path)
-    conn.executescript("""
-        CREATE TABLE rag_kb_files (
-            kb_id TEXT NOT NULL,
-            file_url TEXT NOT NULL,
-            added_at TEXT NOT NULL,
-            PRIMARY KEY (kb_id, file_url)
-        );
-        CREATE TABLE kb_chunk_bindings (
-            kb_id TEXT NOT NULL,
-            file_url TEXT NOT NULL,
-            chunk_set_id TEXT NOT NULL,
-            bound_at TEXT NOT NULL
-        );
-        """)
-    conn.execute(
-        "INSERT INTO rag_kb_files(kb_id,file_url,added_at) VALUES(?,?,?)",
-        ("kb_rule_1", "https://example.com/rule1", "2026-08-19T00:00:00+00:00"),
-    )
-    conn.execute(
-        "INSERT INTO file_chunk_sets(chunk_set_id,file_url,chunk_count) VALUES(?,?,?)",
-        ("cs-orphan", "https://example.com/orphan", 1),
-    )
-    conn.execute(
-        """
-        INSERT INTO global_chunks(
-            chunk_id,chunk_set_id,chunk_index,content,token_count,section_hierarchy
-        ) VALUES(?,?,?,?,?,?)
-        """,
-        ("c-orphan", "cs-orphan", 0, "Orphan content", 10, "Orphan"),
-    )
-    conn.execute(
-        "INSERT INTO kb_chunk_bindings(kb_id,file_url,chunk_set_id,bound_at) VALUES(?,?,?,?)",
-        ("kb_rule_1", "https://example.com/orphan", "cs-orphan", "2099-01-01T00:00:00+00:00"),
-    )
-    conn.commit()
-    conn.close()
+    storage = Storage(test_db_path)
+    try:
+        _seed_kb(storage, "kb_rule_1")
+        _add_kb_member(storage, "kb_rule_1", "https://example.com/rule1")
+        orphan_url = "https://example.com/orphan"
+        _seed_file_and_catalog(storage, orphan_url, title="Orphan", status="error")
+        orphan_set_id = _seed_chunk_set(
+            storage,
+            orphan_url,
+            [
+                {
+                    "chunk_id": "c-orphan",
+                    "chunk_index": 0,
+                    "content": "Orphan content",
+                    "token_count": 10,
+                    "section_hierarchy": "Orphan",
+                }
+            ],
+            markdown_hash="orphan",
+        )
+        _add_kb_binding(storage, "kb_rule_1", orphan_url, orphan_set_id)
+    finally:
+        storage.close()
 
-    with pytest.raises(ValueError, match="persisted KB composition"):
+    with pytest.raises(ValueError, match="one binding for every KB member"):
         builder.build_l0(
             db_path=test_db_path,
             output_dir=str(tmp_path / "orphan-binding"),
@@ -851,60 +868,26 @@ def test_build_l0_rejects_historical_orphan_binding_without_exact_kb(test_db_pat
 
 
 def test_build_l0_rejects_non_ready_binding_without_exact_kb(test_db_path, tmp_path):
-    conn = sqlite3.connect(test_db_path)
-    conn.executescript("""
-        CREATE TABLE rag_kb_files (
-            kb_id TEXT NOT NULL,
-            file_url TEXT NOT NULL,
-            added_at TEXT NOT NULL,
-            PRIMARY KEY (kb_id, file_url)
-        );
-        CREATE TABLE kb_chunk_bindings (
-            kb_id TEXT NOT NULL,
-            file_url TEXT NOT NULL,
-            chunk_set_id TEXT NOT NULL,
-            bound_at TEXT NOT NULL
-        );
-        """)
+    storage = Storage(test_db_path)
     invalid_url = "https://example.com/not-ready"
-    conn.execute(
-        "INSERT INTO files(url,title,source_site,published_time) VALUES(?,?,?,?)",
-        (invalid_url, "Not Ready", "Example", "2026-08-19"),
-    )
-    conn.execute(
-        """
-        INSERT INTO catalog_items(file_url,status,summary,category,keywords,rag_chunk_count)
-        VALUES(?,?,?,?,?,?)
-        """,
-        (invalid_url, "error", "Not ready", "other", "", 1),
-    )
-    conn.execute(
-        "INSERT INTO file_chunk_sets(chunk_set_id,file_url,chunk_count) VALUES(?,?,?)",
-        ("cs-not-ready", invalid_url, 1),
-    )
-    conn.execute(
-        """
-        INSERT INTO global_chunks(
-            chunk_id,chunk_set_id,chunk_index,content,token_count,section_hierarchy
-        ) VALUES(?,?,?,?,?,?)
-        """,
-        ("c-not-ready", "cs-not-ready", 0, "Not-ready content", 10, "Other"),
-    )
-    conn.executemany(
-        "INSERT INTO rag_kb_files(kb_id,file_url,added_at) VALUES(?,?,?)",
-        [
-            ("kb_rule_1", "https://example.com/rule1", "2026-08-19T00:00:00+00:00"),
-            ("kb_rule_1", invalid_url, "2026-08-19T00:00:00+00:00"),
-        ],
-    )
-    conn.execute(
-        "INSERT INTO kb_chunk_bindings(kb_id,file_url,chunk_set_id,bound_at) VALUES(?,?,?,?)",
-        ("kb_rule_1", invalid_url, "cs-not-ready", "2099-01-01T00:00:00+00:00"),
-    )
-    conn.commit()
-    conn.close()
+    try:
+        _seed_kb(storage, "kb_rule_1")
+        _add_kb_member(storage, "kb_rule_1", "https://example.com/rule1")
+        _seed_file_and_catalog(storage, invalid_url, title="Not Ready")
+        _add_kb_member(storage, "kb_rule_1", invalid_url)
+        valid_set_id = storage._conn.execute(
+            "SELECT chunk_set_id FROM file_chunk_sets WHERE file_url = ?",
+            ("https://example.com/rule1",),
+        ).fetchone()[0]
+        pending_set_id = _seed_chunk_set(
+            storage, invalid_url, [], markdown_hash="not-ready", status="building"
+        )
+        _add_kb_binding(storage, "kb_rule_1", "https://example.com/rule1", valid_set_id)
+        _add_kb_binding(storage, "kb_rule_1", invalid_url, pending_set_id)
+    finally:
+        storage.close()
 
-    with pytest.raises(ValueError, match="persisted KB composition"):
+    with pytest.raises(ValueError, match="ready chunk set"):
         builder.build_l0(
             db_path=test_db_path,
             output_dir=str(tmp_path / "invalid-catalog-binding"),
@@ -915,16 +898,8 @@ def test_build_l0_rejects_non_ready_binding_without_exact_kb(test_db_path, tmp_p
 
 def test_build_l0_empty_db(tmp_path):
     """Build with no catalog items should produce empty outputs."""
-    db_path = str(tmp_path / "empty.db")
-    conn = sqlite3.connect(db_path)
-    conn.executescript("""
-        CREATE TABLE IF NOT EXISTS files(url TEXT PRIMARY KEY, title TEXT, source_site TEXT, published_time TEXT);
-        CREATE TABLE IF NOT EXISTS catalog_items(file_url TEXT PRIMARY KEY, status TEXT, summary TEXT, category TEXT, keywords TEXT, rag_chunk_count INTEGER);
-        CREATE TABLE IF NOT EXISTS file_chunk_sets(chunk_set_id TEXT PRIMARY KEY, file_url TEXT, chunk_count INTEGER, status TEXT);
-        CREATE TABLE IF NOT EXISTS global_chunks(chunk_id TEXT PRIMARY KEY, chunk_set_id TEXT, chunk_index INTEGER, content TEXT, token_count INTEGER, section_hierarchy TEXT);
-    """)
-    conn.commit()
-    conn.close()
+    db_path = postgres_url_for_path(tmp_path / "empty.db")
+    Storage(db_path).close()
 
     manifest = builder.build_l0(
         db_path=db_path,

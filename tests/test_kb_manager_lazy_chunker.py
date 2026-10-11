@@ -7,10 +7,11 @@ from ai_actuarial.rag.config import RAGConfig
 from ai_actuarial.rag.knowledge_base import KnowledgeBaseManager
 from ai_actuarial.rag.semantic_chunking import SemanticChunker
 from ai_actuarial.storage import Storage
+from tests.postgres_helpers import postgres_url_for_path
 
 
 def _manager(tmp_path):
-    storage = Storage(str(tmp_path / "knowledge-base.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "knowledge-base.db")))
     manager = KnowledgeBaseManager(
         storage,
         config=RAGConfig(

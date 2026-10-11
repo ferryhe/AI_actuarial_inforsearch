@@ -4,7 +4,6 @@ import json
 import logging
 import os
 import re
-import sqlite3
 import time
 from copy import deepcopy
 from datetime import datetime, timezone
@@ -12,6 +11,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+import psycopg2
 import yaml
 from cryptography.fernet import Fernet
 
@@ -60,6 +60,7 @@ from ai_actuarial.markdown_conversion_config import (
     list_conversion_tools,
     write_markdown_conversion_config,
 )
+from ai_actuarial.postgres import resolve_data_root
 from ai_actuarial.rag.defaults import get_embedding_model_defaults
 from ai_actuarial.schedule_presets import (
     SchedulePreset,
@@ -77,8 +78,10 @@ from ai_actuarial.shared_runtime import (
     get_default_catalog_provider,
     get_sites_config_path,
     load_yaml,
+    resolve_data_path,
     resolve_runtime_features,
     serialize_backend_settings,
+    task_log_path,
 )
 from ai_actuarial.storage import Storage
 from ai_actuarial.utils import extract_metadata, html_to_text
@@ -1817,7 +1820,7 @@ def _has_indexed_knowledge_bases(db_path: str) -> bool:
 
     Mirrors the affected-KB enumeration in ``update_ai_routing``: a KB counts
     as indexed when it has files or chunks. A missing table (a
-    ``sqlite3.OperationalError`` whose message contains "no such table") means
+    missing PostgreSQL table means
     a fresh/empty database with nothing indexed yet, so we safely return
     False (first-time configuration). Any other query failure (transient lock,
     corrupt schema, partial migration) is treated as "indexed KBs exist"
@@ -1834,8 +1837,8 @@ def _has_indexed_knowledge_bases(db_path: str) -> bool:
             LIMIT 1
             """).fetchone()
         return row is not None
-    except sqlite3.OperationalError as exc:
-        if "no such table" in str(exc):
+    except psycopg2.Error as exc:
+        if exc.pgcode == "42P01":
             return False
         logger.warning(
             "Failed to check for indexed KBs before embeddings config change", exc_info=True
@@ -2254,8 +2257,10 @@ def request_task_stop(task_id: str, *, bridge: BridgeState) -> dict[str, Any]:
     return {"success": True, "message": "Stop signal sent"}
 
 
-def _append_history_to_disk(task_data: dict[str, Any]) -> None:
-    path = Path("data/job_history.jsonl")
+def _append_history_to_disk(
+    task_data: dict[str, Any], *, data_root: str | Path | None = None
+) -> None:
+    path = resolve_data_path("data/job_history.jsonl", data_root=data_root)
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "a", encoding="utf-8") as f:
         f.write(json.dumps(task_data, ensure_ascii=False) + "\n")
@@ -2267,8 +2272,9 @@ def _record_rejected_task(
     task_id = f"rejected_{int(datetime.now().timestamp())}"
     task_name = str(data.get("name") or f"{collection_type} (rejected)")
     stamp = datetime.now(timezone.utc).isoformat()
-    log_file = str(Path("data/task_logs") / f"{task_id}.log")
-    append_task_log(task_id, "ERROR", f"Rejected request: {reason}")
+    data_root = resolve_data_root(_load_config_data())
+    log_file = str(task_log_path(task_id, data_root=data_root))
+    append_task_log(task_id, "ERROR", f"Rejected request: {reason}", data_root=data_root)
     task_data = {
         "id": task_id,
         "name": task_name,
@@ -2288,7 +2294,7 @@ def _record_rejected_task(
     else:
         with bridge.task_lock:
             bridge.task_history_ref.append(task_data)
-    _append_history_to_disk(task_data)
+    _append_history_to_disk(task_data, data_root=data_root)
 
 
 def _reject_request(
@@ -2506,13 +2512,14 @@ def start_collection(
 
 def browse_folder(path: str | None = None) -> dict[str, Any]:
     site_config = _load_config_data()
-    data_root = str((site_config.get("paths") or {}).get("download_dir", "data/files"))
-    if not os.path.isabs(data_root):
-        data_root = os.path.abspath(data_root)
-    allowed_root = os.path.abspath(os.path.dirname(data_root) or os.getcwd())
+    data_root = resolve_data_root(site_config)
+    download_dir = resolve_data_path(
+        str((site_config.get("paths") or {}).get("download_dir", "data/files")),
+        data_root=data_root,
+    )
+    allowed_root = str(download_dir.parent.resolve())
 
-    target = str(path or "").strip() or allowed_root
-    target = os.path.abspath(target)
+    target = str(resolve_data_path(str(path or "").strip() or allowed_root, data_root=data_root))
     try:
         target_within_root = os.path.commonpath([allowed_root, target]) == allowed_root
     except ValueError:
@@ -2570,10 +2577,10 @@ def _catalog_candidate_predicate(
 ) -> str:
     conditions = [
         f"{catalog_alias}.file_url IS NULL",
-        f"IFNULL(IFNULL({catalog_alias}.file_sha256, {catalog_alias}.sha256), '') = ''",
-        f"IFNULL({catalog_alias}.file_sha256, {catalog_alias}.sha256) != {file_alias}.sha256",
-        f"IFNULL(IFNULL({catalog_alias}.catalog_version, {catalog_alias}.pipeline_version), '') != ?",
-        f"TRIM(IFNULL({catalog_alias}.summary, '')) = ''",
+        f"COALESCE(COALESCE({catalog_alias}.file_sha256, {catalog_alias}.sha256), '') = ''",
+        f"COALESCE({catalog_alias}.file_sha256, {catalog_alias}.sha256) != {file_alias}.sha256",
+        f"COALESCE(COALESCE({catalog_alias}.catalog_version, {catalog_alias}.pipeline_version), '') != ?",
+        f"TRIM(COALESCE({catalog_alias}.summary, '')) = ''",
     ]
     if retry_errors:
         conditions.append(f"{catalog_alias}.status = 'error'")
@@ -2663,21 +2670,21 @@ def get_markdown_conversion_stats(*, db_path: str, category: str | None = None) 
             f.local_path IS NOT NULL AND f.local_path != ''
             AND f.deleted_at IS NULL
             AND (
-                LOWER(IFNULL(f.content_type,'')) LIKE '%pdf%'
-                OR LOWER(IFNULL(f.content_type,'')) LIKE '%word%'
-                OR LOWER(IFNULL(f.content_type,'')) LIKE '%powerpoint%'
-                OR LOWER(IFNULL(f.content_type,'')) LIKE '%presentation%'
-                OR LOWER(IFNULL(f.content_type,'')) LIKE '%document%'
-                OR LOWER(IFNULL(f.content_type,'')) LIKE '%image%'
-                OR LOWER(IFNULL(f.original_filename,'')) LIKE '%.pdf'
-                OR LOWER(IFNULL(f.original_filename,'')) LIKE '%.docx'
-                OR LOWER(IFNULL(f.original_filename,'')) LIKE '%.ppt'
-                OR LOWER(IFNULL(f.original_filename,'')) LIKE '%.pptx'
-                OR LOWER(IFNULL(f.original_filename,'')) LIKE '%.png'
-                OR LOWER(IFNULL(f.original_filename,'')) LIKE '%.jpg'
-                OR LOWER(IFNULL(f.original_filename,'')) LIKE '%.jpeg'
-                OR LOWER(IFNULL(f.original_filename,'')) LIKE '%.webp'
-                OR LOWER(IFNULL(f.original_filename,'')) LIKE '%.bmp'
+                LOWER(COALESCE(f.content_type,'')) LIKE '%pdf%'
+                OR LOWER(COALESCE(f.content_type,'')) LIKE '%word%'
+                OR LOWER(COALESCE(f.content_type,'')) LIKE '%powerpoint%'
+                OR LOWER(COALESCE(f.content_type,'')) LIKE '%presentation%'
+                OR LOWER(COALESCE(f.content_type,'')) LIKE '%document%'
+                OR LOWER(COALESCE(f.content_type,'')) LIKE '%image%'
+                OR LOWER(COALESCE(f.original_filename,'')) LIKE '%.pdf'
+                OR LOWER(COALESCE(f.original_filename,'')) LIKE '%.docx'
+                OR LOWER(COALESCE(f.original_filename,'')) LIKE '%.ppt'
+                OR LOWER(COALESCE(f.original_filename,'')) LIKE '%.pptx'
+                OR LOWER(COALESCE(f.original_filename,'')) LIKE '%.png'
+                OR LOWER(COALESCE(f.original_filename,'')) LIKE '%.jpg'
+                OR LOWER(COALESCE(f.original_filename,'')) LIKE '%.jpeg'
+                OR LOWER(COALESCE(f.original_filename,'')) LIKE '%.webp'
+                OR LOWER(COALESCE(f.original_filename,'')) LIKE '%.bmp'
             )
         """
         params: list[Any] = []
@@ -2810,9 +2817,9 @@ def get_chunk_generation_stats(*, db_path: str, category: str | None = None) -> 
             FROM file_chunk_sets s
             JOIN files f ON f.url = s.file_url
             JOIN catalog_items c ON c.file_url = f.url
-            JOIN global_chunks g INDEXED BY idx_global_chunks_stats_metadata
+            JOIN global_chunks g
               ON g.chunk_set_id = s.chunk_set_id
-            LEFT JOIN chunk_embeddings e INDEXED BY idx_chunk_embeddings_stats_metadata
+            LEFT JOIN chunk_embeddings e
               ON e.embedding_identity_key = ? AND e.chunk_id = g.chunk_id
             WHERE {where} AND s.status = 'ready'
             """,

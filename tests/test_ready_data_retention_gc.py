@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 import threading
@@ -23,6 +24,7 @@ from ai_actuarial.api.services.rag_admin import (
 from ai_actuarial.rag.config import RAGConfig
 from ai_actuarial.rag.knowledge_base import KnowledgeBaseManager
 from ai_actuarial.storage import Storage
+from tests.postgres_helpers import postgres_url_for_path
 
 CUTOFF = "2026-09-01T00:00:00+00:00"
 OLD_MARK = "2026-08-01T00:00:00+00:00"
@@ -31,7 +33,7 @@ YOUNG_MARK = "2026-08-20T00:00:00+00:00"
 
 def _open_storage(tmp_path: Path) -> Storage:
     db_path = tmp_path / "index.db"
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     KnowledgeBaseManager(
         storage,
         config=RAGConfig(data_dir=str(tmp_path / "rag-data")),
@@ -42,6 +44,25 @@ def _open_storage(tmp_path: Path) -> Storage:
         manifest_profile="general",
     )
     return storage
+
+
+def _postgres_business_state(storage: Storage) -> dict[str, str]:
+    table_names = [
+        str(row[0])
+        for row in storage._conn.execute(
+            "SELECT tablename FROM pg_tables "
+            "WHERE schemaname = current_schema() ORDER BY tablename"
+        )
+    ]
+    state: dict[str, str] = {}
+    for table_name in table_names:
+        identifier = table_name.replace('"', '""')
+        rows = storage._conn.execute(
+            f"SELECT COALESCE(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text), '[]'::jsonb) "
+            f'FROM "{identifier}" AS t'
+        ).fetchone()[0]
+        state[table_name] = json.dumps(rows, ensure_ascii=False, sort_keys=True, default=str)
+    return state
 
 
 def _candidate_dir(tmp_path: Path, name: str) -> Path:
@@ -74,7 +95,6 @@ def _record(
         section_count=1,
         built_at="2026-08-01T00:00:00+00:00",
         artifact_digest=digest,
-        source_db=storage.db_path,
         schema_versions={"ready_data": "1"},
     )
 
@@ -123,8 +143,6 @@ def _plan(
     *,
     cutoff_at: str = CUTOFF,
 ) -> dict[str, object]:
-    checkpoint = storage._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
-    assert checkpoint is not None and checkpoint[0] == 0
     return plan_ready_data_publication_gc(
         db_path=storage.db_path,
         cutoff_at=cutoff_at,
@@ -375,7 +393,7 @@ def test_retention_uses_age_and_newest_two_with_stable_id_tiebreak(tmp_path: Pat
         storage.close()
 
 
-def test_dry_run_does_not_change_database_or_files(tmp_path: Path) -> None:
+def test_dry_run_does_not_change_postgresql_rows_or_ready_data_files(tmp_path: Path) -> None:
     storage = _open_storage(tmp_path)
     try:
         active = _active(storage, tmp_path)
@@ -384,77 +402,15 @@ def test_dry_run_does_not_change_database_or_files(tmp_path: Path) -> None:
         ]
         for attempt in attempts:
             _mark(storage, active, attempt)
-        before = storage._conn.iterdump()
-        before_sql = "\n".join(before)
+        before_state = _postgres_business_state(storage)
         candidate_paths = [Path(str(item["output_dir"])) for item in attempts]
 
         plan = _plan(storage)
 
-        after_sql = "\n".join(storage._conn.iterdump())
+        after_state = _postgres_business_state(storage)
         assert plan["mode"] == "dry_run"
-        assert before_sql == after_sql
+        assert before_state == after_state
         assert all(path.is_dir() for path in candidate_paths)
-    finally:
-        storage.close()
-
-
-def test_dry_run_does_not_create_or_change_sqlite_sidecars(tmp_path: Path) -> None:
-    storage = _open_storage(tmp_path)
-    active = _active(storage, tmp_path)
-    attempts = [
-        _record(storage, _candidate_dir(tmp_path, f"build-sidecar-{index}")) for index in range(3)
-    ]
-    for attempt in attempts:
-        _mark(storage, active, attempt)
-    checkpoint = storage._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
-    assert checkpoint is not None and checkpoint[0] == 0
-    db_path = Path(storage.db_path)
-    storage.close()
-    before = {
-        path.name: path.read_bytes()
-        for path in db_path.parent.glob(f"{db_path.name}*")
-        if path.is_file()
-    }
-
-    plan = plan_ready_data_publication_gc(db_path=str(db_path), cutoff_at=CUTOFF)
-
-    after = {
-        path.name: path.read_bytes()
-        for path in db_path.parent.glob(f"{db_path.name}*")
-        if path.is_file()
-    }
-    assert plan["mode"] == "dry_run"
-    assert after == before
-
-
-def test_dry_run_fails_closed_on_nonempty_wal_without_changing_files(tmp_path: Path) -> None:
-    storage = _open_storage(tmp_path)
-    try:
-        checkpoint = storage._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
-        assert checkpoint is not None and checkpoint[0] == 0
-        storage._conn.execute(
-            "UPDATE rag_knowledge_bases SET embedding_model = ? WHERE kb_id = ?",
-            ("text-embedding-3-small", "kb-ready"),
-        )
-        storage._conn.commit()
-        db_path = Path(storage.db_path)
-        wal_path = Path(f"{storage.db_path}-wal")
-        assert wal_path.stat().st_size > 0
-        before = {
-            path.name: path.read_bytes()
-            for path in db_path.parent.glob(f"{db_path.name}*")
-            if path.is_file()
-        }
-
-        with pytest.raises(ValueError, match="checkpointed"):
-            plan_ready_data_publication_gc(db_path=storage.db_path, cutoff_at=CUTOFF)
-
-        after = {
-            path.name: path.read_bytes()
-            for path in db_path.parent.glob(f"{db_path.name}*")
-            if path.is_file()
-        }
-        assert after == before
     finally:
         storage.close()
 
@@ -486,7 +442,7 @@ def test_plan_fingerprint_binds_derived_candidate_membership(tmp_path: Path) -> 
 def test_dry_run_refuses_a_missing_database_without_creating_any_path(tmp_path: Path) -> None:
     missing_db = tmp_path / "missing-parent" / "index.db"
 
-    with pytest.raises(ValueError, match="existing database"):
+    with pytest.raises(ValueError, match="valid PostgreSQL URL"):
         plan_ready_data_publication_gc(db_path=str(missing_db), cutoff_at=CUTOFF)
 
     assert not missing_db.exists()
@@ -805,7 +761,6 @@ def test_nested_reserved_paths_are_never_recursive_gc_candidates(
                 output_dir=str(legacy_dir),
                 artifact_files=[],
                 artifact_digest="legacy-nested-digest",
-                source_db=storage.db_path,
             )
             storage._conn.execute(
                 "UPDATE agentic_ready_publications SET output_dir = ? WHERE publication_id = ?",
@@ -829,7 +784,6 @@ def test_nested_reserved_paths_are_never_recursive_gc_candidates(
                 output_dir=str(failed_dir),
                 artifact_files=[],
                 artifact_digest="failed-history-digest",
-                source_db=storage.db_path,
             )
             storage._conn.execute(
                 "UPDATE agentic_ready_publications SET output_dir = ? WHERE publication_id = ?",
@@ -1368,7 +1322,6 @@ def test_legacy_ready_data_is_never_a_gc_candidate(tmp_path: Path) -> None:
             output_dir=str(legacy_dir),
             artifact_files=[],
             artifact_digest="legacy-digest",
-            source_db=storage.db_path,
         )
         plan = _plan(storage)
 

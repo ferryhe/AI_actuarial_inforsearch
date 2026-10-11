@@ -3,10 +3,11 @@ from __future__ import annotations
 import sqlite3
 
 from ai_actuarial.storage import Storage
+from tests.postgres_helpers import postgres_url_for_path
 
 
 def test_create_and_get_pipeline_run() -> None:
-    storage = Storage(":memory:")
+    storage = Storage(postgres_url_for_path(":memory:"))
     try:
         storage.create_pipeline_run("run-1", correlation_id="corr-1", source_type="scheduled")
         run = storage.get_pipeline_run("run-1")
@@ -22,7 +23,7 @@ def test_create_and_get_pipeline_run() -> None:
 
 
 def test_start_pipeline_run_stamps_started_at() -> None:
-    storage = Storage(":memory:")
+    storage = Storage(postgres_url_for_path(":memory:"))
     try:
         storage.create_pipeline_run("run-1")
         storage.start_pipeline_run("run-1")
@@ -35,7 +36,7 @@ def test_start_pipeline_run_stamps_started_at() -> None:
 
 
 def test_pipeline_run_lease_storage_compatibility() -> None:
-    storage = Storage(":memory:")
+    storage = Storage(postgres_url_for_path(":memory:"))
     try:
         storage.create_pipeline_run("run-lease")
         assert storage.claim_pipeline_run("run-lease", lease_owner="worker-a") is True
@@ -47,7 +48,7 @@ def test_pipeline_run_lease_storage_compatibility() -> None:
 
 
 def test_update_pipeline_run_fields() -> None:
-    storage = Storage(":memory:")
+    storage = Storage(postgres_url_for_path(":memory:"))
     try:
         storage.create_pipeline_run("run-1")
         storage.update_pipeline_run(
@@ -68,7 +69,7 @@ def test_update_pipeline_run_fields() -> None:
 
 
 def test_list_unfinished_pipeline_runs() -> None:
-    storage = Storage(":memory:")
+    storage = Storage(postgres_url_for_path(":memory:"))
     try:
         storage.create_pipeline_run("run-pending")
         storage.create_pipeline_run("run-running")
@@ -84,7 +85,7 @@ def test_list_unfinished_pipeline_runs() -> None:
 
 
 def test_upsert_and_get_pipeline_stages() -> None:
-    storage = Storage(":memory:")
+    storage = Storage(postgres_url_for_path(":memory:"))
     try:
         storage.create_pipeline_run("run-1")
         storage.upsert_pipeline_stage(
@@ -105,7 +106,7 @@ def test_upsert_and_get_pipeline_stages() -> None:
 
 
 def test_upsert_pipeline_stage_resets() -> None:
-    storage = Storage(":memory:")
+    storage = Storage(postgres_url_for_path(":memory:"))
     try:
         storage.create_pipeline_run("run-1")
         storage.upsert_pipeline_stage(
@@ -142,7 +143,7 @@ def test_upsert_pipeline_stage_resets() -> None:
 
 
 def test_update_pipeline_stage_fields() -> None:
-    storage = Storage(":memory:")
+    storage = Storage(postgres_url_for_path(":memory:"))
     try:
         storage.create_pipeline_run("run-1")
         storage.upsert_pipeline_stage("run-1", "catalog", stage_order=1)
@@ -166,7 +167,7 @@ def test_update_pipeline_stage_fields() -> None:
 
 
 def test_create_update_get_child_runs() -> None:
-    storage = Storage(":memory:")
+    storage = Storage(postgres_url_for_path(":memory:"))
     try:
         storage.create_pipeline_run("parent-1", correlation_id="corr")
         storage.create_child_run("child-1", "parent-1", correlation_id="corr")
@@ -188,7 +189,7 @@ def test_v5_migration_adds_pipeline_tables(tmp_path) -> None:
     from ai_actuarial.sqlite_schema import apply_schema
 
     db_path = str(tmp_path / "v4.db")
-    storage = Storage(db_path)
+    storage = Storage._legacy_sqlite_schema_for_validation(db_path)
     try:
         # Downgrade a fresh v5 DB back to v4: drop the pipeline tables and rewind.
         storage._conn.execute("DROP INDEX idx_file_chunk_sets_latest")

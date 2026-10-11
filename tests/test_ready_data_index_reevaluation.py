@@ -23,6 +23,7 @@ from ai_actuarial.rag.indexing import IndexingPipeline
 from ai_actuarial.rag.kb_index import resolve_kb_bound_chunks
 from ai_actuarial.rag.knowledge_base import KnowledgeBaseManager
 from ai_actuarial.storage import Storage
+from tests.postgres_helpers import postgres_url_for_path
 
 SOURCE_KIND = "catalog_chunks_snapshot"
 
@@ -96,7 +97,7 @@ def _record_publication(
     status: str = "validated",
     index_version_id: str = "idx-test",
 ) -> dict[str, Any]:
-    output_dir = Path(storage.db_path).resolve().parent / "agentic_ready_data" / "staging" / label
+    output_dir = storage.data_root / "agentic_ready_data" / "staging" / label
     output_dir.mkdir(parents=True, exist_ok=True)
     manifest_path = output_dir / "ready_data_manifest.json"
     manifest_path.write_text(
@@ -118,7 +119,6 @@ def _record_publication(
         section_count=1,
         built_at="2026-08-19T00:00:00+00:00",
         artifact_digest=_ready_data_artifact_digest(str(output_dir), artifacts),
-        source_db=storage.db_path,
         smoke_result={
             "contract_version": "ready-data-staging-smoke.v1",
             "status": "passed",
@@ -194,7 +194,7 @@ def _builder(
         index_version_id: str,
         expected_source_snapshot_fingerprint: str,
     ) -> dict[str, Any]:
-        storage = Storage(db_path)
+        storage = Storage(postgres_url_for_path(db_path))
         try:
             state = _source_state(storage, kb_id, profile)
             generation = int(state["pending_evaluation_generation"])
@@ -224,9 +224,9 @@ def _setup_automation(
     active_source_id: str | None,
     publish: bool,
 ) -> tuple[str, str, dict[str, Any] | None]:
-    db_path = str(tmp_path / "index.db")
+    database_url = postgres_url_for_path(tmp_path / "index.db")
     kb_id = "kb-index-reeval"
-    storage = Storage(db_path)
+    storage = Storage(database_url)
     try:
         _create_kb(storage, kb_id)
         active = (
@@ -239,7 +239,7 @@ def _setup_automation(
         assert _source_state(storage, kb_id)["pending_evaluation"] is True
     finally:
         storage.close()
-    return db_path, kb_id, active
+    return database_url, kb_id, active
 
 
 def _publication_count(storage: Storage, kb_id: str) -> int:
@@ -338,7 +338,7 @@ def _commit_builder_index(storage: Storage, kb_id: str) -> dict[str, Any]:
 
 
 def test_ready_index_commit_marks_transactional_neutral_event(tmp_path: Path) -> None:
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         _create_kb(storage)
         record = _commit_index(storage, "kb-index-reeval")
@@ -353,7 +353,7 @@ def test_ready_index_commit_marks_transactional_neutral_event(tmp_path: Path) ->
 
 
 def test_embedding_tuple_change_marks_embedding_index_committed(tmp_path: Path) -> None:
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         _create_kb(storage)
         _commit_index(storage, "kb-index-reeval")
@@ -375,7 +375,7 @@ def test_embedding_tuple_change_marks_embedding_index_committed(tmp_path: Path) 
 
 
 def test_unchanged_embedding_tuple_uses_index_committed(tmp_path: Path) -> None:
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         _create_kb(storage)
         _commit_index(storage, "kb-index-reeval")
@@ -389,7 +389,7 @@ def test_unchanged_embedding_tuple_uses_index_committed(tmp_path: Path) -> None:
 
 
 def test_first_ready_index_uses_index_committed(tmp_path: Path) -> None:
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         _create_kb(storage)
         _commit_index(
@@ -402,7 +402,7 @@ def test_first_ready_index_uses_index_committed(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("status", ["error", "stopped"])
 def test_non_ready_index_commit_does_not_mark_source_event(tmp_path: Path, status: str) -> None:
-    storage = Storage(str(tmp_path / f"{status}.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / f"{status}.db")))
     try:
         _create_kb(storage)
         _commit_index(storage, "kb-index-reeval")
@@ -420,7 +420,7 @@ def test_non_ready_index_preserves_last_ready_embedding_tuple(
     tmp_path: Path,
     status: str,
 ) -> None:
-    storage = Storage(str(tmp_path / f"preserve-{status}.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / f"preserve-{status}.db")))
     try:
         _create_kb(storage)
         _commit_index(storage, "kb-index-reeval")
@@ -445,7 +445,7 @@ def test_non_ready_index_preserves_last_ready_embedding_tuple(
 def test_deleted_and_recreated_kb_treats_next_ready_index_as_first(
     tmp_path: Path,
 ) -> None:
-    storage = Storage(str(tmp_path / "recreated.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "recreated.db")))
     try:
         manager = KnowledgeBaseManager(
             storage,
@@ -499,7 +499,7 @@ def test_deleted_and_recreated_kb_treats_next_ready_index_as_first(
 def test_delete_kb_rejects_outer_transaction_before_filesystem_removal(
     tmp_path: Path,
 ) -> None:
-    storage = Storage(str(tmp_path / "nested-delete.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "nested-delete.db")))
     try:
         data_dir = tmp_path / "rag-data"
         manager = KnowledgeBaseManager(storage, config=RAGConfig(data_dir=str(data_dir)))
@@ -528,17 +528,20 @@ def test_delete_kb_rejects_outer_transaction_before_filesystem_removal(
         storage.close()
 
 
-def test_legacy_orphan_index_state_is_not_inherited_by_recreated_kb(
-    tmp_path: Path,
-) -> None:
+def test_ready_index_state_is_cleared_before_kb_id_reuse(tmp_path: Path) -> None:
     db_path = str(tmp_path / "legacy-orphan.db")
-    storage = Storage(db_path)
+    storage = Storage(postgres_url_for_path(db_path))
     try:
-        KnowledgeBaseManager(
+        manager = KnowledgeBaseManager(
             storage,
             config=RAGConfig(data_dir=str(tmp_path / "rag-data")),
         )
-        storage._conn.execute("PRAGMA foreign_keys=OFF")
+        manager.create_kb(
+            kb_id="kb-index-reeval",
+            name="Original KB",
+            kb_mode="manual",
+            manifest_profile="general",
+        )
         storage._conn.execute(
             """
             INSERT INTO kb_index_versions (
@@ -574,12 +577,6 @@ def test_legacy_orphan_index_state_is_not_inherited_by_recreated_kb(
             ),
         )
         storage._conn.commit()
-        storage._conn.execute("PRAGMA foreign_keys=ON")
-    finally:
-        storage.close()
-
-    storage = Storage(db_path)
-    try:
         assert (
             storage._conn.execute(
                 "SELECT 1 FROM kb_ready_index_state WHERE kb_id = ?",
@@ -594,9 +591,20 @@ def test_legacy_orphan_index_state_is_not_inherited_by_recreated_kb(
             ).fetchone()
             is not None
         )
-        manager = KnowledgeBaseManager(
-            storage,
-            config=RAGConfig(data_dir=str(tmp_path / "rag-data")),
+        assert manager.delete_kb("kb-index-reeval") is True
+        assert (
+            storage._conn.execute(
+                "SELECT 1 FROM kb_ready_index_state WHERE kb_id = ?",
+                ("kb-index-reeval",),
+            ).fetchone()
+            is None
+        )
+        assert (
+            storage._conn.execute(
+                "SELECT 1 FROM kb_index_versions WHERE kb_id = ?",
+                ("kb-index-reeval",),
+            ).fetchone()
+            is None
         )
         manager.create_kb(
             kb_id="kb-index-reeval",
@@ -621,7 +629,7 @@ def test_legacy_orphan_index_state_is_not_inherited_by_recreated_kb(
     finally:
         storage.close()
 
-    storage = Storage(db_path)
+    storage = Storage(postgres_url_for_path(db_path))
     try:
         assert (
             storage._conn.execute(
@@ -650,7 +658,7 @@ def test_legacy_orphan_index_state_is_not_inherited_by_recreated_kb(
 
 
 def test_ready_index_commit_advances_each_known_profile_once(tmp_path: Path) -> None:
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         _create_kb(storage)
         for profile in ("general", "regulation", "formula"):
@@ -672,7 +680,7 @@ def test_ready_index_commit_advances_each_known_profile_once(tmp_path: Path) -> 
 
 
 def test_marker_failure_rolls_back_index_version_update(tmp_path: Path, monkeypatch) -> None:
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         _create_kb(storage)
         previous = _commit_index(storage, "kb-index-reeval")
@@ -771,6 +779,7 @@ def test_ready_index_record_failure_marks_native_task_error_and_keeps_artifact(
 
     monkeypatch.chdir(tmp_path)
     db_path = tmp_path / "runtime.db"
+    database_url = postgres_url_for_path(db_path)
     config_path = tmp_path / "sites.yaml"
     config_path.write_text(
         "\n".join(
@@ -784,6 +793,7 @@ def test_ready_index_record_failure_marks_native_task_error_and_keeps_artifact(
         encoding="utf-8",
     )
     monkeypatch.setenv("CONFIG_PATH", str(config_path))
+    monkeypatch.setenv("DATABASE_URL", database_url)
     kb_id = "kb-runtime-index-version-failure"
     index_path = tmp_path / "rag-data" / kb_id / "index.faiss"
     kb = SimpleNamespace(
@@ -840,7 +850,7 @@ def test_ready_index_record_failure_marks_native_task_error_and_keeps_artifact(
 
 
 def test_automation_disabled_keeps_pending_evaluation_and_does_not_build(tmp_path: Path) -> None:
-    db_path = str(tmp_path / "index.db")
+    db_path = postgres_url_for_path(tmp_path / "index.db")
     storage = Storage(db_path)
     calls: list[int] = []
     try:
@@ -873,7 +883,7 @@ def test_matching_healthy_active_settles_up_to_date_without_builder(tmp_path: Pa
         publish=True,
     )
     calls: list[int] = []
-    storage = Storage(db_path)
+    storage = Storage(postgres_url_for_path(db_path))
     try:
         storage._conn.execute(
             "UPDATE agentic_ready_publications SET index_version_id = ? WHERE publication_id = ?",
@@ -891,7 +901,7 @@ def test_matching_healthy_active_settles_up_to_date_without_builder(tmp_path: Pa
         heartbeat_interval_seconds=0,
     )
 
-    storage = Storage(db_path)
+    storage = Storage(postgres_url_for_path(db_path))
     try:
         state = storage.get_agentic_ready_publication_state(kb_id=kb_id, profile="general")
         active_publication = dict(state["active_publication"])
@@ -942,7 +952,7 @@ def test_changed_fingerprint_preserves_build_only_and_auto_publish_behavior(
     assert second["status"] == "idle"
     assert calls and len(calls) == 1
     if publish:
-        storage = Storage(db_path)
+        storage = Storage(postgres_url_for_path(db_path))
         try:
             assert _source_state(storage, kb_id)["pending_evaluation"] is False
         finally:
@@ -952,9 +962,9 @@ def test_changed_fingerprint_preserves_build_only_and_auto_publish_behavior(
 def test_metadata_change_coalesced_with_index_event_builds_latest_generation_once(
     tmp_path: Path,
 ) -> None:
-    db_path = str(tmp_path / "index.db")
+    db_path = postgres_url_for_path(tmp_path / "index.db")
     kb_id = "kb-index-reeval"
-    storage = Storage(db_path)
+    storage = Storage(postgres_url_for_path(db_path))
     try:
         _create_kb(storage, kb_id)
         file_url = _seed_builder_source(storage, tmp_path, kb_id)
@@ -1001,7 +1011,7 @@ def test_metadata_change_coalesced_with_index_event_builds_latest_generation_onc
         index_version_id: str,
         expected_source_snapshot_fingerprint: str,
     ) -> dict[str, Any]:
-        current = Storage(db_path)
+        current = Storage(postgres_url_for_path(db_path))
         try:
             calls.append(
                 int(_source_state(current, kb_id, profile)["pending_evaluation_generation"])
@@ -1063,7 +1073,7 @@ def test_non_active_slot_record_does_not_take_up_to_date_fast_path(tmp_path: Pat
         active_source_id="same-source",
         publish=False,
     )
-    storage = Storage(db_path)
+    storage = Storage(postgres_url_for_path(db_path))
     try:
         storage._conn.execute(
             "UPDATE agentic_ready_publications SET status = 'validated' WHERE publication_id = ?",
@@ -1098,7 +1108,7 @@ def test_missing_or_non_comparable_active_enters_existing_build_flow(
         publish=False,
     )
     if active_mode == "non_comparable":
-        storage = Storage(db_path)
+        storage = Storage(postgres_url_for_path(db_path))
         try:
             storage._conn.execute(
                 "UPDATE agentic_ready_publications SET source_version_kind = '', source_version_id = '' WHERE publication_id = ?",
@@ -1108,7 +1118,7 @@ def test_missing_or_non_comparable_active_enters_existing_build_flow(
         finally:
             storage.close()
     elif active_mode == "legacy":
-        storage = Storage(db_path)
+        storage = Storage(postgres_url_for_path(db_path))
         try:
             storage._conn.execute(
                 "UPDATE agentic_ready_publications SET source_version_kind = 'legacy_artifact' WHERE publication_id = ?",
@@ -1133,8 +1143,8 @@ def test_missing_or_non_comparable_active_enters_existing_build_flow(
 
 
 def test_fingerprint_matches_build_identity_and_writes_no_artifacts(tmp_path: Path) -> None:
-    db_path = str(tmp_path / "source.db")
-    storage = Storage(db_path)
+    db_path = postgres_url_for_path(tmp_path / "source.db")
+    storage = Storage(postgres_url_for_path(db_path))
     try:
         _create_kb(storage)
         _seed_builder_source(storage, tmp_path, "kb-index-reeval")
@@ -1156,7 +1166,7 @@ def test_fingerprint_matches_build_identity_and_writes_no_artifacts(tmp_path: Pa
         index_version_id=str(committed["index_version_id"]),
         expected_source_snapshot_fingerprint=str(fingerprint["source_snapshot_fingerprint"]),
     )
-    assert {path.name for path in created_by_fingerprint} <= {"source.db-wal", "source.db-shm"}
+    assert not created_by_fingerprint
     assert not any((tmp_path / path).is_dir() for path in created_by_fingerprint)
     assert fingerprint["source_version_kind"] == manifest["source_version_kind"]
     assert fingerprint["source_version_id"] == manifest["source_version_id"]
@@ -1180,7 +1190,7 @@ def test_prebuild_races_fail_closed_without_starting_builder(tmp_path: Path, rac
 
     def race_fingerprint(*, db_path: str, kb_id: str, profile: str) -> dict[str, str]:
         assert profile == "general"
-        storage = Storage(db_path)
+        storage = Storage(postgres_url_for_path(db_path))
         try:
             if race == "generation":
                 storage.mark_agentic_ready_source_event(
@@ -1235,7 +1245,7 @@ def test_prebuild_races_fail_closed_without_starting_builder(tmp_path: Path, rac
 
     assert result["status"] in {"superseded", "claim_lost", "failed", "pending"}
     assert calls == []
-    storage = Storage(db_path)
+    storage = Storage(postgres_url_for_path(db_path))
     try:
         assert _source_state(storage, kb_id)["pending_evaluation"] is True
     finally:
@@ -1262,7 +1272,7 @@ def test_fingerprint_failure_records_automation_failure_without_slot_changes(
         heartbeat_interval_seconds=0,
     )
 
-    storage = Storage(db_path)
+    storage = Storage(postgres_url_for_path(db_path))
     try:
         state = storage.get_agentic_ready_publication_state(kb_id=kb_id, profile="general")
         automation = storage.get_agentic_ready_automation_state(kb_id=kb_id, profile="general")
@@ -1291,7 +1301,7 @@ def test_validation_failure_does_not_change_active_or_previous(tmp_path: Path) -
         heartbeat_interval_seconds=0,
     )
 
-    storage = Storage(db_path)
+    storage = Storage(postgres_url_for_path(db_path))
     try:
         state = storage.get_agentic_ready_publication_state(kb_id=kb_id, profile="general")
         assert result["status"] == "failed"
@@ -1318,7 +1328,7 @@ def test_repeated_same_index_profile_reevaluation_creates_no_publication(tmp_pat
         validator=_valid,
         heartbeat_interval_seconds=0,
     )
-    storage = Storage(db_path)
+    storage = Storage(postgres_url_for_path(db_path))
     try:
         _commit_index(storage, kb_id)
     finally:
@@ -1331,7 +1341,7 @@ def test_repeated_same_index_profile_reevaluation_creates_no_publication(tmp_pat
         heartbeat_interval_seconds=0,
     )
 
-    storage = Storage(db_path)
+    storage = Storage(postgres_url_for_path(db_path))
     try:
         assert first["status"] == second["status"] == "up_to_date"
         assert calls == []

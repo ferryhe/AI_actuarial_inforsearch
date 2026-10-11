@@ -2,9 +2,13 @@
 """Run Agentic RAG retrieval eval cases and print a report.
 
 Usage:
-    python3 scripts/run_agentic_retrieval_eval.py
-    python3 scripts/run_agentic_retrieval_eval.py --db data/index.db
-    python3 scripts/run_agentic_retrieval_eval.py --cases eval/cases.jsonl --json
+    python scripts/run_agentic_retrieval_eval.py --help
+    python scripts/run_agentic_retrieval_eval.py --cases eval/cases.jsonl --json
+    python scripts/run_agentic_retrieval_eval.py --db-url-env DATABASE_URL --json
+    python scripts/run_agentic_retrieval_eval.py --mode agentic --output-dir data/agentic_ready_data
+
+Retrieval mode reads PostgreSQL via DATABASE_URL (or --db-url-env). DATA_DIR or
+paths.data controls ready-data and other file artifacts; it does not select the database.
 """
 
 import sys

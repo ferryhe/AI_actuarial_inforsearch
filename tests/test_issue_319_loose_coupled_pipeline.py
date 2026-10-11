@@ -21,6 +21,7 @@ from ai_actuarial.pipeline_baton import PipelineBaton
 from ai_actuarial.rag.config import RAGConfig
 from ai_actuarial.storage import Storage
 from ai_actuarial.task_runtime import NativeTaskRuntime
+from tests.postgres_helpers import postgres_url_for_path
 
 
 class _Tasks:
@@ -381,7 +382,7 @@ def _seed_ready_chunk_set(
 def test_selector_free_embedding_backlog_uses_real_storage_eligibility_and_is_idempotent(
     tmp_path: Path,
 ) -> None:
-    storage = Storage(str(tmp_path / "embedding-backlog.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "embedding-backlog.db")))
     try:
         profile = storage.create_chunk_profile(
             name="issue-319",
@@ -466,7 +467,7 @@ def test_selector_free_embedding_backlog_uses_real_storage_eligibility_and_is_id
 def test_selector_free_embedding_rejects_profile_filter_at_selection_boundary(
     tmp_path: Path,
 ) -> None:
-    storage = Storage(str(tmp_path / "embedding-profile-filter.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "embedding-profile-filter.db")))
     try:
         identity = compute_embedding_identity(
             RAGConfig(embedding_provider="local", embedding_model="issue-319-model"),
@@ -541,7 +542,7 @@ def test_manual_api_and_baton_use_the_same_selector_free_embedding_mode(tmp_path
     baton.tick()
     assert tasks.started[-1][:2] == ("embedding_generation", {"incremental": True})
 
-    storage = Storage(str(tmp_path / "selection-parity.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "selection-parity.db")))
     try:
         profile = storage.create_chunk_profile(
             name="issue-319-parity",

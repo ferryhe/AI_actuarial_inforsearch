@@ -410,17 +410,6 @@ Settings.ENABLE_FILE_DELETION  # reason: Public exported Settings contract.
 Settings.FASTAPI_ENABLE_MIGRATION_INVENTORY  # reason: Public exported Settings contract.
 Settings.is_search_engine_configured  # reason: Public exported Settings method.
 
-from ai_actuarial.db_models import ChunkEmbedding, User, UserActivityLog, UserQuota
-
-User  # reason: SQLAlchemy discovers this declarative model through Base metadata.
-User.email_verified  # reason: SQLAlchemy maps this declarative column dynamically.
-User.email_verified_at  # reason: SQLAlchemy maps this declarative column dynamically.
-User.last_login_at  # reason: SQLAlchemy maps this declarative column dynamically.
-UserQuota  # reason: SQLAlchemy discovers this declarative model through Base metadata.
-UserQuota.ai_chat_count  # reason: SQLAlchemy maps this declarative column dynamically.
-UserActivityLog  # reason: SQLAlchemy discovers this declarative model through Base metadata.
-ChunkEmbedding.validated_at  # reason: SQLAlchemy maps this declarative column dynamically.
-
 from ai_actuarial.markdown_conversion_config import (
     markdown_conversion_config_file_exists,
 )
@@ -434,6 +423,11 @@ RAGConfig.chunk_strategy  # reason: Public RAG configuration field loaded from Y
 from ai_actuarial.shared_auth import PUBLIC_PERMISSIONS_WHEN_AUTH_DISABLED
 
 PUBLIC_PERMISSIONS_WHEN_AUTH_DISABLED  # reason: Explicit backwards-compatible public alias.
+
+from ai_actuarial.shared_auth import AuthTokenRecord
+
+AuthTokenRecord.last_used_at  # reason: Public TypedDict key for persisted token metadata.
+AuthTokenRecord.revoked_at  # reason: Public TypedDict key for persisted token metadata.
 
 from ai_actuarial.storage import Storage
 
@@ -452,10 +446,26 @@ from tests.test_deployment_config_source import _CaddyStaticUpstream
 _CaddyStaticUpstream.do_GET  # reason: BaseHTTPRequestHandler dispatches this test upstream callback dynamically.
 
 from tests.agentic_rag.test_ready_data_builder import test_db_path
-from tests.conftest import admin_token, guest_token, sample_task, sample_user
+from tests.conftest import (
+    admin_token,
+    cleanup_function_postgres_schemas,
+    guest_token,
+    pytest_sessionfinish,
+    restore_database_test_environment,
+    sample_task,
+    sample_user,
+)
 from tests.test_api_logging import restore_logging_state
+from tests.test_capacity_gate import native_runtime_database
 from tests.test_client_ip import proxy_config
 from tests.test_fastapi_entrypoint import _hermetic_fastapi_env
+from tests.test_fastapi_no_flask_runtime import (
+    _isolated_postgres_database as _no_flask_postgres_database,
+)
+from tests.test_production_recovery import _owned_postgres_schema
+from tests.test_react_fastapi_authority import (
+    _isolated_postgres_database as _react_postgres_database,
+)
 from tests.test_recategory import env
 
 test_db_path  # reason: Pytest injects this fixture by name.
@@ -465,7 +475,14 @@ sample_task  # reason: Pytest injects this fixture by name.
 sample_user  # reason: Pytest injects this fixture by name.
 restore_logging_state  # reason: Pytest injects this fixture by name.
 proxy_config  # reason: Pytest injects this autouse fixture by name.
+cleanup_function_postgres_schemas  # reason: Pytest applies this autouse per-test schema cleanup fixture by name.
+native_runtime_database  # reason: Pytest injects this function-scoped PG fixture by name.
 _hermetic_fastapi_env  # reason: Pytest injects this fixture by name.
+_owned_postgres_schema  # reason: Pytest applies this autouse schema-isolation fixture by name.
+_no_flask_postgres_database  # reason: Pytest applies this autouse PostgreSQL isolation fixture by name.
+_react_postgres_database  # reason: Pytest applies this autouse PostgreSQL isolation fixture by name.
+pytest_sessionfinish  # reason: Pytest invokes this session teardown hook dynamically.
+restore_database_test_environment  # reason: Pytest applies this autouse environment fixture by name.
 env  # reason: Pytest injects this fixture by name.
 
 

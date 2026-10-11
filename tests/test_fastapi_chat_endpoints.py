@@ -14,9 +14,12 @@ from itsdangerous import URLSafeSerializer
 from ai_actuarial.api.app import create_app
 from ai_actuarial.api.deps import AuthContext
 from ai_actuarial.api.services.chat import _build_file_links
+from tests.postgres_helpers import postgres_url_for_path, record_sql
 
 
-def test_chat_document_sources_rejects_more_than_three_before_quota(monkeypatch) -> None:
+def test_chat_document_sources_rejects_more_than_three_before_quota(
+    tmp_path: Path, monkeypatch
+) -> None:
     import ai_actuarial.api.services.chat as chat_service
 
     quota_called = False
@@ -31,7 +34,7 @@ def test_chat_document_sources_rejects_more_than_three_before_quota(monkeypatch)
 
     try:
         chat_service.query_chat(
-            db_path=":memory:",
+            db_path=postgres_url_for_path(tmp_path / "invalid-chat.db"),
             request=object(),
             auth=None,
             payload={
@@ -179,7 +182,7 @@ def _seed_storage(db_path: Path, files_dir: Path) -> dict[str, str]:
     beta_path = files_dir / "beta.pdf"
     beta_path.write_bytes(PDF_BYTES + b"\n% beta")
 
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         alpha_url = "https://alpha.example/doc-a.pdf"
         beta_url = "https://beta.example/doc-b.pdf"
@@ -274,7 +277,7 @@ def _seed_knowledge_bases(client: TestClient, admin_token: str) -> None:
             headers={"X-Auth-Token": admin_token},
         )
         assert response.status_code == 201, response.text
-    storage = Storage(str(client.app.state.db_path))
+    storage = Storage(client.app.state.database)
     try:
         storage.upsert_agentic_ready_manifest(
             kb_id="chat-kb-a",
@@ -282,7 +285,7 @@ def _seed_knowledge_bases(client: TestClient, admin_token: str) -> None:
             profile_version="1",
             status="ready",
             output_dir=str(
-                Path(client.app.state.db_path).parent
+                Path(client.app.state.data_root)
                 / "agentic_ready_data"
                 / "kbs"
                 / "chat-kb-a"
@@ -293,7 +296,6 @@ def _seed_knowledge_bases(client: TestClient, admin_token: str) -> None:
             doc_count=1,
             section_count=2,
             built_at="2026-06-15T00:00:00+00:00",
-            source_db=str(client.app.state.db_path),
         )
     finally:
         storage.close()
@@ -384,6 +386,8 @@ def _write_chat_agentic_ready_data(output_dir: Path) -> None:
 
 def _build_test_client(tmp_path: Path, monkeypatch) -> tuple[TestClient, object, dict[str, str]]:
     db_path, config_path, categories_path, files_dir = _write_config_files(tmp_path)
+    database_url = postgres_url_for_path(db_path)
+    monkeypatch.setenv("DATABASE_URL", database_url)
     seed = _seed_storage(db_path, files_dir)
     monkeypatch.setenv("CONFIG_PATH", str(config_path))
     monkeypatch.setenv("CATEGORIES_CONFIG_PATH", str(categories_path))
@@ -502,7 +506,7 @@ def test_fastapi_chat_available_documents_keeps_catalog_title_and_filename_separ
     monkeypatch,
 ) -> None:
     client, _app, seed = _build_test_client(tmp_path, monkeypatch)
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         storage._conn.execute(
             "UPDATE files SET title = ? WHERE url = ?",
@@ -536,7 +540,7 @@ def test_guest_equivalent_tokens_can_list_public_chat_kbs(tmp_path: Path, monkey
     client, _app, _seed = _build_test_client(tmp_path, monkeypatch)
 
     token = "unknown-role-token"
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         storage.upsert_auth_token_by_hash(
             subject="unknown-role-token",
@@ -654,9 +658,17 @@ def _install_guest_chat_fakes(
             message_id = f"msg_{role}"
             self.storage._conn.execute(
                 """
-                INSERT OR REPLACE INTO messages
+                INSERT INTO messages
                 (message_id, conversation_id, role, content, citations, created_at, token_count, metadata)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT (message_id) DO UPDATE SET
+                    conversation_id = EXCLUDED.conversation_id,
+                    role = EXCLUDED.role,
+                    content = EXCLUDED.content,
+                    citations = EXCLUDED.citations,
+                    created_at = EXCLUDED.created_at,
+                    token_count = EXCLUDED.token_count,
+                    metadata = EXCLUDED.metadata
                 """,
                 (
                     message_id,
@@ -804,7 +816,7 @@ def test_fastapi_standard_retrieval_failure_has_stable_failed_turn_contract(
     assert raw_detail not in response.text
     assert raw_detail not in caplog.text
 
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         rows = storage._conn.execute(
             "SELECT role, metadata FROM messages WHERE conversation_id = ? ORDER BY created_at",
@@ -883,7 +895,7 @@ def test_fastapi_all_multi_kb_read_failures_are_retrieval_failure_not_no_results
     assert "chat-kb-a" not in caplog.text
     assert "chat-kb-b" not in caplog.text
 
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         rows = storage._conn.execute(
             "SELECT role, metadata FROM messages WHERE conversation_id = ? ORDER BY created_at",
@@ -938,7 +950,7 @@ def test_fastapi_deleted_selected_kb_is_safe_nonretryable_failed_turn(
     assert raw_error not in response.text
     assert raw_error not in caplog.text
 
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         rows = storage._conn.execute(
             "SELECT role, metadata FROM messages WHERE conversation_id = ? ORDER BY created_at",
@@ -1039,7 +1051,7 @@ def test_fastapi_injected_invalid_config_is_revalidated_and_persisted_safely(
     assert "347.125" not in caplog.text
     assert "SENSITIVE-API-KEY-347" not in caplog.text
 
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         rows = storage._conn.execute(
             "SELECT role, metadata FROM messages WHERE conversation_id = ? ORDER BY created_at",
@@ -1089,7 +1101,7 @@ def test_fastapi_chatbot_config_parse_failure_persists_safe_failed_turn_and_hist
     assert raw_bad_value not in response.text
     assert raw_bad_value not in caplog.text
 
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         rows = storage._conn.execute(
             "SELECT message_id, role, metadata FROM messages WHERE conversation_id = ?",
@@ -1099,7 +1111,7 @@ def test_fastapi_chatbot_config_parse_failure_persists_safe_failed_turn_and_hist
         storage.close()
 
     assert len(rows) == 1
-    assert rows[0][0:2] == (message_id, "user")
+    assert tuple(rows[0][0:2]) == (message_id, "user")
     assert json.loads(rows[0][2]) == {
         "status": "failed",
         "retry_request": {
@@ -1156,7 +1168,7 @@ def test_fastapi_invalid_context_budget_persists_auth_failure_for_short_document
     assert "4000" not in response.text
     assert "4000" not in caplog.text
 
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         row = storage._conn.execute(
             "SELECT message_id, role, metadata FROM messages WHERE conversation_id = ?",
@@ -1165,7 +1177,7 @@ def test_fastapi_invalid_context_budget_persists_auth_failure_for_short_document
     finally:
         storage.close()
 
-    assert row[0:2] == (message_id, "user")
+    assert tuple(row[0:2]) == (message_id, "user")
     metadata = json.loads(row[2])
     assert metadata["status"] == "failed"
     assert metadata["error_code"] == "CHAT_PROVIDER_AUTH"
@@ -1209,7 +1221,7 @@ def test_fastapi_missing_provider_key_persists_guest_failed_turn_and_session(
     assert "OPENAI_API_KEY" not in response.text
     assert "OPENAI_API_KEY" not in caplog.text
 
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         row = storage._conn.execute(
             "SELECT message_id, role, metadata FROM messages WHERE conversation_id = ?",
@@ -1217,7 +1229,7 @@ def test_fastapi_missing_provider_key_persists_guest_failed_turn_and_session(
         ).fetchone()
     finally:
         storage.close()
-    assert row[0:2] == (message_id, "user")
+    assert tuple(row[0:2]) == (message_id, "user")
     metadata = json.loads(row[2])
     assert metadata["status"] == "failed"
     assert metadata["error_code"] == "CHAT_PROVIDER_AUTH"
@@ -1264,7 +1276,7 @@ def test_fastapi_missing_authoritative_config_persists_guest_failed_turn_safely(
     assert str(missing_config) not in caplog.text
     assert "Authoritative runtime configuration" not in response.text
 
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         rows = storage._conn.execute(
             "SELECT message_id, role, metadata FROM messages WHERE conversation_id = ?",
@@ -1273,7 +1285,7 @@ def test_fastapi_missing_authoritative_config_persists_guest_failed_turn_safely(
     finally:
         storage.close()
     assert len(rows) == 1
-    assert rows[0][0:2] == (message_id, "user")
+    assert tuple(rows[0][0:2]) == (message_id, "user")
     metadata = json.loads(rows[0][2])
     assert metadata["status"] == "failed"
     assert metadata["error_code"] == "CHAT_PROVIDER_AUTH"
@@ -1330,7 +1342,7 @@ def test_fastapi_agentic_failure_sets_guest_session_and_failed_identity(
     assert raw_detail not in response.text
     assert raw_detail not in caplog.text
 
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         rows = storage._conn.execute(
             "SELECT role, metadata FROM messages WHERE conversation_id = ? ORDER BY created_at",
@@ -1409,7 +1421,7 @@ def test_direct_document_internal_recovery_uses_one_quota_and_one_message_pair(
     assert FakeRecoveringLLMClient.generate_calls == 1
     assert FakeRecoveringLLMClient.provider_calls == 2
 
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         assert (
             storage.get_ai_chat_quota_used(
@@ -1449,7 +1461,7 @@ def test_chat_batch_canonicalizes_titles_without_sqlite_parameter_or_n_plus_one_
             for index in range(1005)
         ],
     ]
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     statements: list[str] = []
     try:
         storage._conn.execute(
@@ -1457,7 +1469,7 @@ def test_chat_batch_canonicalizes_titles_without_sqlite_parameter_or_n_plus_one_
             ("2026-08-28T00:00:00+00:00", seed["beta_url"]),
         )
         storage._conn.commit()
-        storage._conn.set_trace_callback(statements.append)
+        record_sql(storage._conn, statements)
         chat_service._canonicalize_file_references(storage, references)
         chat_service._canonicalize_file_references(storage, [])
     finally:
@@ -1500,11 +1512,7 @@ def test_fastapi_chat_standard_query_and_history_use_fresh_canonical_file_names(
 
     def tracking_storage(db_path: str):
         tracked = original_storage(db_path)
-        tracked._conn.set_trace_callback(
-            lambda statement: (
-                response_file_queries.append(statement) if "FROM files" in statement else None
-            )
-        )
+        record_sql(tracked._conn, response_file_queries, include=lambda sql: "FROM files" in sql)
         return tracked
 
     monkeypatch.setattr(chat_service, "Storage", tracking_storage)
@@ -1521,7 +1529,7 @@ def test_fastapi_chat_standard_query_and_history_use_fresh_canonical_file_names(
         assert item["title"] == "Alpha Document"
         assert item["filename"] == "doc-a.pdf"
 
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         storage._conn.execute(
             "UPDATE files SET title = ? WHERE url = ?",
@@ -1559,7 +1567,7 @@ def test_fastapi_chat_history_reenriches_legacy_unknown_without_rewriting_json(
             {"file_url": seed["alpha_url"], "filename": "UNKNOWN", "content": "legacy"}
         ]
     }
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         storage._conn.execute(
             """
@@ -1589,11 +1597,7 @@ def test_fastapi_chat_history_reenriches_legacy_unknown_without_rewriting_json(
 
     def tracking_storage(db_path: str):
         tracked = original_storage(db_path)
-        tracked._conn.set_trace_callback(
-            lambda statement: (
-                history_file_queries.append(statement) if "FROM files" in statement else None
-            )
-        )
+        record_sql(tracked._conn, history_file_queries, include=lambda sql: "FROM files" in sql)
         return tracked
 
     monkeypatch.setattr(chat_service, "Storage", tracking_storage)
@@ -1612,7 +1616,7 @@ def test_fastapi_chat_history_reenriches_legacy_unknown_without_rewriting_json(
     assert message["metadata"]["retrieved_blocks"][0]["title"] == "Alpha Document"
     assert message["metadata"]["retrieved_blocks"][0]["filename"] == "doc-a.pdf"
 
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         row = storage._conn.execute(
             "SELECT citations, metadata FROM messages WHERE message_id = ?",
@@ -1698,7 +1702,7 @@ def test_chat_agentic_missing_file_uses_url_basename_and_keeps_name_fields_separ
         ],
         kb_id="chat-kb-a",
     )
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         chat_service._canonicalize_file_references(storage, [*citations, *retrieved_blocks])
     finally:
@@ -1731,7 +1735,7 @@ def test_chat_no_name_or_url_keeps_standard_and_history_name_fields_empty(
     created = client.post("/api/chat/conversations", json={"mode": "expert"})
     assert created.status_code == 201, created.text
     conversation_id = created.json()["data"]["conversation_id"]
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         storage._conn.execute(
             """
@@ -1808,19 +1812,15 @@ def test_fastapi_chat_comparison_uses_each_current_curated_title(
     ]
 
 
-def test_fastapi_chat_knowledge_bases_defaults_manifest_profile_for_legacy_schema(
+def test_fastapi_chat_knowledge_bases_defaults_missing_manifest_profile_to_general(
     monkeypatch,
 ) -> None:
-    import sqlite3
-
     import ai_actuarial.api.services.chat as chat_service
 
     storages = []
 
     class FakeConnection:
         def execute(self, sql: str):
-            if "manifest_profile" in sql:
-                raise sqlite3.OperationalError("no such column: manifest_profile")
             return SimpleNamespace(
                 fetchall=lambda: [
                     (
@@ -1832,6 +1832,7 @@ def test_fastapi_chat_knowledge_bases_defaults_manifest_profile_for_legacy_schem
                         1536,
                         1,
                         2,
+                        None,
                     )
                 ]
             )
@@ -1912,7 +1913,7 @@ def test_fastapi_chat_knowledge_bases_marks_embedding_mismatch_for_reindex(
 ) -> None:
     client, _app, _seed = _build_test_client(tmp_path, monkeypatch)
 
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         storage.create_kb_index_version(
             kb_id="chat-kb-a",
@@ -1953,7 +1954,7 @@ def test_fastapi_chat_query_agentic_mode_persists_conversation_and_trace(
 ) -> None:
     client, _app, _seed = _build_test_client(tmp_path, monkeypatch)
     ready_dir = (
-        Path(client.app.state.db_path).parent
+        Path(client.app.state.data_root)
         / "agentic_ready_data"
         / "kbs"
         / "chat-kb-a"
@@ -2026,7 +2027,7 @@ def test_fastapi_chat_hard_stale_agentic_request_falls_back_to_same_kb_standard_
 ) -> None:
     client, _app, _seed = _build_test_client(tmp_path, monkeypatch)
     _install_guest_chat_fakes(monkeypatch)
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         storage._conn.execute(
             "INSERT INTO rag_kb_files (kb_id, file_url, added_at) VALUES (?, ?, ?)",
@@ -2138,7 +2139,7 @@ def test_fastapi_chat_hard_fallback_filters_removed_and_unscoped_chunks(
             },
         ],
     )
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         storage._conn.execute(
             "INSERT INTO rag_kb_files (kb_id, file_url, added_at) VALUES (?, ?, ?)",
@@ -2193,7 +2194,7 @@ def test_fastapi_chat_hard_fallback_with_no_current_members_returns_no_results(
             }
         ],
     )
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         storage.mark_agentic_ready_source_event(
             kb_id="chat-kb-a",
@@ -2378,9 +2379,17 @@ def test_fastapi_chat_query_flow_works_with_native_service_contract(
             message_id = f"msg_{role}"
             self.storage._conn.execute(
                 """
-                INSERT OR REPLACE INTO messages
+                INSERT INTO messages
                 (message_id, conversation_id, role, content, citations, created_at, token_count, metadata)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT (message_id) DO UPDATE SET
+                    conversation_id = EXCLUDED.conversation_id,
+                    role = EXCLUDED.role,
+                    content = EXCLUDED.content,
+                    citations = EXCLUDED.citations,
+                    created_at = EXCLUDED.created_at,
+                    token_count = EXCLUDED.token_count,
+                    metadata = EXCLUDED.metadata
                 """,
                 (
                     message_id,
@@ -2814,7 +2823,7 @@ def test_fastapi_chat_query_uses_registered_session_quota_for_public_chat_route(
     app.state.require_auth = True
     client = TestClient(app)
 
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         user_id = storage.create_user(
             "registered-quota@example.com",
@@ -2942,7 +2951,7 @@ def test_fastapi_chat_query_uses_registered_session_quota_for_public_chat_route(
         response.text for response in responses
     ]
 
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         assert storage.get_ai_chat_quota_used(chat_service._today_utc(), user_id=user_id) == 3
     finally:
@@ -3256,7 +3265,12 @@ def test_document_scope_missing_source_mismatch_retry_and_agentic_stay_structure
     detail = client.get(f"/api/chat/conversations/{conversation_id}", headers=headers)
     assert detail.status_code == 200, detail.text
     assert detail.json()["data"]["conversation"]["metadata"]["document_scope"] == scope_a
-    retry_request = detail.json()["data"]["messages"][-1]["metadata"]["retry_request"]
+    failed_user_turn = next(
+        message
+        for message in reversed(detail.json()["data"]["messages"])
+        if message["role"] == "user"
+    )
+    retry_request = failed_user_turn["metadata"]["retry_request"]
     assert retry_request["document_sources"] == scope_a
 
     wrong_source = client.post(
@@ -3367,7 +3381,7 @@ def test_guest_explicit_clear_is_persisted_and_followups_retrieve_library_afterw
     assert generated_chunks[1][0]["metadata"]["kb_id"] == "chat-kb-b"
     assert cleared.json()["data"]["citations"][0]["file_url"] == seed["beta_url"]
 
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         row = storage._conn.execute(
             "SELECT metadata FROM conversations WHERE conversation_id = ?", (conversation_id,)

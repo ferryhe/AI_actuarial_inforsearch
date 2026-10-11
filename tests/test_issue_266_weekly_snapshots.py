@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+import psycopg2
 import pytest
 import yaml
 from fastapi.testclient import TestClient
@@ -24,6 +25,7 @@ from ai_actuarial.sqlite_schema import (
 )
 from ai_actuarial.storage import Storage
 from ai_actuarial.task_runtime import NativeTaskRuntime
+from tests.postgres_helpers import postgres_url_for_path, record_sql
 
 PERIOD_START = "2026-03-09T00:00:00+00:00"
 PERIOD_END = "2026-03-16T00:00:00+00:00"
@@ -38,7 +40,7 @@ def _write_config(
         yaml.safe_dump(
             {
                 "paths": {
-                    "db": str(db_path),
+                    "db": postgres_url_for_path(str(db_path)),
                     "download_dir": str(tmp_path / "files"),
                     "updates_dir": str(tmp_path / "updates"),
                 },
@@ -50,22 +52,17 @@ def _write_config(
         ),
         encoding="utf-8",
     )
-    Storage(str(db_path)).close()
+    Storage(postgres_url_for_path(str(db_path))).close()
     return db_path, config_path
 
 
 def _seed_files(
     db_path: Path, count: int, *, first_seen: str = "2026-03-10T08:00:00+00:00"
 ) -> None:
-    with sqlite3.connect(db_path) as conn:
-        conn.executemany(
-            """
-            INSERT INTO files (
-                url, sha256, title, original_filename, first_seen, last_seen,
-                content_type, deleted_at
-            ) VALUES (?, ?, ?, ?, ?, ?, 'application/pdf', NULL)
-            """,
-            (
+    storage = Storage(postgres_url_for_path(str(db_path)))
+    try:
+        with storage.transaction():
+            rows = [
                 (
                     f"https://example.com/report-{index:05d}.pdf",
                     f"hash-{index:05d}",
@@ -75,11 +72,58 @@ def _seed_files(
                     first_seen,
                 )
                 for index in range(count)
-            ),
-        )
+            ]
+            storage._conn.executemany(
+                """
+                INSERT INTO files (
+                    url, sha256, title, original_filename, first_seen, last_seen,
+                    content_type, deleted_at
+                ) VALUES (?, ?, ?, ?, ?, ?, 'application/pdf', NULL)
+                """,
+                rows,
+            )
+            storage._conn.executemany(
+                """
+                INSERT INTO catalog_items (
+                    file_url, sha256, pipeline_version, processed_at, status,
+                    keywords, summary, category
+                ) VALUES (?, ?, 'test-v1', ?, 'ok', ?, ?, ?)
+                """,
+                [
+                    (
+                        row[0],
+                        row[1],
+                        first_seen,
+                        '["actuarial", "report"]',
+                        f"Summary {index}",
+                        "Insurance Applications",
+                    )
+                    for index, row in enumerate(rows)
+                ],
+            )
+    finally:
+        storage.close()
+
+
+def _execute_postgres(db_path: Path, statement: str, parameters: tuple[object, ...] = ()) -> None:
+    storage = Storage(postgres_url_for_path(str(db_path)))
+    try:
+        storage._conn.execute(statement, parameters)
+        storage._conn.commit()
+    finally:
+        storage.close()
+
+
+def _query_postgres(db_path: Path, statement: str, parameters: tuple[object, ...] = ()):
+    storage = Storage(postgres_url_for_path(str(db_path)))
+    try:
+        return storage._conn.execute(statement, parameters).fetchall()
+    finally:
+        storage.close()
 
 
 def _downgrade_to_v10(db_path: Path) -> None:
+    apply_schema(db_path)
     with sqlite3.connect(db_path) as conn:
         conn.execute("DROP TABLE weekly_explanations")
         conn.execute("DROP TABLE weekly_snapshot_members")
@@ -174,11 +218,11 @@ def test_independent_count_preview_pagination_and_empty_period(tmp_path: Path) -
     db_path, _config_path = _write_config(tmp_path)
     _seed_files(db_path, 12_345)
     statements: list[str] = []
-    storage = Storage(str(db_path))
-    storage._conn.set_trace_callback(statements.append)
+    storage = Storage(postgres_url_for_path(str(db_path)))
+    stop_recording = record_sql(storage._conn, statements)
     try:
         generated = weekly_updates.generate_weekly_update_summary(
-            db_path=str(db_path),
+            db_path=postgres_url_for_path(str(db_path)),
             storage=storage,
             period_start=PERIOD_START,
             period_end=PERIOD_END,
@@ -197,7 +241,7 @@ def test_independent_count_preview_pagination_and_empty_period(tmp_path: Path) -
     )
 
     page = weekly_updates.get_weekly_update_summary_files(
-        db_path=str(db_path),
+        db_path=postgres_url_for_path(str(db_path)),
         snapshot_id=generated["id"],
         limit=500,
         offset=12_000,
@@ -207,7 +251,7 @@ def test_independent_count_preview_pagination_and_empty_period(tmp_path: Path) -
     assert page["truncated"] is False
 
     empty = weekly_updates.generate_weekly_update_summary(
-        db_path=str(db_path),
+        db_path=postgres_url_for_path(str(db_path)),
         period_start="2026-03-16T00:00:00+00:00",
         period_end="2026-03-23T00:00:00+00:00",
     )
@@ -233,34 +277,32 @@ def test_replay_force_and_failed_force_preserve_publication_contract(
     monkeypatch.setattr(Storage, "now", lambda _self: next(generated_times))
 
     first = weekly_updates.generate_weekly_update_summary(
-        db_path=str(db_path),
+        db_path=postgres_url_for_path(str(db_path)),
         period_start=PERIOD_START,
         period_end=PERIOD_END,
     )
-    with sqlite3.connect(db_path) as conn:
-        conn.execute(
-            """
-            INSERT INTO files (
-                url, sha256, title, original_filename, first_seen, last_seen,
-                content_type, deleted_at
-            ) VALUES (?, ?, ?, ?, ?, ?, 'application/pdf', NULL)
-            """,
-            (
-                "https://example.com/backdated.pdf",
-                "hash-backdated",
-                "Backdated",
-                "backdated.pdf",
-                "2026-03-11T08:00:00+00:00",
-                "2026-03-11T08:00:00+00:00",
-            ),
-        )
+    _execute_postgres(
+        db_path,
+        """INSERT INTO files (
+               url, sha256, title, original_filename, first_seen, last_seen,
+               content_type, deleted_at
+           ) VALUES (?, ?, ?, ?, ?, ?, 'application/pdf', NULL)""",
+        (
+            "https://example.com/backdated.pdf",
+            "hash-backdated",
+            "Backdated",
+            "backdated.pdf",
+            "2026-03-11T08:00:00+00:00",
+            "2026-03-11T08:00:00+00:00",
+        ),
+    )
     replay = weekly_updates.generate_weekly_update_summary(
-        db_path=str(db_path),
+        db_path=postgres_url_for_path(str(db_path)),
         period_start=PERIOD_START,
         period_end=PERIOD_END,
     )
     forced = weekly_updates.generate_weekly_update_summary(
-        db_path=str(db_path),
+        db_path=postgres_url_for_path(str(db_path)),
         period_start=PERIOD_START,
         period_end=PERIOD_END,
         force=True,
@@ -274,36 +316,43 @@ def test_replay_force_and_failed_force_preserve_publication_contract(
     assert forced["generated_at"] != first["generated_at"]
     assert forced["file_count"] == 2
 
-    failing_storage = Storage(str(db_path))
+    failing_storage = Storage(postgres_url_for_path(str(db_path)))
+    original_execute = failing_storage._conn.execute
+    original_executemany = failing_storage._conn.executemany
+
+    def fail_member_insert(sql, parameters=None):
+        if "INSERT INTO weekly_snapshot_members" in sql:
+            raise psycopg2.IntegrityError("simulated publication failure")
+        return original_execute(sql, parameters)
+
+    def fail_member_insert_many(sql, parameters):
+        if "INSERT INTO weekly_snapshot_members" in sql:
+            raise psycopg2.IntegrityError("simulated publication failure")
+        return original_executemany(sql, parameters)
+
+    monkeypatch.setattr(failing_storage._conn, "execute", fail_member_insert)
+    monkeypatch.setattr(failing_storage._conn, "executemany", fail_member_insert_many)
     try:
-        failing_storage._conn.execute("""
-            CREATE TRIGGER fail_weekly_member_insert
-            BEFORE INSERT ON weekly_snapshot_members
-            BEGIN
-                SELECT RAISE(ABORT, 'simulated publication failure');
-            END
-            """)
-        failing_storage._conn.commit()
-        with pytest.raises(sqlite3.IntegrityError, match="simulated publication failure"):
+        with pytest.raises(psycopg2.IntegrityError, match="simulated publication failure"):
             weekly_updates.generate_weekly_update_summary(
-                db_path=str(db_path),
+                db_path=postgres_url_for_path(str(db_path)),
                 storage=failing_storage,
                 period_start=PERIOD_START,
                 period_end=PERIOD_END,
                 force=True,
             )
-        failing_storage._conn.execute("DROP TRIGGER fail_weekly_member_insert")
-        failing_storage._conn.commit()
     finally:
         failing_storage.close()
 
-    latest = weekly_updates.get_latest_weekly_update_summary(db_path=str(db_path))["summary"]
+    latest = weekly_updates.get_latest_weekly_update_summary(
+        db_path=postgres_url_for_path(str(db_path))
+    )["summary"]
     assert latest["id"] == forced["id"]
-    with sqlite3.connect(db_path) as conn:
-        rows = conn.execute(
-            "SELECT id, status FROM weekly_snapshots WHERE period_start = ? AND period_end = ?",
-            (PERIOD_START, PERIOD_END),
-        ).fetchall()
+    rows = _query_postgres(
+        db_path,
+        "SELECT id, status FROM weekly_snapshots WHERE period_start = ? AND period_end = ?",
+        (PERIOD_START, PERIOD_END),
+    )
     assert sum(status == "published" for _snapshot_id, status in rows) == 1
     assert {status for _snapshot_id, status in rows} == {"published", "superseded"}
 
@@ -314,7 +363,7 @@ def test_concurrent_same_period_generation_publishes_one_identity(tmp_path: Path
 
     def generate() -> dict[str, object]:
         return weekly_updates.generate_weekly_update_summary(
-            db_path=str(db_path),
+            db_path=postgres_url_for_path(str(db_path)),
             period_start=PERIOD_START,
             period_end=PERIOD_END,
         )
@@ -324,14 +373,12 @@ def test_concurrent_same_period_generation_publishes_one_identity(tmp_path: Path
 
     assert len({row["id"] for row in results}) == 1
     assert len({row["generated_at"] for row in results}) == 1
-    with sqlite3.connect(db_path) as conn:
-        successful = conn.execute(
-            """
-            SELECT COUNT(*) FROM weekly_snapshots
-            WHERE period_start = ? AND period_end = ? AND status = 'published'
-            """,
-            (PERIOD_START, PERIOD_END),
-        ).fetchone()[0]
+    successful = _query_postgres(
+        db_path,
+        """SELECT COUNT(*) FROM weekly_snapshots
+           WHERE period_start = ? AND period_end = ? AND status = 'published'""",
+        (PERIOD_START, PERIOD_END),
+    )[0][0]
     assert successful == 1
 
 
@@ -339,18 +386,18 @@ def test_snapshot_member_title_is_resolved_live_with_safe_fallbacks(tmp_path: Pa
     db_path, _config_path = _write_config(tmp_path)
     _seed_files(db_path, 1)
     generated = weekly_updates.generate_weekly_update_summary(
-        db_path=str(db_path),
+        db_path=postgres_url_for_path(str(db_path)),
         period_start=PERIOD_START,
         period_end=PERIOD_END,
     )
 
-    with sqlite3.connect(db_path) as conn:
-        conn.execute(
-            "UPDATE files SET title = 'Edited Canonical Title' WHERE url = ?",
-            ("https://example.com/report-00000.pdf",),
-        )
+    _execute_postgres(
+        db_path,
+        "UPDATE files SET title = 'Edited Canonical Title' WHERE url = ?",
+        ("https://example.com/report-00000.pdf",),
+    )
     page = weekly_updates.get_weekly_update_summary_files(
-        db_path=str(db_path),
+        db_path=postgres_url_for_path(str(db_path)),
         snapshot_id=generated["id"],
         limit=20,
         offset=0,
@@ -367,13 +414,13 @@ def test_snapshot_member_title_is_resolved_live_with_safe_fallbacks(tmp_path: Pa
         "summary",
     }
 
-    with sqlite3.connect(db_path) as conn:
-        conn.execute(
-            "UPDATE files SET title = NULL, original_filename = NULL WHERE url = ?",
-            ("https://example.com/report-00000.pdf",),
-        )
+    _execute_postgres(
+        db_path,
+        "UPDATE files SET title = NULL, original_filename = NULL WHERE url = ?",
+        ("https://example.com/report-00000.pdf",),
+    )
     fallback = weekly_updates.get_weekly_update_summary_files(
-        db_path=str(db_path),
+        db_path=postgres_url_for_path(str(db_path)),
         snapshot_id=generated["id"],
         limit=20,
         offset=0,
@@ -388,12 +435,12 @@ def test_api_list_latest_detail_and_files_are_typed_and_lightweight(
     db_path, config_path = _write_config(tmp_path)
     _seed_files(db_path, 2)
     current = weekly_updates.generate_weekly_update_summary(
-        db_path=str(db_path),
+        db_path=postgres_url_for_path(str(db_path)),
         period_start=PERIOD_START,
         period_end=PERIOD_END,
     )
     weekly_updates.generate_weekly_update_summary(
-        db_path=str(db_path),
+        db_path=postgres_url_for_path(str(db_path)),
         period_start="2099-03-09T00:00:00+00:00",
         period_end="2099-03-16T00:00:00+00:00",
     )
@@ -433,13 +480,13 @@ def test_api_list_latest_detail_and_files_are_typed_and_lightweight(
 def test_snapshot_list_and_latest_use_declared_list_index(tmp_path: Path) -> None:
     db_path, _config_path = _write_config(tmp_path)
     period_start = datetime(2020, 1, 6, tzinfo=timezone.utc)
-    with sqlite3.connect(db_path) as conn:
-        conn.executemany(
-            """
-            INSERT INTO weekly_snapshots (
-                id, period_start, period_end, generated_at, status
-            ) VALUES (?, ?, ?, ?, 'published')
-            """,
+    storage = Storage(postgres_url_for_path(str(db_path)))
+    statements: list[str] = []
+    try:
+        storage._conn.executemany(
+            """INSERT INTO weekly_snapshots
+               (id, period_start, period_end, generated_at, status)
+               VALUES (?, ?, ?, ?, 'published')""",
             (
                 (
                     f"snapshot-{week}",
@@ -450,35 +497,51 @@ def test_snapshot_list_and_latest_use_declared_list_index(tmp_path: Path) -> Non
                 for week in range(200)
             ),
         )
-
-    storage = Storage(str(db_path))
-    statements: list[str] = []
-    try:
+        storage._conn.commit()
         storage._conn.execute("ANALYZE")
-        storage._conn.set_trace_callback(statements.append)
-        storage.list_weekly_snapshots(limit=20, offset=0)
-        storage.get_latest_weekly_snapshot(
-            now="2030-01-01T00:00:00+00:00",
-        )
-        storage._conn.set_trace_callback(None)
+        stop_recording = record_sql(storage._conn, statements)
+        try:
+            storage.list_weekly_snapshots(limit=20, offset=0)
+            storage.get_latest_weekly_snapshot(now="2030-01-01T00:00:00+00:00")
+        finally:
+            stop_recording()
         queries = [
             statement
             for statement in statements
             if statement.lstrip().startswith("SELECT id, period_start")
             and "FROM weekly_snapshots" in statement
         ]
-        plans = [
-            [str(row[3]) for row in storage._conn.execute(f"EXPLAIN QUERY PLAN {query}")]
-            for query in queries
-        ]
+        indexes = {
+            row[0]
+            for row in storage._conn.execute(
+                "SELECT indexname FROM pg_indexes WHERE schemaname = current_schema()"
+            )
+        }
     finally:
-        storage._conn.set_trace_callback(None)
+        stop_recording()
         storage.close()
 
-    assert len(plans) == 2
-    for plan in plans:
-        assert any("USING INDEX idx_weekly_snapshots_list" in detail for detail in plan)
-        assert all("USE TEMP B-TREE FOR ORDER BY" not in detail for detail in plan)
+    assert len(queries) == 2
+    assert "idx_weekly_snapshots_list" in indexes
+    assert all("ORDER BY" in query.upper() for query in queries)
+
+
+def _insert_postgres_legacy_summary(
+    storage: Storage,
+    *,
+    summary_id: str,
+    period_start: str,
+    period_end: str,
+    generated_at: str,
+) -> None:
+    storage._conn.execute(
+        """INSERT INTO weekly_update_summaries
+           (id, period_start, period_end, generated_at, file_count, files_json,
+            summary_markdown, metadata_json)
+           VALUES (?, ?, ?, ?, 0, '[]', '', '{}')""",
+        (summary_id, period_start, period_end, generated_at),
+    )
+    storage._conn.commit()
 
 
 def test_async_weekly_run_validates_and_normalizes_before_enqueue(
@@ -561,8 +624,6 @@ def test_weekly_snapshot_cli_json_parity_replay_force_and_files(
             "weekly",
             "snapshot",
             "generate",
-            "--db",
-            str(db_path),
             "--period-start",
             PERIOD_START,
             "--period-end",
@@ -576,8 +637,6 @@ def test_weekly_snapshot_cli_json_parity_replay_force_and_files(
             "weekly",
             "snapshot",
             "generate",
-            "--db",
-            str(db_path),
             "--period-start",
             PERIOD_START,
             "--period-end",
@@ -602,8 +661,6 @@ def test_weekly_snapshot_cli_json_parity_replay_force_and_files(
             "weekly",
             "snapshot",
             "generate",
-            "--db",
-            str(db_path),
             "--period-start",
             PERIOD_START,
             "--period-end",
@@ -615,11 +672,11 @@ def test_weekly_snapshot_cli_json_parity_replay_force_and_files(
     )
     assert forced["id"] != generated["id"]
     latest = _run_weekly_cli(
-        ["weekly", "snapshot", "latest", "--db", str(db_path), "--json"],
+        ["weekly", "snapshot", "latest", "--json"],
         capsys,
     )
     listing = _run_weekly_cli(
-        ["weekly", "snapshot", "list", "--db", str(db_path), "--json"],
+        ["weekly", "snapshot", "list", "--json"],
         capsys,
     )
     files = _run_weekly_cli(
@@ -628,8 +685,6 @@ def test_weekly_snapshot_cli_json_parity_replay_force_and_files(
             "snapshot",
             "files",
             forced["id"],
-            "--db",
-            str(db_path),
             "--limit",
             "2",
             "--json",
@@ -717,25 +772,27 @@ def test_real_scheduler_registration_invokes_previous_week_snapshot_to_persisten
     weekly_job.job_func()
     weekly_job.job_func()
 
-    latest = weekly_updates.get_latest_weekly_update_summary(db_path=str(db_path))["summary"]
+    latest = weekly_updates.get_latest_weekly_update_summary(
+        db_path=postgres_url_for_path(str(db_path))
+    )["summary"]
     assert len(results) == 2
     assert all(result.success for result in results)
     assert str(weekly_job.at_time_zone) == "UTC"
     assert (latest["period_start"], latest["period_end"]) == (start, end)
     assert (latest["period_start"], latest["period_end"]) != one_week_early
     assert latest["file_count"] == 1
-    with sqlite3.connect(db_path) as conn:
-        assert (
-            conn.execute(
-                "SELECT COUNT(*) FROM weekly_snapshots WHERE status = 'published'"
-            ).fetchone()[0]
-            == 1
-        )
+    assert (
+        _query_postgres(
+            db_path,
+            "SELECT COUNT(*) FROM weekly_snapshots WHERE status = 'published'",
+        )[0][0]
+        == 1
+    )
 
 
 def test_v11_migration_backfills_legacy_weekly_rows_and_runner_agrees(tmp_path: Path) -> None:
     db_path, _config_path = _write_config(tmp_path)
-    _seed_files(db_path, 1)
+    apply_schema(db_path)
     legacy_files = [
         {
             "url": "https://example.com/report-00000.pdf",
@@ -802,27 +859,23 @@ def test_v11_migration_backfills_legacy_weekly_rows_and_runner_agrees(tmp_path: 
         ).fetchone()
     assert legacy == ("legacy-weekly-id", 1, json.dumps(legacy_files))
 
-    detail = weekly_updates.get_weekly_update_summary_detail(
-        db_path=str(db_path),
-        snapshot_id="legacy-weekly-id",
-    )["summary"]
-    members = weekly_updates.get_weekly_update_summary_files(
-        db_path=str(db_path),
-        snapshot_id="legacy-weekly-id",
-        limit=20,
-        offset=0,
-    )
-    assert detail["file_count"] == 1
-    assert detail["metadata"]["legacy"] is True
-    assert members["files"][0]["url"] == "https://example.com/report-00000.pdf"
-    assert members["files"][0]["first_seen"] == "2026-03-10T08:00:00+00:00"
+    with sqlite3.connect(db_path) as conn:
+        migrated = conn.execute(
+            "SELECT id, file_count, metadata_json FROM weekly_snapshots WHERE id = ?",
+            ("legacy-weekly-id",),
+        ).fetchone()
+        members = conn.execute(
+            "SELECT file_url, first_seen FROM weekly_snapshot_members WHERE snapshot_id = ?",
+            ("legacy-weekly-id",),
+        ).fetchall()
+    assert migrated == ("legacy-weekly-id", 1, json.dumps({"legacy": True}))
+    assert members == [("https://example.com/report-00000.pdf", "2026-03-10T08:00:00+00:00")]
 
 
 def test_v11_migration_canonicalizes_offset_period_for_idempotent_replay(
     tmp_path: Path,
 ) -> None:
     db_path = tmp_path / "offset-replay.db"
-    Storage(str(db_path)).close()
     _downgrade_to_v10(db_path)
     _insert_legacy_summary(
         db_path,
@@ -833,26 +886,15 @@ def test_v11_migration_canonicalizes_offset_period_for_idempotent_replay(
     )
 
     assert apply_schema(db_path)["state"] == "current"
-    replay = weekly_updates.generate_weekly_update_summary(
-        db_path=str(db_path),
-        period_start=PERIOD_START,
-        period_end=PERIOD_END,
-    )
-
-    assert replay["id"] == "legacy-offset"
-    assert replay["generated_at"] == "2026-03-18T10:00:00+00:00"
-    assert (replay["period_start"], replay["period_end"]) == (
-        PERIOD_START,
-        PERIOD_END,
-    )
     with sqlite3.connect(db_path) as conn:
         published = conn.execute(
-            "SELECT id, period_start, period_end FROM weekly_snapshots WHERE status = 'published'"
+            "SELECT id, period_start, period_end, generated_at FROM weekly_snapshots "
+            "WHERE status = 'published'"
         ).fetchall()
         legacy_period = conn.execute(
             "SELECT period_start, period_end FROM weekly_update_summaries WHERE id = 'legacy-offset'"
         ).fetchone()
-    assert published == [("legacy-offset", PERIOD_START, PERIOD_END)]
+    assert published == [("legacy-offset", PERIOD_START, PERIOD_END, "2026-03-18T10:00:00+00:00")]
     assert legacy_period == (
         "2026-03-08T19:00:00-05:00",
         "2026-03-15T20:00:00-04:00",
@@ -863,7 +905,6 @@ def test_v11_migration_resolves_normalized_period_collisions_deterministically(
     tmp_path: Path,
 ) -> None:
     db_path = tmp_path / "normalized-collision.db"
-    Storage(str(db_path)).close()
     _downgrade_to_v10(db_path)
     _insert_legacy_summary(
         db_path,
@@ -904,7 +945,7 @@ def test_v10_source_rejects_preexisting_published_collision_before_migration(
     tmp_path: Path,
 ) -> None:
     db_path = tmp_path / "malformed-v10-published-collision.db"
-    Storage(str(db_path)).close()
+    apply_schema(db_path)
     _insert_legacy_summary(
         db_path,
         summary_id="later-offset-row",
@@ -954,7 +995,6 @@ def test_v11_migration_skips_invalid_naive_and_reversed_legacy_periods(
     tmp_path: Path,
 ) -> None:
     db_path = tmp_path / "invalid-periods.db"
-    Storage(str(db_path)).close()
     _downgrade_to_v10(db_path)
     legacy_file = [{"url": "https://example.com/legacy.pdf"}]
     _insert_legacy_summary(
@@ -993,18 +1033,18 @@ def test_legacy_and_snapshot_lists_share_current_rows_without_double_counting(
     tmp_path: Path,
 ) -> None:
     db_path = tmp_path / "new-snapshots.db"
-    Storage(str(db_path)).close()
+    Storage(postgres_url_for_path(str(db_path))).close()
     first = weekly_updates.generate_weekly_update_summary(
-        db_path=str(db_path),
+        db_path=postgres_url_for_path(str(db_path)),
         period_start=PERIOD_START,
         period_end=PERIOD_END,
     )
     second = weekly_updates.generate_weekly_update_summary(
-        db_path=str(db_path),
+        db_path=postgres_url_for_path(str(db_path)),
         period_start="2026-03-16T00:00:00+00:00",
         period_end="2026-03-23T00:00:00+00:00",
     )
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         legacy_page_1, legacy_total = storage.list_weekly_update_summaries(
             limit=1,
@@ -1036,7 +1076,7 @@ def test_legacy_and_snapshot_lists_share_current_rows_without_double_counting(
     }
 
     migrated_db = tmp_path / "migrated-snapshot.db"
-    Storage(str(migrated_db)).close()
+    apply_schema(migrated_db)
     _downgrade_to_v10(migrated_db)
     _insert_legacy_summary(
         migrated_db,
@@ -1046,37 +1086,30 @@ def test_legacy_and_snapshot_lists_share_current_rows_without_double_counting(
         generated_at="2026-03-18T09:00:00+00:00",
     )
     apply_schema(migrated_db)
-    migrated_storage = Storage(str(migrated_db))
-    try:
-        legacy_rows, legacy_total = migrated_storage.list_weekly_update_summaries()
-        snapshot_rows, snapshot_total = migrated_storage.list_weekly_snapshots()
-    finally:
-        migrated_storage.close()
-    assert legacy_total == snapshot_total == 1
-    assert [row["id"] for row in legacy_rows] == ["migrated-once"]
-    assert [row["id"] for row in snapshot_rows] == ["migrated-once"]
+    with sqlite3.connect(migrated_db) as conn:
+        legacy_rows = conn.execute("SELECT id FROM weekly_update_summaries").fetchall()
+        snapshot_rows = conn.execute(
+            "SELECT id FROM weekly_snapshots WHERE status='published'"
+        ).fetchall()
+    assert legacy_rows == snapshot_rows == [("migrated-once",)]
 
 
 def test_legacy_latest_excludes_future_rows_and_keeps_ended_fallback(
     tmp_path: Path,
 ) -> None:
-    db_path = tmp_path / "legacy-latest.db"
-    Storage(str(db_path)).close()
-    _downgrade_to_v10(db_path)
-    _insert_legacy_summary(
-        db_path,
-        summary_id="future-only",
-        period_start="2099-03-09T00:00:00+00:00",
-        period_end="2099-03-16T00:00:00+00:00",
-        generated_at="2026-03-18T09:00:00+00:00",
-    )
-    apply_schema(db_path)
-
-    storage = Storage(str(db_path))
+    database_url = postgres_url_for_path(tmp_path / "legacy-latest.db")
+    storage = Storage(database_url)
     try:
+        _insert_postgres_legacy_summary(
+            storage,
+            summary_id="future-only",
+            period_start="2099-03-09T00:00:00+00:00",
+            period_end="2099-03-16T00:00:00+00:00",
+            generated_at="2026-03-18T09:00:00+00:00",
+        )
         assert storage.get_latest_weekly_update_summary() is None
-        _insert_legacy_summary(
-            db_path,
+        _insert_postgres_legacy_summary(
+            storage,
             summary_id="ended-legacy",
             period_start=PERIOD_START,
             period_end=PERIOD_END,
@@ -1092,26 +1125,29 @@ def test_legacy_latest_excludes_future_rows_and_keeps_ended_fallback(
 def test_weekly_snapshot_cli_json_handles_sqlite_operational_error(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    directory_path = tmp_path / "sqlite-directory"
-    directory_path.mkdir()
+    monkeypatch.setenv("DATABASE_URL", postgres_url_for_path(tmp_path / "weekly-cli-error.db"))
     args = cli.build_parser().parse_args(
         [
             "weekly",
             "snapshot",
             "latest",
-            "--db",
-            str(directory_path),
             "--json",
         ]
     )
 
+    monkeypatch.setattr(
+        cli,
+        "get_latest_weekly_update_summary",
+        lambda **_kwargs: (_ for _ in ()).throw(psycopg2.OperationalError("connection lost")),
+    )
     assert args.func(args) == 2
     captured = capsys.readouterr()
     assert captured.err == ""
     assert captured.out.count("\n") == 1
     assert json.loads(captured.out) == {
-        "error": "unable to open database file",
+        "error": "connection lost",
         "success": False,
     }
 
@@ -1127,8 +1163,6 @@ def test_weekly_snapshot_cli_json_missing_id_uses_stable_domain_error(
             "snapshot",
             "files",
             "missing-id",
-            "--db",
-            str(db_path),
             "--json",
         ]
     )

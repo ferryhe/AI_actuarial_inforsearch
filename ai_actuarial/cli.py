@@ -5,13 +5,14 @@ import csv
 import json
 import logging
 import os
-import sqlite3
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
+
+import psycopg2
 
 from .ai_runtime import get_search_runtime_credentials
 from .api.services.weekly_updates import (
@@ -35,6 +36,16 @@ from .collectors import CollectionConfig
 from .collectors.file import FileCollector
 from .collectors.url import URLCollector
 from .crawler import Crawler, SiteConfig
+from .postgres import (
+    DatabaseConfigurationError,
+    DatabaseConnectionError,
+    initialize_postgresql_schema,
+    postgresql_schema_plan,
+    postgresql_schema_status,
+    resolve_data_root,
+    resolve_database_config,
+)
+from .postgres_import import import_sqlite_v16
 from .search import search_all
 from .search_acquisition import (
     format_acquisition_outcome,
@@ -47,14 +58,9 @@ from .shared_runtime import (
     coerce_bool,
     get_sites_config_path,
     load_sites_config,
+    resolve_data_path,
 )
-from .sqlite_schema import (
-    SchemaMigrationError,
-    apply_schema,
-    json_dumps,
-    schema_plan,
-    schema_status,
-)
+from .sqlite_schema import json_dumps
 from .storage import Storage
 
 logger = logging.getLogger(__name__)
@@ -129,10 +135,10 @@ def _site_configs(cfg: dict) -> list[SiteConfig]:
 
 def cmd_update(args: argparse.Namespace) -> int:
     cfg = _load_config(args.config)
-    storage = Storage(cfg["paths"]["db"])
+    storage = Storage(resolve_database_config(cfg), data_root=resolve_data_root(cfg))
     crawler = Crawler(
         storage,
-        cfg["paths"]["download_dir"],
+        str(resolve_data_path(cfg["paths"]["download_dir"], data_root=storage.data_root)),
         cfg["defaults"]["user_agent"],
         default_delay_seconds=float(cfg["defaults"].get("delay_seconds", 0.5)),
     )
@@ -279,8 +285,11 @@ def cmd_update(args: argparse.Namespace) -> int:
             ),
         )
 
-    storage.write_last_run(cfg["paths"]["last_run_new"], all_new)
-    _write_timestamped_updates(cfg, all_new)
+    storage.write_last_run(
+        str(resolve_data_path(cfg["paths"]["last_run_new"], data_root=storage.data_root)),
+        all_new,
+    )
+    _write_timestamped_updates(cfg, all_new, data_root=storage.data_root)
     storage.close()
 
     logger.info(f"New files: {len(all_new)}")
@@ -291,12 +300,12 @@ def cmd_update(args: argparse.Namespace) -> int:
 
 def cmd_export(args: argparse.Namespace) -> int:
     cfg = _load_config(args.config)
-    storage = Storage(cfg["paths"]["db"])
+    storage = Storage(resolve_database_config(cfg), data_root=resolve_data_root(cfg))
     rows = storage.export_files()
     rows = [r for r in rows if r.get("local_path")]
     storage.close()
 
-    out_path = Path(args.output)
+    out_path = resolve_data_path(args.output, data_root=resolve_data_root(cfg))
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     if args.format == "json":
@@ -333,11 +342,11 @@ def cmd_export(args: argparse.Namespace) -> int:
 
 def cmd_catalog(args: argparse.Namespace) -> int:
     cfg = _load_config(args.config)
-    db_path = cfg["paths"]["db"]
+    db_path = resolve_database_config(cfg)
 
     # Re-categorization block: refuse to catalog after a taxonomy change so the
     # CLI cannot silently produce stale category data (same gate as the API task).
-    guard_storage = Storage(db_path)
+    guard_storage = Storage(db_path, data_root=resolve_data_root(cfg))
     try:
         if guard_storage.taxonomy_needs_recategory():
             logger.error(
@@ -349,7 +358,7 @@ def cmd_catalog(args: argparse.Namespace) -> int:
 
     if args.legacy:
         # Legacy mode: full rewrite to JSON
-        storage = Storage(db_path)
+        storage = Storage(db_path, data_root=resolve_data_root(cfg))
         items = build_catalog(
             storage,
             site_filter=args.site,
@@ -359,8 +368,8 @@ def cmd_catalog(args: argparse.Namespace) -> int:
         )
         storage.close()
 
-        out_md = Path(args.output_md)
-        out_json = Path(args.output_json)
+        out_md = resolve_data_path(args.output_md, data_root=resolve_data_root(cfg))
+        out_json = resolve_data_path(args.output_json, data_root=resolve_data_root(cfg))
         out_json.parent.mkdir(parents=True, exist_ok=True)
         if args.append and out_json.exists():
             with open(out_json, "r", encoding="utf-8") as f:
@@ -375,8 +384,8 @@ def cmd_catalog(args: argparse.Namespace) -> int:
         return 0
 
     if args.legacy_incremental:
-        out_jsonl = Path(args.output_jsonl)
-        out_md = Path(args.output_md)
+        out_jsonl = resolve_data_path(args.output_jsonl, data_root=resolve_data_root(cfg))
+        out_md = resolve_data_path(args.output_md, data_root=resolve_data_root(cfg))
 
         stats = run_incremental_catalog(
             db_path=db_path,
@@ -398,7 +407,7 @@ def cmd_catalog(args: argparse.Namespace) -> int:
         return 0
 
     # Storage-backed incremental mode (default)
-    storage = Storage(db_path)
+    storage = Storage(db_path, data_root=resolve_data_root(cfg))
     items = build_catalog_incremental(
         storage,
         site_filter=args.site,
@@ -410,8 +419,8 @@ def cmd_catalog(args: argparse.Namespace) -> int:
     )
     storage.close()
 
-    out_jsonl = Path(args.output_jsonl)
-    out_md = Path(args.output_md)
+    out_jsonl = resolve_data_path(args.output_jsonl, data_root=resolve_data_root(cfg))
+    out_md = resolve_data_path(args.output_md, data_root=resolve_data_root(cfg))
     write_catalog_jsonl(out_jsonl, items)
     md_items = [
         CatalogItem(
@@ -432,45 +441,52 @@ def cmd_catalog(args: argparse.Namespace) -> int:
 
 
 def cmd_schema(args: argparse.Namespace) -> int:
-    if args.schema_cmd == "status":
-        payload = schema_status(args.db)
-    elif args.schema_cmd == "plan":
-        payload = schema_plan(args.db)
-    elif args.schema_cmd == "apply":
-        try:
-            payload = apply_schema(args.db)
-        except SchemaMigrationError as exc:
-            payload = {
-                "success": False,
-                "error": str(exc),
-            }
-            if args.json:
-                print(json_dumps(payload))
-            else:
-                print(f"Schema apply failed: {exc}")
-            return 2
-    else:  # pragma: no cover - argparse enforces a valid subcommand
-        raise AssertionError(args.schema_cmd)
+    try:
+        config = _load_config(args.config) if not os.getenv("DATABASE_URL", "").strip() else {}
+        database = resolve_database_config(config)
+        if args.schema_cmd == "status":
+            payload = postgresql_schema_status(database)
+        elif args.schema_cmd == "plan":
+            payload = postgresql_schema_plan(database)
+        elif args.schema_cmd == "apply":
+            initialize_postgresql_schema(database)
+            payload = postgresql_schema_status(database)
+        elif args.schema_cmd == "import-sqlite-v16":
+            payload = import_sqlite_v16(args.source, database)
+        else:  # pragma: no cover - argparse enforces a valid subcommand
+            raise AssertionError(args.schema_cmd)
+    except (DatabaseConfigurationError, DatabaseConnectionError, RuntimeError, ValueError) as exc:
+        payload = {"success": False, "error": str(exc)}
+        if args.json:
+            print(json_dumps(payload))
+        else:
+            print(f"PostgreSQL schema operation failed: {exc}")
+        return 2
+    except psycopg2.Error:
+        payload = {"success": False, "error": "PostgreSQL schema operation failed"}
+        if args.json:
+            print(json_dumps(payload))
+        else:
+            print(payload["error"])
+        return 2
 
     if args.json:
         print(json_dumps(payload))
     else:
         state = payload.get("state", "unknown")
-        version = (payload.get("database") or {}).get("user_version")
-        print(f"SQLite schema state: {state} (user_version={version})")
+        version = (payload.get("database") or {}).get("schema_version")
+        print(f"PostgreSQL schema state: {state} (version={version})")
     return 0
 
 
-def _weekly_snapshot_db_path(args: argparse.Namespace) -> str:
-    if str(args.db or "").strip():
-        return str(args.db).strip()
+def _weekly_snapshot_database(args: argparse.Namespace):
     config = _load_config(args.config)
-    return str((config.get("paths") or {}).get("db") or "data/index.db")
+    return resolve_database_config(config)
 
 
 def cmd_weekly_snapshot(args: argparse.Namespace) -> int:
     try:
-        db_path = _weekly_snapshot_db_path(args)
+        db_path = _weekly_snapshot_database(args)
         if args.snapshot_cmd == "generate":
             payload = generate_weekly_update_summary(
                 db_path=db_path,
@@ -502,7 +518,7 @@ def cmd_weekly_snapshot(args: argparse.Namespace) -> int:
         WeeklySnapshotValidationError,
         OSError,
         RuntimeError,
-        sqlite3.Error,
+        psycopg2.Error,
         ValueError,
     ) as exc:
         _print_cli_payload(
@@ -1039,17 +1055,23 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_catalog.set_defaults(func=cmd_catalog)
 
-    p_schema = sub.add_parser("schema", help="Inspect or apply SQLite schema migrations")
+    p_schema = sub.add_parser("schema", help="Inspect or apply PostgreSQL schema migrations")
     p_schema_sub = p_schema.add_subparsers(dest="schema_cmd", required=True)
     for action in ("status", "plan", "apply"):
-        p_schema_action = p_schema_sub.add_parser(action, help=f"SQLite schema {action}")
-        p_schema_action.add_argument("--db", required=True, help="SQLite database path")
+        p_schema_action = p_schema_sub.add_parser(action, help=f"PostgreSQL schema {action}")
         p_schema_action.add_argument(
             "--json",
             action="store_true",
             help="Emit the stable machine-readable JSON contract",
         )
         p_schema_action.set_defaults(func=cmd_schema)
+    p_schema_import = p_schema_sub.add_parser(
+        "import-sqlite-v16",
+        help="Read one validated SQLite v16 snapshot into an empty PostgreSQL schema",
+    )
+    p_schema_import.add_argument("--source", required=True, help="Read-only SQLite v16 snapshot")
+    p_schema_import.add_argument("--json", action="store_true")
+    p_schema_import.set_defaults(func=cmd_schema)
 
     p_weekly = sub.add_parser("weekly", help="Operate on weekly resources")
     p_weekly_sub = p_weekly.add_subparsers(dest="weekly_cmd", required=True)
@@ -1102,11 +1124,6 @@ def build_parser() -> argparse.ArgumentParser:
         p_weekly_list,
         p_weekly_files,
     ):
-        p_weekly_action.add_argument(
-            "--db",
-            default=None,
-            help="SQLite database path (defaults to config paths.db)",
-        )
         p_weekly_action.add_argument(
             "--json",
             action="store_true",
@@ -1421,10 +1438,10 @@ def build_parser() -> argparse.ArgumentParser:
 def cmd_collect_url(args: argparse.Namespace) -> int:
     """Collect from specific URLs."""
     cfg = _load_config(args.config)
-    storage = Storage(cfg["paths"]["db"])
+    storage = Storage(resolve_database_config(cfg), data_root=resolve_data_root(cfg))
     crawler = Crawler(
         storage,
-        cfg["paths"]["download_dir"],
+        str(resolve_data_path(cfg["paths"]["download_dir"], data_root=storage.data_root)),
         cfg["defaults"]["user_agent"],
         default_delay_seconds=float(cfg["defaults"].get("delay_seconds", 0.5)),
     )
@@ -1459,9 +1476,12 @@ def cmd_collect_url(args: argparse.Namespace) -> int:
 def cmd_collect_file(args: argparse.Namespace) -> int:
     """Import files from local filesystem."""
     cfg = _load_config(args.config)
-    storage = Storage(cfg["paths"]["db"])
+    storage = Storage(resolve_database_config(cfg), data_root=resolve_data_root(cfg))
 
-    collector = FileCollector(storage, cfg["paths"]["download_dir"])
+    collector = FileCollector(
+        storage,
+        str(resolve_data_path(cfg["paths"]["download_dir"], data_root=storage.data_root)),
+    )
 
     config = CollectionConfig(
         name=args.name,
@@ -1561,11 +1581,15 @@ def _write_markdown(path: Path, rows: list[dict]) -> None:
             f.write("| " + " | ".join(safe) + " |\n")
 
 
-def _write_timestamped_updates(cfg: dict, rows: list[dict]) -> None:
+def _write_timestamped_updates(
+    cfg: dict, rows: list[dict], *, data_root: str | Path | None = None
+) -> None:
     ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%SZ")
-    updates_dir = cfg.get("paths", {}).get("updates_dir", "data/updates")
-    out_json = Path(updates_dir) / f"update_{ts}.json"
-    out_md = Path(updates_dir) / f"update_{ts}.md"
+    updates_dir = resolve_data_path(
+        cfg.get("paths", {}).get("updates_dir", "data/updates"), data_root=data_root
+    )
+    out_json = updates_dir / f"update_{ts}.json"
+    out_md = updates_dir / f"update_{ts}.md"
     out_json.parent.mkdir(parents=True, exist_ok=True)
     with open(out_json, "w", encoding="utf-8") as f:
         json.dump(rows, f, ensure_ascii=False, indent=2)

@@ -1,3 +1,37 @@
+# 最新工作 — PostgreSQL runtime conversion — 2026-10-11
+
+- 项目 `AI_actuarial_inforsearch`；分支 `codex/full-postgresql`；基线
+  `origin/main` / HEAD `80f497a3c50351520a88b23e5d1b68901b8c4e6b`。
+  实现树为 `6c58bc61bc021387418eab3ab99565729808d68b`。代码范围 179 个路径；
+  本次只增加此状态记录，工作目录变化为 180 个路径。只改本仓库，同级仓库不可读写。
+- PostgreSQL 是唯一应用运行时数据库。保留原有 Storage 业务 API，以窄连接适配
+  处理 DB-API 差异；迁移覆盖基础与懒初始化的 RAG、聊天 schema。并发状态通过
+  PostgreSQL 事务、CAS、advisory/row locks 和 savepoints 实现。SQLite 仅保留给
+  显式 schema/旧版导入流程使用。
+- SQLite v16 导入器只读单个来源，要求目标 PostgreSQL 业务 schema 为空；校验
+  schema、全表数据、主键/外键、序列和来源 provenance，支持同源幂等重跑并拒绝
+  冲突或第二来源。它不做两站合并。版本化 schema `0001`/`0002` 支持 plan/apply；
+  原生 `pg_dump`/`pg_restore` CLI 提供 backup、verify 与隔离 restore smoke。
+- `DATABASE_URL` 与文件 `DATA_DIR` 独立解析。应用附件、任务历史、上传和 RAG
+  产物可放在 D 盘；PostgreSQL 的 `PGDATA` 也需单独配置到 D 盘。真实 D-root
+  CLI/日志/API 检查通过。Windows PostgreSQL 16.15 原生 CLI 对实际仓库 backup、
+  verify、restore 和 v1→v2 升级检查通过；冻结 v16 fixture 的 42 表导入、内容、
+  ID、序列、幂等和冲突检查通过。PG16 Docker 构建/HTTP smoke 与 API HTTP smoke
+  也通过。证据在 ignored `reports/postgresql-assessment/` 下的
+  `controller-repo-ops.json`、`controller-import-full.json`、
+  `controller-cli-data-root-r2.json`、`controller-docker-smoke.json` 和
+  `controller-http-smoke.json`。
+- 最终 Linux 完整质量门 r6 PASS：2,461 passed、0 skipped、4 warnings、
+  531.64 秒；quality JSON 为 `reports/postgresql-assessment/controller-linux-quality-r6/`，
+  Black/isort/Pylint 无 violations/new/stale。四个 Python/TypeScript 文件和符号
+  dead-code gates 均为零 findings，fresh Sol/high review-4 PASS。最终树未因这些
+  检查发生代码改动。Copilot 按用户要求禁用；PR 发布后仍需等待当前 HEAD 的
+  GitHub CI 实际通过。
+- 本次只更新状态文件；不提交、不推送、不合并、不执行生产切换。生产数据尚未
+  迁移，不做两站数据合并，也不搬运或清理原文档案。PostgreSQL dump 不包含原始
+  文件内容；任何生产清理前必须另行归档并校验原始文件。下一步由控制器发布 PR，
+  再核对该 PR 的 CI；合并和生产切换另行授权。
+
 # 最新工作 — Docker 构建上下文与旧覆盖文件核查 — 2026-10-09
 
 # Active work — Issue #420 offline tokenizer — 2026-10-10

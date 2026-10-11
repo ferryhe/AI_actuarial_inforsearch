@@ -15,6 +15,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from ai_actuarial.ai_runtime import list_provider_credentials, resolve_ai_function_runtime
+from ai_actuarial.postgres import resolve_database_config
 from ai_actuarial.shared_runtime import get_sites_config_path, load_yaml
 from ai_actuarial.storage import Storage
 
@@ -35,14 +36,6 @@ def _resolve_config_path(raw_path: str | None) -> str:
     return get_sites_config_path()
 
 
-def _resolve_db_path(config: dict[str, Any], raw_path: str | None) -> str:
-    if raw_path:
-        return str(Path(raw_path).expanduser())
-    paths = config.get("paths") or {}
-    database = config.get("database") or {}
-    return str(paths.get("db") or database.get("path") or "data/index.db")
-
-
 def _find_credential_status(
     credentials: list[dict[str, Any]], credential_id: str | None, stable_id: str | None
 ) -> dict[str, Any]:
@@ -57,10 +50,10 @@ def _find_credential_status(
 def build_report(args: argparse.Namespace) -> dict[str, Any]:
     config_path = _resolve_config_path(args.config)
     config = load_yaml(config_path, default={})
-    db_path = _resolve_db_path(config, args.db)
+    database = resolve_database_config({"database": {"url_env": args.database_url_env}})
     token_key_configured = _token_encryption_key_configured()
 
-    storage = Storage(db_path)
+    storage = Storage(database)
     try:
         runtime = resolve_ai_function_runtime("embeddings", storage=storage, yaml_config=config)
         credentials = list_provider_credentials(storage=storage).get("credentials", [])
@@ -88,7 +81,7 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
 
     report = {
         "config_path": config_path,
-        "db_path": db_path,
+        "database": {"engine": "postgresql", "configured": True},
         "embeddings": {
             "provider": runtime.provider,
             "model": runtime.model,
@@ -127,7 +120,9 @@ def main(argv: list[str] | None = None) -> int:
         "--config", help="Path to sites.yaml. Defaults to the configured project path."
     )
     parser.add_argument(
-        "--db", help="Path to SQLite database. Defaults to config paths.db/database.path."
+        "--database-url-env",
+        default="DATABASE_URL",
+        help="Environment variable containing the PostgreSQL URL",
     )
     parser.add_argument("--json", action="store_true", help="Print JSON output.")
     parser.add_argument(

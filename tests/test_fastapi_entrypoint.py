@@ -7,10 +7,12 @@ import pytest
 from fastapi.testclient import TestClient
 
 from ai_actuarial.api.app import create_app
+from tests.postgres_helpers import postgres_url_for_path
 
 
 @pytest.fixture(autouse=True)
 def _hermetic_fastapi_env(monkeypatch, tmp_path: Path) -> None:
+    database_url = postgres_url_for_path(str(tmp_path / "index.db"))
     config_path = tmp_path / "sites.yaml"
     categories_path = tmp_path / "categories.yaml"
     config_path.write_text(
@@ -30,6 +32,7 @@ def _hermetic_fastapi_env(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("ENABLE_CSRF", "0")
     monkeypatch.setenv("ENABLE_RATE_LIMITING", "0")
     monkeypatch.setenv("FASTAPI_SESSION_SECRET", "fastapi-entrypoint-test-secret")
+    monkeypatch.setenv("DATABASE_URL", database_url)
 
 
 def test_fastapi_health_endpoint_returns_ok() -> None:
@@ -164,6 +167,7 @@ def test_fastapi_uses_rebound_legacy_task_history_reference(monkeypatch, tmp_pat
     categories_path.write_text("categories: {}\n", encoding="utf-8")
     history_dir = tmp_path / "data"
     history_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("DATA_DIR", str(history_dir))
     history_lines = ["{not-json}\n"]
     history_lines.extend(
         json.dumps(

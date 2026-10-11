@@ -13,6 +13,7 @@ from ai_actuarial.embedding_service import resolve_server_embedding_identity
 from ai_actuarial.rag.kb_index import build_kb_index, resolve_kb_bound_chunks
 from ai_actuarial.rag.knowledge_base import KnowledgeBaseManager
 from ai_actuarial.storage import Storage
+from tests.postgres_helpers import postgres_url_for_path
 
 PDF_BYTES = b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n"
 
@@ -57,7 +58,7 @@ def _seed_storage(db_path: Path, files_dir: Path) -> dict[str, object]:
     beta_path = files_dir / "beta.docx"
     beta_path.write_text("beta docx content", encoding="utf-8")
 
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         storage.insert_file(
             url="https://alpha.example/doc-a.pdf",
@@ -253,7 +254,7 @@ def test_full_export_requires_capability_and_snapshot_membership_is_shared(
     client, _app, seed = _build_test_client(tmp_path, monkeypatch)
     operator_headers = {"Authorization": f"Bearer {seed['operator_token']}"}
     admin_token = "admin-export-token"
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         storage.upsert_auth_token_by_hash(
             subject="admin-export-token",
@@ -307,7 +308,7 @@ def test_full_export_requires_capability_and_snapshot_membership_is_shared(
     assert "Alpha Document" in full_csv
     assert "local_path" in full_csv and "sha256" in full_csv and "etag" in full_csv
 
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         audit_detail = storage._conn.execute(
             "SELECT detail FROM audit_events WHERE event_type = 'catalog_export' ORDER BY id DESC LIMIT 1"
@@ -322,7 +323,7 @@ def test_snapshot_export_keeps_frozen_member_filename_and_first_seen(
 ) -> None:
     client, _app, seed = _build_test_client(tmp_path, monkeypatch)
     headers = {"Authorization": f"Bearer {seed['operator_token']}"}
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         storage.publish_weekly_snapshot(
             {
@@ -378,7 +379,7 @@ def test_snapshot_export_keeps_frozen_member_filename_and_first_seen(
     assert exported.headers["x-export-record-count"] == "1"
     assert "frozen-beta.docx" in exported.content.decode("utf-8-sig")
 
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         storage._conn.execute("DELETE FROM files WHERE url = ?", (seed["beta_url"],))
         storage._conn.commit()
@@ -402,7 +403,7 @@ def test_global_file_delete_reconciles_kbs_and_reindexes_only_complete_nonempty_
 ) -> None:
     client, app, seed = _build_test_client(tmp_path, monkeypatch)
     db_path = tmp_path / "index.db"
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         identity = resolve_server_embedding_identity(storage)
         profile = storage.create_chunk_profile(
@@ -512,7 +513,7 @@ def test_global_file_delete_reconciles_kbs_and_reindexes_only_complete_nonempty_
         {"kb_id": "kb-delete-two", "job_id": "job-delete-1"}
     ]
     assert launched[0][0] == "rag_indexing"
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         assert (
             storage._conn.execute(

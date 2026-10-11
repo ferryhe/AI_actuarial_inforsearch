@@ -40,6 +40,26 @@ def coerce_bool(value: object, default: bool = False) -> bool:
     return bool(value)
 
 
+def resolve_data_path(path: str | Path, *, data_root: str | Path | None = None) -> Path:
+    """Resolve a configured file path under the separate data root.
+
+    Legacy ``data/...`` defaults are relative to ``data_root``. Absolute paths
+    remain explicit operator overrides.
+    """
+    candidate = Path(path).expanduser()
+    if candidate.is_absolute():
+        return candidate.resolve()
+    if data_root is None:
+        from ai_actuarial.postgres import resolve_data_root
+
+        root = resolve_data_root()
+    else:
+        root = Path(data_root).expanduser().resolve()
+    if candidate.parts[:1] == ("data",):
+        candidate = Path(*candidate.parts[1:])
+    return (root / candidate).resolve()
+
+
 def _coerce_bool(value: object, default: bool = False) -> bool:
     return coerce_bool(value, default)
 
@@ -355,12 +375,14 @@ def get_default_catalog_provider() -> str:
     return provider or "openai"
 
 
-def task_log_path(task_id: str) -> Path:
-    return Path("data/task_logs") / f"{task_id}.log"
+def task_log_path(task_id: str, *, data_root: str | Path | None = None) -> Path:
+    return resolve_data_path(Path("data/task_logs") / f"{task_id}.log", data_root=data_root)
 
 
-def append_task_log(task_id: str, level: str, message: str) -> None:
-    path = task_log_path(task_id)
+def append_task_log(
+    task_id: str, level: str, message: str, *, data_root: str | Path | None = None
+) -> None:
+    path = task_log_path(task_id, data_root=data_root)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as handle:
         handle.write(f"[{level}] {message}\n")
@@ -393,10 +415,18 @@ def serialize_backend_settings(config_data: dict[str, Any]) -> dict[str, Any]:
             "schedule_interval": defaults.get("schedule_interval", ""),
         },
         "paths": {
-            "db": paths.get("db", "data/index.db"),
+            "data": paths.get("data", os.getenv("DATA_DIR", "data")),
             "download_dir": paths.get("download_dir", "data/files"),
             "updates_dir": paths.get("updates_dir", "data/updates"),
             "last_run_new": paths.get("last_run_new", "data/last_run_new.json"),
+        },
+        "database": {
+            "type": "postgresql",
+            "url_env": str(
+                ((config_data.get("database") or {}).get("url_env") or "DATABASE_URL")
+                if isinstance(config_data.get("database"), dict)
+                else "DATABASE_URL"
+            ),
         },
         "search": {
             "enabled": bool(search.get("enabled", True)),

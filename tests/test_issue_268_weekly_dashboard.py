@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import sqlite3
 from pathlib import Path
 
 import pytest
@@ -11,6 +10,7 @@ from fastapi.testclient import TestClient
 from ai_actuarial.api.app import create_app
 from ai_actuarial.api.services.weekly_updates import generate_weekly_update_summary
 from ai_actuarial.storage import Storage
+from tests.postgres_helpers import postgres_url_for_path
 
 PERIOD_START = "2026-03-09T00:00:00+00:00"
 PERIOD_END = "2026-03-16T00:00:00+00:00"
@@ -64,7 +64,7 @@ def _build_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Test
             True,
         ),
     ]
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         for filename, title, source, first_seen, category, deleted in rows:
             url = f"https://{source}/{filename}"
@@ -206,7 +206,7 @@ def test_weekly_files_api_projects_a_title_edit_without_rebuilding_snapshot(
 ) -> None:
     client, db_path, _operator_token = _build_client(tmp_path, monkeypatch)
     snapshot = generate_weekly_update_summary(
-        db_path=str(db_path),
+        db_path=postgres_url_for_path(db_path),
         period_start=PERIOD_START,
         period_end=PERIOD_END,
     )
@@ -218,8 +218,13 @@ def test_weekly_files_api_projects_a_title_edit_without_rebuilding_snapshot(
         == "Weekly lower"
     )
 
-    with sqlite3.connect(db_path) as conn:
+    storage = Storage(postgres_url_for_path(db_path))
+    try:
+        conn = storage._conn
         conn.execute("UPDATE files SET title = ? WHERE url = ?", ("Edited live title", target_url))
+        conn.commit()
+    finally:
+        storage.close()
 
     reloaded = client.get(f"/api/weekly-updates/{snapshot['id']}/files?limit=8")
     assert reloaded.status_code == 200
@@ -228,7 +233,9 @@ def test_weekly_files_api_projects_a_title_edit_without_rebuilding_snapshot(
         == "Edited live title"
     )
 
-    with sqlite3.connect(db_path) as conn:
+    storage = Storage(postgres_url_for_path(db_path))
+    try:
+        conn = storage._conn
         conn.execute(
             "UPDATE files SET title = NULL, original_filename = NULL WHERE url = ?",
             (target_url,),
@@ -237,6 +244,9 @@ def test_weekly_files_api_projects_a_title_edit_without_rebuilding_snapshot(
             "UPDATE weekly_snapshot_members SET original_filename = NULL WHERE snapshot_id = ? AND file_url = ?",
             (snapshot["id"], target_url),
         )
+        conn.commit()
+    finally:
+        storage.close()
 
     url_fallback = client.get(f"/api/weekly-updates/{snapshot['id']}/files?limit=8")
     assert url_fallback.status_code == 200

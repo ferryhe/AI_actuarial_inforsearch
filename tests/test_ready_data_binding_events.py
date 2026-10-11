@@ -6,6 +6,7 @@ import pytest
 
 from ai_actuarial.rag.knowledge_base import KnowledgeBaseManager
 from ai_actuarial.storage import Storage
+from tests.postgres_helpers import postgres_url_for_path
 
 
 def _create_kb(storage: Storage, kb_id: str) -> None:
@@ -169,7 +170,7 @@ def _seed_publication_pointers(storage: Storage, *, kb_id: str) -> None:
                 kb_id,
                 f"source-{publication_id}",
                 status,
-                str(Path(storage.db_path).parent / publication_id),
+                str(storage.data_root / publication_id),
                 f"digest-{publication_id}",
                 now,
                 now,
@@ -191,7 +192,7 @@ def _seed_publication_pointers(storage: Storage, *, kb_id: str) -> None:
 def test_first_valid_binding_marks_hard_stale_without_moving_publication_pointers(
     tmp_path: Path,
 ) -> None:
-    storage = Storage(str(tmp_path / "first-binding.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "first-binding.db")))
     try:
         kb_id = "kb-first-binding"
         file_url = "https://example.com/first.pdf"
@@ -230,7 +231,7 @@ def test_first_valid_binding_marks_hard_stale_without_moving_publication_pointer
 
 
 def test_additional_valid_binding_marks_soft_stale_once(tmp_path: Path) -> None:
-    storage = Storage(str(tmp_path / "additional-binding.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "additional-binding.db")))
     try:
         kb_id = "kb-additional-binding"
         _create_kb(storage, kb_id)
@@ -277,7 +278,7 @@ def test_additional_valid_binding_marks_soft_stale_once(tmp_path: Path) -> None:
 def test_duplicate_and_metadata_only_binding_changes_do_not_advance_generation(
     tmp_path: Path,
 ) -> None:
-    storage = Storage(str(tmp_path / "binding-noop.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "binding-noop.db")))
     try:
         kb_id = "kb-binding-noop"
         file_url = "https://example.com/noop.pdf"
@@ -327,7 +328,7 @@ def test_duplicate_and_metadata_only_binding_changes_do_not_advance_generation(
         assert duplicate["created"] is False
         assert metadata_only["created"] is False
         assert after["event_generation"] == before["event_generation"]
-        assert binding == ("follow_latest", profile_id)
+        assert tuple(binding) == ("follow_latest", profile_id)
     finally:
         storage.close()
 
@@ -347,7 +348,7 @@ def test_binding_outside_builder_input_does_not_advance_generation(
     has_membership: bool,
     catalog_status: str,
 ) -> None:
-    storage = Storage(str(tmp_path / f"invalid-binding-{invalid_kind}.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / f"invalid-binding-{invalid_kind}.db")))
     try:
         kb_id = f"kb-{invalid_kind}"
         file_url = f"https://example.com/{invalid_kind}.pdf"
@@ -379,7 +380,7 @@ def test_binding_outside_builder_input_does_not_advance_generation(
 
 
 def test_binding_parameter_validation_is_a_source_state_noop(tmp_path: Path) -> None:
-    storage = Storage(str(tmp_path / "binding-validation.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "binding-validation.db")))
     try:
         kb_id = "kb-binding-validation"
         file_url = "https://example.com/validation.pdf"
@@ -407,7 +408,7 @@ def test_binding_parameter_validation_is_a_source_state_noop(tmp_path: Path) -> 
 
 
 def test_follow_latest_move_marks_one_soft_stale_event(tmp_path: Path) -> None:
-    storage = Storage(str(tmp_path / "follow-latest.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "follow-latest.db")))
     try:
         kb_id = "kb-follow-latest"
         file_url = "https://example.com/follow.pdf"
@@ -448,7 +449,7 @@ def test_follow_latest_move_marks_one_soft_stale_event(tmp_path: Path) -> None:
         ).fetchall()
         assert result["synced_bindings"] == 1
         assert result["affected_kb_ids"] == [kb_id]
-        assert rows == [(new_chunk_set_id,)]
+        assert [tuple(row) for row in rows] == [(new_chunk_set_id,)]
         assert state["event_generation"] == 2
         assert state["pending_severity"] == "soft_stale"
         assert state["pending_reasons"] == ["chunk_binding_updated"]
@@ -457,7 +458,7 @@ def test_follow_latest_move_marks_one_soft_stale_event(tmp_path: Path) -> None:
 
 
 def test_follow_latest_multiple_old_rows_mark_each_affected_kb_once(tmp_path: Path) -> None:
-    storage = Storage(str(tmp_path / "follow-latest-multiple.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "follow-latest-multiple.db")))
     try:
         kb_ids = ("kb-follow-one", "kb-follow-two")
         file_url = "https://example.com/follow-multiple.pdf"
@@ -519,7 +520,7 @@ def test_bind_marker_failure_rolls_back_binding_and_generation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    storage = Storage(str(tmp_path / "bind-marker-failure.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "bind-marker-failure.db")))
     try:
         kb_id = "kb-bind-marker-failure"
         file_url = "https://example.com/bind-failure.pdf"
@@ -565,7 +566,9 @@ def test_follow_latest_marker_failure_rolls_back_insert_update_and_delete(
     monkeypatch: pytest.MonkeyPatch,
     target_preexists: bool,
 ) -> None:
-    storage = Storage(str(tmp_path / f"sync-marker-failure-{target_preexists}.db"))
+    storage = Storage(
+        postgres_url_for_path(str(tmp_path / f"sync-marker-failure-{target_preexists}.db"))
+    )
     try:
         kb_id = "kb-sync-marker-failure"
         file_url = "https://example.com/sync-failure.pdf"
@@ -644,7 +647,7 @@ def test_follow_latest_marker_failure_rolls_back_insert_update_and_delete(
 
 
 def test_follow_latest_without_matching_rows_is_a_complete_noop(tmp_path: Path) -> None:
-    storage = Storage(str(tmp_path / "follow-noop.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "follow-noop.db")))
     try:
         kb_id = "kb-follow-noop"
         file_url = "https://example.com/follow-noop.pdf"
@@ -689,7 +692,7 @@ def test_follow_latest_without_matching_rows_does_not_validate_missing_target(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    storage = Storage(str(tmp_path / "follow-noop-missing-target.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "follow-noop-missing-target.db")))
     try:
 
         def fail_if_transaction_starts(*, immediate: bool = False):
@@ -718,7 +721,9 @@ def test_follow_latest_invalid_target_rolls_back_without_source_event(
     tmp_path: Path,
     invalid_target_kind: str,
 ) -> None:
-    storage = Storage(str(tmp_path / f"follow-invalid-target-{invalid_target_kind}.db"))
+    storage = Storage(
+        postgres_url_for_path(str(tmp_path / f"follow-invalid-target-{invalid_target_kind}.db"))
+    )
     try:
         kb_id = "kb-follow-invalid-target"
         file_url = "https://example.com/follow-invalid-target.pdf"
@@ -801,7 +806,7 @@ def test_follow_latest_invalid_target_rolls_back_without_source_event(
 
 
 def test_same_ready_chunk_set_content_overwrite_is_immutable_noop(tmp_path: Path) -> None:
-    storage = Storage(str(tmp_path / "content-overwrite.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "content-overwrite.db")))
     try:
         kb_id = "kb-content-overwrite"
         file_url = "https://example.com/content-overwrite.pdf"

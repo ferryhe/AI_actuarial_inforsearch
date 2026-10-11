@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import json
 import logging
-import sqlite3
 from argparse import Namespace
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import psycopg2
 import pytest
 import yaml
 
@@ -19,6 +19,12 @@ from ai_actuarial.search import SearchResult
 from ai_actuarial.search_acquisition import make_acquisition_outcome
 from ai_actuarial.storage import Storage
 from ai_actuarial.task_runtime import NativeTaskRuntime
+from tests.postgres_helpers import postgres_url_for_path
+
+
+@pytest.fixture(autouse=True)
+def _isolated_postgres_database(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DATABASE_URL", postgres_url_for_path(tmp_path / "issue-263.db"))
 
 
 def _storage(*, exists: bool = False, hash_exists: bool = False) -> MagicMock:
@@ -62,7 +68,11 @@ def _run_search(
     stopped: bool = False,
     task_data: dict | None = None,
 ):
-    runtime = NativeTaskRuntime(pipeline_baton_state_path=str(tmp_path / "baton.json"))
+    runtime = NativeTaskRuntime(
+        ready_data_database=postgres_url_for_path(str(tmp_path / "index.db")),
+        data_root=tmp_path / "data",
+        pipeline_baton_state_path=str(tmp_path / "baton.json"),
+    )
     runtime.active_tasks[task_id] = {"stop_requested": stopped}
     config = {
         "defaults": {
@@ -149,7 +159,7 @@ def _run_cli_search_outcomes(
                     "file_exts": [".pdf"],
                 },
                 "paths": {
-                    "db": str(tmp_path / "cli-status.db"),
+                    "db": postgres_url_for_path(str(tmp_path / "cli-status.db")),
                     "download_dir": str(tmp_path / "files"),
                     "last_run_new": str(tmp_path / "last-run.json"),
                     "updates_dir": str(tmp_path / "updates"),
@@ -386,7 +396,7 @@ def test_storage_lookup_failure_has_a_structured_terminal_outcome(tmp_path: Path
     "lookup_error",
     [
         pytest.param(OSError, id="os-error"),
-        pytest.param(sqlite3.OperationalError, id="sqlite-operational-error"),
+        pytest.param(psycopg2.OperationalError, id="postgres-operational-error"),
     ],
 )
 def test_direct_content_hash_lookup_failure_is_reported_and_cleans_staging(
@@ -836,7 +846,7 @@ def test_api_and_cli_search_use_the_same_shared_summary(
                     "keywords": [],
                 },
                 "paths": {
-                    "db": str(tmp_path / "index.db"),
+                    "db": postgres_url_for_path(str(tmp_path / "index.db")),
                     "download_dir": str(tmp_path / "files"),
                     "last_run_new": str(tmp_path / "last-run.json"),
                     "updates_dir": str(tmp_path / "updates"),
@@ -847,6 +857,7 @@ def test_api_and_cli_search_use_the_same_shared_summary(
         ),
         encoding="utf-8",
     )
+    postgres_url_for_path(tmp_path / "cli-status.db")
     args = Namespace(
         config=str(config_path), site=None, max_pages=None, max_depth=None, no_search=False
     )
@@ -943,7 +954,7 @@ def test_cli_both_search_branches_consume_outcomes_without_legacy_scans(
             {
                 "defaults": {"user_agent": "Issue263/1.0", "delay_seconds": 0},
                 "paths": {
-                    "db": str(tmp_path / "both-branches.db"),
+                    "db": postgres_url_for_path(str(tmp_path / "both-branches.db")),
                     "download_dir": str(tmp_path / "files"),
                     "last_run_new": str(tmp_path / "last-run-both.json"),
                     "updates_dir": str(tmp_path / "updates-both"),
@@ -1624,7 +1635,7 @@ def test_quoted_site_search_flags_produce_same_real_api_and_cli_summary(
             "exclude_keywords": ["Newsletter"],
         },
         "paths": {
-            "db": str(tmp_path / "parity.db"),
+            "db": postgres_url_for_path(str(tmp_path / "parity.db")),
             "download_dir": str(tmp_path / "files"),
             "last_run_new": str(tmp_path / "last-run.json"),
             "updates_dir": str(tmp_path / "updates"),
@@ -2015,7 +2026,7 @@ def test_single_page_mixed_link_failure_is_auditable_in_runtime_and_cli(
                     "file_exts": [".pdf"],
                 },
                 "paths": {
-                    "db": str(tmp_path / "single-page-mixed.db"),
+                    "db": postgres_url_for_path(str(tmp_path / "single-page-mixed.db")),
                     "download_dir": str(tmp_path / "files"),
                     "last_run_new": str(tmp_path / "last-run.json"),
                     "updates_dir": str(tmp_path / "updates"),
@@ -2064,7 +2075,7 @@ def test_single_page_mixed_link_failure_is_auditable_in_runtime_and_cli(
     "lookup_error",
     [
         pytest.param(OSError, id="os-error"),
-        pytest.param(sqlite3.OperationalError, id="sqlite-operational-error"),
+        pytest.param(psycopg2.OperationalError, id="postgres-operational-error"),
     ],
 )
 def test_linked_storage_lookup_failure_keeps_prior_item_in_crawler_runtime_and_cli(
@@ -2157,7 +2168,7 @@ def test_linked_storage_lookup_failure_keeps_prior_item_in_crawler_runtime_and_c
                     "file_exts": [".pdf"],
                 },
                 "paths": {
-                    "db": str(tmp_path / "lookup-mixed.db"),
+                    "db": postgres_url_for_path(str(tmp_path / "lookup-mixed.db")),
                     "download_dir": str(tmp_path / "files"),
                     "last_run_new": str(tmp_path / "last-run.json"),
                     "updates_dir": str(tmp_path / "updates"),
@@ -2194,7 +2205,7 @@ def test_linked_storage_lookup_failure_keeps_prior_item_in_crawler_runtime_and_c
     "lookup_error",
     [
         pytest.param(OSError, id="os-error"),
-        pytest.param(sqlite3.OperationalError, id="sqlite-operational-error"),
+        pytest.param(psycopg2.OperationalError, id="postgres-operational-error"),
     ],
 )
 def test_linked_staged_storage_lookup_failure_is_reported_and_cleaned(
@@ -2330,7 +2341,7 @@ def test_file_persistence_failure_removes_new_artifact_and_database_rows(
     legacy: bool,
 ) -> None:
     url = "https://example.com/report.pdf"
-    storage = Storage(str(tmp_path / f"{failure_point}-{legacy}.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / f"{failure_point}-{legacy}.db")))
     staged = tmp_path / f"{failure_point}-{legacy}.part"
     staged.write_bytes(b"%PDF")
     target = tmp_path / "files" / "example.com" / "report.pdf"
@@ -2354,11 +2365,11 @@ def test_file_persistence_failure_removes_new_artifact_and_database_rows(
             patch.object(
                 storage,
                 failure_point,
-                side_effect=sqlite3.OperationalError(f"{failure_point} unavailable"),
+                side_effect=psycopg2.OperationalError(f"{failure_point} unavailable"),
             ),
         ):
             if legacy:
-                with pytest.raises(sqlite3.OperationalError, match=failure_point):
+                with pytest.raises(psycopg2.OperationalError, match=failure_point):
                     crawler.scan_page_for_files(url, _site(url), source_site="test")
                 report = None
             else:
@@ -2385,12 +2396,12 @@ def test_file_persistence_failure_removes_new_artifact_and_database_rows(
 
 
 class _FailingPageInsertConnection:
-    def __init__(self, connection: sqlite3.Connection) -> None:
+    def __init__(self, connection) -> None:
         self._connection = connection
 
     def execute(self, sql: str, parameters=()):
-        if "INSERT OR IGNORE INTO files" in sql:
-            raise sqlite3.OperationalError("page content insert unavailable")
+        if "INSERT INTO files" in sql:
+            raise psycopg2.OperationalError("page content insert unavailable")
         return self._connection.execute(sql, parameters)
 
     def __getattr__(self, name: str):
@@ -2403,7 +2414,7 @@ def test_page_content_insert_failure_removes_new_markdown_and_database_row(
     legacy: bool,
 ) -> None:
     url = "https://example.com/research"
-    storage = Storage(str(tmp_path / f"page-content-{legacy}.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / f"page-content-{legacy}.db")))
     storage._conn = _FailingPageInsertConnection(storage._conn)
     crawler = _crawler(tmp_path, storage)
     html = b"<html><title>Research</title><body>Actuarial research page</body></html>"
@@ -2417,7 +2428,7 @@ def test_page_content_insert_failure_removes_new_markdown_and_database_row(
             patch.object(crawler, "_extract_text_from_html", return_value="page content " * 20),
         ):
             if legacy:
-                with pytest.raises(sqlite3.OperationalError, match="page content insert"):
+                with pytest.raises(psycopg2.OperationalError, match="page content insert"):
                     crawler.scan_page_for_files(url, cfg, source_site="test")
                 report = None
             else:

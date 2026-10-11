@@ -235,22 +235,16 @@ def extract_database_config() -> dict:
         ValueError: If environment variables contain invalid values
     """
     try:
-        db_type = os.getenv("DB_TYPE", "sqlite")
-
-        config = {
-            "type": db_type,
+        db_type = os.getenv("DB_TYPE", "postgresql").strip().lower()
+        if db_type not in {"postgres", "postgresql"}:
+            raise ValueError(
+                "SQLite runtime configuration is no longer supported; configure DATABASE_URL "
+                "and use `ai-actuarial schema import-sqlite-v16` for an explicit legacy import."
+            )
+        return {
+            "type": "postgresql",
+            "url_env": os.getenv("DATABASE_URL_ENV", "DATABASE_URL").strip() or "DATABASE_URL",
         }
-
-        if db_type == "sqlite":
-            config["path"] = os.getenv("DB_PATH", "data/index.db")
-        elif db_type == "postgresql":
-            config["host"] = os.getenv("DB_HOST", "localhost")
-            config["port"] = get_int_env("DB_PORT", "5432")
-            config["database"] = os.getenv("DB_NAME", "ai_actuarial")
-            config["username"] = os.getenv("DB_USER", "postgres")
-            # Password remains in .env
-
-        return config
     except ValueError as e:
         raise ValueError(
             f"Error extracting database configuration from environment variables: {e}"

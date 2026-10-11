@@ -1,6 +1,6 @@
 """Ready-data builder for Agentic RAG ready_data artifacts.
 
-Reads existing catalog_items and global_chunks from the SQLite DB
+Reads existing catalog_items and global_chunks from PostgreSQL
 and produces ready_data artifacts:
 
   doc_catalog.jsonl   — document index with title, category, summary, headings
@@ -18,36 +18,25 @@ import json
 import logging
 import os
 import re
-import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from urllib.parse import urlparse
 
+from ai_actuarial.postgres import PostgresConnection, resolve_database_config
+from ai_actuarial.shared_runtime import resolve_data_path
+
 from .manifest_profiles import PROFILES
-
-try:
-    from ai_actuarial.config import settings
-
-    _DB_PATH_FROM_SETTINGS = settings.DB_PATH
-except ImportError:
-    _DB_PATH_FROM_SETTINGS = None
 
 logger = logging.getLogger(__name__)
 
 BUILDER_SOURCE_VERSION_KIND = "catalog_chunks_snapshot"
 
 
-def get_db_path() -> str:
-    """Resolve the SQLite DB path from settings, env, or default."""
-    if _DB_PATH_FROM_SETTINGS:
-        db_path = _DB_PATH_FROM_SETTINGS
-    else:
-        db_path = os.getenv("DB_PATH", "data/index.db")
-    if not os.path.isabs(db_path):
-        db_path = os.path.abspath(db_path)
-    return db_path
+def get_db_path():
+    """Resolve the required PostgreSQL connection without exposing its URL."""
+    return resolve_database_config()
 
 
 # ── Schema ────────────────────────────────────────────────────────────────────
@@ -204,12 +193,8 @@ def _slug(value: str, fallback: str = "item") -> str:
     return slug or fallback
 
 
-def _table_columns(conn: sqlite3.Connection, table_name: str) -> set[str]:
-    try:
-        rows = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
-    except sqlite3.Error:
-        return set()
-    return {str(row[1]) for row in rows}
+def _table_columns(conn: PostgresConnection, table_name: str) -> set[str]:
+    return conn.table_columns(table_name)
 
 
 def _extract_identifier_parts(title: str, file_url: str) -> tuple[list[str], list[str], list[str]]:
@@ -399,26 +384,22 @@ def _context_snippet(text: str, max_chars: int = 480) -> str:
     return compact[: max_chars - 3].rstrip() + "..."
 
 
-def _table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
-    row = conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
-        (table_name,),
-    ).fetchone()
-    return bool(row)
+def _table_exists(conn: PostgresConnection, table_name: str) -> bool:
+    return bool(conn.table_exists(table_name))
 
 
 # ── Builder ───────────────────────────────────────────────────────────────────
 
 
 def _load_builder_source_snapshot(
-    conn: sqlite3.Connection,
+    conn: PostgresConnection,
     *,
     kb_id: str | None,
     profile: str = "general",
     index_version_id: str | None = None,
-) -> tuple[list[sqlite3.Row], list[sqlite3.Row], str, str | None]:
-    """Read the exact builder inputs from one consistent SQLite snapshot."""
-    conn.execute("BEGIN")
+) -> tuple[list[Any], list[Any], str, str | None]:
+    """Read the exact builder inputs from one read-only PostgreSQL snapshot."""
+    conn.execute("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
     try:
         kb_join = ""
         where_params: list[Any] = []
@@ -473,7 +454,7 @@ def _load_builder_source_snapshot(
 
         file_urls = [row["file_url"] for row in catalog_rows]
         placeholders = ",".join("?" for _ in file_urls)
-        chunk_rows: list[sqlite3.Row] = []
+        chunk_rows: list[Any] = []
         binding_payload: list[dict[str, Any]] = []
         current_binding_fingerprint = ""
         if file_urls:
@@ -491,7 +472,7 @@ def _load_builder_source_snapshot(
                     """,
                     (kb_id,),
                 ).fetchall()
-                by_file: dict[str, list[sqlite3.Row]] = {}
+                by_file: dict[str, list[Any]] = {}
                 for row in binding_rows:
                     by_file.setdefault(str(row[0] or ""), []).append(row)
                 if set(by_file) != set(file_urls):
@@ -638,17 +619,14 @@ def _load_builder_source_snapshot(
 
 def get_builder_source_fingerprint(
     *,
-    db_path: str,
+    db_path: Any,
     kb_id: str | None,
     profile: str = "general",
     index_version_id: str | None = None,
 ) -> dict[str, str]:
     """Return the exact builder source identity without creating artifacts."""
-    database_uri = f"{Path(db_path).resolve().as_uri()}?mode=ro"
-    conn = sqlite3.connect(database_uri, uri=True)
-    conn.row_factory = sqlite3.Row
+    conn = PostgresConnection(db_path, read_only=True)
     try:
-        conn.execute("PRAGMA query_only = ON")
         _, _, source_version_id, observed_index_version_id = _load_builder_source_snapshot(
             conn,
             kb_id=kb_id,
@@ -666,7 +644,7 @@ def get_builder_source_fingerprint(
 
 
 def _build_l0_with_connection(
-    conn: sqlite3.Connection,
+    conn: PostgresConnection,
     *,
     db_path: str,
     output_dir: str | None = None,
@@ -678,7 +656,7 @@ def _build_l0_with_connection(
     """Build L0 ready_data artifacts from catalog_items + global_chunks.
 
     Args:
-        db_path: Path to SQLite DB. Defaults to env DB_PATH or data/index.db.
+        db_path: PostgreSQL URL. Defaults to DATABASE_URL.
         output_dir: Output directory. Defaults to data/agentic_ready_data/{profile}/.
         profile: Manifest profile key (general, regulation, formula).
         kb_id: Optional knowledge-base ID; when set, only files in that KB are exported.
@@ -698,6 +676,7 @@ def _build_l0_with_connection(
             )
         else:
             output_dir = os.path.join("data", "agentic_ready_data", profile, profile_def.version)
+    output_dir = str(resolve_data_path(output_dir))
     os.makedirs(output_dir, exist_ok=True)
 
     now_utc = datetime.now(timezone.utc).isoformat()
@@ -1027,7 +1006,7 @@ def _build_l0_with_connection(
         "profile_version": profile_def.version,
         "kb_id": kb_id or "",
         "scope": "knowledge_base" if kb_id else "global",
-        "source_db": db_path,
+        "source_db": "postgresql",
         "source_version_kind": BUILDER_SOURCE_VERSION_KIND,
         "source_version_id": source_version_id,
         "source_snapshot_fingerprint": source_version_id,
@@ -1084,14 +1063,13 @@ def build_l0(
     index_version_id: str | None = None,
     expected_source_snapshot_fingerprint: str | None = None,
 ) -> dict:
-    """Build ready_data while guaranteeing the SQLite connection is closed."""
+    """Build ready_data while guaranteeing the PostgreSQL connection is closed."""
     resolved_db_path = db_path or get_db_path()
-    conn = sqlite3.connect(resolved_db_path)
-    conn.row_factory = sqlite3.Row
+    conn = PostgresConnection(resolved_db_path, read_only=True)
     try:
         return _build_l0_with_connection(
             conn,
-            db_path=resolved_db_path,
+            db_path="postgresql",
             output_dir=output_dir,
             profile=profile,
             kb_id=kb_id,
@@ -1384,7 +1362,11 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser(description="Build Agentic RAG ready_data")
-    parser.add_argument("--db", default=None, help="SQLite DB path")
+    parser.add_argument(
+        "--database-url-env",
+        default="DATABASE_URL",
+        help="Environment variable containing the PostgreSQL URL",
+    )
     parser.add_argument("--output-dir", default=None, help="Output directory for ready_data")
     parser.add_argument(
         "--profile",
@@ -1397,7 +1379,7 @@ def main():
     args = parser.parse_args()
 
     manifest = build_l0(
-        db_path=args.db,
+        db_path=resolve_database_config({"database": {"url_env": args.database_url_env}}),
         output_dir=args.output_dir,
         profile=args.profile,
         kb_id=args.kb_id,
@@ -1416,7 +1398,7 @@ def main():
             default_output_dir = os.path.join(
                 "data", "agentic_ready_data", "kbs", safe_kb_id, args.profile, profile_version
             )
-        result = validate(args.output_dir or default_output_dir)
+        result = validate(str(resolve_data_path(args.output_dir or default_output_dir)))
         status = "✅ valid" if result["valid"] else "❌ invalid"
         print(f"\nValidation: {status}")
         if result["errors"]:

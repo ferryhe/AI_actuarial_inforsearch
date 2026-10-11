@@ -1,33 +1,74 @@
 from __future__ import annotations
 
 import json
-import sqlite3
+import os
 import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from uuid import uuid4
 
+import psycopg2
 import pytest
+from psycopg2.extensions import quote_ident
 
-from ai_actuarial.sqlite_schema import CURRENT_SQLITE_SCHEMA_VERSION
+from ai_actuarial.postgres import DatabaseConfig, PostgresConnection
+from ai_actuarial.storage import Storage
 from scripts import production_recovery
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
+@pytest.fixture(autouse=True)
+def _owned_postgres_schema(monkeypatch: pytest.MonkeyPatch):
+    base_url = os.getenv("POSTGRES_TEST_URL") or os.getenv("DATABASE_URL")
+    if not base_url:
+        pytest.fail("POSTGRES_TEST_URL is required for PostgreSQL integration tests")
+    schema = f"test_recovery_{uuid4().hex}"
+    admin = psycopg2.connect(base_url)
+    admin.autocommit = True
+    with admin.cursor() as cursor:
+        cursor.execute(f'CREATE SCHEMA "{schema}"')
+    admin.close()
+    parsed = urlsplit(base_url)
+    query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    query["options"] = f"-c search_path={schema}"
+    database_url = urlunsplit(parsed._replace(query=urlencode(query).replace("+", "%20")))
+    monkeypatch.setenv("DATABASE_URL", database_url)
+    Storage(database_url).close()
+    try:
+        yield database_url
+    finally:
+        admin = psycopg2.connect(base_url)
+        admin.autocommit = True
+        with admin.cursor() as cursor:
+            cursor.execute(f'DROP SCHEMA "{schema}" CASCADE')
+        admin.close()
+
+
 def _seed_data_dir(root: Path) -> tuple[Path, Path]:
     data_dir = root / "data"
     data_dir.mkdir()
-    db_path = data_dir / "index.db"
-    with sqlite3.connect(db_path) as conn:
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute(f"PRAGMA user_version={CURRENT_SQLITE_SCHEMA_VERSION}")
-        conn.execute("CREATE TABLE files (id INTEGER PRIMARY KEY, local_path TEXT)")
-        conn.execute("CREATE TABLE rag_knowledge_bases (id TEXT PRIMARY KEY)")
-        conn.execute("CREATE TABLE agentic_ready_manifests (id TEXT PRIMARY KEY)")
-        conn.execute("INSERT INTO files (local_path) VALUES ('files/example.pdf')")
-        conn.execute("INSERT INTO rag_knowledge_bases (id) VALUES ('kb-1')")
-        conn.execute("INSERT INTO agentic_ready_manifests (id) VALUES ('ready-1')")
+    conn = PostgresConnection(DatabaseConfig(os.environ["DATABASE_URL"]))
+    try:
+        conn.execute(
+            "INSERT INTO files (url, local_path) VALUES (?, ?)",
+            ("https://example.test/file.pdf", "files/example.pdf"),
+        )
+        conn.execute(
+            """INSERT INTO rag_knowledge_bases (
+                   kb_id, name, embedding_model, chunk_size, chunk_overlap, index_type,
+                   created_at, updated_at
+               ) VALUES ('kb-1', 'KB fixture', 'fixture', 100, 10, 'flat', '2026-10-11', '2026-10-11')"""
+        )
+        conn.execute(
+            """INSERT INTO agentic_ready_manifests (
+                   manifest_id, kb_id, profile, profile_version, status, created_at, updated_at
+               ) VALUES ('ready-1', 'kb-1', 'general', 'v1', 'active', '2026-10-11', '2026-10-11')"""
+        )
+    finally:
+        conn.close()
 
     for relative, content in (
         ("files/example.pdf", b"pdf"),
@@ -39,8 +80,36 @@ def _seed_data_dir(root: Path) -> tuple[Path, Path]:
         path.write_bytes(content)
 
     config_path = root / "sites.yaml"
-    config_path.write_text("paths:\n  db: data/index.db\n", encoding="utf-8")
+    config_path.write_text(
+        "paths:\n  data: data\ndatabase:\n  type: postgresql\n  url_env: DATABASE_URL\n",
+        encoding="utf-8",
+    )
     return data_dir, config_path
+
+
+def _new_empty_database(database_url: str) -> tuple[str, str]:
+    """Provision a disposable restore database on the designated test server."""
+    name = f"ai_act_restore_{uuid4().hex[:20]}"
+    parsed = urlsplit(database_url)
+    admin = psycopg2.connect(database_url)
+    admin.autocommit = True
+    try:
+        with admin.cursor() as cursor:
+            cursor.execute(f"CREATE DATABASE {quote_ident(name, cursor)}")
+    finally:
+        admin.close()
+    target_url = urlunsplit(parsed._replace(path=f"/{name}"))
+    return name, target_url
+
+
+def _drop_database(database_url: str, name: str) -> None:
+    admin = psycopg2.connect(database_url)
+    admin.autocommit = True
+    try:
+        with admin.cursor() as cursor:
+            cursor.execute(f"DROP DATABASE IF EXISTS {quote_ident(name, cursor)} WITH (FORCE)")
+    finally:
+        admin.close()
 
 
 def test_online_database_backup_is_repeatable_and_records_success(tmp_path: Path) -> None:
@@ -74,8 +143,9 @@ def test_online_database_backup_is_repeatable_and_records_success(tmp_path: Path
     manifest = json.loads((first / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["status"] == "success"
     assert manifest["finished_at"] == "2026-08-16T12:00:10Z"
-    assert manifest["database"]["quick_check"] == "ok"
-    assert manifest["database"]["schema_user_version"] == CURRENT_SQLITE_SCHEMA_VERSION
+    assert manifest["database"]["connectivity_check"] == "ok"
+    assert manifest["database"]["schema_version"] == 2
+    assert manifest["database"]["path"] == "database/postgresql.dump"
     assert manifest["included_data_directories"] == []
 
     events = [
@@ -112,9 +182,15 @@ def test_full_snapshot_verifies_and_restores_to_isolated_directory(tmp_path: Pat
     assert report["status"] == "ok"
     assert report["included_data_directories"] == ["agentic_ready_data", "rag"]
 
-    restored = production_recovery.restore_to_isolated_directory(backup, tmp_path / "restore")
+    target_name, target_url = _new_empty_database(os.environ["DATABASE_URL"])
+    try:
+        restored = production_recovery.restore_to_isolated_directory(
+            backup, tmp_path / "restore", database_url=target_url
+        )
+    finally:
+        _drop_database(os.environ["DATABASE_URL"], target_name)
     assert restored["status"] == "ok"
-    assert restored["database"]["quick_check"] == "ok"
+    assert restored["database"]["connectivity_check"] == "ok"
     assert restored["database"]["counts"] == {
         "agentic_ready_manifests": 1,
         "files": 1,
@@ -256,14 +332,17 @@ def test_backup_rejects_negative_retention_before_writing(tmp_path: Path) -> Non
     assert not list(backup_root.glob("backup-*/manifest.json"))
 
 
-def test_failed_backup_writes_failure_event_without_publishing_snapshot(tmp_path: Path) -> None:
+def test_failed_backup_writes_failure_event_without_publishing_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     data_dir = tmp_path / "data"
     data_dir.mkdir()
     config_path = tmp_path / "sites.yaml"
     config_path.write_text("{}\n", encoding="utf-8")
     backup_root = tmp_path / "backups"
 
-    with pytest.raises(FileNotFoundError, match="index.db"):
+    monkeypatch.setenv("PG_DUMP_BIN", str(tmp_path / "missing-pg-dump.exe"))
+    with pytest.raises(RuntimeError, match="pg_dump"):
         production_recovery.create_backup(
             data_dir=data_dir,
             config_path=config_path,
@@ -317,7 +396,7 @@ def test_release_record_captures_image_config_and_schema_versions(tmp_path: Path
     record = production_recovery.create_release_record(
         image="example/api:latest",
         config_path=config_path,
-        db_path=data_dir / "index.db",
+        database_url=DatabaseConfig(os.environ["DATABASE_URL"]),
         output_path=output,
         inspect_image=lambda _image: inspect_payload,
         now=lambda: datetime(2026, 8, 16, 12, 0, tzinfo=timezone.utc),
@@ -326,7 +405,7 @@ def test_release_record_captures_image_config_and_schema_versions(tmp_path: Path
     assert record["image_digest"] == "sha256:" + "d" * 64
     assert record["git_sha"] == "abc123"
     assert record["git_dirty"] is False
-    assert record["schema_user_version"] == CURRENT_SQLITE_SCHEMA_VERSION
+    assert record["schema_version"] == 2
     assert record["config_sha256"]
     assert json.loads(output.read_text(encoding="utf-8")) == record
 
@@ -394,9 +473,9 @@ def test_scheduled_backup_and_deploy_gate_use_named_volume_recovery_tool() -> No
     runbook = (ROOT / "docs" / "deployment-runbook.md").read_text(encoding="utf-8")
     assert "base64.urlsafe_b64encode(secrets.token_bytes(32))" in runbook
     assert "from cryptography.fernet import Fernet" not in runbook
-    assert "ai-actuarial schema status" in runbook
-    assert "ai-actuarial schema plan" in runbook
-    assert "ai-actuarial schema apply" in runbook
+    assert "python -m ai_actuarial schema status" in runbook
+    assert "python -m ai_actuarial schema plan" in runbook
+    assert "python -m ai_actuarial schema apply" in runbook
 
 
 def test_production_recovery_cli_help_and_json_output(tmp_path: Path) -> None:

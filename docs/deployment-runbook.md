@@ -60,24 +60,27 @@ docker compose exec api sh
 ### Database Operations
 
 ```bash
-# Resolve the real production data path. Do not use the repository's data/ path.
+# Resolve the real application data path. PostgreSQL runs independently of this volume.
 DATA_VOLUME=ai_actuarial_inforsearch_ai-data
 DATA_DIR=$(docker volume inspect "$DATA_VOLUME" --format '{{ .Mountpoint }}')
 BACKUP_ROOT=/mnt/aiinforsearch-backup/aiinforsearch
 CONFIG_PATH=/var/lib/aiinforsearch/config/sites.yaml
+# DATABASE_URL must already be available from a private shell environment or secret store.
 
-# Online SQLite + configuration backup. Output is JSON and the database copy is
-# created with sqlite3's backup API, followed by PRAGMA quick_check.
-sudo python3 scripts/production_recovery.py backup \
+# Online PostgreSQL + configuration backup. Keep DATABASE_URL in the private
+# process environment/secret store; the tool does not print credentials.
+DATABASE_URL="$DATABASE_URL" sudo --preserve-env=DATABASE_URL python3 scripts/production_recovery.py backup \
   --data-dir "$DATA_DIR" \
   --config "$CONFIG_PATH" \
-  --backup-root "$BACKUP_ROOT"
+  --backup-root "$BACKUP_ROOT" --json
 ```
 
-The production SQLite database is `/app/data/index.db` inside `ai-api` and
-`/var/lib/docker/volumes/ai_actuarial_inforsearch_ai-data/_data/index.db` with
-the current Compose project name. Always resolve the mountpoint with
-`docker volume inspect`; never assume a repository-local host `data/` directory.
+`DATABASE_URL` selects PostgreSQL. `paths.data` or `DATA_DIR` selects the
+separate writable directory for downloads, logs, upload batches and RAG/Ready
+Data artifacts. Set the latter to an absolute path such as
+`D:/AI_actuarial_inforsearch/data` for a local Windows installation. PostgreSQL
+schema status/apply and the one-source SQLite v16 importer are documented in
+[the database guide](guides/DATABASE_BACKEND_GUIDE.md).
 
 ## Environment Variables
 
@@ -91,6 +94,7 @@ Use environment variables for deployment secrets and explicit platform overrides
 | `FASTAPI_SESSION_SECRET` | Secret for FastAPI browser sessions | `python -c "import secrets; print(secrets.token_urlsafe(48))"` |
 | `CONFIG_PATH` | Absolute host path to the external writable runtime configuration | `/var/lib/aiinforsearch/config/sites.yaml` |
 | `RUNTIME_CONFIG_DIR` | Directory mounted into the API container for atomic configuration writes | `/var/lib/aiinforsearch/config` |
+| `DATABASE_URL` | PostgreSQL connection URL for API, tasks, CLI and native backup tools | private secret value |
 
 ### Provider Credentials
 
@@ -102,7 +106,10 @@ Provider API keys should be created from Settings and stored as encrypted DB cre
 |----------|---------|-------------|
 | `FASTAPI_ENV` | `config/sites.yaml -> server.fastapi_env` | Deployment environment override. Use `production` in production; if unset, the YAML server value is used. |
 
-`config/sites.yaml -> paths.db` is the canonical SQLite path. `DB_PATH` remains supported only as a legacy fallback when that YAML value is absent; do not set both for normal deployments.
+PostgreSQL is the only application database. `database.url_env` may name an
+environment variable other than `DATABASE_URL`; it must contain a PostgreSQL
+URL. There is no SQLite runtime path or `DB_PATH` fallback. The independent
+`paths.data`/`DATA_DIR` setting controls local files and artifacts.
 
 ## Configuration Files
 
@@ -119,8 +126,11 @@ defaults:
   max_depth: 2
   delay_seconds: 0.5
 paths:
+  data: /var/lib/aiinforsearch/data
   download_dir: data/files
-  db: data/index.db
+database:
+  type: postgresql
+  url_env: DATABASE_URL
 search:
   enabled: true
   max_results: 5
@@ -181,8 +191,8 @@ sites:
 
 ### Database locked errors
 
-- Only one write process at a time is supported with SQLite.
-- For multi-instance deployments, migrate to a PostgreSQL-compatible backend.
+- Check PostgreSQL connectivity, transaction errors and database capacity.
+- PostgreSQL is the supported runtime; do not switch to a local SQLite file.
 
 ### Provider credential errors
 
@@ -214,18 +224,19 @@ ss -tlnp | grep 5000
 
 The recovery tool has two scopes:
 
-- Default: online SQLite backup plus `config/sites.yaml`. This is suitable for a
+- Default: online PostgreSQL dump plus `config/sites.yaml`. This is suitable for a
   scheduled daily job and does not copy `.env` or reveal credentials.
-- `--include-data --quiesced`: SQLite plus `rag/` and `agentic_ready_data/`.
+- `--include-data --quiesced`: PostgreSQL plus `rag/` and `agentic_ready_data/`.
   Re-crawlable source documents under `files/` are intentionally excluded from
-  full snapshots (their metadata is still captured in the database backup).
+  full snapshots (their metadata is still captured in PostgreSQL). Keep a
+  separate backup/transfer of raw originals before removing any old copy.
   Stop application writers first so the database and index artifacts share one
   recovery point.
 
 Each run appends a success or failure record to `backup-events.jsonl`. A
-successful snapshot is published only after its database passes
-`PRAGMA quick_check`; its manifest records checksums, WAL checkpoint results,
-directory sizes, and `PRAGMA user_version`.
+successful PostgreSQL dump is checked with matching-major-version native
+clients before publication; its manifest records checksums, schema version,
+directory sizes, and the included data directories.
 
 ### Daily verified database backup
 
@@ -237,11 +248,8 @@ sudo install -d -m 0750 /etc/aiinforsearch
 # The mount must already exist and be distinct from the production volume.
 findmnt -M /mnt/aiinforsearch-backup
 sudo install -d -m 0700 /mnt/aiinforsearch-backup/aiinforsearch
-printf '%s\n' \
-  'BACKUP_ROOT=/mnt/aiinforsearch-backup/aiinforsearch' \
-  'CONFIG_PATH=/var/lib/aiinforsearch/config/sites.yaml' \
-  | sudo tee /etc/aiinforsearch/backup.conf
-sudo chmod 0600 /etc/aiinforsearch/backup.conf
+sudo install -m 0600 /dev/null /etc/aiinforsearch/backup.conf
+sudoedit /etc/aiinforsearch/backup.conf
 sudo install -m 0644 ops/systemd/aiinforsearch-backup.service /etc/systemd/system/
 sudo install -m 0644 ops/systemd/aiinforsearch-backup.timer /etc/systemd/system/
 sudo systemctl daemon-reload
@@ -249,6 +257,14 @@ sudo systemctl enable --now aiinforsearch-backup.timer
 sudo systemctl start aiinforsearch-backup.service
 sudo systemctl status aiinforsearch-backup.service --no-pager
 ```
+
+The private `backup.conf` must define `BACKUP_ROOT`, `CONFIG_PATH`, and the
+database connection variable selected by the application (`DATABASE_URL` by
+default, or the name configured by `url_env`). Enter the connection value with
+`sudoedit` or a secret manager; do not put it in a `tee` command or terminal
+output. The PostgreSQL endpoint must be reachable from the host running this
+backup service. For a loopback-published database container, use the host's
+loopback address and published port.
 
 ### Weekly quiesced full snapshot
 
@@ -258,16 +274,17 @@ alongside the daily job with its own config and full-snapshot root:
 
 ```bash
 sudo install -d -m 0700 /mnt/aiinforsearch-backup/aiinforsearch-full
-printf '%s\n' \
-  'BACKUP_ROOT=/mnt/aiinforsearch-backup/aiinforsearch-full' \
-  'CONFIG_PATH=/var/lib/aiinforsearch/config/sites.yaml' \
-  | sudo tee /etc/aiinforsearch/full-backup.conf
-sudo chmod 0600 /etc/aiinforsearch/full-backup.conf
+sudo install -m 0600 /dev/null /etc/aiinforsearch/full-backup.conf
+sudoedit /etc/aiinforsearch/full-backup.conf
 sudo install -m 0644 ops/systemd/aiinforsearch-full-backup.service /etc/systemd/system/
 sudo install -m 0644 ops/systemd/aiinforsearch-full-backup.timer /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now aiinforsearch-full-backup.timer
 ```
+
+Define `BACKUP_ROOT`, `CONFIG_PATH`, and the configured PostgreSQL connection
+variable in `full-backup.conf` too. Keep the connection value private as for
+`backup.conf`; the endpoint must be reachable from the host running the timer.
 
 The wrapper stops only the API container, runs the quiesced snapshot, and
 restarts the API through an EXIT/INT/TERM trap even if the snapshot fails. It
@@ -313,9 +330,10 @@ DATA_DIR=$(docker volume inspect "$DATA_VOLUME" --format '{{ .Mountpoint }}')
 BACKUP_ROOT=/mnt/aiinforsearch-backup/aiinforsearch
 CONFIG_PATH=/var/lib/aiinforsearch/config/sites.yaml
 COMPOSE="docker compose -f docker-compose.yml -f docker-compose.override.yml"
+# DATABASE_URL must be available from a private shell environment or secret store.
 
 $COMPOSE stop api
-sudo python3 scripts/production_recovery.py backup \
+DATABASE_URL="$DATABASE_URL" sudo --preserve-env=DATABASE_URL python3 scripts/production_recovery.py backup \
   --data-dir "$DATA_DIR" \
   --config "$CONFIG_PATH" \
   --backup-root "$BACKUP_ROOT" \
@@ -324,6 +342,10 @@ sudo python3 scripts/production_recovery.py backup \
   --retention-days 30
 $COMPOSE start api
 ```
+
+Set `DATABASE_URL` privately before this command; the `sudo --preserve-env`
+invocation carries it into the backup process without placing the connection
+value in the command text.
 
 If backup creation fails after the API is stopped, restart the unchanged API
 before investigating. A maintenance-window wrapper should use a shell `trap` to
@@ -337,16 +359,18 @@ reads or copies it.
 ```bash
 BACKUP_DIR=/mnt/aiinforsearch-backup/aiinforsearch/backup-<UTC timestamp>
 RESTORE_DIR=/mnt/aiinforsearch-backup/restore-smoke-<UTC timestamp>
+POSTGRES_RESTORE_URL='postgresql://<user>:<password>@<postgres-host>:5432/restore_test'
 
 python3 scripts/production_recovery.py verify "$BACKUP_DIR"
-python3 scripts/production_recovery.py restore-smoke "$BACKUP_DIR" \
-  --restore-dir "$RESTORE_DIR"
+POSTGRES_RESTORE_URL="$POSTGRES_RESTORE_URL" \
+  python3 scripts/production_recovery.py restore-smoke "$BACKUP_DIR" \
+    --restore-dir "$RESTORE_DIR" --database-url-env POSTGRES_RESTORE_URL
 ```
 
-`restore-smoke` refuses a non-empty target. It verifies checksums, opens the
-restored SQLite database read-only, runs `PRAGMA quick_check`, reports file/KB/
-ready-manifest counts, and checks that database file paths exist in the isolated
-copy. It never replaces the live named volume.
+`restore-smoke` requires a pre-provisioned empty PostgreSQL restore database. It
+verifies checksums, restores with native `pg_restore`, checks the schema and
+business table counts, reports file/KB/Ready Data counts, and checks referenced
+artifact paths in the isolated copy. It never replaces the live database.
 
 After that check, an operator may start the restored copy in an unexposed
 container and call only GET smoke endpoints:
@@ -358,6 +382,7 @@ docker run --rm -d --name ai-restore-smoke \
   -e FASTAPI_ENV=development \
   -e FASTAPI_SESSION_SECRET=restore-smoke-only \
   -e TOKEN_ENCRYPTION_KEY="$RESTORE_SMOKE_KEY" \
+  -e DATABASE_URL="$POSTGRES_RESTORE_URL" \
   -e CONFIG_PATH=/app/runtime-config/sites.yaml \
   -v "$RESTORE_DIR/data:/app/data:rw" \
   -v "$RESTORE_DIR/config:/app/runtime-config:rw" \
@@ -427,18 +452,18 @@ docker buildx bake --builder "$BUILD_BUILDER" -f docker-compose.yml -f docker-co
 ```
 
 After the image is built, write a release record containing its digest, safe OCI
-labels, configuration checksum, and SQLite `PRAGMA user_version`:
+labels, configuration checksum, and PostgreSQL schema version:
 
 ```bash
 DATA_VOLUME=ai_actuarial_inforsearch_ai-data
 DATA_DIR=$(docker volume inspect "$DATA_VOLUME" --format '{{ .Mountpoint }}')
 CONFIG_PATH=/var/lib/aiinforsearch/config/sites.yaml
-python3 scripts/production_recovery.py release-record \
+DATABASE_URL='postgresql://<user>:<password>@<postgres-host>:5432/ai_actuarial' \
+DATABASE_URL="$DATABASE_URL" python3 scripts/production_recovery.py release-record \
   --image "$API_IMAGE" \
   --frontend-image "$FRONTEND_IMAGE" \
   --build-metadata "$BUILD_METADATA" \
   --config "$CONFIG_PATH" \
-  --db "$DATA_DIR/index.db" \
   --output /var/lib/aiinforsearch/releases/"$BUILD_RELEASE_ID".json
 export API_IMAGE_DIGEST=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["image_digest"].rsplit("@", 1)[-1])' /var/lib/aiinforsearch/releases/"$BUILD_RELEASE_ID".json)
 docker compose -f docker-compose.yml -f docker-compose.override.yml \
@@ -486,7 +511,7 @@ node client/src/components/BuildInfo.browser-smoke.mjs
 ```
 
 The deploy test uses fake Git, Docker/Compose, capacity, and backup operations
-plus an isolated SQLite/config fixture. It executes the actual shell deploy
+plus an isolated PostgreSQL/config fixture. It executes the actual shell deploy
 flow and release-record implementation, checks both builds precede image
 inspection, and checks the runtime digest handoff. The browser fixture exercises
 canary mismatch and a return to the previous frontend identity. For a live
@@ -497,28 +522,22 @@ requires the paired database restore described below. Production observations
 and live canary/rollback remain an unverified gate until separately authorized;
 these local fixtures do not claim a live rollout succeeded.
 
-`PRAGMA user_version` is the current explicit schema-version field. Legacy
-databases may still report `0` until the reviewed migration runner assigns the
-repository baseline. A schema-changing deployment must run the explicit,
-idempotent SQLite preflight after verified backup and before application
-startup:
+PostgreSQL schema versions are recorded in
+`ai_actuarial_schema_migrations`. After a verified backup, inspect and apply
+the versioned migration before application startup:
 
 ```bash
-ai-actuarial schema status --db "$DATA_DIR/index.db" --json
-ai-actuarial schema plan --db "$DATA_DIR/index.db" --json
-ai-actuarial schema apply --db "$DATA_DIR/index.db" --json
+python -m ai_actuarial schema status --json
+python -m ai_actuarial schema plan --json
+python -m ai_actuarial schema apply --json
 ```
 
-Schema v15 adds `idx_file_chunk_sets_latest`, a covering index on
-`(file_url, profile_id, updated_at DESC, created_at DESC, chunk_set_id DESC)`.
-Deployments from v14 must apply this migration before application startup. A
-rollback to v14 is a paired operation: deploy the previous application image
-and restore its verified pre-migration database backup. Do not roll back either
-component alone, and do not only decrement `PRAGMA user_version` while leaving
-the v15 index in place.
-
-Do not treat the application's historical startup-time `CREATE/ALTER` behavior
-as a sufficient production migration plan.
+For an initial SQLite migration, prepare an empty PostgreSQL schema, run
+`schema apply` and `schema import-sqlite-v16`, verify the import, then start the
+API. Starting the API first may seed rows and the importer will reject that
+target. A rollback across a schema change is paired: restore the matching
+verified PostgreSQL backup with the previous application image. Never edit the
+schema version by hand.
 
 ### Live restore and rollback
 
@@ -557,8 +576,9 @@ migration definitions. Keep `auth_tokens.token_type` in the v16 migration and
 the v15 latest-chunk index when reconciling storage changes. Both current KB
 status paths already use the latest-row query, so do not restore the obsolete
 window-CTE version. Keep production `CONFIG_PATH` outside the checkout and the
-database in its Docker volume; `.dockerignore` excludes nested environment
-files, SQLite files, and runtime/work directories from image builds.
+PostgreSQL URL in the private runtime environment; `.dockerignore` excludes
+nested environment files, SQLite migration sources, and runtime/work directories
+from image builds.
 
 ```bash
 # The guarded updater refuses a dirty worktree or root-disk use >=80%, creates a

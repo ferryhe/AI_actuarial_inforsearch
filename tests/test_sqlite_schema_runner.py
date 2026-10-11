@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import sqlite3
 import subprocess
@@ -11,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from ai_actuarial.storage import Storage
+from tests.postgres_helpers import postgres_url_for_path, uninitialized_postgres_url_for_path
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -21,7 +21,7 @@ def _user_version(db_path: Path) -> int:
 
 
 def _current_db_at_version_zero(db_path: Path) -> None:
-    storage = Storage(str(db_path))
+    storage = Storage._legacy_sqlite_schema_for_validation(str(db_path))
     try:
         storage._conn.execute("""
             INSERT INTO files (url, sha256, title, first_seen, last_seen)
@@ -38,7 +38,7 @@ def _current_db_at_version_10(
     *,
     snapshot_tables: tuple[str, ...] = (),
 ) -> None:
-    storage = Storage(str(db_path))
+    storage = Storage._legacy_sqlite_schema_for_validation(str(db_path))
     storage.close()
     with sqlite3.connect(db_path) as conn:
         conn.execute("DROP TABLE weekly_explanations")
@@ -53,7 +53,7 @@ def _current_db_at_version_10(
 
 
 def _genuine_v12_db(db_path: Path) -> None:
-    storage = Storage(str(db_path))
+    storage = Storage._legacy_sqlite_schema_for_validation(str(db_path))
     try:
         storage._conn.execute("""
             INSERT INTO files (url, sha256, title, first_seen, last_seen)
@@ -121,7 +121,7 @@ def _genuine_v12_db(db_path: Path) -> None:
 
 
 def _production_v7_db(db_path: Path) -> None:
-    storage = Storage(str(db_path))
+    storage = Storage._legacy_sqlite_schema_for_validation(str(db_path))
     storage.close()
     with sqlite3.connect(db_path) as conn:
         conn.execute("PRAGMA foreign_keys=OFF")
@@ -256,25 +256,6 @@ def _schema_rows(db_path: Path) -> list[tuple[str, str, str, str | None]]:
             """).fetchall()
 
 
-def _db_file_state(db_path: Path) -> tuple[tuple[bool, int, str], ...]:
-    def file_state(candidate: Path) -> tuple[bool, int, str]:
-        if not candidate.exists():
-            return False, 0, ""
-        digest = hashlib.sha256(candidate.read_bytes()).hexdigest()
-        return True, candidate.stat().st_size, digest
-
-    return tuple(
-        file_state(candidate)
-        for candidate in (db_path, Path(f"{db_path}-wal"), Path(f"{db_path}-shm"))
-    )
-
-
-def _api_token_label(db_path: Path) -> str | None:
-    with sqlite3.connect(db_path) as conn:
-        row = conn.execute("SELECT label FROM api_tokens LIMIT 1").fetchone()
-    return row[0] if row else None
-
-
 def _run_schema_cli(*args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, "-m", "ai_actuarial.cli", "schema", *args],
@@ -285,98 +266,6 @@ def _run_schema_cli(*args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def test_fresh_storage_initializes_current_schema_version(tmp_path: Path) -> None:
-    from ai_actuarial.sqlite_schema import CURRENT_SQLITE_SCHEMA_VERSION, schema_status
-
-    db_path = tmp_path / "fresh.db"
-    storage = Storage(str(db_path))
-    storage.close()
-
-    assert _user_version(db_path) == CURRENT_SQLITE_SCHEMA_VERSION
-    status = schema_status(db_path)
-    assert status["state"] == "current"
-    assert status["database"]["user_version"] == CURRENT_SQLITE_SCHEMA_VERSION
-
-
-def test_storage_open_current_schema_does_not_run_backfills(tmp_path: Path) -> None:
-    from ai_actuarial.sqlite_schema import schema_status
-
-    db_path = tmp_path / "current-noop.db"
-    storage = Storage(str(db_path))
-    try:
-        storage._conn.execute("""
-            INSERT INTO api_tokens (provider, category, api_key_encrypted, label)
-            VALUES ('openai', 'llm', 'encrypted-placeholder', NULL)
-            """)
-        storage._conn.commit()
-    finally:
-        storage.close()
-
-    assert schema_status(db_path)["state"] == "current"
-    assert _api_token_label(db_path) is None
-    before_schema = _schema_rows(db_path)
-    before_state = _db_file_state(db_path)
-
-    reopened = Storage(str(db_path))
-    reopened.close()
-
-    assert schema_status(db_path)["state"] == "current"
-    assert _api_token_label(db_path) is None
-    assert _schema_rows(db_path) == before_schema
-    assert _db_file_state(db_path) == before_state
-
-
-@pytest.mark.parametrize(
-    "failing_probe",
-    ("has_user_schema_objects", "storage_startup_status"),
-)
-def test_storage_closes_connection_when_startup_probe_raises_sqlite_error(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    failing_probe: str,
-) -> None:
-    import ai_actuarial.storage as storage_module
-
-    real_connect = sqlite3.connect
-    connections = []
-
-    class TrackingConnection:
-        def __init__(self, conn) -> None:
-            self._conn = conn
-            self.closed = False
-
-        def execute(self, *args, **kwargs):
-            return self._conn.execute(*args, **kwargs)
-
-        def close(self) -> None:
-            self.closed = True
-            self._conn.close()
-
-        def __getattr__(self, name: str):
-            return getattr(self._conn, name)
-
-    def tracking_connect(*args, **kwargs):
-        conn = TrackingConnection(real_connect(*args, **kwargs))
-        connections.append(conn)
-        return conn
-
-    def raise_sqlite_error(_conn) -> bool:
-        raise sqlite3.DatabaseError("injected startup probe failure")
-
-    monkeypatch.setattr(storage_module.sqlite3, "connect", tracking_connect)
-    if failing_probe == "has_user_schema_objects":
-        monkeypatch.setattr(storage_module, "has_user_schema_objects", raise_sqlite_error)
-    else:
-        monkeypatch.setattr(storage_module, "has_user_schema_objects", lambda _conn: True)
-        monkeypatch.setattr(storage_module, "storage_startup_status", raise_sqlite_error)
-
-    with pytest.raises(sqlite3.DatabaseError, match="injected startup probe failure"):
-        Storage(str(tmp_path / "probe-failure.db"))
-
-    assert connections
-    assert connections[-1].closed is True
-
-
 def test_storage_startup_status_skips_quick_check_but_schema_status_keeps_it(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -384,7 +273,7 @@ def test_storage_startup_status_skips_quick_check_but_schema_status_keeps_it(
     import ai_actuarial.sqlite_schema as sqlite_schema
 
     db_path = tmp_path / "startup-no-quick-check.db"
-    storage = Storage(str(db_path))
+    storage = Storage._legacy_sqlite_schema_for_validation(str(db_path))
     storage.close()
 
     analyze_calls: list[bool] = []
@@ -411,62 +300,6 @@ def test_storage_startup_status_skips_quick_check_but_schema_status_keeps_it(
 
     assert explicit_status["state"] == "current"
     assert analyze_calls.count(True) == 1
-
-
-def test_storage_rejects_non_empty_version_zero_without_mutating(tmp_path: Path) -> None:
-    from ai_actuarial.sqlite_schema import schema_status
-
-    db_path = tmp_path / "legacy-zero-storage.db"
-    storage = Storage(str(db_path))
-    try:
-        storage._conn.execute("""
-            INSERT INTO api_tokens (provider, category, api_key_encrypted, label)
-            VALUES ('openai', 'llm', 'encrypted-placeholder', NULL)
-            """)
-        storage._conn.execute("PRAGMA user_version=0")
-        storage._conn.commit()
-    finally:
-        storage.close()
-
-    before_schema = _schema_rows(db_path)
-    assert _api_token_label(db_path) is None
-
-    with pytest.raises(RuntimeError, match="schema apply"):
-        Storage(str(db_path))
-
-    assert _user_version(db_path) == 0
-    assert _schema_rows(db_path) == before_schema
-    assert _api_token_label(db_path) is None
-    assert schema_status(db_path)["state"] == "needs_migration"
-
-
-def test_storage_rejects_malformed_current_without_mutating(tmp_path: Path) -> None:
-    from ai_actuarial.sqlite_schema import CURRENT_SQLITE_SCHEMA_VERSION, schema_status
-
-    db_path = tmp_path / "malformed-current-storage.db"
-    storage = Storage(str(db_path))
-    try:
-        storage._conn.execute("""
-            INSERT INTO api_tokens (provider, category, api_key_encrypted, label)
-            VALUES ('openai', 'llm', 'encrypted-placeholder', NULL)
-            """)
-        storage._conn.commit()
-    finally:
-        storage.close()
-    with sqlite3.connect(db_path) as conn:
-        conn.execute("ALTER TABLE files ADD COLUMN hidden_startup_marker TEXT")
-        conn.execute(f"PRAGMA user_version={CURRENT_SQLITE_SCHEMA_VERSION}")
-
-    before_schema = _schema_rows(db_path)
-    assert _api_token_label(db_path) is None
-
-    with pytest.raises(RuntimeError, match="schema preflight"):
-        Storage(str(db_path))
-
-    assert _user_version(db_path) == CURRENT_SQLITE_SCHEMA_VERSION
-    assert _schema_rows(db_path) == before_schema
-    assert _api_token_label(db_path) is None
-    assert schema_status(db_path)["state"] == "invalid"
 
 
 def test_status_plan_apply_version_zero_baseline_preserves_data(tmp_path: Path) -> None:
@@ -804,16 +637,11 @@ def test_version_12_source_with_future_or_malformed_schema_is_invalid(
     assert schema_plan(db_path)["blocked"] is True
 
 
-def test_v9_manual_operation_state_migration_is_read_compatible_and_idempotent(
-    tmp_path: Path,
-) -> None:
-    from ai_actuarial.api.services.ready_data_publication import (
-        read_public_ready_data_snapshot,
-    )
+def test_v9_manual_operation_state_migration_is_idempotent(tmp_path: Path) -> None:
     from ai_actuarial.sqlite_schema import apply_schema, schema_plan, schema_status
 
     db_path = tmp_path / "manual-operation-v9.db"
-    storage = Storage(str(db_path))
+    storage = Storage._legacy_sqlite_schema_for_validation(str(db_path))
     try:
         storage._conn.execute("DROP TABLE agentic_ready_manual_operation_state")
         storage._conn.execute("DROP INDEX idx_file_chunk_sets_latest")
@@ -821,18 +649,6 @@ def test_v9_manual_operation_state_migration_is_read_compatible_and_idempotent(
         storage._conn.commit()
     finally:
         storage.close()
-
-    legacy = Storage.open_read_only(str(db_path))
-    try:
-        snapshot = read_public_ready_data_snapshot(
-            legacy,
-            kb_id="kb-legacy",
-            profile="general",
-        )
-        assert snapshot["publication_state"]["latest_operation_kind"] == "none"
-        legacy.assert_read_only_snapshot_unchanged()
-    finally:
-        legacy.close()
 
     assert schema_status(db_path)["state"] == "needs_migration"
     assert schema_plan(db_path)["plan"]["actions"] == [
@@ -903,7 +719,7 @@ def test_v10_manual_operation_state_migration_rolls_back_on_failure(
     import ai_actuarial.sqlite_schema as sqlite_schema
 
     db_path = tmp_path / "manual-operation-v10-rollback.db"
-    storage = Storage(str(db_path))
+    storage = Storage._legacy_sqlite_schema_for_validation(str(db_path))
     try:
         storage._conn.execute("DROP TABLE agentic_ready_manual_operation_state")
         storage._conn.execute("DROP INDEX idx_file_chunk_sets_latest")
@@ -949,7 +765,7 @@ def test_mixed_v7_migration_invalidates_unprovable_kb_index_mapping(
     from ai_actuarial.sqlite_schema import apply_schema, schema_status
 
     db_path = tmp_path / "mixed-v7.db"
-    storage = Storage(str(db_path))
+    storage = Storage._legacy_sqlite_schema_for_validation(str(db_path))
     storage.close()
     with sqlite3.connect(db_path) as conn:
         conn.execute("PRAGMA foreign_keys=OFF")
@@ -1180,7 +996,7 @@ def test_v6_migration_preserves_pipeline_stage_and_child_run_rows(tmp_path: Path
     )
 
     db_path = tmp_path / "v5-with-pipeline-data.db"
-    storage = Storage(str(db_path))
+    storage = Storage._legacy_sqlite_schema_for_validation(str(db_path))
     try:
         conn = storage._conn
         # Walk the fresh v6 database back to a genuine v5 state: drop the two v6
@@ -1261,7 +1077,7 @@ def test_schema_runner_plans_registered_old_version_path(
     import ai_actuarial.sqlite_schema as sqlite_schema
 
     db_path = tmp_path / "future-old-version.db"
-    storage = Storage(str(db_path))
+    storage = Storage._legacy_sqlite_schema_for_validation(str(db_path))
     storage.close()
 
     def apply_v17(conn: sqlite3.Connection) -> None:
@@ -1304,13 +1120,13 @@ def test_schema_runner_accepts_registered_old_version_source_signature(
     import ai_actuarial.sqlite_schema as sqlite_schema
 
     db_path = tmp_path / "future-ddl-old-version.db"
-    storage = Storage(str(db_path))
+    storage = Storage._legacy_sqlite_schema_for_validation(str(db_path))
     try:
         v6_signature = sqlite_schema._schema_signature(storage._conn)
     finally:
         storage.close()
 
-    expected = Storage(":memory:")
+    expected = Storage._legacy_sqlite_schema_for_validation()
     try:
         expected._conn.execute("ALTER TABLE files ADD COLUMN schema_runner_v7_marker TEXT")
         v7_signature = sqlite_schema._schema_signature(expected._conn)
@@ -1366,13 +1182,13 @@ def test_schema_runner_rejects_mutating_source_validator_during_apply(
 
     db_path = tmp_path / "mutating-source-validator.db"
     target_db_path = db_path.resolve()
-    storage = Storage(str(db_path))
+    storage = Storage._legacy_sqlite_schema_for_validation(str(db_path))
     try:
         v6_signature = sqlite_schema._schema_signature(storage._conn)
     finally:
         storage.close()
 
-    expected = Storage(":memory:")
+    expected = Storage._legacy_sqlite_schema_for_validation()
     try:
         expected._conn.execute("ALTER TABLE files ADD COLUMN schema_runner_v7_marker TEXT")
         v7_signature = sqlite_schema._schema_signature(expected._conn)
@@ -1447,7 +1263,7 @@ def test_schema_runner_accepts_exported_chat_service_optional_schema(
     from ai_actuarial.sqlite_schema import schema_plan, schema_status
 
     db_path = tmp_path / "chat-service.db"
-    storage = Storage(str(db_path))
+    storage = Storage._legacy_sqlite_schema_for_validation(str(db_path))
     try:
         ensure_conversation_schema(storage)
     finally:
@@ -1490,7 +1306,7 @@ def test_schema_runner_rejects_newer_than_code(tmp_path: Path) -> None:
     )
 
     db_path = tmp_path / "future.db"
-    storage = Storage(str(db_path))
+    storage = Storage._legacy_sqlite_schema_for_validation(str(db_path))
     storage.close()
     with sqlite3.connect(db_path) as conn:
         conn.execute(f"PRAGMA user_version={CURRENT_SQLITE_SCHEMA_VERSION + 1}")
@@ -1537,7 +1353,7 @@ def test_schema_runner_rejects_unexpected_views_and_triggers(tmp_path: Path) -> 
     from ai_actuarial.sqlite_schema import schema_plan, schema_status
 
     db_path = tmp_path / "unexpected-objects.db"
-    storage = Storage(str(db_path))
+    storage = Storage._legacy_sqlite_schema_for_validation(str(db_path))
     storage.close()
     with sqlite3.connect(db_path) as conn:
         conn.executescript("""
@@ -1575,8 +1391,10 @@ def test_version_zero_database_with_only_view_is_not_bootstrapped(tmp_path: Path
         conn.execute("PRAGMA user_version=0")
 
     before_schema = _schema_rows(db_path)
-    with pytest.raises(RuntimeError, match="schema apply|schema preflight"):
-        Storage(str(db_path))
+    from ai_actuarial.sqlite_schema import SchemaMigrationError, apply_schema
+
+    with pytest.raises(SchemaMigrationError, match="not safe to migrate"):
+        apply_schema(db_path)
 
     assert _user_version(db_path) == 0
     assert _schema_rows(db_path) == before_schema
@@ -1633,7 +1451,7 @@ def test_schema_runner_accepts_known_catalog_incremental_extra_columns(
     from ai_actuarial.sqlite_schema import schema_status
 
     db_path = tmp_path / "catalog-extra-compatible.db"
-    storage = Storage(str(db_path))
+    storage = Storage._legacy_sqlite_schema_for_validation(str(db_path))
     storage.close()
     with sqlite3.connect(db_path) as conn:
         for column in (
@@ -1647,7 +1465,7 @@ def test_schema_runner_accepts_known_catalog_incremental_extra_columns(
 
     status = schema_status(db_path)
     assert status["state"] == "current"
-    reopened = Storage(str(db_path))
+    reopened = Storage._legacy_sqlite_schema_for_validation(str(db_path))
     reopened.close()
 
 
@@ -1657,7 +1475,7 @@ def test_schema_runner_rejects_malformed_catalog_incremental_extra_column(
     from ai_actuarial.sqlite_schema import schema_plan, schema_status
 
     db_path = tmp_path / "catalog-extra-malformed.db"
-    storage = Storage(str(db_path))
+    storage = Storage._legacy_sqlite_schema_for_validation(str(db_path))
     storage.close()
     with sqlite3.connect(db_path) as conn:
         conn.execute("ALTER TABLE catalog_items ADD COLUMN title TEXT NOT NULL")
@@ -1667,8 +1485,6 @@ def test_schema_runner_rejects_malformed_catalog_incremental_extra_column(
     assert "column_signature_mismatch" in status["problems"]
     diagnostics = json.dumps(schema_plan(db_path), sort_keys=True)
     assert "title" not in diagnostics
-    with pytest.raises(RuntimeError, match="schema preflight failed"):
-        Storage(str(db_path))
 
 
 def test_schema_runner_rolls_back_failed_migration(
@@ -1746,7 +1562,7 @@ def test_schema_runner_serializes_concurrent_fresh_apply(
 
 
 def test_schema_cli_json_contract_for_status_plan_apply(tmp_path: Path) -> None:
-    from ai_actuarial.sqlite_schema import CURRENT_SQLITE_SCHEMA_VERSION
+    from ai_actuarial.postgres import POSTGRES_SCHEMA_VERSION
 
     help_result = subprocess.run(
         [sys.executable, "-m", "ai_actuarial.cli", "--help"],
@@ -1758,60 +1574,47 @@ def test_schema_cli_json_contract_for_status_plan_apply(tmp_path: Path) -> None:
     assert help_result.returncode == 0
     assert "schema" in help_result.stdout
 
-    db_path = tmp_path / "cli.db"
-    _current_db_at_version_zero(db_path)
+    database_url = postgres_url_for_path(tmp_path / "cli.db")
 
     for command in ("status", "plan"):
-        result = _run_schema_cli(command, "--db", str(db_path), "--json")
+        result = _run_schema_cli(command, "--json")
         assert result.returncode == 0, result.stderr
         payload = json.loads(result.stdout)
         assert payload["success"] is True
-        assert str(db_path) not in result.stdout
-        assert payload["database"]["user_version"] == 0
+        assert database_url not in result.stdout
+        assert payload["database"]["schema_version"] == POSTGRES_SCHEMA_VERSION
+        assert payload["state"] == "current"
 
-    apply_result = _run_schema_cli("apply", "--db", str(db_path), "--json")
+    apply_result = _run_schema_cli("apply", "--json")
     assert apply_result.returncode == 0, apply_result.stderr
     apply_payload = json.loads(apply_result.stdout)
-    assert apply_payload["database"]["user_version"] == CURRENT_SQLITE_SCHEMA_VERSION
-    assert apply_payload["applied_migrations"] == [
-        "baseline_storage_schema_v1",
-        "add_taxonomy_state_v2",
-        "add_taxonomy_categories_v3",
-        "add_files_content_kind_v4",
-        "add_pipeline_state_v5",
-        "add_pipeline_fks_v6",
-        "add_pipeline_lease_v7",
-        "add_chunk_embedding_identity_v8",
-        "add_kb_index_contract_v9",
-        "add_agentic_ready_manual_operation_state_v10",
-        "add_weekly_snapshots_v11",
-        "add_weekly_explanations_v12",
-        "add_chunk_stats_metadata_indexes_v13",
-        "add_markdown_terminal_source_state_v14",
-        "add_file_chunk_sets_latest_index_v15",
-        "add_auth_token_type_v16",
-    ]
-    assert str(db_path) not in apply_result.stdout
+    assert apply_payload["database"]["schema_version"] == POSTGRES_SCHEMA_VERSION
+    assert apply_payload["state"] == "current"
+    assert database_url not in apply_result.stdout
 
 
-def test_schema_cli_apply_missing_database_creates_current_schema(tmp_path: Path) -> None:
-    from ai_actuarial.sqlite_schema import CURRENT_SQLITE_SCHEMA_VERSION
+def test_schema_cli_plans_all_migrations_for_an_empty_postgresql_schema(tmp_path: Path) -> None:
+    from ai_actuarial.postgres import POSTGRES_SCHEMA_VERSION, postgresql_schema_status
 
-    db_path = tmp_path / "missing" / "fresh.db"
-
-    plan_result = _run_schema_cli("plan", "--db", str(db_path), "--json")
+    database_url = uninitialized_postgres_url_for_path(tmp_path / "fresh.db")
+    plan_result = _run_schema_cli("plan", "--json")
     assert plan_result.returncode == 0, plan_result.stderr
     plan_payload = json.loads(plan_result.stdout)
-    assert plan_payload["state"] == "missing"
-    assert plan_payload["plan"]["actions"][0]["id"] == "create_current_storage_schema"
-    assert not db_path.exists()
+    assert plan_payload["state"] == "empty"
+    actions = plan_payload["plan"]
+    assert [action["version"] for action in actions] == list(range(1, POSTGRES_SCHEMA_VERSION + 1))
+    assert [action["file"] for action in actions] == [
+        "0001_postgresql.sql",
+        "0002_message_order.sql",
+    ][:POSTGRES_SCHEMA_VERSION]
+    assert database_url not in plan_result.stdout
 
-    apply_result = _run_schema_cli("apply", "--db", str(db_path), "--json")
+    apply_result = _run_schema_cli("apply", "--json")
     assert apply_result.returncode == 0, apply_result.stderr
     apply_payload = json.loads(apply_result.stdout)
     assert apply_payload["state"] == "current"
-    assert apply_payload["database"]["user_version"] == CURRENT_SQLITE_SCHEMA_VERSION
-    assert _user_version(db_path) == CURRENT_SQLITE_SCHEMA_VERSION
+    assert apply_payload["database"]["schema_version"] == POSTGRES_SCHEMA_VERSION
+    assert postgresql_schema_status(database_url)["state"] == "current"
 
 
 def test_legacy_missing_backfill_table_is_migratable(tmp_path: Path) -> None:
@@ -1822,7 +1625,7 @@ def test_legacy_missing_backfill_table_is_migratable(tmp_path: Path) -> None:
     )
 
     db_path = tmp_path / "legacy-missing-table.db"
-    storage = Storage(str(db_path))
+    storage = Storage._legacy_sqlite_schema_for_validation(str(db_path))
     try:
         storage._conn.execute("DROP TABLE agentic_ready_automation_lock")
         storage._conn.execute("PRAGMA user_version=0")
@@ -1867,7 +1670,7 @@ def test_legacy_missing_non_backfill_table_is_invalid(tmp_path: Path) -> None:
     from ai_actuarial.sqlite_schema import schema_status
 
     db_path = tmp_path / "legacy-missing-core-table.db"
-    storage = Storage(str(db_path))
+    storage = Storage._legacy_sqlite_schema_for_validation(str(db_path))
     try:
         storage._conn.execute("DROP TABLE pages")
         storage._conn.execute("PRAGMA user_version=0")
@@ -1889,7 +1692,7 @@ def test_legacy_missing_backfill_column_is_migratable(tmp_path: Path) -> None:
     )
 
     db_path = tmp_path / "legacy-missing-column.db"
-    storage = Storage(str(db_path))
+    storage = Storage._legacy_sqlite_schema_for_validation(str(db_path))
     try:
         storage._conn.execute("ALTER TABLE agentic_ready_manifests DROP COLUMN artifact_digest")
         storage._conn.execute("PRAGMA user_version=0")
@@ -1913,7 +1716,7 @@ def test_legacy_missing_non_backfill_column_is_invalid(tmp_path: Path) -> None:
     from ai_actuarial.sqlite_schema import schema_status
 
     db_path = tmp_path / "legacy-missing-core-column.db"
-    storage = Storage(str(db_path))
+    storage = Storage._legacy_sqlite_schema_for_validation(str(db_path))
     try:
         storage._conn.execute("ALTER TABLE files DROP COLUMN sha256")
         storage._conn.execute("PRAGMA user_version=0")
@@ -2085,7 +1888,7 @@ def test_accept_version_2_source_requires_taxonomy_state(tmp_path: Path) -> None
     )
 
     db_path = tmp_path / "v2-missing-taxonomy-state.db"
-    storage = Storage(str(db_path))
+    storage = Storage._legacy_sqlite_schema_for_validation(str(db_path))
     try:
         storage._conn.execute("DROP TABLE taxonomy_state")
         storage._conn.commit()
@@ -2101,7 +1904,7 @@ def test_v15_auth_token_type_migration_preserves_legacy_tokens(tmp_path: Path) -
     from ai_actuarial.sqlite_schema import apply_schema, schema_status
 
     path = tmp_path / "v15-token.db"
-    storage = Storage(str(path))
+    storage = Storage._legacy_sqlite_schema_for_validation(str(path))
     storage.create_auth_token(
         subject="Old operator", group_name="operator_ai", token_hash=hash_token("old-token")
     )
@@ -2112,7 +1915,7 @@ def test_v15_auth_token_type_migration_preserves_legacy_tokens(tmp_path: Path) -
         conn.execute("PRAGMA user_version=15")
     assert schema_status(path)["state"] == "needs_migration"
     assert apply_schema(path)["applied_migrations"] == ["add_auth_token_type_v16"]
-    storage = Storage(str(path))
+    storage = Storage._legacy_sqlite_schema_for_validation(str(path))
     try:
         record = storage.get_auth_token_by_hash(hash_token("old-token"))
         assert record["group_name"] == "operator" and record["token_type"] == "standard"

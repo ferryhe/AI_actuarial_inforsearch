@@ -2,10 +2,20 @@ from __future__ import annotations
 
 import argparse
 import re
-import sqlite3
+import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from ai_actuarial.postgres import (  # noqa: E402
+    PostgresConnection,
+    resolve_data_root,
+    resolve_database_config,
+    run_postgres_dump,
+)
+from config.yaml_config import load_database_config  # noqa: E402
 
 LINE_PATTERNS = [
     re.compile(r"^\s*#{1,6}\s*page\s+\d+(?:\s+of\s+\d+)?\s*$", re.IGNORECASE),
@@ -46,13 +56,9 @@ def clean_markdown(text: str) -> CleanResult:
     return CleanResult(changed=(cleaned != original), removed_lines=removed, markdown=cleaned)
 
 
-def ensure_backup(conn: sqlite3.Connection, backup_path: Path) -> None:
+def ensure_backup(database_url, schema: str, backup_path: Path) -> None:
     backup_path.parent.mkdir(parents=True, exist_ok=True)
-    backup_conn = sqlite3.connect(str(backup_path))
-    try:
-        conn.backup(backup_conn)
-    finally:
-        backup_conn.close()
+    run_postgres_dump(database_url, backup_path, schema=schema)
 
 
 def main() -> int:
@@ -60,7 +66,9 @@ def main() -> int:
         description="Remove page number lines from markdown_content in catalog_items."
     )
     parser.add_argument(
-        "--db", default="data/index.db", help="SQLite database path (default: data/index.db)"
+        "--database-url-env",
+        default="",
+        help="Environment variable containing the PostgreSQL URL (default: configured URL variable)",
     )
     parser.add_argument(
         "--source-like",
@@ -75,16 +83,15 @@ def main() -> int:
     parser.add_argument(
         "--backup",
         default="",
-        help="Optional backup path. Default when --apply: data/backups/index_before_md_page_cleanup_<timestamp>.db",
+        help="Optional native PostgreSQL custom-format backup path.",
     )
     args = parser.parse_args()
 
-    db_path = Path(args.db)
-    if not db_path.exists():
-        raise SystemExit(f"Database not found: {db_path}")
-
-    conn = sqlite3.connect(str(db_path))
-    conn.row_factory = sqlite3.Row
+    database_settings = load_database_config()
+    if args.database_url_env:
+        database_settings = {**database_settings, "url_env": args.database_url_env}
+    database = resolve_database_config({"database": database_settings})
+    conn = PostgresConnection(database)
     try:
         rows = conn.execute(
             """
@@ -136,11 +143,15 @@ def main() -> int:
             backup_path = Path(args.backup)
         else:
             stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            backup_path = Path("data/backups") / f"index_before_md_page_cleanup_{stamp}.db"
-        ensure_backup(conn, backup_path)
-        print(f"\nBackup created: {backup_path}")
+            backup_path = (
+                resolve_data_root() / "backups" / f"catalog_before_page_cleanup_{stamp}.dump"
+            )
+        schema = str(conn.execute("SELECT current_schema()").fetchone()[0])
+        ensure_backup(database, schema, backup_path)
+        print(f"\nPostgreSQL backup created: {backup_path}")
 
-        with conn:
+        conn.execute("BEGIN")
+        try:
             for file_url, _source, cleaned, _removed_lines in changed_rows:
                 conn.execute(
                     """
@@ -151,6 +162,10 @@ def main() -> int:
                     """,
                     (cleaned, file_url),
                 )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
 
         print(f"Updated rows: {len(changed_rows)}")
         return 0

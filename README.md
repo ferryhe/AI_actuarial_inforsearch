@@ -105,6 +105,7 @@ This separation keeps future upgrades local: a collector, conversion engine, cla
 Requirements:
 
 - Python 3.10+
+- PostgreSQL 16 server and a database/schema the app can access
 - Node.js `^20.19.0` or `>=22.12.0` for the Vite 7 frontend toolchain
 - Java 11+ on `PATH` only when using OpenDataLoader PDF conversion
 - `FASTAPI_SESSION_SECRET` when session login is enabled
@@ -114,8 +115,14 @@ Start the API:
 
 ```bash
 pip install -r requirements.txt
+export DATABASE_URL='postgresql://<user>:<password>@127.0.0.1:5432/ai_actuarial'
 python -m ai_actuarial api --host 127.0.0.1 --port 8000
 ```
+
+The runtime initializes its versioned PostgreSQL schema on startup. Keep database
+credentials in the process environment or a private secret store. File data is
+stored separately from PostgreSQL: set `paths.data` in the active config (or
+`DATA_DIR`) to an absolute data directory such as `D:/AI_actuarial_inforsearch/data`.
 
 Start the React UI:
 
@@ -150,7 +157,11 @@ Important variables:
 
 Feature switches such as authentication, global logs, file deletion, rate limiting, CSRF protection, error-detail exposure, and security headers live in `CONFIG_PATH -> features` and can be changed from Settings. Matching environment variables are deployment overrides and are shown as locked in Settings.
 
-The canonical SQLite path is `CONFIG_PATH -> paths.db`. `DB_PATH` is only a fallback when that YAML path is absent.
+PostgreSQL is the only application runtime database. Configure its URL through
+`DATABASE_URL` or `database.url_env`; SQLite files are accepted only by the explicit
+`schema import-sqlite-v16` migration command. The independent `paths.data` setting
+(or `DATA_DIR`) controls downloads, logs, upload batches, RAG artifacts, and task
+history; it does not select a database.
 
 ## Authentication and Permissions
 
@@ -223,7 +234,7 @@ Knowledge bases carry a `manifest_profile`:
 Build a ready-data manifest from the CLI:
 
 ```bash
-python -m ai_actuarial.agentic_rag.ready_data_builder --db data/index.db --kb-id <kb-id> --profile formula --validate
+python -m ai_actuarial.agentic_rag.ready_data_builder --kb-id <kb-id> --profile formula --validate
 ```
 
 Run deterministic eval smoke:
@@ -251,7 +262,7 @@ AI_actuarial_inforsearch/
 |-- ai_actuarial/           # Core Python package and FastAPI API
 |-- client/                 # React + TypeScript frontend
 |-- config/                 # YAML configuration
-|-- data/                   # Local runtime data, downloads, logs, and SQLite DB
+|-- data/                   # Default local runtime files; PostgreSQL is separate
 |-- doc_to_md/              # Document-to-Markdown engines
 |-- docs/                   # Current docs plus archived historical notes
 |-- scripts/                # Maintenance scripts

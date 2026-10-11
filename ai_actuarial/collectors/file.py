@@ -7,6 +7,7 @@ import logging
 import shutil
 from pathlib import Path
 
+from ..shared_runtime import resolve_data_path
 from ..storage import Storage
 from .base import BaseCollector, CollectionConfig, CollectionResult
 
@@ -28,7 +29,7 @@ class FileCollector(BaseCollector):
             download_dir: Base directory for storing files
         """
         self.storage = storage
-        self.download_dir = Path(download_dir)
+        self.download_dir = resolve_data_path(download_dir, data_root=storage.data_root)
 
     def collect(self, config: CollectionConfig, progress_callback=None) -> CollectionResult:
         """Execute file-based collection from local paths.

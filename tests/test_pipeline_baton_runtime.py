@@ -1,21 +1,25 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 from typing import Any
 from unittest.mock import patch
 
+import psycopg2
 import pytest
 
 from ai_actuarial.pipeline_baton import PipelineBaton
+from ai_actuarial.rag.knowledge_base import KnowledgeBaseManager
+from ai_actuarial.storage import Storage
 from ai_actuarial.task_item_errors import make_item_error
 from ai_actuarial.task_runtime import NativeTaskRuntime, _FallbackScheduler
+from tests.postgres_helpers import postgres_url_for_path
 
 
 def _runtime(monkeypatch, tmp_path):
     monkeypatch.setattr("ai_actuarial.task_runtime._new_scheduler", lambda: _FallbackScheduler())
+    database_url = postgres_url_for_path(tmp_path / "data" / "index.db")
     runtime = NativeTaskRuntime(
-        ready_data_db_path=str(tmp_path / "index.db"),
+        ready_data_database=database_url,
         pipeline_baton_state_path=str(tmp_path / "pipeline-baton.json"),
     )
     runtime._scheduler_loop_started = True
@@ -23,7 +27,7 @@ def _runtime(monkeypatch, tmp_path):
         runtime,
         "_load_site_config",
         lambda: {
-            "paths": {"db": str(tmp_path / "index.db")},
+            "paths": {"db": database_url},
             "scheduled_tasks": [
                 {
                     "name": "Scheduled Collection",
@@ -231,7 +235,7 @@ def test_scheduled_tick_logs_errors_without_hiding_direct_api_failure(
     runtime, _started = _runtime(monkeypatch, tmp_path)
 
     def fail_tick():
-        raise sqlite3.OperationalError("temporary KB lookup failure")
+        raise psycopg2.OperationalError("temporary KB lookup failure")
 
     monkeypatch.setattr(runtime, "tick_pipeline_baton", fail_tick)
     runtime.init_scheduler()
@@ -240,7 +244,7 @@ def test_scheduled_tick_logs_errors_without_hiding_direct_api_failure(
     )
 
     tick_job.job_func()
-    with pytest.raises(sqlite3.OperationalError, match="temporary KB lookup failure"):
+    with pytest.raises(psycopg2.OperationalError, match="temporary KB lookup failure"):
         runtime.tick_pipeline_baton()
 
 
@@ -270,17 +274,28 @@ def test_runtime_rejects_old_full_pipeline_dispatch(monkeypatch, tmp_path) -> No
 
 def test_runtime_sequences_all_supported_kb_modes_in_stable_order(monkeypatch, tmp_path) -> None:
     runtime, started = _runtime(monkeypatch, tmp_path)
-    with sqlite3.connect(tmp_path / "index.db") as conn:
-        conn.execute("CREATE TABLE rag_knowledge_bases (kb_id TEXT, kb_mode TEXT)")
-        conn.executemany(
-            "INSERT INTO rag_knowledge_bases (kb_id, kb_mode) VALUES (?, ?)",
-            [
-                ("kb-z-category", "category"),
-                ("kb-m-manual", "manual"),
-                ("kb-a-all", "all"),
-                ("kb-unsupported", "external"),
-            ],
+    storage = Storage(runtime.database)
+    try:
+        manager = KnowledgeBaseManager(storage)
+        for kb_id, mode in (
+            ("kb-z-category", "category"),
+            ("kb-m-manual", "manual"),
+            ("kb-a-all", "all"),
+            ("kb-unsupported", "manual"),
+        ):
+            manager.create_kb(
+                kb_id=kb_id,
+                name=kb_id,
+                kb_mode=mode,
+                manifest_profile="general",
+            )
+        storage._conn.execute(
+            "UPDATE rag_knowledge_bases SET kb_mode = 'external' WHERE kb_id = ?",
+            ("kb-unsupported",),
         )
+        storage._conn.commit()
+    finally:
+        storage.close()
 
     assert runtime._indexable_kb_ids() == [
         "kb-a-all",
@@ -365,8 +380,15 @@ def test_runtime_sequences_all_supported_kb_modes_in_stable_order(monkeypatch, t
 
 def test_runtime_does_not_treat_kb_discovery_errors_as_zero_kbs(monkeypatch, tmp_path) -> None:
     runtime, _started = _runtime(monkeypatch, tmp_path)
+    missing_table_error = psycopg2.errors.lookup("42P01")
+    missing_table = missing_table_error('relation "rag_knowledge_bases" does not exist')
 
-    with pytest.raises(sqlite3.OperationalError, match="rag_knowledge_bases"):
+    def fail_connection(*_args, **_kwargs):
+        raise missing_table
+
+    monkeypatch.setattr("ai_actuarial.task_runtime.PostgresConnection", fail_connection)
+
+    with pytest.raises(psycopg2.Error, match="rag_knowledge_bases"):
         runtime._indexable_kb_ids()
 
 

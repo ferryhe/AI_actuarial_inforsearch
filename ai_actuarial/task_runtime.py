@@ -6,7 +6,6 @@ import logging
 import os
 import re
 import secrets
-import sqlite3
 import threading
 import time
 from collections import deque
@@ -47,6 +46,7 @@ from ai_actuarial.markdown_conversion_config import (
     load_markdown_conversion_config,
 )
 from ai_actuarial.pipeline_baton import PIPELINE_STEPS, PipelineBaton
+from ai_actuarial.postgres import PostgresConnection, resolve_data_root, resolve_database_config
 from ai_actuarial.rag.kb_index import (
     KBIndexStopped,
     build_kb_index,
@@ -70,6 +70,7 @@ from ai_actuarial.shared_runtime import (
     get_sites_config_path,
     load_yaml,
     parse_int_clamped,
+    resolve_data_path,
     task_log_path,
 )
 from ai_actuarial.storage import Storage
@@ -105,21 +106,21 @@ _CONVERTIBLE_MARKDOWN_PREDICATE = """
     f.local_path IS NOT NULL AND f.local_path != ''
     AND f.deleted_at IS NULL
     AND (
-        LOWER(IFNULL(f.content_type,'')) LIKE '%pdf%'
-        OR LOWER(IFNULL(f.content_type,'')) LIKE '%word%'
-        OR LOWER(IFNULL(f.content_type,'')) LIKE '%powerpoint%'
-        OR LOWER(IFNULL(f.content_type,'')) LIKE '%presentation%'
-        OR LOWER(IFNULL(f.content_type,'')) LIKE '%document%'
-        OR LOWER(IFNULL(f.content_type,'')) LIKE '%image%'
-        OR LOWER(IFNULL(f.original_filename,'')) LIKE '%.pdf'
-        OR LOWER(IFNULL(f.original_filename,'')) LIKE '%.docx'
-        OR LOWER(IFNULL(f.original_filename,'')) LIKE '%.ppt'
-        OR LOWER(IFNULL(f.original_filename,'')) LIKE '%.pptx'
-        OR LOWER(IFNULL(f.original_filename,'')) LIKE '%.png'
-        OR LOWER(IFNULL(f.original_filename,'')) LIKE '%.jpg'
-        OR LOWER(IFNULL(f.original_filename,'')) LIKE '%.jpeg'
-        OR LOWER(IFNULL(f.original_filename,'')) LIKE '%.webp'
-        OR LOWER(IFNULL(f.original_filename,'')) LIKE '%.bmp'
+        LOWER(COALESCE(f.content_type,'')) LIKE '%pdf%'
+        OR LOWER(COALESCE(f.content_type,'')) LIKE '%word%'
+        OR LOWER(COALESCE(f.content_type,'')) LIKE '%powerpoint%'
+        OR LOWER(COALESCE(f.content_type,'')) LIKE '%presentation%'
+        OR LOWER(COALESCE(f.content_type,'')) LIKE '%document%'
+        OR LOWER(COALESCE(f.content_type,'')) LIKE '%image%'
+        OR LOWER(COALESCE(f.original_filename,'')) LIKE '%.pdf'
+        OR LOWER(COALESCE(f.original_filename,'')) LIKE '%.docx'
+        OR LOWER(COALESCE(f.original_filename,'')) LIKE '%.ppt'
+        OR LOWER(COALESCE(f.original_filename,'')) LIKE '%.pptx'
+        OR LOWER(COALESCE(f.original_filename,'')) LIKE '%.png'
+        OR LOWER(COALESCE(f.original_filename,'')) LIKE '%.jpg'
+        OR LOWER(COALESCE(f.original_filename,'')) LIKE '%.jpeg'
+        OR LOWER(COALESCE(f.original_filename,'')) LIKE '%.webp'
+        OR LOWER(COALESCE(f.original_filename,'')) LIKE '%.bmp'
     )
 """
 
@@ -290,6 +291,10 @@ def _tag_scheduler_job(
     return job
 
 
+def _append_task_log_for_runtime(runtime: Any, task_id: str, level: str, message: str) -> None:
+    append_task_log(task_id, level, message, data_root=getattr(runtime, "data_root", None))
+
+
 @dataclass(slots=True)
 class RuntimeRefs:
     active_tasks_ref: dict[str, dict[str, Any]]
@@ -309,12 +314,17 @@ class NativeTaskRuntime:
     def __init__(
         self,
         *,
-        ready_data_db_path: str = "",
+        ready_data_database: Any | None = None,
+        data_root: str | Path | None = None,
+        ready_data_db_path: Any | None = None,
         ready_data_poll_interval_seconds: int = 60,
         ready_data_runner: Callable[..., dict[str, Any]] | None = None,
         pipeline_baton_state_path: str = "data/pipeline_baton.json",
         weekly_explanation_generator: Any | None = None,
     ) -> None:
+        self.data_root = (
+            Path(data_root).expanduser().resolve() if data_root else resolve_data_root()
+        )
         self.active_tasks: dict[str, dict[str, Any]] = {}
         self.task_history: list[dict[str, Any]] = self._load_history_from_disk()
         self.task_lock = threading.RLock()
@@ -322,7 +332,8 @@ class NativeTaskRuntime:
         self._scheduler_lock = threading.RLock()
         self._scheduler_loop_started = False
         self._site_config_override: dict[str, Any] | None = None
-        self._ready_data_db_path = str(ready_data_db_path or "")
+        self.database = ready_data_database or ready_data_db_path or resolve_database_config()
+        self._ready_data_db_path = self.database
         self._ready_data_poll_interval_seconds = max(
             1,
             int(ready_data_poll_interval_seconds),
@@ -331,7 +342,11 @@ class NativeTaskRuntime:
         self._weekly_explanation_generator = weekly_explanation_generator
         self._ready_data_worker_lock = threading.Lock()
         self._pipeline_baton = PipelineBaton(
-            state_path=pipeline_baton_state_path,
+            state_path=str(
+                resolve_data_path(
+                    pipeline_baton_state_path, data_root=getattr(self, "data_root", None)
+                )
+            ),
             start_task=lambda task_type, payload, **kwargs: self.start_background_task(
                 task_type, payload, **kwargs
             ),
@@ -343,7 +358,9 @@ class NativeTaskRuntime:
         )
 
     def _load_history_from_disk(self) -> list[dict[str, Any]]:
-        path = Path("data/job_history.jsonl")
+        path = resolve_data_path(
+            "data/job_history.jsonl", data_root=getattr(self, "data_root", None)
+        )
         if not path.exists():
             return []
         try:
@@ -364,7 +381,9 @@ class NativeTaskRuntime:
             return []
 
     def _load_pipeline_round_tasks_from_disk(self, source_task_id: str) -> list[dict[str, Any]]:
-        path = Path("data/job_history.jsonl")
+        path = resolve_data_path(
+            "data/job_history.jsonl", data_root=getattr(self, "data_root", None)
+        )
         if not source_task_id or not path.exists():
             return []
         try:
@@ -422,18 +441,22 @@ class NativeTaskRuntime:
 
     def _indexable_kb_ids(self) -> list[str]:
         db_path = self._ready_data_db_path or self._resolve_db_path(self._load_site_config())
-        with sqlite3.connect(db_path) as conn:
+        conn = PostgresConnection(db_path, read_only=True)
+        try:
+            conn.execute("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
             rows = conn.execute("""
                 SELECT kb_id
                 FROM rag_knowledge_bases
                 WHERE COALESCE(kb_mode, 'category') IN ('manual', 'category', 'all')
                 ORDER BY kb_id
                 """).fetchall()
+        finally:
+            conn.close()
         return [str(row[0]) for row in rows if str(row[0] or "")]
 
     def _pipeline_kb_index_input(self, kb_id: str) -> dict[str, Any]:
         db_path = self._ready_data_db_path or self._resolve_db_path(self._load_site_config())
-        storage = Storage(db_path)
+        storage = Storage(db_path, data_root=getattr(self, "data_root", None))
         try:
             from ai_actuarial.rag.knowledge_base import KnowledgeBaseManager
 
@@ -460,7 +483,7 @@ class NativeTaskRuntime:
         if not index_version_id:
             raise ValueError("KB Index task did not return index_version_id")
         db_path = self._ready_data_db_path or self._resolve_db_path(self._load_site_config())
-        storage = Storage(db_path)
+        storage = Storage(db_path, data_root=getattr(self, "data_root", None))
         try:
             from ai_actuarial.agentic_rag.ready_data_builder import (
                 get_builder_source_fingerprint,
@@ -795,11 +818,8 @@ class NativeTaskRuntime:
         return f"task_{int(time.time() * 1000)}_{secrets.token_hex(8)}"
 
     @staticmethod
-    def _resolve_db_path(config: dict[str, Any]) -> str:
-        db_path = str((config.get("paths") or {}).get("db") or "data/index.db")
-        if not os.path.isabs(db_path):
-            db_path = os.path.abspath(db_path)
-        return db_path
+    def _resolve_db_path(config: dict[str, Any]):
+        return resolve_database_config(config)
 
     def start_background_task(
         self,
@@ -829,7 +849,7 @@ class NativeTaskRuntime:
             "failed_items": 0,
             "item_errors": [],
             "item_errors_truncated": False,
-            "log_file": str(task_log_path(task_id)),
+            "log_file": str(task_log_path(task_id, data_root=getattr(self, "data_root", None))),
             "errors": [],
         }
         if collection_type in {"catalog", "markdown_conversion"}:
@@ -884,7 +904,9 @@ class NativeTaskRuntime:
             task_data.update(extra_fields)
         with self.task_lock:
             self.active_tasks[task_id] = task_data
-        append_task_log(task_id, "INFO", f"Task created (type={collection_type})")
+        _append_task_log_for_runtime(
+            self, task_id, "INFO", f"Task created (type={collection_type})"
+        )
         thread = threading.Thread(
             target=self._execute_collection_task,
             args=(task_id, collection_type, dict(data)),
@@ -1077,7 +1099,8 @@ class NativeTaskRuntime:
             for row in chunk_sets or []
         )
         if not has_stable_chunk_set:
-            append_task_log(
+            _append_task_log_for_runtime(
+                self,
                 chunk_task_id,
                 "ERROR",
                 "Scheduled Chunk & Embedding stopped: chunk task returned no stable chunk_set_ids",
@@ -1160,7 +1183,9 @@ class NativeTaskRuntime:
         self._update_task(
             task_id, status="running", current_activity=f"Starting {collection_type} task"
         )
-        append_task_log(task_id, "INFO", f"Starting background task (type={collection_type})")
+        _append_task_log_for_runtime(
+            self, task_id, "INFO", f"Starting background task (type={collection_type})"
+        )
         try:
             result = self._run_collection(task_id, collection_type, data)
             self._finalize_task_success(task_id, collection_type, result)
@@ -1194,12 +1219,13 @@ class NativeTaskRuntime:
         self, task_id: str, collection_type: str, data: dict[str, Any]
     ) -> CollectionResult:
         config = self._load_site_config()
-        db_path = str((config.get("paths") or {}).get("db") or "data/index.db")
-        download_dir = str((config.get("paths") or {}).get("download_dir") or "data/files")
-        if not os.path.isabs(db_path):
-            db_path = os.path.abspath(db_path)
-        if not os.path.isabs(download_dir):
-            download_dir = os.path.abspath(download_dir)
+        db_path = self._ready_data_db_path or self._resolve_db_path(config)
+        download_dir = str(
+            resolve_data_path(
+                (config.get("paths") or {}).get("download_dir") or "data/files",
+                data_root=getattr(self, "data_root", None),
+            )
+        )
 
         if collection_type in _CAPACITY_GATED_TYPES:
             ensure_capacity(path="/", operation=collection_type)
@@ -1226,7 +1252,7 @@ class NativeTaskRuntime:
             validate_manifest(manifest)
             manifest_input = (manifest, manifest_text)
 
-        storage = Storage(db_path)
+        storage = Storage(db_path, data_root=getattr(self, "data_root", None))
         try:
             if collection_type == "file":
                 collector = FileCollector(storage, download_dir)
@@ -1343,7 +1369,10 @@ class NativeTaskRuntime:
                     limit = max(0, int(raw_limit))
                 except (TypeError, ValueError):
                     limit = 100
-                updates_dir = Path((config.get("paths") or {}).get("updates_dir") or "data/updates")
+                updates_dir = resolve_data_path(
+                    (config.get("paths") or {}).get("updates_dir") or "data/updates",
+                    data_root=getattr(self, "data_root", None),
+                )
                 common_catalog_kwargs = {
                     "db_path": db_path,
                     "out_jsonl": updates_dir / "catalog_runtime.jsonl",
@@ -1636,11 +1665,13 @@ class NativeTaskRuntime:
                     task_id_kwargs: dict[str, Any] = {}
                     if parent_run_id:
                         if child_db is None:
-                            child_db = Storage(self._resolve_db_path(config))
+                            child_db = Storage(
+                                self._resolve_db_path(config),
+                                data_root=getattr(self, "data_root", None),
+                            )
                         child_task_id = self._new_task_id()
                         task_data["child_run_id"] = child_task_id
                         task_data["parent_run_id"] = parent_run_id
-                        task_data["_db_path"] = self._resolve_db_path(config)
                         child_db.create_child_run(
                             child_task_id,
                             parent_run_id,
@@ -1665,7 +1696,7 @@ class NativeTaskRuntime:
                         f"(reason={fallback_reason}, query={query})"
                     )
                     logger.info(message)
-                    append_task_log(task_id, "INFO", message)
+                    _append_task_log_for_runtime(self, task_id, "INFO", message)
         finally:
             if child_db is not None:
                 child_db.close()
@@ -2079,7 +2110,8 @@ class NativeTaskRuntime:
             outcome_level = "ERROR" if int(outcome.get("failed") or 0) else "INFO"
             if int(outcome.get("downloaded") or 0) and int(outcome.get("failed") or 0):
                 outcome_level = "WARNING"
-            append_task_log(
+            _append_task_log_for_runtime(
+                self,
                 task_id,
                 outcome_level,
                 format_acquisition_outcome(index, total, outcome),
@@ -2087,7 +2119,8 @@ class NativeTaskRuntime:
             progress(index, total, f"Scanned search result {index}/{total}")
 
         acquisition_summary = summarize_acquisition_outcomes(acquisition_outcomes)
-        append_task_log(
+        _append_task_log_for_runtime(
+            self,
             task_id,
             "INFO",
             f"Search acquisition summary: {format_acquisition_summary(acquisition_summary)}",
@@ -2107,13 +2140,15 @@ class NativeTaskRuntime:
         warnings = list(errors) if acquisition_summary["downloaded"] and errors else []
         if warnings:
             count = len(failed_outcomes)
-            append_task_log(
+            _append_task_log_for_runtime(
+                self,
                 task_id,
                 "WARNING",
                 f"Search acquisition completed with {count} failed result{'s' if count != 1 else ''}",
             )
         elif errors:
-            append_task_log(
+            _append_task_log_for_runtime(
+                self,
                 task_id,
                 "ERROR",
                 f"Search acquisition failed for {len(failed_outcomes)} result(s)",
@@ -3145,7 +3180,7 @@ class NativeTaskRuntime:
                 items_total=total_int,
                 current_activity=message,
             )
-            append_task_log(task_id, "INFO", message)
+            _append_task_log_for_runtime(self, task_id, "INFO", message)
 
         return callback
 
@@ -3169,7 +3204,7 @@ class NativeTaskRuntime:
                 failed_items = max(0, int(result_metadata.get("failed_items") or 0))
             except (TypeError, ValueError):
                 failed_items = 0
-            db_path = str(getattr(self, "_ready_data_db_path", "") or "")
+            db_path = getattr(self, "_ready_data_db_path", None)
             file_ids_by_digest = (
                 resolve_item_error_file_ids(result_metadata.get("item_errors"), db_path)
                 if db_path
@@ -3277,7 +3312,8 @@ class NativeTaskRuntime:
                     task_data["ready_data_task_id"] = ready_task_id
                 except Exception as exc:  # noqa: BLE001
                     task_data["ready_data_launch_error"] = str(exc)
-                    append_task_log(
+                    _append_task_log_for_runtime(
+                        self,
                         task_id,
                         "ERROR",
                         f"Ready Data task launch failed: {exc}",
@@ -3298,14 +3334,18 @@ class NativeTaskRuntime:
                         task_data["explanation_task_id"] = explanation_task_id
                     except Exception as exc:  # noqa: BLE001
                         task_data["explanation_launch_error"] = str(exc)
-                        append_task_log(
+                        _append_task_log_for_runtime(
+                            self,
                             task_id,
                             "ERROR",
                             f"Weekly explanation task launch failed: {exc}",
                         )
             self.task_history.append(task_data)
-        append_task_log(
-            task_id, "INFO", f"Task finished (type={collection_type}, success={result.success})"
+        _append_task_log_for_runtime(
+            self,
+            task_id,
+            "INFO",
+            f"Task finished (type={collection_type}, success={result.success})",
         )
         self._append_history_to_disk(task_data)
 
@@ -3335,7 +3375,7 @@ class NativeTaskRuntime:
             if error_details:
                 task_data["error_details"] = dict(error_details)
             self.task_history.append(task_data)
-        append_task_log(task_id, "ERROR", f"Task failed: {error}")
+        _append_task_log_for_runtime(self, task_id, "ERROR", f"Task failed: {error}")
         self._append_history_to_disk(task_data)
 
     def _finalize_child_run(
@@ -3356,10 +3396,12 @@ class NativeTaskRuntime:
         parent_run_id = str(data.get("parent_run_id") or "").strip()
         if not child_run_id or not parent_run_id:
             return
-        db_path = str(data.get("_db_path") or "").strip()
-        if not db_path:
-            db_path = self._resolve_db_path(self._load_site_config())
-        storage = Storage(db_path)
+        db_path = (
+            data.get("_db_path")
+            or self._ready_data_db_path
+            or self._resolve_db_path(self._load_site_config())
+        )
+        storage = Storage(db_path, data_root=getattr(self, "data_root", None))
         try:
             if error is not None:
                 storage.update_child_run(child_run_id, status="failed", error=error)
@@ -3409,7 +3451,9 @@ class NativeTaskRuntime:
         return {"children": children, "failed": failed, "partial": partial, "pending": pending}
 
     def _append_history_to_disk(self, task_data: dict[str, Any]) -> None:
-        path = Path("data/job_history.jsonl")
+        path = resolve_data_path(
+            "data/job_history.jsonl", data_root=getattr(self, "data_root", None)
+        )
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(task_data, ensure_ascii=False) + "\n")

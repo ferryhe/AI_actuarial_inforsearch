@@ -20,10 +20,16 @@ from ai_actuarial.rag.knowledge_base import KnowledgeBaseManager
 from ai_actuarial.rag.semantic_chunking import Chunk
 from ai_actuarial.rag.vector_store import VectorStore
 from ai_actuarial.storage import Storage
+from tests.postgres_helpers import postgres_url_for_path
+
+
+@pytest.fixture(autouse=True)
+def _isolated_postgres_database(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("DATABASE_URL", postgres_url_for_path(tmp_path / "task-stop.db"))
 
 
 def _seed_catalog_files(db_path, count: int = 2) -> list[str]:
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     urls = []
     try:
         for idx in range(count):
@@ -50,7 +56,7 @@ def test_run_catalog_for_urls_respects_immediate_stop(tmp_path) -> None:
     file_urls = _seed_catalog_files(db_path)
 
     stats = run_catalog_for_urls(
-        db_path=str(db_path),
+        db_path=postgres_url_for_path(str(db_path)),
         file_urls=file_urls,
         out_jsonl=tmp_path / "catalog.jsonl",
         out_md=tmp_path / "catalog.md",
@@ -90,7 +96,7 @@ def test_run_catalog_for_urls_counts_only_consumed_outcomes_when_stopped(
 
     monkeypatch.setattr("ai_actuarial.catalog_incremental._process_single_row", fake_process)
     stats = run_catalog_for_urls(
-        db_path=str(db_path),
+        db_path=postgres_url_for_path(str(db_path)),
         file_urls=[f"https://example.com/catalog-stop-{idx}.pdf" for idx in range(4)],
         out_jsonl=tmp_path / "catalog.jsonl",
         out_md=tmp_path / "catalog.md",
@@ -108,7 +114,7 @@ def test_run_catalog_for_urls_counts_only_consumed_outcomes_when_stopped(
 def test_run_catalog_for_urls_counts_missing_urls_as_checked_failures(tmp_path) -> None:
     db_path = tmp_path / "catalog-missing-stop.db"
     existing_url = _seed_catalog_files(db_path, count=1)[0]
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         storage._conn.execute(
             """
@@ -123,7 +129,7 @@ def test_run_catalog_for_urls_counts_missing_urls_as_checked_failures(tmp_path) 
         storage.close()
 
     stats = run_catalog_for_urls(
-        db_path=str(db_path),
+        db_path=postgres_url_for_path(str(db_path)),
         file_urls=[existing_url, "https://example.com/missing.pdf"],
         out_jsonl=tmp_path / "catalog.jsonl",
         out_md=tmp_path / "catalog.md",
@@ -165,6 +171,7 @@ def test_native_catalog_runtime_propagates_stop_and_finalizes_stopped(
     from ai_actuarial.task_runtime import NativeTaskRuntime
 
     runtime = NativeTaskRuntime.__new__(NativeTaskRuntime)
+    runtime._ready_data_db_path = postgres_url_for_path(tmp_path / "runtime-catalog-stop.db")
     runtime.task_lock = threading.RLock()
     runtime.active_tasks = {"catalog-stop": {"stop_requested": True}}
     runtime.task_history = []
@@ -176,7 +183,7 @@ def test_native_catalog_runtime_propagates_stop_and_finalizes_stopped(
             "updates_dir": str(tmp_path / "updates"),
         }
     }
-    monkeypatch.setattr("ai_actuarial.task_runtime.append_task_log", lambda *_args: None)
+    monkeypatch.setattr("ai_actuarial.task_runtime.append_task_log", lambda *_args, **_kwargs: None)
     target = (
         "ai_actuarial.task_runtime.run_catalog_for_urls"
         if explicit_urls
@@ -223,7 +230,7 @@ def test_run_incremental_catalog_flushes_partial_batch_before_stop(tmp_path) -> 
 
     with patch("ai_actuarial.catalog_incremental._process_single_row", side_effect=fake_process):
         stats = run_incremental_catalog(
-            db_path=str(db_path),
+            db_path=postgres_url_for_path(str(db_path)),
             out_jsonl=tmp_path / "catalog.jsonl",
             out_md=tmp_path / "catalog.md",
             batch=10,
@@ -356,7 +363,7 @@ def test_indexing_pipeline_immediate_stop_preserves_existing_index(tmp_path) -> 
 
 
 def test_crawler_records_mid_crawl_stop_diagnostic(tmp_path) -> None:
-    storage = Storage(str(tmp_path / "crawler-stop.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "crawler-stop.db")))
     stop_calls = 0
 
     def stop_check() -> bool:
@@ -453,7 +460,7 @@ def test_indexing_pipeline_force_reindex_removes_chunks_for_deleted_files(tmp_pa
     kb_id = "kb-clean-removed"
     old_url = "https://example.com/removed.pdf"
     current_url = "https://example.com/current.pdf"
-    storage = Storage(str(tmp_path / "clean-removed.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "clean-removed.db")))
     try:
         for file_url, title in [(old_url, "Removed"), (current_url, "Current")]:
             storage.insert_file(
@@ -587,7 +594,7 @@ def test_vector_store_search_caps_soft_deleted_overfetch(tmp_path) -> None:
 def test_indexing_pipeline_update_soft_deletes_old_file_vectors_before_append(tmp_path) -> None:
     kb_id = "kb-update-soft-delete"
     file_url = "https://example.com/update.pdf"
-    storage = Storage(str(tmp_path / "update-soft-delete.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "update-soft-delete.db")))
     try:
         storage.insert_file(
             url=file_url,
@@ -655,7 +662,7 @@ def test_indexing_pipeline_force_reindex_rebuilds_full_kb_when_subset_requested(
     kb_id = "kb-force-reindex-full"
     first_url = "https://example.com/first.pdf"
     second_url = "https://example.com/second.pdf"
-    storage = Storage(str(tmp_path / "force-reindex-full.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "force-reindex-full.db")))
     try:
         for file_url, title in [(first_url, "First"), (second_url, "Second")]:
             storage.insert_file(
@@ -719,7 +726,7 @@ def test_remove_files_from_kb_preserves_immutable_artifact_and_marks_kb_stale(tm
     kb_id = "kb-remove-soft-delete"
     removed_url = "https://example.com/remove-me.pdf"
     kept_url = "https://example.com/keep-me.pdf"
-    storage = Storage(str(tmp_path / "remove-soft-delete.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "remove-soft-delete.db")))
     try:
         for file_url, title in [(removed_url, "Remove"), (kept_url, "Keep")]:
             storage.insert_file(
@@ -836,7 +843,7 @@ def test_native_task_runtime_runs_rag_indexing_collection(tmp_path, monkeypatch)
         "\n".join(
             [
                 "paths:",
-                f"  db: {db_path.as_posix()}",
+                f"  db: {postgres_url_for_path(str(db_path))}",
                 f"  download_dir: {download_dir.as_posix()}",
                 "",
             ]
@@ -924,7 +931,7 @@ def test_native_task_runtime_catalog_uses_yaml_routing_for_explicit_file_urls(
         "\n".join(
             [
                 "paths:",
-                f"  db: {db_path.as_posix()}",
+                f"  db: {postgres_url_for_path(str(db_path))}",
                 f"  download_dir: {download_dir.as_posix()}",
                 f"  updates_dir: {updates_dir.as_posix()}",
                 "ai_config:",
@@ -992,7 +999,7 @@ def test_native_task_runtime_catalog_scan_uses_stats_version_and_scan_window(
         "\n".join(
             [
                 "paths:",
-                f"  db: {db_path.as_posix()}",
+                f"  db: {postgres_url_for_path(str(db_path))}",
                 f"  download_dir: {download_dir.as_posix()}",
                 "ai_config:",
                 "  catalog:",
@@ -1053,7 +1060,7 @@ def test_native_task_runtime_quick_check_uses_submitted_url_config(tmp_path, mon
         "\n".join(
             [
                 "paths:",
-                f"  db: {db_path.as_posix()}",
+                f"  db: {postgres_url_for_path(str(db_path))}",
                 f"  download_dir: {download_dir.as_posix()}",
                 "defaults:",
                 "  user_agent: test-agent/1.0",
@@ -1114,7 +1121,7 @@ def test_native_task_runtime_search_uses_selected_engine_and_db_credentials(
         "\n".join(
             [
                 "paths:",
-                f"  db: {db_path.as_posix()}",
+                f"  db: {postgres_url_for_path(str(db_path))}",
                 f"  download_dir: {download_dir.as_posix()}",
                 "defaults:",
                 "  user_agent: test-agent/1.0",
@@ -1211,7 +1218,7 @@ def test_native_task_runtime_search_passes_check_database_false_to_scan_config(
         "\n".join(
             [
                 "paths:",
-                f"  db: {db_path.as_posix()}",
+                f"  db: {postgres_url_for_path(str(db_path))}",
                 f"  download_dir: {download_dir.as_posix()}",
                 "search:",
                 "  max_results: 5",
@@ -1415,7 +1422,7 @@ def test_native_task_runtime_scheduled_success_with_queries_does_not_enqueue_sea
         "\n".join(
             [
                 "paths:",
-                f"  db: {db_path.as_posix()}",
+                f"  db: {postgres_url_for_path(str(db_path))}",
                 f"  download_dir: {download_dir.as_posix()}",
                 "defaults:",
                 "  user_agent: test-agent/1.0",
@@ -1480,7 +1487,7 @@ def test_native_task_runtime_scheduled_blocked_outcome_enqueues_search_fallback(
         "\n".join(
             [
                 "paths:",
-                f"  db: {db_path.as_posix()}",
+                f"  db: {postgres_url_for_path(str(db_path))}",
                 f"  download_dir: {download_dir.as_posix()}",
                 "defaults:",
                 "  user_agent: test-agent/1.0",
@@ -1555,7 +1562,7 @@ def test_native_task_runtime_scheduled_blocked_outcome_enqueues_search_fallback(
     }
     mock_run_search_task.assert_not_called()
     mock_search.assert_not_called()
-    log_text = (tmp_path / "data" / "task_logs" / "task-scheduled-blocked.log").read_text(
+    log_text = (runtime.data_root / "task_logs" / "task-scheduled-blocked.log").read_text(
         encoding="utf-8"
     )
     assert "enqueued search fallback task child-search-1" in log_text
@@ -1612,7 +1619,7 @@ def test_native_task_runtime_scheduled_zero_result_outcome_enqueues_brave_search
         "\n".join(
             [
                 "paths:",
-                f"  db: {db_path.as_posix()}",
+                f"  db: {postgres_url_for_path(str(db_path))}",
                 f"  download_dir: {download_dir.as_posix()}",
                 "defaults:",
                 "  user_agent: test-agent/1.0",
@@ -1680,7 +1687,7 @@ def test_native_task_runtime_scheduled_search_disabled_does_not_enqueue_fallback
         "\n".join(
             [
                 "paths:",
-                f"  db: {db_path.as_posix()}",
+                f"  db: {postgres_url_for_path(str(db_path))}",
                 f"  download_dir: {download_dir.as_posix()}",
                 "search:",
                 "  enabled: false",
@@ -1735,7 +1742,7 @@ def test_native_task_runtime_scheduled_site_without_queries_does_not_enqueue_fal
         "\n".join(
             [
                 "paths:",
-                f"  db: {db_path.as_posix()}",
+                f"  db: {postgres_url_for_path(str(db_path))}",
                 f"  download_dir: {download_dir.as_posix()}",
                 "search:",
                 "  enabled: true",
@@ -1788,7 +1795,7 @@ def test_native_task_runtime_scheduled_multiple_queries_enqueue_multiple_child_t
         "\n".join(
             [
                 "paths:",
-                f"  db: {db_path.as_posix()}",
+                f"  db: {postgres_url_for_path(str(db_path))}",
                 f"  download_dir: {download_dir.as_posix()}",
                 "defaults:",
                 "  keywords: [solvency]",
@@ -1870,7 +1877,7 @@ def test_native_task_runtime_search_task_does_not_enqueue_recursive_fallback(
         "\n".join(
             [
                 "paths:",
-                f"  db: {db_path.as_posix()}",
+                f"  db: {postgres_url_for_path(str(db_path))}",
                 f"  download_dir: {download_dir.as_posix()}",
                 "search:",
                 "  enabled: true",
@@ -1921,7 +1928,7 @@ def test_native_task_runtime_markdown_conversion_writes_db_markdown(tmp_path, mo
         "\n".join(
             [
                 "paths:",
-                f"  db: {db_path.as_posix()}",
+                f"  db: {postgres_url_for_path(str(db_path))}",
                 f"  download_dir: {download_dir.as_posix()}",
                 "ai_config:",
                 "  ocr:",
@@ -1933,7 +1940,7 @@ def test_native_task_runtime_markdown_conversion_writes_db_markdown(tmp_path, mo
         encoding="utf-8",
     )
     monkeypatch.setenv("CONFIG_PATH", str(config_path))
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         storage.insert_file(
             url=file_url,
@@ -1964,7 +1971,7 @@ def test_native_task_runtime_markdown_conversion_writes_db_markdown(tmp_path, mo
 
     assert result.success is True
     mock_convert.assert_called_once()
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         markdown = storage.get_file_markdown(file_url)
     finally:
@@ -1982,7 +1989,7 @@ def test_native_task_runtime_chunk_generation_uses_existing_service(tmp_path, mo
         "\n".join(
             [
                 "paths:",
-                f"  db: {db_path.as_posix()}",
+                f"  db: {postgres_url_for_path(str(db_path))}",
                 f"  download_dir: {download_dir.as_posix()}",
                 "",
             ]
@@ -1990,7 +1997,7 @@ def test_native_task_runtime_chunk_generation_uses_existing_service(tmp_path, mo
         encoding="utf-8",
     )
     monkeypatch.setenv("CONFIG_PATH", str(config_path))
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         storage.insert_file(
             url=file_url,
@@ -2029,7 +2036,7 @@ def test_native_task_runtime_chunk_generation_uses_existing_service(tmp_path, mo
     assert result.success is True
     assert result.metadata["total_chunks"] == 3
     kwargs = mock_generate.call_args.kwargs
-    assert Path(kwargs["db_path"]) == db_path.resolve()
+    assert kwargs["db_path"] == runtime.database
     assert kwargs["file_url"] == file_url
     assert kwargs["payload"]["name"] == "Task Profile"
     assert kwargs["payload"]["chunk_size"] == 120
@@ -2047,7 +2054,7 @@ def test_native_task_runtime_chunk_generation_rejects_removed_binding_options(
         "\n".join(
             [
                 "paths:",
-                f"  db: {db_path.as_posix()}",
+                f"  db: {postgres_url_for_path(str(db_path))}",
                 f"  download_dir: {download_dir.as_posix()}",
                 "",
             ]
@@ -2055,7 +2062,7 @@ def test_native_task_runtime_chunk_generation_rejects_removed_binding_options(
         encoding="utf-8",
     )
     monkeypatch.setenv("CONFIG_PATH", str(config_path))
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         storage.insert_file(
             url=file_url,
@@ -2139,7 +2146,7 @@ def test_native_task_runtime_chunk_generation_rejects_removed_binding_options(
                 },
             )
     generate.assert_not_called()
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         binding_count = storage._conn.execute(
             "SELECT COUNT(*) FROM kb_chunk_bindings WHERE kb_id = ?",
@@ -2161,7 +2168,7 @@ def test_native_task_runtime_chunk_generation_filters_existing_chunks_by_selecte
         "\n".join(
             [
                 "paths:",
-                f"  db: {db_path.as_posix()}",
+                f"  db: {postgres_url_for_path(str(db_path))}",
                 f"  download_dir: {download_dir.as_posix()}",
                 "",
             ]
@@ -2169,7 +2176,7 @@ def test_native_task_runtime_chunk_generation_filters_existing_chunks_by_selecte
         encoding="utf-8",
     )
     monkeypatch.setenv("CONFIG_PATH", str(config_path))
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         storage.insert_file(
             url=file_url,
@@ -2236,7 +2243,7 @@ def test_native_task_runtime_chunk_generation_resolves_custom_profile_before_fil
         "\n".join(
             [
                 "paths:",
-                f"  db: {db_path.as_posix()}",
+                f"  db: {postgres_url_for_path(str(db_path))}",
                 f"  download_dir: {download_dir.as_posix()}",
                 "",
             ]
@@ -2244,7 +2251,7 @@ def test_native_task_runtime_chunk_generation_resolves_custom_profile_before_fil
         encoding="utf-8",
     )
     monkeypatch.setenv("CONFIG_PATH", str(config_path))
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         storage.insert_file(
             url=file_url,
@@ -2310,7 +2317,7 @@ def test_native_task_runtime_chunk_generation_rejects_removed_binding_mode(
         "\n".join(
             [
                 "paths:",
-                f"  db: {db_path.as_posix()}",
+                f"  db: {postgres_url_for_path(str(db_path))}",
                 f"  download_dir: {download_dir.as_posix()}",
                 "",
             ]
@@ -2318,7 +2325,7 @@ def test_native_task_runtime_chunk_generation_rejects_removed_binding_mode(
         encoding="utf-8",
     )
     monkeypatch.setenv("CONFIG_PATH", str(config_path))
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         storage.insert_file(
             url=file_url,

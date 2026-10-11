@@ -11,6 +11,7 @@ from ai_actuarial.api.services import ops_write
 from ai_actuarial.embedding_service import EmbeddingIdentity
 from ai_actuarial.rag.config import RAGConfig
 from ai_actuarial.storage import Storage
+from tests.postgres_helpers import postgres_url_for_path, record_sql
 
 
 def _identity(*, dimension: int = 3) -> EmbeddingIdentity:
@@ -147,7 +148,7 @@ def _seed_matrix(
     vector_json: str | None = None,
 ) -> dict[str, Any]:
     body = vector_json or json.dumps([0.0] * identity.dimension)
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         _add_file(
             storage,
@@ -230,7 +231,7 @@ def test_chunk_stats_are_metadata_only_and_preserve_selection_semantics(
     monkeypatch.setattr(Storage, "read_valid_chunk_embeddings", fail)
 
     pricing = ops_write.get_chunk_generation_stats(
-        db_path=str(db_path),
+        db_path=postgres_url_for_path(str(db_path)),
         category="Pricing",
     )
     assert pricing == {
@@ -249,7 +250,7 @@ def test_chunk_stats_are_metadata_only_and_preserve_selection_semantics(
         "first_without_chunks_index": 2,
     }
 
-    unfiltered = ops_write.get_chunk_generation_stats(db_path=str(db_path))
+    unfiltered = ops_write.get_chunk_generation_stats(db_path=postgres_url_for_path(str(db_path)))
     assert unfiltered["category"] == ""
     assert unfiltered["total_with_markdown"] == 4
     assert unfiltered["total_with_chunks"] == 3
@@ -269,49 +270,53 @@ def test_chunk_stats_use_covering_indexes_without_reading_payload_columns(
     _seed_matrix(db_path, identity=identity)
     _patch_identity(monkeypatch, identity)
 
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     statements: list[str] = []
-    reads: list[tuple[str, str]] = []
-
-    def authorize(
-        action: int,
-        table: str | None,
-        column: str | None,
-        _database: str | None,
-        _trigger: str | None,
-    ) -> int:
-        if action == sqlite3.SQLITE_READ:
-            reads.append((str(table or ""), str(column or "")))
-        return sqlite3.SQLITE_OK
-
-    storage._conn.set_authorizer(authorize)
-    storage._conn.set_trace_callback(statements.append)
+    stop_recording = record_sql(storage._conn, statements)
     monkeypatch.setattr(storage, "close", lambda: None)
     monkeypatch.setattr(ops_write, "Storage", lambda _db_path: storage)
     try:
-        result = ops_write.get_chunk_generation_stats(db_path=str(db_path), category="Pricing")
+        result = ops_write.get_chunk_generation_stats(
+            db_path=postgres_url_for_path(str(db_path)), category="Pricing"
+        )
         assert result["chunks_ready"] == 8
     finally:
-        storage._conn.set_authorizer(None)
-        storage._conn.set_trace_callback(None)
+        stop_recording()
 
-    assert ("global_chunks", "content") not in reads
-    assert ("chunk_embeddings", "vector_json") not in reads
     metadata_sql = next(
         statement
         for statement in statements
         if "LEFT JOIN chunk_embeddings" in statement and "EXPLAIN QUERY PLAN" not in statement
     )
-    plan = [
-        str(row[3])
-        for row in storage._conn.execute(f"EXPLAIN QUERY PLAN {metadata_sql}").fetchall()
-    ]
-    assert any(
-        "USING COVERING INDEX idx_global_chunks_stats_metadata" in detail for detail in plan
-    ), plan
-    assert any(
-        "USING COVERING INDEX idx_chunk_embeddings_stats_metadata" in detail for detail in plan
-    ), plan
+    assert "global_chunks.content" not in metadata_sql
+    assert "chunk_embeddings.vector_json" not in metadata_sql
+    index_definitions = {
+        row[0]: row[1]
+        for row in storage._conn.execute(
+            "SELECT indexname, indexdef FROM pg_indexes WHERE schemaname = current_schema() "
+            "AND indexname IN (?, ?)",
+            ("idx_global_chunks_stats_metadata", "idx_chunk_embeddings_stats_metadata"),
+        )
+    }
+    assert set(index_definitions) == {
+        "idx_global_chunks_stats_metadata",
+        "idx_chunk_embeddings_stats_metadata",
+    }
+    covered_columns = {
+        "idx_global_chunks_stats_metadata": {"chunk_set_id", "chunk_id"},
+        "idx_chunk_embeddings_stats_metadata": {
+            "embedding_identity_key",
+            "chunk_id",
+            "embedding_provider",
+            "embedding_model",
+            "dimension",
+            "config_fingerprint",
+            "status",
+        },
+    }
+    for index_name, columns in covered_columns.items():
+        definition = index_definitions[index_name].lower()
+        assert all(column in definition for column in columns)
     storage._conn.close()
 
 
@@ -324,11 +329,13 @@ def test_malformed_vector_body_is_metadata_ready_but_deep_invalid(
     seeded = _seed_matrix(db_path, identity=identity)
     _patch_identity(monkeypatch, identity)
 
-    stats = ops_write.get_chunk_generation_stats(db_path=str(db_path), category="Pricing")
+    stats = ops_write.get_chunk_generation_stats(
+        db_path=postgres_url_for_path(str(db_path)), category="Pricing"
+    )
     assert stats["embeddings_ready"] == 2
     assert stats["embeddings_invalid"] == 5
 
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         deep = storage.embedding_coverage(
             chunk_set_ids=[str(seeded["matrix_set_id"])],
@@ -350,7 +357,7 @@ def test_metadata_counts_match_deep_coverage_on_valid_vectors(
     identity = _identity()
     seeded = _seed_matrix(db_path, identity=identity)
     _patch_identity(monkeypatch, identity)
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         storage._conn.execute(
             """
@@ -368,7 +375,9 @@ def test_metadata_counts_match_deep_coverage_on_valid_vectors(
     finally:
         storage.close()
 
-    stats = ops_write.get_chunk_generation_stats(db_path=str(db_path), category="Pricing")
+    stats = ops_write.get_chunk_generation_stats(
+        db_path=postgres_url_for_path(str(db_path)), category="Pricing"
+    )
     assert (
         stats["chunks_ready"],
         stats["embeddings_ready"],
@@ -394,30 +403,28 @@ def test_stats_work_is_independent_of_vector_dimension_and_bytes(
         _seed_matrix(db_path, identity=identity, vector_json=vector_json)
         _patch_identity(monkeypatch, identity)
 
-        storage = Storage(str(db_path))
-        steps = 0
-
-        def count_step() -> int:
-            nonlocal steps
-            steps += 1
-            return 0
-
-        storage._conn.set_progress_handler(count_step, 1)
+        storage = Storage(postgres_url_for_path(str(db_path)))
+        statements: list[str] = []
+        stop_recording = record_sql(storage._conn, statements)
         monkeypatch.setattr(storage, "close", lambda: None)
         monkeypatch.setattr(ops_write, "Storage", lambda _db_path: storage)
-        result = ops_write.get_chunk_generation_stats(db_path=str(db_path), category="Pricing")
-        storage._conn.set_progress_handler(None, 0)
+        result = ops_write.get_chunk_generation_stats(
+            db_path=postgres_url_for_path(str(db_path)), category="Pricing"
+        )
+        stop_recording()
         stored_bytes = int(
             storage._conn.execute(
-                "SELECT SUM(length(CAST(vector_json AS BLOB))) FROM chunk_embeddings"
+                "SELECT SUM(octet_length(vector_json)) FROM chunk_embeddings"
             ).fetchone()[0]
         )
         storage._conn.close()
-        results.append((steps, stored_bytes, result))
+        results.append((statements, stored_bytes, result))
 
     small, large = results
     assert large[1] > small[1] * 500
-    assert abs(large[0] - small[0]) <= 5
+    assert large[0] == small[0]
+    assert all("vector_json" not in statement for statement in large[0])
+    assert all("global_chunks.content" not in statement for statement in large[0])
     assert {key: value for key, value in large[2].items() if key != "embedding_dimension"} == {
         key: value for key, value in small[2].items() if key != "embedding_dimension"
     }
@@ -475,7 +482,7 @@ def test_schema_v13_migrates_recent_sources_without_future_indexes(
     from ai_actuarial.sqlite_schema import apply_schema, schema_plan, schema_status
 
     db_path = tmp_path / f"schema-v{source_version}.db"
-    storage = Storage(str(db_path))
+    storage = Storage._legacy_sqlite_schema_for_validation(db_path)
     storage.close()
     with sqlite3.connect(db_path) as conn:
         conn.execute("DROP INDEX idx_global_chunks_stats_metadata")
@@ -501,7 +508,7 @@ def test_schema_v13_migrates_version_zero_database_without_future_indexes(
     from ai_actuarial.sqlite_schema import apply_schema, schema_status
 
     db_path = tmp_path / "schema-v0.db"
-    storage = Storage(str(db_path))
+    storage = Storage._legacy_sqlite_schema_for_validation(db_path)
     try:
         storage.insert_file(
             url="https://issue-306.test/preserved.pdf",
@@ -559,7 +566,7 @@ def test_schema_v13_adds_stats_covering_indexes_for_fresh_and_v12_databases(
 
     assert CURRENT_SQLITE_SCHEMA_VERSION == 16
     db_path = tmp_path / "schema.db"
-    storage = Storage(str(db_path))
+    storage = Storage._legacy_sqlite_schema_for_validation(db_path)
     try:
         fresh_indexes = {
             str(row[1]) for row in storage._conn.execute("PRAGMA index_list(chunk_embeddings)")

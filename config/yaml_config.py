@@ -418,39 +418,22 @@ def _extract_server_config_from_env() -> Dict[str, Any]:
 
 def load_database_config() -> Dict[str, Any]:
     """
-    Load database configuration from the canonical sites.yaml paths.db value.
+    Load the PostgreSQL environment reference from the canonical sites.yaml file.
 
     Returns:
         Dict containing database configuration
     """
     yaml_config = load_yaml_config()
-    paths_cfg = yaml_config.get("paths") if isinstance(yaml_config.get("paths"), dict) else {}
     database_cfg = (
         yaml_config.get("database") if isinstance(yaml_config.get("database"), dict) else {}
     )
-
-    paths_db = str((paths_cfg or {}).get("db") or "").strip()
-    if paths_db:
-        logger.debug("Using database path from sites.yaml paths.db")
-        result = dict(database_cfg or {})
-        result["type"] = str(result.get("type") or "sqlite")
-        if result["type"] == "sqlite":
-            result["path"] = paths_db
-        result["source"] = "paths.db"
-        return result
-
     if database_cfg:
-        logger.debug("Using legacy database config from sites.yaml database")
-        result = dict(database_cfg)
-        result["source"] = "database"
-        return result
-
-    logger.warning(
-        "database config not found in sites.yaml, falling back to environment variables."
-    )
-    result = _extract_database_config_from_env()
-    result["source"] = "env"
-    return result
+        return {
+            "type": "postgresql",
+            "url_env": str(database_cfg.get("url_env") or "DATABASE_URL"),
+            "source": "database",
+        }
+    return {"type": "postgresql", "url_env": "DATABASE_URL", "source": "env"}
 
 
 def _extract_database_config_from_env() -> Dict[str, Any]:
@@ -463,19 +446,4 @@ def _extract_database_config_from_env() -> Dict[str, Any]:
     Raises:
         ValueError: If environment variables contain invalid numeric values
     """
-    db_type = os.getenv("DB_TYPE", "sqlite")
-
-    config = {
-        "type": db_type,
-    }
-
-    if db_type == "sqlite":
-        config["path"] = os.getenv("DB_PATH", "data/index.db")
-    elif db_type == "postgresql":
-        config["host"] = os.getenv("DB_HOST", "localhost")
-        config["port"] = _safe_int(os.getenv("DB_PORT", "5432"), "DB_PORT")
-        config["database"] = os.getenv("DB_NAME", "ai_actuarial")
-        config["username"] = os.getenv("DB_USER", "postgres")
-        # Password should still come from .env
-
-    return config
+    return {"type": "postgresql", "url_env": "DATABASE_URL"}

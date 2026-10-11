@@ -98,8 +98,7 @@ class TestYAMLConfigLoader:
                 "fastapi_debug": False,
             },
             "database": {
-                "type": "sqlite",
-                "path": "data/legacy-index.db",
+                "url_env": "APP_DATABASE_URL",
             },
         }
 
@@ -183,9 +182,9 @@ class TestYAMLConfigLoader:
         with patch("config.yaml_config._get_sites_config_path", return_value=self.config_path):
             db_config = load_database_config()
 
-            assert db_config["type"] == "sqlite"
-            assert db_config["path"] == "data/primary-index.db"
-            assert db_config["source"] == "paths.db"
+            assert db_config["type"] == "postgresql"
+            assert db_config["url_env"] == "APP_DATABASE_URL"
+            assert db_config["source"] == "database"
 
     def test_fallback_to_env_when_yaml_missing(self):
         """Test fallback to environment variables when YAML sections missing."""

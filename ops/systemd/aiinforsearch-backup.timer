@@ -1,5 +1,5 @@
 [Unit]
-Description=Run the AI InfoSearch verified SQLite backup daily
+Description=Run the AI InfoSearch verified PostgreSQL backup daily
 
 [Timer]
 OnCalendar=*-*-* 02:15:00

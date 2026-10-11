@@ -13,7 +13,6 @@ def test_diagnose_secrets_runtime_reports_presence_without_secret_values(tmp_pat
     token_value = "do-not-print-this-token"
     env_path = tmp_path / ".env"
     config_path = tmp_path / "sites.yaml"
-    missing_db = tmp_path / "missing.db"
 
     env_path.write_text(
         "\n".join(
@@ -27,7 +26,9 @@ def test_diagnose_secrets_runtime_reports_presence_without_secret_values(tmp_pat
         ),
         encoding="utf-8",
     )
-    config_path.write_text("paths:\n  db: missing.db\n", encoding="utf-8")
+    config_path.write_text(
+        "database:\n  type: postgresql\n  url_env: TEST_DIAG_DATABASE_URL\n", encoding="utf-8"
+    )
 
     result = subprocess.run(
         [
@@ -37,8 +38,8 @@ def test_diagnose_secrets_runtime_reports_presence_without_secret_values(tmp_pat
             str(env_path),
             "--config",
             str(config_path),
-            "--db",
-            str(missing_db),
+            "--database-url-env",
+            "TEST_DIAG_DATABASE_URL",
             "--json",
         ],
         cwd=REPO_ROOT,
@@ -54,7 +55,12 @@ def test_diagnose_secrets_runtime_reports_presence_without_secret_values(tmp_pat
     assert payload["secret_presence"]["FASTAPI_SESSION_SECRET"] is True
     assert payload["token_encryption_key"]["valid_fernet"] is True
     assert payload["auth_token_alignment"] == {"bootstrap_matches_config_write": True}
-    assert payload["database"]["exists"] is False
+    assert payload["database"] == {
+        "engine": "postgresql",
+        "configured": False,
+        "credential_count": 0,
+        "usable_count": 0,
+    }
 
 
 def test_removed_endpoint_tokens_have_no_active_runtime_config_or_documentation_references():

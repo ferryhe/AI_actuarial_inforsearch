@@ -329,8 +329,8 @@ class ConversationManager:
             conn = self.storage._conn
 
             columns = """
-                SELECT message_id, conversation_id, role, content, citations, 
-                       created_at, token_count, metadata
+                SELECT message_id, conversation_id, role, content, citations,
+                       created_at, token_count, metadata, message_order
             """
             source = """
                 FROM messages
@@ -340,17 +340,18 @@ class ConversationManager:
             if limit:
                 query = f"""
                     {columns} FROM (
-                        SELECT rowid AS storage_rowid, message_id, conversation_id,
-                               role, content, citations, created_at, token_count, metadata
+                        SELECT message_order AS storage_order, message_id, conversation_id,
+                               role, content, citations, created_at, token_count, metadata,
+                               message_order
                         {source}
-                        ORDER BY created_at DESC, storage_rowid DESC
+                        ORDER BY created_at DESC, message_order DESC
                         LIMIT ?
-                    )
-                    ORDER BY created_at ASC, storage_rowid ASC
+                    ) AS recent
+                    ORDER BY created_at ASC, storage_order ASC
                 """
                 params = (conversation_id, int(limit))
             else:
-                query = columns + source + " ORDER BY created_at ASC, rowid ASC"
+                query = columns + source + " ORDER BY created_at ASC, message_order ASC"
                 params = (conversation_id,)
 
             cursor = conn.execute(query, params)

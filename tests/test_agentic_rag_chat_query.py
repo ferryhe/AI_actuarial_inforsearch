@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from ai_actuarial.api.middleware import rate_limit
 from ai_actuarial.shared_auth import GROUP_PERMISSIONS
 from ai_actuarial.storage import Storage
+from tests.postgres_helpers import postgres_url_for_path
 from tests.test_fastapi_chat_endpoints import _build_test_client, _write_chat_agentic_ready_data
 
 CANONICAL_PATH = "/api/chat/query"
@@ -26,7 +27,7 @@ def _prepare_ready_agentic_kb(client: TestClient, monkeypatch) -> None:
         lambda **_kwargs: ("Deterministic agentic test answer", "deterministic_fallback"),
     )
     ready_dir = (
-        Path(client.app.state.db_path).parent
+        Path(client.app.state.data_root)
         / "agentic_ready_data"
         / "kbs"
         / "chat-kb-a"
@@ -130,7 +131,7 @@ def test_compatibility_chat_requires_chat_query_permission_on_both_paths(
     client, app, _seed = _build_test_client(tmp_path, monkeypatch)
     app.state.require_auth = True
     monkeypatch.setitem(GROUP_PERMISSIONS, "catalog_only", frozenset({"catalog.read", "chat.view"}))
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         token = secrets.token_urlsafe(32)
         storage.upsert_auth_token_by_hash(

@@ -27,6 +27,7 @@ from ai_actuarial.sqlite_schema import (
 )
 from ai_actuarial.storage import Storage
 from ai_actuarial.task_runtime import NativeTaskRuntime
+from tests.postgres_helpers import postgres_url_for_path
 from tests.test_fastapi_ops_read_endpoints import _build_test_client, _patch_available_models
 
 PERIOD_START = "2026-03-09T00:00:00+00:00"
@@ -67,7 +68,7 @@ def _write_config(
     config_path = tmp_path / "sites.yaml"
     config: dict[str, Any] = {
         "paths": {
-            "db": str(database),
+            "db": postgres_url_for_path(str(database)),
             "download_dir": str(tmp_path / "files"),
             "updates_dir": str(tmp_path / "updates"),
         },
@@ -91,7 +92,7 @@ def _write_config(
     config_path.write_text(
         yaml.safe_dump(config, sort_keys=False, allow_unicode=True), encoding="utf-8"
     )
-    Storage(str(database)).close()
+    Storage(postgres_url_for_path(str(database))).close()
     return database, config_path, config
 
 
@@ -102,7 +103,8 @@ def _seed_files(
     first_seen: str = "2026-03-10T08:00:00+00:00",
     long_material: bool = False,
 ) -> None:
-    with sqlite3.connect(db_path) as conn:
+    storage = Storage(postgres_url_for_path(str(db_path)))
+    try:
         for index in range(count):
             url = f"https://example.com/report-{index:03d}.pdf"
             summary = (
@@ -110,41 +112,36 @@ def _seed_files(
                 if long_material
                 else f"Deterministic actuarial summary {index}"
             )
-            conn.execute(
-                """
-                INSERT INTO files (
-                    url, sha256, title, source_site, source_page_url,
-                    original_filename, first_seen, last_seen, crawl_time, deleted_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
-                """,
-                (
-                    url,
-                    f"hash-{index:03d}",
-                    f"Report {index:03d}",
-                    "FORBIDDEN SOURCE LINEAGE",
-                    "https://example.com/crawl-job-source",
-                    f"report-{index:03d}.pdf",
-                    first_seen,
-                    first_seen,
-                    "2026-03-10T09:00:00+00:00",
-                ),
+            storage.insert_file(
+                url=url,
+                sha256=f"hash-{index:03d}",
+                title=f"Report {index:03d}",
+                source_site="FORBIDDEN SOURCE LINEAGE",
+                source_page_url="https://example.com/crawl-job-source",
+                original_filename=f"report-{index:03d}.pdf",
+                local_path=f"/tmp/report-{index:03d}.pdf",
+                bytes=0,
+                content_type="application/pdf",
+                published_time="2026-03-10T09:00:00+00:00",
             )
-            conn.execute(
-                """
-                INSERT INTO catalog_items (
-                    file_url, sha256, pipeline_version, processed_at, status,
-                    keywords, summary, category
-                ) VALUES (?, ?, 'catalog-v1', ?, 'ok', ?, ?, ?)
-                """,
-                (
-                    url,
-                    f"hash-{index:03d}",
-                    first_seen,
-                    json.dumps(["actuarial AI", f"keyword-{index}"], ensure_ascii=False),
-                    summary,
-                    "Insurance Applications",
-                ),
+            storage._conn.execute(
+                "UPDATE files SET first_seen = ?, last_seen = ? WHERE url = ?",
+                (first_seen, first_seen, url),
             )
+            storage.upsert_catalog_item(
+                {
+                    "url": url,
+                    "sha256": f"hash-{index:03d}",
+                    "keywords": ["actuarial AI", f"keyword-{index}"],
+                    "summary": summary,
+                    "category": "Insurance Applications",
+                },
+                pipeline_version="catalog-v1",
+                status="ok",
+                processed_at=first_seen,
+            )
+    finally:
+        storage.close()
 
 
 def _snapshot(
@@ -155,7 +152,7 @@ def _snapshot(
     force: bool = False,
 ) -> dict[str, Any]:
     return weekly_updates.generate_weekly_update_summary(
-        db_path=str(db_path),
+        db_path=postgres_url_for_path(str(db_path)),
         period_start=period_start,
         period_end=period_end,
         force=force,
@@ -168,11 +165,33 @@ def _weekly_explanations_module():
     return weekly_explanations
 
 
+def _execute_postgres(db_path: Path, statement: str, parameters: tuple[Any, ...] = ()) -> None:
+    storage = Storage(postgres_url_for_path(str(db_path)))
+    try:
+        storage._conn.execute(statement, parameters)
+        storage._conn.commit()
+    finally:
+        storage.close()
+
+
 def test_v12_then_v13_migrations_preserve_v11_data(tmp_path: Path) -> None:
-    db_path, _config_path, _config = _write_config(tmp_path)
-    _seed_files(db_path, count=1)
-    snapshot = _snapshot(db_path)
+    db_path = tmp_path / "legacy-v11.sqlite"
+    apply_schema(db_path)
     with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "INSERT INTO weekly_snapshots "
+            "(id, period_start, period_end, generated_at, file_count, "
+            "summary_markdown, metadata_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                "legacy-snapshot-v11",
+                PERIOD_START,
+                PERIOD_END,
+                "2026-03-16T00:00:00+00:00",
+                1,
+                "# Legacy weekly summary",
+                "{}",
+            ),
+        )
         conn.execute("DROP TABLE IF EXISTS weekly_explanations")
         conn.execute("DROP INDEX idx_global_chunks_stats_metadata")
         conn.execute("DROP INDEX idx_chunk_embeddings_stats_metadata")
@@ -203,7 +222,9 @@ def test_v12_then_v13_migrations_preserve_v11_data(tmp_path: Path) -> None:
         "add_auth_token_type_v16",
     ]
     with sqlite3.connect(db_path) as conn:
-        assert conn.execute("SELECT id FROM weekly_snapshots").fetchone()[0] == snapshot["id"]
+        assert (
+            conn.execute("SELECT id FROM weekly_snapshots").fetchone()[0] == "legacy-snapshot-v11"
+        )
         columns = [row[1] for row in conn.execute("PRAGMA table_info(weekly_explanations)")]
         assert columns == [
             "snapshot_id",
@@ -221,12 +242,12 @@ def test_v12_then_v13_migrations_preserve_v11_data(tmp_path: Path) -> None:
             "claim_token",
             "claim_expires_at",
         ]
-    Storage(str(db_path)).close()
     assert schema_status(db_path)["state"] == "current"
 
 
 def test_v11_stamp_rejects_a_preexisting_v12_table(tmp_path: Path) -> None:
-    db_path, _config_path, _config = _write_config(tmp_path)
+    db_path = tmp_path / "legacy-v11-conflict.sqlite"
+    apply_schema(db_path)
     with sqlite3.connect(db_path) as conn:
         conn.execute("PRAGMA user_version=11")
     status = schema_status(db_path)
@@ -246,12 +267,12 @@ def test_strict_bilingual_generation_is_bounded_auditable_and_idempotent(
     generator = FakeWeeklyExplanationGenerator()
 
     first = weekly_explanations.generate_weekly_explanation(
-        db_path=str(db_path),
+        db_path=postgres_url_for_path(str(db_path)),
         snapshot_id=snapshot["id"],
         generator=generator,
     )
     second = weekly_explanations.generate_weekly_explanation(
-        db_path=str(db_path),
+        db_path=postgres_url_for_path(str(db_path)),
         snapshot_id=snapshot["id"],
         generator=generator,
     )
@@ -272,7 +293,7 @@ def test_strict_bilingual_generation_is_bounded_auditable_and_idempotent(
     assert "crawl-job-source" not in prompt
     assert len(prompt) <= weekly_explanations.MAX_PROMPT_INPUT_CHARS
 
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         persisted = storage.get_weekly_explanation(snapshot_id=snapshot["id"])
     finally:
@@ -353,7 +374,7 @@ def test_default_generator_enforces_timeout_and_one_sdk_transport_attempt(
         lambda *_args, **_kwargs: ConfiguredRuntime(),
     )
 
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         generator = weekly_explanations.ChatRuntimeWeeklyExplanationGenerator(storage)
         with pytest.raises(
@@ -408,9 +429,16 @@ def test_concurrent_same_fingerprint_calls_single_flight_and_preserve_complete_r
                 self.calls += 1
                 call_number = self.calls
             if call_number == 1:
-                with sqlite3.connect(db_path, timeout=0.2) as conn:
-                    conn.execute("BEGIN IMMEDIATE")
-                    conn.rollback()
+                probe = Storage(postgres_url_for_path(str(db_path)))
+                try:
+                    probe._conn.execute("BEGIN")
+                    probe._conn.execute(
+                        "SELECT id FROM weekly_snapshots WHERE id = ? FOR UPDATE NOWAIT",
+                        (snapshot["id"],),
+                    )
+                    probe._conn.rollback()
+                finally:
+                    probe.close()
                 self.provider_call_allows_db_writes = True
                 self._second_entered.wait(timeout=0.5)
                 return '{"zh":"并发成功","en":"Concurrent success"}'
@@ -418,7 +446,7 @@ def test_concurrent_same_fingerprint_calls_single_flight_and_preserve_complete_r
             self._second_entered.set()
             deadline = time.monotonic() + 2
             while time.monotonic() < deadline:
-                storage = Storage(str(db_path))
+                storage = Storage(postgres_url_for_path(str(db_path)))
                 try:
                     persisted = storage.get_weekly_explanation(snapshot_id=snapshot["id"])
                 finally:
@@ -433,7 +461,7 @@ def test_concurrent_same_fingerprint_calls_single_flight_and_preserve_complete_r
     def generate() -> dict[str, Any]:
         start.wait(timeout=2)
         return weekly_explanations.generate_weekly_explanation(
-            db_path=str(db_path),
+            db_path=postgres_url_for_path(str(db_path)),
             snapshot_id=snapshot["id"],
             generator=generator,
         )
@@ -441,7 +469,7 @@ def test_concurrent_same_fingerprint_calls_single_flight_and_preserve_complete_r
     with ThreadPoolExecutor(max_workers=2) as executor:
         results = list(executor.map(lambda _index: generate(), range(2)))
 
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         persisted = storage.get_weekly_explanation(snapshot_id=snapshot["id"])
     finally:
@@ -468,7 +496,7 @@ def test_weekly_explanation_finalize_requires_the_active_claim(tmp_path: Path) -
         "generated_at": "2026-03-17T00:00:00+00:00",
         "coverage": {"snapshot_file_count": 1},
     }
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         claim = storage.claim_weekly_explanation(attempt, lease_ttl_seconds=61.0)
         completed = storage.finalize_weekly_explanation(
@@ -528,13 +556,13 @@ def test_abandoned_weekly_explanation_lease_is_reclaimed_and_retry_recovers(
         "coverage": {"snapshot_file_count": 1},
     }
 
-    owner_storage = Storage(str(db_path))
+    owner_storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         original_claim = owner_storage.claim_weekly_explanation(
             attempt,
             lease_ttl_seconds=60.0,
         )
-        contender_storage = Storage(str(db_path))
+        contender_storage = Storage(postgres_url_for_path(str(db_path)))
         try:
             live_contender = contender_storage.claim_weekly_explanation(
                 attempt,
@@ -548,16 +576,16 @@ def test_abandoned_weekly_explanation_lease_is_reclaimed_and_retry_recovers(
         assert live_contender["state"] == "busy"
         assert live_contender["explanation"]["claim_token"] == original_claim["claim_token"]
 
-        with sqlite3.connect(db_path) as conn:
-            conn.execute(
-                "UPDATE weekly_explanations SET claim_expires_at = ? WHERE snapshot_id = ?",
-                ("2000-01-01T00:00:00+00:00", snapshot["id"]),
-            )
+        _execute_postgres(
+            db_path,
+            "UPDATE weekly_explanations SET claim_expires_at = ? WHERE snapshot_id = ?",
+            ("2000-01-01T00:00:00+00:00", snapshot["id"]),
+        )
 
         start = threading.Barrier(2)
 
         def reclaim() -> dict[str, Any]:
-            storage = Storage(str(db_path))
+            storage = Storage(postgres_url_for_path(str(db_path)))
             try:
                 start.wait(timeout=2)
                 return storage.claim_weekly_explanation(
@@ -608,7 +636,7 @@ def test_abandoned_weekly_explanation_lease_is_reclaimed_and_retry_recovers(
     assert persisted["claim_expires_at"] == ""
 
     retry_snapshot = _snapshot(db_path, force=True)
-    abandoned_storage = Storage(str(db_path))
+    abandoned_storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         abandoned_claim = abandoned_storage.claim_weekly_explanation(
             {**attempt, "snapshot_id": retry_snapshot["id"]},
@@ -617,15 +645,15 @@ def test_abandoned_weekly_explanation_lease_is_reclaimed_and_retry_recovers(
     finally:
         abandoned_storage.close()
     assert abandoned_claim["state"] == "claimed"
-    with sqlite3.connect(db_path) as conn:
-        conn.execute(
-            "UPDATE weekly_explanations SET claim_expires_at = ? WHERE snapshot_id = ?",
-            ("2000-01-01T00:00:00+00:00", retry_snapshot["id"]),
-        )
+    _execute_postgres(
+        db_path,
+        "UPDATE weekly_explanations SET claim_expires_at = ? WHERE snapshot_id = ?",
+        ("2000-01-01T00:00:00+00:00", retry_snapshot["id"]),
+    )
 
     generator = FakeWeeklyExplanationGenerator(['{"zh":"租约恢复","en":"Lease recovered"}'])
     recovered = weekly_explanations.retry_weekly_explanation(
-        db_path=str(db_path),
+        db_path=postgres_url_for_path(str(db_path)),
         snapshot_id=retry_snapshot["id"],
         generator=generator,
     )
@@ -664,14 +692,14 @@ def test_generation_failures_persist_without_mutating_snapshot_and_retry_indepen
     )
 
     failed = weekly_explanations.generate_weekly_explanation(
-        db_path=str(db_path), snapshot_id=snapshot["id"], generator=generator
+        db_path=postgres_url_for_path(str(db_path)), snapshot_id=snapshot["id"], generator=generator
     )
     assert failed["status"] == "failed"
     assert failed["explanation_zh"] == ""
     assert failed["explanation_en"] == ""
     assert "error" not in failed
 
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         persisted_failure = storage.get_weekly_explanation(snapshot_id=snapshot["id"])
         unchanged_snapshot = storage.get_weekly_snapshot(snapshot_id=snapshot["id"])
@@ -683,13 +711,13 @@ def test_generation_failures_persist_without_mutating_snapshot_and_retry_indepen
     assert unchanged_snapshot["status"] == "published"
 
     retried = weekly_explanations.retry_weekly_explanation(
-        db_path=str(db_path), snapshot_id=snapshot["id"], generator=generator
+        db_path=postgres_url_for_path(str(db_path)), snapshot_id=snapshot["id"], generator=generator
     )
     assert retried["status"] == "complete"
     assert retried["explanation_zh"] == "重试成功"
     assert retried["explanation_en"] == "Retry succeeded"
     assert len(generator.calls) == 2
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         assert storage.get_weekly_snapshot(snapshot_id=snapshot["id"])["status"] == "published"
     finally:
@@ -708,14 +736,18 @@ def test_latest_never_falls_back_after_force_rebuild(
     old_generator = FakeWeeklyExplanationGenerator()
     assert (
         weekly_explanations.generate_weekly_explanation(
-            db_path=str(db_path), snapshot_id=old_snapshot["id"], generator=old_generator
+            db_path=postgres_url_for_path(str(db_path)),
+            snapshot_id=old_snapshot["id"],
+            generator=old_generator,
         )["status"]
         == "complete"
     )
 
     rebuilt = _snapshot(db_path, force=True)
     assert rebuilt["id"] != old_snapshot["id"]
-    missing_latest = weekly_explanations.get_latest_weekly_explanation(db_path=str(db_path))
+    missing_latest = weekly_explanations.get_latest_weekly_explanation(
+        db_path=postgres_url_for_path(str(db_path))
+    )
     assert missing_latest == {
         "snapshot_id": rebuilt["id"],
         "status": "missing",
@@ -725,17 +757,24 @@ def test_latest_never_falls_back_after_force_rebuild(
     }
     assert (
         weekly_explanations.get_weekly_explanation(
-            db_path=str(db_path), snapshot_id=old_snapshot["id"]
+            db_path=postgres_url_for_path(str(db_path)), snapshot_id=old_snapshot["id"]
         )["status"]
         == "complete"
     )
 
     failed_generator = FakeWeeklyExplanationGenerator(["invalid-json"])
     failed = weekly_explanations.generate_weekly_explanation(
-        db_path=str(db_path), snapshot_id=rebuilt["id"], generator=failed_generator
+        db_path=postgres_url_for_path(str(db_path)),
+        snapshot_id=rebuilt["id"],
+        generator=failed_generator,
     )
     assert failed["status"] == "failed"
-    assert weekly_explanations.get_latest_weekly_explanation(db_path=str(db_path)) == failed
+    assert (
+        weekly_explanations.get_latest_weekly_explanation(
+            db_path=postgres_url_for_path(str(db_path))
+        )
+        == failed
+    )
 
 
 def test_effective_prompt_change_invalidates_the_complete_fingerprint(
@@ -756,9 +795,9 @@ def test_effective_prompt_change_invalidates_the_complete_fingerprint(
         ]
     )
     first = weekly_explanations.generate_weekly_explanation(
-        db_path=str(db_path), snapshot_id=snapshot["id"], generator=generator
+        db_path=postgres_url_for_path(str(db_path)), snapshot_id=snapshot["id"], generator=generator
     )
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         first_audit = storage.get_weekly_explanation(snapshot_id=snapshot["id"])
     finally:
@@ -772,9 +811,9 @@ def test_effective_prompt_change_invalidates_the_complete_fingerprint(
     )
     invalidate_config_cache()
     second = weekly_explanations.generate_weekly_explanation(
-        db_path=str(db_path), snapshot_id=snapshot["id"], generator=generator
+        db_path=postgres_url_for_path(str(db_path)), snapshot_id=snapshot["id"], generator=generator
     )
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         second_audit = storage.get_weekly_explanation(snapshot_id=snapshot["id"])
     finally:
@@ -812,9 +851,9 @@ def test_chat_route_change_is_used_by_the_next_weekly_run_and_audited_without_se
     )
 
     weekly_explanations.generate_weekly_explanation(
-        db_path=str(db_path), snapshot_id=snapshot["id"], generator=generator
+        db_path=postgres_url_for_path(str(db_path)), snapshot_id=snapshot["id"], generator=generator
     )
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         first_audit = storage.get_weekly_explanation(snapshot_id=snapshot["id"])
     finally:
@@ -830,9 +869,9 @@ def test_chat_route_change_is_used_by_the_next_weekly_run_and_audited_without_se
     )
     invalidate_config_cache()
     weekly_explanations.generate_weekly_explanation(
-        db_path=str(db_path), snapshot_id=snapshot["id"], generator=generator
+        db_path=postgres_url_for_path(str(db_path)), snapshot_id=snapshot["id"], generator=generator
     )
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         second_audit = storage.get_weekly_explanation(snapshot_id=snapshot["id"])
     finally:
@@ -860,7 +899,7 @@ def test_chat_credential_change_invalidates_weekly_replay(
     monkeypatch.setenv("CONFIG_PATH", str(config_path))
     monkeypatch.setenv("TOKEN_ENCRYPTION_KEY", Fernet.generate_key().decode())
     TokenEncryption._instance = None
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         encryption = TokenEncryption()
         storage.upsert_llm_provider(
@@ -894,9 +933,11 @@ def test_chat_credential_change_invalidates_weekly_replay(
 
     try:
         weekly_explanations.generate_weekly_explanation(
-            db_path=str(db_path), snapshot_id=snapshot["id"], generator=generator
+            db_path=postgres_url_for_path(str(db_path)),
+            snapshot_id=snapshot["id"],
+            generator=generator,
         )
-        storage = Storage(str(db_path))
+        storage = Storage(postgres_url_for_path(str(db_path)))
         try:
             first_audit = storage.get_weekly_explanation(snapshot_id=snapshot["id"])
         finally:
@@ -908,9 +949,11 @@ def test_chat_credential_change_invalidates_weekly_replay(
         )
         invalidate_config_cache()
         weekly_explanations.generate_weekly_explanation(
-            db_path=str(db_path), snapshot_id=snapshot["id"], generator=generator
+            db_path=postgres_url_for_path(str(db_path)),
+            snapshot_id=snapshot["id"],
+            generator=generator,
         )
-        storage = Storage(str(db_path))
+        storage = Storage(postgres_url_for_path(str(db_path)))
         try:
             second_audit = storage.get_weekly_explanation(snapshot_id=snapshot["id"])
         finally:
@@ -932,11 +975,11 @@ def test_typed_explanation_routes_redact_audit_and_gets_never_call_model(
 ) -> None:
     client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
     db_path = tmp_path / "index.db"
-    with sqlite3.connect(db_path) as conn:
-        conn.execute(
-            "UPDATE files SET first_seen = ?, last_seen = ? WHERE url = ?",
-            (PERIOD_START, PERIOD_START, "https://alpha.example/doc-a.pdf"),
-        )
+    _execute_postgres(
+        db_path,
+        "UPDATE files SET first_seen = ?, last_seen = ? WHERE url = ?",
+        (PERIOD_START, PERIOD_START, "https://alpha.example/doc-a.pdf"),
+    )
     snapshot = _snapshot(db_path)
     generator = FakeWeeklyExplanationGenerator()
     app.state.weekly_explanation_generator = generator
@@ -1143,7 +1186,7 @@ def test_weekly_snapshot_task_launches_real_idempotent_explanation_followup(
     assert len(explanation_tasks) == 2
     assert len(generator.calls) == 1
 
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         snapshot = storage.get_latest_weekly_snapshot(now="2026-03-20T00:00:00+00:00")
         persisted = storage.get_weekly_explanation(snapshot_id=snapshot["id"])
@@ -1183,7 +1226,7 @@ def test_failed_explanation_followup_never_fails_or_hides_the_snapshot_task(
         child = next(task for task in runtime.task_history if task["type"] == "weekly_explanation")
     assert parent["status"] == "completed"
     assert child["status"] == "error"
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         snapshot = storage.get_latest_weekly_snapshot(now="2026-03-20T00:00:00+00:00")
         explanation = storage.get_weekly_explanation(snapshot_id=snapshot["id"])
@@ -1321,7 +1364,7 @@ def test_generate_weekly_explanation_for_period_resolves_existing_snapshot(
     generator = FakeWeeklyExplanationGenerator()
 
     result = weekly_explanations.generate_weekly_explanation_for_period(
-        db_path=str(db_path),
+        db_path=postgres_url_for_path(str(db_path)),
         period_start=PERIOD_START,
         period_end=PERIOD_END,
         generator=generator,
@@ -1352,7 +1395,7 @@ def test_generate_weekly_explanation_for_period_waits_for_late_snapshot(
     thread.start()
 
     result = weekly_explanations.generate_weekly_explanation_for_period(
-        db_path=str(db_path),
+        db_path=postgres_url_for_path(str(db_path)),
         period_start=PERIOD_START,
         period_end=PERIOD_END,
         generator=generator,
@@ -1378,7 +1421,7 @@ def test_generate_weekly_explanation_for_period_times_out_without_snapshot(
 
     with pytest.raises(RuntimeError, match="was not published"):
         weekly_explanations.generate_weekly_explanation_for_period(
-            db_path=str(db_path),
+            db_path=postgres_url_for_path(str(db_path)),
             period_start=PERIOD_START,
             period_end=PERIOD_END,
             generator=generator,

@@ -16,6 +16,12 @@ from ai_actuarial.api.services.ops_read import get_global_logs, list_task_histor
 from ai_actuarial.manifest_ingest import ingest_manifest
 from ai_actuarial.storage import Storage
 from ai_actuarial.task_runtime import NativeTaskRuntime
+from tests.postgres_helpers import postgres_url_for_path
+
+
+@pytest.fixture(autouse=True)
+def _isolated_postgres_database(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DATABASE_URL", postgres_url_for_path(tmp_path / "runtime.db"))
 
 
 def _legacy_manifest() -> dict[str, Any]:
@@ -305,7 +311,7 @@ def test_issue_320_backslash_asset_url_leaves_real_database_unchanged(
     manifest = _legacy_manifest()
     manifest["downloaded_assets"][0]["url"] = "https://example.test\\report.pdf"
     raw_text = json.dumps(manifest)
-    storage = Storage(str(tmp_path / "backslash.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "backslash.db")))
     try:
         with pytest.raises(ValueError) as exc_info:
             ingest_manifest(storage, json.loads(raw_text), raw_text=raw_text)
@@ -457,7 +463,7 @@ def test_issue_320_valid_asset_preserves_legacy_mapping_and_path_precedence() ->
 def test_issue_320_valid_manifest_remains_byte_exact_and_idempotent(tmp_path: Path) -> None:
     manifest = _legacy_manifest()
     raw_text = json.dumps(manifest, ensure_ascii=False, indent=2) + "\n"
-    storage = Storage(str(tmp_path / "manifest.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "manifest.db")))
     try:
         first = ingest_manifest(storage, manifest, raw_text=raw_text)
         second = ingest_manifest(storage, manifest, raw_text=raw_text)
@@ -485,7 +491,7 @@ def test_issue_320_valid_manifest_remains_byte_exact_and_idempotent(tmp_path: Pa
 def test_issue_320_unsupported_manifest_with_identity_leaves_database_unchanged(
     tmp_path: Path,
 ) -> None:
-    storage = Storage(str(tmp_path / "manifest.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "manifest.db")))
     payload = {
         "schema_version": "web-listening-result.v1",
         "manifest_id": "must-not-archive",
@@ -517,7 +523,9 @@ def test_issue_320_task_preflight_runs_before_storage_is_opened(
         '"schema_version":"web-listening-manifest.v1"}',
         encoding="utf-8",
     )
-    runtime = NativeTaskRuntime()
+    runtime = NativeTaskRuntime(
+        ready_data_database=postgres_url_for_path(str(tmp_path / "runtime.db"))
+    )
     runtime.set_site_config({"paths": {"db": str(tmp_path / "must-not-open.db")}})
     storage_opened = False
 
@@ -548,9 +556,8 @@ def test_issue_320_task_valid_file_archives_original_bytes(tmp_path: Path) -> No
     )
     manifest_path = tmp_path / "valid-manifest.json"
     manifest_path.write_bytes(raw_bytes)
-    db_path = tmp_path / "task.db"
-    runtime = NativeTaskRuntime()
-    runtime.set_site_config({"paths": {"db": str(db_path)}})
+    database_url = postgres_url_for_path(tmp_path / "task.db")
+    runtime = NativeTaskRuntime(ready_data_database=database_url)
 
     result = runtime._run_collection(
         "task-320-valid",
@@ -558,7 +565,7 @@ def test_issue_320_task_valid_file_archives_original_bytes(tmp_path: Path) -> No
         {"manifest_path": str(manifest_path)},
     )
 
-    storage = Storage(str(db_path))
+    storage = Storage(database_url)
     try:
         archived = storage._conn.execute(
             "SELECT manifest_json FROM manifest_raw WHERE manifest_id = ?",

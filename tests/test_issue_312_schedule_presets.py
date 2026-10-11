@@ -20,10 +20,16 @@ from ai_actuarial.schedule_presets import (
     parse_structured_schedule,
 )
 from ai_actuarial.task_runtime import NativeTaskRuntime, _FallbackScheduler
+from tests.postgres_helpers import postgres_url_for_path
 from tests.test_fastapi_ops_read_endpoints import _build_test_client, _patch_available_models
 
 ROOT = Path(__file__).resolve().parents[1]
 NPM_COMMAND = "npm.cmd" if os.name == "nt" else "npm"
+
+
+@pytest.fixture(autouse=True)
+def _isolated_postgres_database(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DATABASE_URL", postgres_url_for_path(tmp_path / "schedule.db"))
 
 
 @pytest.mark.parametrize(
@@ -707,7 +713,10 @@ def test_fixed_time_registration_uses_requested_wall_clock_and_monday(
             return frozen_utc.astimezone(tz)
 
     monkeypatch.setattr(schedule.datetime, "datetime", FrozenDateTime)
-    runtime = NativeTaskRuntime(pipeline_baton_state_path=str(tmp_path / "pipeline.json"))
+    runtime = NativeTaskRuntime(
+        ready_data_database=postgres_url_for_path(str(tmp_path / "index.db")),
+        pipeline_baton_state_path=str(tmp_path / "pipeline.json"),
+    )
     runtime.scheduler = scheduler_cls()
 
     daily = runtime._register_schedule("daily at 00:30", lambda: None, at_timezone=timezone_name)

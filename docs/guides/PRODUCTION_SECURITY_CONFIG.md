@@ -15,6 +15,7 @@ Set these only on the deployment server:
 - `VITE_API_BASE_URL`: public API URL used by the frontend build.
 - `FASTAPI_SESSION_SECRET`: strong random session secret.
 - `TOKEN_ENCRYPTION_KEY`: stable Fernet key for encrypted provider credentials.
+- `DATABASE_URL`: PostgreSQL 16 connection URL, kept in the private environment/secret store.
 - `ENABLE_CSRF`: keep `true` in production unless there is a documented exception.
 - `FASTAPI_SESSION_COOKIE_SECURE`: keep `true` behind HTTPS.
 - `TRUST_PROXY`: set `true` only when direct API access is restricted to trusted reverse proxy traffic.
@@ -35,11 +36,11 @@ Do not commit the server's real `.env` file.
 
 ## Agentic RAG production notes
 
-Agentic RAG does not require new production secrets. It does create and read ready_data artifacts derived from catalog and chunk text, so treat those files as application data:
+Agentic RAG does not require new production secrets. It does create and read Ready Data artifacts derived from catalog and chunk text, so treat those files as application data:
 
-- Persist the database-adjacent `agentic_ready_data/` directory together with the configured SQLite database or other app data volume.
+- Persist `agentic_ready_data/` under the configured `paths.data` root with the PostgreSQL backup/recovery process.
 - Do not expose `data/`, `agentic_ready_data/`, converted Markdown, or downloaded source files as static public directories.
-- Keep filesystem permissions aligned with the API process user; ready_data builds need write access under the database-adjacent data directory.
+- Keep filesystem permissions aligned with the API process user; Ready Data builds need write access under the configured data root.
 - Build ready_data manifests through the authenticated Knowledge UI or `/api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest/build`; do not run ad hoc builders against untrusted output paths.
 - Agentic read APIs require product permissions and should stay behind the same FastAPI authentication/CORS boundary as the rest of `/api/*`.
 

@@ -73,9 +73,10 @@ python -m ai_actuarial collect file /path/to/file.pdf --subdir my_imports
 from ai_actuarial.storage import Storage
 from ai_actuarial.collectors import CollectionConfig, WebPageCollector
 
-# Setup
-storage = Storage("data/index.db")
-collector = WebPageCollector(storage, "data/files", user_agent="MyBot/1.0")
+# Set DATABASE_URL privately; DATA_DIR or paths.data selects file placement.
+storage = Storage()
+download_dir = str(storage.data_root / "files")
+collector = WebPageCollector(storage, download_dir, user_agent="MyBot/1.0")
 
 # Configure collection
 config = CollectionConfig(
@@ -103,9 +104,10 @@ from ai_actuarial.crawler import Crawler
 from ai_actuarial.collectors import CollectionConfig
 from ai_actuarial.collectors.url import URLCollector
 
-# Setup
-storage = Storage("data/index.db")
-crawler = Crawler(storage, "data/files", "MyAgent/1.0")
+# Set DATABASE_URL privately; DATA_DIR or paths.data selects file placement.
+storage = Storage()
+download_dir = str(storage.data_root / "files")
+crawler = Crawler(storage, download_dir, "MyAgent/1.0")
 
 # Create collector
 collector = URLCollector(storage, crawler)
@@ -138,7 +140,7 @@ cfg = SiteConfig(
     collect_page_content=True,  # extract & store HTML page text as .md
 )
 
-crawler = Crawler(storage, "data/files", user_agent="MyBot/1.0")
+crawler = Crawler(storage, download_dir, user_agent="MyBot/1.0")
 items = crawler.crawl_site(cfg)
 ```
 

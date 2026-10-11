@@ -15,6 +15,7 @@ from ai_actuarial.rag.config import RAGConfig
 from ai_actuarial.rag.embeddings import EmbeddingGenerator
 from ai_actuarial.services.token_encryption import TokenEncryption
 from ai_actuarial.storage import Storage
+from tests.postgres_helpers import postgres_url_for_path
 
 
 class TestRagRuntime(unittest.TestCase):
@@ -24,7 +25,7 @@ class TestRagRuntime(unittest.TestCase):
         self.db_path = os.path.join(self.temp_dir, "test.db")
         os.environ["TOKEN_ENCRYPTION_KEY"] = Fernet.generate_key().decode()
         TokenEncryption._instance = None
-        self.storage = Storage(self.db_path)
+        self.storage = Storage(postgres_url_for_path(self.db_path))
 
     def tearDown(self):
         os.environ.clear()

@@ -8,10 +8,15 @@ for better code organization.
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 from typing import Any
 
-from ai_actuarial.shared_runtime import get_sites_config_path, load_yaml
+from ai_actuarial.postgres import resolve_data_root
+from ai_actuarial.shared_runtime import (
+    get_sites_config_path,
+    load_sites_config,
+    load_yaml,
+    resolve_data_path,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -36,14 +41,12 @@ def browse_folder(path: str | None = None) -> dict[str, Any]:
     """
     import os
 
-    if not path:
-        data_dir = Path("data")
-        root = data_dir.resolve()
-    else:
-        root = Path(path).resolve()
+    config = load_sites_config(default={})
+    data_root = resolve_data_root(config)
+    root = resolve_data_path(path or "data", data_root=data_root)
 
     # Path safety: restrict to data directory tree
-    data_dir = Path("data").resolve()
+    data_dir = data_root
     allowed_root = data_dir
     try:
         root_within_root = os.path.commonpath([str(allowed_root), str(root)]) == str(allowed_root)

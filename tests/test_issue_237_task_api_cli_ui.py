@@ -12,6 +12,7 @@ from ai_actuarial.api.services.ops_write import BridgeState, OpsWriteError, star
 from ai_actuarial.cli import build_parser, cmd_task_run
 from ai_actuarial.collectors.base import CollectionResult
 from ai_actuarial.task_runtime import NativeTaskRuntime
+from tests.postgres_helpers import postgres_url_for_path
 
 
 class _State:
@@ -335,7 +336,7 @@ def test_managed_schedule_does_not_launch_embedding_for_empty_chunk_result(
             self.started.append((_args, _kwargs))
             return "unexpected"
 
-    monkeypatch.setattr("ai_actuarial.task_runtime.append_task_log", lambda *_args: None)
+    monkeypatch.setattr("ai_actuarial.task_runtime.append_task_log", lambda *_args, **_kwargs: None)
     runtime = Runtime()
 
     assert (
@@ -373,7 +374,10 @@ def test_managed_schedule_does_not_launch_embedding_after_chunk_failure(
 
 
 def test_legacy_scheduled_chunk_params_are_sanitized_at_runtime(tmp_path: Path) -> None:
-    runtime = NativeTaskRuntime(pipeline_baton_state_path=tmp_path / "pipeline.json")
+    runtime = NativeTaskRuntime(
+        ready_data_database=postgres_url_for_path(tmp_path / "runtime.db"),
+        pipeline_baton_state_path=str(tmp_path / "pipeline.json"),
+    )
     runtime._scheduler_loop_started = True
     runtime.set_site_config(
         {
@@ -447,7 +451,7 @@ def test_partial_chunk_failure_is_error_and_scheduled_composition_does_not_conti
         }
 
     monkeypatch.setattr("ai_actuarial.task_runtime.generate_file_chunk_sets", generate)
-    monkeypatch.setattr("ai_actuarial.task_runtime.append_task_log", lambda *_args: None)
+    monkeypatch.setattr("ai_actuarial.task_runtime.append_task_log", lambda *_args, **_kwargs: None)
 
     result = runtime._run_chunk_generation("chunk-task", storage, str(tmp_path / "db"), {})
     runtime._finalize_task_success("chunk-task", "chunk_generation", result)
@@ -528,7 +532,7 @@ def test_chunk_stop_requested_during_only_file_is_terminal_stopped(
         }
 
     monkeypatch.setattr("ai_actuarial.task_runtime.generate_file_chunk_sets", generate)
-    monkeypatch.setattr("ai_actuarial.task_runtime.append_task_log", lambda *_args: None)
+    monkeypatch.setattr("ai_actuarial.task_runtime.append_task_log", lambda *_args, **_kwargs: None)
 
     result = runtime._run_chunk_generation("chunk-task", storage, str(tmp_path / "db"), {})
     runtime._finalize_task_success("chunk-task", "chunk_generation", result)
@@ -633,7 +637,7 @@ def test_task_finalization_has_no_active_history_visibility_gap(
     log_entered = threading.Event()
     release_log = threading.Event()
 
-    def blocking_log(*_args: object) -> None:
+    def blocking_log(*_args: object, **_kwargs: object) -> None:
         log_entered.set()
         assert release_log.wait(2)
 
@@ -664,7 +668,9 @@ def test_task_finalization_has_no_active_history_visibility_gap(
 
 def test_chunk_canonical_files_selector_fails_if_markdown_changed(tmp_path: Path) -> None:
     db_path = tmp_path / "index.db"
-    storage = __import__("ai_actuarial.storage", fromlist=["Storage"]).Storage(str(db_path))
+    storage = __import__("ai_actuarial.storage", fromlist=["Storage"]).Storage(
+        postgres_url_for_path(str(db_path))
+    )
     try:
         storage.insert_file(
             "https://example.test/a.pdf",
@@ -711,7 +717,7 @@ def test_chunk_service_rechecks_each_expected_markdown_hash_at_generation_time(
     db_path = tmp_path / "toctou.db"
     file_urls = ["https://example.test/a.pdf", "https://example.test/b.pdf"]
     markdown_by_url = {file_urls[0]: "# Alpha", file_urls[1]: "# Beta"}
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         for file_url in file_urls:
             storage.insert_file(
@@ -749,7 +755,7 @@ def test_chunk_service_rechecks_each_expected_markdown_hash_at_generation_time(
             result = real_generate(**kwargs)
             calls += 1
             if calls == 1:
-                mutator = Storage(str(db_path))
+                mutator = Storage(postgres_url_for_path(str(db_path)))
                 try:
                     mutator.update_file_markdown(file_urls[1], "# Changed Beta", "manual")
                 finally:
@@ -770,7 +776,7 @@ def test_chunk_service_rechecks_each_expected_markdown_hash_at_generation_time(
         )
 
         result = runtime._run_chunk_generation(
-            "chunk-task", storage, str(db_path), {"files": selectors}
+            "chunk-task", storage, storage.db_path, {"files": selectors}
         )
 
         assert result.success is False

@@ -12,6 +12,7 @@ from cryptography.fernet import Fernet
 from ai_actuarial.services.token_encryption import TokenEncryption
 from ai_actuarial.storage import Storage
 from ai_actuarial.task_runtime import NativeTaskRuntime
+from tests.postgres_helpers import postgres_url_for_path
 from tests.test_fastapi_ops_read_endpoints import (
     _build_test_client,
     _make_session_cookie,
@@ -29,8 +30,13 @@ def _read_scheduled_tasks(config_path: Path) -> list[dict[str, object]]:
     return list(data.get("scheduled_tasks") or [])
 
 
-def _seed_stats_data(db_path: Path) -> None:
-    storage = Storage(str(db_path))
+def _seed_stats_data(database_or_path: object) -> None:
+    database = (
+        database_or_path
+        if not isinstance(database_or_path, Path)
+        else postgres_url_for_path(str(database_or_path))
+    )
+    storage = Storage(database)
     try:
         conn = storage._conn
         now = datetime.now(timezone.utc).isoformat()
@@ -40,10 +46,21 @@ def _seed_stats_data(db_path: Path) -> None:
         )
         conn.execute(
             """
-            INSERT OR REPLACE INTO chunk_profiles (
+            INSERT INTO chunk_profiles (
                 profile_id, name, config_hash, config_json, chunk_size, chunk_overlap,
                 splitter, tokenizer, version, created_at, updated_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (profile_id) DO UPDATE SET
+                name = EXCLUDED.name,
+                config_hash = EXCLUDED.config_hash,
+                config_json = EXCLUDED.config_json,
+                chunk_size = EXCLUDED.chunk_size,
+                chunk_overlap = EXCLUDED.chunk_overlap,
+                splitter = EXCLUDED.splitter,
+                tokenizer = EXCLUDED.tokenizer,
+                version = EXCLUDED.version,
+                created_at = EXCLUDED.created_at,
+                updated_at = EXCLUDED.updated_at
             """,
             (
                 "profile-default",
@@ -61,10 +78,19 @@ def _seed_stats_data(db_path: Path) -> None:
         )
         conn.execute(
             """
-            INSERT OR REPLACE INTO file_chunk_sets (
+            INSERT INTO file_chunk_sets (
                 chunk_set_id, file_url, profile_id, markdown_hash, profile_config_hash,
                 status, chunk_count, created_at, updated_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (chunk_set_id) DO UPDATE SET
+                file_url = EXCLUDED.file_url,
+                profile_id = EXCLUDED.profile_id,
+                markdown_hash = EXCLUDED.markdown_hash,
+                profile_config_hash = EXCLUDED.profile_config_hash,
+                status = EXCLUDED.status,
+                chunk_count = EXCLUDED.chunk_count,
+                created_at = EXCLUDED.created_at,
+                updated_at = EXCLUDED.updated_at
             """,
             (
                 "chunkset-1",
@@ -905,7 +931,7 @@ def test_ai_routing_roundtrip_matches_runtime_defaults_for_empty_fields(
         headers=headers,
     )
     assert create_kb.status_code == 201, create_kb.text
-    storage = Storage(str(app.state.db_path))
+    storage = Storage(app.state.database)
     try:
         storage._conn.execute(
             "UPDATE rag_knowledge_bases SET chunk_count = 1 WHERE kb_id = ?",
@@ -1141,8 +1167,7 @@ def test_browse_folder_and_stats_endpoints_return_real_values(tmp_path: Path, mo
     client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
     recorder = _BridgeRecorder()
     _install_bridge(app, recorder)
-    db_path = Path(app.state.db_path)
-    _seed_stats_data(db_path)
+    _seed_stats_data(app.state.database)
     headers = {"X-Auth-Token": str(seed["admin_token"])}
     operator_headers = {"X-Auth-Token": str(seed["operator_token"])}
 
@@ -1554,7 +1579,7 @@ def test_ai_routing_embedding_change_marks_existing_kbs_for_chat_reindex(
     client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
     headers = {"X-Auth-Token": seed["admin_token"]}
     alpha_url = "https://alpha.example/doc-a.pdf"
-    _seed_stats_data(Path(app.state.db_path))
+    _seed_stats_data(app.state.database)
 
     create_kb = client.post(
         "/api/rag/knowledge-bases",
@@ -1576,7 +1601,7 @@ def test_ai_routing_embedding_change_marks_existing_kbs_for_chat_reindex(
     assert add_file.status_code == 200, add_file.text
 
     built_at = "2026-05-01T00:00:00+00:00"
-    storage = Storage(str(app.state.db_path))
+    storage = Storage(app.state.database)
     try:
         storage.create_kb_index_version(
             kb_id="kb-embedding-route-change",
@@ -1647,7 +1672,7 @@ def test_ai_routing_embedding_change_with_indexed_kb_requires_full_reindex(
     )
     assert create_kb.status_code == 201, create_kb.text
 
-    storage = Storage(str(app.state.db_path))
+    storage = Storage(app.state.database)
     try:
         storage._conn.execute(
             "UPDATE rag_knowledge_bases SET chunk_count = 1 WHERE kb_id = ?",
@@ -2119,7 +2144,7 @@ def test_provider_credentials_reencrypt_rotates_ciphertext(tmp_path: Path, monke
     )
     assert create.status_code == 200, create.text
 
-    storage = Storage(str(app.state.db_path))
+    storage = Storage(app.state.database)
     try:
         before = storage.get_llm_provider("mistral", category="llm", instance_id="default")
         before_cipher = str(before["api_key_encrypted"])
@@ -2137,7 +2162,7 @@ def test_provider_credentials_reencrypt_rotates_ciphertext(tmp_path: Path, monke
     assert rotate_body["rotated_count"] >= 1
     assert rotate_body["failed_count"] == 0
 
-    storage = Storage(str(app.state.db_path))
+    storage = Storage(app.state.database)
     try:
         after = storage.get_llm_provider("mistral", category="llm", instance_id="default")
         after_cipher = str(after["api_key_encrypted"])

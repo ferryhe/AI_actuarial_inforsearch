@@ -8,7 +8,6 @@ import os
 import random
 import re
 import socket
-import sqlite3
 import ssl
 import time
 import xml.etree.ElementTree as ET
@@ -17,6 +16,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urljoin, urlparse, urlsplit, urlunsplit
 
+import psycopg2
+
 from .search_acquisition import (
     SearchAcquisitionReport,
     make_acquisition_outcome,
@@ -24,6 +25,7 @@ from .search_acquisition import (
     safe_outcome_url,
 )
 from .security import SafeUrlResolution, UnsafeUrlError, resolve_safe_http_url
+from .shared_runtime import resolve_data_path
 from .storage import Storage
 from .utils import extract_metadata, html_to_text, normalize_url, same_domain
 
@@ -167,7 +169,9 @@ class Crawler:
         default_delay_seconds: float = 0.5,
     ) -> None:
         self.storage = storage
-        self.download_dir = download_dir
+        self.download_dir = str(
+            resolve_data_path(download_dir, data_root=getattr(storage, "data_root", None))
+        )
         self.user_agent = user_agent
         self.stop_check = stop_check
         self.default_delay_seconds = max(float(default_delay_seconds), 0.0)
@@ -976,12 +980,13 @@ class Crawler:
                 ts = self.storage.now()
                 self.storage._conn.execute(
                     """
-                    INSERT OR IGNORE INTO files (
+                    INSERT INTO files (
                         url, sha256, title, source_site, source_page_url,
                         original_filename, local_path, bytes, content_type,
                         published_time, first_seen, last_seen, crawl_time
                     )
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(url) DO NOTHING
                     """,
                     (
                         url,
@@ -1698,7 +1703,7 @@ class Crawler:
             if cfg.check_database:
                 try:
                     hash_exists = self.storage.file_exists_by_hash(sha256)
-                except (OSError, sqlite3.Error) as exc:
+                except (OSError, psycopg2.Error) as exc:
                     self._remove_temp_file(tmp_path)
                     if legacy_exceptions:
                         raise
@@ -1900,7 +1905,7 @@ class Crawler:
             if cfg.check_database:
                 try:
                     duplicate_reason = self._existing_url_subreason(link)
-                except (OSError, sqlite3.Error) as exc:
+                except (OSError, psycopg2.Error) as exc:
                     if legacy_exceptions:
                         raise
                     failures.append(
@@ -1992,7 +1997,7 @@ class Crawler:
             if cfg.check_database:
                 try:
                     hash_exists = self.storage.file_exists_by_hash(sha256)
-                except (OSError, sqlite3.Error) as exc:
+                except (OSError, psycopg2.Error) as exc:
                     self._remove_temp_file(tmp_path)
                     if legacy_exceptions:
                         raise
@@ -2043,7 +2048,7 @@ class Crawler:
                 try:
                     duplicate_reason = self._existing_url_subreason(ffinal)
                     hash_exists = not duplicate_reason and self.storage.file_exists_by_hash(sha256)
-                except (OSError, sqlite3.Error) as exc:
+                except (OSError, psycopg2.Error) as exc:
                     self._remove_temp_file(tmp_path)
                     if legacy_exceptions:
                         raise

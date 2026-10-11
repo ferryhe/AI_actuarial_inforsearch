@@ -13,6 +13,7 @@ from ai_actuarial.web_listening_rule import (
     rule_to_yaml,
     validate_rule,
 )
+from tests.postgres_helpers import postgres_url_for_path
 from tests.test_fastapi_ops_read_endpoints import _build_test_client, _patch_available_models
 from tests.test_fastapi_ops_write_endpoints import (
     _BridgeRecorder,
@@ -400,8 +401,8 @@ def test_web_listening_materialize_reports_partial_resource_changes(
         }
 
 
-def test_task_runtime_passes_collect_page_content_from_yaml() -> None:
-    runtime = NativeTaskRuntime()
+def test_task_runtime_passes_collect_page_content_from_yaml(tmp_path: Path) -> None:
+    runtime = NativeTaskRuntime(ready_data_database=postgres_url_for_path(tmp_path / "runtime.db"))
     site_configs = runtime._site_configs_for_run(
         {
             "defaults": {"max_pages": 5, "max_depth": 1, "file_exts": [".pdf"]},

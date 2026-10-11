@@ -6,6 +6,7 @@ import tempfile
 import unittest
 
 from ai_actuarial.storage import Storage
+from tests.postgres_helpers import postgres_url_for_path
 
 
 class TestFileEdit(unittest.TestCase):
@@ -15,7 +16,7 @@ class TestFileEdit(unittest.TestCase):
         """Create a temporary database."""
         self.temp_dir = tempfile.mkdtemp()
         self.db_path = os.path.join(self.temp_dir, "test.db")
-        self.storage = Storage(self.db_path)
+        self.storage = Storage(postgres_url_for_path(self.db_path))
 
         # Insert a test file using the public Storage API
         self.test_url = "http://test.com/file.pdf"

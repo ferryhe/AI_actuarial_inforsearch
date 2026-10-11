@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 from pathlib import Path
 
 import pytest
@@ -13,6 +12,7 @@ import ai_actuarial.api.services.agentic_rag as agentic_rag_service
 from ai_actuarial.api.app import create_app
 from ai_actuarial.rag.knowledge_base import KnowledgeBaseManager
 from ai_actuarial.storage import Storage
+from tests.postgres_helpers import postgres_url_for_path
 
 
 def _write_config_files(base_dir: Path) -> Path:
@@ -219,9 +219,11 @@ def _write_formula_artifacts(output_dir: Path) -> None:
 
 def _build_client(tmp_path: Path, monkeypatch) -> tuple[TestClient, Path]:
     db_path = _write_config_files(tmp_path)
+    database_url = postgres_url_for_path(str(db_path))
     monkeypatch.setenv("CONFIG_PATH", str(tmp_path / "sites.yaml"))
     monkeypatch.setenv("CATEGORIES_CONFIG_PATH", str(tmp_path / "categories.yaml"))
     monkeypatch.setenv("FASTAPI_SESSION_SECRET", "agentic-rag-test-secret")
+    monkeypatch.setenv("DATABASE_URL", database_url)
     monkeypatch.delenv("REQUIRE_AUTH", raising=False)
     app = create_app()
     return TestClient(app), db_path
@@ -254,7 +256,7 @@ def test_fastapi_agentic_rag_title_search_resolves_registry_ready_manifest(
     client, db_path = _build_client(tmp_path, monkeypatch)
     ready_dir = tmp_path / "agentic_ready_data" / "kbs" / "kb-a" / "general" / "1"
     _write_ready_data(ready_dir)
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         manager = KnowledgeBaseManager(storage)
         manager.create_kb(kb_id="kb-a", name="KB A", kb_mode="manual", manifest_profile="general")
@@ -268,7 +270,6 @@ def test_fastapi_agentic_rag_title_search_resolves_registry_ready_manifest(
             doc_count=2,
             section_count=1,
             built_at="2026-06-14T00:00:00+00:00",
-            source_db=str(db_path),
         )
     finally:
         storage.close()
@@ -293,7 +294,7 @@ def test_fastapi_agentic_rag_title_search_resolves_atomically_published_manifest
     client, db_path = _build_client(tmp_path, monkeypatch)
     ready_dir = tmp_path / "agentic_ready_data" / "staging" / "published"
     _write_ready_data(ready_dir)
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         manager = KnowledgeBaseManager(storage)
         manager.create_kb(kb_id="kb-published", name="Published KB", kb_mode="manual")
@@ -311,7 +312,6 @@ def test_fastapi_agentic_rag_title_search_resolves_atomically_published_manifest
             section_count=1,
             built_at="2026-06-14T00:00:00+00:00",
             artifact_digest="published-digest",
-            source_db=str(db_path),
         )
         storage.publish_agentic_ready_publication(
             str(publication["publication_id"]),
@@ -360,7 +360,7 @@ def test_fastapi_agentic_rag_section_search_uses_kb_manifest_profile_by_default(
     manifest = json.loads((ready_dir / "ready_data_manifest.json").read_text(encoding="utf-8"))
     manifest["profile"] = "regulation"
     (ready_dir / "ready_data_manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         manager = KnowledgeBaseManager(storage)
         manager.create_kb(
@@ -385,7 +385,6 @@ def test_fastapi_agentic_rag_section_search_uses_kb_manifest_profile_by_default(
             doc_count=2,
             section_count=1,
             built_at="2026-06-14T00:00:00+00:00",
-            source_db=str(db_path),
         )
     finally:
         storage.close()
@@ -561,7 +560,7 @@ def test_fastapi_agentic_rag_search_rejects_not_ready_registry_manifest(
     client, db_path = _build_client(tmp_path, monkeypatch)
     ready_dir = tmp_path / "agentic_ready_data" / "kbs" / "kb-building" / "general" / "1"
     _write_ready_data(ready_dir)
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         manager = KnowledgeBaseManager(storage)
         manager.create_kb(
@@ -593,7 +592,7 @@ def test_fastapi_agentic_rag_search_rejects_registry_output_dir_outside_ready_ro
     client, db_path = _build_client(tmp_path, monkeypatch)
     ready_dir = tmp_path / "outside-ready"
     _write_ready_data(ready_dir)
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         manager = KnowledgeBaseManager(storage)
         manager.create_kb(
@@ -654,7 +653,7 @@ def test_fastapi_agentic_rag_chat_resolves_registry_manifest_profile(
     manifest = json.loads((ready_dir / "ready_data_manifest.json").read_text(encoding="utf-8"))
     manifest["profile"] = "regulation"
     (ready_dir / "ready_data_manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         manager = KnowledgeBaseManager(storage)
         manager.create_kb(
@@ -679,7 +678,6 @@ def test_fastapi_agentic_rag_chat_resolves_registry_manifest_profile(
             doc_count=2,
             section_count=1,
             built_at="2026-06-14T00:00:00+00:00",
-            source_db=str(db_path),
         )
     finally:
         storage.close()
@@ -745,11 +743,9 @@ def test_fastapi_agentic_rag_chat_reuses_missing_ready_data_registry_error(
     assert "conversation_id" not in payload
     assert "message_id" not in payload
     assert "manifest" not in response.text.lower()
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
-        messages_table = storage._conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'messages'"
-        ).fetchone()
+        messages_table = storage._conn.execute("SELECT to_regclass('messages')").fetchone()[0]
         assert (
             messages_table is None
             or storage._conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0] == 0
@@ -765,7 +761,7 @@ def test_fastapi_agentic_rag_chat_reuses_not_ready_registry_error(
     client, db_path = _build_client(tmp_path, monkeypatch)
     ready_dir = tmp_path / "agentic_ready_data" / "kbs" / "kb-building" / "general" / "1"
     _write_ready_data(ready_dir)
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         manager = KnowledgeBaseManager(storage)
         manager.create_kb(
@@ -797,11 +793,9 @@ def test_fastapi_agentic_rag_chat_reuses_not_ready_registry_error(
     assert "message_id" not in payload
     assert str(ready_dir) not in response.text
     assert "not ready" not in response.text.lower()
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
-        messages_table = storage._conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'messages'"
-        ).fetchone()
+        messages_table = storage._conn.execute("SELECT to_regclass('messages')").fetchone()[0]
         assert (
             messages_table is None
             or storage._conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0] == 0
@@ -836,12 +830,14 @@ def test_fastapi_agentic_rag_chat_does_not_hide_tool_runtime_errors(
     assert response.json()["error"].startswith("output_dir is not supported")
 
 
-def test_agentic_rag_registry_profile_lookup_does_not_hide_sqlite_errors(
+def test_agentic_rag_registry_profile_lookup_does_not_hide_postgresql_errors(
     tmp_path: Path, monkeypatch
 ) -> None:
+    import psycopg2
+
     class _BrokenConn:
         def execute(self, *_args, **_kwargs):
-            raise sqlite3.OperationalError("database is locked")
+            raise psycopg2.OperationalError("connection is unavailable")
 
     class _BrokenStorage:
         def __init__(self, _db_path: str) -> None:
@@ -855,7 +851,7 @@ def test_agentic_rag_registry_profile_lookup_does_not_hide_sqlite_errors(
 
     monkeypatch.setattr(agentic_rag_service, "Storage", _BrokenStorage)
 
-    with pytest.raises(sqlite3.OperationalError, match="database is locked"):
+    with pytest.raises(psycopg2.OperationalError, match="connection is unavailable"):
         agentic_rag_service._resolve_ready_output_dir(
             db_path=str(tmp_path / "index.db"),
             payload={"kb_id": "kb-regulation"},

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
@@ -15,7 +14,8 @@ from ai_actuarial.agentic_rag.ready_data_tools import (
     search_titles,
     trace_relations,
 )
-from ai_actuarial.shared_runtime import parse_int_clamped
+from ai_actuarial.postgres import resolve_data_root
+from ai_actuarial.shared_runtime import load_sites_config, parse_int_clamped
 from ai_actuarial.storage import Storage
 
 
@@ -24,6 +24,13 @@ class AgenticRagError(Exception):
         super().__init__(message)
         self.message = message
         self.status_code = status_code
+
+
+def _ready_data_root() -> Path:
+    try:
+        return resolve_data_root(load_sites_config()) / "agentic_ready_data"
+    except Exception:  # noqa: BLE001
+        return resolve_data_root() / "agentic_ready_data"
 
 
 def _norm(value: Any) -> str:
@@ -49,12 +56,12 @@ def _validate_ready_output_dir(output_dir: str) -> str:
 
 def _validate_agentic_ready_output_dir(*, db_path: str, output_dir: str) -> str:
     candidate = Path(_validate_ready_output_dir(output_dir)).resolve()
-    root = (Path(db_path).resolve().parent / "agentic_ready_data").resolve()
+    root = _ready_data_root().resolve()
     try:
         candidate.relative_to(root)
     except ValueError as exc:
         raise AgenticRagError(
-            "output_dir must stay under the database agentic_ready_data directory",
+            "output_dir must stay under the configured agentic_ready_data directory",
             status_code=400,
         ) from exc
     return str(candidate)
@@ -69,12 +76,12 @@ def _resolve_agentic_ready_output_path(*, db_path: str, output_dir: str) -> str:
     if not path.is_dir():
         raise AgenticRagError("output_dir does not exist or is not a directory", status_code=400)
     candidate = path.resolve()
-    root = (Path(db_path).resolve().parent / "agentic_ready_data").resolve()
+    root = _ready_data_root().resolve()
     try:
         candidate.relative_to(root)
     except ValueError as exc:
         raise AgenticRagError(
-            "output_dir must stay under the database agentic_ready_data directory",
+            "output_dir must stay under the configured agentic_ready_data directory",
             status_code=400,
         ) from exc
     return str(candidate)
@@ -83,7 +90,7 @@ def _resolve_agentic_ready_output_path(*, db_path: str, output_dir: str) -> str:
 def _enforce_registered_ready_source_gate(*, db_path: str, output_dir: str) -> None:
     """Apply the registry source gate when an explicit path names a known artifact."""
     candidate = Path(output_dir).resolve()
-    root = (Path(db_path).resolve().parent / "agentic_ready_data").resolve()
+    root = _ready_data_root().resolve()
 
     def _registered_path(value: Any) -> Path | None:
         try:
@@ -169,14 +176,6 @@ def _manifest_profile_from_output_dir(output_dir: str) -> str:
     return _norm(data.get("profile")).lower()
 
 
-def _is_missing_profile_schema_error(exc: sqlite3.OperationalError) -> bool:
-    message = str(exc).lower()
-    return (
-        "no such table: rag_knowledge_bases" in message
-        or "no such column: manifest_profile" in message
-    )
-
-
 def _resolve_ready_output_dir(
     *,
     db_path: str,
@@ -209,15 +208,10 @@ def _resolve_ready_output_dir(
     storage = Storage(db_path)
     try:
         if not requested_profile:
-            try:
-                row = storage._conn.execute(
-                    "SELECT manifest_profile FROM rag_knowledge_bases WHERE kb_id = ?",
-                    (kb_id,),
-                ).fetchone()
-            except sqlite3.OperationalError as exc:
-                if not _is_missing_profile_schema_error(exc):
-                    raise
-                row = None
+            row = storage._conn.execute(
+                "SELECT manifest_profile FROM rag_knowledge_bases WHERE kb_id = ?",
+                (kb_id,),
+            ).fetchone()
             if row and _norm(row[0]):
                 profile = _norm(row[0]).lower()
         manifest = storage.get_agentic_ready_manifest(kb_id=kb_id, profile=profile)

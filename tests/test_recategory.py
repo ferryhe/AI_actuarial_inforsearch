@@ -12,6 +12,7 @@ from ai_actuarial.recategory import (
     plan_recategory,
 )
 from ai_actuarial.storage import Storage
+from tests.postgres_helpers import postgres_url_for_path
 
 
 def _write_categories(path: Path, categories: dict[str, list[str]]) -> None:
@@ -53,7 +54,7 @@ def _make_storage(env: dict, categories: dict[str, list[str]], name: str = "test
     # Seed the applied taxonomy baseline against the *initial* config, then
     # return an open Storage whose taxonomy_state.applied_categories == initial.
     _write_categories(env["cfg"], categories)
-    return Storage(str(env["tmp_path"] / name))
+    return Storage(postgres_url_for_path(str(env["tmp_path"] / name)))
 
 
 def _patch_llm(monkeypatch: pytest.MonkeyPatch, value: bool) -> None:
@@ -275,7 +276,7 @@ def test_v3_backfill_with_pending_change_falls_back_to_db(env: dict) -> None:
 
         # Re-open to trigger the backfill path (hash no longer matches current).
         storage.close()
-        storage = Storage(str(env["tmp_path"] / "f1.db"))
+        storage = Storage(postgres_url_for_path(str(env["tmp_path"] / "f1.db")))
 
         assert storage.get_applied_taxonomy_categories() is None
 
@@ -325,7 +326,7 @@ def test_catalog_blocked_when_taxonomy_changed(
     _write_categories(cfg, {"Finance": ["finance"]})
 
     # Seed the baseline applied hash, then edit the taxonomy.
-    seed = Storage(str(db_path))
+    seed = Storage(postgres_url_for_path(str(db_path)))
     seed.close()
     _write_categories(cfg, {"Finance": ["finance"], "Technology": ["technology"]})
 

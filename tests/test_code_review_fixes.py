@@ -15,7 +15,6 @@ Tests the following issues fixed:
 """
 
 import os
-import sqlite3
 import tempfile
 import time
 import unittest
@@ -23,9 +22,16 @@ from pathlib import Path
 
 from ai_actuarial.api.services.import_batches import ImportBatchError, _safe_relative_path
 from ai_actuarial.catalog import CatalogItem
-from ai_actuarial.catalog_incremental import _connect, _count_candidates, _upsert_catalog_row
+from ai_actuarial.catalog_incremental import (
+    CATALOG_OPTIONAL_COLUMNS,
+    _connect,
+    _count_candidates,
+    _ensure_catalog_schema,
+    _upsert_catalog_row,
+)
 from ai_actuarial.crawler import Crawler
 from ai_actuarial.storage import Storage
+from tests.postgres_helpers import postgres_url_for_path
 
 
 class TestSkippedItemsStatus(unittest.TestCase):
@@ -34,7 +40,7 @@ class TestSkippedItemsStatus(unittest.TestCase):
     def setUp(self):
         """Create a temporary database."""
         self.temp_dir = tempfile.mkdtemp()
-        self.db_path = os.path.join(self.temp_dir, "test.db")
+        self.db_path = postgres_url_for_path(os.path.join(self.temp_dir, "test.db"))
 
     def tearDown(self):
         """Clean up temporary files."""
@@ -85,7 +91,7 @@ class TestCatalogSchemaCompatibility(unittest.TestCase):
 
     def setUp(self):
         self.temp_dir = tempfile.mkdtemp()
-        self.db_path = os.path.join(self.temp_dir, "test.db")
+        self.db_path = postgres_url_for_path(os.path.join(self.temp_dir, "test.db"))
 
     def tearDown(self):
         import shutil
@@ -100,18 +106,19 @@ class TestCatalogSchemaCompatibility(unittest.TestCase):
 
     def test_connect_adds_incremental_columns_for_legacy_schema(self):
         # Create schema via Storage (modern builds may already include incremental columns).
-        storage = Storage(self.db_path)
+        storage = Storage(postgres_url_for_path(self.db_path))
         storage.close()
-
-        with sqlite3.connect(self.db_path) as check_conn:
-            cols_before = {row[1] for row in check_conn.execute("PRAGMA table_info(catalog_items)")}
-            # Baseline sanity: table exists before _connect migration helper runs.
-            self.assertIn("file_url", cols_before)
-
-        # _connect should apply compatibility migration.
         conn = _connect(self.db_path)
         try:
-            cols_after = {row[1] for row in conn.execute("PRAGMA table_info(catalog_items)")}
+            for column in CATALOG_OPTIONAL_COLUMNS:
+                conn.execute(f"ALTER TABLE catalog_items DROP COLUMN IF EXISTS {column}")
+            conn.commit()
+            cols_before = conn.table_columns("catalog_items")
+            self.assertIn("file_url", cols_before)
+            self.assertNotIn("file_sha256", cols_before)
+
+            _ensure_catalog_schema(conn)
+            cols_after = conn.table_columns("catalog_items")
             self.assertIn("file_sha256", cols_after)
             self.assertIn("catalog_version", cols_after)
 
@@ -127,20 +134,12 @@ class TestCatalogSchemaCompatibility(unittest.TestCase):
             conn.close()
 
     def test_upsert_works_when_legacy_sha256_is_not_null(self):
-        # Build a strict legacy table to reproduce:
-        # sqlite3.IntegrityError: NOT NULL constraint failed: catalog_items.sha256
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute("""
-                CREATE TABLE files (
-                    id INTEGER PRIMARY KEY,
-                    url TEXT UNIQUE,
-                    sha256 TEXT,
-                    title TEXT,
-                    source_site TEXT,
-                    original_filename TEXT,
-                    local_path TEXT
-                )
-                """)
+        # Recreate a strict historical catalog shape inside this isolated PG schema.
+        storage = Storage(self.db_path)
+        storage.close()
+        conn = _connect(self.db_path)
+        try:
+            conn.execute("DROP TABLE catalog_items")
             conn.execute("""
                 CREATE TABLE catalog_items (
                     file_url TEXT PRIMARY KEY,
@@ -154,10 +153,7 @@ class TestCatalogSchemaCompatibility(unittest.TestCase):
                     error TEXT
                 )
                 """)
-            conn.commit()
-
-        conn = _connect(self.db_path)
-        try:
+            _ensure_catalog_schema(conn)
             item = CatalogItem(
                 source_site="test.com",
                 title="Legacy Strict Schema",
@@ -194,7 +190,7 @@ class TestStorageAbstraction(unittest.TestCase):
         """Create a temporary database."""
         self.temp_dir = tempfile.mkdtemp()
         self.db_path = os.path.join(self.temp_dir, "test.db")
-        self.storage = Storage(self.db_path)
+        self.storage = Storage(postgres_url_for_path(self.db_path))
 
     def tearDown(self):
         """Clean up temporary files."""
@@ -445,7 +441,7 @@ class TestSQLInjectionProtection(unittest.TestCase):
         """Create a temporary database."""
         self.temp_dir = tempfile.mkdtemp()
         self.db_path = os.path.join(self.temp_dir, "test.db")
-        self.storage = Storage(self.db_path)
+        self.storage = Storage(postgres_url_for_path(self.db_path))
 
     def tearDown(self):
         """Clean up temporary files."""
@@ -489,8 +485,8 @@ class TestCatalogCandidateSelection(unittest.TestCase):
 
     def setUp(self):
         self.temp_dir = tempfile.mkdtemp()
-        self.db_path = os.path.join(self.temp_dir, "test.db")
-        storage = Storage(self.db_path)
+        self.db_path = postgres_url_for_path(os.path.join(self.temp_dir, "test.db"))
+        storage = Storage(postgres_url_for_path(self.db_path))
         try:
             storage.insert_file(
                 url="http://test.com/file1.pdf",
@@ -574,7 +570,7 @@ class TestFilenameExclusionLogic(unittest.TestCase):
         """Create a temporary directory and crawler."""
         self.temp_dir = tempfile.mkdtemp()
         self.db_path = os.path.join(self.temp_dir, "test.db")
-        self.storage = Storage(self.db_path)
+        self.storage = Storage(postgres_url_for_path(self.db_path))
         self.crawler = Crawler(self.storage, self.temp_dir, "TestAgent/1.0")
 
     def tearDown(self):

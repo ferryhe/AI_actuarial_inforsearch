@@ -23,6 +23,7 @@ from ai_actuarial.api.services import rag_admin as rag_admin_service
 from ai_actuarial.embedding_service import resolve_server_embedding_identity
 from ai_actuarial.rag.kb_index import resolve_kb_bound_chunks
 from ai_actuarial.storage import Storage
+from tests.postgres_helpers import postgres_url_for_path
 
 PDF_BYTES = b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n"
 
@@ -137,13 +138,14 @@ def test_failed_rollback_comparison_ignores_mirrored_operation_audit() -> None:
 
 
 def _prepare_committed_kb_index(
-    db_path: Path,
+    db_path: object,
     kb_id: str,
     *,
     persist_embeddings: bool = False,
 ) -> dict[str, object]:
     """Upgrade a legacy test KB fixture to the exact #238 index contract."""
-    storage = Storage(str(db_path))
+    database = db_path if not isinstance(db_path, Path) else postgres_url_for_path(str(db_path))
+    storage = Storage(database)
     try:
         kb_row = storage._conn.execute(
             """
@@ -317,7 +319,7 @@ def _prepare_committed_kb_index(
             binding_snapshot_fingerprint=str(resolved["binding_snapshot_fingerprint"]),
             index_type="faiss",
             chunk_count=len(selected_chunk_ids),
-            artifact_path=str(db_path.parent / "test-indexes" / kb_id),
+            artifact_path=str(storage.data_root / "test-indexes" / kb_id),
             artifact_digest=hashlib.sha256(kb_id.encode("utf-8")).hexdigest(),
             chunk_ids=selected_chunk_ids,
             status="ready",
@@ -366,10 +368,10 @@ def test_issue_376_latest_any_status_surfaces_binding_dirty(tmp_path: Path, monk
     profile_id = str(seed["default_chunk_profile_id"])
     alpha_url = str(seed["alpha_url"])
     _KnowledgeBase, _manager, initialized_storage = rag_admin_service._manager_and_storage(
-        str(db_path)
+        postgres_url_for_path(str(db_path))
     )
     initialized_storage.close()
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         ready_set_id = str(
             storage._conn.execute(
@@ -410,7 +412,7 @@ def test_issue_376_latest_any_status_surfaces_binding_dirty(tmp_path: Path, monk
         storage.close()
     _prepare_committed_kb_index(db_path, "kb-issue-376-http", persist_embeddings=True)
 
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         newer = storage.get_or_create_file_chunk_set(
             file_url=alpha_url,
@@ -481,7 +483,7 @@ def _post_ready_build_core(
     suffix = "/agentic-ready-manifest/build"
     assert url.startswith(marker) and url.endswith(suffix)
     kb_id = url[len(marker) : -len(suffix)]
-    db_path = Path(client.app.state.db_path)
+    db_path = client.app.state.database
     request_payload = dict(json or {})
     if prepare_index:
         prepared = _prepare_committed_kb_index(db_path, kb_id)
@@ -495,7 +497,7 @@ def _post_ready_build_core(
             )
 
             source = get_builder_source_fingerprint(
-                db_path=str(db_path),
+                db_path=db_path,
                 kb_id=kb_id,
                 profile=str(
                     request_payload.get("profile") or prepared.get("manifest_profile") or "general"
@@ -507,7 +509,7 @@ def _post_ready_build_core(
             )
     try:
         payload = rag_admin_service._build_agentic_ready_manifest_core(
-            db_path=str(db_path),
+            db_path=db_path,
             kb_id=kb_id,
             payload=request_payload,
             publish=publish,
@@ -543,18 +545,6 @@ def _wait_for_task(client: TestClient, job_id: str, *, timeout: float = 10.0) ->
     raise AssertionError(f"task did not finish: {job_id}")
 
 
-def _sqlite_file_state(db_path: Path) -> tuple[tuple[bool, int, str], ...]:
-    def file_state(candidate: Path) -> tuple[bool, int, str]:
-        if not candidate.exists():
-            return False, 0, ""
-        return True, candidate.stat().st_size, hashlib.sha256(candidate.read_bytes()).hexdigest()
-
-    return tuple(
-        file_state(candidate)
-        for candidate in (db_path, Path(f"{db_path}-wal"), Path(f"{db_path}-shm"))
-    )
-
-
 def _record_snapshot_race_publication(
     storage: Storage,
     *,
@@ -580,7 +570,6 @@ def _record_snapshot_race_publication(
         section_count=1,
         built_at="2026-08-20T12:00:00+00:00",
         artifact_digest=f"digest-{label}",
-        source_db=storage.db_path,
         schema_versions={"ready_data": "1"},
     )
 
@@ -620,7 +609,7 @@ def _build_public_rollback_pair(
     )
     assert first_response.status_code == 200, first_response.text
     first = first_response.json()["candidate_publication"]
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         with storage.transaction(immediate=True):
             storage._conn.execute(
@@ -678,7 +667,7 @@ def _seed_storage(db_path: Path, files_dir: Path) -> dict[str, object]:
     beta_path = files_dir / "beta.pdf"
     beta_path.write_bytes(PDF_BYTES + b"\n% beta")
 
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         alpha_url = "https://alpha.example/doc-a.pdf"
         beta_url = "https://beta.example/doc-b.pdf"
@@ -781,7 +770,7 @@ def _seed_storage(db_path: Path, files_dir: Path) -> dict[str, object]:
 def _build_test_client(tmp_path: Path, monkeypatch) -> tuple[TestClient, object, dict[str, object]]:
     db_path, config_path, categories_path, files_dir = _write_config_files(tmp_path)
     seed = _seed_storage(db_path, files_dir)
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         default_profile = storage.create_chunk_profile(
             name="issue-238-api-default",
@@ -876,7 +865,7 @@ def test_rag_task_auth_preserves_legacy_config_token_fallback(monkeypatch) -> No
 def _seed_ready_chunk_set(
     db_path: Path, file_url: str, profile_id: str, *, text: str = "Chunk"
 ) -> dict[str, object]:
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         chunk_set = storage.get_or_create_file_chunk_set(
             file_url=file_url,
@@ -967,7 +956,7 @@ def test_explicit_ready_publish_api_is_thin_exact_adapter(tmp_path: Path, monkey
         "active_publication_id": "arp_candidate",
     }
     assert captured == {
-        "db_path": str(tmp_path / "index.db"),
+        "db_path": client.app.state.database,
         "kb_id": "kb-publish",
         "payload": request_payload,
     }
@@ -1111,7 +1100,7 @@ def test_fastapi_rag_admin_categories_mapping_uses_catalog_items_without_legacy_
     tmp_path: Path, monkeypatch
 ) -> None:
     client, _app, seed = _build_test_client(tmp_path, monkeypatch)
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         storage._conn.execute(
             "UPDATE catalog_items SET category = ? WHERE file_url = ?",
@@ -1211,8 +1200,8 @@ def test_fastapi_rag_admin_kb_list_does_not_initialize_rag_runtime(
     tmp_path: Path, monkeypatch
 ) -> None:
     client, _app, _seed = _build_test_client(tmp_path, monkeypatch)
-    db_path = tmp_path / "index.db"
-    storage = Storage(str(db_path))
+    db_url = postgres_url_for_path(str(tmp_path / "index.db"))
+    storage = Storage(db_url)
     try:
         profile = storage.create_chunk_profile(
             name="offline-profile",
@@ -1222,65 +1211,23 @@ def test_fastapi_rag_admin_kb_list_does_not_initialize_rag_runtime(
             tokenizer="cl100k_base",
             version="v1",
         )
-        storage._conn.executescript("""
-            CREATE TABLE rag_knowledge_bases (
-                kb_id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                description TEXT,
-                kb_mode TEXT DEFAULT 'category',
-                chunk_profile_id TEXT,
-                manifest_profile TEXT DEFAULT 'general',
-                embedding_provider TEXT DEFAULT 'openai',
-                embedding_model TEXT NOT NULL,
-                embedding_dimension INTEGER,
-                chunk_size INTEGER NOT NULL,
-                chunk_overlap INTEGER NOT NULL,
-                index_type TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                file_count INTEGER DEFAULT 0,
-                chunk_count INTEGER DEFAULT 0,
-                index_dirty_at TEXT
-            );
-            CREATE TABLE rag_kb_files (
-                kb_id TEXT NOT NULL,
-                file_url TEXT NOT NULL,
-                added_at TEXT NOT NULL,
-                chunk_count INTEGER DEFAULT 0,
-                indexed_at TEXT,
-                PRIMARY KEY (kb_id, file_url)
-            );
-            """)
-        storage._conn.executemany(
+        storage._conn.execute(
             """
             INSERT INTO rag_knowledge_bases (
-                kb_id, name, description, kb_mode, chunk_profile_id,
-                manifest_profile, embedding_provider, embedding_model,
-                embedding_dimension, chunk_size, chunk_overlap, index_type,
+                kb_id, name, description, kb_mode, chunk_profile_id, manifest_profile,
+                embedding_provider, embedding_model, embedding_dimension,
+                embedding_identity_key, chunk_size, chunk_overlap, index_type,
                 created_at, updated_at, file_count, chunk_count
-            ) VALUES (?, ?, ?, ?, ?, 'general', 'openai',
-                      'text-embedding-3-large', 3072, 320, 40, 'Flat',
-                      ?, ?, 0, 0)
+            ) VALUES (?, ?, ?, 'manual', ?, 'general', 'openai',
+                      'text-embedding-3-large', 3072, '', 320, 40, 'Flat', ?, ?, 0, 0)
             """,
             (
-                (
-                    "kb-offline-list",
-                    "Offline Actuarial KB",
-                    "Offline recovery metadata",
-                    "manual",
-                    profile["profile_id"],
-                    "2026-08-20T13:00:00+00:00",
-                    "2026-08-20T13:00:00+00:00",
-                ),
-                (
-                    "kb-category-other",
-                    "Other KB",
-                    "Must be filtered out",
-                    "category",
-                    None,
-                    "2026-08-20T12:00:00+00:00",
-                    "2026-08-20T12:00:00+00:00",
-                ),
+                "kb-offline-list",
+                "Offline Actuarial KB",
+                "Offline recovery metadata",
+                profile["profile_id"],
+                "2026-08-20T13:00:00+00:00",
+                "2026-08-20T13:00:00+00:00",
             ),
         )
         storage._conn.commit()
@@ -1288,17 +1235,13 @@ def test_fastapi_rag_admin_kb_list_does_not_initialize_rag_runtime(
         storage.close()
 
     _disable_rag_runtime_initialization(monkeypatch, tmp_path)
-
-    from ai_actuarial.api.deps import AuthContext
-    from ai_actuarial.api.services import rag_admin as rag_admin_service
-
-    operator_auth = AuthContext(token=None, permissions=frozenset({"tasks.run"}))
-    body = rag_admin_service.list_knowledge_bases(
-        db_path=str(db_path),
-        query={"kb_mode": "manual", "search": "offline"},
-        auth=operator_auth,
+    response = client.get(
+        "/api/rag/knowledge-bases",
+        params={"kb_mode": "manual", "search": "offline"},
     )
 
+    assert response.status_code == 200, response.text
+    body = response.json()
     assert body["current_embeddings"]["stable_credential_id"] == "openai:llm:env"
     assert [item["kb_id"] for item in body["knowledge_bases"]] == ["kb-offline-list"]
     listed = body["knowledge_bases"][0]
@@ -1314,17 +1257,16 @@ def test_fastapi_rag_admin_kb_list_does_not_initialize_rag_runtime(
     assert listed["agentic_fallback_mode"] == "standard"
 
 
-@pytest.mark.parametrize("db_path", (":memory:", ""))
-def test_rag_admin_kb_list_supports_connection_local_database(
+def test_rag_admin_kb_list_accepts_initialized_postgresql_schema(
     tmp_path: Path,
     monkeypatch,
-    db_path: str,
 ) -> None:
     from ai_actuarial.api.services import rag_admin as rag_admin_service
 
+    db_url = postgres_url_for_path(str(tmp_path / "empty-kb-list.db"))
     _disable_rag_runtime_initialization(monkeypatch, tmp_path)
 
-    result = rag_admin_service.list_knowledge_bases(db_path=db_path, query={})
+    result = rag_admin_service.list_knowledge_bases(db_path=db_url, query={})
 
     assert result["knowledge_bases"] == []
     current_embeddings = result["current_embeddings"]
@@ -1335,568 +1277,82 @@ def test_rag_admin_kb_list_supports_connection_local_database(
     assert "configured" in current_embeddings
 
 
-def test_fastapi_rag_admin_kb_list_legacy_metadata_requires_schema_apply_without_writes(
+def test_rag_admin_kb_list_concurrent_postgresql_reads_do_not_write(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    import sqlite3
-
-    client, _app, _seed = _build_test_client(tmp_path, monkeypatch)
-    db_path = tmp_path / "index.db"
-    storage = Storage(str(db_path))
-    try:
-        storage._conn.executescript("""
-            CREATE TABLE rag_knowledge_bases (
-                kb_id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                embedding_model TEXT NOT NULL,
-                chunk_size INTEGER NOT NULL,
-                chunk_overlap INTEGER NOT NULL,
-                index_type TEXT NOT NULL,
-                created_at TEXT,
-                updated_at TEXT
-            );
-            INSERT INTO rag_knowledge_bases (
-                kb_id, name, embedding_model, chunk_size, chunk_overlap,
-                index_type, created_at, updated_at
-            ) VALUES (
-                'kb-legacy-offline', 'Legacy Offline KB',
-                'text-embedding-3-large', 800, 100, 'Flat',
-                '2026-08-20T11:00:00+00:00', '2026-08-20T11:00:00+00:00'
-            );
-            """)
-        storage._conn.commit()
-    finally:
-        storage.close()
-
-    _disable_rag_runtime_initialization(monkeypatch, tmp_path)
-    client.headers.pop("X-Auth-Token", None)
-    before_state = _sqlite_file_state(db_path)
-    before_schema = sqlite3.connect(str(db_path))
-    try:
-        before_columns = {
-            row[1] for row in before_schema.execute("PRAGMA table_info(rag_knowledge_bases)")
-        }
-    finally:
-        before_schema.close()
-
-    response = client.get("/api/rag/knowledge-bases", params={"search": "legacy"})
-
-    assert response.status_code == 409, response.text
-    assert "schema apply" in response.text
-    assert _sqlite_file_state(db_path) == before_state
-
-    conn = sqlite3.connect(str(db_path))
-    try:
-        kb_columns = {row[1] for row in conn.execute("PRAGMA table_info(rag_knowledge_bases)")}
-        assert kb_columns == before_columns
-        assert not conn.execute(
-            "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'rag_kb_files'"
-        ).fetchone()
-        assert (
-            conn.execute(
-                "SELECT COUNT(*) FROM rag_knowledge_bases WHERE kb_id = 'kb-legacy-offline'"
-            ).fetchone()[0]
-            == 1
-        )
-    finally:
-        conn.close()
-
-
-def test_rag_admin_kb_list_concurrent_legacy_reads_do_not_write(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    import sqlite3
     from concurrent.futures import ThreadPoolExecutor
 
     from ai_actuarial.api.services import rag_admin as rag_admin_service
-    from ai_actuarial.api.services.rag_admin import RagAdminError
 
-    db_path = tmp_path / "index.db"
-    storage = Storage(str(db_path))
+    db_url = postgres_url_for_path(str(tmp_path / "concurrent-kb-list.db"))
+    _disable_rag_runtime_initialization(monkeypatch, tmp_path)
+    storage = Storage(db_url)
     try:
-        storage._conn.executescript("""
-            CREATE TABLE rag_knowledge_bases (
-                kb_id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                embedding_model TEXT NOT NULL,
-                chunk_size INTEGER NOT NULL,
-                chunk_overlap INTEGER NOT NULL,
-                index_type TEXT NOT NULL,
-                created_at TEXT,
-                updated_at TEXT
-            );
-            INSERT INTO rag_knowledge_bases (
-                kb_id, name, embedding_model, chunk_size, chunk_overlap,
-                index_type, created_at, updated_at
-            ) VALUES (
-                'kb-concurrent-legacy', 'Concurrent Legacy KB',
-                'text-embedding-3-large', 800, 100, 'Flat',
-                '2026-08-20T11:00:00+00:00', '2026-08-20T11:00:00+00:00'
-            );
-            """)
-        storage._conn.commit()
+        before = tuple(
+            int(storage._conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
+            for table in ("rag_knowledge_bases", "rag_kb_files", "rag_kb_category_mappings")
+        )
     finally:
         storage.close()
-
-    _disable_rag_runtime_initialization(monkeypatch, tmp_path)
-    before_state = _sqlite_file_state(db_path)
-
-    def list_legacy_kb() -> int:
-        with pytest.raises(RagAdminError) as excinfo:
-            rag_admin_service.list_knowledge_bases(
-                db_path=str(db_path),
-                query={"search": "concurrent"},
-            )
-        return excinfo.value.status_code
 
     with ThreadPoolExecutor(max_workers=2) as executor:
-        futures = [executor.submit(list_legacy_kb) for _ in range(2)]
+        futures = [
+            executor.submit(rag_admin_service.list_knowledge_bases, db_path=db_url, query={})
+            for _ in range(2)
+        ]
         results = [future.result(timeout=10) for future in futures]
 
-    assert results == [409, 409]
-    assert _sqlite_file_state(db_path) == before_state
-    with sqlite3.connect(str(db_path)) as conn:
-        assert not conn.execute(
-            "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'rag_kb_files'"
-        ).fetchone()
-
-
-def test_rag_admin_kb_list_schema_ready_path_does_not_wait_for_writer(
-    tmp_path: Path,
-) -> None:
-    import sqlite3
-
-    from ai_actuarial.api.services import rag_admin as rag_admin_service
-
-    db_path = tmp_path / "index.db"
-    setup = Storage(str(db_path))
+    assert [result["knowledge_bases"] for result in results] == [[], []]
+    storage = Storage(db_url)
     try:
-        setup._conn.executescript("""
-            CREATE TABLE rag_knowledge_bases (
-                kb_id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                description TEXT,
-                kb_mode TEXT DEFAULT 'category',
-                chunk_profile_id TEXT,
-                manifest_profile TEXT DEFAULT 'general',
-                embedding_provider TEXT DEFAULT 'openai',
-                embedding_model TEXT NOT NULL,
-                embedding_dimension INTEGER,
-                chunk_size INTEGER NOT NULL,
-                chunk_overlap INTEGER NOT NULL,
-                index_type TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                file_count INTEGER DEFAULT 0,
-                chunk_count INTEGER DEFAULT 0,
-                index_dirty_at TEXT
-            );
-            CREATE TABLE rag_kb_files (
-                kb_id TEXT NOT NULL,
-                file_url TEXT NOT NULL,
-                added_at TEXT NOT NULL,
-                chunk_count INTEGER DEFAULT 0,
-                indexed_at TEXT,
-                PRIMARY KEY (kb_id, file_url)
-            );
-            """)
-        setup._conn.commit()
-    finally:
-        setup.close()
-
-    writer = sqlite3.connect(str(db_path))
-    writer.execute("BEGIN IMMEDIATE")
-    try:
-        result = rag_admin_service.list_knowledge_bases(db_path=str(db_path), query={})
-        assert writer.in_transaction
-    finally:
-        writer.rollback()
-        writer.close()
-
-    assert result["knowledge_bases"] == []
-    assert "configured" in result["current_embeddings"]
-
-
-def test_rag_admin_kb_list_existing_db_without_kb_table_is_read_only(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    import sqlite3
-
-    from ai_actuarial.api.services import rag_admin as rag_admin_service
-
-    db_path = tmp_path / "raw-no-kb-table.db"
-    with sqlite3.connect(str(db_path)) as conn:
-        conn.execute("CREATE TABLE raw_rag_placeholder (id TEXT PRIMARY KEY)")
-        conn.execute("INSERT INTO raw_rag_placeholder (id) VALUES ('keep')")
-        conn.commit()
-
-    _disable_rag_runtime_initialization(monkeypatch, tmp_path)
-    before_state = _sqlite_file_state(db_path)
-
-    result = rag_admin_service.list_knowledge_bases(db_path=str(db_path), query={})
-
-    assert result["knowledge_bases"] == []
-    assert "configured" in result["current_embeddings"]
-    assert _sqlite_file_state(db_path) == before_state
-    with sqlite3.connect(str(db_path)) as conn:
-        assert conn.execute("SELECT COUNT(*) FROM raw_rag_placeholder").fetchone()[0] == 1
-
-
-def test_rag_admin_kb_list_user_schema_probe_is_read_only_query_only(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    import sqlite3
-
-    from ai_actuarial.api.services import rag_admin as rag_admin_service
-
-    db_path = tmp_path / "probe-read-only.db"
-    with sqlite3.connect(str(db_path)) as conn:
-        conn.execute("CREATE TABLE raw_rag_placeholder (id TEXT PRIMARY KEY)")
-        conn.execute("INSERT INTO raw_rag_placeholder (id) VALUES ('keep')")
-        conn.commit()
-
-    real_connect = sqlite3.connect
-    connect_calls = []
-    query_only_statements = []
-
-    class TrackingConnection:
-        def __init__(self, conn) -> None:
-            self._conn = conn
-
-        def execute(self, statement, *args, **kwargs):
-            if str(statement).strip().upper() == "PRAGMA QUERY_ONLY=ON":
-                query_only_statements.append(str(statement))
-            return self._conn.execute(statement, *args, **kwargs)
-
-        def close(self) -> None:
-            self._conn.close()
-
-        def __getattr__(self, name: str):
-            return getattr(self._conn, name)
-
-    def tracking_connect(database, *args, **kwargs):
-        connect_calls.append((str(database), kwargs.get("uri")))
-        return TrackingConnection(real_connect(database, *args, **kwargs))
-
-    monkeypatch.setattr(rag_admin_service.sqlite3, "connect", tracking_connect)
-
-    assert rag_admin_service._kb_list_db_has_user_schema_objects(str(db_path)) is True
-
-    assert connect_calls
-    assert connect_calls[0][1] is True
-    assert "mode=ro" in connect_calls[0][0]
-    assert query_only_statements == ["PRAGMA query_only=ON"]
-
-
-def test_rag_admin_kb_list_unreadable_sqlite_fails_closed_without_writes(
-    tmp_path: Path,
-) -> None:
-    from ai_actuarial.api.services import rag_admin as rag_admin_service
-    from ai_actuarial.api.services.rag_admin import RagAdminError
-
-    db_path = tmp_path / "unreadable.db"
-    db_path.write_bytes(b"not a sqlite database")
-    before_state = _sqlite_file_state(db_path)
-
-    with pytest.raises(RagAdminError) as excinfo:
-        rag_admin_service.list_knowledge_bases(db_path=str(db_path), query={})
-
-    assert excinfo.value.status_code == 409
-    assert "schema apply" in excinfo.value.message
-    assert _sqlite_file_state(db_path) == before_state
-
-
-def test_rag_admin_kb_list_reads_raw_rag_only_database_without_core_storage_tables(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    import sqlite3
-
-    from ai_actuarial.api.services import rag_admin as rag_admin_service
-
-    db_path = tmp_path / "raw-rag-only.db"
-    with sqlite3.connect(str(db_path)) as conn:
-        conn.executescript("""
-            CREATE TABLE rag_knowledge_bases (
-                kb_id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                description TEXT,
-                kb_mode TEXT DEFAULT 'category',
-                chunk_profile_id TEXT,
-                manifest_profile TEXT DEFAULT 'general',
-                embedding_provider TEXT DEFAULT 'openai',
-                embedding_model TEXT NOT NULL,
-                embedding_dimension INTEGER,
-                chunk_size INTEGER NOT NULL,
-                chunk_overlap INTEGER NOT NULL,
-                index_type TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                file_count INTEGER DEFAULT 0,
-                chunk_count INTEGER DEFAULT 0,
-                index_dirty_at TEXT
-            );
-            INSERT INTO rag_knowledge_bases (
-                kb_id, name, description, kb_mode, chunk_profile_id,
-                manifest_profile, embedding_provider, embedding_model,
-                embedding_dimension, chunk_size, chunk_overlap, index_type,
-                created_at, updated_at, file_count, chunk_count, index_dirty_at
-            ) VALUES (
-                'kb-raw-rag-only', 'Raw RAG Only', 'No core Storage tables',
-                'manual', NULL, 'general', 'openai',
-                'text-embedding-3-large', 3072, 800, 100, 'Flat',
-                '2026-08-20T11:00:00+00:00',
-                '2026-08-20T11:00:00+00:00', 0, 0, NULL
-            );
-            """)
-        conn.commit()
-
-    _disable_rag_runtime_initialization(monkeypatch, tmp_path)
-    before_state = _sqlite_file_state(db_path)
-
-    result = rag_admin_service.list_knowledge_bases(
-        db_path=str(db_path),
-        query={"search": "raw"},
-    )
-
-    assert _sqlite_file_state(db_path) == before_state
-    listed = result["knowledge_bases"][0]
-    assert listed["kb_id"] == "kb-raw-rag-only"
-    assert listed["availability"] == "building"
-    assert listed["agentic_ready_manifest"]["status"] == "missing"
-    assert listed["agentic_fallback_mode"] == "standard"
-
-
-def test_rag_admin_kb_list_legacy_optional_table_requires_schema_apply_without_writes(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    import sqlite3
-
-    from ai_actuarial.api.services import rag_admin as rag_admin_service
-    from ai_actuarial.api.services.rag_admin import RagAdminError
-
-    db_path = tmp_path / "raw-rag-legacy-agentic-slot.db"
-    with sqlite3.connect(str(db_path)) as conn:
-        conn.executescript("""
-            CREATE TABLE rag_knowledge_bases (
-                kb_id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                description TEXT,
-                kb_mode TEXT DEFAULT 'category',
-                chunk_profile_id TEXT,
-                manifest_profile TEXT DEFAULT 'general',
-                embedding_provider TEXT DEFAULT 'openai',
-                embedding_model TEXT NOT NULL,
-                embedding_dimension INTEGER,
-                chunk_size INTEGER NOT NULL,
-                chunk_overlap INTEGER NOT NULL,
-                index_type TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                file_count INTEGER DEFAULT 0,
-                chunk_count INTEGER DEFAULT 0,
-                index_dirty_at TEXT
-            );
-            CREATE TABLE agentic_ready_slots (
-                kb_id TEXT NOT NULL,
-                profile TEXT NOT NULL,
-                active_publication_id TEXT,
-                previous_publication_id TEXT,
-                automatic_build_enabled INTEGER NOT NULL DEFAULT 0,
-                automatic_publish_enabled INTEGER NOT NULL DEFAULT 0,
-                updated_at TEXT NOT NULL,
-                PRIMARY KEY(kb_id, profile)
-            );
-            INSERT INTO rag_knowledge_bases (
-                kb_id, name, description, kb_mode, chunk_profile_id,
-                manifest_profile, embedding_provider, embedding_model,
-                embedding_dimension, chunk_size, chunk_overlap, index_type,
-                created_at, updated_at, file_count, chunk_count, index_dirty_at
-            ) VALUES (
-                'kb-legacy-slot', 'Legacy Slot KB', 'Legacy optional table',
-                'manual', NULL, 'general', 'openai',
-                'text-embedding-3-large', 3072, 800, 100, 'Flat',
-                '2026-08-20T11:00:00+00:00',
-                '2026-08-20T11:00:00+00:00', 0, 0, NULL
-            );
-            INSERT INTO agentic_ready_slots (
-                kb_id, profile, automatic_build_enabled,
-                automatic_publish_enabled, updated_at
-            ) VALUES (
-                'kb-legacy-slot', 'general', 0, 0,
-                '2026-08-20T11:00:00+00:00'
-            );
-            """)
-        conn.commit()
-
-    _disable_rag_runtime_initialization(monkeypatch, tmp_path)
-    before_state = _sqlite_file_state(db_path)
-
-    with pytest.raises(RagAdminError) as excinfo:
-        rag_admin_service.list_knowledge_bases(
-            db_path=str(db_path),
-            query={"search": "legacy slot"},
+        after = tuple(
+            int(storage._conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
+            for table in ("rag_knowledge_bases", "rag_kb_files", "rag_kb_category_mappings")
         )
-
-    assert excinfo.value.status_code == 409
-    assert "schema apply" in excinfo.value.message
-    assert _sqlite_file_state(db_path) == before_state
-    with sqlite3.connect(str(db_path)) as conn:
-        slot_columns = {row[1] for row in conn.execute("PRAGMA table_info(agentic_ready_slots)")}
-        assert "publication_revision" not in slot_columns
-        assert conn.execute("SELECT COUNT(*) FROM agentic_ready_slots").fetchone()[0] == 1
-
-
-def test_rag_admin_kb_list_optional_view_requires_schema_apply_without_writes(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    import sqlite3
-
-    from ai_actuarial.api.services import rag_admin as rag_admin_service
-    from ai_actuarial.api.services.rag_admin import RagAdminError
-
-    db_path = tmp_path / "raw-rag-view-shaped-slot.db"
-    with sqlite3.connect(str(db_path)) as conn:
-        conn.executescript("""
-            CREATE TABLE rag_knowledge_bases (
-                kb_id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                description TEXT,
-                kb_mode TEXT DEFAULT 'category',
-                chunk_profile_id TEXT,
-                manifest_profile TEXT DEFAULT 'general',
-                embedding_provider TEXT DEFAULT 'openai',
-                embedding_model TEXT NOT NULL,
-                embedding_dimension INTEGER,
-                chunk_size INTEGER NOT NULL,
-                chunk_overlap INTEGER NOT NULL,
-                index_type TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                file_count INTEGER DEFAULT 0,
-                chunk_count INTEGER DEFAULT 0,
-                index_dirty_at TEXT
-            );
-            CREATE VIEW agentic_ready_slots AS
-            SELECT * FROM missing_slot_source;
-            INSERT INTO rag_knowledge_bases (
-                kb_id, name, description, kb_mode, chunk_profile_id,
-                manifest_profile, embedding_provider, embedding_model,
-                embedding_dimension, chunk_size, chunk_overlap, index_type,
-                created_at, updated_at, file_count, chunk_count, index_dirty_at
-            ) VALUES (
-                'kb-view-slot', 'View Slot KB', 'View-shaped optional object',
-                'manual', NULL, 'general', 'openai',
-                'text-embedding-3-large', 3072, 800, 100, 'Flat',
-                '2026-08-20T11:00:00+00:00',
-                '2026-08-20T11:00:00+00:00', 0, 0, NULL
-            );
-            """)
-        conn.commit()
-
-    _disable_rag_runtime_initialization(monkeypatch, tmp_path)
-    before_state = _sqlite_file_state(db_path)
-
-    with pytest.raises(RagAdminError) as excinfo:
-        rag_admin_service.list_knowledge_bases(
-            db_path=str(db_path),
-            query={"search": "view slot"},
-        )
-
-    assert excinfo.value.status_code == 409
-    assert "schema apply" in excinfo.value.message
-    assert _sqlite_file_state(db_path) == before_state
-    with sqlite3.connect(str(db_path)) as conn:
-        row = conn.execute(
-            "SELECT type FROM sqlite_schema WHERE name = 'agentic_ready_slots'"
-        ).fetchone()
-        assert row[0] == "view"
-        assert conn.execute("SELECT COUNT(*) FROM rag_knowledge_bases").fetchone()[0] == 1
-
-
-def test_fastapi_rag_admin_kb_list_normalizes_legacy_rows_without_runtime(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    client, _app, _seed = _build_test_client(tmp_path, monkeypatch)
-    db_path = tmp_path / "index.db"
-    storage = Storage(str(db_path))
-    try:
-        storage._conn.executescript("""
-            CREATE TABLE rag_knowledge_bases (
-                kb_id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                description TEXT,
-                kb_mode TEXT,
-                chunk_profile_id TEXT,
-                manifest_profile TEXT,
-                embedding_provider TEXT,
-                embedding_model TEXT NOT NULL,
-                embedding_dimension TEXT,
-                chunk_size INTEGER NOT NULL,
-                chunk_overlap INTEGER NOT NULL,
-                index_type TEXT NOT NULL,
-                created_at TEXT,
-                updated_at TEXT,
-                file_count INTEGER,
-                chunk_count INTEGER,
-                index_dirty_at TEXT
-            );
-            CREATE TABLE rag_kb_files (
-                kb_id TEXT NOT NULL,
-                file_url TEXT NOT NULL,
-                added_at TEXT NOT NULL,
-                chunk_count INTEGER DEFAULT 0,
-                indexed_at TEXT,
-                PRIMARY KEY (kb_id, file_url)
-            );
-            INSERT INTO rag_knowledge_bases (
-                kb_id, name, description, kb_mode, chunk_profile_id,
-                manifest_profile, embedding_provider, embedding_model,
-                embedding_dimension, chunk_size, chunk_overlap, index_type,
-                created_at, updated_at, file_count, chunk_count, index_dirty_at
-            ) VALUES (
-                'kb-legacy-row', 'Legacy Row KB', 'Legacy row normalization',
-                '', NULL, ' Regulation ', ' OpenAI ',
-                'text-embedding-3-large', '3072', 800, 100, 'Flat',
-                NULL, NULL, 0, 0, NULL
-            );
-            """)
-        storage._conn.commit()
     finally:
         storage.close()
+    assert after == before
 
-    monkeypatch.setattr(Storage, "_ensure_rag_kb_embedding_columns", lambda _storage: None)
-    _disable_rag_runtime_initialization(monkeypatch, tmp_path)
 
-    from ai_actuarial.api.deps import AuthContext
+def test_rag_admin_kb_list_does_not_wait_for_postgresql_row_writer(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+
     from ai_actuarial.api.services import rag_admin as rag_admin_service
 
-    operator_auth = AuthContext(token=None, permissions=frozenset({"tasks.run"}))
-    body = rag_admin_service.list_knowledge_bases(
-        db_path=str(db_path),
-        query={"kb_mode": "category", "search": "legacy row"},
-        auth=operator_auth,
-    )
+    db_url = postgres_url_for_path(str(tmp_path / "row-lock-kb-list.db"))
+    _disable_rag_runtime_initialization(monkeypatch, tmp_path)
+    writer = Storage(db_url)
+    try:
+        writer._conn.execute(
+            """
+            INSERT INTO rag_knowledge_bases (
+                kb_id, name, description, kb_mode, manifest_profile, embedding_provider,
+                embedding_model, embedding_identity_key, chunk_size, chunk_overlap,
+                index_type, created_at, updated_at
+            ) VALUES ('kb-row-lock', 'Row Lock KB', '', 'manual', 'general', 'openai',
+                      'text-embedding-3-large', '', 256, 32, 'Flat', ?, ?)
+            """,
+            (writer._utcnow_iso(), writer._utcnow_iso()),
+        )
+        writer._conn.commit()
+        writer._conn.execute("BEGIN")
+        writer._conn.execute(
+            "SELECT kb_id FROM rag_knowledge_bases WHERE kb_id = ? FOR UPDATE",
+            ("kb-row-lock",),
+        ).fetchone()
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(
+                rag_admin_service.list_knowledge_bases, db_path=db_url, query={}
+            )
+            result = future.result(timeout=10)
+        writer._conn.rollback()
+    finally:
+        writer.close()
 
-    listed = body["knowledge_bases"][0]
-    assert listed["kb_id"] == "kb-legacy-row"
-    assert listed["kb_mode"] == "category"
-    assert listed["chunk_profile_id"] == ""
-    assert listed["manifest_profile"] == "regulation"
-    assert listed["embedding_provider"] == "openai"
-    assert listed["embedding_dimension"] == 3072
-    assert isinstance(listed["embedding_dimension"], int)
-    assert listed["created_at"].endswith("+00:00")
-    assert listed["updated_at"].endswith("+00:00")
-    assert listed["agentic_ready_manifest"]["status"] == "missing"
-    assert listed["agentic_fallback_mode"] == "standard"
+    assert [item["kb_id"] for item in result["knowledge_bases"]] == ["kb-row-lock"]
 
 
 def test_fastapi_rag_admin_agentic_ready_manifest_build_is_kb_scoped(
@@ -2042,7 +1498,7 @@ def test_kb_list_and_detail_embed_authoritative_public_ready_data_state(
     assert built.status_code == 200, built.text
     active_id = built.json()["publication_state"]["active_publication_id"]
 
-    storage = Storage(str(client.app.state.db_path))
+    storage = Storage(client.app.state.database)
     try:
         now = storage._utcnow_iso()
         with storage.transaction(immediate=True):
@@ -2116,7 +1572,7 @@ def test_orphan_pending_is_normalized_across_ready_data_public_projections(
     )
     assert built.status_code == 200, built.text
 
-    storage = Storage(str(client.app.state.db_path))
+    storage = Storage(client.app.state.database)
     try:
         before = storage.get_agentic_ready_publication_state(
             kb_id=kb_id,
@@ -2182,7 +1638,7 @@ def test_orphan_pending_is_normalized_across_ready_data_public_projections(
         assert state["previous_publication_id"] == before["previous_publication_id"]
         assert state["publication_revision"] == before["publication_revision"]
 
-    storage = Storage(str(client.app.state.db_path))
+    storage = Storage(client.app.state.database)
     try:
         raw_state = storage._conn.execute(
             """
@@ -2192,7 +1648,7 @@ def test_orphan_pending_is_normalized_across_ready_data_public_projections(
             """,
             (kb_id,),
         ).fetchone()
-        assert raw_state == ("pending",)
+        assert list(raw_state) == ["pending"]
     finally:
         storage.close()
 
@@ -2281,7 +1737,7 @@ def test_kb_embedded_public_projection_uses_one_sqlite_read_snapshot(
     monkeypatch.setattr(storage_type, "get_agentic_ready_publication", pause_after_slot_read)
 
     def rollback_publication() -> None:
-        writer = Storage(str(tmp_path / "index.db"))
+        writer = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
         try:
             if not record_read_started.wait(10):
                 raise RuntimeError("reader did not reach publication record lookup")
@@ -2424,7 +1880,7 @@ def test_fastapi_rag_admin_ready_build_launches_real_async_task(
     assert settled.json()["publication_state"]["latest_operation_state"] == "succeeded"
     assert settled.json()["manifest"]["latest_operation_kind"] == "publish"
 
-    evidence = Storage(str(tmp_path / "index.db"))
+    evidence = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         raw_publication = evidence.get_agentic_ready_publication_state(
             kb_id="kb-ready-async",
@@ -2485,7 +1941,7 @@ def test_up_to_date_automation_settlement_is_not_reported_as_publish(
 
     claimed_at = datetime(2030, 8, 27, 13, 0, tzinfo=timezone.utc)
     settled_at = claimed_at + timedelta(seconds=1)
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         before = storage.get_agentic_ready_publication_state(
             kb_id=kb_id,
@@ -2582,7 +2038,7 @@ def test_ready_manifest_public_projection_uses_one_sqlite_read_snapshot(
         json={},
     ).json()["candidate_publication"]
 
-    setup = Storage(str(tmp_path / "index.db"))
+    setup = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         candidate = _record_snapshot_race_publication(
             setup,
@@ -2626,7 +2082,7 @@ def test_ready_manifest_public_projection_uses_one_sqlite_read_snapshot(
     monkeypatch.setattr(Storage, "get_agentic_ready_publication", pause_after_slot_read)
 
     def mutate_publication() -> None:
-        writer = Storage(str(tmp_path / "index.db"))
+        writer = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
         try:
             if not record_read_started.wait(10):
                 raise RuntimeError("reader did not reach publication record lookup")
@@ -2723,7 +2179,7 @@ def test_ready_manifest_rollback_success_response_uses_new_read_snapshot(
         f"/api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest/build",
         json={},
     ).json()["candidate_publication"]
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         with storage.transaction(immediate=True):
             storage._conn.execute(
@@ -2742,7 +2198,7 @@ def test_ready_manifest_rollback_success_response_uses_new_read_snapshot(
         f"/api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest/build",
         json={},
     ).json()["candidate_publication"]
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         third = _record_snapshot_race_publication(
             storage,
@@ -2782,7 +2238,7 @@ def test_ready_manifest_rollback_success_response_uses_new_read_snapshot(
     monkeypatch.setattr(Storage, "get_agentic_ready_publication", pause_response_record_read)
 
     def publish_after_rollback() -> None:
-        writer = Storage(str(tmp_path / "index.db"))
+        writer = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
         try:
             if not record_read_started.wait(10):
                 raise RuntimeError("rollback response did not reach publication lookup")
@@ -2822,7 +2278,7 @@ def test_ready_manifest_rollback_success_response_uses_new_read_snapshot(
     assert public_state["active_publication"]["status"] == "active"
     assert response.json()["manifest"]["status"] in {"ready", "stale"}
 
-    final = Storage(str(tmp_path / "index.db"))
+    final = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         final_state = final.get_agentic_ready_publication_state(
             kb_id=kb_id,
@@ -2873,7 +2329,7 @@ def test_ready_manifest_public_projection_and_rollback_are_safe_and_cas_guarded(
     )
     assert first_snapshot["publication_state"]["previous_publication_id"] is None
 
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         with storage.transaction(immediate=True):
             storage._conn.execute(
@@ -2936,7 +2392,7 @@ def test_ready_manifest_public_projection_and_rollback_are_safe_and_cas_guarded(
     ).isoformat()
     failed_at = (datetime.fromisoformat(second_published_at) + timedelta(seconds=1)).isoformat()
     rollback_at = (datetime.fromisoformat(second_published_at) + timedelta(seconds=2)).isoformat()
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         with storage.transaction(immediate=True):
             storage._conn.execute(
@@ -3118,7 +2574,7 @@ def test_ready_manifest_public_projection_and_rollback_are_safe_and_cas_guarded(
     assert rolled["manifest"]["latest_operation_error"] == ""
     assert rolled["manifest"]["last_error"] == ""
 
-    evidence = Storage(str(tmp_path / "index.db"))
+    evidence = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         raw_rollback = evidence.get_agentic_ready_publication_state(
             kb_id="kb-publication-controls",
@@ -3260,7 +2716,7 @@ def test_failed_explicit_publish_is_latest_operation_without_displacing_active(
         f"/api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest/build",
         json={},
     ).json()["candidate_publication"]
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         with storage.transaction(immediate=True):
             storage._conn.execute(
@@ -3298,7 +2754,7 @@ def test_failed_explicit_publish_is_latest_operation_without_displacing_active(
 
         monkeypatch.setattr(ready_data_builder, "validate", invalidate_candidate)
     elif failure_case == "source":
-        storage = Storage(str(tmp_path / "index.db"))
+        storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
         try:
             with storage.transaction(immediate=True):
                 storage._conn.execute(
@@ -3346,7 +2802,7 @@ def test_failed_explicit_publish_is_latest_operation_without_displacing_active(
         assert manifest["latest_operation_error"] == "ready_data operation failed"
         assert "/workspace/private" not in json.dumps(manifest, sort_keys=True)
 
-    evidence = Storage(str(tmp_path / "index.db"))
+    evidence = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         preserved = evidence.get_agentic_ready_automation_state(
             kb_id=kb_id,
@@ -3384,7 +2840,7 @@ def test_failed_explicit_publish_is_latest_operation_without_displacing_active(
         )
 
         retried = run_ready_data_automation_once(
-            db_path=str(tmp_path / "index.db"),
+            db_path=postgres_url_for_path(str(tmp_path / "index.db")),
             heartbeat_interval_seconds=0,
         )
         assert retried["status"] == "published"
@@ -3497,7 +2953,7 @@ def test_older_awaiting_candidate_auto_publish_is_not_inferred_as_rollback(
         f"/api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest/build",
         json={},
     ).json()["candidate_publication"]
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         with storage.transaction(immediate=True):
             storage._conn.execute(
@@ -3516,7 +2972,7 @@ def test_older_awaiting_candidate_auto_publish_is_not_inferred_as_rollback(
         f"/api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest/build",
         json={},
     ).json()["candidate_publication"]
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         storage.mark_agentic_ready_source_event(
             kb_id=kb_id,
@@ -3532,7 +2988,7 @@ def test_older_awaiting_candidate_auto_publish_is_not_inferred_as_rollback(
         publish=False,
     ).json()["candidate_publication"]
 
-    evidence = Storage(str(tmp_path / "index.db"))
+    evidence = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         before_rollback = evidence.get_agentic_ready_automation_state(
             kb_id=kb_id,
@@ -3550,7 +3006,7 @@ def test_older_awaiting_candidate_auto_publish_is_not_inferred_as_rollback(
         },
     )
     assert failed_rollback.status_code == 409, failed_rollback.text
-    evidence = Storage(str(tmp_path / "index.db"))
+    evidence = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         after_failed_rollback = evidence.get_agentic_ready_automation_state(
             kb_id=kb_id,
@@ -3598,7 +3054,7 @@ def test_older_awaiting_candidate_auto_publish_is_not_inferred_as_rollback(
     assert rolled.status_code == 200, rolled.text
     assert rolled.json()["publication_state"]["latest_operation_kind"] == "rollback"
     assert datetime.fromisoformat(str(awaiting["created_at"])) < rollback_at
-    evidence = Storage(str(tmp_path / "index.db"))
+    evidence = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         after_successful_rollback = evidence.get_agentic_ready_automation_state(
             kb_id=kb_id,
@@ -3650,7 +3106,7 @@ def test_older_awaiting_candidate_auto_publish_is_not_inferred_as_rollback(
     )
 
     published = run_ready_data_automation_once(
-        db_path=str(tmp_path / "index.db"),
+        db_path=postgres_url_for_path(str(tmp_path / "index.db")),
         heartbeat_interval_seconds=0,
         clock=lambda: automation_at,
     )
@@ -3790,7 +3246,7 @@ def test_failed_build_candidate_is_latest_operation_without_displacing_active(
     assert datetime.fromisoformat(failed_candidate["updated_at"]) < datetime.fromisoformat(
         retry_candidate["updated_at"]
     )
-    evidence = Storage(str(tmp_path / "index.db"))
+    evidence = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         retained_retry = evidence.get_agentic_ready_publication(
             str(retry_candidate["publication_id"])
@@ -3860,7 +3316,7 @@ def test_terminal_automation_failure_preserves_candidate_phase_in_public_project
     claimed_at = datetime(2030, 8, 27, 12, 0, tzinfo=timezone.utc)
     candidate_at = claimed_at + timedelta(seconds=1)
     failed_at = claimed_at + timedelta(seconds=2)
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         storage.set_agentic_ready_automation(
             kb_id=kb_id,
@@ -3977,7 +3433,7 @@ def test_public_rollback_rejects_active_publication_from_another_kb_atomically(
     assert first_a_response.status_code == 200, first_a_response.text
     first_a = first_a_response.json()["candidate_publication"]
 
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         with storage.transaction(immediate=True):
             storage._conn.execute(
@@ -4007,7 +3463,7 @@ def test_public_rollback_rejects_active_publication_from_another_kb_atomically(
     assert active_b_response.status_code == 200, active_b_response.text
     active_b = active_b_response.json()["candidate_publication"]
 
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         with storage.transaction(immediate=True):
             storage._conn.execute(
@@ -4058,7 +3514,7 @@ def test_public_rollback_rejects_active_publication_from_another_kb_atomically(
     )
     assert response.status_code == 422, response.text
 
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         after_slots = storage._conn.execute(
             "SELECT kb_id, profile, active_publication_id, previous_publication_id "
@@ -4116,7 +3572,7 @@ def test_public_rollback_accepts_canonical_legacy_publication_profiles(
     assert first_response.status_code == 200, first_response.text
     first = first_response.json()["candidate_publication"]
 
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         with storage.transaction(immediate=True):
             storage._conn.execute(
@@ -4139,7 +3595,7 @@ def test_public_rollback_accepts_canonical_legacy_publication_profiles(
     assert second_response.status_code == 200, second_response.text
     second = second_response.json()["candidate_publication"]
 
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         with storage.transaction(immediate=True):
             storage._conn.execute(
@@ -4212,7 +3668,7 @@ def test_ready_manifest_public_projection_fail_closes_sensitive_errors(
         "lease_token=lease-secret output_dir=/workspace/private/output "
         "Traceback (most recent call last): internal-stack"
     )
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         now = storage._utcnow_iso()
         with storage.transaction(immediate=True):
@@ -5006,7 +4462,7 @@ def test_ready_manifest_rollback_rejects_corrupt_previous_without_changing_slots
         "/api/rag/knowledge-bases/kb-public-rollback-corrupt/agentic-ready-manifest/build",
         json={},
     ).json()["candidate_publication"]
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         with storage.transaction(immediate=True):
             storage._conn.execute(
@@ -5042,7 +4498,7 @@ def test_ready_manifest_rollback_rejects_corrupt_previous_without_changing_slots
     )
     assert response.status_code == 422, response.text
     catalog_path.write_bytes(original_catalog)
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         state = storage.get_agentic_ready_publication_state(
             kb_id="kb-public-rollback-corrupt",
@@ -5072,7 +4528,7 @@ def test_ready_manifest_rollback_rejects_corrupt_previous_without_changing_slots
     assert digest_mismatch.status_code == 422, digest_mismatch.text
     catalog_path.write_bytes(original_catalog)
 
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         state = storage.get_agentic_ready_publication_state(
             kb_id="kb-public-rollback-corrupt",
@@ -5100,7 +4556,7 @@ def test_ready_manifest_rollback_rejects_corrupt_previous_without_changing_slots
     )
     assert escaped.status_code == 422, escaped.text
 
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         state = storage.get_agentic_ready_publication_state(
             kb_id="kb-public-rollback-corrupt",
@@ -5134,7 +4590,7 @@ def test_ready_manifest_rollback_rejects_corrupt_previous_without_changing_slots
         },
     )
     assert reparse.status_code == 422, reparse.text
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         state = storage.get_agentic_ready_publication_state(
             kb_id="kb-public-rollback-corrupt",
@@ -5301,7 +4757,7 @@ def test_public_rollback_rejects_nested_artifact_ancestor_link_atomically(
     (nested_dir / "catalog-copy.jsonl").write_bytes((real_dir / "catalog-copy.jsonl").read_bytes())
     artifact_files = [*list(first["artifact_files"]), nested_artifact]
     recorded_digest = rag_admin_service._ready_data_artifact_digest(str(output_dir), artifact_files)
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         storage._conn.execute(
             """
@@ -5421,7 +4877,7 @@ def test_fastapi_rag_admin_failed_ready_build_keeps_serving_publication(
     staging_root = Path(first_manifest["output_dir"]).parent
     staging_dirs_before = sorted(path.name for path in staging_root.iterdir())
 
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         storage._conn.execute(
             "UPDATE catalog_items SET summary = ? WHERE file_url = ?",
@@ -5500,7 +4956,7 @@ def test_fastapi_rag_admin_idempotent_ready_build_retains_validated_duplicate(
     assert body["publication_state"]["duplicate_retained"] is True
     assert body["publication_state"]["duplicate_gc_deferred"] is True
     assert body["publication_state"]["duplicate_gc_marked"] is True
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         recorded_candidate = storage.get_agentic_ready_publication(candidate["publication_id"])
         assert recorded_candidate is not None
@@ -5556,7 +5012,7 @@ def test_fastapi_rag_admin_duplicate_keeps_deferred_compatibility_when_gc_mark_l
     assert state["duplicate_retained"] is True
     assert state["duplicate_gc_deferred"] is True
     assert state["duplicate_gc_marked"] is False
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         recorded_candidate = storage.get_agentic_ready_publication(candidate["publication_id"])
         assert recorded_candidate is not None
@@ -5597,7 +5053,7 @@ def test_fastapi_rag_admin_duplicate_reports_concurrent_active_cas_loss(
     def publish_different_identity_after_validation(publication, **kwargs):
         result = original_validate(publication, **kwargs)
         if not concurrent and publication["publication_id"] == first_candidate["publication_id"]:
-            storage = Storage(str(tmp_path / "index.db"))
+            storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
             try:
                 winner_output_dir = Path(str(publication["output_dir"])).with_name(
                     f'{Path(str(publication["output_dir"])).name}-concurrent'
@@ -5617,7 +5073,6 @@ def test_fastapi_rag_admin_duplicate_reports_concurrent_active_cas_loss(
                     section_count=int(publication["section_count"]),
                     built_at=publication["built_at"],
                     artifact_digest=str(publication["artifact_digest"]),
-                    source_db=str(publication["source_db"]),
                     schema_versions=dict(publication["schema_versions"]),
                     error_message="",
                 )
@@ -6108,7 +5563,7 @@ def test_fastapi_rag_admin_replaces_corrupt_active_with_fresh_duplicate(
         == replacement_candidate["publication_id"]
     )
     assert replacement_body["publication_state"]["previous_publication_id"] is None
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         corrupt_after = storage.get_agentic_ready_publication(
             str(first_candidate["publication_id"])
@@ -6146,7 +5601,7 @@ def test_fastapi_rag_admin_excludes_corrupt_different_identity_from_previous(
         "corrupt\n",
         encoding="utf-8",
     )
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         with storage.transaction():
             storage._conn.execute(
@@ -6168,7 +5623,7 @@ def test_fastapi_rag_admin_excludes_corrupt_different_identity_from_previous(
     assert replacement["status"] == "active"
     assert body["publication_state"]["previous_publication_id"] is None
 
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         corrupt = storage.get_agentic_ready_publication(str(first_candidate["publication_id"]))
         assert corrupt is not None
@@ -6210,7 +5665,7 @@ def test_fastapi_rag_admin_revalidates_different_identity_active_before_previous
     )
     assert first.status_code == 200, first.text
     first_candidate = first.json()["candidate_publication"]
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         with storage.transaction():
             storage._conn.execute(
@@ -6256,7 +5711,7 @@ def test_fastapi_rag_admin_revalidates_different_identity_active_before_previous
     assert replacement["status"] == "active"
     assert body["publication_state"]["previous_publication_id"] is None
 
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         corrupt = storage.get_agentic_ready_publication(str(first_candidate["publication_id"]))
         assert corrupt is not None and corrupt["status"] == "failed"
@@ -6286,7 +5741,7 @@ def test_internal_ready_publication_rollback_rejects_corrupt_previous(
     )
     assert first.status_code == 200, first.text
     first_candidate = first.json()["candidate_publication"]
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         with storage.transaction():
             storage._conn.execute(
@@ -6310,7 +5765,7 @@ def test_internal_ready_publication_rollback_rejects_corrupt_previous(
     from ai_actuarial.agentic_rag import ready_data_builder
     from ai_actuarial.api.services import rag_admin as rag_admin_service
 
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         before = storage.get_agentic_ready_publication_state(
             kb_id="kb-corrupt-rollback",
@@ -6463,7 +5918,6 @@ def test_fastapi_rag_admin_corrupt_replacement_cas_loss_is_not_reported_as_repla
                 section_count=int(candidate["section_count"]),
                 built_at=candidate["built_at"],
                 artifact_digest=str(candidate["artifact_digest"]),
-                source_db=str(candidate["source_db"]),
                 schema_versions=dict(candidate["schema_versions"]),
                 error_message="",
             )
@@ -6590,7 +6044,7 @@ def test_fastapi_rag_admin_first_publication_preserves_legacy_ready_manifest(
     legacy_output_dir = legacy_manifest["output_dir"]
     legacy_artifact_digest = legacy_manifest["artifact_digest"]
 
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         with storage.transaction():
             storage._conn.execute(
@@ -6658,7 +6112,7 @@ def test_fastapi_rag_admin_invalid_legacy_manifest_is_not_registered_as_previous
     legacy_manifest = initial.json()["manifest"]
     legacy_output_dir = Path(legacy_manifest["output_dir"])
 
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         with storage.transaction():
             storage._conn.execute(
@@ -6723,7 +6177,7 @@ def test_fastapi_rag_admin_ready_build_uses_builder_input_snapshot_not_index(
         tmp_path / "index.db",
         "kb-index-source",
     )
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         storage._conn.execute(
             """
@@ -6810,7 +6264,7 @@ def test_fastapi_rag_admin_agentic_ready_manifest_builds_formula_profile(
             "The reserve calculation uses mortality rate and discount rate assumptions.",
         ]
     )
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         storage.update_file_markdown(
             str(seed["alpha_url"]),
@@ -6927,7 +6381,7 @@ def test_fastapi_rag_admin_legacy_manifest_stale_uses_bound_chunks_and_catalog_m
     db_path = tmp_path / "index.db"
     alpha_url = seed["alpha_url"]
 
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         profile_one = storage.create_chunk_profile(
             name="agentic-bound-profile",
@@ -6970,7 +6424,7 @@ def test_fastapi_rag_admin_legacy_manifest_stale_uses_bound_chunks_and_catalog_m
     assert "Bound profile chunk" in section_text
     assert "Unbound profile chunk" not in section_text
 
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         storage._conn.execute(
             "DELETE FROM agentic_ready_source_state WHERE kb_id = ?",
@@ -6988,7 +6442,7 @@ def test_fastapi_rag_admin_legacy_manifest_stale_uses_bound_chunks_and_catalog_m
     assert still_ready.status_code == 200, still_ready.text
     assert still_ready.json()["manifest"]["status"] == "ready"
 
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         storage._conn.execute(
             "UPDATE catalog_items SET summary = ?, updated_at = ? WHERE file_url = ?",
@@ -7020,7 +6474,7 @@ def test_fastapi_rag_admin_legacy_manifest_ignores_binding_outside_builder_input
     alpha_url = str(seed["alpha_url"])
     beta_url = str(seed["beta_url"])
 
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         profile = storage.create_chunk_profile(
             name=f"legacy-invalid-binding-{invalid_binding_kind}",
@@ -7056,7 +6510,7 @@ def test_fastapi_rag_admin_legacy_manifest_ignores_binding_outside_builder_input
     assert build.status_code == 200, build.text
     assert build.json()["manifest"]["status"] == "ready"
 
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         if invalid_binding_kind == "catalog_not_ok":
             storage._conn.execute(
@@ -7120,7 +6574,7 @@ def test_manual_ready_build_settles_orphan_pending_without_overriding_latest_ope
     )
     assert first.status_code == 200, first.text
 
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         marked = storage.mark_agentic_ready_source_event(
             kb_id="kb-manual-generation",
@@ -7166,7 +6620,7 @@ def test_manual_ready_build_settles_orphan_pending_without_overriding_latest_ope
     assert manifest["usable"] is True
     from ai_actuarial.api.services.ready_data_publication import _latest_build_attempt
 
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         latest_build_attempt = _latest_build_attempt(
             storage,
@@ -7213,7 +6667,7 @@ def test_manual_ready_build_does_not_clear_generation_created_during_build(
     assert first.status_code == 200, first.text
     initial_generation = int(first.json()["manifest"]["event_generation"])
 
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         first_mark = storage.mark_agentic_ready_source_event(
             kb_id="kb-manual-generation-race",
@@ -7230,7 +6684,7 @@ def test_manual_ready_build_does_not_clear_generation_created_during_build(
 
     def build_then_mark_new_generation(*args, **kwargs):
         result = original_build(*args, **kwargs)
-        concurrent = Storage(str(tmp_path / "index.db"))
+        concurrent = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
         try:
             concurrent.mark_agentic_ready_source_event(
                 kb_id="kb-manual-generation-race",
@@ -7287,7 +6741,7 @@ def test_fastapi_rag_admin_kb_file_membership_routes_work(tmp_path: Path, monkey
     assert files_after_add.status_code == 200, files_after_add.text
     assert any(item["file_url"] == alpha_url for item in files_after_add.json()["files"])
 
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         added_state = storage.get_agentic_ready_source_state(
             kb_id="kb-files-test",
@@ -7309,7 +6763,7 @@ def test_fastapi_rag_admin_kb_file_membership_routes_work(tmp_path: Path, monkey
     assert files_after_remove.status_code == 200, files_after_remove.text
     assert not any(item["file_url"] == alpha_url for item in files_after_remove.json()["files"])
 
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         removed_state = storage.get_agentic_ready_source_state(
             kb_id="kb-files-test",
@@ -7350,7 +6804,7 @@ def test_fastapi_rag_admin_kb_add_marks_dirty_and_delete_soft_applies(
         "kb-index-dirty",
         persist_embeddings=True,
     )
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         indexed_at = "2026-05-24T02:00:00+00:00"
         storage._conn.execute(
@@ -7422,7 +6876,7 @@ def test_fastapi_rag_admin_kb_add_marks_dirty_and_delete_soft_applies(
     assert after_delete.status_code == 200, after_delete.text
     assert after_delete.json()["knowledge_base"]["needs_reindex"] is True
 
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         stale_chunks = storage._conn.execute(
             "SELECT COUNT(*) FROM rag_chunks WHERE kb_id = ? AND file_url = ?",
@@ -7521,7 +6975,7 @@ def test_category_replace_preflight_preserves_existing_mapping_membership_and_bi
     alpha_set = _seed_ready_chunk_set(
         db_path, seed["alpha_url"], profile_id, text="Existing AI chunk"
     )
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         storage._conn.execute(
             "UPDATE catalog_items SET category = ? WHERE file_url = ?",
@@ -7554,7 +7008,7 @@ def test_category_replace_preflight_preserves_existing_mapping_membership_and_bi
     ] == ["AI"]
     files = client.get("/api/rag/knowledge-bases/kb-category-preflight/files")
     assert [row["file_url"] for row in files.json()["files"]] == [seed["alpha_url"]]
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         assert (
             storage._conn.execute(
@@ -7605,7 +7059,7 @@ def test_profile_update_preflight_preserves_old_profile_and_bindings(
     assert "missing_chunk:" in response.json()["error"]
     current = client.get("/api/rag/knowledge-bases/kb-profile-preflight")
     assert current.json()["knowledge_base"]["chunk_profile_id"] == old_profile["profile_id"]
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         assert (
             storage._conn.execute(
@@ -7641,7 +7095,7 @@ def test_fastapi_rag_admin_rebuilds_complete_index_after_embedding_change(
         persist_embeddings=True,
     )
 
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         old_built_at = "2026-05-24T02:00:00+00:00"
         storage._conn.execute(
@@ -7846,7 +7300,7 @@ def test_fastapi_rag_admin_create_kb_uses_existing_chunk_profile_bindings(
     assert create_profile.status_code == 201, create_profile.text
     profile_id = create_profile.json()["profile"]["profile_id"]
 
-    storage = Storage(str(tmp_path / "index.db"))
+    storage = Storage(postgres_url_for_path(str(tmp_path / "index.db")))
     try:
         chunk_set = storage.get_or_create_file_chunk_set(
             file_url=alpha_url,
@@ -8012,7 +7466,7 @@ def test_fastapi_rag_admin_file_management_marks_membership_source_state(
     )
     assert created.status_code == 201, created.text
 
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         state = storage.get_agentic_ready_source_state(
             kb_id="kb-membership-api",
@@ -8065,7 +7519,7 @@ def test_fastapi_rag_admin_category_update_syncs_new_files_before_index(
     assert [item["file_url"] for item in files_before.json()["files"]] == [alpha_url]
 
     beta_sha = hashlib.sha256((PDF_BYTES + b"\n% beta")).hexdigest()
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         storage.upsert_catalog_item(
             item={
@@ -8107,7 +7561,7 @@ def test_fastapi_rag_admin_category_update_syncs_new_files_before_index(
         [alpha_url, beta_url]
     )
 
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         state = storage.get_agentic_ready_source_state(
             kb_id="kb-category-sync",
@@ -8165,7 +7619,7 @@ def test_fastapi_rag_admin_removing_last_category_reconciles_files_and_bindings(
     files = client.get("/api/rag/knowledge-bases/kb-remove-last-category/files")
     assert files.status_code == 200, files.text
     assert files.json()["files"] == []
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         assert (
             storage._conn.execute(
@@ -8190,7 +7644,7 @@ def test_fastapi_rag_admin_category_remove_preserves_files_selected_by_remaining
     )
     assert profile.status_code == 201, profile.text
     profile_id = profile.json()["profile"]["profile_id"]
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         storage._conn.execute(
             "UPDATE catalog_items SET category = ? WHERE file_url = ?",
@@ -8226,7 +7680,7 @@ def test_fastapi_rag_admin_category_remove_preserves_files_selected_by_remaining
     files = client.get("/api/rag/knowledge-bases/kb-remove-overlap-category/files")
     assert files.status_code == 200, files.text
     assert [item["file_url"] for item in files.json()["files"]] == [seed["beta_url"]]
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         rows = storage._conn.execute(
             "SELECT file_url, chunk_set_id FROM kb_chunk_bindings WHERE kb_id = ?",
@@ -8256,7 +7710,7 @@ def test_fastapi_rag_admin_category_remove_missing_new_remaining_chunk_rolls_bac
     )
     assert profile.status_code == 201, profile.text
     profile_id = profile.json()["profile"]["profile_id"]
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         storage._conn.execute(
             "UPDATE catalog_items SET category = ? WHERE file_url = ?",
@@ -8280,7 +7734,7 @@ def test_fastapi_rag_admin_category_remove_missing_new_remaining_chunk_rolls_bac
     )
     assert created.status_code == 201, created.text
 
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         storage._conn.execute(
             "UPDATE catalog_items SET category = ? WHERE file_url = ?",
@@ -8303,7 +7757,7 @@ def test_fastapi_rag_admin_category_remove_missing_new_remaining_chunk_rolls_bac
     files = client.get("/api/rag/knowledge-bases/kb-remove-category-rollback/files")
     assert files.status_code == 200, files.text
     assert [item["file_url"] for item in files.json()["files"]] == [seed["alpha_url"]]
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         rows = storage._conn.execute(
             "SELECT file_url, chunk_set_id FROM kb_chunk_bindings WHERE kb_id = ?",
@@ -8422,7 +7876,7 @@ def test_fastapi_rag_admin_chunk_binding_adds_kb_file_membership(
     assert "content" not in json.dumps(bindings.json())
     assert "vector" not in json.dumps(bindings.json())
 
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         source_state = storage.get_agentic_ready_source_state(
             kb_id="kb-direct-bind",
@@ -8498,7 +7952,7 @@ def test_fastapi_rag_admin_binding_batch_rolls_back_when_later_item_is_invalid(
     )
 
     assert response.status_code == 404, response.text
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         assert (
             storage._conn.execute(
@@ -8561,7 +8015,7 @@ def test_fastapi_rag_admin_binding_batch_rejects_wrong_profile_without_mutation(
 
     assert response.status_code == 400, response.text
     assert "wrong chunk profile" in response.json()["error"]
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         assert (
             storage._conn.execute(
@@ -8618,7 +8072,7 @@ def test_rag_admin_binding_batch_rolls_back_database_failure(
         },
     )
     assert initial.status_code == 200, initial.text
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         replacement_set = storage.get_or_create_file_chunk_set(
             file_url=seed["alpha_url"],
@@ -8654,7 +8108,7 @@ def test_rag_admin_binding_batch_rolls_back_database_failure(
     monkeypatch.setattr(Storage, "bind_chunk_set_to_kb", fail_second_bind)
     with pytest.raises(RuntimeError, match="synthetic binding database failure"):
         rag_admin_service.bind_chunk_sets(
-            db_path=str(db_path),
+            db_path=postgres_url_for_path(str(db_path)),
             kb_id="kb-atomic-db",
             payload={
                 "bindings": [
@@ -8673,7 +8127,7 @@ def test_rag_admin_binding_batch_rolls_back_database_failure(
             headers={},
         )
 
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         assert (
             storage._conn.execute(

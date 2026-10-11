@@ -8,6 +8,7 @@ import pytest
 
 from ai_actuarial.shared_auth import AI_CHAT_QUOTA, GROUP_PERMISSIONS
 from ai_actuarial.storage import Storage
+from tests.postgres_helpers import postgres_url_for_path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tests"))
@@ -37,7 +38,7 @@ def test_assignable_role_schema_matches_every_successful_email_role_write(
         for role in roles
     )
 
-    storage = Storage(str(app.state.db_path))
+    storage = Storage(app.state.database)
     try:
         user_ids = [
             storage.create_user(f"role-{role['value']}@example.com", "hash") for role in roles
@@ -67,7 +68,7 @@ def test_legacy_operator_alias_migrates_through_atomic_role_audit(
 ) -> None:
     client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
     headers = {"Authorization": f"Bearer {seed['admin_token']}"}
-    storage = Storage(str(app.state.db_path))
+    storage = Storage(app.state.database)
     try:
         legacy_id = storage.create_user("legacy@example.com", "hash", role="operator_ai")
     finally:
@@ -85,7 +86,7 @@ def test_legacy_operator_alias_migrates_through_atomic_role_audit(
     )
     assert migrated.status_code == 200, migrated.text
 
-    storage = Storage(str(app.state.db_path))
+    storage = Storage(app.state.database)
     try:
         assert storage.get_user_by_id(legacy_id)["role"] == "operator"
         operator_id = storage._conn.execute(

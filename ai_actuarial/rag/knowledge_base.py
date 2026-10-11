@@ -131,7 +131,12 @@ class KnowledgeBaseManager:
         conn = self.storage._conn
 
         def ensure_columns(table: str, columns: dict[str, str]) -> None:
-            existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+            if getattr(self.storage, "_schema_only", False):
+                existing = {
+                    row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()
+                }
+            else:
+                existing = conn.table_columns(table)
             for name, definition in columns.items():
                 if name not in existing:
                     conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")
@@ -898,9 +903,12 @@ class KnowledgeBaseManager:
         for category in categories:
             self.storage._conn.execute(
                 """
-                INSERT OR REPLACE INTO rag_kb_category_mappings 
+                INSERT INTO rag_kb_category_mappings
                 (kb_id, category, auto_sync, created_at)
                 VALUES (?, ?, ?, ?)
+                ON CONFLICT(kb_id, category) DO UPDATE SET
+                    auto_sync = EXCLUDED.auto_sync,
+                    created_at = EXCLUDED.created_at
             """,
                 (kb_id, category, 1 if auto_sync else 0, timestamp),
             )
@@ -1027,7 +1035,7 @@ class KnowledgeBaseManager:
 
         cursor = self.storage._conn.execute(
             f"""
-            SELECT DISTINCT f.url
+            SELECT f.url
             FROM files f
             JOIN catalog_items c ON c.file_url = f.url
             WHERE f.deleted_at IS NULL
@@ -1035,6 +1043,7 @@ class KnowledgeBaseManager:
               AND c.markdown_content IS NOT NULL
               AND c.markdown_content != ''
               {profile_filter}
+            GROUP BY f.id, f.url, f.last_seen
             ORDER BY f.last_seen DESC, f.id DESC
             """,
             params,

@@ -21,6 +21,7 @@ from ai_actuarial.task_item_errors import (
     resolve_item_error_file_ids,
 )
 from ai_actuarial.task_runtime import NativeTaskRuntime
+from tests.postgres_helpers import postgres_url_for_path
 
 NATIVE_TASK_ID = "task_1780000000000_0123456789abcdef"
 UNSAFE_PARTS = (
@@ -34,7 +35,7 @@ UNSAFE_PARTS = (
 
 
 def _seed_catalog_files(db_path: Path, count: int) -> list[str]:
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     urls: list[str] = []
     try:
         for index in range(count):
@@ -124,7 +125,7 @@ def test_catalog_url_and_incremental_producers_keep_distinct_bounded_failures(
         for index in range(ITEM_ERROR_LIMIT + 1)
     ]
     missing_stats = run_catalog_for_urls(
-        db_path=str(tmp_path / "missing.db"),
+        db_path=postgres_url_for_path(str(tmp_path / "missing.db")),
         file_urls=missing_urls,
         out_jsonl=tmp_path / "missing.jsonl",
         out_md=tmp_path / "missing.md",
@@ -149,7 +150,7 @@ def test_catalog_url_and_incremental_producers_keep_distinct_bounded_failures(
 
     monkeypatch.setattr("ai_actuarial.catalog_incremental._process_single_row", process)
     stats = run_incremental_catalog(
-        db_path=str(db_path),
+        db_path=postgres_url_for_path(str(db_path)),
         out_jsonl=tmp_path / "incremental.jsonl",
         out_md=tmp_path / "incremental.md",
         batch=10,
@@ -175,7 +176,7 @@ def test_catalog_missing_source_uses_file_not_found_without_leaking_identity(
     db_path = tmp_path / f"catalog-missing-{producer}.db"
     file_url = "https://user:pass@example.test/private/report.pdf?api_key=provider-secret"
     missing_path = tmp_path / "Authorization-Bearer-secret-report.pdf"
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         storage.insert_file(
             url=file_url,
@@ -192,7 +193,7 @@ def test_catalog_missing_source_uses_file_not_found_without_leaking_identity(
         storage.close()
 
     common = {
-        "db_path": str(db_path),
+        "db_path": postgres_url_for_path(str(db_path)),
         "out_jsonl": tmp_path / f"{producer}.jsonl",
         "out_md": tmp_path / f"{producer}.md",
         "skip_existing": False,
@@ -232,7 +233,7 @@ def test_catalog_worker_exception_logs_only_fixed_failure_code(
 ) -> None:
     db_path = tmp_path / f"catalog-worker-exception-{producer}.db"
     file_url = "https://judge-user:judge-pass@example.test/private.pdf?api_key=judge-api-secret"
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         storage.insert_file(
             url=file_url,
@@ -265,7 +266,7 @@ def test_catalog_worker_exception_logs_only_fixed_failure_code(
     monkeypatch.setattr("ai_actuarial.catalog_incremental._process_single_row", fail_worker)
     caplog.set_level("ERROR", logger="ai_actuarial.catalog_incremental")
     common = {
-        "db_path": str(db_path),
+        "db_path": postgres_url_for_path(str(db_path)),
         "out_jsonl": tmp_path / f"{producer}.jsonl",
         "out_md": tmp_path / f"{producer}.md",
         "skip_existing": False,
@@ -496,7 +497,7 @@ def test_finalized_task_persists_bounded_contract_and_restart_api_reads_it(
         NATIVE_TASK_ID: {"id": NATIVE_TASK_ID, "name": "Catalog", "type": "catalog"}
     }
     runtime.task_history = []
-    monkeypatch.setattr("ai_actuarial.task_runtime.append_task_log", lambda *_args: None)
+    monkeypatch.setattr("ai_actuarial.task_runtime.append_task_log", lambda *_args, **_kwargs: None)
 
     runtime._finalize_task_success(NATIVE_TASK_ID, "catalog", result)
     restarted = NativeTaskRuntime.__new__(NativeTaskRuntime)._load_history_from_disk()
@@ -514,7 +515,7 @@ def test_file_error_links_survive_history_reload_and_are_revalidated(tmp_path: P
     monkeypatch.chdir(tmp_path)
     db_path = tmp_path / "files.db"
     file_url = "https://user:pass@example.test/report.pdf?api_key=private"
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         storage.insert_file(
             url=file_url,
@@ -533,11 +534,12 @@ def test_file_error_links_survive_history_reload_and_are_revalidated(tmp_path: P
 
     error = make_item_error("catalog", "catalog_failed", file_url, task_id=NATIVE_TASK_ID)
     runtime = NativeTaskRuntime.__new__(NativeTaskRuntime)
-    runtime._ready_data_db_path = str(db_path)
+    database_url = postgres_url_for_path(str(db_path))
+    runtime._ready_data_db_path = database_url
     runtime.task_lock = threading.RLock()
     runtime.active_tasks = {NATIVE_TASK_ID: {"id": NATIVE_TASK_ID, "type": "catalog"}}
     runtime.task_history = []
-    monkeypatch.setattr("ai_actuarial.task_runtime.append_task_log", lambda *_args: None)
+    monkeypatch.setattr("ai_actuarial.task_runtime.append_task_log", lambda *_args, **_kwargs: None)
     runtime._finalize_task_success(
         NATIVE_TASK_ID,
         "catalog",
@@ -561,24 +563,24 @@ def test_file_error_links_survive_history_reload_and_are_revalidated(tmp_path: P
     # API projection rebinds stale IDs from the full digest and hides links without file access.
     reloaded[0]["item_errors"][0]["file_id"] = "999"
     reloaded[0]["item_errors"][0]["context_url"] = "/file-detail?file_id=999"
-    visible = list_task_history(reloaded, 20, db_path=str(db_path), can_read_files=True)["tasks"][0]
+    visible = list_task_history(reloaded, 20, db_path=database_url, can_read_files=True)["tasks"][0]
     assert visible["item_errors"][0]["file_id"] == str(file_id)
     assert visible["item_errors"][0]["context_url"] == f"/file-detail?file_id={file_id}"
-    hidden = list_task_history(reloaded, 20, db_path=str(db_path), can_read_files=False)["tasks"][0]
+    hidden = list_task_history(reloaded, 20, db_path=database_url, can_read_files=False)["tasks"][0]
     assert "file_id" not in hidden["item_errors"][0]
     assert "context_url" not in hidden["item_errors"][0]
 
-    storage = Storage(str(db_path))
+    storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         storage.mark_file_deleted(file_url, "2026-10-08T00:00:00+00:00")
     finally:
         storage.close()
-    deleted = list_task_history(reloaded, 20, db_path=str(db_path), can_read_files=True)["tasks"][0]
+    deleted = list_task_history(reloaded, 20, db_path=database_url, can_read_files=True)["tasks"][0]
     assert "file_id" not in deleted["item_errors"][0]
     assert "context_url" not in deleted["item_errors"][0]
 
     missing_error = make_item_error("catalog", "catalog_failed", "https://missing.example/x")
-    assert resolve_item_error_file_ids([missing_error], str(db_path)) == {}
+    assert resolve_item_error_file_ids([missing_error], database_url) == {}
 
 
 @pytest.mark.parametrize("count", [0, 1, 50, 51])
@@ -606,7 +608,7 @@ def test_finalizer_normalizes_zero_one_and_cap_boundaries(
     runtime.active_tasks = {"test": {"id": "test", "type": "catalog"}}
     runtime.task_history = []
     runtime._append_history_to_disk = lambda _task: None  # type: ignore[method-assign]
-    monkeypatch.setattr("ai_actuarial.task_runtime.append_task_log", lambda *_args: None)
+    monkeypatch.setattr("ai_actuarial.task_runtime.append_task_log", lambda *_args, **_kwargs: None)
 
     runtime._finalize_task_success("test", "catalog", result)
     task = runtime.task_history[0]
@@ -651,7 +653,7 @@ def test_stage_level_failures_use_fixed_public_top_level_errors(
     )
     runtime._finalize_child_run = lambda *_args, **_kwargs: None  # type: ignore[method-assign]
     runtime._append_history_to_disk = lambda _task: None  # type: ignore[method-assign]
-    monkeypatch.setattr("ai_actuarial.task_runtime.append_task_log", lambda *_args: None)
+    monkeypatch.setattr("ai_actuarial.task_runtime.append_task_log", lambda *_args, **_kwargs: None)
 
     runtime._execute_collection_task(NATIVE_TASK_ID, task_type, {})
 

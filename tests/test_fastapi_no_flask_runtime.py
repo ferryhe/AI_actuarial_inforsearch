@@ -6,8 +6,17 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
+from tests.postgres_helpers import postgres_url_for_path
+
 ROOT = Path(__file__).resolve().parents[1]
 API_ROOT = ROOT / "ai_actuarial" / "api"
+
+
+@pytest.fixture(autouse=True)
+def _isolated_postgres_database(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("DATABASE_URL", postgres_url_for_path(str(tmp_path / "index.db")))
 
 
 def test_fastapi_modules_no_longer_import_web_app_directly() -> None:
