@@ -20,9 +20,11 @@
   缓存未声明的模型/切块配置及历史未知配置如实记 unknown；原始向量/切块行仍在私有全量暂存库。
 - 主库原生 PG16 dump/隔离 restore PASS，9 表全部计数/内容摘要一致。D 档案保留两份来源库
   dump 和 content-hub.dump；原始文件另在 hub/cas 与原站 archives，不以数据库备份代替文件备份。
-- 重点旧 CLI/import/schema/data-root 回归 116 passed；最终新功能 9 passed。Black/isort/py_compile、
-  Pylint errors-only、Python 文件/符号 dead-code 与 diff-check PASS。独立 fresh Sol/high review-3 PASS。
-  两轮已确认问题由同一 Sol/high worker 修复；TypeSafe/Jev-1.13.0 已按规定裁定一次。
+- 重点旧 CLI/import/schema/data-root 回归 116 passed；最终新功能 12 passed。Black/isort/py_compile、
+  Pylint errors-only、Python 文件/符号 dead-code 与 diff-check PASS。独立 fresh Sol/high review-5 PASS（0 findings）。
+  已确认问题和 AC7 验证缺口由同一 Sol/high worker 修复；TypeSafe/Jev-1.13.0 裁定三次。
+  Windows Git 检出 SQL 固定 LF，已验收的 SQL/ledger 不变；CAS 哈希错误与中途源库变化的
+  隔离故障回归均证明 canonical 与 raw_source 全表计数/内容摘要保持不变。
 - 本次变更：hub/source-stage 模块与 SQL migrations、CLI、tests、langdetect 依赖、操作指南和文档索引。
   本机采集/摘要/翻译 API 调用为 0；不停止或清理生产数据，不切换服务器、不合并 PR。
   现有 API/crawler/RAG 尚不消费新 hub。下一步接入本机采集，按分类/语言发布两站子集及增量同步。

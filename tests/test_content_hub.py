@@ -3,13 +3,16 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+import subprocess
 import sys
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
 import psycopg2
 import pytest
+from psycopg2 import sql
 
+import ai_actuarial.content_hub as content_hub
 import ai_actuarial.source_stage as source_stage
 from ai_actuarial.content_hub import (
     ContentHubError,
@@ -45,6 +48,72 @@ def _isolated_database_schema(tmp_path: Path, name: str) -> tuple[str, str]:
 
 def _other_database_name(url: str, database: str) -> str:
     return urlunsplit(urlsplit(url)._replace(path=f"/{database}"))
+
+
+def test_git_checkout_keeps_migration_sql_lf_with_autocrlf_enabled(
+    tmp_path: Path, monkeypatch
+) -> None:
+    source_root = Path(__file__).resolve().parents[1]
+    repository = tmp_path / "migration-eol-repo"
+    repository.mkdir()
+
+    def run_git(*args: str, cwd: Path = repository) -> bytes:
+        return subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True).stdout
+
+    migration_paths = [
+        "ai_actuarial/content_hub_migrations/0001_content_hub.sql",
+        "ai_actuarial/source_stage_migrations/0001_lossless_source_stage.sql",
+    ]
+    source_blobs = {
+        relative_path: run_git("show", f"HEAD:{relative_path}", cwd=source_root)
+        for relative_path in migration_paths
+    }
+    assert all(b"\r\n" not in payload for payload in source_blobs.values())
+
+    attributes = source_root / ".gitattributes"
+    (repository / ".gitattributes").write_bytes(attributes.read_bytes())
+    for relative_path, payload in source_blobs.items():
+        destination = repository / Path(relative_path)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(payload)
+
+    run_git("init", "--quiet")
+    run_git("config", "core.autocrlf", "true")
+    run_git("config", "user.name", "Migration EOL regression")
+    run_git("config", "user.email", "migration-eol@example.invalid")
+    run_git("config", "commit.gpgsign", "false")
+    run_git("add", "--", ".gitattributes", *migration_paths)
+    run_git("commit", "--quiet", "-m", "fixture migration files")
+
+    materialized = tmp_path / "migration-eol-checkout"
+    materialized.mkdir()
+    run_git(
+        "checkout-index",
+        "--force",
+        f"--prefix={materialized.as_posix()}/",
+        "--",
+        *migration_paths,
+    )
+    for relative_path, source_payload in source_blobs.items():
+        committed_payload = run_git("show", f"HEAD:{relative_path}")
+        checked_out_payload = (materialized / Path(relative_path)).read_bytes()
+        assert committed_payload == source_payload
+        assert checked_out_payload == source_payload
+        assert b"\r\n" not in checked_out_payload
+
+    database_url, schema = _isolated_database_schema(tmp_path, "migration-eol-plan")
+    monkeypatch.setattr(
+        content_hub, "_MIGRATION_DIR", materialized / "ai_actuarial/content_hub_migrations"
+    )
+    monkeypatch.setattr(
+        source_stage,
+        "_MIGRATION_DIR",
+        materialized / "ai_actuarial/source_stage_migrations",
+    )
+    content_plan = content_hub.content_hub_schema_plan(database_url, schema=schema)
+    stage_plan = source_stage.source_stage_schema_plan(database_url, schema=schema)
+    assert content_plan["pending"] == [{"version": 1, "file": migration_paths[0].split("/")[-1]}]
+    assert stage_plan["pending"] == [{"version": 1, "file": migration_paths[1].split("/")[-1]}]
 
 
 @pytest.mark.parametrize(
@@ -240,6 +309,86 @@ def _write_manifest(
         json.dumps(manifest, ensure_ascii=False, separators=(",", ":")), encoding="utf-8"
     )
     return manifest_path, source_sha
+
+
+def _digest_test_rows(rows: list[tuple]) -> str:
+    serialized = sorted(
+        json.dumps(row, ensure_ascii=False, separators=(",", ":"), default=str) for row in rows
+    )
+    return hashlib.sha256("\n".join(serialized).encode("utf-8")).hexdigest()
+
+
+def _content_hub_state(database_url: str, schema: str) -> dict[str, dict[str, int | str]]:
+    tables = (
+        "schema_migrations",
+        "source_snapshots",
+        "source_table_counts",
+        "content_blobs",
+        "content_versions",
+        "source_file_observations",
+        "source_record_map",
+        "text_variants",
+        "legacy_index_artifacts",
+    )
+    connection = psycopg2.connect(database_url)
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(sql.SQL("SET search_path TO {}").format(sql.Identifier(schema)))
+            state = {}
+            for table in tables:
+                cursor.execute(sql.SQL("SELECT * FROM {}").format(sql.Identifier(table)))
+                rows = cursor.fetchall()
+                state[table] = {"count": len(rows), "digest": _digest_test_rows(rows)}
+            return state
+    finally:
+        connection.close()
+
+
+def _source_stage_state(database_url: str, schema: str) -> dict:
+    connection = psycopg2.connect(database_url)
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(sql.SQL("SET search_path TO {}").format(sql.Identifier(schema)))
+            cursor.execute(
+                "SELECT version, filename, checksum FROM schema_migrations ORDER BY version"
+            )
+            migrations = cursor.fetchall()
+            cursor.execute(
+                "SELECT source_name, source_sha256, schema_json, table_counts_json, "
+                "table_digests_json, format_version FROM snapshot ORDER BY source_name"
+            )
+            snapshots = cursor.fetchall()
+            cursor.execute(
+                "SELECT table_name, row_number, row_json FROM table_rows "
+                "ORDER BY table_name, row_number"
+            )
+            rows = cursor.fetchall()
+        if len(snapshots) == 1:
+            stored_counts = json.loads(snapshots[0][3])
+            stored_digests = json.loads(snapshots[0][4])
+        else:
+            stored_counts = {}
+            stored_digests = {}
+        row_payloads: dict[str, list[bytes]] = {table: [] for table in stored_counts}
+        for table, _row_number, payload in rows:
+            row_payloads[str(table)].append(str(payload).encode("utf-8") + b"\n")
+        actual_counts = {table: len(payloads) for table, payloads in row_payloads.items()}
+        actual_digests = {
+            table: hashlib.sha256(b"".join(payloads)).hexdigest()
+            for table, payloads in row_payloads.items()
+        }
+        return {
+            "migration_rows": migrations,
+            "snapshots": snapshots,
+            "row_count": len(rows),
+            "rows_digest": _digest_test_rows(rows),
+            "stored_counts": stored_counts,
+            "stored_digests": stored_digests,
+            "actual_counts": actual_counts,
+            "actual_digests": actual_digests,
+        }
+    finally:
+        connection.close()
 
 
 def test_source_stage_preserves_nul_blob_rowid_and_rejects_conflicts(
@@ -511,6 +660,138 @@ def test_content_hub_import_keeps_alias_versions_text_and_source_namespaces(tmp_
         )
 
     assert hashlib.sha256(first_path.read_bytes()).hexdigest() == first_sha
+
+
+def test_import_rejects_corrupt_present_cas_without_mutating_hub_or_source_stage(
+    tmp_path: Path,
+) -> None:
+    hub_url, hub_schema = _isolated_database_schema(tmp_path, "cas-hub")
+    stage_url, stage_schema = _isolated_database_schema(tmp_path, "cas-stage")
+    apply_content_hub_schema(hub_url, schema=hub_schema)
+
+    source_path = tmp_path / "cas-hash-mismatch-v16.db"
+    payload = b"verified CAS payload"
+    _, table_counts = _create_v16_source(source_path, payload, source_label="cas_hash_mismatch")
+    artifact_root = tmp_path / "shared-cas-root"
+    manifest_path, source_sha = _write_manifest(
+        source_path, "cas_hash_mismatch", artifact_root, payload, table_counts
+    )
+    stage_result = stage_sqlite_v16(
+        source_path,
+        "cas_hash_mismatch",
+        stage_url,
+        hub_database_url=_other_database_name(stage_url, "cas_hash_hub_guard"),
+        schema=stage_schema,
+    )
+    assert stage_result["state"] == "verified"
+
+    hub_before = _content_hub_state(hub_url, hub_schema)
+    stage_before = _source_stage_state(stage_url, stage_schema)
+    assert all(
+        state["count"] == (1 if table == "schema_migrations" else 0)
+        for table, state in hub_before.items()
+    )
+    assert stage_before["actual_counts"] == stage_before["stored_counts"]
+    assert stage_before["actual_digests"] == stage_before["stored_digests"]
+    assert stage_before["snapshots"][0][1] == source_sha
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    cas_path = artifact_root / Path(*manifest["files"][0]["cas_relpath"].split("/"))
+    corrupt_payload = b"X" * len(payload)
+    assert hashlib.sha256(corrupt_payload).hexdigest() != hashlib.sha256(payload).hexdigest()
+    cas_path.write_bytes(corrupt_payload)
+
+    with pytest.raises(
+        ContentHubError, match="CAS artifact hash or size does not match its manifest"
+    ):
+        import_content_snapshot(
+            source_path,
+            manifest_path,
+            artifact_root,
+            tmp_path / "hub-data",
+            hub_url,
+            schema=hub_schema,
+            expected_source_name="cas_hash_mismatch",
+        )
+
+    assert _content_hub_state(hub_url, hub_schema) == hub_before
+    assert _source_stage_state(stage_url, stage_schema) == stage_before
+
+
+def test_import_rolls_back_when_sqlite_source_changes_after_canonical_rows_are_written(
+    tmp_path: Path, monkeypatch
+) -> None:
+    hub_url, hub_schema = _isolated_database_schema(tmp_path, "mutation-hub")
+    stage_url, stage_schema = _isolated_database_schema(tmp_path, "mutation-stage")
+    apply_content_hub_schema(hub_url, schema=hub_schema)
+
+    source_path = tmp_path / "late-mutation-v16.db"
+    payload = b"source bytes verified before mutation"
+    _, table_counts = _create_v16_source(source_path, payload, source_label="late_mutation")
+    artifact_root = tmp_path / "shared-mutation-root"
+    manifest_path, source_sha = _write_manifest(
+        source_path, "late_mutation", artifact_root, payload, table_counts
+    )
+    stage_result = stage_sqlite_v16(
+        source_path,
+        "late_mutation",
+        stage_url,
+        hub_database_url=_other_database_name(stage_url, "late_mutation_hub_guard"),
+        schema=stage_schema,
+    )
+    assert stage_result["state"] == "verified"
+
+    hub_before = _content_hub_state(hub_url, hub_schema)
+    stage_before = _source_stage_state(stage_url, stage_schema)
+    assert all(
+        state["count"] == (1 if table == "schema_migrations" else 0)
+        for table, state in hub_before.items()
+    )
+    assert stage_before["actual_counts"] == stage_before["stored_counts"]
+    assert stage_before["actual_digests"] == stage_before["stored_digests"]
+    assert stage_before["snapshots"][0][1] == source_sha
+
+    source_hash_checks = 0
+    canonical_rows_verified = False
+    original_source_sha256 = content_hub._source_sha256
+    original_verify_import_counts = content_hub._verify_import_counts
+
+    def mark_canonical_rows_verified(*args, **kwargs):
+        nonlocal canonical_rows_verified
+        original_verify_import_counts(*args, **kwargs)
+        canonical_rows_verified = True
+
+    def mutate_source_before_final_hash(path: Path):
+        nonlocal source_hash_checks
+        source_hash_checks += 1
+        if source_hash_checks == 2:
+            assert canonical_rows_verified
+            with sqlite3.connect(path) as mutator:
+                mutator.execute(
+                    "UPDATE files SET title = ? WHERE id = ?", ("late source mutation", 101)
+                )
+        return original_source_sha256(path)
+
+    monkeypatch.setattr(content_hub, "_verify_import_counts", mark_canonical_rows_verified)
+    monkeypatch.setattr(content_hub, "_source_sha256", mutate_source_before_final_hash)
+    with pytest.raises(
+        ContentHubError, match="SQLite source changed while the content hub import was running"
+    ):
+        import_content_snapshot(
+            source_path,
+            manifest_path,
+            artifact_root,
+            tmp_path / "hub-data",
+            hub_url,
+            schema=hub_schema,
+            expected_source_name="late_mutation",
+        )
+
+    assert source_hash_checks == 2
+    assert canonical_rows_verified
+    assert hashlib.sha256(source_path.read_bytes()).hexdigest() != source_sha
+    assert _content_hub_state(hub_url, hub_schema) == hub_before
+    assert _source_stage_state(stage_url, stage_schema) == stage_before
 
 
 def test_content_import_retry_recovers_receipt_without_changing_imported_rows(
