@@ -8,6 +8,7 @@ PyYAML>=6.0
 requests>=2.31.0
 curl_cffi>=0.7.0
 schedule>=1.2.2
+langdetect==1.0.9
 
 # Database and security
 psycopg2-binary>=2.9.0

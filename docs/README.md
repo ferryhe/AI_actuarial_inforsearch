@@ -23,6 +23,7 @@ This directory keeps maintained documentation first. Historical implementation r
 - [RAG Embeddings Runtime](guides/RAG_EMBEDDINGS_RUNTIME.md): embeddings runtime resolution and diagnostics.
 - [Troubleshooting Model Fetching](guides/TROUBLESHOOTING_MODEL_FETCHING.md): model registry troubleshooting.
 - [Database Backend Guide](guides/DATABASE_BACKEND_GUIDE.md): database backend notes.
+- [Local Content Hub and Source Staging](guides/CONTENT_HUB.md): isolated hub/source-stage setup, immutable imports, D-drive paths, and backup boundaries.
 
 ## Current Product Milestones
 

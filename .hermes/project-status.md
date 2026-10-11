@@ -1,3 +1,54 @@
+# 第 1–3 步实际迁移已验收，PR/CI 发布验证进行中 — 2026-10-11
+
+- 项目 AI_actuarial_inforsearch；实现分支 codex/local-content-hub，基于未合并的
+  codex/full-postgresql / PR #422。原工作目录 fix/gpt6-parameter-compat 的已有
+  状态修改及四个未跟踪目录保留；同级项目没有读写。
+- 两站 SQLite v16 一致快照、原文/富内容/索引归档已落盘 D:/AI_actuarial_inforsearch。
+  海外 1,008、中国 3,384 个归档文件已逐文件校验；Windows 特殊名称用可追溯映射保留。
+- 正式本机 PG16.15：ai-actuarial-content-hub-pg16；PGDATA 在 D 的 postgres/content-hub-pg16，
+  仅绑定 127.0.0.1:55434。连接、全量来源档案与 PGDATA 目录访问已限制为当前用户/System/Admin。
+- 两个独立 raw_source 暂存库保留全部 42 表、195,675 行，JSON TEXT 存档保留 NUL/BLOB/rowid。
+  source-stage 版本 ledger、逐表计数与内容摘要、原生 dump/隔离 restore 均 PASS；不冒充原生 42 表转换。
+- content_hub 主库实际双源导入 PASS：4,141 个 file observations、3,511 个 URL/文件版本、
+  8,269 个来源记录映射、28,909 个文本字段版本。全部原始元数据/文本已独立逐字段比对，
+  13 个同 URL 不同原文版本均可查询；两源精确重跑后全表计数/摘要保持不变。
+- 共享原文 CAS 已验证 3,356 个唯一文件；保留 137 个缺失哈希状态：136 对应删除记录，
+  1 个在用历史网页捕获缺件。两份缺件已按完全相同 SHA 补回；不同的新响应没有替代旧版。
+- 摘要和 Markdown 独立离线语言候选，原文不改；模型/来源/生成配方并存。
+  中国站实际仍含大量英文富内容，不能按所在服务器推断中文或法域。
+- 62 个 legacy artifacts 保持来源隔离，8 份 FAISS 实测 China1024 / overseas3072；不混合。
+  缓存未声明的模型/切块配置及历史未知配置如实记 unknown；原始向量/切块行仍在私有全量暂存库。
+- 主库原生 PG16 dump/隔离 restore PASS，9 表全部计数/内容摘要一致。D 档案保留两份来源库
+  dump 和 content-hub.dump；原始文件另在 hub/cas 与原站 archives，不以数据库备份代替文件备份。
+- 重点旧 CLI/import/schema/data-root 回归 116 passed；最终新功能 9 passed。Black/isort/py_compile、
+  Pylint errors-only、Python 文件/符号 dead-code 与 diff-check PASS。独立 fresh Sol/high review-3 PASS。
+  两轮已确认问题由同一 Sol/high worker 修复；TypeSafe/Jev-1.13.0 已按规定裁定一次。
+- 本次变更：hub/source-stage 模块与 SQL migrations、CLI、tests、langdetect 依赖、操作指南和文档索引。
+  本机采集/摘要/翻译 API 调用为 0；不停止或清理生产数据，不切换服务器、不合并 PR。
+  现有 API/crawler/RAG 尚不消费新 hub。下一步接入本机采集，按分类/语言发布两站子集及增量同步。
+- 自动提交/push/依赖 PR 后核对当前 HEAD 的 GitHub CI 和约 15 分钟的非 Copilot 反馈；
+  Copilot 用户禁用。最终发布状态见 ignored reports/data-hub/github-verification.json 与 D/hub/reports/20261011。
+
+# 执行第 1–3 步：归档与来源暂存完成，主库合并进行中 — 2026-10-11
+
+- 用户已解除前次权限限制并明确授权继续；D 盘、Git 与本机 Docker 均可访问。
+- 项目 AI_actuarial_inforsearch；实现分支 codex/local-content-hub，依赖未合并的
+  codex/full-postgresql / PR #422。主目录已有改动保留；同级仓库不在范围内。
+- 两站 SQLite v16 一致快照已保存到 D:/AI_actuarial_inforsearch/archives/20261011-content-hub，
+  SHA、integrity 与全部 42 表行数核对通过。海外 1,008、中国 3,384 个原文/富内容/旧索引
+  归档文件核对通过；5 个 Windows 不支持的原文件名用可追溯的名称映射存放。
+- 新建 PG16.15 容器 ai-actuarial-content-hub-pg16；PGDATA 在 D，端口只绑定
+  127.0.0.1:55434，连接设置保存在 D 的 private 目录，未写入 Git 或报告。
+- 两个独立 raw_source 暂存库共 195,675 行：China 122,038 / overseas 73,637。
+  JSON TEXT 行存档保留 SQLite 的 NUL/BLOB/rowid，未冒充原生 42 表转换。
+  逐表行数与内容摘要、原生 dump 和隔离 restore 均通过。
+- 共享原文 SHA CAS 与双源 manifest 正在准备；产品 CLI/独立 schema 的测试和审查
+  仍在进行，尚未声明第 3 步完成。生产配置、采集、数据和服务均未切换或清理。
+- 中英富内容按来源、内容版本和独立语言候选保存；资料采集/摘要/翻译 API 调用为 0。
+  按仓库规定已完成 1 次 TypeSafe/Jev 审查裁定，裁定只接收代码与审查证据。
+  旧向量来源/模型/维度/切块配置分别存档；现有 API/RAG 后续步骤再接入主库。
+- 本次 review 的范围限定用户第 1–3 步；Copilot 按用户要求禁用。
+
 # 最新工作 — PostgreSQL runtime conversion — 2026-10-11
 
 - 项目 `AI_actuarial_inforsearch`；分支 `codex/full-postgresql`；基线
