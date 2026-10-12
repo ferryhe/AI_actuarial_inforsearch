@@ -172,7 +172,7 @@ def test_schema_drop_lock_timeout_failure_preserves_schema_cache() -> None:
         def execute(self, sql):
             commands.append(sql)
             if sql.startswith("DROP SCHEMA"):
-                raise psycopg2.errors.LockNotAvailable("synthetic lock timeout")
+                raise psycopg2.OperationalError("synthetic lock timeout")
 
     class AdminConnection:
         autocommit = False
@@ -199,7 +199,7 @@ def test_schema_drop_lock_timeout_failure_preserves_schema_cache() -> None:
         monkeypatch.setattr(postgres_helpers, "_data_roots", {"test-url": "test-root"})
 
         with pytest.raises(
-            psycopg2.errors.LockNotAvailable,
+            psycopg2.OperationalError,
             match="synthetic lock timeout",
         ):
             postgres_helpers.cleanup_postgres_test_schemas()
