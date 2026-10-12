@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import argparse
+import codecs
+import io
 import json
 import re
 import subprocess
@@ -94,19 +96,29 @@ def _run(
     command: Sequence[str], root: Path, *, echo_output: bool = True
 ) -> subprocess.CompletedProcess[str]:
     print(f"+ {' '.join(command)}", flush=True)
-    result = subprocess.run(
+    with subprocess.Popen(
         command,
         cwd=root,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        check=False,
-    )
-    if echo_output and result.stdout:
-        print(result.stdout, end="" if result.stdout.endswith("\n") else "\n")
-    return result
+    ) as process:
+        assert process.stdout is not None
+        decoder = io.IncrementalNewlineDecoder(
+            codecs.getincrementaldecoder("utf-8")(errors="replace"), translate=True
+        )
+        output = []
+        while chunk := process.stdout.read1(4096):
+            text = decoder.decode(chunk)
+            output.append(text)
+            if echo_output:
+                sys.stdout.write(text)
+                sys.stdout.flush()
+        text = decoder.decode(b"", final=True)
+        output.append(text)
+        if echo_output:
+            sys.stdout.write(text)
+            sys.stdout.flush()
+        return subprocess.CompletedProcess(command, process.wait(), "".join(output))
 
 
 def _format_scan(
