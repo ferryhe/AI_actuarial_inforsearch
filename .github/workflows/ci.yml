@@ -149,6 +149,7 @@ jobs:
         env:
           FASTAPI_SESSION_SECRET: ci-fastapi-session-secret
           TOKEN_ENCRYPTION_KEY: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
+          PYTEST_ADDOPTS: "-o faulthandler_timeout=120"
         run: python scripts/quality_gate.py
 
       - name: Upload quality report

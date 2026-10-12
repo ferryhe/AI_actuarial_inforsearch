@@ -1,3 +1,9 @@
+# CI 超时调查更新 — 2026-10-12
+
+- 分支 `fix/ci-quality-gate-progress` 已定位 PostgreSQL 测试夹具在后台 ready-data 子任务结束前删除 schema，形成应用层锁等待环；证据见 `reports/ci-investigation-20261012/root-cause.md`。
+- 当前工作树只改测试清理：等待 `NativeTaskRuntime` 工作线程及其后续子线程，超时则在 DROP 前明确失败；schema DROP 增加 30 秒 lock timeout。Windows 3 项回归与 Black、isort、Ruff、`git diff --check` 均通过。
+- disposable PostgreSQL Linux 最终复跑 15/15 PASS（含清理回归、quality-gate 回归、受影响 API 与 index-chain 用例）；实际旧 fixture 负对照使新回归失败，修复后通过。Fresh Sol/high 独立审核 PASS，另独立验证 Windows 8 PASS 及 Black/isort/Ruff/diff-check。Controller 将发布至 PR #424，并核对新提交实际完整 CI；原 CI run `38198724627` 与正式数据库/服务保持未触碰，部署门槛未改变。
+
 # 第 1–3 步实际迁移已验收，发布状态见验收记录 — 2026-10-11
 
 - 项目 AI_actuarial_inforsearch；实现分支 codex/local-content-hub，基于未合并的

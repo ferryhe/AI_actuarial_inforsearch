@@ -120,6 +120,9 @@ def cleanup_postgres_test_schemas(
         admin.autocommit = True
         try:
             with admin.cursor() as cursor:
+                # Bound both function- and session-scoped teardown if an owned
+                # schema still has a lock holder after the task-drain failure.
+                cursor.execute("SET lock_timeout = '30s'")
                 for schema in to_drop:
                     quoted = quote_ident(schema, cursor)
                     cursor.execute(f"DROP SCHEMA IF EXISTS {quoted} CASCADE")
