@@ -54,6 +54,59 @@ The manifest must name the same source and snapshot hash as the read-only SQLite
 
 Summary and markdown text are detected independently with the offline language detector. The original text is stored unchanged. Low-confidence or too-short text is marked `und`; a language label is not a locale or legal jurisdiction. Existing provider, model, recipe, and profile values are preserved when present, otherwise they are recorded as `unknown`. Source index artifacts remain source-namespaced and their embedding dimensions are never treated as interchangeable.
 
+## Import generated bilingual metadata
+
+Generated titles, summaries, categories, and keywords are stored separately from the source-attributed fields. The offline importer does not call an AI service and does not change source rows, text variants, files, or the CAS. It stores one independent `zh` and/or `en` record per content version; both records can coexist. The serving API and websites do not consume these records yet.
+
+Prepare a UTF-8 JSON file in this exact versioned format. Use the content version ID and the `text_variant_id` and `payload_sha256` of that version's `markdown_content` entry from `content-hub show --url <exact-url> --json`:
+
+```json
+{
+  "format": "ai_actuarial.content_hub.generated_metadata",
+  "version": 1,
+  "items": [
+    {
+      "content_version_id": 123,
+      "language_code": "zh",
+      "markdown_text_variant_id": 456,
+      "markdown_sha256": "<64-character SHA-256 from show>",
+      "title": "中文标题",
+      "summary": "中文摘要",
+      "category": "Life",
+      "keywords": ["寿险", "精算"],
+      "recipe": "offline-summary-v1",
+      "author": "metadata-controller"
+    },
+    {
+      "content_version_id": 123,
+      "language_code": "en",
+      "markdown_text_variant_id": 456,
+      "markdown_sha256": "<64-character SHA-256 from show>",
+      "title": "English title",
+      "summary": "English summary",
+      "category": "Life",
+      "keywords": ["life", "actuarial"],
+      "recipe": "offline-summary-v1",
+      "author": "metadata-controller"
+    }
+  ]
+}
+```
+
+Each item must include exactly the fields shown. `language_code` is `zh` or `en`; `category` must match a key in `config/categories.yaml` or be `Other`; `keywords` is a nonempty array of strings. `recipe` and `author` record how the generated fields were prepared. The importer checks that the Markdown variant belongs to the stated version and that its stored digest matches `markdown_sha256` before writing anything.
+
+After applying the hub schema, import the file and verify the result:
+
+```powershell
+python -m ai_actuarial content-hub metadata import `
+  --input 'D:\AI_actuarial_inforsearch\hub\generated-metadata.json' `
+  --json
+python -m ai_actuarial content-hub show --url '<exact-url>' --json
+python -m ai_actuarial content-hub status --json
+```
+
+Metadata appears under each content version's `bilingual_metadata` object, keyed by `zh` and `en`; status includes `bilingual_metadata_count` and per-language counts. Reimporting identical records is unchanged. An existing language record is fill-only: nonempty title, summary, category, and keywords remain as stored, while blank fields can be filled with provenance recorded for that fill. A different Markdown binding or conflicting duplicate item is rejected.
+
 ## Failure and rerun behavior
 
 Use `--json` for scripts. A successful exact rerun returns `already_imported: true` for a hub import or `state: "unchanged"` for a source stage after checking stored counts and hashes. A changed source, manifest, conflicting source name, nonempty stage database, invalid declared-present CAS payload, or corrupted stored stage aborts before a successful response. Files explicitly marked missing remain recorded as missing. CLI failures return exit code 2 and a JSON error when `--json` is set. Never resolve a conflict by deleting source rows or replacing the manifest in place; preserve the archive and start a new, explicitly named snapshot workflow.

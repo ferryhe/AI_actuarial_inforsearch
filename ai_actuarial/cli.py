@@ -486,6 +486,7 @@ def cmd_content_hub(args: argparse.Namespace) -> int:
         content_hub_schema_plan,
         content_hub_show_url,
         content_hub_status,
+        import_bilingual_metadata,
         import_content_snapshot,
     )
     from .source_stage import SourceStageError, source_stage_schema_plan, stage_sqlite_v16
@@ -514,6 +515,8 @@ def cmd_content_hub(args: argparse.Namespace) -> int:
                 schema=args.schema,
                 expected_source_name=args.source_name,
             )
+        elif args.hub_cmd == "metadata":
+            payload = import_bilingual_metadata(args.input, schema=args.schema)
         elif args.hub_cmd == "status":
             payload = content_hub_status(schema=args.schema)
         elif args.hub_cmd == "show":
@@ -1177,6 +1180,24 @@ def build_parser() -> argparse.ArgumentParser:
     p_content_hub_import.add_argument("--schema", default="content_hub")
     p_content_hub_import.add_argument("--json", action="store_true")
     p_content_hub_import.set_defaults(func=cmd_content_hub)
+
+    p_content_hub_metadata = p_content_hub_sub.add_parser(
+        "metadata", help="Import generated bilingual metadata without changing source text"
+    )
+    p_content_hub_metadata_sub = p_content_hub_metadata.add_subparsers(
+        dest="metadata_cmd", required=True
+    )
+    p_content_hub_metadata_import = p_content_hub_metadata_sub.add_parser(
+        "import", help="Import validated Chinese and English metadata JSON"
+    )
+    p_content_hub_metadata_import.add_argument(
+        "--input",
+        required=True,
+        help="Version-1 ai_actuarial.content_hub.generated_metadata JSON",
+    )
+    p_content_hub_metadata_import.add_argument("--schema", default="content_hub")
+    p_content_hub_metadata_import.add_argument("--json", action="store_true")
+    p_content_hub_metadata_import.set_defaults(func=cmd_content_hub)
 
     p_content_hub_status = p_content_hub_sub.add_parser(
         "status", help="Summarize source and content counts"

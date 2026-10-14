@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import argparse
 import hashlib
 import importlib.metadata
 import json
@@ -14,10 +13,9 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any, Iterable
-from urllib.parse import urlsplit
-
 import psycopg2
 from psycopg2 import sql
+from psycopg2.extras import Json
 
 from .postgres import DatabaseConfig
 from .sqlite_schema import (
@@ -29,7 +27,7 @@ from .sqlite_schema import (
 
 MANIFEST_FORMAT = "ai_actuarial.content_hub.artifact_manifest"
 HUB_SCHEMA = "content_hub"
-HUB_SCHEMA_VERSION = 1
+HUB_SCHEMA_VERSION = 2
 _MIGRATION_DIR = Path(__file__).with_name("content_hub_migrations")
 _HASH_RE = re.compile(r"^[0-9a-f]{64}$")
 _SOURCE_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
@@ -1267,6 +1265,241 @@ def _import_result(
     }
 
 
+def _validate_bilingual_metadata_input(path: str | Path) -> list[dict[str, Any]]:
+    try:
+        document = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ContentHubError("Bilingual metadata input is not readable UTF-8 JSON") from exc
+    if (
+        not isinstance(document, dict)
+        or document.get("format") != "ai_actuarial.content_hub.generated_metadata"
+        or type(document.get("version")) is not int
+        or document["version"] != 1
+        or set(document) != {"format", "version", "items"}
+    ):
+        raise ContentHubError("Bilingual metadata input format or version is not supported")
+    items = document["items"]
+    if not isinstance(items, list) or not items:
+        raise ContentHubError("Bilingual metadata input must contain a nonempty items array")
+
+    from .catalog import CATEGORY_RULES
+
+    allowed_categories = {"Other", *(CATEGORY_RULES or {}).keys()}
+    required = {
+        "content_version_id",
+        "language_code",
+        "markdown_text_variant_id",
+        "markdown_sha256",
+        "title",
+        "summary",
+        "category",
+        "keywords",
+        "recipe",
+        "author",
+    }
+    normalized: dict[tuple[int, str], dict[str, Any]] = {}
+    for item in items:
+        if not isinstance(item, dict) or set(item) != required:
+            raise ContentHubError("Bilingual metadata item fields are invalid")
+        version_id = item["content_version_id"]
+        variant_id = item["markdown_text_variant_id"]
+        language = item["language_code"]
+        if type(version_id) is not int or version_id <= 0:
+            raise ContentHubError(
+                "Bilingual metadata content_version_id must be a positive integer"
+            )
+        if type(variant_id) is not int or variant_id <= 0:
+            raise ContentHubError(
+                "Bilingual metadata markdown_text_variant_id must be a positive integer"
+            )
+        if not isinstance(language, str) or language not in {"zh", "en"}:
+            raise ContentHubError("Bilingual metadata language_code must be zh or en")
+        digest = item["markdown_sha256"]
+        if not isinstance(digest, str) or not _HASH_RE.fullmatch(digest):
+            raise ContentHubError("Bilingual metadata markdown_sha256 is invalid")
+        fields: dict[str, str] = {}
+        for field in ("title", "summary", "category", "recipe", "author"):
+            value = item[field]
+            if not isinstance(value, str) or not value.strip():
+                raise ContentHubError(f"Bilingual metadata {field} must be nonempty text")
+            fields[field] = value.strip()
+        if fields["category"] not in allowed_categories:
+            raise ContentHubError("Bilingual metadata category is not in the configured taxonomy")
+        keywords = item["keywords"]
+        if not isinstance(keywords, list) or not keywords:
+            raise ContentHubError("Bilingual metadata keywords must be a nonempty array")
+        clean_keywords: list[str] = []
+        seen_keywords: set[str] = set()
+        for keyword in keywords:
+            if not isinstance(keyword, str) or not keyword.strip():
+                raise ContentHubError("Bilingual metadata keywords must contain nonempty text")
+            value = keyword.strip()
+            if value.casefold() not in seen_keywords:
+                clean_keywords.append(value)
+                seen_keywords.add(value.casefold())
+        record = {
+            "content_version_id": version_id,
+            "language_code": language,
+            "markdown_text_variant_id": variant_id,
+            "markdown_sha256": digest,
+            **fields,
+            "keywords": clean_keywords,
+        }
+        key = (version_id, language)
+        previous = normalized.get(key)
+        if previous is not None and previous != record:
+            raise ContentHubError("Bilingual metadata input has conflicting duplicate records")
+        normalized[key] = record
+    return list(normalized.values())
+
+
+def import_bilingual_metadata(
+    input_path: str | Path,
+    database_url: DatabaseConfig | str | None = None,
+    *,
+    schema: str = HUB_SCHEMA,
+) -> dict[str, Any]:
+    """Import generated zh/en metadata without changing source-attributed rows."""
+    schema = _validate_schema(schema)
+    records = _validate_bilingual_metadata_input(input_path)
+    connection = _connect(database_url)
+    inserted = filled = unchanged = 0
+    try:
+        with connection.cursor() as cursor:
+            _require_current_schema(cursor, schema)
+            cursor.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                (f"content_hub:bilingual_metadata:{schema}",),
+            )
+            for record in records:
+                cursor.execute(
+                    "SELECT 1 FROM content_versions WHERE content_version_id = %s",
+                    (record["content_version_id"],),
+                )
+                if cursor.fetchone() is None:
+                    raise ContentHubError(
+                        "Bilingual metadata references an unknown content version"
+                    )
+                cursor.execute(
+                    "SELECT payload_value_json, payload_is_null, payload_sha256 "
+                    "FROM text_variants WHERE text_variant_id = %s AND content_version_id = %s "
+                    "AND field_name = 'markdown_content'",
+                    (record["markdown_text_variant_id"], record["content_version_id"]),
+                )
+                markdown = cursor.fetchone()
+                if markdown is None:
+                    raise ContentHubError(
+                        "Bilingual metadata Markdown variant does not match its content version"
+                    )
+                markdown_value = _load_json(markdown[0])
+                if (
+                    bool(markdown[1])
+                    or not isinstance(markdown_value, str)
+                    or not markdown_value.strip()
+                    or str(markdown[2]).strip() != record["markdown_sha256"]
+                ):
+                    raise ContentHubError(
+                        "Bilingual metadata Markdown digest does not match stored content"
+                    )
+
+            for record in records:
+                key = (record["content_version_id"], record["language_code"])
+                cursor.execute(
+                    "SELECT markdown_text_variant_id, markdown_sha256, title, summary, category, "
+                    "keywords_json, provenance_json FROM bilingual_metadata "
+                    "WHERE content_version_id = %s AND language_code = %s FOR UPDATE",
+                    key,
+                )
+                existing = cursor.fetchone()
+                if existing is None:
+                    provenance = [
+                        {
+                            "recipe": record["recipe"],
+                            "author": record["author"],
+                            "fields": ["title", "summary", "category", "keywords"],
+                        }
+                    ]
+                    cursor.execute(
+                        "INSERT INTO bilingual_metadata (content_version_id, language_code, "
+                        "markdown_text_variant_id, markdown_sha256, title, summary, category, "
+                        "keywords_json, provenance_json) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                        (
+                            *key,
+                            record["markdown_text_variant_id"],
+                            record["markdown_sha256"],
+                            record["title"],
+                            record["summary"],
+                            record["category"],
+                            Json(record["keywords"]),
+                            Json(provenance),
+                        ),
+                    )
+                    inserted += 1
+                    continue
+
+                if (
+                    int(existing[0]) != record["markdown_text_variant_id"]
+                    or str(existing[1]).strip() != record["markdown_sha256"]
+                ):
+                    raise ContentHubError(
+                        "Existing bilingual metadata is bound to a different Markdown variant"
+                    )
+                current = {
+                    "title": existing[2],
+                    "summary": existing[3],
+                    "category": existing[4],
+                    "keywords": existing[5],
+                }
+                merged = dict(current)
+                filled_fields = []
+                for field in ("title", "summary", "category", "keywords"):
+                    if not current[field]:
+                        merged[field] = record[field]
+                        filled_fields.append(field)
+                if not filled_fields:
+                    unchanged += 1
+                    continue
+                provenance = list(existing[6])
+                provenance.append(
+                    {
+                        "recipe": record["recipe"],
+                        "author": record["author"],
+                        "fields": filled_fields,
+                    }
+                )
+                cursor.execute(
+                    "UPDATE bilingual_metadata SET title = %s, summary = %s, category = %s, "
+                    "keywords_json = %s, provenance_json = %s, updated_at = CURRENT_TIMESTAMP "
+                    "WHERE content_version_id = %s AND language_code = %s",
+                    (
+                        merged["title"],
+                        merged["summary"],
+                        merged["category"],
+                        Json(merged["keywords"]),
+                        Json(provenance),
+                        *key,
+                    ),
+                )
+                filled += 1
+        connection.commit()
+        return {
+            "success": True,
+            "schema": schema,
+            "item_count": len(records),
+            "inserted_count": inserted,
+            "filled_count": filled,
+            "unchanged_count": unchanged,
+        }
+    except psycopg2.Error as exc:
+        connection.rollback()
+        raise ContentHubError("Bilingual metadata import failed") from exc
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+
 def _write_import_receipt(data_root: Path, result: dict[str, Any]) -> None:
     receipt_root = data_root / "content-hub" / "import-receipts" / result["source_name"]
     destination = receipt_root / f"{result['snapshot_sha256']}.json"
@@ -1335,6 +1568,10 @@ def content_hub_status(
             cursor.execute("SELECT COUNT(*) FROM text_variants")
             text_variants = int(cursor.fetchone()[0])
             cursor.execute(
+                "SELECT language_code, COUNT(*) FROM bilingual_metadata GROUP BY language_code"
+            )
+            metadata_counts = {str(language): int(count) for language, count in cursor.fetchall()}
+            cursor.execute(
                 "SELECT availability, COUNT(*) FROM legacy_index_artifacts GROUP BY availability"
             )
             index_states = {str(state): int(count) for state, count in cursor.fetchall()}
@@ -1354,6 +1591,10 @@ def content_hub_status(
                 },
                 "source_record_count": source_records,
                 "text_variant_count": text_variants,
+                "bilingual_metadata_count": sum(metadata_counts.values()),
+                "bilingual_metadata_by_language": {
+                    language: metadata_counts.get(language, 0) for language in ("zh", "en")
+                },
                 "legacy_index_artifact_counts": {
                     state: index_states.get(state, 0) for state in ("present", "missing")
                 },
@@ -1403,9 +1644,11 @@ def content_hub_show_url(
                         "url": stored_url,
                         "raw_sha256": str(raw_sha256).strip() if raw_sha256 else None,
                         "blob_sha256": str(blob_sha256).strip() if blob_sha256 else None,
+                        "bilingual_metadata": {},
                     }
                 )
             version_ids = [item["content_version_id"] for item in versions]
+            versions_by_id = {item["content_version_id"]: item for item in versions}
             variants: list[dict[str, Any]] = []
             observations: list[dict[str, Any]] = []
             if version_ids:
@@ -1449,7 +1692,7 @@ def content_hub_show_url(
                     for row in cursor.fetchall()
                 ]
                 cursor.execute(
-                    "SELECT s.source_name, v.source_table, v.source_pk_json, v.field_name, "
+                    "SELECT v.text_variant_id, s.source_name, v.source_table, v.source_pk_json, v.field_name, "
                     "v.payload_value_json, v.payload_is_null, v.payload_sha256, v.language_code, "
                     "v.language_candidates_json, v.language_detection_json, v.model_identity_json, "
                     "v.recipe_identity_json, v.provenance_json "
@@ -1460,22 +1703,42 @@ def content_hub_show_url(
                 )
                 variants = [
                     {
-                        "source_name": row[0],
-                        "source_table": row[1],
-                        "source_primary_key": _load_json(row[2]),
-                        "field_name": row[3],
-                        "value": _load_json(row[4]),
-                        "is_null": bool(row[5]),
-                        "payload_sha256": str(row[6]).strip(),
-                        "language": row[7],
-                        "language_candidates": _load_json(row[8]),
-                        "language_detection": _load_json(row[9]),
-                        "model_identity": _load_json(row[10]),
-                        "recipe_identity": _load_json(row[11]),
-                        "provenance": _load_json(row[12]),
+                        "text_variant_id": int(row[0]),
+                        "source_name": row[1],
+                        "source_table": row[2],
+                        "source_primary_key": _load_json(row[3]),
+                        "field_name": row[4],
+                        "value": _load_json(row[5]),
+                        "is_null": bool(row[6]),
+                        "payload_sha256": str(row[7]).strip(),
+                        "language": row[8],
+                        "language_candidates": _load_json(row[9]),
+                        "language_detection": _load_json(row[10]),
+                        "model_identity": _load_json(row[11]),
+                        "recipe_identity": _load_json(row[12]),
+                        "provenance": _load_json(row[13]),
                     }
                     for row in cursor.fetchall()
                 ]
+                cursor.execute(
+                    "SELECT content_version_id, language_code, markdown_text_variant_id, "
+                    "markdown_sha256, title, summary, category, keywords_json, provenance_json, "
+                    "created_at, updated_at FROM bilingual_metadata "
+                    "WHERE content_version_id = ANY(%s) ORDER BY content_version_id, language_code",
+                    (version_ids,),
+                )
+                for row in cursor.fetchall():
+                    versions_by_id[int(row[0])]["bilingual_metadata"][row[1]] = {
+                        "markdown_text_variant_id": int(row[2]),
+                        "markdown_sha256": str(row[3]).strip(),
+                        "title": row[4],
+                        "summary": row[5],
+                        "category": row[6],
+                        "keywords": row[7],
+                        "provenance": row[8],
+                        "created_at": row[9].isoformat(),
+                        "updated_at": row[10].isoformat(),
+                    }
             return {
                 "success": True,
                 "url": url,

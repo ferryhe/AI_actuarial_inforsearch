@@ -21,6 +21,7 @@ from ai_actuarial.content_hub import (
     content_hub_schema_plan,
     content_hub_show_url,
     content_hub_status,
+    import_bilingual_metadata,
     import_content_snapshot,
 )
 from ai_actuarial.postgres_import import _source_snapshot
@@ -63,10 +64,15 @@ def test_git_checkout_keeps_migration_sql_lf_with_autocrlf_enabled(
 
     migration_paths = [
         "ai_actuarial/content_hub_migrations/0001_content_hub.sql",
+        "ai_actuarial/content_hub_migrations/0002_bilingual_metadata.sql",
         "ai_actuarial/source_stage_migrations/0001_lossless_source_stage.sql",
     ]
     source_blobs = {
-        relative_path: run_git("show", f"HEAD:{relative_path}", cwd=source_root)
+        relative_path: (
+            (source_root / relative_path).read_bytes()
+            if relative_path.endswith("0002_bilingual_metadata.sql")
+            else run_git("show", f"HEAD:{relative_path}", cwd=source_root)
+        )
         for relative_path in migration_paths
     }
     assert all(b"\r\n" not in payload for payload in source_blobs.values())
@@ -113,8 +119,11 @@ def test_git_checkout_keeps_migration_sql_lf_with_autocrlf_enabled(
     )
     content_plan = content_hub.content_hub_schema_plan(database_url, schema=schema)
     stage_plan = source_stage.source_stage_schema_plan(database_url, schema=schema)
-    assert content_plan["pending"] == [{"version": 1, "file": migration_paths[0].split("/")[-1]}]
-    assert stage_plan["pending"] == [{"version": 1, "file": migration_paths[1].split("/")[-1]}]
+    assert content_plan["pending"] == [
+        {"version": 1, "file": migration_paths[0].split("/")[-1]},
+        {"version": 2, "file": migration_paths[1].split("/")[-1]},
+    ]
+    assert stage_plan["pending"] == [{"version": 1, "file": migration_paths[2].split("/")[-1]}]
 
 
 @pytest.mark.parametrize(
@@ -330,6 +339,7 @@ def _content_hub_state(database_url: str, schema: str) -> dict[str, dict[str, in
         "source_record_map",
         "text_variants",
         "legacy_index_artifacts",
+        "bilingual_metadata",
     )
     connection = psycopg2.connect(database_url)
     try:
@@ -506,7 +516,7 @@ def test_source_stage_preserves_nul_blob_rowid_and_rejects_conflicts(
 def test_content_hub_import_keeps_alias_versions_text_and_source_namespaces(tmp_path: Path) -> None:
     hub_url, schema = _isolated_database_schema(tmp_path, "hub")
     assert content_hub_schema_plan(hub_url, schema=schema)["current_version"] == 0
-    assert apply_content_hub_schema(hub_url, schema=schema)["version"] == 1
+    assert apply_content_hub_schema(hub_url, schema=schema)["version"] == 2
     artifact_root = tmp_path / "shared-hub-root"
     first_path = tmp_path / "overseas-v16.db"
     second_path = tmp_path / "china-v16.db"
@@ -597,6 +607,8 @@ def test_content_hub_import_keeps_alias_versions_text_and_source_namespaces(tmp_
     assert status["content_blob_counts"] == {"present": 2, "missing": 0}
     assert status["source_file_observation_count"] == 4
     assert status["legacy_index_artifact_counts"] == {"present": 0, "missing": 2}
+    assert status["bilingual_metadata_count"] == 0
+    assert status["bilingual_metadata_by_language"] == {"zh": 0, "en": 0}
 
     original_manifest = first_manifest.read_text(encoding="utf-8")
     manifest_doc = json.loads(original_manifest)
@@ -659,8 +671,217 @@ def test_content_hub_import_keeps_alias_versions_text_and_source_namespaces(tmp_
             schema=schema,
             expected_source_name="overseas",
         )
-
     assert hashlib.sha256(first_path.read_bytes()).hexdigest() == first_sha
+
+
+def test_bilingual_metadata_import_is_version_bound_fill_only_and_idempotent(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    from ai_actuarial.cli import main
+
+    hub_url, schema = _isolated_database_schema(tmp_path, "bilingual-metadata")
+    apply_content_hub_schema(hub_url, schema=schema)
+    artifact_root = tmp_path / "artifacts"
+    source_path = tmp_path / "source-v16.db"
+    payload = b"source markdown backing bytes"
+    _, counts = _create_v16_source(source_path, payload, source_label="bilingual")
+    manifest_path, _ = _write_manifest(source_path, "bilingual", artifact_root, payload, counts)
+    import_content_snapshot(
+        source_path,
+        manifest_path,
+        artifact_root,
+        tmp_path / "data",
+        hub_url,
+        schema=schema,
+        expected_source_name="bilingual",
+    )
+    shown = content_hub_show_url(
+        "https://content.example.test/primary?version=1", hub_url, schema=schema
+    )
+    assert len(shown["versions"]) == 1
+    version_id = shown["versions"][0]["content_version_id"]
+    markdown = next(
+        variant for variant in shown["text_variants"] if variant["field_name"] == "markdown_content"
+    )
+    raw_before = _content_hub_state(hub_url, schema)
+    source_table_names = set(raw_before) - {"bilingual_metadata"}
+
+    def metadata_item(language: str) -> dict:
+        return {
+            "content_version_id": version_id,
+            "language_code": language,
+            "markdown_text_variant_id": markdown["text_variant_id"],
+            "markdown_sha256": markdown["payload_sha256"],
+            "title": "中英标题" if language == "zh" else "English title",
+            "summary": "中文摘要" if language == "zh" else "English summary",
+            "category": "Life",
+            "keywords": ["寿险", "精算"] if language == "zh" else ["life", "actuarial"],
+            "recipe": "offline-summary-v1",
+            "author": "controller",
+        }
+
+    metadata_path = tmp_path / "generated-metadata.json"
+
+    def write_metadata(items: list[dict]) -> None:
+        metadata_path.write_text(
+            json.dumps(
+                {
+                    "format": "ai_actuarial.content_hub.generated_metadata",
+                    "version": 1,
+                    "items": items,
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+
+    write_metadata([metadata_item("zh"), metadata_item("en")])
+    monkeypatch.setenv("CONFIG_PATH", os.environ.get("CONFIG_PATH", ""))
+    monkeypatch.setenv("CONTENT_HUB_DATABASE_URL", hub_url)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "ai-actuarial",
+            "content-hub",
+            "metadata",
+            "import",
+            "--input",
+            str(metadata_path),
+            "--schema",
+            schema,
+            "--json",
+        ],
+    )
+    assert main() == 0
+    first = json.loads(capsys.readouterr().out)
+    assert first == {
+        "success": True,
+        "schema": schema,
+        "item_count": 2,
+        "inserted_count": 2,
+        "filled_count": 0,
+        "unchanged_count": 0,
+    }
+    assert main() == 0
+    repeated = json.loads(capsys.readouterr().out)
+    assert repeated["inserted_count"] == 0
+    assert repeated["unchanged_count"] == 2
+
+    connection = psycopg2.connect(hub_url)
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "UPDATE bilingual_metadata SET summary = NULL, keywords_json = NULL "
+                "WHERE content_version_id = %s",
+                (version_id,),
+            )
+        connection.commit()
+    finally:
+        connection.close()
+
+    partial_items = []
+    for language in ("zh", "en"):
+        item = metadata_item(language)
+        item.update(
+            {
+                "title": "replacement title",
+                "summary": f"filled {language} summary",
+                "category": "AI",
+                "keywords": [f"filled-{language}"],
+                "recipe": "offline-summary-v2",
+                "author": "second-controller",
+            }
+        )
+        partial_items.append(item)
+    write_metadata(partial_items)
+    filled = import_bilingual_metadata(metadata_path, hub_url, schema=schema)
+    assert filled["filled_count"] == 2
+
+    after_show = content_hub_show_url(
+        "https://content.example.test/primary?version=1", hub_url, schema=schema
+    )
+    by_language = after_show["versions"][0]["bilingual_metadata"]
+    assert set(by_language) == {"zh", "en"}
+    for language in ("zh", "en"):
+        metadata = by_language[language]
+        original = metadata_item(language)
+        assert metadata["title"] == original["title"]
+        assert metadata["category"] == "Life"
+        assert metadata["summary"] == f"filled {language} summary"
+        assert metadata["keywords"] == [f"filled-{language}"]
+        assert metadata["provenance"][-1] == {
+            "recipe": "offline-summary-v2",
+            "author": "second-controller",
+            "fields": ["summary", "keywords"],
+        }
+
+    write_metadata([metadata_item("zh"), metadata_item("en")])
+    preserved = import_bilingual_metadata(metadata_path, hub_url, schema=schema)
+    assert preserved["unchanged_count"] == 2
+    after_state = _content_hub_state(hub_url, schema)
+    assert {name: after_state[name] for name in source_table_names} == {
+        name: raw_before[name] for name in source_table_names
+    }
+    status = content_hub_status(hub_url, schema=schema)
+    assert status["bilingual_metadata_by_language"] == {"zh": 1, "en": 1}
+
+    invalid_cases = []
+    wrong_version = metadata_item("zh")
+    wrong_version["content_version_id"] += 10000
+    invalid_cases.append([wrong_version])
+    mismatched_version = metadata_item("zh")
+    alias = content_hub_show_url(
+        "https://content.example.test/alias?version=1", hub_url, schema=schema
+    )
+    mismatched_version["content_version_id"] = alias["versions"][0]["content_version_id"]
+    invalid_cases.append([mismatched_version])
+    wrong_variant = metadata_item("zh")
+    wrong_variant["markdown_text_variant_id"] += 1
+    invalid_cases.append([wrong_variant])
+    wrong_digest = metadata_item("zh")
+    wrong_digest["markdown_sha256"] = "0" * 64
+    invalid_cases.append([wrong_digest])
+    alias_markdown = next(
+        variant for variant in alias["text_variants"] if variant["field_name"] == "markdown_content"
+    )
+    valid_alias_record = metadata_item("en")
+    valid_alias_record.update(
+        {
+            "content_version_id": alias["versions"][0]["content_version_id"],
+            "markdown_text_variant_id": alias_markdown["text_variant_id"],
+            "markdown_sha256": alias_markdown["payload_sha256"],
+        }
+    )
+    invalid_cases.append([valid_alias_record, wrong_digest])
+    wrong_language = metadata_item("zh")
+    wrong_language["language_code"] = "fr"
+    invalid_cases.append([wrong_language])
+    empty_title = metadata_item("zh")
+    empty_title["title"] = "  "
+    invalid_cases.append([empty_title])
+    empty_keywords = metadata_item("zh")
+    empty_keywords["keywords"] = []
+    invalid_cases.append([empty_keywords])
+    unknown_category = metadata_item("zh")
+    unknown_category["category"] = "Unknown category"
+    invalid_cases.append([unknown_category])
+    conflicting_duplicate = metadata_item("zh")
+    invalid_cases.append([metadata_item("zh"), {**conflicting_duplicate, "title": "conflict"}])
+    for invalid in invalid_cases:
+        write_metadata(invalid)
+        before = _content_hub_state(hub_url, schema)
+        with pytest.raises(ContentHubError):
+            import_bilingual_metadata(metadata_path, hub_url, schema=schema)
+        assert _content_hub_state(hub_url, schema) == before
+
+    monkeypatch.setattr(
+        sys, "argv", ["ai-actuarial", "content-hub", "metadata", "import", "--help"]
+    )
+    with pytest.raises(SystemExit) as help_exit:
+        main()
+    assert help_exit.value.code == 0
+    assert "--input" in capsys.readouterr().out
 
 
 def test_import_rejects_corrupt_present_cas_without_mutating_hub_or_source_stage(
@@ -689,7 +910,7 @@ def test_import_rejects_corrupt_present_cas_without_mutating_hub_or_source_stage
     hub_before = _content_hub_state(hub_url, hub_schema)
     stage_before = _source_stage_state(stage_url, stage_schema)
     assert all(
-        state["count"] == (1 if table == "schema_migrations" else 0)
+        state["count"] == (2 if table == "schema_migrations" else 0)
         for table, state in hub_before.items()
     )
     assert stage_before["actual_counts"] == stage_before["stored_counts"]
@@ -745,7 +966,7 @@ def test_import_rolls_back_when_sqlite_source_changes_after_canonical_rows_are_w
     hub_before = _content_hub_state(hub_url, hub_schema)
     stage_before = _source_stage_state(stage_url, stage_schema)
     assert all(
-        state["count"] == (1 if table == "schema_migrations" else 0)
+        state["count"] == (2 if table == "schema_migrations" else 0)
         for table, state in hub_before.items()
     )
     assert stage_before["actual_counts"] == stage_before["stored_counts"]
