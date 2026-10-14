@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import os
 import re
 import secrets
 import threading
@@ -1388,7 +1387,9 @@ class NativeTaskRuntime:
                     "update_title": bool(data.get("update_title", False)),
                     "catalog_system_prompt": str(catalog_cfg.get("system_prompt") or "").strip()
                     or None,
-                    "output_language": str(data.get("output_language") or "auto").strip() or "auto",
+                    "output_language": str(data.get("output_language") or "bilingual").strip()
+                    or "bilingual",
+                    "require_bilingual": True,
                     "progress_callback": self._progress_callback(task_id),
                     "stop_check": lambda: self._stop_requested(task_id),
                     "task_id": task_id,

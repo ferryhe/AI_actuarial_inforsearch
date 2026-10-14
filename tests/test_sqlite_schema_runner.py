@@ -1606,6 +1606,7 @@ def test_schema_cli_plans_all_migrations_for_an_empty_postgresql_schema(tmp_path
     assert [action["file"] for action in actions] == [
         "0001_postgresql.sql",
         "0002_message_order.sql",
+        "0003_bilingual_catalog_metadata.sql",
     ][:POSTGRES_SCHEMA_VERSION]
     assert database_url not in plan_result.stdout
 

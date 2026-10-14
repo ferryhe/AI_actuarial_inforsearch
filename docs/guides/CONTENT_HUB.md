@@ -107,6 +107,20 @@ python -m ai_actuarial content-hub status --json
 
 Metadata appears under each content version's `bilingual_metadata` object, keyed by `zh` and `en`; status includes `bilingual_metadata_count` and per-language counts. Reimporting identical records is unchanged. An existing language record is fill-only: nonempty title, summary, category, and keywords remain as stored, while blank fields can be filled with provenance recorded for that fill. A different Markdown binding or conflicting duplicate item is rejected.
 
+## Sync into the application catalog
+
+`content-hub metadata sync-catalog` copies only missing Chinese and English catalog fields into the already initialized application database. The content hub is read-only for this command. It matches each record by the exact stored URL and the original file SHA-256 in `content_versions`; the Markdown payload digest and content-hub IDs are retained only as version/variant binding metadata. The hub and application databases must be separate PostgreSQL databases.
+
+Configure `CONTENT_HUB_DATABASE_URL` for the hub and use the application's existing `DATABASE_URL` for the target. An explicit target URL can be passed when the current environment points elsewhere:
+
+```powershell
+$env:CONTENT_HUB_DATABASE_URL = '<private PostgreSQL URL for the content-hub database>'
+$env:DATABASE_URL = '<private PostgreSQL URL for the existing application database>'
+python -m ai_actuarial content-hub metadata sync-catalog --json
+```
+
+The JSON result reports updated, unchanged, unmatched, changed-version, and conflicting records, plus the number of individual fields filled. Repeating the command is idempotent. Existing nonempty target titles, summaries, keywords, and canonical categories are retained; an existing canonical category is applied to both language packages. No application schema is created against the content-hub connection.
+
 ## Failure and rerun behavior
 
 Use `--json` for scripts. A successful exact rerun returns `already_imported: true` for a hub import or `state: "unchanged"` for a source stage after checking stored counts and hashes. A changed source, manifest, conflicting source name, nonempty stage database, invalid declared-present CAS payload, or corrupted stored stage aborts before a successful response. Files explicitly marked missing remain recorded as missing. CLI failures return exit code 2 and a JSON error when `--json` is set. Never resolve a conflict by deleting source rows or replacing the manifest in place; preserve the archive and start a new, explicitly named snapshot workflow.

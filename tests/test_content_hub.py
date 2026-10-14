@@ -674,6 +674,39 @@ def test_content_hub_import_keeps_alias_versions_text_and_source_namespaces(tmp_
     assert hashlib.sha256(first_path.read_bytes()).hexdigest() == first_sha
 
 
+def test_bilingual_metadata_validator_requires_one_category_per_content_version(
+    tmp_path: Path,
+) -> None:
+    item = {
+        "content_version_id": 1,
+        "markdown_text_variant_id": 2,
+        "markdown_sha256": "a" * 64,
+        "title": "Title",
+        "summary": "Summary",
+        "category": "AI",
+        "keywords": ["keyword"],
+        "recipe": "fixture",
+        "author": "fixture",
+    }
+    metadata_path = tmp_path / "split-category.json"
+    metadata_path.write_text(
+        json.dumps(
+            {
+                "format": "ai_actuarial.content_hub.generated_metadata",
+                "version": 1,
+                "items": [
+                    {**item, "language_code": "zh"},
+                    {**item, "language_code": "en", "category": "Data & Analytics"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ContentHubError, match="share a canonical category"):
+        content_hub._validate_bilingual_metadata_input(metadata_path)
+
+
 def test_bilingual_metadata_import_is_version_bound_fill_only_and_idempotent(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
@@ -787,7 +820,7 @@ def test_bilingual_metadata_import_is_version_bound_fill_only_and_idempotent(
             {
                 "title": "replacement title",
                 "summary": f"filled {language} summary",
-                "category": "AI",
+                "category": "Life",
                 "keywords": [f"filled-{language}"],
                 "recipe": "offline-summary-v2",
                 "author": "second-controller",
@@ -866,6 +899,10 @@ def test_bilingual_metadata_import_is_version_bound_fill_only_and_idempotent(
     unknown_category = metadata_item("zh")
     unknown_category["category"] = "Unknown category"
     invalid_cases.append([unknown_category])
+    split_categories = [metadata_item("zh"), metadata_item("en")]
+    split_categories[0]["category"] = "AI"
+    split_categories[1]["category"] = "Data & Analytics"
+    invalid_cases.append(split_categories)
     conflicting_duplicate = metadata_item("zh")
     invalid_cases.append([metadata_item("zh"), {**conflicting_duplicate, "title": "conflict"}])
     for invalid in invalid_cases:
@@ -874,6 +911,48 @@ def test_bilingual_metadata_import_is_version_bound_fill_only_and_idempotent(
         with pytest.raises(ContentHubError):
             import_bilingual_metadata(metadata_path, hub_url, schema=schema)
         assert _content_hub_state(hub_url, schema) == before
+
+    connection = psycopg2.connect(hub_url)
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "DELETE FROM bilingual_metadata WHERE content_version_id = %s "
+                "AND language_code = 'en'",
+                (version_id,),
+            )
+        connection.commit()
+    finally:
+        connection.close()
+
+    before_sibling_conflict = _content_hub_state(hub_url, schema)
+    mismatched_sibling = metadata_item("en")
+    mismatched_sibling["category"] = "AI"
+    write_metadata([mismatched_sibling])
+    with pytest.raises(ContentHubError, match="conflicts with an existing language package"):
+        import_bilingual_metadata(metadata_path, hub_url, schema=schema)
+    assert _content_hub_state(hub_url, schema) == before_sibling_conflict
+
+    matching_sibling = metadata_item("en")
+    write_metadata([matching_sibling])
+    imported_sibling = import_bilingual_metadata(metadata_path, hub_url, schema=schema)
+    assert imported_sibling["inserted_count"] == 1
+    assert imported_sibling["unchanged_count"] == 0
+    repeated_sibling = import_bilingual_metadata(metadata_path, hub_url, schema=schema)
+    assert repeated_sibling["inserted_count"] == 0
+    assert repeated_sibling["unchanged_count"] == 1
+
+    first_language_only = metadata_item("zh")
+    first_language_only.update(
+        {
+            "content_version_id": alias["versions"][0]["content_version_id"],
+            "markdown_text_variant_id": alias_markdown["text_variant_id"],
+            "markdown_sha256": alias_markdown["payload_sha256"],
+        }
+    )
+    write_metadata([first_language_only])
+    first_language_result = import_bilingual_metadata(metadata_path, hub_url, schema=schema)
+    assert first_language_result["inserted_count"] == 1
+    assert first_language_result["unchanged_count"] == 0
 
     monkeypatch.setattr(
         sys, "argv", ["ai-actuarial", "content-hub", "metadata", "import", "--help"]

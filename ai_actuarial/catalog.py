@@ -6,7 +6,6 @@ import json
 import logging
 import os
 import re
-import string
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
@@ -219,6 +218,7 @@ class CatalogItem:
     keywords: list[str]
     summary: str
     category: str
+    bilingual_metadata: dict[str, object] | None = None
 
 
 # ---------------------------------------------------------------------------

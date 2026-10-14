@@ -44,11 +44,13 @@ it("hides the start index and starts new Catalog tasks at the beginning", async 
   expect(screen.getByTestId("stats-banner")).toHaveTextContent("Candidates0");
   expect(screen.queryByText("First candidate #")).not.toBeInTheDocument();
   expect(screen.queryByTestId("input-start-index")).not.toBeInTheDocument();
+  expect(screen.queryByTestId("select-output-language")).not.toBeInTheDocument();
+  expect(screen.getByTestId("text-catalog-language-mode")).toBeInTheDocument();
   await user.clear(screen.getByTestId("input-scan-count"));
   await user.type(screen.getByTestId("input-scan-count"), "25");
   await user.click(screen.getByTestId("run-catalog"));
 
-  expect(submit).toHaveBeenCalledWith(expect.objectContaining({ scan_count: 25, scan_start_index: 1 }));
+  expect(submit).toHaveBeenCalledWith(expect.objectContaining({ scan_count: 25, scan_start_index: 1, output_language: "bilingual" }));
 });
 
 it("keeps an existing scheduled Catalog task start index in settings mode", async () => {

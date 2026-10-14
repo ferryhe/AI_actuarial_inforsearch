@@ -279,6 +279,7 @@ _CORE_TABLE_ALLOWED_EXTRA_COLUMNS: dict[str, frozenset[str]] = {
             "original_filename",
             "local_path",
             "keywords_json",
+            "bilingual_metadata_json",
         }
     ),
 }

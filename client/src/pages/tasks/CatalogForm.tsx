@@ -32,7 +32,6 @@ export function CatalogForm({
   const [skipExisting, setSkipExisting] = useState(initialTask.skip_existing == null ? true : Boolean(initialTask.skip_existing));
   const [overwriteExisting, setOverwriteExisting] = useState(Boolean(initialTask.overwrite_existing));
   const [updateTitle, setUpdateTitle] = useState(Boolean(initialTask.update_title));
-  const [outputLanguage, setOutputLanguage] = useState(String(initialTask.output_language || "auto"));
   const [stats, setStats] = useState<Record<string, unknown> | null>(null);
   const [statsLoading, setStatsLoading] = useState(false);
   const categoryOptions = [
@@ -79,7 +78,7 @@ export function CatalogForm({
       skip_existing: skipExisting,
       overwrite_existing: overwriteExisting,
       update_title: updateTitle,
-      output_language: outputLanguage,
+      output_language: "bilingual",
     };
   };
 
@@ -138,16 +137,9 @@ export function CatalogForm({
         <SelectField value={inputSource} onChange={(value) => { setInputSource(value); loadStats(scopeMode === "category" ? category : undefined, value); }} testId="select-input-source"
           options={[{ value: "markdown", label: "Markdown" }, { value: "source", label: "Source" }]} />
       </FormField>
-      {catalogProviders.length > 0 && (
-        <FormField label={t("tasks.form.output_language")}>
-          <SelectField value={outputLanguage} onChange={setOutputLanguage} testId="select-output-language"
-            options={[
-              { value: "auto", label: t("tasks.form.lang_auto") },
-              { value: "en", label: t("tasks.form.lang_en") },
-              { value: "zh", label: t("tasks.form.lang_zh") },
-            ]} />
-        </FormField>
-      )}
+      <p className="text-xs text-muted-foreground" data-testid="text-catalog-language-mode">
+        {t("tasks.form.bilingual_metadata_note")}
+      </p>
       <div className="flex flex-wrap gap-x-5 gap-y-2">
         <CheckboxField checked={retryErrors} onChange={setRetryErrors} label={t("tasks.form.retry_errors")} testId="checkbox-retry-errors" />
         <CheckboxField checked={skipExisting} onChange={(v) => { setSkipExisting(v); if (v) setOverwriteExisting(false); }}

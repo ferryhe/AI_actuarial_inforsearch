@@ -488,6 +488,7 @@ def cmd_content_hub(args: argparse.Namespace) -> int:
         content_hub_status,
         import_bilingual_metadata,
         import_content_snapshot,
+        sync_content_hub_catalog_metadata,
     )
     from .source_stage import SourceStageError, source_stage_schema_plan, stage_sqlite_v16
 
@@ -516,7 +517,16 @@ def cmd_content_hub(args: argparse.Namespace) -> int:
                 expected_source_name=args.source_name,
             )
         elif args.hub_cmd == "metadata":
-            payload = import_bilingual_metadata(args.input, schema=args.schema)
+            if args.metadata_cmd == "import":
+                payload = import_bilingual_metadata(args.input, schema=args.schema)
+            elif args.metadata_cmd == "sync-catalog":
+                target_database = args.target_database_url or resolve_database_config()
+                payload = sync_content_hub_catalog_metadata(
+                    target_database,
+                    schema=args.schema,
+                )
+            else:  # pragma: no cover - argparse enforces a valid subcommand
+                raise AssertionError(args.metadata_cmd)
         elif args.hub_cmd == "status":
             payload = content_hub_status(schema=args.schema)
         elif args.hub_cmd == "show":
@@ -1198,6 +1208,18 @@ def build_parser() -> argparse.ArgumentParser:
     p_content_hub_metadata_import.add_argument("--schema", default="content_hub")
     p_content_hub_metadata_import.add_argument("--json", action="store_true")
     p_content_hub_metadata_import.set_defaults(func=cmd_content_hub)
+
+    p_content_hub_metadata_sync = p_content_hub_metadata_sub.add_parser(
+        "sync-catalog",
+        help="Fill missing bilingual catalog fields from the separate content-hub database",
+    )
+    p_content_hub_metadata_sync.add_argument("--schema", default="content_hub")
+    p_content_hub_metadata_sync.add_argument(
+        "--target-database-url",
+        help="Existing application DATABASE_URL; defaults to the DATABASE_URL environment variable",
+    )
+    p_content_hub_metadata_sync.add_argument("--json", action="store_true")
+    p_content_hub_metadata_sync.set_defaults(func=cmd_content_hub)
 
     p_content_hub_status = p_content_hub_sub.add_parser(
         "status", help="Summarize source and content counts"

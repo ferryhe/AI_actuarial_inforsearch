@@ -34,6 +34,8 @@ import { useLatestRequestGuard } from "@/hooks/use-latest-request";
 import { useAuth } from "@/context/AuthContext";
 import ConfirmDeleteModal from "@/components/ConfirmDeleteModal";
 import { MarkdownContent } from "@/components/MarkdownContent";
+import { categoryDisplayName } from "@/lib/category-labels";
+import { hasCompleteLocalizedCatalogMetadata, localizedCatalogMetadata } from "@/lib/bilingual-metadata";
 
 interface FileData {
   url: string;
@@ -49,6 +51,7 @@ interface FileData {
   category?: string;
   summary?: string;
   keywords?: string[];
+  bilingual_metadata?: unknown;
   catalog_status?: string;
   catalog_version?: string;
   catalog_model?: string;
@@ -316,7 +319,7 @@ function TaskStatusBadge({ status, t }: { status: TaskStatus; t: (k: string) => 
 }
 
 export default function FileDetail() {
-  const { t } = useTranslation();
+  const { t, lang } = useTranslation();
   const { permissions } = useAuth();
   const canReadConfig = permissions.includes("config.read");
   const canRunTasks = permissions.includes("tasks.run");
@@ -362,6 +365,7 @@ export default function FileDetail() {
   const [editCategory, setEditCategory] = useState("");
   const [editSummary, setEditSummary] = useState("");
   const [editKeywords, setEditKeywords] = useState("");
+  const [editLanguage, setEditLanguage] = useState<"en" | "zh">("en");
   const [saving, setSaving] = useState(false);
 
   const [allCategories, setAllCategories] = useState<string[]>([]);
@@ -391,7 +395,6 @@ export default function FileDetail() {
   const [catalogSource, setCatalogSource] = useState("markdown");
   const [catalogOverwrite, setCatalogOverwrite] = useState(false);
   const [catalogUpdateTitle, setCatalogUpdateTitle] = useState(false);
-  const [catalogOutputLanguage, setCatalogOutputLanguage] = useState("auto");
   const [catalogSubmitting, setCatalogSubmitting] = useState(false);
 
   const taskOptions = useTaskOptions(canReadConfig);
@@ -539,10 +542,12 @@ export default function FileDetail() {
   function startEdit() {
     setMutationError(null);
     if (!file) return;
-    setEditTitle(file.title || "");
-    setEditCategory(file.category || "");
-    setEditSummary(file.summary || "");
-    setEditKeywords((file.keywords || []).join(", "));
+    const metadata = localizedCatalogMetadata(file.bilingual_metadata, lang, file);
+    setEditLanguage(lang === "zh" ? "zh" : "en");
+    setEditTitle(metadata.title || "");
+    setEditCategory(metadata.category || "");
+    setEditSummary(metadata.summary || "");
+    setEditKeywords(metadata.keywords.join(", "));
     setEditing(true);
   }
 
@@ -552,9 +557,12 @@ export default function FileDetail() {
     setSaving(true);
     try {
       const kws = editKeywords.split(",").map((k) => k.trim()).filter(Boolean);
-      const titleChanged = editTitle.trim() !== (file.title || "").trim();
+      const currentMetadata = localizedCatalogMetadata(file.bilingual_metadata, editLanguage, file);
+      const titleChanged = editTitle.trim() !== (currentMetadata.title || "").trim();
+      const languagePackageIsComplete = hasCompleteLocalizedCatalogMetadata(file.bilingual_metadata, editLanguage);
       const res = await apiPost<{ file?: FileData }>("/api/files/update", {
         url: file.url,
+        ...(languagePackageIsComplete ? { lang: editLanguage } : {}),
         title: titleChanged ? editTitle.trim() : undefined,
         category: editCategory || undefined,
         summary: editSummary || undefined,
@@ -620,9 +628,9 @@ export default function FileDetail() {
         name: `Catalog: ${file.title || file.original_filename}`,
         file_urls: [file.url],
         input_source: catalogSource,
+        output_language: "bilingual",
         overwrite_existing: catalogOverwrite,
         update_title: catalogUpdateTitle,
-        output_language: catalogOutputLanguage,
       });
       setShowCatalogModal(false);
       catalogPoller.start(res.job_id);
@@ -736,8 +744,9 @@ export default function FileDetail() {
     );
   }
 
-  const selectedCategories = (editing ? editCategory : file.category || "").split(";").map((c) => c.trim()).filter(Boolean);
-  const keywords = editing ? editKeywords.split(",").map((k) => k.trim()).filter(Boolean) : file.keywords || [];
+  const displayMetadata = localizedCatalogMetadata(file.bilingual_metadata, lang, file);
+  const selectedCategories = (editing ? editCategory : displayMetadata.category || "").split(";").map((c) => c.trim()).filter(Boolean);
+  const keywords = editing ? editKeywords.split(",").map((k) => k.trim()).filter(Boolean) : displayMetadata.keywords;
   const hasMarkdown = !!(markdown?.markdown_content);
   const isDeleted = !!file.deleted_at;
   const hasLocalFile = !!file.local_path && !isDeleted;
@@ -771,7 +780,7 @@ export default function FileDetail() {
         </button>
         <div className="min-w-0 flex-1">
           <h1 className="text-xl sm:text-2xl font-serif font-bold tracking-tight truncate" data-testid="text-file-title">
-            {file.title || file.original_filename || "Untitled"}
+            {displayMetadata.title || file.original_filename || "Untitled"}
           </h1>
           <div className="flex items-center gap-2 mt-0.5 flex-wrap">
             <span className={cn("text-[10px] font-semibold px-2 py-0.5 rounded-full", contentTypeBadgeColor(file.content_type))}>
@@ -916,7 +925,7 @@ export default function FileDetail() {
                 placeholder={t("fv.title_ph")} data-testid="input-title" />
             ) : (
               <p className="text-sm font-medium" data-testid="text-title">
-                {file.title || <span className="text-muted-foreground italic">{file.original_filename}</span>}
+                {displayMetadata.title || <span className="text-muted-foreground italic">{file.original_filename}</span>}
               </p>
             )}
           </div>
@@ -928,7 +937,7 @@ export default function FileDetail() {
                 <div className="flex flex-wrap gap-1.5">
                   {selectedCategories.map((c) => (
                     <span key={c} className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full bg-primary/10 text-primary">
-                      {c}
+                      {categoryDisplayName(c, editLanguage)}
                       <button aria-label={`Remove ${c}`} onClick={() => toggleCategory(c)} className="min-h-[44px] min-w-[44px] -my-2 -mr-2 inline-flex items-center justify-center hover:text-destructive"><X className="w-3 h-3" /></button>
                     </span>
                   ))}
@@ -944,7 +953,7 @@ export default function FileDetail() {
                       <button key={c} onClick={() => toggleCategory(c)}
                         className={cn("min-h-[44px] min-w-[44px] px-2 py-1 text-xs rounded-full border transition-colors",
                           selectedCategories.includes(c) ? "border-primary bg-primary/10 text-primary" : "border-border hover:border-primary/50"
-                        )} data-testid={`button-cat-${c}`}>{c}</button>
+                        )} data-testid={`button-cat-${c}`}>{categoryDisplayName(c, editLanguage)}</button>
                     ))}
                   </div>
                 )}
@@ -953,7 +962,7 @@ export default function FileDetail() {
               <div className="flex flex-wrap gap-1.5">
                 {selectedCategories.length > 0
                   ? selectedCategories.map((c) => (
-                    <span key={c} className="text-xs px-2 py-1 rounded-full bg-primary/10 text-primary">{c}</span>
+                    <span key={c} className="text-xs px-2 py-1 rounded-full bg-primary/10 text-primary">{categoryDisplayName(c, lang)}</span>
                   ))
                   : <span className="text-xs text-muted-foreground">{t("fv.uncategorized")}</span>
                 }
@@ -969,7 +978,7 @@ export default function FileDetail() {
                 placeholder={t("fv.no_summary")} data-testid="input-summary" />
             ) : (
               <p className="text-sm whitespace-pre-wrap" data-testid="text-summary">
-                {file.summary || <span className="text-muted-foreground italic">{t("fv.no_summary")}</span>}
+                {displayMetadata.summary || <span className="text-muted-foreground italic">{t("fv.no_summary")}</span>}
               </p>
             )}
           </div>
@@ -1176,20 +1185,9 @@ export default function FileDetail() {
                 </span>
               </label>
             )}
-            {taskOptions.catalogProviders.length > 0 && (
-              <div>
-                <label htmlFor="select-output-language" className="text-xs font-medium text-muted-foreground mb-1 block">{t("tasks.form.output_language")}</label>
-                <select id="select-output-language"
-                  value={catalogOutputLanguage}
-                  onChange={(e) => setCatalogOutputLanguage(e.target.value)}
-                  className="w-full min-h-[48px] px-3 py-2 text-sm rounded-lg border border-border bg-background"
-                  data-testid="select-output-language">
-                  <option value="auto">{t("tasks.form.lang_auto")}</option>
-                  <option value="en">{t("tasks.form.lang_en")}</option>
-                  <option value="zh">{t("tasks.form.lang_zh")}</option>
-                </select>
-              </div>
-            )}
+            <p className="text-xs text-muted-foreground" data-testid="text-catalog-language-mode">
+              {t("tasks.form.bilingual_metadata_note")}
+            </p>
             <div className="flex justify-end gap-2 pt-2 border-t border-border">
               <button onClick={() => { setMutationError(null); setShowCatalogModal(false); }} className="min-h-[48px] text-sm px-3 py-2 rounded-lg border border-border hover:bg-muted transition-colors">
                 {t("fv.cancel")}

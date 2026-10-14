@@ -13,7 +13,7 @@ import psycopg2
 import pytest
 from psycopg2.extensions import quote_ident
 
-from ai_actuarial.postgres import DatabaseConfig, PostgresConnection
+from ai_actuarial.postgres import POSTGRES_SCHEMA_VERSION, DatabaseConfig, PostgresConnection
 from ai_actuarial.storage import Storage
 from scripts import production_recovery
 
@@ -144,7 +144,7 @@ def test_online_database_backup_is_repeatable_and_records_success(tmp_path: Path
     assert manifest["status"] == "success"
     assert manifest["finished_at"] == "2026-08-16T12:00:10Z"
     assert manifest["database"]["connectivity_check"] == "ok"
-    assert manifest["database"]["schema_version"] == 2
+    assert manifest["database"]["schema_version"] == POSTGRES_SCHEMA_VERSION
     assert manifest["database"]["path"] == "database/postgresql.dump"
     assert manifest["included_data_directories"] == []
 
@@ -405,7 +405,7 @@ def test_release_record_captures_image_config_and_schema_versions(tmp_path: Path
     assert record["image_digest"] == "sha256:" + "d" * 64
     assert record["git_sha"] == "abc123"
     assert record["git_dirty"] is False
-    assert record["schema_version"] == 2
+    assert record["schema_version"] == POSTGRES_SCHEMA_VERSION
     assert record["config_sha256"]
     assert json.loads(output.read_text(encoding="utf-8")) == record
 

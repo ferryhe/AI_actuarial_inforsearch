@@ -28,6 +28,7 @@ import { useTranslation } from "@/components/Layout";
 import { useAuth } from "@/context/AuthContext";
 import { apiGet, apiPost } from "@/lib/api";
 import { categoryDisplayName } from "@/lib/category-labels";
+import { localizedCatalogMetadata } from "@/lib/bilingual-metadata";
 import {
   buildDatabaseLocation,
   buildFilesParams,
@@ -58,6 +59,7 @@ interface FileItem {
   category: string | null;
   keywords: unknown;
   summary: string | null;
+  bilingual_metadata?: unknown;
   has_markdown: boolean;
   markdown_source: string | null;
   bytes: number | null;
@@ -500,7 +502,8 @@ export default function DatabasePage() {
   }
 
   function explainFile(file: FileItem) {
-    const displayName = getCanonicalDisplayName(file, t("dashboard.untitled_material"));
+    const metadata = localizedCatalogMetadata(file.bilingual_metadata, lang, file);
+    const displayName = getCanonicalDisplayName({ ...file, title: metadata.title }, t("dashboard.untitled_material"));
     const filename = getChatValidName(file.original_filename) || displayName;
     databaseScrollCache.set(locationKey, window.scrollY);
     navigate("/chat", {
@@ -509,7 +512,7 @@ export default function DatabasePage() {
           file_url: file.url,
           filename,
           title: displayName,
-          category: file.category || "",
+          category: metadata.category,
           keywords: [],
         },
       },
@@ -883,14 +886,19 @@ export default function DatabasePage() {
           </div>
 
           {files.map((file, i) => {
+            const metadata = localizedCatalogMetadata(file.bilingual_metadata, lang, file);
             const hasMd = file.has_markdown;
             const isDeleted = !!file.deleted_at;
             const isSelected = selectedUrls.includes(file.url);
-            const displayName = getCanonicalDisplayName(file, t("dashboard.untitled_material"));
+            const displayName = getCanonicalDisplayName({ ...file, title: metadata.title }, t("dashboard.untitled_material"));
             const displayDate = file.first_seen;
-            const categoryText = normalizePublicCategory(file.category);
-            const keywordText = normalizePublicKeywords(file.keywords).join(", ");
-            const summaryText = normalizePublicMetadataText(file.summary);
+            const categoryText = normalizePublicCategory(metadata.category)
+              .split(";")
+              .map((name) => categoryDisplayName(name.trim(), lang))
+              .filter((name) => name !== "-")
+              .join("; ");
+            const keywordText = normalizePublicKeywords(metadata.keywords).join(", ");
+            const summaryText = normalizePublicMetadataText(metadata.summary);
             const selectionLabel = t(isSelected ? "db.deselect_file" : "db.select_file");
             const explainLabel = t(hasMd ? "db.explain_with_ai" : "db.explain_unavailable");
 

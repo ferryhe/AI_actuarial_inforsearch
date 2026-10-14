@@ -226,6 +226,36 @@ def test_fastapi_file_mutations_download_and_export_work(tmp_path: Path, monkeyp
     assert deleted["deleted_at"]
 
 
+def test_fastapi_file_update_accepts_language_and_returns_bilingual_metadata(
+    tmp_path: Path, monkeypatch
+) -> None:
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch)
+    headers = {"Authorization": f"Bearer {seed['operator_token']}"}
+
+    response = client.post(
+        "/api/files/update",
+        json={
+            "url": seed["alpha_url"],
+            "lang": "zh",
+            "title": "中文标题",
+            "category": "Life",
+            "summary": "中文摘要",
+            "keywords": ["中文关键词"],
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 200, response.text
+    bilingual = response.json()["file"]["bilingual_metadata"]
+    assert bilingual["zh"] == {
+        "title": "中文标题",
+        "summary": "中文摘要",
+        "category": "Life",
+        "keywords": ["中文关键词"],
+    }
+    assert bilingual["en"] == {"category": "Life"}
+
+
 def test_filtered_export_matches_database_filters_and_uses_safe_fields(
     tmp_path: Path, monkeypatch
 ) -> None:

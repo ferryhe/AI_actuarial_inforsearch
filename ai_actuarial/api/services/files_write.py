@@ -107,6 +107,7 @@ def update_file_record(*, db_path: str, payload: dict[str, Any]) -> dict[str, An
     category = payload.get("category")
     summary = payload.get("summary")
     keywords = payload.get("keywords")
+    lang = payload.get("lang")
 
     if title is not None:
         title = str(title).strip() or None
@@ -116,6 +117,8 @@ def update_file_record(*, db_path: str, payload: dict[str, Any]) -> dict[str, An
         category = str(category).strip()
     if keywords is not None and not isinstance(keywords, list):
         raise FileWriteError("Keywords must be a list")
+    if lang is not None and str(lang).strip().lower() not in {"zh", "en"}:
+        raise FileWriteError("Language must be zh or en")
 
     storage = Storage(db_path)
     try:
@@ -128,6 +131,7 @@ def update_file_record(*, db_path: str, payload: dict[str, Any]) -> dict[str, An
             category=category,
             summary=summary,
             keywords=keywords,
+            lang=str(lang).strip().lower() if lang is not None else None,
         )
         if not success and reason == "file_not_found":
             raise FileWriteError("File not found", status_code=404)

@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
 from ai_actuarial.ai_runtime import infer_embedding_dimension, infer_embedding_provider
+from ai_actuarial.bilingual_metadata import with_shared_category
 from ai_actuarial.postgres import (
     DatabaseConfig,
     PostgresConnection,
@@ -20,9 +21,6 @@ from ai_actuarial.postgres import (
     resolve_database_config,
 )
 from ai_actuarial.shared_auth import AuthTokenRecord, canonical_token_group
-from ai_actuarial.sqlite_schema import (
-    CURRENT_SQLITE_SCHEMA_VERSION,
-)
 
 AGENTIC_READY_PUBLICATION_PROFILES = frozenset({"general", "regulation", "formula"})
 
@@ -305,6 +303,7 @@ class Storage:
                 keywords TEXT,
                 summary TEXT,
                 category TEXT,
+                bilingual_metadata_json TEXT,
                 updated_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
             """)
@@ -425,6 +424,7 @@ class Storage:
                 "keywords": "TEXT",
                 "summary": "TEXT",
                 "category": "TEXT",
+                "bilingual_metadata_json": "TEXT",
                 "updated_at": "TEXT",
                 "markdown_content": "TEXT",
                 "markdown_updated_at": "TEXT",
@@ -2583,13 +2583,49 @@ class Storage:
             processed_ts = processed_at or self.now()
             updated_ts = self.now()
             effective_pipeline_version = pipeline_version or extractor_version or ""
+            existing_row = self._conn.execute(
+                "SELECT category, summary, keywords, bilingual_metadata_json "
+                "FROM catalog_items WHERE file_url = ?",
+                (file_url,),
+            ).fetchone()
+            requested_category = str(item.get("category") or "").strip()
+            successful_category = status.strip().lower() == "ok" and bool(requested_category)
+            category = (
+                requested_category if successful_category or not existing_row else existing_row[0]
+            )
+            summary = item.get("summary") or ""
+            keywords = json.dumps(item.get("keywords") or [], ensure_ascii=False)
+            bilingual_metadata_json = existing_row[3] if existing_row else None
+            if existing_row and status.strip().lower() in {"error", "skipped"}:
+                category = existing_row[0]
+                summary = existing_row[1]
+                keywords = existing_row[2]
+                bilingual_metadata_json = existing_row[3]
+            elif existing_row and not successful_category:
+                category = existing_row[0]
+                bilingual_metadata_json = existing_row[3]
+            elif successful_category:
+                bilingual_metadata = item.get("bilingual_metadata")
+                if not isinstance(bilingual_metadata, dict):
+                    bilingual_metadata = self._decode_bilingual_metadata(
+                        existing_row[3] if existing_row else None
+                    )
+                else:
+                    bilingual_metadata = dict(bilingual_metadata)
+            else:
+                bilingual_metadata = {}
+            if successful_category and bilingual_metadata:
+                bilingual_metadata_json = json.dumps(
+                    with_shared_category(bilingual_metadata, category),
+                    ensure_ascii=False,
+                )
             self._conn.execute(
                 """
                 INSERT INTO catalog_items (
                     file_url, sha256, pipeline_version, processed_at, status, error,
-                    keywords, summary, category, updated_at
+                    keywords, summary, category, bilingual_metadata_json, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(file_url) DO UPDATE SET
                     sha256=excluded.sha256,
                     pipeline_version=excluded.pipeline_version,
@@ -2599,6 +2635,7 @@ class Storage:
                     keywords=excluded.keywords,
                     summary=excluded.summary,
                     category=excluded.category,
+                    bilingual_metadata_json=COALESCE(excluded.bilingual_metadata_json, catalog_items.bilingual_metadata_json),
                     updated_at=excluded.updated_at
                 """,
                 (
@@ -2608,9 +2645,10 @@ class Storage:
                     processed_ts,
                     status,
                     error,
-                    json.dumps(item.get("keywords") or [], ensure_ascii=False),
-                    item.get("summary") or "",
-                    item.get("category") or "",
+                    keywords,
+                    summary,
+                    category,
+                    bilingual_metadata_json,
                     updated_ts,
                 ),
             )
@@ -2930,6 +2968,21 @@ class Storage:
 
         if query:
             join_clause = catalog_join_clause
+            bilingual_search = (
+                "OR LOWER(COALESCE(json_extract(c.bilingual_metadata_json, '$.zh.title'), '')) LIKE ? "
+                "OR LOWER(COALESCE(json_extract(c.bilingual_metadata_json, '$.zh.summary'), '')) LIKE ? "
+                "OR LOWER(COALESCE(json_extract(c.bilingual_metadata_json, '$.zh.keywords'), '')) LIKE ? "
+                "OR LOWER(COALESCE(json_extract(c.bilingual_metadata_json, '$.en.title'), '')) LIKE ? "
+                "OR LOWER(COALESCE(json_extract(c.bilingual_metadata_json, '$.en.summary'), '')) LIKE ? "
+                "OR LOWER(COALESCE(json_extract(c.bilingual_metadata_json, '$.en.keywords'), '')) LIKE ?"
+                if self._schema_only
+                else "OR LOWER(COALESCE(NULLIF(c.bilingual_metadata_json, '')::jsonb #>> '{zh,title}', '')) LIKE ? "
+                "OR LOWER(COALESCE(NULLIF(c.bilingual_metadata_json, '')::jsonb #>> '{zh,summary}', '')) LIKE ? "
+                "OR LOWER(COALESCE(NULLIF(c.bilingual_metadata_json, '')::jsonb #>> '{zh,keywords}', '')) LIKE ? "
+                "OR LOWER(COALESCE(NULLIF(c.bilingual_metadata_json, '')::jsonb #>> '{en,title}', '')) LIKE ? "
+                "OR LOWER(COALESCE(NULLIF(c.bilingual_metadata_json, '')::jsonb #>> '{en,summary}', '')) LIKE ? "
+                "OR LOWER(COALESCE(NULLIF(c.bilingual_metadata_json, '')::jsonb #>> '{en,keywords}', '')) LIKE ?"
+            )
             filters.append(
                 "(LOWER(COALESCE(f.title, '')) LIKE ? "
                 f"OR LOWER(COALESCE({snapshot_original_filename}, '')) LIKE ? "
@@ -2937,10 +2990,11 @@ class Storage:
                 "OR LOWER(COALESCE(c.summary, '')) LIKE ? "
                 "OR LOWER(COALESCE(c.keywords, '')) LIKE ? "
                 "OR LOWER(COALESCE(c.category, '')) LIKE ? "
-                "OR LOWER(COALESCE(c.markdown_content, '')) LIKE ?)"
+                "OR LOWER(COALESCE(c.markdown_content, '')) LIKE ? "
+                f"{bilingual_search})"
             )
             search_term = f"%{query.lower()}%"
-            params.extend([search_term] * 7)
+            params.extend([search_term] * 13)
 
         if source:
             filters.append("LOWER(f.source_site) LIKE ?")
@@ -3008,7 +3062,8 @@ class Storage:
                        THEN 1 ELSE 0
                    END AS has_markdown,
                    c.markdown_source, c.markdown_updated_at,
-                   c.rag_chunk_count, c.rag_indexed_at
+                   c.rag_chunk_count, c.rag_indexed_at,
+                   c.bilingual_metadata_json
             FROM {from_clause}
             {join_clause}
             WHERE {where_clause}
@@ -3044,6 +3099,7 @@ class Storage:
                 "markdown_updated_at": row[21],
                 "rag_chunk_count": row[22] or 0,
                 "rag_indexed_at": row[23],
+                "bilingual_metadata": self._decode_bilingual_metadata(row[24]),
             }
             files.append(file_dict)
 
@@ -3067,6 +3123,12 @@ class Storage:
                     return []
                 values = decoded
         return [value.strip() for value in values if isinstance(value, str) and value.strip()]
+
+    @staticmethod
+    def _decode_bilingual_metadata(raw: object) -> dict[str, Any]:
+        from .bilingual_metadata import parse_bilingual_metadata
+
+        return parse_bilingual_metadata(raw)
 
     def count_files_first_seen_between(
         self,
@@ -3790,7 +3852,8 @@ class Storage:
                    c.category, c.summary, c.keywords, c.status,
                    c.markdown_content, c.markdown_updated_at, c.markdown_source,
                    c.catalog_version, c.processed_at, c.updated_at,
-                   c.rag_chunk_count, c.rag_indexed_at
+                   c.rag_chunk_count, c.rag_indexed_at,
+                   c.bilingual_metadata_json
             FROM files f
             LEFT JOIN catalog_items c ON c.file_url = f.url
             WHERE f.url = ?
@@ -3830,6 +3893,7 @@ class Storage:
             "catalog_updated_at": row[25],
             "rag_chunk_count": row[26] or 0,
             "rag_indexed_at": row[27],
+            "bilingual_metadata": self._decode_bilingual_metadata(row[28]),
         }
 
     def update_file_metadata(
@@ -3840,6 +3904,7 @@ class Storage:
         category: str | None = None,
         summary: str | None = None,
         keywords: list | None = None,
+        lang: str | None = None,
     ) -> tuple[bool, str | None]:
         """Update builder-visible file/Catalog metadata as one source mutation."""
         with self.transaction(immediate=True):
@@ -3852,7 +3917,13 @@ class Storage:
             if not file_exists:
                 return (False, "file_not_found")
 
-            catalog_updates = any(value is not None for value in (category, summary, keywords))
+            language = str(lang or "").strip().lower()
+            if lang is not None and language not in {"zh", "en"}:
+                return (False, "invalid_language")
+
+            catalog_updates = any(
+                value is not None for value in (category, summary, keywords)
+            ) or bool(language)
             if title is None and not catalog_updates:
                 return (False, "no_updates")
 
@@ -3882,6 +3953,45 @@ class Storage:
                 if keywords is not None:
                     updates.append("keywords = ?")
                     params.append(json.dumps(keywords) if keywords else "")
+                if language:
+                    raw_metadata = self._conn.execute(
+                        "SELECT bilingual_metadata_json FROM catalog_items WHERE file_url = ?",
+                        (url,),
+                    ).fetchone()
+                    metadata = self._decode_bilingual_metadata(
+                        raw_metadata[0] if raw_metadata else None
+                    )
+                    for code in ("zh", "en"):
+                        entry = metadata.get(code)
+                        if not isinstance(entry, dict):
+                            metadata[code] = {}
+                    current = metadata[language]
+                    if title is not None:
+                        current["title"] = title
+                    if summary is not None:
+                        current["summary"] = summary
+                    if keywords is not None:
+                        current["keywords"] = keywords
+                    if category is not None:
+                        for code in ("zh", "en"):
+                            metadata[code]["category"] = category
+                    updates.append("bilingual_metadata_json = ?")
+                    params.append(json.dumps(metadata, ensure_ascii=False))
+                elif category is not None:
+                    raw_metadata = self._conn.execute(
+                        "SELECT bilingual_metadata_json FROM catalog_items WHERE file_url = ?",
+                        (url,),
+                    ).fetchone()
+                    metadata = self._decode_bilingual_metadata(
+                        raw_metadata[0] if raw_metadata else None
+                    )
+                    for code in ("zh", "en"):
+                        entry = metadata.get(code)
+                        if not isinstance(entry, dict):
+                            metadata[code] = {}
+                        metadata[code]["category"] = category
+                    updates.append("bilingual_metadata_json = ?")
+                    params.append(json.dumps(metadata, ensure_ascii=False))
                 updates.append("updated_at = CURRENT_TIMESTAMP")
                 params.append(url)
                 self._conn.execute(
@@ -3918,6 +4028,135 @@ class Storage:
             summary=summary,
             keywords=keywords,
         )
+
+    def merge_hub_bilingual_metadata(
+        self,
+        *,
+        url: str,
+        file_sha256: str,
+        metadata_by_language: dict[str, dict[str, Any]],
+    ) -> tuple[str, int]:
+        """Fill missing bilingual catalog fields from version-bound Hub metadata."""
+        with self.transaction(immediate=True):
+            self._lock_postgres_key("file", url)
+            before = self._ready_data_builder_metadata_snapshot(url)
+            file_row = self._conn.execute(
+                "SELECT sha256, deleted_at FROM files WHERE url = ?", (url,)
+            ).fetchone()
+            if file_row is None or file_row[1]:
+                return ("unmatched", 0)
+            if str(file_row[0] or "").strip().lower() != str(file_sha256 or "").strip().lower():
+                return ("version_changed", 0)
+
+            catalog_row = self._conn.execute(
+                "SELECT category, bilingual_metadata_json FROM catalog_items WHERE file_url = ?",
+                (url,),
+            ).fetchone()
+            legacy_category = str(catalog_row[0] or "").strip() if catalog_row else ""
+            metadata = self._decode_bilingual_metadata(catalog_row[1] if catalog_row else None)
+            for language in ("zh", "en"):
+                package = metadata.get(language)
+                if not isinstance(package, dict):
+                    metadata[language] = {}
+
+            for language in ("zh", "en"):
+                source = metadata_by_language.get(language)
+                if not isinstance(source, dict):
+                    continue
+                incoming_binding = source.get("hub_binding")
+                existing_binding = metadata[language].get("hub_binding")
+                if existing_binding is not None and existing_binding != incoming_binding:
+                    return ("conflict", 0)
+
+            hub_categories = {
+                str(metadata_by_language[language].get("category") or "").strip()
+                for language in ("zh", "en")
+                if isinstance(metadata_by_language.get(language), dict)
+                and str(metadata_by_language[language].get("category") or "").strip()
+            }
+            target_categories = {
+                str(metadata[language].get("category") or "").strip()
+                for language in ("zh", "en")
+                if str(metadata[language].get("category") or "").strip()
+            }
+            if len(target_categories) > 1:
+                return ("conflict", 0)
+            if legacy_category and target_categories and legacy_category not in target_categories:
+                return ("conflict", 0)
+            if not legacy_category and not target_categories and len(hub_categories) > 1:
+                return ("conflict", 0)
+            canonical_category = (
+                legacy_category
+                or next(iter(target_categories), "")
+                or next(iter(hub_categories), "")
+            )
+
+            changed = 0
+            binding_changed = False
+            for language in ("zh", "en"):
+                source = metadata_by_language.get(language)
+                target = metadata[language]
+                language_changed = 0
+                if isinstance(source, dict):
+                    for field in ("title", "summary"):
+                        current = target.get(field)
+                        incoming = source.get(field)
+                        if (
+                            not (isinstance(current, str) and current.strip())
+                            and isinstance(incoming, str)
+                            and incoming.strip()
+                        ):
+                            target[field] = incoming.strip()
+                            language_changed += 1
+                    current_keywords = target.get("keywords")
+                    has_keywords = isinstance(current_keywords, list) and any(
+                        isinstance(item, str) and item.strip() for item in current_keywords
+                    )
+                    incoming_keywords = source.get("keywords")
+                    if (
+                        not has_keywords
+                        and isinstance(incoming_keywords, list)
+                        and incoming_keywords
+                    ):
+                        target["keywords"] = [
+                            item.strip()
+                            for item in incoming_keywords
+                            if isinstance(item, str) and item.strip()
+                        ]
+                        if target["keywords"]:
+                            language_changed += 1
+                if canonical_category and not str(target.get("category") or "").strip():
+                    target["category"] = canonical_category
+                    language_changed += 1
+                if isinstance(source, dict) and isinstance(source.get("hub_binding"), dict):
+                    if target.get("hub_binding") is None:
+                        target["hub_binding"] = source["hub_binding"]
+                        binding_changed = True
+                changed += language_changed
+
+            if canonical_category and legacy_category != canonical_category:
+                changed += 1
+            package_json = json.dumps(metadata, ensure_ascii=False)
+            if changed == 0 and not binding_changed:
+                return ("unchanged", 0)
+
+            if catalog_row is None:
+                self._conn.execute(
+                    "INSERT INTO catalog_items (file_url, sha256, pipeline_version, status, "
+                    "category, bilingual_metadata_json, updated_at) "
+                    "VALUES (?, ?, 'content-hub-sync', 'ok', ?, ?, CURRENT_TIMESTAMP)",
+                    (url, file_sha256, canonical_category or None, package_json),
+                )
+            else:
+                self._conn.execute(
+                    "UPDATE catalog_items SET category = CASE "
+                    "WHEN TRIM(COALESCE(category, '')) = '' THEN ? ELSE category END, "
+                    "bilingual_metadata_json = ?, updated_at = CURRENT_TIMESTAMP "
+                    "WHERE file_url = ?",
+                    (canonical_category or None, package_json, url),
+                )
+            self._mark_ready_data_builder_metadata_change(file_url=url, before=before)
+            return ("updated", changed)
 
     def update_file_markdown(
         self, url: str, markdown_content: str, markdown_source: str = "manual"
