@@ -30,9 +30,15 @@ def _datetime_at_agentic_chat_sunset(offset_seconds: int) -> type[datetime]:
     return FrozenDateTime
 
 
-@pytest.fixture(autouse=True)
-def _legacy_chat_contract_tests_run_before_sunset(monkeypatch) -> None:
-    monkeypatch.setattr(agentic_rag_router, "datetime", _datetime_at_agentic_chat_sunset(-1))
+_ORIGINAL_AGENTIC_CHAT_DATETIME = agentic_rag_router.datetime
+
+
+def setup_module(_module: object) -> None:
+    agentic_rag_router.datetime = _datetime_at_agentic_chat_sunset(-1)
+
+
+def teardown_module(_module: object) -> None:
+    agentic_rag_router.datetime = _ORIGINAL_AGENTIC_CHAT_DATETIME
 
 
 def _write_config_files(base_dir: Path) -> Path:

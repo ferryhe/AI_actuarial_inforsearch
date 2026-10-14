@@ -7,7 +7,6 @@ import secrets
 from datetime import datetime, timedelta
 from pathlib import Path
 
-import pytest
 from fastapi.testclient import TestClient
 
 from ai_actuarial.api.middleware import rate_limit
@@ -34,9 +33,15 @@ def _datetime_at_agentic_chat_sunset(offset_seconds: int) -> type[datetime]:
     return FrozenDateTime
 
 
-@pytest.fixture(autouse=True)
-def _legacy_chat_contract_tests_run_before_sunset(monkeypatch) -> None:
-    monkeypatch.setattr(agentic_rag_router, "datetime", _datetime_at_agentic_chat_sunset(-1))
+_ORIGINAL_AGENTIC_CHAT_DATETIME = agentic_rag_router.datetime
+
+
+def setup_module(_module: object) -> None:
+    agentic_rag_router.datetime = _datetime_at_agentic_chat_sunset(-1)
+
+
+def teardown_module(_module: object) -> None:
+    agentic_rag_router.datetime = _ORIGINAL_AGENTIC_CHAT_DATETIME
 
 
 def _prepare_ready_agentic_kb(client: TestClient, monkeypatch) -> None:

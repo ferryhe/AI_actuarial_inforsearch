@@ -1,3 +1,11 @@
+# Simple parallel bilingual metadata and CI hooks — 2026-10-14
+
+- User requested one Markdown per fresh Luna/high context, three in parallel, with a separate importer and only basic field/source-ID checks. The two local scripts in reports/bilingual-metadata/simple-runner are running and have actually imported 295 document versions / 590 zh/en rows at this checkpoint.
+- The generator sends up to150k characters as one complete input, chunks longer texts, reuses successful notes/outputs, and records source gaps. The writer calls the existing reviewed core API; no source-excerpt, all-table fingerprint or repeated-readback gate delays generation.
+- Original source fields/CAS are retained. The pipeline is not fully complete;25versions lackMD and29nonemptyMDs are known empty-extraction placeholders. Additional unsupported bodies are recorded as gaps.
+- Three Luna contexts continue independently. Minor terminal-state/gap bookkeeping repairs are undergoing the configured scoped review without stopping the running pipeline. Previous real schema failure is fixed; both scripts now produce/import real metadata.
+- The existing two CI tests now use recognized setup_module/teardown_module hooks, preserving the production sunset and at/after410 checks.31focused tests andPython-symbol gatePASS; fresh review5 approved those diffs. Full local symbol gate cannotrun becauseKnip is missing; actual currentHEAD CI is the delivery gate.
+- Only the two CI testfiles andthisstatus are published inthisfollow-up; operation scripts/data remainlocalignored. Copilot user-disabled. No merge or website deployment is authorized.
 # 双语元数据逐篇生成与 CI 日期修复 — 2026-10-14
 
 - 项目 AI_actuarial_inforsearch / fix/bilingual-document-metadata；PR #425。只编辑本仓库，原 checkout 已有状态修改及四个未跟踪目录保留，兄弟仓库未访问。
