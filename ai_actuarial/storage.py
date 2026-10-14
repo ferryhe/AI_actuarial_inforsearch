@@ -2588,8 +2588,10 @@ class Storage:
                 "FROM catalog_items WHERE file_url = ?",
                 (file_url,),
             ).fetchone()
-            requested_category = str(item.get("category") or "").strip()
-            successful_category = status.strip().lower() == "ok" and bool(requested_category)
+            requested_category = str(item.get("category") or "")
+            successful_category = status.strip().lower() == "ok" and bool(
+                requested_category.strip()
+            )
             category = (
                 requested_category if successful_category or not existing_row else existing_row[0]
             )

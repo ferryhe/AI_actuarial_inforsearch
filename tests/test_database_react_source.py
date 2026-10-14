@@ -28,8 +28,9 @@ def test_database_file_rows_offer_ai_explain_via_chat_route_state():
     assert "file_url: file.url" in src
     assert "filename," in src
     assert "title: displayName" in src
-    assert "getCanonicalDisplayName(file" in src
-    assert 'category: file.category || ""' in src
+    assert "getCanonicalDisplayName({ ...file, title: metadata.title }" in src
+    assert "getChatValidName(file.original_filename) || displayName" in src
+    assert "category: metadata.category" in src
     assert "data-testid={`button-ai-explain-${i}`}" in src
     assert "data-testid={`button-ai-explain-mobile-${i}`}" in src
     assert "disabled={!hasMd || isDeleted}" in src
@@ -113,6 +114,7 @@ def test_database_uses_category_specific_public_metadata_normalization():
     src = DATABASE_TSX.read_text(encoding="utf-8")
     i18n = I18N_TS.read_text(encoding="utf-8")
 
-    assert "normalizePublicCategory(file.category)" in src
-    assert "normalizePublicMetadataText(file.category)" not in src
+    assert "normalizePublicCategory(metadata.category)" in src
+    assert "normalizePublicMetadataText(metadata.category)" not in src
+    assert "normalizePublicMetadataText(metadata.summary)" in src
     assert i18n.count('"db.clear_search"') == 2

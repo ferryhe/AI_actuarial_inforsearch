@@ -335,8 +335,9 @@ def _upsert_catalog_row(
     with _db_lock:
         write_conn = storage._conn if storage is not None else conn
         existing = _table_columns(write_conn, "catalog_items")
-        category = str(item.category or "").strip()
-        successful_category = status.strip().lower() == "ok" and bool(category)
+        category = str(item.category or "")
+        successful_category = status.strip().lower() == "ok" and bool(category.strip())
+        bilingual_metadata: dict[str, Any] = {}
         saved_fields = [
             field
             for field in (
@@ -562,6 +563,7 @@ def _process_single_row(
     local_path = row_data["local_path"]
     suggested_title: str | None = None
     failure_code = "catalog_failed"
+    bilingual_metadata: dict[str, Any] | None = None
 
     try:
         provider_norm = (provider or "local").strip().lower()
