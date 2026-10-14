@@ -1,12 +1,12 @@
 # 双语元数据试跑及入库 — 2026-10-14
 
 - 项目 AI_actuarial_inforsearch / fix/bilingual-document-metadata。原 checkout 的已有状态修改和四个未跟踪目录保留；兄弟仓库未访问。
-- 按用户授权，由 GPT-6-luna/high 新上下文直接读 Markdown。1/3/6/8 篇试跑均完成，共 18 个文档版本、36 条 zh/en 记录；6 篇组全文 129,567 字符约 6 分钟，8 篇组 95,417 字符约 4 分 42 秒。每批绑定版本、Markdown variant 和 JSON 字段哈希。
-- 本机 D 盘正式 content_hub 已实际应用追加迁移 v2 并入库这 36 条记录，逐字段数据库回读和精确重复导入 PASS。8 张原来源表全部行指纹及行数前后相同；9,767 个版本和 9,541 个原文 blob 保持不变。原来源字段/CAS 未改。
+- 按用户授权，由 GPT-6-luna/high 新上下文直接读 Markdown。1/3/6/8 篇试跑均完成，首轮 18 个文档版本已通过；随后三批继续完成，目前共 40 个文档版本、80 条 zh/en 记录；6 篇组全文 129,567 字符约 6 分钟，8 篇组 95,417 字符约 4 分 42 秒。每批绑定版本、Markdown variant 和 JSON 字段哈希。
+- 本机 D 盘正式 content_hub 已实际应用追加迁移 v2 并入库这 80 条记录，逐字段数据库回读和精确重复导入 PASS。8 张原来源表全部行指纹及行数前后相同；9,767 个版本和 9,541 个原文 blob 保持不变。原来源字段/CAS 未改。
 - 可处理 Markdown 共 9,742 个版本，另 25 个没有正文，不能据标题编摘要；全量尚未完成。其余批次及断点队列正在处理，普通上下文按 6–8 篇且约 150,000 字符控制，长文需分段后汇总。
 - 存储代码 fresh 独立 Sol/high 审核 PASS。Windows 常规 pytest 因既有 FAISS 全局夹具崩溃无法启动；同 13 项隔离 PG 测试 PASS，Linux 原始 conftest/真实 Git 临时快照 13/13 PASS。Black、Ruff、py_compile、CLI help、diff-check PASS；0001 迁移不变，新 0002 为 LF。
 - 仅更改 content_hub、CLI、0002 迁移、聚焦测试、CONTENT_HUB 指南和本状态。网站尚未接入新表；这次完成可按版本及 zh/en 查询的数据结构，不部署网站。
-- 操作证据与逐文档输出在 reports/bilingual-metadata，初批实际回执 initial-18-import.json，来源指纹 source-state-before.json，审核 review-1.md。依项目规则发布 PR，Copilot 按用户偏好禁用，仅等待真实当前提交 CI 并处理有范围的非 Copilot 反馈。
+- 操作证据与逐文档输出在 reports/bilingual-metadata，实际回执 initial-18-import.json 与 next-22-import.json，来源指纹 source-state-before.json，审核 review-1.md。依项目规则发布 PR，Copilot 按用户偏好禁用，仅等待真实当前提交 CI 并处理有范围的非 Copilot 反馈。
 
 # Bilingual metadata storage — 2026-10-14
 

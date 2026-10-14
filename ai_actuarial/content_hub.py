@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any, Iterable
+
 import psycopg2
 from psycopg2 import sql
 from psycopg2.extras import Json
