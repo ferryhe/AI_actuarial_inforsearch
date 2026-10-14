@@ -31,6 +31,19 @@ it("uses a visible Markdown editor label", async () => {
   expect(markdown.labels?.[0]).not.toHaveClass("sr-only");
 });
 
+it("submits bilingual catalog generation from the file-detail entry point", async () => {
+  apiPost.mockResolvedValueOnce({ job_id: "catalog-job" });
+  const user = userEvent.setup();
+  render(<Layout><FileDetail /></Layout>);
+  await user.click(await screen.findByTestId("button-catalog"));
+  expect(screen.getByTestId("text-catalog-language-mode")).toHaveTextContent("Chinese and English");
+  await user.click(screen.getByTestId("button-submit-catalog"));
+  await waitFor(() => expect(apiPost).toHaveBeenCalledWith("/api/collections/run", expect.objectContaining({
+    type: "catalog",
+    output_language: "bilingual",
+  })));
+});
+
 it("describes a rejected chunk submission from Submit, not the profile selector", async () => {
   apiPost.mockResolvedValueOnce({});
   const user = userEvent.setup(); render(<Layout><FileDetail /></Layout>);
@@ -56,6 +69,48 @@ it("describes a rejected edit save from the initiating action", async () => {
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   await user.click(screen.getByTestId("button-edit"));
   expect(screen.getByTestId("button-save")).not.toHaveAttribute("aria-describedby");
+});
+
+it("saves an edit through the legacy contract when the selected language package is incomplete", async () => {
+  apiGet.mockReset();
+  apiPost.mockReset();
+  const file = {
+    url: "file-smoke",
+    title: "Legacy title",
+    original_filename: "smoke.pdf",
+    source_site: "smoke",
+    content_type: "text/plain",
+    bytes: 12,
+    local_path: "/tmp/smoke.txt",
+    category: "Life",
+    summary: "Legacy summary",
+    keywords: ["legacy"],
+    bilingual_metadata: {
+      zh: { title: "中文标题", summary: "中文摘要", category: "Life", keywords: ["中文"] },
+    },
+  };
+  apiGet.mockImplementation((url) => Promise.resolve(
+    url.includes("/detail") ? { file }
+      : url.includes("/markdown") ? { markdown: { markdown_content: "text", markdown_source: "manual" } }
+        : url.includes("categories") ? { categories: { Life: [] } }
+          : { chunk_sets: [] },
+  ));
+  const savedFile = { ...file, title: "Edited legacy title" };
+  apiPost.mockResolvedValueOnce({ file: savedFile });
+
+  const user = userEvent.setup();
+  render(<Layout><FileDetail /></Layout>);
+  await user.click(await screen.findByTestId("button-edit"));
+  await user.clear(screen.getByTestId("input-title"));
+  await user.type(screen.getByTestId("input-title"), "Edited legacy title");
+  await user.click(screen.getByTestId("button-save"));
+
+  await waitFor(() => expect(apiPost).toHaveBeenCalledWith("/api/files/update", expect.objectContaining({
+    url: "file-smoke",
+    title: "Edited legacy title",
+  })));
+  expect(apiPost.mock.calls.at(-1)?.[1]).not.toHaveProperty("lang");
+  expect(await screen.findByTestId("text-file-title")).toHaveTextContent("Edited legacy title");
 });
 
 it("describes a rejected delete from the confirmed delete action", async () => {

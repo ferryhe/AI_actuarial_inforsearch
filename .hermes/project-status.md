@@ -1,3 +1,69 @@
+# 当前 PR #425：双语前台/Catalog及汇总库同步 — 2026-10-14T19:56:34+00:00
+
+- 项目 AI_actuarial_inforsearch；分支 fix/bilingual-document-metadata，任务工作树 reports/bilingual-metadata-worktree；原 checkout 修改及四个未跟踪目录保留，兄弟仓库未访问。范围为目录 JSON/PG0003、生成与增量补齐、Storage/API/搜索/编辑、Database/FileDetail/两Catalog入口、Hub同步CLI及相关测试和指南。
+- 前台列表/详情使用现有语言按钮显示中英完整元数据；编辑仅更新所选语言，另一套保留。Catalog固定输出完整中英，移除原文语言选项；分类共享规范键并按界面翻译，错误/跳过不清除已保存信息，旧local调用保留原合同。Hub导入同版本分类一致；同步按URL/原文件SHA及Markdown绑定，只补空值并报告冲突。
+- Linux原始conftest/真实Git隔离快照/独立PG16：213测试与13子测试PASS；前端12测试、typecheck/build、Chrome真实渲染fixture smoke PASS。Black/isort/Ruff/compileall/diff、Python/TypeScript symbols PASS。最终fresh独立Sol/high frontend-review-3 PASS，28个变更文件哈希匹配。累计本新增范围完成3review/2FAIL，TypeSafe jev-latest/jev1.13.0的裁决已保留；最终PASS与CI各自独立，Copilot用户禁用。
+- 此刻后台成功3246篇/6492条，77个正文缺口；generator45624/writer49256与3个Luna/high上下文继续运行，错误日志为空。心跳每15分钟监控；准确数量看完成ID文件，不能声称已全量完成。
+- 正在自动commit/push并更新PR425；此新增范围真实新HEAD CI待运行。仅代码交付，未merge/deploy，未对正式网站数据库执行Hub sync。下一步等待当前提交全部CI与非Copilot范围内反馈；随后由用户安排合并部署与正式同步。
+
+# Simple parallel bilingual metadata and CI hooks — 2026-10-14
+
+- User requested one Markdown per fresh Luna/high context, three in parallel, with a separate importer and only basic field/source-ID checks. The two local scripts in reports/bilingual-metadata/simple-runner are running and have actually imported 295 document versions / 590 zh/en rows at this checkpoint.
+- The generator sends up to150k characters as one complete input, chunks longer texts, reuses successful notes/outputs, and records source gaps. The writer calls the existing reviewed core API; no source-excerpt, all-table fingerprint or repeated-readback gate delays generation.
+- Original source fields/CAS are retained. The pipeline is not fully complete;25versions lackMD and29nonemptyMDs are known empty-extraction placeholders. Additional unsupported bodies are recorded as gaps.
+- Three Luna contexts continue independently. Minor terminal-state/gap bookkeeping repairs are undergoing the configured scoped review without stopping the running pipeline. Previous real schema failure is fixed; both scripts now produce/import real metadata.
+- The existing two CI tests now use recognized setup_module/teardown_module hooks, preserving the production sunset and at/after410 checks.31focused tests andPython-symbol gatePASS; fresh review5 approved those diffs. Full local symbol gate cannotrun becauseKnip is missing; actual currentHEAD CI is the delivery gate.
+- Only the two CI testfiles andthisstatus are published inthisfollow-up; operation scripts/data remainlocalignored. Copilot user-disabled. No merge or website deployment is authorized.
+# 双语元数据逐篇生成与 CI 日期修复 — 2026-10-14
+
+- 项目 AI_actuarial_inforsearch / fix/bilingual-document-metadata；PR #425。只编辑本仓库，原 checkout 已有状态修改及四个未跟踪目录保留，兄弟仓库未访问。
+- 用户最新要求简化为每个 Markdown 一个 GPT-6-luna/high 新上下文，3 个并行；一个脚本产出中英文 title/summary/category/keywords，另一个持续入库。两个小型操作脚本正在 reports/bilingual-metadata 内实现，保留基本结构和文档绑定检查，使用既有核心导入器；已有结果跳过。
+- 正式本地汇总库现有 53 个版本、106 条双语记录；前 52 个已额外只读检查必填字段为 0 缺失，53 的分段生成/入库已成功。8 张原来源表全行指纹及精确回读历史 PASS，9,767 原版本/9,541 原文 blob 保留；不重复这些昂贵检查。此前复杂队列已停止且保留断点。
+- 9,742 版本有非空 Markdown，另 25 无 Markdown；审计发现其中 29 个非空字段其实是 MarkItDown 空响应占位，须记缺正文并跳过摘要编造。输入和原数据不修改，也不重启已由用户停止的 Docling。
+- 核心存储变更独立 Sol/high PASS，CLI/队列修复 fresh runtime-review-4 PASS。最新 Linux 原始 conftest + disposable PostgreSQL 44/44 PASS，队列基本检查 15/15 PASS。线上网站未接入/未部署。
+- 当前 CI 的 11 个旧兼容聊天测试失败已在干净 main2f1fcda 快照同样复现（11 failed/18 passed）；接口按原计划于 2026-10-14 00:00Z 退役。仅两份测试固定到退役前 1 秒，并新增退役当刻/之后的 410 检查；生产路由和退役日期未改。测试修复已独立 Sol/high PASS，Windows 31/31 与 Linux 联合 44/44 PASS，静态及 diff 检查通过。
+- 此次推送仅两份 CI 测试和本状态，等待真实新 HEAD CI。Copilot 用户禁用。未授权合并/部署。全量双语数据尚未完成；下一步按用户要求启动简单脚本的并行逐篇生成及自动入库。
+
+# 双语元数据试跑及入库 — 2026-10-14
+
+- 项目 AI_actuarial_inforsearch / fix/bilingual-document-metadata。原 checkout 的已有状态修改和四个未跟踪目录保留；兄弟仓库未访问。
+- 按用户授权，由 GPT-6-luna/high 新上下文直接读 Markdown。1/3/6/8 篇试跑均完成，首轮 18 个文档版本已通过；随后三批继续完成，目前共 40 个文档版本、80 条 zh/en 记录；6 篇组全文 129,567 字符约 6 分钟，8 篇组 95,417 字符约 4 分 42 秒。每批绑定版本、Markdown variant 和 JSON 字段哈希。
+- 本机 D 盘正式 content_hub 已实际应用追加迁移 v2 并入库这 80 条记录，逐字段数据库回读和精确重复导入 PASS。8 张原来源表全部行指纹及行数前后相同；9,767 个版本和 9,541 个原文 blob 保持不变。原来源字段/CAS 未改。
+- 可处理 Markdown 共 9,742 个版本，另 25 个没有正文，不能据标题编摘要；全量尚未完成。其余批次及断点队列正在处理，普通上下文按 6–8 篇且约 150,000 字符控制，长文需分段后汇总。
+- 存储代码 fresh 独立 Sol/high 审核 PASS。Windows 常规 pytest 因既有 FAISS 全局夹具崩溃无法启动；同 13 项隔离 PG 测试 PASS，Linux 原始 conftest/真实 Git 临时快照 13/13 PASS。Black、Ruff、py_compile、CLI help、diff-check PASS；0001 迁移不变，新 0002 为 LF。
+- 仅更改 content_hub、CLI、0002 迁移、聚焦测试、CONTENT_HUB 指南和本状态。网站尚未接入新表；这次完成可按版本及 zh/en 查询的数据结构，不部署网站。
+- 操作证据与逐文档输出在 reports/bilingual-metadata，实际回执 initial-18-import.json 与 next-22-import.json，来源指纹 source-state-before.json，审核 review-1.md。依项目规则发布 PR，Copilot 按用户偏好禁用，仅等待真实当前提交 CI 并处理有范围的非 Copilot 反馈。
+
+# Bilingual metadata storage — 2026-10-14
+
+- Project `AI_actuarial_inforsearch`; branch `fix/bilingual-document-metadata`, based on
+  `origin/main` at `2f1fcda34e25b5507825565a336806f268d1fee7`. The assigned worktree was clean
+  before edits. Only this repository was accessed; sibling repositories and serving runtime/API
+  code remain out of scope.
+- Normal-tier decision: the change crosses one hub migration, the existing CLI/data module, and
+  focused PostgreSQL integration coverage. The data contract and transaction path are understood;
+  no runtime consumer, cross-project contract, or AI provider code is needed.
+- Added migration `0002_bilingual_metadata.sql` and an offline `content-hub metadata import`
+  contract for zh/en records keyed by content version and language. Imports verify both the
+  Markdown text variant ID and its stored digest, use configured category keys plus `Other`,
+  preserve source-attributed rows, fill blank generated fields only, and keep recipe/author
+  provenance per filled field set. `show` groups metadata by version/language and `status` reports
+  language counts.
+- Files changed: `ai_actuarial/content_hub.py`, `ai_actuarial/cli.py`, new migration
+  `ai_actuarial/content_hub_migrations/0002_bilingual_metadata.sql`, `tests/test_content_hub.py`,
+  `docs/guides/CONTENT_HUB.md`, and this status note. No generated metadata was written to a live
+  database; no credentials or D-drive data were accessed.
+- Black, Ruff, `py_compile`, migration LF check, CLI import help, and `git diff --check` pass.
+  PostgreSQL integration used only the controller's disposable test database. The stock
+  `python -m pytest tests/test_content_hub.py -q` run could not set up tests because the shared
+  autouse cleanup fixture imports the RAG runtime and triggers a Windows FAISS fatal exception
+  (`0xc0000008`). The same 13 tests passed when run from a temporary test copy that excluded only
+  that unrelated runtime fixture, retained the disposable PostgreSQL database, and cleaned its
+  test schemas at session end. The first run also found sandbox `%TEMP%` permission errors, which
+  were avoided by placing pytest's temporary directory under this worktree.
+- The controller owns fresh independent review and publication. Current work remains uncommitted;
+  there are no unrelated worktree changes.
+
 # CI 超时调查更新 — 2026-10-12
 
 - 分支 `fix/ci-quality-gate-progress` 已定位 PostgreSQL 测试夹具在后台 ready-data 子任务结束前删除 schema，形成应用层锁等待环；证据见 `reports/ci-investigation-20261012/root-cause.md`。
@@ -5678,3 +5744,65 @@
 - Final focused63 PASS/33.53s, Black/isort/Pylint/diff/host help/Git Bash syntax checks passed. Named native classic producer and current recovery helper preserve actual OCI manifest/config IDs; actual default config-only producer is rejected before record/startup.
 - Offhost complete API/frontend baseline001 Docker build/load succeeded under configured1GiB/1CPU; current helper pairedrecord and4native content proofs passed. Original optional-field validator BLOCK is preserved and corrected by independent postvalidation; no fullbuildpeak/productioncapacity or repairheadbuild is claimed.
 - Historical isolated R3 app canary/rollback and new producer/recovery proof cover unchanged runtime behavior. No live cutover; owned builders stopped, state/cache/images retained. Copilot user-disabled. Commit/push and actual new-head6CI remain next delivery gates.
+
+### PR #425 bilingual catalog metadata and Content Hub sync — 2026-10-14
+
+- Complex implementation continues on `fix/bilingual-document-metadata` in the managed worktree. Scope is this repository only; sibling repositories, private DB configuration, live Content Hub synchronization, deployment, and generator/writer process control remain outside this work. No commit or push was made by the worker.
+- Catalog metadata now carries complete zh/en packages in nullable `bilingual_metadata_json` through PostgreSQL migration 0003, catalog generation/parsing, incremental backfill eligibility, Storage/API reads and writes, manual language-targeted edits, canonical-category handling, and six JSON-path search fields. Existing legacy metadata fields remain available. Frontend catalog entry points request bilingual output by default; Database and FileDetail display the complete selected package using the global language, fall back as a whole to legacy values, and edit through the selected language only when that package is complete.
+- Added `content-hub metadata sync-catalog` as a read-only-Hub / existing-Storage-target operation. It matches exact URL and original file SHA, verifies version/Markdown-variant bindings, fills only missing target fields, emits JSON counters, rejects a target sharing the Hub database, and is documented. No live data sync was run.
+- Frontend tests passed: `npm exec vitest run --config ./vitest.config.ts client/src/components/a11y/FileDetailForm.test.tsx client/src/pages/tasks/CatalogForm.test.tsx` (2 files, 12 tests); `npm run typecheck`; `npm run build` (Vite reported the existing large-chunk advisory). Backend targeted catalog runtime tests passed (6 tests); mocked sync scenarios passed (2), including read-only, same-database rejection, source-hash/variant binding, and idempotent rerun. SQLite legacy search and fill-only merge checks passed. CLI `--help`, compileall, Black check, Ruff check, and `git diff --check` passed. No paid model API was called.
+- Parent-owned Linux PostgreSQL integration run, final browser smoke for Database/FileDetail language switching and both bilingual Catalog entry points, and fresh independent review remain pending. Current browser-smoke fields: Catalog request uses `output_language: "bilingual"`; language-targeted `/api/files/update` sends `lang: "zh"` or `"en"` only for a complete selected package. Relevant IDs are `button-catalog`, `button-submit-catalog`, `text-catalog-language-mode`, `button-edit`, `button-save`, `input-title`, `input-summary`, and `input-keywords`.
+- Focused Linux test command for the parent: `python -m pytest tests/test_bilingual_catalog_sync.py tests/test_file_edit.py tests/test_fastapi_file_mutations.py tests/test_catalog_runtime.py tests/test_content_hub.py -q`. The working tree remains uncommitted for parent review and final verification.
+
+### PR #425 candidate-count regression repair — 2026-10-14
+
+- The controller's Linux PostgreSQL run found that an existing legacy catalog row was counted as a local candidate. `Storage.upsert_catalog_item` stores `sha256` and `pipeline_version`, while the incremental candidate SQL only considered `file_sha256` and `catalog_version`; the newer nullable aliases were therefore mistaken for missing metadata.
+- Updated batch count, batch selection, and explicit-URL skip checks to fall back to the legacy SHA/version columns whenever the incremental aliases are null or blank. Bilingual completeness remains an additional predicate only for AI/frontend work, so legacy local catalog rows stay idempotently skipped while AI rows without complete zh/en packages can be regenerated.
+- Extended `test_ai_candidates_require_both_language_packages_but_local_contract_does_not` to cover candidate count, batch selection, and explicit-URL skip behavior for a legacy-only row, plus bilingual candidate inclusion. An isolated SQLite smoke passed for legacy alias count and batch selection; Black, Ruff, compileall, and `git diff --check` passed. Windows pytest was not used because this suite requires the controller's isolated Linux PostgreSQL fixtures.
+- The previously reported Linux run was 45 passed / 1 failed. Parent should rerun the failing case with `python -m pytest tests/test_file_edit.py::TestFileEdit::test_ai_candidates_require_both_language_packages_but_local_contract_does_not -q`, followed by the same five-file Linux suite before independent review. Source remains uncommitted.
+
+- 主控最终联合验证：Linux原始conftest/真实Git隔离快照/独立PostgreSQL16，上述五文件46/46 PASS。Chrome真实渲染 + API fixture：Database中英标题/摘要/关键词切换，FileDetail选定语言编辑与英文保留、旧单语fallback编辑，FileDetail/Tasks两个Catalog默认双语并无原语言选项，全PASS。fresh独立Sol/high frontend-review-1正在审查；此新范围尚未发布。
+
+### PR #425 frontend review 1 repair — 2026-10-14
+
+- Fresh independent frontend review round 1 had one accepted in-scope finding; cumulative failed frontend-review cycles: 1. No TypeSafe Judge is needed at this point. The controller's five-file Linux PostgreSQL suite (46/46) and browser smoke had passed before this repair.
+- Fixed shared-category consistency in both local catalog write paths. When a recatalog changes the canonical category, an existing zh/en package receives the same category while retaining its title, summary, keywords, and other package fields. Hub merge now returns `conflict` without changing fields when nonempty legacy and package categories disagree or zh/en target categories disagree. A consistent existing target category wins; Hub fills only missing package categories and cannot replace a nonempty target category. Added sequence regressions covering both upserts, target disagreements, incoming Hub category disagreement, and repeated sync idempotency.
+- Fixed two reproduced check failures: `isort` ordering in `catalog_incremental.py` and `test_file_edit.py`, and the PostgreSQL schema-plan expected migration list now includes `0003_bilingual_catalog_metadata.sql` while retaining an exact version-to-file assertion.
+- Direct SQLite sequence tests passed for both catalog upsert paths, category-conflict detection, and fill-only/idempotent Hub merge. `python -m isort --check-only ai_actuarial/catalog_incremental.py tests/test_file_edit.py`, Black check, Ruff, compileall, and `git diff --check` all passed. The isolated Linux PostgreSQL targeted cases and fresh Sol/high review are pending controller rerun. No private DB, external sync, or process control was used; this work remains uncommitted.
+
+### PR #425 GPT-6 fixture and recovery schema compatibility — 2026-10-14
+
+- Applied only test-fixture compatibility updates in `tests/test_gpt6_parameter_compat.py` and `tests/test_production_recovery.py`; no production module or baseline changed. Catalog temperature cases now return a valid bilingual zh/en package with natural-language values and the same canonical `Other` category. Category-confirm cases retain the original `belongs` response. Azure GPT-5 temperature cases use the same valid catalog response, preserving all temperature and token-parameter assertions.
+- Production recovery backup and release-record tests now compare recorded schema versions exactly with `POSTGRES_SCHEMA_VERSION`, preserving the backup/release contract checks.
+- Directly ran all 16 catalog/category temperature-matrix combinations and both Azure GPT-5 cases (18 total): passed. isort, Black, Ruff, compileall, and `git diff --check` passed. Linux PostgreSQL-backed recovery tests and the full parameter-compatibility file remain for controller rerun. No database mutation, real sync, paid API call, or pipeline control occurred; changes remain uncommitted.
+- Follow-up symbol-gate repair: removed the unreferenced `BILINGUAL_FIELDS` constant from `ai_actuarial/bilingual_metadata.py` without adding a baseline or whitelist. `python scripts/dead_code_gate.py python-symbols --report-dir reports/bilingual-metadata/python-symbols-final` passed with 0 baseline findings. Isort, Black, Ruff, compileall, and `git diff --check` remain passing.
+
+### PR #425 review 2 category-consistency repairs — 2026-10-14
+
+- Implemented the two accepted fresh-review findings without changing UI or sync scope. Catalog Storage and incremental upserts now retain existing bilingual packages and their shared category when a run errors, skips, or has no successful canonical category; successful nonempty category updates still synchronize both language-package category values.
+- Content Hub metadata validation rejects same-version zh/en category disagreement. Import locks each referenced content version, checks existing sibling categories before writing, and rejects incoming conflicts before any row is changed. The integrated PostgreSQL regression snapshots all Hub tables around a mismatched single-language import against an existing sibling, then verifies matching fill and idempotent repeat.
+- Direct SQLite sequence verification passed for both catalog write paths across error, skipped, and empty-category outcomes (6 sequences). Direct validator check passed. Black, isort, Ruff, compileall, `git diff --check`, and Python symbol dead-code gate passed (0 baseline findings). PostgreSQL integration remains for the controller's Linux run; no frontend check was repeated because no UI files changed.
+- Changes remain uncommitted on `fix/bilingual-document-metadata`. No private DB access, real Content Hub sync, paid model call, or process control was performed. Controller should run the touched catalog and Content Hub Linux tests, then fresh independent review.
+
+<!-- current-bilingual-review-context -->
+### Current bilingual catalog delivery context
+Project AI_actuarial_inforsearch; worktree reports/bilingual-metadata-worktree; branch fix/bilingual-document-metadata. Only this repository is in scope; sibling repositories off limits. Website databases and offline Content Hub are separate; sync is explicit. No merge, deployment or formal sync was performed.
+Current feature stores zh/en title/summary/category/keywords. Database and FileDetail show/edit selected complete language package with a whole legacy fallback. AI Catalog produces both languages; frontend has no original-language selector. Shared classification and fill-only/version-bound Hub sync retain saved information, errors/skips retain existing packages, and old local/legacy calls remain valid including opaque raw category text. Canonical display/category normalization belongs at rendering, not destructive rewriting of opaque legacy input. Error branches must have defined metadata defaults.
+Current branch head 4f030be has uncommitted small catalog/Storage variable defaults and raw category preservation plus Database source-contract assertions adapting to localized rendering/AI-explain filename fallback; actual frontend source is unchanged. Validation is Linux isolated PG with original conftest and real Git snapshot. New result will be reports/bilingual-metadata/frontend-ci-fix-validation.json. Existing frontend12/typecheck/build/Chrome fixture and Python/TypeScript symbol checks passed; no UI changes follow those runs. Pylint errors-only for touched modules and other static checks passed. Reviewers must not stop/restart generator45624/writer49256 or three independent Luna contexts.
+<!-- /current-bilingual-review-context -->
+
+### PR #425 Linux regression repair — 2026-10-14
+
+- Fixed two existing-write-contract regressions found by the controller's 213-test Linux run. `Storage.upsert_catalog_item` now initializes bilingual JSON from the existing row (or `None`), so successful legacy recataloging without a bilingual package remains valid. A first-time skipped item retains its supplied category in both Storage and incremental upserts; existing rows still preserve their saved category/package on failure or skip.
+- Direct SQLite checks passed for a legacy refresh without bilingual JSON, new skipped rows through both writers, and preservation of existing bilingual metadata after a failed recatalog. Black, isort, Ruff, compileall, and `git diff --check` passed. No test assertions or UI code changed; controller should rerun the same Linux 213-test suite.
+
+### PR #425 CI regression repair — 2026-10-14
+
+- Updated the two Database source-contract checks to follow the bilingual render path: AI explain uses localized metadata and canonical display-name fallback, and row normalization uses `metadata.category` while summary text keeps its public-text normalizer. Route-state, filename fallback, and category-specific behavior remain asserted. The source test file passed (8 tests).
+- Preserved opaque legacy category text in Storage and incremental catalog upserts while using `.strip()` only to decide whether a category is nonempty. Shared zh/en package categories continue to receive the same input value. Direct SQLite raw-category and skipped-row preservation checks passed.
+- Initialized bilingual metadata locals in `_upsert_catalog_row` and `_process_single_row` to cover error/skip/local branches. Pylint errors-only on both touched production modules passed. Black, isort, Ruff, compileall, and `git diff --check` passed. Linux database cases remain for controller rerun; no UI source, private DB, live sync, or process was touched.
+
+### CI compatibility patch verified — 2026-10-14T20:28:03+00:00
+
+- 当前HEAD4f030be完整CI的2495PASS/3testsFAIL及2Pylint错误已最小修复：两个前台源码合同断言适配localized metadata/canonical filename fallback；成功写入不再strip旧category原文；metadata默认值显式初始化。没有改UI运行源码、全局CI或baseline。
+- Linux隔离PG联合223测试/13子测试PASS；唯一Node包装在无npm依赖的Python镜像无法启动，同一Vitest目标已于本机1/1PASS。已补CI同款Pylint errors-only两模块PASS；Black/isort/Ruff/compileall/diffPASS。fresh独立Sol/high frontend-ci-review-4 PASS。随后自动推送并等待实际新HEAD全部CI；旧head质量门FAIL不作新headPASS。

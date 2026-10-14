@@ -96,7 +96,20 @@ def test_chat_generate_gpt6_parameter_matrix(
 def test_catalog_and_category_temperature_matrix(
     function, provider: str, model: str, expected_temperature: float | None
 ) -> None:
-    client = _completion_client('{"belongs":true,"summary":"Summary"}')
+    catalog_response = (
+        '{"bilingual_metadata":{"zh":{"title":"偿付能力风险分析",'
+        '"summary":"本文概述保险公司偿付能力评估的主要风险因素。",'
+        '"category":"Other","keywords":["偿付能力","保险风险"]},'
+        '"en":{"title":"Insurer Solvency Risk Analysis",'
+        '"summary":"This document outlines key risk factors in insurer solvency assessment.",'
+        '"category":"Other","keywords":["solvency","insurance risk"]}}}'
+    )
+    response = (
+        catalog_response
+        if function is catalog_with_openai
+        else '{"belongs":true,"summary":"Summary"}'
+    )
+    client = _completion_client(response)
     runtime = SimpleNamespace(
         provider=provider,
         model=model,
@@ -134,7 +147,14 @@ def test_catalog_and_category_temperature_matrix(
 def test_catalog_keeps_azure_gpt5_temperature_behavior(
     model: str, expected_temperature: float | None
 ) -> None:
-    client = _completion_client('{"summary":"Summary"}')
+    client = _completion_client(
+        '{"bilingual_metadata":{"zh":{"title":"偿付能力风险分析",'
+        '"summary":"本文概述保险公司偿付能力评估的主要风险因素。",'
+        '"category":"Other","keywords":["偿付能力","保险风险"]},'
+        '"en":{"title":"Insurer Solvency Risk Analysis",'
+        '"summary":"This document outlines key risk factors in insurer solvency assessment.",'
+        '"category":"Other","keywords":["solvency","insurance risk"]}}}'
+    )
     runtime = SimpleNamespace(
         provider="azure_openai",
         model=model,

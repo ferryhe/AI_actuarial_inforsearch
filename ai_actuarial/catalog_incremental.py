@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+from .bilingual_metadata import is_complete_bilingual_metadata, with_shared_category
 from .catalog import (
     CatalogItem,
     categorize,
@@ -56,6 +57,7 @@ CATALOG_OPTIONAL_COLUMNS = {
     "markdown_content": "TEXT",
     "markdown_updated_at": "TEXT",
     "markdown_source": "TEXT",
+    "bilingual_metadata_json": "TEXT",
 }
 
 
@@ -124,6 +126,25 @@ def _ensure_catalog_schema(conn: PostgresConnection) -> None:
             """)
 
 
+def _bilingual_incomplete_sql() -> str:
+    metadata = "COALESCE(NULLIF(c.bilingual_metadata_json, '')::jsonb, '{}'::jsonb)"
+    checks = []
+    for language in ("zh", "en"):
+        for field in ("title", "summary", "category"):
+            checks.append(
+                f"NULLIF(BTRIM(COALESCE({metadata} #>> '{{{language},{field}}}', '')), '') IS NULL"
+            )
+        keywords = f"{metadata} #> '{{{language},keywords}}'"
+        checks.extend(
+            [
+                f"jsonb_typeof({keywords}) IS DISTINCT FROM 'array'",
+                f"jsonb_array_length(CASE WHEN jsonb_typeof({keywords}) = 'array' "
+                f"THEN {keywords} ELSE '[]'::jsonb END) = 0",
+            ]
+        )
+    return "(" + " OR ".join(checks) + ")"
+
+
 def _connect(database: str) -> PostgresConnection:
     return PostgresConnection(database)
 
@@ -140,6 +161,7 @@ def _fetch_candidates(
     catalog_version: str,
     retry_errors: bool = False,
     skip_existing: bool = True,
+    require_bilingual: bool = False,
 ) -> list[Any]:
     """
     Select files that are:
@@ -168,13 +190,15 @@ def _fetch_candidates(
     candidate_pred = ""
     candidate_params: list[object] = []
     if skip_existing:
+        bilingual_cond = f"OR {_bilingual_incomplete_sql()}" if require_bilingual else ""
         candidate_pred = f"""
         AND (
             c.file_url IS NULL
-            OR c.file_sha256 IS NULL
-            OR c.file_sha256 != f.sha256
-            OR c.catalog_version != ?
+            OR COALESCE(NULLIF(c.file_sha256, ''), c.sha256) IS NULL
+            OR COALESCE(NULLIF(c.file_sha256, ''), c.sha256) != f.sha256
+            OR COALESCE(NULLIF(c.catalog_version, ''), c.pipeline_version) != ?
             OR TRIM(COALESCE(c.summary, '')) = ''
+            {bilingual_cond}
             {status_cond}
         )
         """
@@ -189,8 +213,8 @@ def _fetch_candidates(
         f.source_site,
         f.original_filename,
         f.local_path,
-        c.file_sha256 AS c_sha256,
-        c.catalog_version AS c_version,
+        COALESCE(NULLIF(c.file_sha256, ''), c.sha256) AS c_sha256,
+        COALESCE(NULLIF(c.catalog_version, ''), c.pipeline_version) AS c_version,
         c.status AS c_status
     FROM files f
     LEFT JOIN catalog_items c
@@ -254,6 +278,7 @@ def _count_candidates(
     catalog_version: str,
     retry_errors: bool = False,
     skip_existing: bool = True,
+    require_bilingual: bool = False,
 ) -> int:
     where_extra, params, status_cond = _candidate_filter_sql(
         site_filter, retry_errors, category_filter
@@ -261,13 +286,15 @@ def _count_candidates(
     candidate_pred = ""
     candidate_params: list[object] = []
     if skip_existing:
+        bilingual_cond = f"OR {_bilingual_incomplete_sql()}" if require_bilingual else ""
         candidate_pred = f"""
         AND (
             c.file_url IS NULL
-            OR c.file_sha256 IS NULL
-            OR c.file_sha256 != f.sha256
-            OR c.catalog_version != ?
+            OR COALESCE(NULLIF(c.file_sha256, ''), c.sha256) IS NULL
+            OR COALESCE(NULLIF(c.file_sha256, ''), c.sha256) != f.sha256
+            OR COALESCE(NULLIF(c.catalog_version, ''), c.pipeline_version) != ?
             OR TRIM(COALESCE(c.summary, '')) = ''
+            {bilingual_cond}
             {status_cond}
         )
         """
@@ -308,6 +335,28 @@ def _upsert_catalog_row(
     with _db_lock:
         write_conn = storage._conn if storage is not None else conn
         existing = _table_columns(write_conn, "catalog_items")
+        category = str(item.category or "")
+        successful_category = status.strip().lower() == "ok" and bool(category.strip())
+        bilingual_metadata: dict[str, Any] = {}
+        saved_fields = [
+            field
+            for field in (
+                "title",
+                "summary",
+                "category",
+                "keywords_json",
+                "keywords",
+                "bilingual_metadata_json",
+            )
+            if field in existing
+        ]
+        saved_row = None
+        if item.url and saved_fields:
+            saved_row = write_conn.execute(
+                f"SELECT {', '.join(saved_fields)} FROM catalog_items WHERE file_url = ?",
+                (item.url,),
+            ).fetchone()
+        saved_values = dict(zip(saved_fields, saved_row or ()))
         keywords_json = json.dumps(item.keywords, ensure_ascii=False)
         value_map: dict[str, object] = {
             "file_url": item.url,
@@ -320,13 +369,38 @@ def _upsert_catalog_row(
             "keywords_json": keywords_json,
             "keywords": keywords_json,
             "summary": item.summary,
-            "category": item.category,
+            "category": (
+                category
+                if successful_category or not saved_row
+                else saved_values.get("category", "")
+            ),
             "catalog_version": catalog_version,
             "pipeline_version": catalog_version,
             "processed_at": processed_at,
             "status": status,
             "error": error,
         }
+        failed_or_skipped = status.strip().lower() in {"error", "skipped"}
+        if saved_row and failed_or_skipped:
+            for field, value in saved_values.items():
+                value_map[field] = value
+        elif saved_row and not successful_category:
+            if "bilingual_metadata_json" in saved_values:
+                value_map["bilingual_metadata_json"] = saved_values["bilingual_metadata_json"]
+        elif successful_category:
+            if isinstance(item.bilingual_metadata, dict):
+                bilingual_metadata = item.bilingual_metadata
+            else:
+                bilingual_metadata = Storage._decode_bilingual_metadata(
+                    saved_values.get("bilingual_metadata_json")
+                )
+        else:
+            bilingual_metadata = {}
+        if successful_category and bilingual_metadata:
+            value_map["bilingual_metadata_json"] = json.dumps(
+                with_shared_category(bilingual_metadata, category),
+                ensure_ascii=False,
+            )
         insert_columns = [
             col
             for col in [
@@ -346,8 +420,9 @@ def _upsert_catalog_row(
                 "processed_at",
                 "status",
                 "error",
+                "bilingual_metadata_json",
             ]
-            if col in existing
+            if col in existing and (col != "bilingual_metadata_json" or col in value_map)
         ]
         values = [value_map[col] for col in insert_columns]
         update_columns = [col for col in insert_columns if col != "file_url"]
@@ -396,6 +471,13 @@ def _append_jsonl(out_jsonl: Path, items: list[dict]) -> None:
     with open(out_jsonl, "a", encoding="utf-8") as f:
         for obj in items:
             f.write(json.dumps(obj, ensure_ascii=False) + "\n")
+
+
+def _catalog_item_payload(item: CatalogItem) -> dict:
+    payload = asdict(item)
+    if payload.get("bilingual_metadata") is None:
+        payload.pop("bilingual_metadata", None)
+    return payload
 
 
 # ---------------------------------------------------------------------------
@@ -468,7 +550,7 @@ def _process_single_row(
     catalog_base_url: str | None = None,
     input_source: str,
     catalog_system_prompt: str | None = None,
-    output_language: str = "auto",
+    output_language: str = "bilingual",
 ) -> tuple[dict, CatalogItem, str, str | None]:
     """Process a single row in a worker thread.
     Returns: (row_data, result_item, status, suggested_title)
@@ -481,6 +563,7 @@ def _process_single_row(
     local_path = row_data["local_path"]
     suggested_title: str | None = None
     failure_code = "catalog_failed"
+    bilingual_metadata: dict[str, Any] | None = None
 
     try:
         provider_norm = (provider or "local").strip().lower()
@@ -538,6 +621,8 @@ def _process_single_row(
                 api_key=catalog_api_key,
                 base_url=catalog_base_url,
             )
+            if not is_complete_bilingual_metadata(llm.bilingual_metadata):
+                raise ValueError("Catalog model response does not satisfy the bilingual contract")
             keywords = llm.keywords
             suggested_title = llm.suggested_title
 
@@ -556,6 +641,7 @@ def _process_single_row(
 
             summary = llm.summary
             category = llm.category
+            bilingual_metadata = llm.bilingual_metadata
 
         item = CatalogItem(
             source_site=source_site,
@@ -566,6 +652,7 @@ def _process_single_row(
             keywords=keywords,
             summary=summary,
             category=category,
+            bilingual_metadata=(bilingual_metadata if provider_norm != "local" else None),
         )
         return (row_data, item, "ok", suggested_title)
 
@@ -603,7 +690,8 @@ def run_incremental_catalog(
     candidate_offset: int = 0,
     update_title: bool = False,
     catalog_system_prompt: str | None = None,
-    output_language: str = "auto",
+    output_language: str = "bilingual",
+    require_bilingual: bool = False,
     progress_callback: Optional[Callable[[int, int, str], None]] = None,
     stop_check: Optional[Callable[[], bool]] = None,
     task_id: str | None = None,
@@ -624,15 +712,19 @@ def run_incremental_catalog(
         limit: Max total items to process (0 for unlimited)
         update_title: If True, update files.title with the AI-suggested title
         catalog_system_prompt: Optional system prompt override for the LLM cataloger.
-        output_language: Language for LLM output (``"auto"``, ``"en"``, ``"zh"``).
+        output_language: Legacy projection hint; non-local AI always generates both languages.
 
     Returns:
         dict with stats: {scanned, processed, written, skipped_ai, errors}
     """
+    provider_norm = (provider or "local").strip().lower()
+    require_bilingual = bool(require_bilingual or provider_norm != "local")
+    if require_bilingual and provider_norm == "local":
+        raise RuntimeError("Bilingual catalog tasks require a configured non-local AI provider.")
+
     storage = Storage(db_path)
     conn = storage._conn
     _ensure_catalog_schema(conn)
-    provider_norm = (provider or "local").strip().lower()
     catalog_model: str | None = None
     catalog_api_key: str | None = None
     catalog_base_url: str | None = None
@@ -654,6 +746,11 @@ def run_incremental_catalog(
             runtime_storage.close()
 
         provider = runtime.provider
+        if require_bilingual and provider.strip().lower() == "local":
+            storage.close()
+            raise RuntimeError(
+                "Bilingual catalog tasks require a configured non-local AI provider."
+            )
         catalog_model = runtime.model
         catalog_api_key = runtime.api_key
         catalog_base_url = runtime.base_url
@@ -700,6 +797,7 @@ def run_incremental_catalog(
         catalog_version=catalog_version,
         retry_errors=retry_errors,
         skip_existing=skip_existing,
+        require_bilingual=require_bilingual,
     )
     if candidate_offset > 0:
         candidate_count = max(0, candidate_count - int(candidate_offset))
@@ -712,6 +810,7 @@ def run_incremental_catalog(
             catalog_version=catalog_version,
             retry_errors=retry_errors,
             skip_existing=skip_existing,
+            require_bilingual=require_bilingual,
         )
         candidate_start_id = int(start_rows[0]["id"]) if start_rows else None
     else:
@@ -752,6 +851,7 @@ def run_incremental_catalog(
             catalog_version=catalog_version,
             retry_errors=retry_errors,
             skip_existing=skip_existing,
+            require_bilingual=require_bilingual,
         )
         if not rows:
             stats["candidate_exhausted"] = True
@@ -820,7 +920,7 @@ def run_incremental_catalog(
                     if status == "ok":
                         stats["processed"] += 1
                         batch_items.append(item)
-                        batch_jsonl.append(asdict(item))
+                        batch_jsonl.append(_catalog_item_payload(item))
 
                         _upsert_catalog_row(
                             conn,
@@ -984,16 +1084,21 @@ def run_catalog_for_urls(
     max_workers: int = 5,
     update_title: bool = False,
     catalog_system_prompt: str | None = None,
-    output_language: str = "auto",
+    output_language: str = "bilingual",
+    require_bilingual: bool = False,
     progress_callback: Optional[Callable[[int, int, str], None]] = None,
     stop_check: Optional[Callable[[], bool]] = None,
     task_id: str | None = None,
 ) -> dict:
     """Catalog a specific list of file URLs (used by File Details actions)."""
+    provider_norm = (provider or "local").strip().lower()
+    require_bilingual = bool(require_bilingual or provider_norm != "local")
+    if require_bilingual and provider_norm == "local":
+        raise RuntimeError("Bilingual catalog tasks require a configured non-local AI provider.")
+
     storage = Storage(db_path)
     conn = storage._conn
     _ensure_catalog_schema(conn)
-    provider_norm = (provider or "local").strip().lower()
     catalog_model: str | None = None
     catalog_api_key: str | None = None
     catalog_base_url: str | None = None
@@ -1015,6 +1120,11 @@ def run_catalog_for_urls(
             runtime_storage.close()
 
         provider = runtime.provider
+        if require_bilingual and provider.strip().lower() == "local":
+            storage.close()
+            raise RuntimeError(
+                "Bilingual catalog tasks require a configured non-local AI provider."
+            )
         catalog_model = runtime.model
         catalog_api_key = runtime.api_key
         catalog_base_url = runtime.base_url
@@ -1067,10 +1177,11 @@ def run_catalog_for_urls(
             f.original_filename,
             f.local_path,
             c.file_url AS c_url,
-            c.file_sha256 AS c_sha256,
-            c.catalog_version AS c_version,
+            COALESCE(NULLIF(c.file_sha256, ''), c.sha256) AS c_sha256,
+            COALESCE(NULLIF(c.catalog_version, ''), c.pipeline_version) AS c_version,
             c.status AS c_status,
-            c.summary AS c_summary
+            c.summary AS c_summary,
+            c.bilingual_metadata_json AS c_bilingual_metadata_json
         FROM files f
         LEFT JOIN catalog_items c ON c.file_url = f.url
         WHERE f.url IN ({placeholders})
@@ -1101,6 +1212,7 @@ def run_catalog_for_urls(
         c_ver = (r.get("c_version") or "").strip()
         c_status = (r.get("c_status") or "").strip()
         c_summary = (r.get("c_summary") or "").strip()
+        c_bilingual_metadata = r.get("c_bilingual_metadata_json")
         f_sha = (r.get("sha256") or "").strip()
         return (
             (c_url is None)
@@ -1108,6 +1220,7 @@ def run_catalog_for_urls(
             or (c_sha != f_sha)
             or (c_ver != catalog_version)
             or (not c_summary)
+            or (require_bilingual and not is_complete_bilingual_metadata(c_bilingual_metadata))
             or (retry_errors and c_status == "error")
         )
 
@@ -1168,7 +1281,7 @@ def run_catalog_for_urls(
                 if status == "ok":
                     stats["processed"] += 1
                     batch_items.append(item)
-                    batch_jsonl.append(asdict(item))
+                    batch_jsonl.append(_catalog_item_payload(item))
                     _upsert_catalog_row(
                         conn,
                         item=item,

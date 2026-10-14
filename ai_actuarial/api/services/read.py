@@ -25,6 +25,7 @@ PUBLIC_FILE_LIST_FIELDS: tuple[str, ...] = (
     "category",
     "summary",
     "keywords",
+    "bilingual_metadata",
     "has_markdown",
     "markdown_source",
     "markdown_updated_at",

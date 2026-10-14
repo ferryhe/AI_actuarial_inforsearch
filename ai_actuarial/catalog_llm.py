@@ -34,6 +34,7 @@ class LlmCatalogResult:
     category: str
     model: str | None = None
     suggested_title: str | None = None
+    bilingual_metadata: dict[str, dict[str, Any]] | None = None
 
 
 def _clean_keywords(items: Any, *, max_items: int = 12) -> list[str]:
@@ -99,12 +100,21 @@ def _clean_categories(items: Any, *, allowed: list[str], max_items: int = 3) -> 
     return out
 
 
+def _legacy_language(output_language: str, content: str) -> str:
+    requested = str(output_language or "").strip().lower()
+    if requested in {"en", "zh"}:
+        return requested
+    han = sum("\u4e00" <= char <= "\u9fff" for char in content)
+    latin = sum(char.isascii() and char.isalpha() for char in content)
+    return "zh" if han > latin else "en"
+
+
 def catalog_with_openai(
     *,
     title: str | None,
     content: str,
     custom_system_prompt: str | None = None,
-    output_language: str = "auto",
+    output_language: str = "bilingual",
     provider: str | None = None,
     model: str | None = None,
     api_key: str | None = None,
@@ -117,19 +127,12 @@ def catalog_with_openai(
         title: Optional existing document title used as a context hint.
         content: Document text to catalog.
         custom_system_prompt: Optional system prompt override stored in ai_config.catalog
-            in sites.yaml. When provided, replaces the built-in default prompt entirely
-            (output_language is still appended to custom prompts).
-        output_language: Language for summary/keywords/suggested_title output.
-            ``"auto"`` (default) lets the LLM match the document language.
-            ``"en"`` forces English output.
-            ``"zh"`` forces Chinese output.
-            Categories are always returned as the fixed English identifiers regardless
-            of this setting, so no category-matching issues arise.
+            in sites.yaml. The bilingual output contract is appended to custom prompts.
+        output_language: Legacy projection hint for top-level summary/keywords/title
+            fields. The model always generates both Chinese and English packages.
 
     Notes:
         The default prompt instructs the model to:
-        - Write the summary and suggested_title in the same language as the document content
-          (unless output_language overrides this).
         - Generate a self-contained title that reflects the document's subject matter, not the
           source website name or publication series header.
         - Use specific domain keyphrases for keywords, avoiding generic words like 'report'.
@@ -184,39 +187,21 @@ def catalog_with_openai(
     else:
         system_prompt = (
             "You are a precise document cataloging assistant for an actuarial/insurance knowledge base. "
-            "Read the document and return a STRICT JSON object with exactly these keys:\n"
-            "- summary: factual summary in 3-5 concise bullet points or a short paragraph (≤300 words). "
-            "Write the summary in the same language as the document content.\n"
-            "- keywords: 8-12 specific keyphrases (strings), no generic words like 'report' or 'document', "
-            "no duplicates, focused on the core topics covered.\n"
-            "- categories: array of 1-3 most relevant categories from the provided list, "
-            "ordered by relevance (most relevant first). "
-            "Always return category names exactly as given — do NOT translate them.\n"
-            "- suggested_title: a concise, self-contained descriptive title for the document (≤15 words, "
-            "plain text, no markdown, no source-site name). "
-            "The title must reflect the document's actual subject matter — not the website name, "
-            "publication series, or section header. "
-            "If the document is primarily in Chinese, write the title in Chinese. "
-            "If the document is primarily in English, write the title in English.\n"
-            "Rules: do not invent facts. "
-            'If content is insufficient, return categories=["Other"] and keep summary short. '
-            "Output valid JSON only — no code fences, no extra text."
+            "Read the document and produce factual, concise catalog metadata in Chinese and English. "
+            "Titles must be self-contained, reflect the document subject, and omit website names and "
+            "publication series. Do not invent facts."
         )
-
-    # Append a language-override instruction when the caller requests a specific language.
-    # This supplements both the default prompt and any custom prompt so the user's
-    # language choice is always honoured.
-    lang_norm = (output_language or "auto").strip().lower()
-    if lang_norm == "en":
-        system_prompt += (
-            "\n\nOUTPUT LANGUAGE OVERRIDE: Write the summary, keywords, and suggested_title "
-            "in English, regardless of the document's original language."
-        )
-    elif lang_norm == "zh":
-        system_prompt += (
-            "\n\n输出语言要求：无论文档原始语言是什么，summary（摘要）、keywords（关键词）和 "
-            "suggested_title（建议标题）均必须使用中文输出。"
-        )
+    system_prompt += (
+        "\n\nMANDATORY BILINGUAL CATALOG CONTRACT:\n"
+        'Return valid JSON with exactly one top-level key: "bilingual_metadata". '
+        'Its value must have exactly "zh" and "en" objects. Each language object must have '
+        'non-empty string fields "title", "summary", and "category", plus a non-empty array '
+        'of string "keywords". The title, summary, and keywords must be naturally written in '
+        "the named language. Use the same canonical category key in both objects, chosen exactly "
+        "from the supplied category list; do not translate category keys. Category may contain "
+        'up to three canonical keys separated by "; ". Missing or empty fields are invalid. '
+        "Do not use the document language to omit or copy a translation. Output JSON only."
+    )
 
     cat_lines: list[str] = []
     for c in categories:
@@ -231,14 +216,16 @@ def catalog_with_openai(
             cat_lines.append(f"- {c}")
 
     user_prompt = (
-        "Categories (choose 1-3 and order by relevance):\n"
+        "Categories (choose up to 3 canonical keys and order by relevance):\n"
         + "\n".join(cat_lines)
         + "\n\n"
         + f"Title:\n{safe_title}\n\n"
         + "Content:\n"
         + safe_content
         + "\n\n"
-        + "Return JSON only, with keys: summary, keywords, categories, suggested_title."
+        + 'Return JSON only with this shape: {"bilingual_metadata":{"zh":{"title":"...",'
+        '"summary":"...","category":"...","keywords":["..."]},"en":{"title":"...",'
+        '"summary":"...","category":"...","keywords":["..."]}}.'
     )
 
     request_kwargs: dict[str, Any] = {
@@ -261,16 +248,45 @@ def catalog_with_openai(
         content_text = ""
 
     payload = _parse_json_object(content_text)
-    summary = str(payload.get("summary") or "").strip()
-    keywords = _clean_keywords(payload.get("keywords"), max_items=12)
-    raw_categories = payload.get("categories")
-    if raw_categories is None:
-        raw_categories = payload.get("category")
-    selected = _clean_categories(raw_categories, allowed=categories, max_items=3)
-    if not selected:
-        selected = ["Other"]
-    category = "; ".join(selected[:3])
-    suggested_title = str(payload.get("suggested_title") or "").strip() or None
+    raw_bilingual = payload.get("bilingual_metadata")
+    if not isinstance(raw_bilingual, dict):
+        raise ValueError("Catalog model response is missing bilingual_metadata")
+
+    bilingual_metadata: dict[str, dict[str, Any]] = {}
+    canonical_categories: dict[str, str] = {}
+    for language in ("zh", "en"):
+        raw_entry = raw_bilingual.get(language)
+        if not isinstance(raw_entry, dict):
+            raise ValueError(f"Catalog model response is missing the {language} metadata package")
+        title_value = raw_entry.get("title")
+        summary_value = raw_entry.get("summary")
+        if not isinstance(title_value, str) or not title_value.strip():
+            raise ValueError(f"Catalog model response has an empty {language} title")
+        if not isinstance(summary_value, str) or not summary_value.strip():
+            raise ValueError(f"Catalog model response has an empty {language} summary")
+        keywords = _clean_keywords(raw_entry.get("keywords"), max_items=12)
+        if not keywords:
+            raise ValueError(f"Catalog model response has no {language} keywords")
+        selected = _clean_categories(raw_entry.get("category"), allowed=categories, max_items=3)
+        if not selected:
+            raise ValueError(f"Catalog model response has an invalid {language} category")
+        category = "; ".join(selected)
+        canonical_categories[language] = category
+        bilingual_metadata[language] = {
+            "title": re.sub(r"\s+", " ", title_value.strip()),
+            "summary": summary_value.strip(),
+            "category": category,
+            "keywords": keywords,
+        }
+    if canonical_categories["zh"] != canonical_categories["en"]:
+        raise ValueError("Catalog model returned different canonical categories for zh and en")
+
+    legacy_language = _legacy_language(output_language, safe_content)
+    legacy_package = bilingual_metadata[legacy_language]
+    summary = legacy_package["summary"]
+    keywords = legacy_package["keywords"]
+    category = legacy_package["category"]
+    suggested_title = legacy_package["title"]
 
     return LlmCatalogResult(
         summary=summary,
@@ -278,6 +294,7 @@ def catalog_with_openai(
         category=category,
         model=resolved_model,
         suggested_title=suggested_title,
+        bilingual_metadata=bilingual_metadata,
     )
 
 
