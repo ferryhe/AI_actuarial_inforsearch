@@ -1,3 +1,13 @@
+# 双语元数据逐篇生成与 CI 日期修复 — 2026-10-14
+
+- 项目 AI_actuarial_inforsearch / fix/bilingual-document-metadata；PR #425。只编辑本仓库，原 checkout 已有状态修改及四个未跟踪目录保留，兄弟仓库未访问。
+- 用户最新要求简化为每个 Markdown 一个 GPT-6-luna/high 新上下文，3 个并行；一个脚本产出中英文 title/summary/category/keywords，另一个持续入库。两个小型操作脚本正在 reports/bilingual-metadata 内实现，保留基本结构和文档绑定检查，使用既有核心导入器；已有结果跳过。
+- 正式本地汇总库现有 53 个版本、106 条双语记录；前 52 个已额外只读检查必填字段为 0 缺失，53 的分段生成/入库已成功。8 张原来源表全行指纹及精确回读历史 PASS，9,767 原版本/9,541 原文 blob 保留；不重复这些昂贵检查。此前复杂队列已停止且保留断点。
+- 9,742 版本有非空 Markdown，另 25 无 Markdown；审计发现其中 29 个非空字段其实是 MarkItDown 空响应占位，须记缺正文并跳过摘要编造。输入和原数据不修改，也不重启已由用户停止的 Docling。
+- 核心存储变更独立 Sol/high PASS，CLI/队列修复 fresh runtime-review-4 PASS。最新 Linux 原始 conftest + disposable PostgreSQL 44/44 PASS，队列基本检查 15/15 PASS。线上网站未接入/未部署。
+- 当前 CI 的 11 个旧兼容聊天测试失败已在干净 main2f1fcda 快照同样复现（11 failed/18 passed）；接口按原计划于 2026-10-14 00:00Z 退役。仅两份测试固定到退役前 1 秒，并新增退役当刻/之后的 410 检查；生产路由和退役日期未改。测试修复已独立 Sol/high PASS，Windows 31/31 与 Linux 联合 44/44 PASS，静态及 diff 检查通过。
+- 此次推送仅两份 CI 测试和本状态，等待真实新 HEAD CI。Copilot 用户禁用。未授权合并/部署。全量双语数据尚未完成；下一步按用户要求启动简单脚本的并行逐篇生成及自动入库。
+
 # 双语元数据试跑及入库 — 2026-10-14
 
 - 项目 AI_actuarial_inforsearch / fix/bilingual-document-metadata。原 checkout 的已有状态修改和四个未跟踪目录保留；兄弟仓库未访问。

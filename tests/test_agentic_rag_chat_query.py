@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import hashlib
 import secrets
+from datetime import datetime, timedelta
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from ai_actuarial.api.middleware import rate_limit
+from ai_actuarial.api.routers import agentic_rag as agentic_rag_router
 from ai_actuarial.shared_auth import GROUP_PERMISSIONS
 from ai_actuarial.storage import Storage
 from tests.postgres_helpers import postgres_url_for_path
@@ -16,6 +19,24 @@ from tests.test_fastapi_chat_endpoints import _build_test_client, _write_chat_ag
 
 CANONICAL_PATH = "/api/chat/query"
 COMPATIBILITY_PATH = "/api/agentic-rag/chat"
+
+
+def _datetime_at_agentic_chat_sunset(offset_seconds: int) -> type[datetime]:
+    sunset = agentic_rag_router._parse_sunset(agentic_rag_router._AGENTIC_CHAT_SUNSET_HEADER)
+    assert sunset is not None
+
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            value = sunset + timedelta(seconds=offset_seconds)
+            return value.replace(tzinfo=None) if tz is None else value.astimezone(tz)
+
+    return FrozenDateTime
+
+
+@pytest.fixture(autouse=True)
+def _legacy_chat_contract_tests_run_before_sunset(monkeypatch) -> None:
+    monkeypatch.setattr(agentic_rag_router, "datetime", _datetime_at_agentic_chat_sunset(-1))
 
 
 def _prepare_ready_agentic_kb(client: TestClient, monkeypatch) -> None:

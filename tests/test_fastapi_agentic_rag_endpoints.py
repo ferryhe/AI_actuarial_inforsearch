@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -10,9 +11,28 @@ from fastapi.testclient import TestClient
 import ai_actuarial.agentic_rag.agentic_loop as agentic_loop
 import ai_actuarial.api.services.agentic_rag as agentic_rag_service
 from ai_actuarial.api.app import create_app
+from ai_actuarial.api.routers import agentic_rag as agentic_rag_router
 from ai_actuarial.rag.knowledge_base import KnowledgeBaseManager
 from ai_actuarial.storage import Storage
 from tests.postgres_helpers import postgres_url_for_path
+
+
+def _datetime_at_agentic_chat_sunset(offset_seconds: int) -> type[datetime]:
+    sunset = agentic_rag_router._parse_sunset(agentic_rag_router._AGENTIC_CHAT_SUNSET_HEADER)
+    assert sunset is not None
+
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            value = sunset + timedelta(seconds=offset_seconds)
+            return value.replace(tzinfo=None) if tz is None else value.astimezone(tz)
+
+    return FrozenDateTime
+
+
+@pytest.fixture(autouse=True)
+def _legacy_chat_contract_tests_run_before_sunset(monkeypatch) -> None:
+    monkeypatch.setattr(agentic_rag_router, "datetime", _datetime_at_agentic_chat_sunset(-1))
 
 
 def _write_config_files(base_dir: Path) -> Path:
@@ -633,6 +653,31 @@ def test_fastapi_agentic_rag_chat_rejects_explicit_output_dir(tmp_path: Path, mo
 
     assert response.status_code == 400
     assert response.json()["error"].startswith("output_dir is not supported")
+
+
+@pytest.mark.parametrize("offset_seconds", [0, 1])
+def test_fastapi_agentic_rag_chat_is_retired_at_and_after_sunset(
+    tmp_path: Path,
+    monkeypatch,
+    offset_seconds: int,
+) -> None:
+    monkeypatch.setattr(
+        agentic_rag_router,
+        "datetime",
+        _datetime_at_agentic_chat_sunset(offset_seconds),
+    )
+    client, _db_path = _build_client(tmp_path, monkeypatch)
+
+    response = client.post(
+        "/api/agentic-rag/chat",
+        json={"query": "capital", "kb_id": "kb-a"},
+    )
+
+    assert response.status_code == 410
+    assert response.json() == {
+        "success": False,
+        "error": "Endpoint retired; use /api/chat/query",
+    }
 
 
 def test_fastapi_agentic_rag_chat_resolves_registry_manifest_profile(
