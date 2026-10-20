@@ -48,10 +48,10 @@ const baseNavItems = [
 function Sidebar({ collapsed, onClose, showClose = false, testIdPrefix = "" }: { collapsed: boolean; onClose: () => void; showClose?: boolean; testIdPrefix?: string }) {
   const [location] = useLocation();
   const { t } = useTranslation();
-  const { isLoggedIn, permissions } = useAuth();
+  const { isLoggedIn, permissions, isReadOnlyHub } = useAuth();
   const can = (permission: string) => permissions.includes(permission);
   const navItems = [
-    ...baseNavItems.filter((item) => can(item.permission)),
+    ...baseNavItems.filter((item) => isReadOnlyHub ? item.path === "/database" : can(item.permission)),
     ...(isLoggedIn ? [{ path: "/profile", icon: UserCircle2, labelKey: "nav.profile" }] : []),
     ...(can("users.manage") ? [{ path: "/users", icon: Users, labelKey: "nav.users" }] : []),
   ];
@@ -110,7 +110,7 @@ function Sidebar({ collapsed, onClose, showClose = false, testIdPrefix = "" }: {
 export default function Layout({ children }: { children: React.ReactNode }) {
   const i18n = useI18n();
   const { theme, toggleTheme } = useTheme();
-  const { user, isLoggedIn, logout, permissions } = useAuth();
+  const { user, isLoggedIn, logout, permissions, isReadOnlyHub } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const openSidebarRef = useRef<HTMLButtonElement>(null);
   const closeSidebar = () => {
@@ -151,7 +151,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             </IconButton>
             <div className="flex-1" />
             <div className="flex items-center gap-1.5">
-              {isLoggedIn ? (
+              {isReadOnlyHub ? null : isLoggedIn ? (
                 <>
                   <Link href="/profile" className="hidden sm:flex">
                     <div className="flex items-center gap-2 rounded-lg border border-border px-3 py-1.5 text-sm hover:bg-muted cursor-pointer">
@@ -211,6 +211,11 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
           <main className="flex-1 overflow-y-auto">
             <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6">
+              {isReadOnlyHub && (
+                <div className="mb-5 rounded-lg border border-primary/20 bg-primary/5 px-4 py-2 text-xs text-muted-foreground" data-testid="hub-read-only-banner">
+                  {i18n.lang === "zh" ? "本地 Content Hub 浏览器 · 只读" : "Local Content Hub viewer · Read only"}
+                </div>
+              )}
               {children}
             </div>
           </main>

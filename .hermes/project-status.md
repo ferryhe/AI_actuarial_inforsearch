@@ -1,3 +1,14 @@
+# 本地 Hub 只读查看 — 2026-10-20
+
+- 项目 AI_actuarial_inforsearch；工作树 `C:/Users/ferry/.codex/worktrees/local-hub-readonly/AI_actuarial_inforsearch`，分支 `codex/local-hub-readonly`，基于 `origin/main ef906bd`。主 checkout 的旧分支、状态修改和四个未跟踪目录保留；兄弟仓库未访问。
+- 复用 Database/FileDetail，新增独立 loopback GET-only Hub API、只读 PostgreSQL 事务及本地启动指南。页面展示中英元数据、按顺序的主次分类、原精度日期、原文证据、未决/缺口和版本绑定 Markdown；隐藏写入及未支持的正常产品操作。Auth 模式等待/失败/重试、正常服务兼容及根路径/浏览器返回导航均已验证。
+- 本地服务已启动：页面 `http://127.0.0.1:5173/database`，API `127.0.0.1:8000`。仅绑定本机；API PID 45876、UI PID 61064，运行信息及日志在本工作树 `reports/local-hub-readonly-20261020/runtime.json`。服务和工作树保持供用户查看。
+- 真实 API 全量扫描 9,751 个可查看版本并逐项与数据库一致，41 个排除版本全部不可见，94 个缺注释版本保留缺口；25 类和 42 来源核对通过。11 个详情/正文/日期/证据案例、筛选及相同 URL 多版本身份核对通过。未知、拒绝或未决日期没有提升为确认日期。
+- 数据库 12 张表全部行/列的前后多集指纹相同，详见 database-before/after.json。未运行迁移、生成器或 writer，未恢复已完成的补全心跳；未复制凭据、修改数据库或部署网站。
+- 验证：Python 聚焦 29 项及认证源码 1 项通过；前端 4 文件 22 项通过；typecheck、lint、build、Black/isort/Ruff、CLI help、dead-code 与 diff 检查通过。Lint 保留 4 条既有 hook 警告，构建保留既有大分块提示。Fresh GPT-6-sol/high 独立 review-5 PASS，16 个实现文件哈希匹配。累计 4 个需修复审核已按策略由原 GPT-6-luna/high 工作者修复；TypeSafe jev-latest 的新增证据裁决分别记录在 judge-1/2/3.json。
+- 自动浏览器视觉验证被工具 URL 策略拒绝，未换浏览器或绕过限制；实际 HTTP、组件和 API 检查通过，用户可直接打开上述本地页面查看。深分页/搜索部分请求约需 11–12 秒，作为已记录限制保留。
+- 改动范围为 ai_actuarial/api 独立 viewer、现有前端页/路由/认证/导航/分类、聚焦测试、dead-code 配置及本地指南。本地验收、复核与运行证据在 `reports/local-hub-readonly-20261020`。按仓库规则自动提交、推送并建立 PR；提交的实际 CI/非 Copilot 反馈由本线程跟进，Copilot 用户禁用。未授权合并或线上部署。
+
 # 当前 PR #425：双语前台/Catalog及汇总库同步 — 2026-10-14T19:56:34+00:00
 
 - 项目 AI_actuarial_inforsearch；分支 fix/bilingual-document-metadata，任务工作树 reports/bilingual-metadata-worktree；原 checkout 修改及四个未跟踪目录保留，兄弟仓库未访问。范围为目录 JSON/PG0003、生成与增量补齐、Storage/API/搜索/编辑、Database/FileDetail/两Catalog入口、Hub同步CLI及相关测试和指南。

@@ -49,6 +49,7 @@ import {
 import { getCanonicalDisplayName, getChatValidName } from "./chat/displayName";
 
 interface FileItem {
+  content_version_id?: number;
   url: string;
   title: string;
   original_filename: string;
@@ -64,6 +65,10 @@ interface FileItem {
   markdown_source: string | null;
   bytes: number | null;
   deleted_at: string | null;
+  hub_categories?: Array<{ key?: string; evidence?: unknown }>;
+  hub_dates?: Record<string, { value?: string; precision?: string } | null>;
+  hub_date_review_status?: string;
+  hub_date_review_reason?: string;
 }
 
 interface FilesResponse {
@@ -100,6 +105,29 @@ function formatDate(dateStr: string, lang: string): string {
     day: "numeric",
     year: "numeric",
   }).format(d);
+}
+
+function hubMetadataForLanguage(value: unknown, lang: string, fallback: FileItem) {
+  const packages = value && typeof value === "object" ? value as Record<string, unknown> : {};
+  const selected = packages[lang] && typeof packages[lang] === "object"
+    ? packages[lang] as Record<string, unknown>
+    : {};
+  const other = packages[lang === "zh" ? "en" : "zh"] && typeof packages[lang === "zh" ? "en" : "zh"] === "object"
+    ? packages[lang === "zh" ? "en" : "zh"] as Record<string, unknown>
+    : {};
+  const text = (key: "title" | "summary" | "category") => {
+    const current = selected[key];
+    const backup = other[key];
+    return (typeof current === "string" && current.trim()) || (typeof backup === "string" && backup.trim()) ||
+      (typeof fallback[key] === "string" ? fallback[key] as string : "");
+  };
+  const keywords = Array.isArray(selected.keywords) ? selected.keywords : Array.isArray(other.keywords) ? other.keywords : fallback.keywords;
+  return {
+    title: text("title"),
+    summary: text("summary"),
+    category: text("category"),
+    keywords: Array.isArray(keywords) ? keywords.filter((item): item is string => typeof item === "string") : [],
+  };
 }
 
 interface CachedFilesEntry {
@@ -239,7 +267,7 @@ function normalizeCategories(items: Array<string | CategoryOption> | undefined):
 
 export default function DatabasePage() {
   const { t, lang } = useTranslation();
-  const { permissions, isLoading: authLoading } = useAuth();
+  const { permissions, isLoading: authLoading, isReadOnlyHub } = useAuth();
   const canDeleteFiles = permissions.includes("files.delete");
   const canDownloadFiles = permissions.includes("files.download");
   const canExportFiles = permissions.includes("export.read");
@@ -252,9 +280,10 @@ export default function DatabasePage() {
     initialStateRef.current = parseDatabaseQueryState(searchStr);
   }
   const initialState = initialStateRef.current;
-  const initialRequestKey = buildFilesParams(initialState).toString();
+  const initialQuery = buildFilesParams(initialState).toString();
+  const initialRequestKey = isReadOnlyHub ? `hub:${initialQuery}` : initialQuery;
   const initialCachedFiles = getCachedFiles(initialRequestKey);
-  const initialCachedMeta = getCachedMeta();
+  const initialCachedMeta = isReadOnlyHub ? null : getCachedMeta();
 
   const [files, setFiles] = useState<FileItem[]>(initialCachedFiles?.files || []);
   const [total, setTotal] = useState(initialCachedFiles?.total ?? 0);
@@ -321,7 +350,8 @@ export default function DatabasePage() {
   }, [authLoading, locationKey]);
 
   useEffect(() => {
-    const cachedMeta = getCachedMeta();
+    if (authLoading) return;
+    const cachedMeta = isReadOnlyHub ? null : getCachedMeta();
     if (cachedMeta) {
       setSources(cachedMeta.sources);
       setCategories(cachedMeta.categories);
@@ -330,8 +360,8 @@ export default function DatabasePage() {
 
     let cancelled = false;
     Promise.allSettled([
-      apiGet<{ sources: string[] }>("/api/sources"),
-      apiGet<{ categories: Array<string | CategoryOption> }>("/api/categories?mode=used"),
+      apiGet<{ sources: string[] }>(isReadOnlyHub ? "/api/hub/sources" : "/api/sources"),
+      apiGet<{ categories: Array<string | CategoryOption> }>(isReadOnlyHub ? "/api/hub/categories" : "/api/categories?mode=used"),
     ])
       .then(([sourcesResult, categoriesResult]) => {
         if (cancelled) return;
@@ -343,14 +373,14 @@ export default function DatabasePage() {
             : [];
         setSources(nextSources);
         setCategories(nextCategories);
-        setCachedMeta(nextSources, nextCategories);
+        if (!isReadOnlyHub) setCachedMeta(nextSources, nextCategories);
       })
       .catch(() => {});
 
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [authLoading, isReadOnlyHub]);
 
   const fetchFiles = useCallback(
     async ({ targetOffset = offset, forceNetwork = false }: { targetOffset?: number; forceNetwork?: boolean } = {}) => {
@@ -366,7 +396,8 @@ export default function DatabasePage() {
         firstSeenFrom: initialState.firstSeenFrom,
         firstSeenBefore: initialState.firstSeenBefore,
       };
-      const targetKey = buildFilesParams(targetState).toString();
+      const requestQuery = buildFilesParams(targetState).toString();
+      const targetKey = isReadOnlyHub ? `hub:${requestQuery}` : requestQuery;
       const availableCached = getCachedFiles(targetKey);
       const cached = forceNetwork ? null : availableCached;
       const isCurrentRequest = targetOffset === offset;
@@ -387,7 +418,7 @@ export default function DatabasePage() {
       const requestId = isCurrentRequest ? ++fetchSeqRef.current : fetchSeqRef.current;
 
       try {
-        const data = await apiGet<FilesResponse>(`/api/files?${targetKey}`);
+        const data = await apiGet<FilesResponse>(`${isReadOnlyHub ? "/api/hub/files" : "/api/files"}?${requestQuery}`);
         setCachedFiles(targetKey, data);
 
         if (isCurrentRequest && requestId === fetchSeqRef.current) {
@@ -412,7 +443,7 @@ export default function DatabasePage() {
         }
       }
     },
-    [offset, debouncedQuery, source, category, authLoading, canDeleteFiles, includeDeleted, orderBy, orderDir]
+    [offset, debouncedQuery, source, category, authLoading, canDeleteFiles, includeDeleted, orderBy, orderDir, isReadOnlyHub]
   );
 
   useEffect(() => {
@@ -493,7 +524,7 @@ export default function DatabasePage() {
 
   function navigateToFile(file: FileItem) {
     databaseScrollCache.set(locationKey, window.scrollY);
-    navigate(buildFileDetailPath(file.url, locationKey));
+    navigate(buildFileDetailPath(file.url, locationKey, isReadOnlyHub ? file.content_version_id : undefined));
   }
 
   function navigateToPreview(file: FileItem) {
@@ -795,13 +826,24 @@ export default function DatabasePage() {
               className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-border bg-card text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
               data-testid="select-sort"
             >
-              <option value="last_seen:desc">{t("db.sort_date_newest")}</option>
-              <option value="last_seen:asc">{t("db.sort_date_oldest")}</option>
-              <option value="first_seen:desc">{t("db.sort_first_seen_newest")}</option>
-              <option value="first_seen:asc">{t("db.sort_first_seen_oldest")}</option>
-              <option value="title:asc">{t("db.sort_title_az")}</option>
-              <option value="source_site:asc">{t("db.sort_source_az")}</option>
-              <option value="bytes:desc">{t("db.sort_size_largest")}</option>
+              {isReadOnlyHub ? (
+                <>
+                  <option value="last_seen:desc">{lang === "zh" ? "内容版本 ID：新到旧" : "Content version ID: newest"}</option>
+                  <option value="last_seen:asc">{lang === "zh" ? "内容版本 ID：旧到新" : "Content version ID: oldest"}</option>
+                  <option value="title:asc">{t("db.sort_title_az")}</option>
+                  <option value="source_site:asc">{t("db.sort_source_az")}</option>
+                </>
+              ) : (
+                <>
+                  <option value="last_seen:desc">{t("db.sort_date_newest")}</option>
+                  <option value="last_seen:asc">{t("db.sort_date_oldest")}</option>
+                  <option value="first_seen:desc">{t("db.sort_first_seen_newest")}</option>
+                  <option value="first_seen:asc">{t("db.sort_first_seen_oldest")}</option>
+                  <option value="title:asc">{t("db.sort_title_az")}</option>
+                  <option value="source_site:asc">{t("db.sort_source_az")}</option>
+                  <option value="bytes:desc">{t("db.sort_size_largest")}</option>
+                </>
+              )}
             </select>
           </div>
           <div className="flex items-end gap-3">
@@ -880,23 +922,27 @@ export default function DatabasePage() {
               {t("table.source")} <SortIcon field="source_site" />
             </button>
             <button onClick={() => handleSort("first_seen")} className="flex items-center gap-1 hover:text-foreground transition-colors text-left" data-testid="sort-first-seen">
-              {t("db.first_seen")} <SortIcon field="first_seen" />
+              {isReadOnlyHub ? (lang === "zh" ? "内容版本 ID" : "Content version ID") : t("db.first_seen")} <SortIcon field="first_seen" />
             </button>
             <span>{t("table.actions")}</span>
           </div>
 
           {files.map((file, i) => {
-            const metadata = localizedCatalogMetadata(file.bilingual_metadata, lang, file);
+            const metadata = isReadOnlyHub
+              ? hubMetadataForLanguage(file.bilingual_metadata, lang, file)
+              : localizedCatalogMetadata(file.bilingual_metadata, lang, file);
             const hasMd = file.has_markdown;
             const isDeleted = !!file.deleted_at;
             const isSelected = selectedUrls.includes(file.url);
             const displayName = getCanonicalDisplayName({ ...file, title: metadata.title }, t("dashboard.untitled_material"));
             const displayDate = file.first_seen;
-            const categoryText = normalizePublicCategory(metadata.category)
-              .split(";")
-              .map((name) => categoryDisplayName(name.trim(), lang))
-              .filter((name) => name !== "-")
-              .join("; ");
+            const categoryText = isReadOnlyHub
+              ? (file.hub_categories || []).map((item) => categoryDisplayName(item.key, lang)).join("; ")
+              : normalizePublicCategory(metadata.category)
+                .split(";")
+                .map((name) => categoryDisplayName(name.trim(), lang))
+                .filter((name) => name !== "-")
+                .join("; ");
             const keywordText = normalizePublicKeywords(metadata.keywords).join(", ");
             const summaryText = normalizePublicMetadataText(metadata.summary);
             const selectionLabel = t(isSelected ? "db.deselect_file" : "db.select_file");
@@ -904,7 +950,7 @@ export default function DatabasePage() {
 
             return (
               <motion.div
-                key={file.url}
+                key={file.content_version_id ?? file.url}
                 custom={i}
                 variants={fadeUp}
                 initial="hidden"
@@ -967,18 +1013,30 @@ export default function DatabasePage() {
                       <span className="line-clamp-3 whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{summaryText}</span>
                     </p>
                   ) : null}
+                  {isReadOnlyHub && (
+                    <div className="mt-2 min-w-0 pl-6 text-[11px] text-muted-foreground" data-testid={`text-hub-dates-${i}`}>
+                      {(["publication_date", "revision_date", "document_version_date"] as const).map((kind) => {
+                        const labels = lang === "zh"
+                          ? { publication_date: "发布日期", revision_date: "修订日期", document_version_date: "文档版本日期" }
+                          : { publication_date: "Publication", revision_date: "Revision", document_version_date: "Document version" };
+                        const fact = file.hub_dates?.[kind];
+                        return <span key={kind} className="mr-3 inline-block">{labels[kind]}: {fact?.value || "—"}{fact?.value && fact.precision ? ` (${fact.precision})` : ""}</span>;
+                      })}
+                      <span>{lang === "zh" ? "日期审核" : "Date review"}: {file.hub_date_review_status || "unannotated"}</span>
+                    </div>
+                  )}
                 </div>
 
                 <span className="text-xs text-muted-foreground truncate hidden lg:flex items-center" data-testid={`text-source-${i}`}>
                   {file.source_site || "-"}
                 </span>
 
-                <time className="text-xs text-muted-foreground hidden lg:flex items-center" dateTime={file.first_seen} title={file.first_seen} data-testid={`text-date-${i}`}>
-                  {formatDate(displayDate, lang)}
-                </time>
+                <span className="text-xs text-muted-foreground hidden lg:flex items-center" title={isReadOnlyHub ? [file.hub_date_review_status, file.hub_date_review_reason].filter(Boolean).join(": ") : file.first_seen} data-testid={`text-date-${i}`}>
+                  {isReadOnlyHub ? file.content_version_id : formatDate(displayDate, lang)}
+                </span>
 
                 <div className="hidden lg:flex items-center gap-1.5 justify-end">
-                  <button
+                  {!isReadOnlyHub && <button
                     type="button"
                     onClick={(e) => {
                       e.stopPropagation();
@@ -992,8 +1050,8 @@ export default function DatabasePage() {
                     title={explainLabel}
                   >
                     <Sparkles className="w-4 h-4" />
-                  </button>
-                  <button
+                  </button>}
+                  {!isReadOnlyHub && <button
                     type="button"
                     onClick={(e) => {
                       e.stopPropagation();
@@ -1005,7 +1063,7 @@ export default function DatabasePage() {
                     title={t("db.preview")}
                   >
                     <Eye className="w-4 h-4" />
-                  </button>
+                  </button>}
                   {canDownloadFiles && (
                     <button
                       type="button"
@@ -1044,12 +1102,12 @@ export default function DatabasePage() {
                   <span className="min-w-0 truncate text-xs text-muted-foreground" data-testid={`text-source-mobile-${i}`}>
                     {file.source_site || "-"}
                   </span>
-                  <time className="shrink-0 text-xs text-muted-foreground" dateTime={file.first_seen} title={file.first_seen}>
-                    {formatDate(displayDate, lang)}
-                  </time>
+                  <span className="shrink-0 text-xs text-muted-foreground" title={isReadOnlyHub ? [file.hub_date_review_status, file.hub_date_review_reason].filter(Boolean).join(": ") : file.first_seen}>
+                    {isReadOnlyHub ? file.content_version_id : formatDate(displayDate, lang)}
+                  </span>
                 </div>
                 <div className="flex flex-wrap items-center gap-2 lg:hidden mt-2 pl-6">
-                  <button
+                  {!isReadOnlyHub && <button
                     type="button"
                     onClick={(e) => {
                       e.stopPropagation();
@@ -1063,8 +1121,8 @@ export default function DatabasePage() {
                   >
                     <Sparkles className="w-3.5 h-3.5" />
                     {t("db.explain_with_ai")}
-                  </button>
-                  <button
+                  </button>}
+                  {!isReadOnlyHub && <button
                     type="button"
                     onClick={(e) => {
                       e.stopPropagation();
@@ -1076,7 +1134,7 @@ export default function DatabasePage() {
                   >
                     <Eye className="w-3.5 h-3.5" />
                     {t("db.preview")}
-                  </button>
+                  </button>}
                   {canDownloadFiles && (
                     <button
                       type="button"

@@ -61,6 +61,55 @@ function RequirePermission({ permission, children }: { permission: string; child
 }
 
 function Router() {
+  const { isReadOnlyHub, isLoading, authError, refresh } = useAuth();
+  const [location, navigate] = useLocation();
+
+  useEffect(() => {
+    if (!isLoading && isReadOnlyHub && location !== "/database" && location !== "/file-detail") {
+      navigate("/database", { replace: true });
+    }
+  }, [isLoading, isReadOnlyHub, location, navigate]);
+
+  if (isLoading) {
+    return (
+      <main className="flex min-h-screen items-center justify-center text-sm text-muted-foreground" role="status" data-testid="auth-mode-loading">
+        Connecting to the local content viewer… / 正在连接本地内容浏览器…
+      </main>
+    );
+  }
+
+  if (authError) {
+    return (
+      <main className="flex min-h-screen flex-col items-center justify-center gap-4 px-6 text-center" role="alert" data-testid="auth-mode-error">
+        <p className="text-sm text-muted-foreground">
+          Unable to connect to the local content viewer. Please retry. / 无法连接到本地内容浏览器，请重试。
+        </p>
+        <button
+          type="button"
+          className="rounded-lg border border-border bg-card px-4 py-2 text-sm font-medium hover:bg-muted"
+          data-testid="auth-mode-retry"
+          onClick={() => void refresh()}
+        >
+          Retry / 重试
+        </button>
+      </main>
+    );
+  }
+
+  if (isReadOnlyHub) {
+    return (
+      <Layout>
+        <Switch>
+          <Route path="/database" component={Database} />
+          <Route path="/file-detail" component={FileDetail} />
+          <Route>
+            <div className="flex min-h-[50vh] items-center justify-center text-sm text-muted-foreground">Loading local Hub viewer…</div>
+          </Route>
+        </Switch>
+      </Layout>
+    );
+  }
+
   return (
     <Switch>
       <Route path="/login" component={Login} />

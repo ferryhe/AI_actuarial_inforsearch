@@ -6,8 +6,10 @@ export interface CategoryLabelOption {
 }
 
 const CATEGORY_LABELS_ZH: Record<string, string> = {
+  "Accounting & Financial Reporting": "会计与财务报告",
   "AI": "人工智能",
   "Climate & ESG": "气候与 ESG",
+  "Cyber Risk & Insurance": "网络风险与保险",
   "Data & Analytics": "数据与分析",
   "Education / Events": "教育与活动",
   "Exam": "考试",
@@ -16,12 +18,16 @@ const CATEGORY_LABELS_ZH: Record<string, string> = {
   "Investment / ALM": "投资与资产负债管理",
   "Life": "寿险",
   "LTC / DI / CI": "长期护理 / 失能 / 重疾",
+  "Mortality & Longevity": "死亡率与长寿",
   "Operations / Automation": "运营与自动化",
   "Other": "其他",
   "P&C": "财产与意外险",
   "Pension & Retirement": "养老金与退休",
   "Pricing": "定价",
+  "Product Development & Profitability": "产品开发与盈利分析",
+  "Professional Practice & Ethics": "精算实务与职业道德",
   "Regulation & Standards": "监管与准则",
+  "Reinsurance": "再保险",
   "Reserving": "准备金",
   "Risk & Capital": "风险与资本",
   "Underwriting & Claims": "核保与理赔",

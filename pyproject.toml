@@ -62,6 +62,7 @@ production_entries = [
     "ai_actuarial.__main__",
     "ai_actuarial.cli",
     "ai_actuarial.api.app",
+    "ai_actuarial.api.local_hub",
     "ai_actuarial.agentic_rag.eval",
 ]
 script_entry_globs = ["scripts/*.py", "scripts/maintenance/*.py"]
