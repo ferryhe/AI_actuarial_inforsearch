@@ -319,6 +319,12 @@ function TaskStatusBadge({ status, t }: { status: TaskStatus; t: (k: string) => 
 }
 
 export default function FileDetail() {
+  const { isLoading, isReadOnlyHub } = useAuth();
+  if (isLoading) return null;
+  return isReadOnlyHub ? <HubFileDetail /> : <LocalFileDetail />;
+}
+
+function LocalFileDetail() {
   const { t, lang } = useTranslation();
   const { permissions } = useAuth();
   const canReadConfig = permissions.includes("config.read");
@@ -1249,6 +1255,169 @@ export default function FileDetail() {
           </div>
         </Modal>
       )}
+    </div>
+  );
+}
+
+interface HubDateFact {
+  value?: string | null;
+  precision?: string | null;
+  semantic?: string | null;
+  evidence?: unknown;
+  location?: string | null;
+}
+
+interface HubFileDetailData {
+  content_version_id: number;
+  url: string;
+  title: string;
+  original_filename: string;
+  source_site: string;
+  category?: string | null;
+  hub_categories: Array<{ key: string; evidence?: unknown }>;
+  bilingual_metadata: Record<string, { title?: string; summary?: string; keywords?: string[] }>;
+  hub_dates: Record<string, HubDateFact | null>;
+  hub_date_review_status: string;
+  hub_date_review_reason: string;
+  source_record: {
+    legacy_file_id?: string;
+    source_snapshot_id?: number;
+    availability?: string;
+    raw_sha256?: string;
+    verified_sha256?: string;
+  };
+  annotation: {
+    source_text_variant_id?: number;
+    source_markdown_sha256?: string;
+    result_sha256?: string;
+    recipe?: string;
+    run_id?: string;
+    date_review_unresolved?: Array<{ kind?: string; status?: string; reason?: string; evidence?: string[] }>;
+  };
+  markdown: string | null;
+}
+
+function evidenceQuotes(value: unknown): string[] {
+  const quotes = new Set<string>();
+  const evidenceKeys = new Set(["evidence", "quote", "quotes", "excerpt"]);
+  const visit = (item: unknown, evidenceField = false): void => {
+    if (typeof item === "string") {
+      if (evidenceField && item.trim()) quotes.add(item.trim());
+      return;
+    }
+    if (Array.isArray(item)) {
+      item.forEach((child) => visit(child, evidenceField || typeof child === "string"));
+      return;
+    }
+    if (!item || typeof item !== "object") return;
+    for (const [key, child] of Object.entries(item as Record<string, unknown>)) {
+      const normalizedKey = key.toLowerCase();
+      visit(child, evidenceKeys.has(normalizedKey) || (evidenceField && normalizedKey === "text"));
+    }
+  };
+  visit(value, typeof value === "string");
+  return [...quotes];
+}
+
+function HubFileDetail() {
+  const { lang } = useTranslation();
+  const [, navigate] = useLocation();
+  const searchParams = useRawSearchParams();
+  const fileId = searchParams.get("file_id") || "";
+  const from = sanitizeReturnPath(searchParams.get("from"));
+  const [file, setFile] = useState<HubFileDetailData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (!/^\d+$/.test(fileId)) {
+      setError("A content version ID is required.");
+      setLoading(false);
+      return;
+    }
+    let cancelled = false;
+    apiGet<{ file: HubFileDetailData }>(`/api/hub/files/${encodeURIComponent(fileId)}`)
+      .then((result) => { if (!cancelled) setFile(result.file); })
+      .catch((reason: unknown) => { if (!cancelled) setError(reason instanceof Error ? reason.message : "Could not load content version"); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [fileId]);
+
+  if (loading) return <div className="py-16 text-center text-sm text-muted-foreground">Loading Content Hub record…</div>;
+  if (!file) {
+    return <div className="space-y-4"><button onClick={() => navigate(from || "/database")} className="min-h-[44px] px-3 rounded-lg border border-border">Back to database</button><p role="alert" className="text-sm text-destructive">{error || "Content version not found."}</p></div>;
+  }
+
+  const localized = file.bilingual_metadata?.[lang] || file.bilingual_metadata?.[lang === "zh" ? "en" : "zh"] || {};
+  const title = localized.title?.trim() || file.title || file.original_filename || `Content version ${file.content_version_id}`;
+  const kindLabels: Record<string, string> = lang === "zh"
+    ? { publication_date: "发布日期", revision_date: "修订日期", document_version_date: "文档版本日期" }
+    : { publication_date: "Publication date", revision_date: "Revision date", document_version_date: "Document version date" };
+  const displayUrl = /^https?:\/\//i.test(file.url);
+  const categoryItems = Array.isArray(file.hub_categories) ? file.hub_categories : [];
+
+  return (
+    <div className="max-w-4xl space-y-6" data-testid="hub-file-detail">
+      <button onClick={() => navigate(from || "/database")} className="inline-flex min-h-[44px] items-center gap-2 rounded-lg border border-border px-3 text-sm hover:bg-muted" data-testid="button-back">
+        <ArrowLeft className="h-4 w-4" />{lang === "zh" ? "返回文章列表" : "Back to database"}
+      </button>
+      <section className="rounded-xl border border-border bg-card p-5 space-y-3">
+        <h1 className="text-xl sm:text-2xl font-serif font-bold break-words" data-testid="text-file-title">{title}</h1>
+        <p className="text-xs text-muted-foreground">Content version {file.content_version_id} · {file.source_site || "Unknown source"}</p>
+        <div className="text-xs break-all">
+          <span className="font-medium">{lang === "zh" ? "来源 URL" : "Source URL"}: </span>
+          {displayUrl ? <a href={file.url} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline" data-testid="link-original-url">{file.url}</a> : <span>{file.url || "—"}</span>}
+        </div>
+        {file.original_filename && <p className="text-xs text-muted-foreground">{file.original_filename}</p>}
+      </section>
+
+      <section className="rounded-xl border border-border bg-card p-5 space-y-4">
+        <h2 className="font-semibold">{lang === "zh" ? "分类与证据" : "Classifications and evidence"}</h2>
+        {categoryItems.length ? categoryItems.map((item, index) => (
+          <div key={`${item.key}-${index}`} className="space-y-1" data-testid={`hub-category-${index}`}>
+            <span className="inline-flex rounded-full bg-primary/10 px-2 py-1 text-xs text-primary">{categoryDisplayName(item.key, lang)}</span>
+            {evidenceQuotes(item.evidence).map((quote, quoteIndex) => <blockquote key={quoteIndex} className="border-l-2 border-border pl-3 text-xs text-muted-foreground">“{quote}”</blockquote>)}
+          </div>
+        )) : <p className="text-sm text-muted-foreground">{lang === "zh" ? "暂无已标注分类" : "No approved classification"}</p>}
+      </section>
+
+      <section className="rounded-xl border border-border bg-card p-5 space-y-4" data-testid="hub-dates">
+        <h2 className="font-semibold">{lang === "zh" ? "日期与证据" : "Dates and evidence"}</h2>
+        {Object.entries(kindLabels).map(([kind, label]) => {
+          const fact = file.hub_dates?.[kind];
+          return (
+            <div key={kind} className="space-y-1 border-t border-border pt-3">
+              <h3 className="text-sm font-medium">{label}</h3>
+              {fact?.value
+                ? <p className="text-sm" data-testid={`hub-date-${kind}`}>{fact.value}{fact.precision ? ` (${fact.precision})` : ""}{fact.semantic ? ` · ${fact.semantic}` : ""}{fact.location ? ` · ${fact.location}` : ""}</p>
+                : <p className="text-xs text-muted-foreground">{lang === "zh" ? "无已确认日期" : "No confirmed date"}</p>}
+              {evidenceQuotes(fact?.evidence).map((quote, index) => <blockquote key={index} className="border-l-2 border-border pl-3 text-xs text-muted-foreground">“{quote}”</blockquote>)}
+            </div>
+          );
+        })}
+        <p className="text-xs text-muted-foreground">{lang === "zh" ? "日期审核状态" : "Date review status"}: {file.hub_date_review_status}{file.hub_date_review_reason ? ` · ${file.hub_date_review_reason}` : ""}</p>
+        {(file.annotation.date_review_unresolved || []).map((proposal, index) => (
+          <div key={index} className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-xs" data-testid={`hub-unresolved-date-${index}`}>
+            <p className="font-medium">{lang === "zh" ? "未确认日期证据" : "Unresolved date evidence"}{proposal.kind ? ` · ${kindLabels[proposal.kind] || proposal.kind}` : ""}{proposal.status ? ` · ${proposal.status}` : ""}</p>
+            {proposal.reason && <p className="mt-1 text-muted-foreground">{proposal.reason}</p>}
+            {(proposal.evidence || []).map((quote, quoteIndex) => <blockquote key={quoteIndex} className="mt-1 border-l-2 border-amber-500/40 pl-3">“{quote}”</blockquote>)}
+          </div>
+        ))}
+      </section>
+
+      <section className="rounded-xl border border-border bg-card p-5 space-y-3">
+        <h2 className="font-semibold">{lang === "zh" ? "摘要与关键词" : "Summary and keywords"}</h2>
+        <p className="whitespace-pre-wrap text-sm">{localized.summary || (lang === "zh" ? "暂无摘要" : "No summary")}</p>
+        <div className="flex flex-wrap gap-2">{(localized.keywords || []).map((keyword, index) => <span key={`${keyword}-${index}`} className="rounded-full bg-muted px-2 py-1 text-xs">{keyword}</span>)}</div>
+      </section>
+
+      <section className="rounded-xl border border-border bg-card p-5 space-y-3">
+        <h2 className="font-semibold">{lang === "zh" ? "源 Markdown 正文" : "Source Markdown"}</h2>
+        {file.markdown
+          ? <div className="max-h-none min-w-0 overflow-x-auto" data-testid="text-markdown-content"><MarkdownContent content={file.markdown} /></div>
+          : <p className="text-sm text-muted-foreground">{lang === "zh" ? "此版本没有已绑定的原始 Markdown 正文" : "No source Markdown is bound to this content version"}</p>}
+        {file.annotation.source_text_variant_id && <p className="text-[11px] text-muted-foreground">Text variant {file.annotation.source_text_variant_id}{file.annotation.source_markdown_sha256 ? ` · SHA-256 ${file.annotation.source_markdown_sha256}` : ""}</p>}
+      </section>
     </div>
   );
 }

@@ -377,6 +377,10 @@ from ai_actuarial.api.middleware.rate_limit import RateLimitMiddleware
 
 RateLimitMiddleware.dispatch  # reason: Starlette invokes the middleware protocol hook.
 
+from ai_actuarial.api import __getattr__
+
+__getattr__  # reason: Python resolves the existing lazy API package exports dynamically.
+
 from ai_actuarial.collectors.base import CollectionConfig
 
 CollectionConfig.auto_download  # reason: Public exported dataclass constructor field retained for compatibility.

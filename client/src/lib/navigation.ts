@@ -71,9 +71,10 @@ export function parseAskAiChatTarget(rawSearch?: string): AskAiChatTarget | null
   return { kbId, ragMode: "agentic" };
 }
 
-export function buildFileDetailPath(fileUrl: string, from?: string | null): string {
+export function buildFileDetailPath(fileUrl: string, from?: string | null, fileId?: number): string {
   const params = new URLSearchParams();
-  params.set("url", fileUrl);
+  if (fileId !== undefined) params.set("file_id", String(fileId));
+  else params.set("url", fileUrl);
 
   const safeFrom = sanitizeReturnPath(from);
   if (safeFrom) {
