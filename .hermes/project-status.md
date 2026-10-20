@@ -7,6 +7,7 @@
 - 数据库 12 张表全部行/列的前后多集指纹相同，详见 database-before/after.json。未运行迁移、生成器或 writer，未恢复已完成的补全心跳；未复制凭据、修改数据库或部署网站。
 - 验证：Python 聚焦 29 项及认证源码 1 项通过；前端 4 文件 22 项通过；typecheck、lint、build、Black/isort/Ruff、CLI help、dead-code 与 diff 检查通过。Lint 保留 4 条既有 hook 警告，构建保留既有大分块提示。Fresh GPT-6-sol/high 独立 review-5 PASS，16 个实现文件哈希匹配。累计 4 个需修复审核已按策略由原 GPT-6-luna/high 工作者修复；TypeSafe jev-latest 的新增证据裁决分别记录在 judge-1/2/3.json。
 - 自动浏览器视觉验证被工具 URL 策略拒绝，未换浏览器或绕过限制；实际 HTTP、组件和 API 检查通过，用户可直接打开上述本地页面查看。深分页/搜索部分请求约需 11–12 秒，作为已记录限制保留。
+- PR #426 初始提交 `58b9234` 的完整 CI：2,504 项 Python 测试及其余 5 项 CI 通过，quality-gate 仅因 api 延迟导出声明的两项 Pylint E0603 失败。原 Luna/high 工作者已加入 TYPE_CHECKING-only 导入，运行时仍保持 lazy；Pylint 红绿验证及 6 项隔离/导出测试通过，fresh Sol/high review-6 PASS，16 个当前实现文件哈希匹配。修复提交后的实际 CI/反馈状态见本工作树 publication.json/final-acceptance.json 及 PR 检查页面；pr426 心跳每 15 分钟安静跟进，完成后停止。集成子集本地缺 POSTGRES_TEST_URL，未连接文章库，须由新提交的临时 PostgreSQL CI 验证。服务健康且未重启，未合并/部署。
 - 改动范围为 ai_actuarial/api 独立 viewer、现有前端页/路由/认证/导航/分类、聚焦测试、dead-code 配置及本地指南。本地验收、复核与运行证据在 `reports/local-hub-readonly-20261020`。按仓库规则自动提交、推送并建立 PR；提交的实际 CI/非 Copilot 反馈由本线程跟进，Copilot 用户禁用。未授权合并或线上部署。
 
 # 当前 PR #425：双语前台/Catalog及汇总库同步 — 2026-10-14T19:56:34+00:00
