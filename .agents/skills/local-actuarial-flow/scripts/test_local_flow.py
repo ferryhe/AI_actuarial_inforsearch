@@ -4,81 +4,351 @@ import json
 import re
 import tempfile
 import unittest
-from datetime import date, datetime, timezone
+from datetime import date, timedelta
 from pathlib import Path
 
 import local_flow as flow
 
 
-def receipt_for(start, site, *, run_status="succeeded", downloaded=1, china=None, overseas=None):
+def receipt_for(day, site, *, run_status="succeeded", ai=0, failed_stage=None, error="source parser failed", evidence=None, china=None, overseas=None):
     stages = {
-        "downloaded": {"status": "succeeded", "count": downloaded},
+        "downloaded": {"status": "succeeded", "count": 1},
         "new_versions": {"status": "succeeded", "count": 1},
         "duplicates": {"status": "succeeded", "count": 0},
         "enriched": {"status": "succeeded", "count": 1},
-        "ai_candidates": {"status": "succeeded", "count": 1},
+        "ai_candidates": {"status": "succeeded", "count": ai},
     }
+    if failed_stage:
+        stages[failed_stage] = {"status": "failed", "error": error, "evidence": evidence or ["https://example.test/list"]}
     if china is not None:
         stages["china_ack"] = china
     if overseas is not None:
         stages["overseas_ack"] = overseas
-    slot = flow.utc_iso(start)
-    return {
-        "schema_version": 1,
-        "receipt_id": f"{slot}/{site}",
-        "slot_start_utc": slot,
+    result = {
+        "schema_version": 2,
+        "receipt_id": f"{day.isoformat()}/{site}",
+        "date_local": day.isoformat(),
         "site_id": site,
         "run_status": run_status,
         "stages": stages,
     }
+    if run_status in {"failed", "partial"}:
+        result["reason"] = error
+    return result
 
 
-def monitoring_receipt_for(start, site, *, run_status="succeeded"):
-    slot = flow.utc_iso(start)
+def monitor_receipt(day, site="iaba", status="succeeded"):
+    stage = {"status": status}
+    if status in {"failed", "partial"}:
+        stage["error"] = "navigation changed"
+        stage["evidence"] = ["https://example.test/monitor"]
     return {
-        "schema_version": 1,
-        "receipt_id": f"{slot}/{site}",
-        "slot_start_utc": slot,
+        "schema_version": 2,
+        "receipt_id": f"{day.isoformat()}/{site}",
+        "date_local": day.isoformat(),
         "site_id": site,
-        "run_status": run_status,
-        "stages": {},
+        "run_status": status,
+        **({"reason": "navigation changed"} if status in {"failed", "partial"} else {}),
+        "stages": {"monitor": stage},
     }
 
 
+def normalized(raw, name="fixture.json"):
+    return flow.normalize_receipt(raw, Path(name))
+
+
+def history(*raw_receipts):
+    result = {}
+    for raw in raw_receipts:
+        receipt = normalized(raw)
+        result[(receipt["date_local"], receipt["site_id"])] = receipt
+    return result
+
+
+def failed_receipt(day, site):
+    if site in flow.MONITOR_ONLY_SITES:
+        return monitor_receipt(day, site, "failed")
+    return receipt_for(day, site, run_status="failed", failed_stage="downloaded", error=f"failure at {site}")
+
+
 class LocalFlowTests(unittest.TestCase):
-    def test_eight_groups_cover_all_sites_and_hold_is_visible(self):
-        start = datetime(2026, 10, 25, 0, tzinfo=timezone.utc)
-        groups = [flow.assigned_sites(start + i * flow.SLOT) for i in range(8)]
+    def test_six_site_rotation_covers_all_32_in_any_seven_dates_including_dst_weeks(self):
         self.assertEqual(len(flow.SITES), 32)
-        self.assertEqual(len({site for group in groups for site in group}), 32)
-        self.assertTrue(all(len(group) == 4 for group in groups))
-        self.assertIn("istituto-italiano-degli-attuari", flow.SITES)
-        held_start = next(start + i * flow.SLOT for i in range(8) if "istituto-italiano-degli-attuari" in flow.assigned_sites(start + i * flow.SLOT))
-        held = next(site for site in flow.make_slot(held_start)["sites"] if site["site_id"] == "istituto-italiano-degli-attuari")
-        self.assertEqual(held["action"], "hold")
-        monitor_start = next(start + i * flow.SLOT for i in range(8) if "iaba" in flow.assigned_sites(start + i * flow.SLOT))
-        monitor = next(site for site in flow.make_slot(monitor_start)["sites"] if site["site_id"] == "iaba")
-        self.assertEqual(monitor["action"], "monitor_only")
+        for start in (date(2026, 3, 5), date(2026, 10, 29), date(2026, 10, 25)):
+            plans = [flow.make_plan(start + timedelta(days=i)) for i in range(7)]
+            planned = {site for plan in plans for site in plan["baseline_sites"]}
+            self.assertEqual(len(planned), 32)
+            self.assertTrue(all(len(plan["baseline_sites"]) == 6 for plan in plans))
+            self.assertTrue(all(len(plan["items"]) == 6 for plan in plans))
+        self.assertTrue(any("istituto-italiano-degli-attuari" in flow.baseline_sites(date(2026, 10, 25) + timedelta(days=i)) for i in range(6)))
 
-    def test_rotation_and_status_do_not_starve_sites_after_a_failure(self):
-        start = datetime(2026, 10, 25, 0, tzinfo=timezone.utc)
-        group = next(flow.assigned_sites(start + i * flow.SLOT) for i in range(8) if "istituto-italiano-degli-attuari" not in flow.assigned_sites(start + i * flow.SLOT))
-        slot = next(start + i * flow.SLOT for i in range(8) if flow.assigned_sites(start + i * flow.SLOT) == group)
-        receipt = receipt_for(slot, group[0], run_status="failed")
-        day = slot.astimezone(flow.TIME_ZONE).date()
-        status = flow.make_status(day, {(receipt["slot_start_utc"], group[0]): flow.normalize_receipt(receipt, Path("fixture.json"))})
-        rows = [row for row in status["rows"] if row["slot_start_utc"] == flow.utc_iso(slot)]
-        self.assertEqual(sum(row["state"] == "failed" for row in rows), 1)
-        self.assertEqual(sum(row["state"] == "not_run" for row in rows), 3)
+    def test_plan_uses_local_date_at_six_and_handles_both_dst_offsets(self):
+        spring = flow.make_plan(date(2026, 3, 8))
+        fall = flow.make_plan(date(2026, 11, 1))
+        self.assertEqual(spring["scheduled_local_at"], "2026-03-08T06:00-04:00")
+        self.assertEqual(fall["scheduled_local_at"], "2026-11-01T06:00-05:00")
 
-    def test_dst_local_date_uses_elapsed_two_hour_slots(self):
-        self.assertEqual(len(flow.slots_for_local_date(date(2026, 3, 8))), 11)
-        self.assertEqual(len(flow.slots_for_local_date(date(2026, 11, 1))), 13)
-        self.assertEqual(len(flow.slots_for_local_date(date(2026, 10, 25))), 12)
-        plan = flow.make_plan(datetime.fromisoformat("2026-11-01T01:30:00-04:00"))
-        self.assertIn("slot_start_utc", plan["slot"])
+    def test_daily_plan_caps_retries_and_never_replaces_baseline(self):
+        day = date(2026, 10, 25)
+        prior = day - timedelta(days=1)
+        baseline = set(flow.baseline_sites(day))
+        candidates = [site for site in flow.SITES if site not in baseline and site != next(iter(flow.HELD_SITES))][:9]
+        failed = [failed_receipt(prior, site) for site in candidates]
+        plan = flow.make_plan(day, history(*failed))
+        self.assertEqual(len(plan["baseline_sites"]), 6)
+        self.assertEqual(len(plan["extra_retry_sites"]), 2)
+        self.assertEqual(len(set(plan["extra_retry_sites"])), 2)
+        self.assertFalse(set(plan["extra_retry_sites"]) & baseline)
+        self.assertEqual(len(plan["retry_candidates_deferred"]), len(candidates) - 2)
 
-    def test_missing_iana_database_has_install_hint(self):
+    def test_failure_retry_rotation_prevents_unattempted_failure_queue_starvation(self):
+        first = date(2026, 10, 25)
+        prior = first - timedelta(days=1)
+        failures = [failed_receipt(prior, site) for site in flow.SITES if site not in flow.HELD_SITES]
+        receipts = history(*failures)
+        retried = set()
+        for offset in range(32):
+            plan = flow.make_plan(first + timedelta(days=offset), receipts)
+            retried.update(plan["extra_retry_sites"])
+            self.assertLessEqual(len(plan["extra_retry_sites"]), 2)
+        self.assertEqual(set(flow.SITES) - flow.HELD_SITES, retried)
+
+    def test_receipts_deduplicate_identical_files_and_reject_conflicts_or_v1(self):
+        day = date(2026, 10, 25)
+        site = flow.baseline_sites(day)[0]
+        raw = receipt_for(day, site)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "one.json").write_text(json.dumps(raw), encoding="utf-8")
+            (root / "copy.json").write_text(json.dumps(raw, sort_keys=True), encoding="utf-8")
+            self.assertEqual(len(flow.read_receipts(root)), 1)
+            conflict = dict(raw, run_status="partial", reason="partial run")
+            (root / "conflict.json").write_text(json.dumps(conflict), encoding="utf-8")
+            with self.assertRaisesRegex(flow.FlowError, "conflicting receipts"):
+                flow.read_receipts(root)
+            (root / "conflict.json").unlink()
+            legacy = dict(raw, schema_version=1, slot_start_utc="2026-10-25T12:00:00Z")
+            (root / "legacy.json").write_text(json.dumps(legacy), encoding="utf-8")
+            with self.assertRaisesRegex(flow.FlowError, "quarantine.*v2"):
+                flow.read_receipts(root)
+
+    def test_status_distinguishes_not_run_from_source_failure_and_daily_budget_exceptions(self):
+        day = date(2026, 10, 25)
+        planned = flow.baseline_sites(day)
+        actual = history(receipt_for(day, planned[0], run_status="failed", failed_stage="downloaded"))
+        status = flow.make_status(day, actual)
+        rows = {row["site_id"]: row for row in status["rows"]}
+        self.assertEqual(rows[planned[0]]["state"], "failed")
+        self.assertEqual(rows[planned[1]]["state"], "not_run")
+        self.assertIn("scheduling gap", rows[planned[1]]["reason"])
+        self.assertEqual(status["budget_exceptions"]["unplanned_actual_sites"], [])
+        outside = next(site for site in flow.SITES if site not in planned and site not in flow.HELD_SITES)
+        extra_actual = history(receipt_for(day, outside))
+        self.assertTrue(flow.make_status(day, extra_actual)["budget_exceptions"]["has_outside_plan_receipts"])
+        repeated_receipt = receipt_for(day, planned[0])
+        repeated_receipt["attempt_count"] = 2
+        repeated = flow.make_status(day, history(repeated_receipt))["budget_exceptions"]
+        self.assertEqual(repeated["unplanned_repeat_attempt_sites"], [planned[0]])
+        self.assertTrue(repeated["has_budget_exception"])
+
+        nine = [
+            receipt_for(day, site)
+            for site in flow.SITES
+            if site not in flow.HELD_SITES and site not in flow.MONITOR_ONLY_SITES
+        ][:9]
+        over_cap = flow.make_status(day, history(*nine))["budget_exceptions"]
+        self.assertTrue(over_cap["exceeds_daily_site_cap"])
+        self.assertTrue(over_cap["exceeds_daily_attempt_cap"])
+
+        prior_day = day - timedelta(days=1)
+        failed_site = next(site for site in flow.SITES if site not in flow.HELD_SITES and site not in planned)
+        with_retry = history(failed_receipt(prior_day, failed_site))
+        retry = flow.make_plan(day, with_retry)["extra_retry_sites"][0]
+        planned_retry_status = flow.make_status(day, history(failed_receipt(prior_day, failed_site), receipt_for(day, retry)))
+        self.assertFalse(planned_retry_status["budget_exceptions"]["has_outside_plan_receipts"])
+
+    def test_succeeded_top_level_with_failed_overseas_ready_is_partial_and_researchable(self):
+        day = date(2026, 10, 25)
+        site = flow.baseline_sites(day)[0]
+        raw = receipt_for(day, site, ai=1, overseas={
+            "status": "succeeded", "acknowledged": 1, "pending": 0, "failed": 0,
+            "ready_status": "failed", "ready_error": "index build failed", "ready_evidence": ["kb://version/123"],
+        })
+        report = flow.make_report(day, history(raw))
+        row = next(row for row in report["site_statuses"] if row["site_id"] == site)
+        self.assertEqual(raw["run_status"], "succeeded")
+        self.assertEqual(row["state"], "partial")
+        self.assertEqual(row["failure_stages"][0]["stage"], "overseas_ready")
+        self.assertEqual(report["suggested_research"][0]["stage"], "overseas_ready")
+
+    def test_ack_success_does_not_hide_unknown_or_pending_ready(self):
+        day = date(2026, 10, 25)
+        site = flow.baseline_sites(day)[0]
+        raw = receipt_for(day, site, ai=1, china={
+            "status": "succeeded", "acknowledged": 1, "pending": 0, "failed": 0,
+            "ready_status": "succeeded",
+        }, overseas={
+            "status": "succeeded", "acknowledged": 1, "pending": 0, "failed": 0,
+            "ready_status": "pending",
+        })
+        report = flow.make_report(day, history(raw))
+        self.assertEqual(report["stages"]["china_ack"]["ready_status_counts"], {"succeeded": 1})
+        self.assertEqual(report["stages"]["overseas_ack"]["ready_status_counts"], {"pending": 1})
+        row = next(row for row in report["site_statuses"] if row["site_id"] == site)
+        self.assertEqual(row["state"], "partial")
+        self.assertEqual(row["failure_stages"], [])
+        self.assertEqual(report["research_queue"], [])
+
+    def test_zero_ai_candidates_does_not_invent_target_failure(self):
+        day = date(2026, 10, 25)
+        site = flow.baseline_sites(day)[0]
+        report = flow.make_report(day, history(receipt_for(day, site, ai=0)))
+        row = next(row for row in report["site_statuses"] if row["site_id"] == site)
+        self.assertEqual(row["state"], "succeeded")
+        self.assertEqual(report["research_queue"], [])
+        self.assertEqual(report["stages"]["overseas_ack"]["ready_status_counts"], {"unknown": 1})
+
+    def test_daily_receipt_counts_are_cumulative_even_when_latest_attempt_succeeds_with_zero(self):
+        day = date(2026, 10, 25)
+        site = flow.baseline_sites(day)[0]
+        raw = receipt_for(day, site, ai=0)
+        raw["attempt_count"] = 2
+        raw["stages"]["downloaded"]["count"] = 4
+        raw["stages"]["new_versions"]["count"] = 3
+        report = flow.make_report(day, history(raw))
+        self.assertEqual(report["receipts"][0]["attempt_count"], 2)
+        self.assertEqual(report["stages"]["downloaded"]["run_observation_sum"], 4)
+        self.assertEqual(report["stages"]["new_versions"]["run_observation_sum"], 3)
+
+    def test_monitor_only_receipts_allow_structural_monitor_and_reject_collection_payload(self):
+        day = date(2026, 10, 25)
+        valid = normalized(monitor_receipt(day))
+        report = flow.make_report(day, {(day.isoformat(), "iaba"): valid})
+        self.assertEqual(report["monitoring_only"]["actual_receipt_sites"], ["iaba"])
+        invalid = monitor_receipt(day)
+        invalid["stages"]["ai_candidates"] = {"status": "succeeded", "count": 1}
+        with self.assertRaisesRegex(flow.FlowError, "cannot include.*AI"):
+            normalized(invalid)
+        invalid = monitor_receipt(day)
+        invalid["stages"]["monitor"] = {"status": "failed"}
+        with self.assertRaisesRegex(flow.FlowError, "error is required"):
+            normalized(invalid)
+        missing = monitor_receipt(day)
+        missing["stages"] = {}
+        with self.assertRaisesRegex(flow.FlowError, "must include the structural monitor stage"):
+            normalized(missing)
+
+    def test_case_recovery_requires_success_for_same_stage_and_unknown_preserves_case(self):
+        day0 = date(2026, 10, 20)
+        site = "iaa"
+        failure = receipt_for(day0, site, run_status="partial", failed_stage="overseas_ack", error="write failed", overseas={
+            "status": "succeeded", "acknowledged": 1, "pending": 0, "failed": 0,
+            "ready_status": "failed", "ready_error": "not ready",
+        })
+        original = normalized(failure)
+        case = flow._active_failure_cases({(day0.isoformat(), site): original}, day0 + timedelta(days=1))
+        target_case = next(value for value in case.values() if value["stage"] == "overseas_ready")
+        ledger = {target_case["case_id"]: {**target_case, "state": "active", "last_observed_date": day0.isoformat(), "evidence_fingerprint": target_case["evidence_fingerprint"]}}
+        day1 = day0 + timedelta(days=1)
+        incomplete = receipt_for(day1, site, ai=0)
+        receipts = history(failure, incomplete)
+        active_day1 = flow._active_failure_cases(receipts, day1)
+        self.assertIn(target_case["case_id"], active_day1)
+        updates = flow._failure_case_updates(active_day1, ledger, receipts, day1)
+        self.assertEqual(next(item["action"] for item in updates if item["case_id"] == target_case["case_id"]), "observe")
+        day2 = day1 + timedelta(days=1)
+        recovered = receipt_for(day2, site, ai=1, overseas={
+            "status": "succeeded", "acknowledged": 1, "pending": 0, "failed": 0,
+            "ready_status": "succeeded",
+        })
+        updates = flow._failure_case_updates({}, ledger, history(failure, incomplete, recovered), day2)
+        closed = next(item for item in updates if item["case_id"] == target_case["case_id"])
+        self.assertEqual(closed["action"], "close")
+
+    def test_ready_failure_survives_later_download_success_and_unknown_ready(self):
+        day0 = date(2026, 10, 20)
+        site = "iaa"
+        failed = receipt_for(day0, site, ai=1, overseas={
+            "status": "succeeded", "acknowledged": 1, "pending": 0, "failed": 0,
+            "ready_status": "failed", "ready_error": "index unavailable", "ready_evidence": ["kb://version/old"],
+        })
+        day1 = day0 + timedelta(days=1)
+        later_download = receipt_for(day1, site, ai=1, overseas={
+            "status": "succeeded", "acknowledged": 1, "pending": 0, "failed": 0,
+            "ready_status": "unknown",
+        })
+        receipts = history(failed, later_download)
+        active = flow._active_failure_cases(receipts, day1)
+        ready_case = next(case for case in active.values() if case["stage"] == "overseas_ready")
+        self.assertEqual(ready_case["last_observed_date"], day0.isoformat())
+        self.assertIn(site, flow.make_plan(day0 + timedelta(days=2), receipts)["extra_retry_sites"])
+        self.assertIn(ready_case["case_id"], {case["case_id"] for case in flow.make_report(day1, receipts)["research_queue"]})
+
+    def test_changed_evidence_remains_unresearched_across_daily_ledger_updates(self):
+        day0 = date(2026, 10, 20)
+        site = "iaa"
+        first = receipt_for(day0, site, run_status="failed", failed_stage="downloaded", error="HTTP request failed", evidence=["https://example.test/old"])
+        first_case = next(iter(flow._active_failure_cases(history(first), day0).values()))
+        ledger = {first_case["case_id"]: {
+            **first_case,
+            "last_researched_date": day0.isoformat(),
+            "last_researched_fingerprint": first_case["evidence_fingerprint"],
+        }}
+        day1 = day0 + timedelta(days=1)
+        changed = receipt_for(day1, site, run_status="failed", failed_stage="downloaded", error="HTTP request failed", evidence=["https://example.test/new"])
+        receipts = history(first, changed)
+        report1 = flow.make_report(day1, receipts, ledger)
+        update = next(item for item in report1["case_updates"] if item["case_id"] == first_case["case_id"])
+        self.assertEqual(update["action"], "update")
+        self.assertEqual(update["last_researched_fingerprint"], first_case["evidence_fingerprint"])
+        self.assertIn(first_case["case_id"], {item["case_id"] for item in report1["research_queue"]})
+        next_ledger = {update["case_id"]: {**update, "state": "active"}}
+        day2 = day1 + timedelta(days=1)
+        report2 = flow.make_report(day2, receipts, next_ledger)
+        self.assertIn(first_case["case_id"], {item["case_id"] for item in report2["research_queue"]})
+
+    def test_research_queue_is_bounded_and_same_evidence_is_not_requeued(self):
+        day = date(2026, 10, 25)
+        sites = [site for site in flow.SITES if site not in flow.MONITOR_ONLY_SITES and site not in flow.HELD_SITES][:5]
+        raws = [receipt_for(day, site, run_status="failed", failed_stage="downloaded", error=f"failed {site}") for site in sites]
+        receipts = history(*raws)
+        report = flow.make_report(day, receipts)
+        self.assertEqual(len(report["research_queue"]), 5)
+        self.assertEqual(len(report["suggested_research"]), 2)
+        first = report["suggested_research"][0]
+        ledger = {first["case_id"]: {**first, "state": "active", "last_researched_date": day.isoformat()}}
+        updated = flow.make_report(day, receipts, ledger)
+        self.assertNotIn(first["case_id"], {item["case_id"] for item in updated["research_queue"]})
+
+    def test_seven_day_report_separates_scheduled_from_actual_coverage(self):
+        day = date(2026, 11, 3)
+        receipts = {}
+        for offset in range(7):
+            target = day - timedelta(days=offset)
+            for site in flow.baseline_sites(target):
+                if site in flow.HELD_SITES:
+                    continue
+                raw = monitor_receipt(target, site) if site in flow.MONITOR_ONLY_SITES else receipt_for(target, site)
+                item = normalized(raw)
+                receipts[(target.isoformat(), site)] = item
+        report = flow.make_report(day, receipts)
+        self.assertEqual(report["coverage"]["planned_unique_count_7d"], 32)
+        self.assertEqual(report["coverage"]["seven_day_scheduled_coverage_complete"], True)
+        self.assertLess(report["coverage"]["actual_unique_count_7d"], 32)
+        self.assertEqual(len(report["seven_day_window"]), 7)
+        self.assertIn("not_run", report["seven_day_window"][0]["states"])
+
+    def test_document_receipt_example_loads_and_normalizes(self):
+        doc = Path(__file__).resolve().parents[1] / "references" / "receipts.zh-CN.md"
+        content = doc.read_text(encoding="utf-8")
+        match = re.search(r"```json\s*(\{.*?\})\s*```", content, re.DOTALL)
+        self.assertIsNotNone(match, "receipt contract must contain a JSON example")
+        raw = json.loads(match.group(1))
+        receipt = flow.normalize_receipt(raw, doc)
+        self.assertEqual(receipt["site_id"], "iaa")
+        self.assertEqual(receipt["date_local"], "2026-10-25")
+
+    def test_timezone_missing_has_install_hint(self):
         original = flow.TIME_ZONE
         flow.TIME_ZONE = None
         try:
@@ -87,178 +357,30 @@ class LocalFlowTests(unittest.TestCase):
         finally:
             flow.TIME_ZONE = original
 
-    def test_duplicate_receipts_count_once_and_conflict_fails_closed(self):
-        day = date(2026, 10, 25)
-        slot = flow.slots_for_local_date(day)[0]
-        site = next(site for site in flow.assigned_sites(slot) if site not in flow.HELD_SITES)
-        receipt = receipt_for(slot, site)
+    def test_cli_help_json_and_idempotent_plan_status_report(self):
         with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            (root / "one.json").write_text(json.dumps(receipt), encoding="utf-8")
-            (root / "copy.json").write_text(json.dumps(receipt, sort_keys=True), encoding="utf-8")
-            loaded = flow.read_receipts(root, day)
-            self.assertEqual(len(loaded), 1)
-            conflict = dict(receipt)
-            conflict["run_status"] = "failed"
-            (root / "conflict.json").write_text(json.dumps(conflict), encoding="utf-8")
-            with self.assertRaises(flow.FlowError):
-                flow.read_receipts(root, day)
-
-    def test_receipt_document_example_normalizes(self):
-        doc = Path(__file__).resolve().parents[1] / "references" / "receipts.zh-CN.md"
-        content = doc.read_text(encoding="utf-8")
-        match = re.search(r"```json\s*(\{.*?\})\s*```", content, re.DOTALL)
-        self.assertIsNotNone(match, "receipt contract must contain a JSON example")
-        raw = json.loads(match.group(1))
-        receipt = flow.normalize_receipt(raw, doc)
-        self.assertEqual(receipt["site_id"], "aae")
-        self.assertEqual(receipt["slot_start_utc"], "2026-10-25T12:00:00Z")
-
-    def test_report_keeps_missing_unknown_and_independent_publish_outcomes(self):
-        day = date(2026, 10, 25)
-        slot = flow.slots_for_local_date(day)[0]
-        sites = [site for site in flow.assigned_sites(slot) if site not in flow.HELD_SITES]
-        one = receipt_for(
-            slot,
-            sites[0],
-            china={"status": "succeeded", "acknowledged": 2, "pending": 0, "failed": 0},
-            overseas={"status": "failed", "acknowledged": 0, "pending": 1, "failed": 1},
-        )
-        two = receipt_for(slot, sites[1], run_status="partial", downloaded=3)
-        two["stages"].pop("enriched")
-        receipts = {
-            (one["slot_start_utc"], one["site_id"]): flow.normalize_receipt(one, Path("one.json")),
-            (two["slot_start_utc"], two["site_id"]): flow.normalize_receipt(two, Path("two.json")),
-        }
-        report = flow.make_report(day, receipts)
-        self.assertEqual(report["stages"]["downloaded"]["run_observation_sum"], 4)
-        self.assertIsNone(report["stages"]["downloaded"]["complete_day_run_sum"])
-        self.assertGreater(report["coverage"]["missing_collection_receipts"], 0)
-        self.assertEqual(report["stages"]["china_ack"]["acknowledged"]["run_observation_sum"], 2)
-        self.assertEqual(report["stages"]["overseas_ack"]["status_counts"]["failed"], 1)
-        self.assertEqual(report["stages"]["china_ack"]["ready_status_counts"], {"unknown": 2})
-        self.assertEqual(report["stages"]["overseas_ack"]["ready_status_counts"], {"unknown": 2})
-        self.assertGreater(report["stages"]["enriched"]["unknown_receipts"], 0)
-        self.assertTrue(report["coverage"]["missing_receipt_is_not_zero_success"])
-
-    def test_ready_status_is_independent_of_ack_and_validates_enum(self):
-        day = date(2026, 10, 25)
-        slot = flow.slots_for_local_date(day)[0]
-        site = next(site for site in flow.assigned_sites(slot) if site not in flow.HELD_SITES)
-        receipt = receipt_for(
-            slot,
-            site,
-            china={
-                "status": "succeeded",
-                "acknowledged": 1,
-                "pending": 0,
-                "failed": 0,
-                "ready_status": "succeeded",
-            },
-            overseas={
-                "status": "succeeded",
-                "acknowledged": 1,
-                "pending": 0,
-                "failed": 0,
-                "ready_status": "pending",
-            },
-        )
-        normalized = flow.normalize_receipt(receipt, Path("target-ready.json"))
-        report = flow.make_report(day, {(normalized["slot_start_utc"], site): normalized})
-        china = report["stages"]["china_ack"]
-        overseas = report["stages"]["overseas_ack"]
-        self.assertEqual(china["status_counts"], {"succeeded": 1})
-        self.assertEqual(overseas["status_counts"], {"succeeded": 1})
-        self.assertEqual(china["ready_status_counts"], {"succeeded": 1})
-        self.assertEqual(overseas["ready_status_counts"], {"pending": 1})
-
-        receipt["stages"]["overseas_ack"]["ready_status"] = "ready"
-        with self.assertRaisesRegex(flow.FlowError, "ready_status must be one of"):
-            flow.normalize_receipt(receipt, Path("invalid-ready.json"))
-
-    def test_cli_help_json_and_idempotent_plan(self):
-        output1 = io.StringIO()
-        with contextlib.redirect_stdout(output1):
-            self.assertEqual(flow.main(["plan", "--at", "2026-10-25T09:00:00-04:00", "--json"]), 0)
-        output2 = io.StringIO()
-        with contextlib.redirect_stdout(output2):
-            self.assertEqual(flow.main(["plan", "--at", "2026-10-25T09:00:00-04:00", "--json"]), 0)
-        self.assertEqual(output1.getvalue(), output2.getvalue())
-        self.assertEqual(json.loads(output1.getvalue())["executes_collection"], False)
-        help_output = io.StringIO()
-        with contextlib.redirect_stdout(help_output):
-            with self.assertRaises(SystemExit) as error:
-                flow.main(["--help"])
-        self.assertEqual(error.exception.code, 0)
-        self.assertIn("plan", help_output.getvalue())
-
-    def test_missing_receipt_has_no_zero_success_totals(self):
-        report = flow.make_report(date(2026, 10, 25), {})
-        self.assertEqual(report["coverage"]["receipt_count"], 0)
-        self.assertIsNone(report["stages"]["downloaded"]["complete_day_run_sum"])
-        self.assertIsNone(report["stages"]["downloaded"]["run_observation_sum"])
-        self.assertEqual(
-            report["coverage"]["states"]["not_run"],
-            report["coverage"]["expected_collection_receipts"] + report["monitoring_only"]["planned_slots"],
-        )
-
-    def test_monitor_only_receipt_is_reported_separately(self):
-        day = date(2026, 10, 25)
-        receipts = {}
-        for site in sorted(flow.MONITOR_ONLY_SITES):
-            start = next(slot for slot in flow.slots_for_local_date(day) if site in flow.assigned_sites(slot))
-            receipt = monitoring_receipt_for(start, site)
-            normalized = flow.normalize_receipt(receipt, Path(f"{site}.json"))
-            receipts[(receipt["slot_start_utc"], site)] = normalized
-
-            invalid = monitoring_receipt_for(start, site)
-            invalid["stages"] = {
-                "downloaded": {"status": "succeeded", "count": 1},
-                "ai_candidates": {"status": "succeeded", "count": 1},
-                "china_ack": {"status": "succeeded", "acknowledged": 1, "pending": 0, "failed": 0},
-            }
-            with self.assertRaisesRegex(flow.FlowError, "monitor_only site"):
-                flow.normalize_receipt(invalid, Path(f"{site}-invalid.json"))
-
-        report = flow.make_report(day, receipts)
-        self.assertEqual(report["monitoring_only"]["receipt_count"], 2)
-        self.assertEqual(report["coverage"]["collection_receipt_count"], 0)
-        self.assertIsNone(report["stages"]["downloaded"]["run_observation_sum"])
-
-    def test_monitor_only_receipt_does_not_invalidate_collection_complete_sum(self):
-        day = date(2026, 10, 25)
-        receipts = {}
-        for start in flow.slots_for_local_date(day):
-            for site in flow.assigned_sites(start):
-                if site in flow.HELD_SITES:
-                    continue
-                receipt = monitoring_receipt_for(start, site) if site in flow.MONITOR_ONLY_SITES else receipt_for(start, site)
-                normalized = flow.normalize_receipt(receipt, Path("fixture.json"))
-                receipts[(normalized["slot_start_utc"], site)] = normalized
-        report = flow.make_report(day, receipts)
-        self.assertEqual(
-            report["stages"]["downloaded"]["complete_day_run_sum"],
-            report["coverage"]["expected_collection_receipts"],
-        )
-
-    def test_status_and_report_json_cli_contract(self):
-        day = date(2026, 10, 25)
-        start = flow.slots_for_local_date(day)[0]
-        site = next(site for site in flow.assigned_sites(start) if site not in flow.HELD_SITES)
-        receipt = receipt_for(start, site)
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            (root / "receipt.json").write_text(json.dumps(receipt), encoding="utf-8")
-            for command in ("status", "report"):
-                output = io.StringIO()
-                with contextlib.redirect_stdout(output):
-                    result = flow.main([command, "--date", day.isoformat(), "--receipts", str(root), "--json"])
-                self.assertEqual(result, 0)
-                parsed = json.loads(output.getvalue())
-                self.assertEqual(parsed["date_local"], day.isoformat())
-                self.assertEqual(parsed["writes_hub_or_servers"], False)
+            root = Path(tmp) / "receipts"
+            root.mkdir()
+            day = date(2026, 10, 25)
+            (root / "one.json").write_text(json.dumps(receipt_for(day, flow.baseline_sites(day)[0])), encoding="utf-8")
+            ledger = root.parent / "ledger.json"
+            ledger.write_text('{"schema_version":1,"cases":[]}', encoding="utf-8")
+            for command in ("plan", "status", "report"):
+                args = [command, "--date", day.isoformat(), "--receipts", str(root), "--json"]
                 if command == "report":
-                    self.assertEqual(parsed["stages"]["china_ack"]["ready_status_counts"], {"unknown": 1})
+                    args.extend(["--case-ledger", str(ledger)])
+                first, second = io.StringIO(), io.StringIO()
+                with contextlib.redirect_stdout(first):
+                    self.assertEqual(flow.main(args), 0)
+                with contextlib.redirect_stdout(second):
+                    self.assertEqual(flow.main(args), 0)
+                self.assertEqual(first.getvalue(), second.getvalue())
+                self.assertEqual(json.loads(first.getvalue())["writes_hub_or_servers"], False)
+            help_output = io.StringIO()
+            with contextlib.redirect_stdout(help_output), self.assertRaises(SystemExit) as error:
+                flow.main(["--help"])
+            self.assertEqual(error.exception.code, 0)
+            self.assertIn("plan", help_output.getvalue())
 
 
 if __name__ == "__main__":

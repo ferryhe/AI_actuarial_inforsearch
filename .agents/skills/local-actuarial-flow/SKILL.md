@@ -1,26 +1,24 @@
 ---
 name: local-actuarial-flow
-description: 规划和审查本机精算资料监控项的轮换采集、Hub 入库、双语分类、两站 AI 增量同步与日报；仅适用于本仓库已登记的 32 个监控项。
+description: 规划和审查本机精算资料监控项的每日轮换、真实回执、Hub 入库、双语分类、两站 AI 增量同步与日报；适用于本仓库登记的 32 个监控项。
 ---
 
 # 本机精算资料采集流程
 
-先读 [工作流与改造边界](references/workflow.zh-CN.md)；处理单项时再查 [32 项目录](references/sites.zh-CN.md)，实现回执时读 [回执与日报合同](references/receipts.zh-CN.md)。
+先读 [工作流与改造边界](references/workflow.zh-CN.md)；修复单项来源时读 [32 项目录](references/sites.zh-CN.md)，实现或读取回执时读 [每日回执、失败队列与日报合同](references/receipts.zh-CN.md)。
 
-## 当前可运行范围
+## 离线 helper
 
-`scripts/local_flow.py` 只离线规划两小时轮换、读取最终 JSON 回执并生成状态/日报 JSON。它不访问网站，不运行采集器，不写 Hub 或海外/国内服务，也不启用计划任务。当前全链路因本地 Hub 与 source/serving adapters 未接好而未激活。不得把入口页探测、历史 `status.json`、离线测试或“未运行”算作采集成功。IABA/EAA 是低频 `monitor_only`，Istituto 是 `hold`；组计划不替代逐项 cadence 配置。
+`scripts/local_flow.py` 仅读取最终 v2 JSON 回执、给出每日轮换计划、日报和最多两项研究建议。它不访问网站、运行采集器、写 Hub/两站，也不写 case ledger 或启用 Scheduler。基线是美东每日 06:00 固定六项；失败重试最多另加两个不同监控项。连续七个自然日计划覆盖 32 个监控项，但计划覆盖不证明实际执行或成功。IABA/EAA 是 monitor-only，Istituto 保留 baseline 位置并 hold。
 
 ```powershell
-python .agents/skills/local-actuarial-flow/scripts/local_flow.py plan --at 2026-10-25T09:00:00-04:00 --json
-python .agents/skills/local-actuarial-flow/scripts/local_flow.py status --date 2026-10-24 --receipts PATH --json
-python .agents/skills/local-actuarial-flow/scripts/local_flow.py report --date 2026-10-24 --receipts PATH --json
+python .agents/skills/local-actuarial-flow/scripts/local_flow.py plan --date 2026-10-25 --receipts reports/local-automation-state/receipts --json
+python .agents/skills/local-actuarial-flow/scripts/local_flow.py status --date 2026-10-25 --receipts reports/local-automation-state/receipts --json
+python .agents/skills/local-actuarial-flow/scripts/local_flow.py report --date 2026-10-25 --receipts reports/local-automation-state/receipts --case-ledger reports/local-automation-state/cases/ledger.json --json
 ```
 
-日报计划在美东每日 09:00 汇总前一美东自然日的实际轮次回执。计划按 UTC 连续两小时边界轮转，八组各四个监控项，连续计划覆盖周期为 16 小时；DST 日当地自然日可能覆盖 11 或 13 个边界。Istituto 当前为单项 `hold`，仍留在组表中。失败项不阻塞同组其他项或后续轮次。Helper 没有持久游标或漏槽补偿，不能保证停机后的实际完整覆盖。
+日报按美东 09:00 触发时由调用端提供前一自然日。缺回执是 `not_run` 或 `not_scheduled`，不是源站失败；缺字段是 `unknown`，不是成功或零。AI 发布 acknowledgement 与各自 Ready 状态分开记录。回执格式、Case ledger 的原子更新及状态定义见每日合同。
 
-需要 Python 3.10+ 和 `America/New_York` IANA 时区数据。Windows Python 若没有该数据库，请在所用 Python 环境安装 `tzdata`；helper 不改主应用依赖。
+真实失败的修复闭环：用回执 case ID 和证据复现；判断是临时网络/服务问题还是 DOM、URL、分页、CLI、过滤器/分类规则变更；对本仓库可维护的实际脚本、playbook 或 skill 做最小修改；跑聚焦测试和低流量真实验证，再交 fresh reviewer；下一日用新的真实回执确认恢复。每日日报后最多研究两项；同一 case 和证据不得每天重复研究。外部源仍不可用时保留未解决和退避建议。不得编辑 skill/报告把状态改成成功，也不得修改 ignored 历史快照冒充已部署修复。
 
-只有实际 final receipt 才能计数。相同 slot/site 的字节语义相同回执去重，冲突回执拒绝；缺计数为 unknown，缺回执为 `not_run`，不能写成成功的零。回执中的计数是本轮观测，重复内容可能跨站或跨轮出现；China/overseas pending/failed 是各轮观测，不是去重后的当前积压。
-
-日报在 China/overseas 两端分别报告写入/回读 acknowledgement 与索引 `ready_status`；ack 成功不代表 Ready。旧回执缺少 `ready_status` 时按 `unknown` 计，不推断索引已就绪。
+入口响应、离线测试、历史 `status.json` 和计划项都不是采集回执。采集内容入库、两站增量发布及适配器若尚未有真实回执，必须明确写阻塞，不能声称完成。运行需要 Python 3.10+ 与 `America/New_York` 时区数据；Windows 缺失时在使用的 Python 环境安装 `tzdata`。

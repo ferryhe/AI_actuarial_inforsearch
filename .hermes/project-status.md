@@ -1,10 +1,10 @@
-# 本地资料轮换 skill 与日报交付 — 2026-10-25
+# 本地资料每日轮换与失败研究 — 2026-10-25
 
-- 项目工作树 `reports/local-automation-worktree`，分支 `docs/local-collection-automation`；范围为本地采集 skill、审计/改造参考、离线 `plan/status/report --json` helper 与最小行为测试。
-- helper 只读取明确回执并输出 JSON，不抓取网站、不写 Hub/两站、不创建 Scheduler。方案为每两小时四项/八组/16 小时计划周期；App 已另设本线程每日美东 09:00 只读日报 ACTIVE，采集轮换 PAUSED，等待增量 source/Hub/serving 接点与数据库验收。
-- 验证：Python 3.11.9；13 项单元测试、CLI `--help` 与 JSON plan、`py_compile`、skill-creator `quick_validate.py` 均通过；32 项 source-map/目录矩阵对齐，DST、重复回执、缺失/失败阶段、monitor-only 汇总和逐目标 Ready 统计已覆盖。
-- fresh Sol/high review-3 PASS；前两次审查的三项合同问题由同一 Luna/high worker 修复，TypeSafe jev-latest 实际 jev-1.14.0 已裁决最小 Ready 状态修复。证据保存在原 checkout reports/local-automation-20261025；日报与回执在 reports/local-automation-state，缺回执不算0成功。
-- 下一步按仓库授权 commit/push/PR，并检查真实当前提交 CI/非 Copilot 反馈；Copilot 用户禁用，未授权 merge。原 checkout 的既有改动与未跟踪目录保留，兄弟仓库未访问；本轮无生产采集或数据库写入。
+- 工作树 `reports/local-automation-worktree`，分支 `docs/local-collection-automation`（PR #427）；范围为 skill、离线 `plan/status/report --json`、回执/ledger合同、行为测试和 CI smoke 测试。
+- 计划按 America/New_York 自然日每天 06:00 选固定六项 baseline，最多另排两个不同的失败重试；连续七日计划覆盖 32 个监控项。09:00 日报统计前一自然日。hold/monitor-only 均不冒充采集成功，实际覆盖只由逐站回执确认。
+- helper 只读 v2 每日回执与可选 case ledger，不执行采集、研究、Hub/两站写入，也不创建或启用 Scheduler。生产 source、Hub、两端写入/回读及 Ready/index adapters 仍待实现与验收。
+- 验证：Python 3.11；19 项单元测试、CLI help/JSON/幂等、schema 文档夹具、DST/七日覆盖/预算/重试公平/恢复语义、`py_compile`、skill-creator `quick_validate.py`、`git diff --check` 均通过。
+- 失败 case 按 site/stage 跨日保留；只有对应阶段明确成功才关闭。ledger 写回 `close/supersede=closed`，其他更新动作保持 `active`；新证据保留旧研究指纹直到实际研究。fresh Sol/high review-4 PASS，无验收范围内问题；提交与远端检查以 PR #427 当前 HEAD 为准。
 
 # 当前 PR #425：双语前台/Catalog及汇总库同步 — 2026-10-14T19:56:34+00:00
 
