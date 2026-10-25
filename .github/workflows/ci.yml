@@ -251,6 +251,9 @@ jobs:
           PY
           python -m pip install -r .github/ci-requirements.txt -r requirements-dev.txt
 
+      - name: Run local collection flow contract tests
+        run: python -m unittest discover -s .agents/skills/local-actuarial-flow/scripts -p test_local_flow.py -v
+
       - name: Run FastAPI smoke tests
         env:
           FASTAPI_SESSION_SECRET: ci-fastapi-session-secret

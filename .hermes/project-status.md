@@ -1,3 +1,11 @@
+# 本地资料每日轮换与失败研究 — 2026-10-25
+
+- 工作树 `reports/local-automation-worktree`，分支 `docs/local-collection-automation`（PR #427）；范围为 skill、离线 `plan/status/report --json`、回执/ledger合同、行为测试和 CI smoke 测试。
+- 计划按 America/New_York 自然日每天 06:00 选固定六项 baseline，最多另排两个不同的失败重试；连续七日计划覆盖 32 个监控项。09:00 日报统计前一自然日。hold/monitor-only 均不冒充采集成功，实际覆盖只由逐站回执确认。
+- helper 只读 v2 每日回执与可选 case ledger，不执行采集、研究、Hub/两站写入，也不创建或启用 Scheduler。生产 source、Hub、两端写入/回读及 Ready/index adapters 仍待实现与验收。
+- 验证：Python 3.11；19 项单元测试、CLI help/JSON/幂等、schema 文档夹具、DST/七日覆盖/预算/重试公平/恢复语义、`py_compile`、skill-creator `quick_validate.py`、`git diff --check` 均通过。
+- 失败 case 按 site/stage 跨日保留；只有对应阶段明确成功才关闭。ledger 写回 `close/supersede=closed`，其他更新动作保持 `active`；新证据保留旧研究指纹直到实际研究。fresh Sol/high review-4 PASS，无验收范围内问题；提交与远端检查以 PR #427 当前 HEAD 为准。
+
 # 当前 PR #425：双语前台/Catalog及汇总库同步 — 2026-10-14T19:56:34+00:00
 
 - 项目 AI_actuarial_inforsearch；分支 fix/bilingual-document-metadata，任务工作树 reports/bilingual-metadata-worktree；原 checkout 修改及四个未跟踪目录保留，兄弟仓库未访问。范围为目录 JSON/PG0003、生成与增量补齐、Storage/API/搜索/编辑、Database/FileDetail/两Catalog入口、Hub同步CLI及相关测试和指南。
