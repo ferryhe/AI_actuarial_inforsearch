@@ -1,3 +1,11 @@
+# 本地资料轮换 skill 与日报交付 — 2026-10-25
+
+- 项目工作树 `reports/local-automation-worktree`，分支 `docs/local-collection-automation`；范围为本地采集 skill、审计/改造参考、离线 `plan/status/report --json` helper 与最小行为测试。
+- helper 只读取明确回执并输出 JSON，不抓取网站、不写 Hub/两站、不创建 Scheduler。方案为每两小时四项/八组/16 小时计划周期；App 已另设本线程每日美东 09:00 只读日报 ACTIVE，采集轮换 PAUSED，等待增量 source/Hub/serving 接点与数据库验收。
+- 验证：Python 3.11.9；13 项单元测试、CLI `--help` 与 JSON plan、`py_compile`、skill-creator `quick_validate.py` 均通过；32 项 source-map/目录矩阵对齐，DST、重复回执、缺失/失败阶段、monitor-only 汇总和逐目标 Ready 统计已覆盖。
+- fresh Sol/high review-3 PASS；前两次审查的三项合同问题由同一 Luna/high worker 修复，TypeSafe jev-latest 实际 jev-1.14.0 已裁决最小 Ready 状态修复。证据保存在原 checkout reports/local-automation-20261025；日报与回执在 reports/local-automation-state，缺回执不算0成功。
+- 下一步按仓库授权 commit/push/PR，并检查真实当前提交 CI/非 Copilot 反馈；Copilot 用户禁用，未授权 merge。原 checkout 的既有改动与未跟踪目录保留，兄弟仓库未访问；本轮无生产采集或数据库写入。
+
 # 当前 PR #425：双语前台/Catalog及汇总库同步 — 2026-10-14T19:56:34+00:00
 
 - 项目 AI_actuarial_inforsearch；分支 fix/bilingual-document-metadata，任务工作树 reports/bilingual-metadata-worktree；原 checkout 修改及四个未跟踪目录保留，兄弟仓库未访问。范围为目录 JSON/PG0003、生成与增量补齐、Storage/API/搜索/编辑、Database/FileDetail/两Catalog入口、Hub同步CLI及相关测试和指南。
