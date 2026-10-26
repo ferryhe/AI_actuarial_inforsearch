@@ -16,6 +16,7 @@ import pytest
 from psycopg2 import sql
 
 import ai_actuarial.content_hub as content_hub
+import ai_actuarial.postgres as postgres
 import ai_actuarial.source_stage as source_stage
 from ai_actuarial.content_hub import (
     ContentHubError,
@@ -884,6 +885,8 @@ def test_live_capture_is_idempotent_versioned_and_secondary_ai_is_eligible(tmp_p
     assert shown and shown["annotation"]["categories"] == categories
     assert shown["annotation"]["date_facts"]["publication_date"]["precision"] == "month"
     assert shown["markdown_sha256"] == first["markdown_sha256"]
+    assert shown["hub_markdown_sha256"] == first["markdown_sha256"]
+    assert shown["hub_markdown_sha256_kind"] == "raw_utf8"
     assert content_hub_ai_url_versions([url], database_url=hub_url, schema=schema) == {
         url: [first["content_version_id"]]
     }
@@ -893,6 +896,7 @@ def test_live_capture_is_idempotent_versioned_and_secondary_ai_is_eligible(tmp_p
     assert ai_page["eligible_ai_count"] == 1
     assert ai_page["versions"][0]["content_version_id"] == first["content_version_id"]
     assert ai_page["versions"][0]["source_site"] == "iaa"
+    assert ai_page["versions"][0]["hub_markdown_sha256_kind"] == "raw_utf8"
 
     connection = psycopg2.connect(hub_url)
     try:
@@ -925,6 +929,264 @@ def test_live_capture_is_idempotent_versioned_and_secondary_ai_is_eligible(tmp_p
             assert cursor.fetchall() == [(None, "live_capture"), (None, "live_capture")]
     finally:
         connection.close()
+
+
+def test_legacy_json_payload_binding_reads_and_lists_with_raw_digest(tmp_path: Path) -> None:
+    hub_url, schema = _isolated_database_schema(tmp_path, "legacy-markdown-binding")
+    apply_content_hub_schema(hub_url, schema=schema)
+    artifact_root = tmp_path / "legacy-artifacts"
+    source_path = tmp_path / "legacy-binding-v16.db"
+    source_payload = b"legacy original PDF bytes"
+    _, counts = _create_v16_source(source_path, source_payload, source_label="binding")
+    manifest_path, _ = _write_manifest(
+        source_path, "binding", artifact_root, source_payload, counts
+    )
+    import_content_snapshot(
+        source_path,
+        manifest_path,
+        artifact_root,
+        tmp_path / "legacy-data",
+        hub_url,
+        schema=schema,
+        expected_source_name="binding",
+    )
+    url = "https://content.example.test/primary?version=1"
+    shown = content_hub_show_url(url, hub_url, schema=schema)
+    version_id = shown["versions"][0]["content_version_id"]
+    raw_sha = shown["versions"][0]["raw_sha256"]
+    markdown_variant = next(
+        item for item in shown["text_variants"] if item["field_name"] == "markdown_content"
+    )
+    markdown = markdown_variant["value"]
+    assert isinstance(markdown, str)
+    raw_markdown_sha = hashlib.sha256(markdown.encode("utf-8")).hexdigest()
+    legacy_binding_sha = hashlib.sha256(
+        content_hub._json_text(markdown).encode("utf-8")
+    ).hexdigest()
+    assert legacy_binding_sha == markdown_variant["payload_sha256"]
+    assert raw_markdown_sha != legacy_binding_sha
+
+    metadata_path = tmp_path / "legacy-binding-metadata.json"
+    metadata_path.write_text(
+        json.dumps(
+            {
+                "format": "ai_actuarial.content_hub.generated_metadata",
+                "version": 1,
+                "items": [
+                    {
+                        "content_version_id": version_id,
+                        "language_code": language,
+                        "markdown_text_variant_id": markdown_variant["text_variant_id"],
+                        "markdown_sha256": legacy_binding_sha,
+                        "title": f"AI research {language}",
+                        "summary": f"AI actuarial research {language} summary",
+                        "category": "Pricing",
+                        "keywords": ["actuarial", "AI"],
+                        "recipe": "legacy-metadata-fixture",
+                        "author": "test",
+                    }
+                    for language in ("zh", "en")
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    import_bilingual_metadata(metadata_path, hub_url, schema=schema)
+
+    signature = "a" * 64
+    result_sha = "b" * 64
+    categories = [
+        {"key": "Pricing", "evidence": ["Pricing"]},
+        {"key": "AI", "evidence": ["AI research"]},
+    ]
+    connection = psycopg2.connect(hub_url)
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(sql.SQL("SET search_path TO {}").format(sql.Identifier(schema)))
+            cursor.execute(
+                "INSERT INTO article_enrichment_annotations "
+                "(content_version_id, source_text_variant_id, source_markdown_sha256, "
+                "source_primary_category, source_signature, categories_json, date_facts_json, "
+                "date_review_status, date_review_unresolved_json, result_sha256, recipe, run_id) "
+                "VALUES (%s, %s, %s, 'Pricing', %s, %s::jsonb, '{}'::jsonb, 'complete', "
+                "'[]'::jsonb, %s, 'legacy-fixture', 'legacy-binding-run')",
+                (
+                    version_id,
+                    markdown_variant["text_variant_id"],
+                    legacy_binding_sha,
+                    signature,
+                    json.dumps(categories),
+                    result_sha,
+                ),
+            )
+        connection.commit()
+    finally:
+        connection.close()
+
+    direct = content_hub_read_version(url, raw_sha, hub_url, schema=schema)
+    assert direct["markdown_sha256"] == raw_markdown_sha
+    assert direct["hub_markdown_sha256"] == legacy_binding_sha
+    assert direct["hub_markdown_sha256_kind"] == "json_payload_utf8"
+    assert set(direct["bilingual_metadata"]) == {"zh", "en"}
+    page = content_hub_list_ai_versions(
+        after_version_id=0, limit=10, database_url=hub_url, schema=schema
+    )
+    assert page["versions"][0]["content_version_id"] == version_id
+    assert page["versions"][0]["markdown_sha256"] == raw_markdown_sha
+    assert page["versions"][0]["hub_markdown_sha256"] == legacy_binding_sha
+    assert page["versions"][0]["hub_markdown_sha256_kind"] == "json_payload_utf8"
+
+    connection = psycopg2.connect(hub_url)
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(sql.SQL("SET search_path TO {}").format(sql.Identifier(schema)))
+            cursor.execute(
+                "UPDATE article_enrichment_annotations SET source_markdown_sha256 = %s "
+                "WHERE content_version_id = %s",
+                ("0" * 64, version_id),
+            )
+        connection.commit()
+    finally:
+        connection.close()
+    with pytest.raises(ContentHubError, match="binding is invalid"):
+        content_hub_read_version(url, raw_sha, hub_url, schema=schema)
+    malformed_page = content_hub_list_ai_versions(
+        after_version_id=0, limit=10, database_url=hub_url, schema=schema
+    )
+    assert malformed_page["versions"] == []
+
+
+@pytest.mark.parametrize(
+    "binding_kind",
+    [
+        "json_payload_utf8",
+        "raw_utf8",
+        "mismatch",
+        "different_bilingual_variant",
+        "different_language_binding",
+    ],
+)
+def test_catalog_projection_keeps_legacy_or_live_binding_exact(
+    monkeypatch, binding_kind: str
+) -> None:
+    url = "https://projection.example.test/article.pdf"
+    markdown = "Source Markdown for projection."
+    payload_json = content_hub._json_text(markdown)
+    payload_sha = hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
+    raw_markdown_sha = hashlib.sha256(markdown.encode("utf-8")).hexdigest()
+    binding_sha = {
+        "json_payload_utf8": payload_sha,
+        "raw_utf8": raw_markdown_sha,
+        "mismatch": "0" * 64,
+        "different_bilingual_variant": payload_sha,
+        "different_language_binding": payload_sha,
+    }[binding_kind]
+    rows = [
+        (
+            71,
+            json.dumps(url),
+            hashlib.sha256(url.encode("utf-8")).hexdigest(),
+            "a" * 64,
+            language,
+            82 if binding_kind == "different_bilingual_variant" and language == "en" else 81,
+            (
+                raw_markdown_sha
+                if binding_kind == "different_language_binding" and language == "en"
+                else binding_sha
+            ),
+            f"title {language}",
+            f"summary {language}",
+            "Other",
+            [f"keyword {language}"],
+            71,
+            "markdown_content",
+            payload_json,
+            False,
+            payload_sha,
+        )
+        for language in ("zh", "en")
+    ]
+    target_identity = ("target", "127.0.0.1", 5432, "public")
+    hub_identity = ("hub", "127.0.0.1", 5432, "content_hub")
+
+    class FakeTargetConnection:
+        def __init__(self, _database, *, read_only=False):
+            assert read_only
+
+        def execute(self, query, _parameters=None):
+            if "current_database()" in query:
+                value = target_identity
+            else:
+                value = (3,)
+            return type("Result", (), {"fetchone": lambda _self: value})()
+
+        def table_exists(self, _table):
+            return True
+
+        def table_columns(self, _table):
+            return {"file_url", "sha256", "category"}
+
+        def close(self):
+            pass
+
+    class FakeCursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def execute(self, query):
+            self.query = query
+
+        def fetchone(self):
+            return hub_identity
+
+        def fetchall(self):
+            return rows
+
+    class FakeHubConnection:
+        def set_session(self, **_kwargs):
+            pass
+
+        def cursor(self):
+            return FakeCursor()
+
+        def close(self):
+            pass
+
+    merged = []
+
+    class FakeStorage:
+        def __init__(self, _database, *, data_root):
+            assert data_root
+
+        def merge_hub_bilingual_metadata(self, **kwargs):
+            merged.append(kwargs)
+            return ("updated", 1)
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(postgres, "PostgresConnection", FakeTargetConnection)
+    monkeypatch.setattr(content_hub, "_connect", lambda _url: FakeHubConnection())
+    monkeypatch.setattr(content_hub, "_require_current_schema", lambda *_args: None)
+    monkeypatch.setattr("ai_actuarial.storage.Storage", FakeStorage)
+
+    result = content_hub.sync_content_hub_catalog_metadata(
+        "postgresql://target.invalid/app", "postgresql://hub.invalid/content_hub"
+    )
+    if binding_kind not in {"json_payload_utf8", "raw_utf8"}:
+        assert result["conflict_count"] == 1
+        assert merged == []
+        return
+    assert result["updated_count"] == 1
+    assert merged[0]["metadata_by_language"]["zh"]["hub_binding"] == {
+        "content_version_id": 71,
+        "markdown_text_variant_id": 81,
+        "markdown_sha256": binding_sha,
+    }
 
 
 def test_raw_only_live_capture_can_be_completed_on_same_content_version(tmp_path: Path) -> None:

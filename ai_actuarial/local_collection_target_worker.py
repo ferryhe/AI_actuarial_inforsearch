@@ -182,6 +182,8 @@ def _normalize_item(
     url = item.get("url")
     raw_sha = str(item.get("raw_sha256") or "")
     md_sha = str(item.get("markdown_sha256") or "")
+    hub_md_sha = str(item.get("hub_markdown_sha256") or "")
+    hub_md_sha_kind = str(item.get("hub_markdown_sha256_kind") or "")
     markdown = item.get("markdown")
     raw_b64 = item.get("raw_bytes_b64")
     if not isinstance(url, str) or not url.startswith(("http://", "https://")):
@@ -194,6 +196,18 @@ def _normalize_item(
         raise ValueError("target item Markdown is empty")
     if _hash(markdown.encode("utf-8")) != md_sha:
         raise ValueError("target item Markdown digest mismatch")
+    json_payload_sha = _hash(_canonical_json(markdown).encode("utf-8"))
+    expected_hub_sha = {
+        "raw_utf8": md_sha,
+        "json_payload_utf8": json_payload_sha,
+    }.get(hub_md_sha_kind)
+    if (
+        len(hub_md_sha) != 64
+        or any(ch not in "0123456789abcdef" for ch in hub_md_sha)
+        or expected_hub_sha is None
+        or hub_md_sha != expected_hub_sha
+    ):
+        raise ValueError("target item Hub Markdown binding digest mismatch")
     if not isinstance(raw_b64, str):
         raise ValueError("target item requires verified source bytes")
     try:
@@ -264,6 +278,8 @@ def _normalize_item(
             "content_version_id": version_id,
             "markdown_text_variant_id": md_variant_id,
             "markdown_sha256": md_sha,
+            "hub_markdown_sha256": hub_md_sha,
+            "hub_markdown_sha256_kind": hub_md_sha_kind,
             "source_primary_category": str(
                 item.get("source_primary_category") or packages["en"]["category"]
             ),
@@ -281,6 +297,8 @@ def _normalize_item(
         "raw_sha256": raw_sha,
         "markdown_text_variant_id": md_variant_id,
         "markdown_sha256": md_sha,
+        "hub_markdown_sha256": hub_md_sha,
+        "hub_markdown_sha256_kind": hub_md_sha_kind,
         "source_site": source_site,
         "bilingual_metadata": packages,
         "categories": categories,
@@ -340,6 +358,10 @@ def _existing_is_current(storage: Any, item: dict[str, Any], kb_ids: list[str]) 
         return False
     if enrichment.get("markdown_sha256") != item["markdown_sha256"]:
         return False
+    if enrichment.get("hub_markdown_sha256") != item["hub_markdown_sha256"]:
+        return False
+    if enrichment.get("hub_markdown_sha256_kind") != item["hub_markdown_sha256_kind"]:
+        return False
     if enrichment.get("ordered_categories") != item["categories"]:
         return False
     if enrichment.get("source_primary_category") != str(
@@ -376,6 +398,8 @@ def _write_item(
                 "raw_sha256": item["raw_sha256"],
                 "markdown_text_variant_id": item["markdown_text_variant_id"],
                 "markdown_sha256": item["markdown_sha256"],
+                "hub_markdown_sha256": item["hub_markdown_sha256"],
+                "hub_markdown_sha256_kind": item["hub_markdown_sha256_kind"],
                 "metadata_fingerprint": item["metadata_fingerprint"],
                 "status": "already_current",
                 "source_site": existing.get("source_site"),
@@ -460,6 +484,8 @@ def _write_item(
             "raw_sha256": item["raw_sha256"],
             "markdown_text_variant_id": item["markdown_text_variant_id"],
             "markdown_sha256": item["markdown_sha256"],
+            "hub_markdown_sha256": item["hub_markdown_sha256"],
+            "hub_markdown_sha256_kind": item["hub_markdown_sha256_kind"],
             "metadata_fingerprint": item["metadata_fingerprint"],
             "status": "written",
             "source_site": row.get("source_site"),

@@ -264,6 +264,42 @@ def _json_text(value: Any) -> str:
     return json.dumps(_json_safe(value), ensure_ascii=False, separators=(",", ":"), allow_nan=False)
 
 
+def _verify_hub_markdown_binding(
+    markdown: Any,
+    payload_value_json: Any,
+    payload_sha256: Any,
+    hub_binding_sha256: Any,
+) -> tuple[str, str]:
+    """Validate both Hub payload integrity and its historical or live Markdown binding."""
+    if not isinstance(markdown, str) or not markdown.strip():
+        raise ContentHubError("Stored enrichment Markdown is missing")
+    if not isinstance(payload_value_json, str) or payload_value_json != _json_text(markdown):
+        raise ContentHubError("Stored enrichment Markdown payload is not canonical JSON")
+
+    payload_digest = hashlib.sha256(payload_value_json.encode("utf-8")).hexdigest()
+    stored_payload_digest = str(payload_sha256 or "").strip()
+    binding_digest = str(hub_binding_sha256 or "").strip()
+    if (
+        not _HASH_RE.fullmatch(stored_payload_digest)
+        or stored_payload_digest != payload_digest
+        or not _HASH_RE.fullmatch(binding_digest)
+    ):
+        raise ContentHubError("Stored enrichment Markdown payload digest is invalid")
+
+    raw_digest = hashlib.sha256(markdown.encode("utf-8")).hexdigest()
+    matches = [
+        kind
+        for kind, digest in (
+            ("raw_utf8", raw_digest),
+            ("json_payload_utf8", payload_digest),
+        )
+        if digest == binding_digest
+    ]
+    if len(matches) != 1:
+        raise ContentHubError("Stored enrichment Markdown binding is invalid")
+    return raw_digest, matches[0]
+
+
 def _source_sha256(path: Path) -> tuple[str, int, tuple[int, int]]:
     before = path.stat()
     digest = hashlib.sha256()
@@ -1460,7 +1496,9 @@ def content_hub_list_ai_versions(
                 "bmen.title, bmen.summary, bmen.category, bmen.keywords_json, "
                 "COALESCE((SELECT r.source_metadata_json FROM source_record_map r "
                 " JOIN source_snapshots ss USING (source_snapshot_id) WHERE r.content_version_id = v.content_version_id "
-                " ORDER BY ss.imported_at DESC, ss.source_snapshot_id DESC LIMIT 1), '{}'), b.availability "
+                " ORDER BY ss.imported_at DESC, ss.source_snapshot_id DESC LIMIT 1), '{}'), b.availability, "
+                "tv.payload_sha256, bmzh.markdown_text_variant_id, bmzh.markdown_sha256, "
+                "bmen.markdown_text_variant_id, bmen.markdown_sha256 "
                 "FROM article_enrichment_annotations a "
                 "JOIN content_versions v USING (content_version_id) "
                 "LEFT JOIN content_blobs b ON b.sha256 = v.blob_sha256 "
@@ -1484,12 +1522,19 @@ def content_hub_list_ai_versions(
             for row in rows:
                 url = _load_json(row[1])
                 markdown = _load_json(row[15])
+                if not isinstance(url, str) or not _HASH_RE.fullmatch(str(row[2]).strip()):
+                    continue
+                try:
+                    markdown_sha, markdown_sha_kind = _verify_hub_markdown_binding(
+                        markdown, row[15], row[26], row[6]
+                    )
+                except ContentHubError:
+                    continue
                 if (
-                    not isinstance(url, str)
-                    or not isinstance(markdown, str)
-                    or not markdown.strip()
-                    or hashlib.sha256(markdown.encode("utf-8")).hexdigest() != str(row[6]).strip()
-                    or not _HASH_RE.fullmatch(str(row[2]).strip())
+                    int(row[27]) != int(row[5])
+                    or int(row[29]) != int(row[5])
+                    or str(row[28]).strip() != str(row[6]).strip()
+                    or str(row[30]).strip() != str(row[6]).strip()
                 ):
                     continue
                 categories = row[8] if isinstance(row[8], list) else json.loads(row[8])
@@ -1518,7 +1563,9 @@ def content_hub_list_ai_versions(
                         "cas_relpath": row[3],
                         "byte_size": int(row[4] or 0),
                         "markdown_text_variant_id": int(row[5]),
-                        "markdown_sha256": str(row[6]).strip(),
+                        "markdown_sha256": markdown_sha,
+                        "hub_markdown_sha256": str(row[6]).strip().lower(),
+                        "hub_markdown_sha256_kind": markdown_sha_kind,
                         "source_primary_category": str(row[7] or ""),
                         "categories": categories,
                         "date_facts": row[9] if isinstance(row[9], dict) else json.loads(row[9]),
@@ -2749,7 +2796,7 @@ def content_hub_read_version(
             if _load_json(url_value) != url or str(stored_sha).strip() != raw_sha256:
                 raise ContentHubError("Stored URL/raw hash identity conflicts with its source")
             cursor.execute(
-                "SELECT text_variant_id, payload_value_json, payload_is_null, provenance_json "
+                "SELECT text_variant_id, payload_value_json, payload_is_null, provenance_json, payload_sha256 "
                 "FROM text_variants WHERE content_version_id = %s AND field_name = 'markdown_content' "
                 "ORDER BY text_variant_id DESC",
                 (version_id,),
@@ -2764,6 +2811,8 @@ def content_hub_read_version(
             )
             annotation = cursor.fetchone()
             selected = None
+            hub_markdown_sha = None
+            hub_markdown_sha_kind = None
             if annotation is not None:
                 selected = next(
                     (row for row in variants if int(row[0]) == int(annotation[0])), None
@@ -2771,13 +2820,10 @@ def content_hub_read_version(
                 if selected is None or bool(selected[2]):
                     raise ContentHubError("Stored enrichment Markdown binding is missing")
                 markdown = _load_json(selected[1])
-                markdown_sha = str(annotation[1]).strip()
-                if (
-                    not isinstance(markdown, str)
-                    or not markdown.strip()
-                    or hashlib.sha256(markdown.encode("utf-8")).hexdigest() != markdown_sha
-                ):
-                    raise ContentHubError("Stored enrichment Markdown digest is invalid")
+                hub_markdown_sha = str(annotation[1]).strip()
+                markdown_sha, hub_markdown_sha_kind = _verify_hub_markdown_binding(
+                    markdown, selected[1], selected[4], hub_markdown_sha
+                )
             else:
                 selected = next((row for row in variants if not bool(row[2])), None)
                 markdown = _load_json(selected[1]) if selected else None
@@ -2802,11 +2848,21 @@ def content_hub_read_version(
                     (version_id,),
                 )
                 for row in cursor.fetchall():
+                    if annotation is not None and (
+                        int(row[1]) != int(selected[0]) or str(row[2]).strip() != hub_markdown_sha
+                    ):
+                        raise ContentHubError(
+                            "Stored bilingual Markdown binding conflicts with its enrichment"
+                        )
+                    expected_binding_sha = hub_markdown_sha or markdown_sha
                     if int(row[1]) != int(selected[0]) or str(row[2]).strip() != str(
-                        markdown_sha or ""
+                        expected_binding_sha or ""
                     ):
                         continue
-                    bilingual[str(row[0])] = {
+                    language = str(row[0])
+                    if language in bilingual:
+                        raise ContentHubError("Stored bilingual language binding is duplicated")
+                    bilingual[language] = {
                         "title": row[3],
                         "summary": row[4],
                         "category": row[5],
@@ -2814,6 +2870,8 @@ def content_hub_read_version(
                             row[6] if isinstance(row[6], list) else _load_json(row[6]) or []
                         ),
                     }
+                if annotation is not None and set(bilingual) != {"zh", "en"}:
+                    raise ContentHubError("Stored enrichment requires matching zh/en bindings")
             cursor.execute(
                 "SELECT cas_relpath, byte_size, availability FROM content_blobs WHERE sha256 = %s",
                 (blob_sha,),
@@ -2846,6 +2904,8 @@ def content_hub_read_version(
                 "blob_available": bool(blob and blob[2] == "present"),
                 "markdown_text_variant_id": int(selected[0]) if selected else None,
                 "markdown_sha256": markdown_sha,
+                "hub_markdown_sha256": hub_markdown_sha,
+                "hub_markdown_sha256_kind": hub_markdown_sha_kind,
                 "markdown": markdown,
                 "markdown_extraction_status": extraction_status,
                 "bilingual_metadata": bilingual,
@@ -2883,7 +2943,9 @@ def sync_content_hub_catalog_metadata(
     """Fill missing catalog translations from exact URL and original-file versions.
 
     The content hub connection is read-only. The target must already be an initialized
-    application database; it is checked before Storage is allowed to run migrations.
+    application database; it is checked before Storage is allowed to run migrations. The
+    verifier accepts both exact Hub Markdown hash forms, while this legacy projection retains
+    its existing three-field ``hub_binding`` shape for fill-only target compatibility.
     """
     schema = _validate_schema(schema)
     from .postgres import PostgresConnection
@@ -3002,9 +3064,8 @@ def sync_content_hub_catalog_metadata(
             and int(variant_version_id) == int(version_id)
             and field_name == "markdown_content"
             and not bool(markdown_is_null)
-            and isinstance(markdown_sha, str)
-            and _HASH_RE.fullmatch(str(markdown_sha).strip().lower())
-            and str(variant_sha or "").strip().lower() == str(markdown_sha).strip().lower()
+            and isinstance(variant_sha, str)
+            and _HASH_RE.fullmatch(str(variant_sha).strip().lower())
         )
         try:
             markdown_value = (
@@ -3015,13 +3076,21 @@ def sync_content_hub_catalog_metadata(
         markdown_json_text = (
             markdown_json if isinstance(markdown_json, str) else _json_text(markdown_json)
         )
-        expected_markdown_sha = hashlib.sha256(markdown_json_text.encode("utf-8")).hexdigest()
         if (
             not is_valid_variant
             or not isinstance(markdown_value, str)
             or not markdown_value.strip()
-            or str(variant_sha or "").strip().lower() != expected_markdown_sha
         ):
+            invalid_identities.add(identity)
+            continue
+        try:
+            _verify_hub_markdown_binding(
+                markdown_value,
+                markdown_json_text,
+                variant_sha,
+                str(markdown_sha or "").strip(),
+            )
+        except ContentHubError:
             invalid_identities.add(identity)
             continue
         if language not in {"zh", "en"}:
@@ -3060,6 +3129,14 @@ def sync_content_hub_catalog_metadata(
         if previous is not None and previous != language_record:
             invalid_identities.add(identity)
         record["metadata_by_language"][language] = language_record
+
+    for identity, record in versions.items():
+        languages = record["metadata_by_language"]
+        bindings = {
+            language: metadata.get("hub_binding") for language, metadata in languages.items()
+        }
+        if set(bindings) != {"zh", "en"} or bindings["zh"] != bindings["en"]:
+            invalid_identities.add(identity)
 
     for identity, version_ids in identity_versions.items():
         if len(version_ids) != 1:

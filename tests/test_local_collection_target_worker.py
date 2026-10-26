@@ -23,6 +23,8 @@ def _item(url: str, raw: bytes, markdown: str, *, version: int = 17) -> dict:
         "raw_bytes_b64": __import__("base64").b64encode(raw).decode(),
         "markdown": markdown,
         "markdown_sha256": md_sha,
+        "hub_markdown_sha256": md_sha,
+        "hub_markdown_sha256_kind": "raw_utf8",
         "content_version_id": version,
         "markdown_text_variant_id": version + 100,
         "title": "Pricing AI paper",
@@ -76,6 +78,39 @@ def test_target_item_preserves_secondary_ai_and_hash_bound_enrichment() -> None:
             "china",
             ["AI", "Pricing"],
         )
+
+
+def test_target_preserves_legacy_hub_binding_and_rejects_mismatch(tmp_path: Path) -> None:
+    raw = b"%PDF-1.7\nlegacy payload binding"
+    markdown = "Pricing models use AI methods."
+    item = _item("https://example.test/legacy-binding.pdf", raw, markdown)
+    item["hub_markdown_sha256"] = hashlib.sha256(
+        json.dumps(markdown, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    item["hub_markdown_sha256_kind"] = "json_payload_utf8"
+
+    normalized = worker._normalize_item(item, "china", ["AI", "Pricing", "Other"])
+    enrichment = normalized["serving_metadata"]["hub_enrichment"]
+    assert normalized["markdown_sha256"] == hashlib.sha256(markdown.encode("utf-8")).hexdigest()
+    assert enrichment["hub_markdown_sha256"] == item["hub_markdown_sha256"]
+    assert enrichment["hub_markdown_sha256_kind"] == "json_payload_utf8"
+    assert normalized["metadata_fingerprint"] == runtime._target_metadata_fingerprint(item)
+
+    storage = _FakeStorage(tmp_path)
+    ready: list = []
+    saved = _apply_payload(tmp_path, storage, "china", [item], ready)
+    assert saved["failures"] == []
+    assert saved["acknowledgements"][0]["hub_markdown_sha256_kind"] == "json_payload_utf8"
+    assert worker._existing_is_current(storage, normalized, ["ai", "all"])
+
+    tampered = copy.deepcopy(item)
+    tampered["hub_markdown_sha256"] = "0" * 64
+    with pytest.raises(ValueError, match="Hub Markdown binding digest mismatch"):
+        worker._normalize_item(tampered, "china", ["AI", "Pricing", "Other"])
+
+    changed_binding = copy.deepcopy(normalized)
+    changed_binding["hub_markdown_sha256"] = "f" * 64
+    assert not worker._existing_is_current(storage, changed_binding, ["ai", "all"])
 
 
 class _FakeConnection:

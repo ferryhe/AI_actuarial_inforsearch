@@ -1,12 +1,12 @@
 # 当前运行候选 — 2026-10-26
 
-- 项目 `AI_actuarial_inforsearch`；工作树 `reports/local-automation-worktree`，分支 `feat/local-collection-runtime`；本候选含 15 个文件，兄弟仓库未访问。
-- Ready task 的 id/type/status/errors/error_details/log_file 保留到 v2 回执和离线失败 case；item ack 与 Ready 结果分开计数，Ready-only 失败仍可次日重试。IAA 行政资料过滤和 AI 治理研究收录规则保持有效。
-- Raw-only 捕获先保存原件、来源和不可变 URL/SHA 版本；提取失败保留 extraction gap，不生成虚假 Markdown、分类或 AI 成功。后续可将 Markdown 补到同一版本；没有可用正文时目标 Ready 保持 unknown。
-- Target worker 的启动 JSON 错误、空 JSON SSH 错误和无效 JSON 解析错误均保留配置目标、退出码及可用诊断，并贯通 summary、v2 receipt 和离线 Ready failure case。
-- 扩展名缺失的 ZIP 格式 DOCX/PPTX/XLSX 下载按标准 OOXML MIME 识别并进入既有提取器；普通 ZIP 仍维持不支持状态。
-- 验证：隔离 PostgreSQL 55435 上 67 项 Hub/runtime/target focused tests PASS（3 项上游 SWIG deprecation warnings）；DOCX/PPTX/XLSX 均通过 extensionless capture→extraction 回归，generic ZIP 检查通过。真实 IAA HTTP capture→Codex→隔离 Hub smoke 通过，重跑复用同一版本且未触碰目标。Ruff、Black、isort、pylint errors-only、py_compile、dead-code files/symbols、CLI help 与 `git diff --check` 均 PASS；测试容器保持运行。
-- 未写入生产 Hub（55434）或两个服务目标，未应用生产迁移，未提交或推送。候选等待新的独立审查；详情见 `reports/local-runtime-20261025/implementation.json`。此前所有历史状态如下保留。
+- 项目 `AI_actuarial_inforsearch`；工作树 `reports/local-automation-worktree`，分支 `feat/local-collection-runtime`；当前候选含 16 个文件，兄弟仓库未访问。
+- Hub 对外 `markdown_sha256` 表示 Markdown UTF-8 原文摘要；另带 `hub_markdown_sha256` 和 `hub_markdown_sha256_kind`。共享严格校验器独立验证存储 JSON payload 摘要，并仅接受确切的 `raw_utf8` 或 `json_payload_utf8` 绑定；两种语言必须共用 variant ID 与原始绑定。旧 fill-only projection 保留原三字段 `hub_binding` 形状。
+- 双端 target fingerprint、流式输入、持久元数据和回读校验均保留上述新绑定对；原生 chunk 仍按原 Markdown UTF-8 文本计算。
+- 显式声明 `openpyxl>=3.1.5,<4`，使不安装 MarkItDown extras 的 CI 环境也具备现有 XLSX 提取依赖；DOCX/PPTX/XLSX 与普通 ZIP 的识别规则保持现有测试覆盖。
+- 隔离 PostgreSQL 55435 上 Hub/runtime/target focused tests 为 78/78 PASS（3 项上游 SWIG deprecation warnings）；Ruff、Black、isort、pylint errors-only、py_compile、dead-code files/symbols、CLI help、CI 过滤依赖检查和 `git diff --check` 均 PASS。
+- 全量 quality gate 已启动并收集 2,558 项测试，冻结时仍在运行；结果只追加到 ignored `reports/local-runtime-20261025/implementation.json`。
+- 此次修复未调用生产 Hub 或 target。此前 IAA 单篇真实生产验收记录为 receipt succeeded，Hub 双语与中国 ai/all、海外 ai Ready/query 检查均通过；该记录来自修复前 HEAD。此候选冻结等待独立审查，生产兼容只读审计由 controller 执行；未提交或推送。详情见 `reports/local-runtime-20261025/implementation.json`。此前所有历史状态如下保留。
 
 # 本地资料每日轮换与失败研究 — 2026-10-25
 
