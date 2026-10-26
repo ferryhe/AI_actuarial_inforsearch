@@ -437,6 +437,11 @@ from ai_actuarial.storage_factory import get_database_config_from_env
 
 get_database_config_from_env  # reason: Documented public configuration helper.
 
+from ai_actuarial.local_collection_runtime import _LinkParser
+
+_LinkParser.handle_starttag  # reason: HTMLParser dispatches this parser callback dynamically.
+_LinkParser.handle_endtag  # reason: HTMLParser dispatches this parser callback dynamically.
+
 from ai_actuarial.utils import _TextExtractor
 
 _TextExtractor.handle_data  # reason: HTMLParser invokes this protocol callback dynamically.

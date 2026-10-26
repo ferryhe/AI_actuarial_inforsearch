@@ -1,5 +1,9 @@
 # 流程、现状与实施边界
 
+## 当前实现状态（2026-10-25）
+
+跟踪源码现含 32 项 bounded discovery、URL/SHA 版本化 Hub v3 live-capture、Luna/high 双语分类和三类日期补全、两目标独立文章写入与原生 KB/Ready 以及可恢复 v2 回执。代码和隔离测试通过后仍需 fresh review 与 IAA/CAS 低流量真实验收；这份设计记录中标为“待实现”的旧叙述只代表历史审计时状态。当前命令、配置和 pilot 次序见 [本机运行指南](runtime.zh-CN.md)。生产 automation 不由 CLI 修改。
+
 ## 每轮与日报
 
 用户确认的目标是每日轮换 32 个监控项：helper 按固定 America/New_York 日期锚点，每天取六个 baseline，最多再选两个不同站点做历史失败重试。连续任意七个自然日的六项 baseline 覆盖全部 32 项；这是计划覆盖，未运行站点仍报告 `not_run`，不能算成功。Istituto 保留 baseline 位置但为 hold，IABA/EAA 为仅做结构检查的 `monitor_only`。日计划目标为美东 06:00，09:00 日报覆盖前一美东自然日。日期而非 UTC 经过小时推进，因此跨 DST 不重复或跳过计划日。单站失败不减少其余 baseline，也不改变未来日期轮换。每站其他低频配置和真实执行端仍待实现。
@@ -29,7 +33,7 @@ flowchart LR
 
 每日回执用 v2 `date_local/site_id` 唯一键记录本地自然日一次最终结果。失败/partial stage 携带错误和证据；report 从真实回执生成 case ID 和研究队列，最多建议两项。Case ledger 由调用端原子写入，不由 helper 修改。失败状态按同一 site/stage 保留，后续回执缺字段或 unknown 不会关闭它；只有该阶段新的 succeeded 证据才能关闭。最新 receipt 的下载成功不能掩盖之前 overseas Ready 失败。研究应先复现并定位证据，再更新仓库维护的实际 script/playbook/skill，跑聚焦测试与低流量验证、交独立 review，次日通过新回执确认；不得靠改报告/skill 把失败写成成功。相同 case 与 evidence fingerprint 不重复研究，单次日报最多处理两个；临时 HTTP/服务问题按证据退避。若维护源只存在 ignored snapshot，则不能伪装已经部署修复。
 
-## 现有可复用部分与明确缺口
+## 已跟踪运行端与历史复用证据
 
 32 个监控项（29 个唯一入口 hostname；SOA 和 CIA 各含专题监控项，CAS 还跨期刊 host）均已有 `collect.py`、`playbook.md`、`filters.json`、`status.json` 的只读副本。它们不是 32 个独立 Skill，仓库另有一个共享采集 Skill。脚本均可解析，但产物、运行时依赖、游标与过滤语义并不统一；候选枚举不等于下载、Hub 入库或完成摘要分类。`status.json` 是历史快照，不是本轮回执。逐项问题和建议见 [监控项目录](sites.zh-CN.md)。
 

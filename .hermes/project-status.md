@@ -1,3 +1,13 @@
+# 当前运行候选 — 2026-10-26
+
+- 项目 `AI_actuarial_inforsearch`；工作树 `reports/local-automation-worktree`，分支 `feat/local-collection-runtime`；本候选含 15 个文件，兄弟仓库未访问。
+- Ready task 的 id/type/status/errors/error_details/log_file 保留到 v2 回执和离线失败 case；item ack 与 Ready 结果分开计数，Ready-only 失败仍可次日重试。IAA 行政资料过滤和 AI 治理研究收录规则保持有效。
+- Raw-only 捕获先保存原件、来源和不可变 URL/SHA 版本；提取失败保留 extraction gap，不生成虚假 Markdown、分类或 AI 成功。后续可将 Markdown 补到同一版本；没有可用正文时目标 Ready 保持 unknown。
+- Target worker 的启动 JSON 错误、空 JSON SSH 错误和无效 JSON 解析错误均保留配置目标、退出码及可用诊断，并贯通 summary、v2 receipt 和离线 Ready failure case。
+- 扩展名缺失的 ZIP 格式 DOCX/PPTX/XLSX 下载按标准 OOXML MIME 识别并进入既有提取器；普通 ZIP 仍维持不支持状态。
+- 验证：隔离 PostgreSQL 55435 上 67 项 Hub/runtime/target focused tests PASS（3 项上游 SWIG deprecation warnings）；DOCX/PPTX/XLSX 均通过 extensionless capture→extraction 回归，generic ZIP 检查通过。真实 IAA HTTP capture→Codex→隔离 Hub smoke 通过，重跑复用同一版本且未触碰目标。Ruff、Black、isort、pylint errors-only、py_compile、dead-code files/symbols、CLI help 与 `git diff --check` 均 PASS；测试容器保持运行。
+- 未写入生产 Hub（55434）或两个服务目标，未应用生产迁移，未提交或推送。候选等待新的独立审查；详情见 `reports/local-runtime-20261025/implementation.json`。此前所有历史状态如下保留。
+
 # 本地资料每日轮换与失败研究 — 2026-10-25
 
 - 工作树 `reports/local-automation-worktree`，分支 `docs/local-collection-automation`（PR #427）；范围为 skill、离线 `plan/status/report --json`、回执/ledger合同、行为测试和 CI smoke 测试。
@@ -5814,3 +5824,21 @@ Current branch head 4f030be has uncommitted small catalog/Storage variable defau
 
 - 当前HEAD4f030be完整CI的2495PASS/3testsFAIL及2Pylint错误已最小修复：两个前台源码合同断言适配localized metadata/canonical filename fallback；成功写入不再strip旧category原文；metadata默认值显式初始化。没有改UI运行源码、全局CI或baseline。
 - Linux隔离PG联合223测试/13子测试PASS；唯一Node包装在无npm依赖的Python镜像无法启动，同一Vitest目标已于本机1/1PASS。已补CI同款Pylint errors-only两模块PASS；Black/isort/Ruff/compileall/diffPASS。fresh独立Sol/high frontend-ci-review-4 PASS。随后自动推送并等待实际新HEAD全部CI；旧head质量门FAIL不作新headPASS。
+# 当前运行端实现 — 2026-10-25
+
+- 当前 worker 在独立工作树 `reports/local-automation-worktree` / `feat/local-collection-runtime` 实现用户已授权的本机流程：32 项 bounded adapter；Hub v3 `live_capture`/URL+raw SHA 版本及现有 exclusion；双语 25 类与三语义日期 enrich；两目标独立写入、原生 profile-specific chunk/embed/index/Ready；state/CAS/frontier 与 v2 receipt restart recovery。
+- 现有 offline helper 和 06:00/09:00 automation 合同保留。该变更不自动启用 Scheduler，不用旧全量替换脚本；只触碰本仓库。本阶段禁止生产 Hub/服务写入，待 fresh review PASS 后由 controller 使用真实 IAA 新版本和 CAS secondary-AI 跑 pilot。
++ 当前代码修复包括 target AI serving bucket readback、单文章写入/Ready ledger 与 chunk failure vs Ready-only retry 区别，并修正 Hub ingest 后模型失败的分阶段回执计数和实际下载数。`tests/test_local_collection_runtime.py` 与 `tests/test_local_collection_target_worker.py` 12/12、独立 PostgreSQL `tests/test_content_hub.py` 17/17；dead-code files/symbols、Pylint -E、Ruff、Black、isort、py_compile、CLI help/plan JSON、skill-creator validate、`git diff --check` 通过。CI python-smoke 显式纳入三组本地流程/Hub 测试。
+- 既有 AI backlog 有 449 unique URLs；历史现有 primary-only 322 个 target 不代表完整覆盖。源 bytes 缺失与旧多版本歧义保持 pending/deferred，不计为同步完成。
+- Controller 的真实只读 `preflight --remote` 已核对两端 China ai+all Qwen1024、Overseas ai OpenAI3072、容量低于80%；仅 Hub v3 尚待显式迁移。未写生产 Hub/服务。代码冻结，等待 fresh Sol/high review；通过后由 controller 使用 IAA 新版本与 CAS secondary-AI 进行实际验收。
+
+### Runtime review repairs R1–R4 — 2026-10-25
+
+- 修复 Ready-only 重试回执误计 pending、preview 失败/部分完成仍返回 0、IAA organization chart 误收及 AI governance 研究论文误挡、target source_site 丢失四项 review finding。目标来源现在精确回读；没有来源记录的历史内容保留空值，不标成 `content-hub`。
+- 独立 PostgreSQL 55435 上聚焦 36/36 PASS；Black、isort、Ruff、Pylint errors-only、py_compile、dead-code files/symbols、`git diff --check` 均 PASS。生产 Hub 和服务端没有写入；隔离 PG 容器留给 fresh reviewer 复现。已冻结工作树，等待 controller 启动新的 Sol/high review。
+
+
+### Local collection runtime independent review 2 — 2026-10-26
+
+- Fresh review verdict: CHANGES_REQUESTED. Three reproducible P2 issues are recorded in `reports/local-runtime-20261025/review-2.json`: parser retry items are skipped after being marked visited; CAA/Australia bootstrap errors can leave no v2 receipt; and exact-URL same-host redirects can report success without Hub processing.
+- Verification: 36 focused Hub/runtime/target tests and 19 existing offline helper tests pass; `git diff --check origin/main` passes. No production Hub/target writes or real source previews were performed. Same implementation worker should repair the three findings before fresh review.
