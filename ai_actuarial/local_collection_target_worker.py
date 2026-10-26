@@ -12,7 +12,6 @@ import base64
 import hashlib
 import json
 import os
-import re
 import sys
 import tempfile
 import time
@@ -264,10 +263,7 @@ def _normalize_item(
     ):
         raise ValueError("target item must carry its Hub version and Markdown variant IDs")
     source_site = item.get("source_site")
-    if source_site is not None and (
-        not isinstance(source_site, str)
-        or not re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,127}", source_site)
-    ):
+    if source_site is not None and (not isinstance(source_site, str) or not source_site.strip()):
         raise ValueError("target source-site provenance is malformed")
     serving_metadata = {
         # The serving catalog is an AI bucket. Keep each source primary

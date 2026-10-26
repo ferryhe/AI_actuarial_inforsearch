@@ -20,6 +20,8 @@ python -m ai_actuarial.local_collection_runtime apply-hub-schema --config report
 
 它为新 live capture 记录来源类型，不生成虚假的 SQLite v16 snapshot，也不改写历史不可变 snapshot。历史 annotations/exclusions 由迁移前 shape check 保护。
 
+目标文件的 `source_site` 原样保留来源提供的名称：历史 v16 记录可能是机构显示名称（例如 `Actuarial Association of Europe (AAE)`），新采集记录使用注册表 `site_id`。两者都不是需要统一成 slug 的外键；未知历史来源保持 `null`，不得从 URL 推断。
+
 ## 小流量单站试跑
 
 先做只读下载/候选预览，再对同一站运行至多一篇的真实单站试跑。`--article-limit 1` 限制本次新增或重试的模型富信息工作。`--exact-url` 用于复核已知来源 URL；抓取仍经过站点 host、include/exclude、robots 与内容验证。

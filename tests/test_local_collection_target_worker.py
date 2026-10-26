@@ -80,6 +80,62 @@ def test_target_item_preserves_secondary_ai_and_hash_bound_enrichment() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    "source_site",
+    [
+        "Conference of Consulting Actuaries (CCA)",
+        "Actuarial Association of Europe (AAE)",
+        "iaa",
+    ],
+)
+@pytest.mark.parametrize("target", ["china", "overseas"])
+def test_target_preserves_legacy_and_registry_source_site_values(
+    source_site: str, target: str, tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(capacity, "ensure_capacity", lambda **_kwargs: None)
+    monkeypatch.setattr(
+        capacity, "capacity_status", lambda **_kwargs: {"status": "ok", "percent_used": 70}
+    )
+    storage = _FakeStorage(tmp_path)
+    item = _item(
+        f"https://example.test/{target}-{source_site[:3]}.pdf",
+        b"%PDF legacy source-site provenance",
+        "Pricing models use AI methods.",
+    )
+    item["source_site"] = source_site
+    ready: list = []
+
+    normalized = worker._normalize_item(item, target, ["AI", "Pricing", "Other"])
+    assert normalized["source_site"] == source_site
+    result = _apply_payload(tmp_path, storage, target, [item], ready)
+
+    assert result["failures"] == []
+    assert result["acknowledgements"][0]["source_site"] == source_site
+    assert storage.rows[item["url"]]["source_site"] == source_site
+    kb_ids = ["ai", "all"] if target == "china" else ["ai"]
+    assert worker._existing_is_current(storage, normalized, kb_ids)
+
+    ready.clear()
+    repeated = _apply_payload(tmp_path, storage, target, [item], ready)
+    assert repeated["failures"] == []
+    assert repeated["acknowledgements"][0]["status"] == "already_current"
+    assert repeated["acknowledgements"][0]["source_site"] == source_site
+    assert ready == []
+
+
+@pytest.mark.parametrize("source_site", ["", " \t ", 123, ["cas"]])
+def test_target_rejects_blank_or_non_string_source_site(source_site) -> None:
+    item = _item(
+        "https://example.test/invalid-source-site.pdf",
+        b"%PDF invalid source-site provenance",
+        "Pricing models use AI methods.",
+    )
+    item["source_site"] = source_site
+
+    with pytest.raises(ValueError, match="source-site provenance is malformed"):
+        worker._normalize_item(item, "china", ["AI", "Pricing", "Other"])
+
+
 def test_target_preserves_legacy_hub_binding_and_rejects_mismatch(tmp_path: Path) -> None:
     raw = b"%PDF-1.7\nlegacy payload binding"
     markdown = "Pricing models use AI methods."
@@ -522,6 +578,11 @@ def test_unknown_historical_source_is_not_fabricated_or_overwritten(
     assert result["failures"] == []
     assert result["acknowledgements"][0]["source_site"] is None
     assert storage.rows[url]["source_site"] is None
+    ready.clear()
+    repeated = _apply_payload(tmp_path, storage, "overseas", [item], ready)
+    assert repeated["acknowledgements"][0]["status"] == "already_current"
+    assert repeated["acknowledgements"][0]["source_site"] is None
+    assert ready == []
 
     retained_url = "https://example.test/retained-source.pdf"
     retained = _item(

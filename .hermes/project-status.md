@@ -8,6 +8,12 @@
 - 全量 quality gate 已启动并收集 2,558 项测试，冻结时仍在运行；结果只追加到 ignored `reports/local-runtime-20261025/implementation.json`。
 - 此次修复未调用生产 Hub 或 target。此前 IAA 单篇真实生产验收记录为 receipt succeeded，Hub 双语与中国 ai/all、海外 ai Ready/query 检查均通过；该记录来自修复前 HEAD。此候选冻结等待独立审查，生产兼容只读审计由 controller 执行；未提交或推送。详情见 `reports/local-runtime-20261025/implementation.json`。此前所有历史状态如下保留。
 
+### Target source-site provenance compatibility — 2026-10-26
+
+- Historical v16 `source_site` values can be organization display names; new captures use registry site IDs. The target worker now preserves any nonblank source-site string exactly, keeps `null` unknown, and rejects blank/non-string values. Historical raw-blob recovery is unchanged.
+- Target worker regression: CCA and AAE legacy labels plus `iaa` pass persistence, exact readback, and idempotent retry on China and Overseas profiles; `null` remains supported and malformed values fail. Focused target tests pass 24/24; Black, isort, Ruff, Pylint errors-only, py_compile, CLI help, and diff check pass.
+- This repair made no production calls or writes. Candidate remains the existing 16-file scope; ready for fresh independent review and controller retry of the first five backlog records. No commit or push by this worker.
+
 # 本地资料每日轮换与失败研究 — 2026-10-25
 
 - 工作树 `reports/local-automation-worktree`，分支 `docs/local-collection-automation`（PR #427）；范围为 skill、离线 `plan/status/report --json`、回执/ledger合同、行为测试和 CI smoke 测试。
