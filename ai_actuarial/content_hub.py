@@ -9,10 +9,12 @@ import os
 import re
 import sqlite3
 import stat
+import tempfile
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any, Iterable
+from urllib.parse import urlsplit
 
 import psycopg2
 from psycopg2 import sql
@@ -28,7 +30,7 @@ from .sqlite_schema import (
 
 MANIFEST_FORMAT = "ai_actuarial.content_hub.artifact_manifest"
 HUB_SCHEMA = "content_hub"
-HUB_SCHEMA_VERSION = 2
+HUB_SCHEMA_VERSION = 3
 _MIGRATION_DIR = Path(__file__).with_name("content_hub_migrations")
 _HASH_RE = re.compile(r"^[0-9a-f]{64}$")
 _SOURCE_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
@@ -42,6 +44,40 @@ _CONTENT_FIELDS = (
     "markdown_content",
 )
 _LANGUAGE_FIELDS = frozenset({"summary", "markdown_content"})
+APPROVED_CATEGORY_KEYS = frozenset(
+    {
+        "AI",
+        "Data & Analytics",
+        "Education / Events",
+        "Exam",
+        "Health",
+        "Investment / ALM",
+        "Life",
+        "LTC / DI / CI",
+        "Operations / Automation",
+        "Other",
+        "P&C",
+        "Pricing",
+        "Regulation & Standards",
+        "Reserving",
+        "Risk & Capital",
+        "Underwriting & Claims",
+        "Pension & Retirement",
+        "Reinsurance",
+        "Climate & ESG",
+        "Mortality & Longevity",
+        "Accounting & Financial Reporting",
+        "Professional Practice & Ethics",
+        "Product Development & Profitability",
+        "Cyber Risk & Insurance",
+        "Fintech & InsurTech",
+    }
+)
+DATE_FIELDS = {
+    "publication_date": "publication",
+    "revision_date": "revision",
+    "document_version_date": "document_version",
+}
 
 
 class ContentHubError(RuntimeError):
@@ -191,6 +227,8 @@ def apply_content_hub_schema(
             for version, filename, content in migrations:
                 if version in applied:
                     continue
+                if version == 3:
+                    _validate_existing_live_contract(cursor, schema)
                 cursor.execute(content.decode("utf-8"))
                 cursor.execute(
                     "INSERT INTO schema_migrations (version, filename, checksum) VALUES (%s, %s, %s)",
@@ -224,6 +262,42 @@ def _json_safe(value: Any) -> Any:
 
 def _json_text(value: Any) -> str:
     return json.dumps(_json_safe(value), ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+
+
+def _verify_hub_markdown_binding(
+    markdown: Any,
+    payload_value_json: Any,
+    payload_sha256: Any,
+    hub_binding_sha256: Any,
+) -> tuple[str, str]:
+    """Validate both Hub payload integrity and its historical or live Markdown binding."""
+    if not isinstance(markdown, str) or not markdown.strip():
+        raise ContentHubError("Stored enrichment Markdown is missing")
+    if not isinstance(payload_value_json, str) or payload_value_json != _json_text(markdown):
+        raise ContentHubError("Stored enrichment Markdown payload is not canonical JSON")
+
+    payload_digest = hashlib.sha256(payload_value_json.encode("utf-8")).hexdigest()
+    stored_payload_digest = str(payload_sha256 or "").strip()
+    binding_digest = str(hub_binding_sha256 or "").strip()
+    if (
+        not _HASH_RE.fullmatch(stored_payload_digest)
+        or stored_payload_digest != payload_digest
+        or not _HASH_RE.fullmatch(binding_digest)
+    ):
+        raise ContentHubError("Stored enrichment Markdown payload digest is invalid")
+
+    raw_digest = hashlib.sha256(markdown.encode("utf-8")).hexdigest()
+    matches = [
+        kind
+        for kind, digest in (
+            ("raw_utf8", raw_digest),
+            ("json_payload_utf8", payload_digest),
+        )
+        if digest == binding_digest
+    ]
+    if len(matches) != 1:
+        raise ContentHubError("Stored enrichment Markdown binding is invalid")
+    return raw_digest, matches[0]
 
 
 def _source_sha256(path: Path) -> tuple[str, int, tuple[int, int]]:
@@ -700,6 +774,896 @@ def _ensure_blob(
         )
 
 
+def _validate_existing_live_contract(cursor: Any, schema: str) -> None:
+    """Refuse to adopt pre-existing operational tables with a different contract."""
+    expected_columns = {
+        "article_enrichment_annotations": [
+            ("content_version_id", "bigint", False, None, None),
+            ("source_text_variant_id", "bigint", False, None, None),
+            ("source_markdown_sha256", "character", False, 64, None),
+            ("source_primary_category", "text", True, None, None),
+            ("source_signature", "character", False, 64, None),
+            ("categories_json", "jsonb", False, None, None),
+            ("date_facts_json", "jsonb", False, None, None),
+            ("date_review_status", "text", False, None, None),
+            ("date_review_reason", "text", True, None, None),
+            ("date_review_unresolved_json", "jsonb", False, None, None),
+            ("result_sha256", "character", False, 64, None),
+            ("recipe", "text", False, None, None),
+            ("run_id", "text", False, None, None),
+            ("annotated_at", "timestamp with time zone", False, None, "clock_timestamp()"),
+        ],
+        "excluded_urls": [
+            ("url_identity_sha256", "character", False, 64, None),
+            ("url_value_json", "text", False, None, None),
+            ("reason", "text", False, None, None),
+            ("excluded_at", "timestamp with time zone", False, None, "current_timestamp"),
+        ],
+    }
+    for table, expected in expected_columns.items():
+        cursor.execute(
+            "SELECT column_name, data_type, is_nullable, character_maximum_length, column_default "
+            "FROM information_schema.columns WHERE table_schema = %s AND table_name = %s "
+            "ORDER BY ordinal_position",
+            (schema, table),
+        )
+        actual = [
+            (
+                str(name),
+                str(kind),
+                str(nullable) == "YES",
+                length,
+                " ".join(str(default).lower().split()) if default is not None else None,
+            )
+            for name, kind, nullable, length, default in cursor.fetchall()
+        ]
+        if actual and actual != expected:
+            raise ContentHubError(f"Existing {table} table does not match the approved contract")
+        if not actual:
+            continue
+        cursor.execute(
+            "SELECT pg_get_constraintdef(c.oid) FROM pg_constraint c "
+            "JOIN pg_class t ON t.oid = c.conrelid JOIN pg_namespace n ON n.oid = t.relnamespace "
+            "WHERE n.nspname = %s AND t.relname = %s",
+            (schema, table),
+        )
+        definitions = [" ".join(str(row[0]).lower().split()) for row in cursor.fetchall()]
+        if table == "excluded_urls":
+            valid = len(definitions) == 2
+            valid = valid and any(
+                "primary key (url_identity_sha256)" in item for item in definitions
+            )
+            valid = valid and any(
+                "recruitment" in item and "tender" in item for item in definitions
+            )
+        else:
+            valid = len(definitions) == 9
+            valid = valid and any(
+                "primary key (content_version_id)" in item for item in definitions
+            )
+            valid = valid and any(
+                "foreign key (content_version_id)" in item for item in definitions
+            )
+            valid = valid and all(
+                token in " ".join(definitions)
+                for token in (
+                    "source_markdown_sha256",
+                    "source_signature",
+                    "categories_json",
+                    "date_facts_json",
+                    "date_review_status",
+                    "date_review_unresolved_json",
+                    "result_sha256",
+                )
+            )
+        if not valid:
+            raise ContentHubError(
+                f"Existing {table} constraints do not match the approved contract"
+            )
+
+
+def content_hub_url_exclusion(
+    url: str, database_url: DatabaseConfig | str | None = None, *, schema: str = HUB_SCHEMA
+) -> dict[str, Any] | None:
+    """Return a verified recruitment/tender exclusion for one exact canonical URL."""
+    schema = _validate_schema(schema)
+    if not isinstance(url, str) or not url.strip():
+        raise ContentHubError("URL must be non-empty source text")
+    digest = hashlib.sha256(url.encode("utf-8")).hexdigest()
+    connection = _connect(database_url)
+    try:
+        with connection.cursor() as cursor:
+            _require_current_schema(cursor, schema)
+            cursor.execute(
+                "SELECT url_value_json, reason FROM excluded_urls WHERE url_identity_sha256 = %s",
+                (digest,),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                return None
+            stored_url = _load_json(row[0])
+            if stored_url != url or row[1] not in {"recruitment", "tender"}:
+                raise ContentHubError("Stored excluded URL identity conflicts with its source")
+            return {"url": url, "reason": str(row[1])}
+    except psycopg2.Error as exc:
+        raise ContentHubError("Content hub exclusion query failed") from exc
+    finally:
+        connection.close()
+
+
+def _persist_live_cas(data_root: Path, raw_sha256: str, raw_bytes: bytes) -> str:
+    relative = PurePosixPath("cas") / "sha256" / raw_sha256[:2] / raw_sha256
+    target = data_root.joinpath(*relative.parts)
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if not target.resolve().is_relative_to(data_root.resolve()):
+            raise ContentHubError("Live CAS destination escapes the configured data root")
+        if target.exists():
+            existing = target.read_bytes()
+            if hashlib.sha256(existing).hexdigest() != raw_sha256 or len(existing) != len(
+                raw_bytes
+            ):
+                raise ContentHubError("Existing live CAS artifact does not match its digest")
+            return relative.as_posix()
+        fd, name = tempfile.mkstemp(prefix=".live-cas-", suffix=".tmp", dir=target.parent)
+        temporary = Path(name)
+        try:
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(raw_bytes)
+                handle.flush()
+                os.fsync(handle.fileno())
+            if hashlib.sha256(temporary.read_bytes()).hexdigest() != raw_sha256:
+                raise ContentHubError("Live CAS write failed digest verification")
+            os.replace(temporary, target)
+        finally:
+            temporary.unlink(missing_ok=True)
+    except OSError as exc:
+        raise ContentHubError("Could not persist the verified live CAS artifact") from exc
+    return relative.as_posix()
+
+
+def ingest_live_article(
+    *,
+    canonical_url: str,
+    source_site: str,
+    source_page_url: str,
+    title: str,
+    raw_bytes: bytes,
+    markdown: str | None,
+    content_type: str,
+    data_root: str | Path,
+    database_url: DatabaseConfig | str | None = None,
+    schema: str = HUB_SCHEMA,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Append one verified live capture with immutable source and version provenance."""
+    schema = _validate_schema(schema)
+    if not isinstance(canonical_url, str) or not canonical_url.strip():
+        raise ContentHubError("Live article URL is required")
+    parsed = urlsplit(canonical_url)
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.username
+        or parsed.password
+    ):
+        raise ContentHubError("Live article URL must be an HTTP(S) URL without credentials")
+    if not isinstance(source_site, str) or not _SOURCE_RE.fullmatch(source_site):
+        raise ContentHubError("Live source site must be a stable lowercase registry key")
+    if not isinstance(source_page_url, str) or not source_page_url.strip():
+        raise ContentHubError("Live source page URL is required")
+    if not isinstance(title, str) or not title.strip():
+        raise ContentHubError("Live article title must be non-empty")
+    if markdown is not None and (not isinstance(markdown, str) or not markdown.strip()):
+        raise ContentHubError("Live Markdown must be non-empty when supplied")
+    if not isinstance(raw_bytes, bytes) or not raw_bytes:
+        raise ContentHubError("Live source bytes must be non-empty")
+    raw_sha256 = hashlib.sha256(raw_bytes).hexdigest()
+    markdown_sha256 = (
+        hashlib.sha256(markdown.encode("utf-8")).hexdigest() if markdown is not None else None
+    )
+    capture_metadata = {
+        "source_site": source_site,
+        "source_page_url": source_page_url,
+        "canonical_url": canonical_url,
+        "title": title.strip(),
+        "content_type": str(content_type or "application/octet-stream").strip().lower(),
+        "raw_sha256": raw_sha256,
+        "raw_bytes": len(raw_bytes),
+        "markdown_sha256": markdown_sha256,
+        **(metadata or {}),
+    }
+    manifest_bytes = _json_text(capture_metadata).encode("utf-8")
+    manifest_sha256 = hashlib.sha256(manifest_bytes).hexdigest()
+    source_name = f"live_{source_site}_{manifest_sha256[:24]}"
+    cas_relpath = _persist_live_cas(Path(data_root).expanduser().resolve(), raw_sha256, raw_bytes)
+    connection = _connect(database_url)
+    try:
+        with connection.cursor() as cursor:
+            _require_current_schema(cursor, schema)
+            cursor.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                (f"content_hub:live_import:{schema}:{source_site}:{canonical_url}",),
+            )
+            url_identity = hashlib.sha256(canonical_url.encode("utf-8")).hexdigest()
+            cursor.execute(
+                "SELECT url_value_json, reason FROM excluded_urls WHERE url_identity_sha256 = %s",
+                (url_identity,),
+            )
+            exclusion = cursor.fetchone()
+            if exclusion is not None:
+                if _load_json(exclusion[0]) != canonical_url or exclusion[1] not in {
+                    "recruitment",
+                    "tender",
+                }:
+                    raise ContentHubError("Stored excluded URL identity conflicts with live source")
+                raise ContentHubError(f"Hub excludes this URL as {exclusion[1]}")
+            cursor.execute(
+                "SELECT source_snapshot_id, snapshot_sha256, snapshot_bytes, manifest_sha256, source_kind "
+                "FROM source_snapshots WHERE source_name = %s FOR UPDATE",
+                (source_name,),
+            )
+            existing_source = cursor.fetchone()
+            if existing_source is not None:
+                if (
+                    str(existing_source[1]).strip() != manifest_sha256
+                    or int(existing_source[2]) != len(raw_bytes)
+                    or str(existing_source[3]).strip() != manifest_sha256
+                    or existing_source[4] != "live_capture"
+                ):
+                    raise ContentHubError("Live source identity conflicts with an existing capture")
+                snapshot_id = int(existing_source[0])
+                cursor.execute(
+                    "SELECT content_version_id FROM source_record_map "
+                    "WHERE source_snapshot_id = %s AND source_table = 'files'",
+                    (snapshot_id,),
+                )
+                version_row = cursor.fetchone()
+                cursor.execute(
+                    "SELECT text_variant_id, payload_is_null FROM text_variants WHERE source_snapshot_id = %s "
+                    "AND field_name = 'markdown_content' ORDER BY text_variant_id DESC LIMIT 1",
+                    (snapshot_id,),
+                )
+                markdown_row = cursor.fetchone()
+                if version_row is None or markdown_row is None:
+                    raise ContentHubError("Existing live capture is missing its version binding")
+                markdown_variant_id = None if bool(markdown_row[1]) else int(markdown_row[0])
+                result = {
+                    "success": True,
+                    "already_imported": True,
+                    "source_name": source_name,
+                    "source_snapshot_id": snapshot_id,
+                    "content_version_id": int(version_row[0]),
+                    "markdown_text_variant_id": markdown_variant_id,
+                    "raw_sha256": raw_sha256,
+                    "markdown_sha256": markdown_sha256,
+                    "byte_size": len(raw_bytes),
+                }
+                connection.commit()
+                return result
+
+            cursor.execute(
+                "SELECT content_version_id FROM content_versions "
+                "WHERE url_identity_sha256 = %s AND raw_sha256 = %s",
+                (url_identity, raw_sha256),
+            )
+            already_versioned = cursor.fetchone() is not None
+            cursor.execute(
+                "INSERT INTO source_snapshots (source_name, snapshot_sha256, snapshot_bytes, "
+                "sqlite_user_version, manifest_sha256, source_kind) "
+                "VALUES (%s, %s, %s, NULL, %s, 'live_capture') RETURNING source_snapshot_id",
+                (source_name, manifest_sha256, len(raw_bytes), manifest_sha256),
+            )
+            snapshot_id = int(cursor.fetchone()[0])
+            cursor.execute(
+                "INSERT INTO source_table_counts (source_snapshot_id, table_name, row_count) "
+                "VALUES (%s, 'files', 1)",
+                (snapshot_id,),
+            )
+            _ensure_blob(
+                cursor,
+                raw_sha256,
+                byte_size=len(raw_bytes),
+                availability="present",
+                cas_relpath=cas_relpath,
+            )
+            source_pk = {"url": canonical_url, "sha256": raw_sha256}
+            source_pk_json = _json_text(source_pk)
+            version_id = _ensure_content_version(
+                cursor,
+                url=canonical_url,
+                raw_sha256=raw_sha256,
+                source_sha256=manifest_sha256,
+                source_table="files",
+                source_pk_json=source_pk_json,
+            )
+            cursor.execute(
+                "INSERT INTO source_file_observations (source_snapshot_id, legacy_file_id, "
+                "content_version_id, file_url_json, raw_sha256, source_byte_size, artifact_byte_size, "
+                "deleted_at_json, availability, cas_relpath, verified_sha256, legacy_metadata_json) "
+                "VALUES (%s, 'live', %s, %s, %s, %s, %s, 'null', 'present', %s, %s, %s)",
+                (
+                    snapshot_id,
+                    version_id,
+                    _json_text(canonical_url),
+                    raw_sha256,
+                    len(raw_bytes),
+                    len(raw_bytes),
+                    cas_relpath,
+                    raw_sha256,
+                    _json_text(capture_metadata),
+                ),
+            )
+            cursor.execute(
+                "INSERT INTO source_record_map (source_snapshot_id, source_table, legacy_pk_json, "
+                "content_version_id, source_metadata_json) VALUES (%s, 'files', %s, %s, %s)",
+                (snapshot_id, source_pk_json, version_id, _json_text(capture_metadata)),
+            )
+            provenance = {"source_site": source_site, "source_page_url": source_page_url}
+            _insert_variant(
+                cursor,
+                snapshot_id=snapshot_id,
+                version_id=version_id,
+                source_table="files",
+                source_pk_json=source_pk_json,
+                field_name="title",
+                payload=title.strip(),
+                recipe_identity="local-live-capture-v1",
+                provenance=provenance,
+            )
+            _insert_variant(
+                cursor,
+                snapshot_id=snapshot_id,
+                version_id=version_id,
+                source_table="files",
+                source_pk_json=source_pk_json,
+                field_name="markdown_content",
+                payload=markdown,
+                recipe_identity="local-live-capture-v1",
+                provenance={
+                    **provenance,
+                    "markdown_sha256": markdown_sha256,
+                    "extraction_status": "extraction_gap" if markdown is None else "available",
+                },
+            )
+            if markdown is not None:
+                cursor.execute(
+                    "SELECT text_variant_id FROM text_variants WHERE source_snapshot_id = %s "
+                    "AND content_version_id = %s AND field_name = 'markdown_content' "
+                    "AND payload_sha256 = %s",
+                    (
+                        snapshot_id,
+                        version_id,
+                        hashlib.sha256(_json_text(markdown).encode("utf-8")).hexdigest(),
+                    ),
+                )
+                markdown_row = cursor.fetchone()
+                if markdown_row is None:
+                    raise ContentHubError("Live Markdown variant was not persisted")
+            else:
+                markdown_row = None
+        connection.commit()
+        return {
+            "success": True,
+            "already_imported": False,
+            "already_versioned": already_versioned,
+            "source_name": source_name,
+            "source_snapshot_id": snapshot_id,
+            "content_version_id": version_id,
+            "markdown_text_variant_id": int(markdown_row[0]) if markdown_row else None,
+            "raw_sha256": raw_sha256,
+            "markdown_sha256": markdown_sha256,
+            "byte_size": len(raw_bytes),
+        }
+    except psycopg2.Error as exc:
+        connection.rollback()
+        raise ContentHubError("Live content hub import failed") from exc
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+
+def _canonical_json(value: Any) -> str:
+    return json.dumps(
+        value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False
+    )
+
+
+def save_live_enrichment(
+    *,
+    content_version_id: int,
+    markdown_text_variant_id: int,
+    markdown_sha256: str,
+    primary_category: str,
+    bilingual_metadata: dict[str, Any],
+    categories: list[dict[str, Any]],
+    date_facts: dict[str, Any],
+    date_review_status: str,
+    date_review_reason: str | None,
+    date_review_unresolved: list[dict[str, Any]],
+    recipe: str,
+    run_id: str,
+    database_url: DatabaseConfig | str | None = None,
+    schema: str = HUB_SCHEMA,
+) -> dict[str, Any]:
+    """Store complete version/hash-bound bilingual metadata and article annotations."""
+    schema = _validate_schema(schema)
+    if type(content_version_id) is not int or content_version_id < 1:
+        raise ContentHubError("content_version_id must be positive")
+    if type(markdown_text_variant_id) is not int or markdown_text_variant_id < 1:
+        raise ContentHubError("markdown_text_variant_id must be positive")
+    if not _HASH_RE.fullmatch(str(markdown_sha256)):
+        raise ContentHubError("Markdown SHA-256 is malformed")
+    if primary_category not in APPROVED_CATEGORY_KEYS:
+        raise ContentHubError("Primary category is outside the approved taxonomy")
+    if not isinstance(categories, list) or not 1 <= len(categories) <= 4:
+        raise ContentHubError("Enrichment must include one to four ordered categories")
+    normalized_categories = []
+    seen_categories: set[str] = set()
+    for category in categories:
+        if not isinstance(category, dict):
+            raise ContentHubError("Enrichment category is malformed")
+        key, evidence = category.get("key"), category.get("evidence")
+        if key not in APPROVED_CATEGORY_KEYS or key in seen_categories:
+            raise ContentHubError("Enrichment category key is invalid or repeated")
+        if (
+            not isinstance(evidence, list)
+            or not 1 <= len(evidence) <= 3
+            or any(not isinstance(item, str) or not item.strip() for item in evidence)
+        ):
+            raise ContentHubError("Category evidence must contain one to three exact quotes")
+        seen_categories.add(key)
+        normalized_categories.append({"key": key, "evidence": evidence})
+    if normalized_categories[0]["key"] != primary_category:
+        raise ContentHubError("Ordered enrichment categories must preserve the bilingual primary")
+    if not isinstance(bilingual_metadata, dict) or set(bilingual_metadata) != {"zh", "en"}:
+        raise ContentHubError("Bilingual metadata must include exactly zh and en packages")
+    normalized_bilingual: dict[str, dict[str, Any]] = {}
+    for language in ("zh", "en"):
+        package = bilingual_metadata[language]
+        if not isinstance(package, dict):
+            raise ContentHubError("Bilingual language package must be an object")
+        title = package.get("title")
+        summary = package.get("summary")
+        category = package.get("category")
+        keywords = package.get("keywords")
+        if (
+            not isinstance(title, str)
+            or not title.strip()
+            or not isinstance(summary, str)
+            or not summary.strip()
+            or category != primary_category
+            or not isinstance(keywords, list)
+            or not any(isinstance(word, str) and word.strip() for word in keywords)
+        ):
+            raise ContentHubError(
+                "Bilingual metadata is incomplete or disagrees on primary category"
+            )
+        normalized_bilingual[language] = {
+            "title": title.strip(),
+            "summary": summary.strip(),
+            "category": category,
+            "keywords": [
+                word.strip() for word in keywords if isinstance(word, str) and word.strip()
+            ],
+        }
+    if not isinstance(date_facts, dict) or set(date_facts) != set(DATE_FIELDS):
+        raise ContentHubError("Date facts must have the three approved semantic fields")
+    normalized_dates: dict[str, dict[str, str] | None] = {}
+    for field, semantic in DATE_FIELDS.items():
+        fact = date_facts[field]
+        if fact is None:
+            normalized_dates[field] = None
+            continue
+        if not isinstance(fact, dict) or fact.get("semantic") != semantic:
+            raise ContentHubError("Date fact does not match its approved semantic field")
+        value, precision = fact.get("value"), fact.get("precision")
+        evidence, location = fact.get("evidence"), fact.get("location")
+        if (
+            not isinstance(value, str)
+            or not re.fullmatch(r"\d{4}(?:-\d{2}(?:-\d{2})?)?", value)
+            or precision not in {"year", "month", "day"}
+            or len(value) != {"year": 4, "month": 7, "day": 10}[precision]
+            or not isinstance(evidence, str)
+            or not evidence.strip()
+            or not isinstance(location, str)
+            or not location.strip()
+            or len(location) > 120
+        ):
+            raise ContentHubError("Date value, precision, evidence, or location is malformed")
+        try:
+            date.fromisoformat(
+                value + ("-01-01" if precision == "year" else "-01" if precision == "month" else "")
+            )
+        except ValueError as exc:
+            raise ContentHubError("Date value is not a valid calendar date") from exc
+        normalized_dates[field] = {
+            "value": value,
+            "precision": precision,
+            "semantic": semantic,
+            "evidence": evidence,
+            "location": location.strip(),
+        }
+    if date_review_status not in {"complete", "candidate_limit_gap", "unsupported_format_gap"}:
+        raise ContentHubError("Date review status is invalid")
+    if not isinstance(date_review_unresolved, list):
+        raise ContentHubError("Unresolved date evidence must be an array")
+    if date_review_status == "complete" and date_review_unresolved:
+        raise ContentHubError("Complete date review cannot retain unresolved date candidates")
+    if date_review_status != "complete" and not date_review_reason:
+        raise ContentHubError("Incomplete date review requires a reason")
+    if (
+        not isinstance(recipe, str)
+        or not recipe.strip()
+        or not isinstance(run_id, str)
+        or not run_id.strip()
+    ):
+        raise ContentHubError("Enrichment recipe and run id are required")
+    connection = _connect(database_url)
+    try:
+        with connection.cursor() as cursor:
+            _require_current_schema(cursor, schema)
+            cursor.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                (f"content_hub:live_enrichment:{schema}:{content_version_id}",),
+            )
+            cursor.execute(
+                "SELECT payload_value_json, payload_is_null FROM text_variants "
+                "WHERE text_variant_id = %s AND content_version_id = %s "
+                "AND field_name = 'markdown_content' FOR UPDATE",
+                (markdown_text_variant_id, content_version_id),
+            )
+            markdown_row = cursor.fetchone()
+            if markdown_row is None or bool(markdown_row[1]):
+                raise ContentHubError("Enrichment Markdown binding is not a stored text variant")
+            markdown = _load_json(markdown_row[0])
+            if (
+                not isinstance(markdown, str)
+                or hashlib.sha256(markdown.encode("utf-8")).hexdigest() != markdown_sha256
+            ):
+                raise ContentHubError(
+                    "Enrichment Markdown digest does not match the stored variant"
+                )
+            if any(
+                quote not in markdown
+                for item in normalized_categories
+                for quote in item["evidence"]
+            ):
+                raise ContentHubError("Category evidence is not an exact Markdown quote")
+            if any(fact and fact["evidence"] not in markdown for fact in normalized_dates.values()):
+                raise ContentHubError("Date evidence is not an exact Markdown quote")
+            for unresolved in date_review_unresolved:
+                if (
+                    not isinstance(unresolved, dict)
+                    or unresolved.get("field") not in DATE_FIELDS
+                    or not isinstance(unresolved.get("evidence"), str)
+                    or unresolved["evidence"] not in markdown
+                ):
+                    raise ContentHubError("Unresolved date evidence is not bound to the Markdown")
+
+            source_signature = hashlib.sha256(
+                _canonical_json(
+                    {
+                        "content_version_id": content_version_id,
+                        "source_text_variant_id": markdown_text_variant_id,
+                        "source_markdown_sha256": markdown_sha256,
+                        "source_primary_category": primary_category,
+                    }
+                ).encode("utf-8")
+            ).hexdigest()
+            annotation = {
+                "categories": normalized_categories,
+                "date_facts": normalized_dates,
+                "date_review_status": date_review_status,
+                "date_review_reason": date_review_reason,
+                "date_review_unresolved": date_review_unresolved,
+            }
+            result_sha256 = hashlib.sha256(_canonical_json(annotation).encode("utf-8")).hexdigest()
+            cursor.execute(
+                "SELECT 1 FROM content_versions WHERE content_version_id = %s FOR UPDATE",
+                (content_version_id,),
+            )
+            if cursor.fetchone() is None:
+                raise ContentHubError("Enrichment references an unknown content version")
+            for language, package in normalized_bilingual.items():
+                provenance = [
+                    {
+                        "recipe": recipe,
+                        "author": "Codex CLI gpt-6-luna/high",
+                        "fields": ["title", "summary", "category", "keywords"],
+                    }
+                ]
+                cursor.execute(
+                    "SELECT markdown_text_variant_id, markdown_sha256, title, summary, category, "
+                    "keywords_json, provenance_json FROM bilingual_metadata "
+                    "WHERE content_version_id = %s AND language_code = %s FOR UPDATE",
+                    (content_version_id, language),
+                )
+                previous = cursor.fetchone()
+                if (
+                    previous is not None
+                    and int(previous[0]) == markdown_text_variant_id
+                    and str(previous[1]).strip() == markdown_sha256
+                ):
+                    current = {
+                        "title": previous[2],
+                        "summary": previous[3],
+                        "category": previous[4],
+                        "keywords": previous[5],
+                    }
+                    current_keywords = list(current["keywords"] or [])
+                    if current == {**package, "keywords": current_keywords}:
+                        continue
+                    provenance = list(previous[6] or []) + provenance
+                cursor.execute(
+                    "INSERT INTO bilingual_metadata (content_version_id, language_code, markdown_text_variant_id, "
+                    "markdown_sha256, title, summary, category, keywords_json, provenance_json) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) "
+                    "ON CONFLICT (content_version_id, language_code) DO UPDATE SET "
+                    "markdown_text_variant_id = EXCLUDED.markdown_text_variant_id, "
+                    "markdown_sha256 = EXCLUDED.markdown_sha256, title = EXCLUDED.title, "
+                    "summary = EXCLUDED.summary, category = EXCLUDED.category, "
+                    "keywords_json = EXCLUDED.keywords_json, provenance_json = EXCLUDED.provenance_json, "
+                    "updated_at = CURRENT_TIMESTAMP",
+                    (
+                        content_version_id,
+                        language,
+                        markdown_text_variant_id,
+                        markdown_sha256,
+                        package["title"],
+                        package["summary"],
+                        package["category"],
+                        Json(package["keywords"]),
+                        Json(provenance),
+                    ),
+                )
+            cursor.execute(
+                "INSERT INTO article_enrichment_annotations (content_version_id, source_text_variant_id, "
+                "source_markdown_sha256, source_primary_category, source_signature, categories_json, "
+                "date_facts_json, date_review_status, date_review_reason, date_review_unresolved_json, "
+                "result_sha256, recipe, run_id) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+                "ON CONFLICT (content_version_id) DO UPDATE SET source_text_variant_id = EXCLUDED.source_text_variant_id, "
+                "source_markdown_sha256 = EXCLUDED.source_markdown_sha256, source_primary_category = EXCLUDED.source_primary_category, "
+                "source_signature = EXCLUDED.source_signature, categories_json = EXCLUDED.categories_json, "
+                "date_facts_json = EXCLUDED.date_facts_json, date_review_status = EXCLUDED.date_review_status, "
+                "date_review_reason = EXCLUDED.date_review_reason, date_review_unresolved_json = EXCLUDED.date_review_unresolved_json, "
+                "result_sha256 = EXCLUDED.result_sha256, recipe = EXCLUDED.recipe, run_id = EXCLUDED.run_id, annotated_at = clock_timestamp()",
+                (
+                    content_version_id,
+                    markdown_text_variant_id,
+                    markdown_sha256,
+                    primary_category,
+                    source_signature,
+                    Json(normalized_categories),
+                    Json(normalized_dates),
+                    date_review_status,
+                    date_review_reason,
+                    Json(date_review_unresolved),
+                    result_sha256,
+                    recipe,
+                    run_id,
+                ),
+            )
+        connection.commit()
+        return {
+            "success": True,
+            "content_version_id": content_version_id,
+            "markdown_text_variant_id": markdown_text_variant_id,
+            "markdown_sha256": markdown_sha256,
+            "source_signature": source_signature,
+            "result_sha256": result_sha256,
+            "category_keys": [item["key"] for item in normalized_categories],
+            "is_ai_candidate": any(item["key"] == "AI" for item in normalized_categories),
+        }
+    except psycopg2.Error as exc:
+        connection.rollback()
+        raise ContentHubError("Live enrichment write failed") from exc
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+
+def content_hub_list_ai_versions(
+    *,
+    after_version_id: int = 0,
+    limit: int = 50,
+    database_url: DatabaseConfig | str | None = None,
+    schema: str = HUB_SCHEMA,
+) -> dict[str, Any]:
+    """Read an ordered, hash-validated page of already-enriched AI versions for reconciliation."""
+    schema = _validate_schema(schema)
+    if (
+        type(after_version_id) is not int
+        or after_version_id < 0
+        or type(limit) is not int
+        or not 1 <= limit <= 200
+    ):
+        raise ContentHubError("AI reconciliation page is outside its bounded cursor contract")
+    connection = _connect(database_url)
+    try:
+        with connection.cursor() as cursor:
+            _require_current_schema(cursor, schema)
+            cursor.execute(
+                "SELECT v.content_version_id, v.url_value_json, v.raw_sha256, b.cas_relpath, b.byte_size, "
+                "a.source_text_variant_id, a.source_markdown_sha256, a.source_primary_category, "
+                "a.categories_json, a.date_facts_json, a.date_review_status, a.date_review_reason, "
+                "a.date_review_unresolved_json, a.source_signature, a.result_sha256, "
+                "tv.payload_value_json, bmzh.title, bmzh.summary, bmzh.category, bmzh.keywords_json, "
+                "bmen.title, bmen.summary, bmen.category, bmen.keywords_json, "
+                "COALESCE((SELECT r.source_metadata_json FROM source_record_map r "
+                " JOIN source_snapshots ss USING (source_snapshot_id) WHERE r.content_version_id = v.content_version_id "
+                " ORDER BY ss.imported_at DESC, ss.source_snapshot_id DESC LIMIT 1), '{}'), b.availability, "
+                "tv.payload_sha256, bmzh.markdown_text_variant_id, bmzh.markdown_sha256, "
+                "bmen.markdown_text_variant_id, bmen.markdown_sha256 "
+                "FROM article_enrichment_annotations a "
+                "JOIN content_versions v USING (content_version_id) "
+                "LEFT JOIN content_blobs b ON b.sha256 = v.blob_sha256 "
+                "JOIN text_variants tv ON tv.text_variant_id = a.source_text_variant_id "
+                " AND tv.content_version_id = a.content_version_id AND tv.field_name = 'markdown_content' "
+                "JOIN bilingual_metadata bmzh ON bmzh.content_version_id = v.content_version_id AND bmzh.language_code = 'zh' "
+                "JOIN bilingual_metadata bmen ON bmen.content_version_id = v.content_version_id AND bmen.language_code = 'en' "
+                "WHERE v.content_version_id > %s AND v.raw_sha256 IS NOT NULL "
+                'AND a.categories_json @> \'[{"key":"AI"}]\'::jsonb '
+                "AND a.source_markdown_sha256 = bmzh.markdown_sha256 AND bmzh.markdown_sha256 = bmen.markdown_sha256 "
+                "AND a.source_text_variant_id = bmzh.markdown_text_variant_id "
+                "AND bmzh.markdown_text_variant_id = bmen.markdown_text_variant_id "
+                "AND NOT EXISTS (SELECT 1 FROM excluded_urls e WHERE e.url_identity_sha256 = v.url_identity_sha256) "
+                "ORDER BY v.content_version_id LIMIT %s",
+                (after_version_id, limit + 1),
+            )
+            rows = cursor.fetchall()
+            has_more = len(rows) > limit
+            rows = rows[:limit]
+            versions: list[dict[str, Any]] = []
+            for row in rows:
+                url = _load_json(row[1])
+                markdown = _load_json(row[15])
+                if not isinstance(url, str) or not _HASH_RE.fullmatch(str(row[2]).strip()):
+                    continue
+                try:
+                    markdown_sha, markdown_sha_kind = _verify_hub_markdown_binding(
+                        markdown, row[15], row[26], row[6]
+                    )
+                except ContentHubError:
+                    continue
+                if (
+                    int(row[27]) != int(row[5])
+                    or int(row[29]) != int(row[5])
+                    or str(row[28]).strip() != str(row[6]).strip()
+                    or str(row[30]).strip() != str(row[6]).strip()
+                ):
+                    continue
+                categories = row[8] if isinstance(row[8], list) else json.loads(row[8])
+                keys = [str(item.get("key") or "") for item in categories if isinstance(item, dict)]
+                if "AI" not in keys or not keys or keys[0] != str(row[7] or ""):
+                    continue
+                source_metadata = _load_json(row[24])
+                metadata = {
+                    language: {
+                        "title": row[offset],
+                        "summary": row[offset + 1],
+                        "category": row[offset + 2],
+                        "keywords": (
+                            row[offset + 3]
+                            if isinstance(row[offset + 3], list)
+                            else json.loads(row[offset + 3] or "[]")
+                        ),
+                    }
+                    for language, offset in (("zh", 16), ("en", 20))
+                }
+                versions.append(
+                    {
+                        "content_version_id": int(row[0]),
+                        "url": url,
+                        "raw_sha256": str(row[2]).strip(),
+                        "cas_relpath": row[3],
+                        "byte_size": int(row[4] or 0),
+                        "markdown_text_variant_id": int(row[5]),
+                        "markdown_sha256": markdown_sha,
+                        "hub_markdown_sha256": str(row[6]).strip().lower(),
+                        "hub_markdown_sha256_kind": markdown_sha_kind,
+                        "source_primary_category": str(row[7] or ""),
+                        "categories": categories,
+                        "date_facts": row[9] if isinstance(row[9], dict) else json.loads(row[9]),
+                        "date_review_status": row[10],
+                        "date_review_reason": row[11],
+                        "date_review_unresolved": (
+                            row[12] if isinstance(row[12], list) else json.loads(row[12])
+                        ),
+                        "source_signature": str(row[13]).strip(),
+                        "result_sha256": str(row[14]).strip(),
+                        "markdown": markdown,
+                        "bilingual_metadata": metadata,
+                        "source_site": source_metadata.get("source_site"),
+                        "source_page_url": str(source_metadata.get("source_page_url") or ""),
+                        "content_type": str(
+                            source_metadata.get("content_type") or "application/octet-stream"
+                        ),
+                        "blob_availability": str(row[25] or "missing"),
+                    }
+                )
+            cursor.execute(
+                "SELECT count(*) FROM article_enrichment_annotations a "
+                'WHERE a.categories_json @> \'[{"key":"AI"}]\'::jsonb'
+            )
+            annotated_ai_count = int(cursor.fetchone()[0])
+            cursor.execute(
+                "SELECT count(*) FROM article_enrichment_annotations a JOIN content_versions v USING (content_version_id) "
+                'WHERE a.categories_json @> \'[{"key":"AI"}]\'::jsonb AND NOT EXISTS '
+                "(SELECT 1 FROM excluded_urls e WHERE e.url_identity_sha256 = v.url_identity_sha256)"
+            )
+            eligible_ai_count = int(cursor.fetchone()[0])
+            cursor.execute(
+                "SELECT count(*) FROM article_enrichment_annotations a "
+                "JOIN content_versions v USING (content_version_id) "
+                "LEFT JOIN content_blobs b ON b.sha256 = v.blob_sha256 "
+                "WHERE a.categories_json @> '[{\"key\":\"AI\"}]'::jsonb AND (b.sha256 IS NULL OR b.availability != 'present') "
+                "AND NOT EXISTS (SELECT 1 FROM excluded_urls e WHERE e.url_identity_sha256 = v.url_identity_sha256)"
+            )
+            missing_blob_ai_count = int(cursor.fetchone()[0])
+            return {
+                "success": True,
+                "versions": versions,
+                "has_more": has_more,
+                "next_after_version_id": (
+                    versions[-1]["content_version_id"] if versions else after_version_id
+                ),
+                "annotated_ai_count": annotated_ai_count,
+                "eligible_ai_count": eligible_ai_count,
+                "missing_blob_ai_count": missing_blob_ai_count,
+            }
+    except psycopg2.Error as exc:
+        raise ContentHubError("Content hub AI reconciliation query failed") from exc
+    finally:
+        connection.close()
+
+
+def content_hub_ai_url_versions(
+    canonical_urls: list[str],
+    *,
+    database_url: DatabaseConfig | str | None = None,
+    schema: str = HUB_SCHEMA,
+) -> dict[str, list[int]]:
+    """Return every eligible AI version grouped by exact URL identity."""
+    schema = _validate_schema(schema)
+    if (
+        not isinstance(canonical_urls, list)
+        or len(canonical_urls) > 200
+        or any(not isinstance(url, str) or not url.strip() for url in canonical_urls)
+    ):
+        raise ContentHubError("AI URL identity lookup is outside its bounded URL contract")
+    urls = list(dict.fromkeys(canonical_urls))
+    url_hashes = [hashlib.sha256(url.encode("utf-8")).hexdigest() for url in urls]
+    connection = _connect(database_url)
+    try:
+        with connection.cursor() as cursor:
+            _require_current_schema(cursor, schema)
+            cursor.execute(
+                "SELECT v.content_version_id, v.url_value_json, v.url_identity_sha256 FROM content_versions v "
+                "JOIN article_enrichment_annotations a USING (content_version_id) "
+                'WHERE v.url_identity_sha256 = ANY(%s) AND a.categories_json @> \'[{"key":"AI"}]\'::jsonb '
+                "AND NOT EXISTS (SELECT 1 FROM excluded_urls e WHERE e.url_identity_sha256 = v.url_identity_sha256) "
+                "ORDER BY v.url_identity_sha256, v.content_version_id",
+                (url_hashes,),
+            )
+            rows = cursor.fetchall()
+            url_by_hash = dict(zip(url_hashes, urls, strict=True))
+            if any(_load_json(row[1]) != url_by_hash.get(str(row[2]).strip()) for row in rows):
+                raise ContentHubError("AI URL identity hash does not match the exact stored URL")
+            grouped = {url: [] for url in urls}
+            for version_id, url_json, identity_hash in rows:
+                grouped[url_by_hash[str(identity_hash).strip()]].append(int(version_id))
+            return grouped
+    except psycopg2.Error as exc:
+        raise ContentHubError("Content hub AI URL identity lookup failed") from exc
+    finally:
+        connection.close()
+
+
 def _ensure_content_version(
     cursor: Any,
     *,
@@ -731,7 +1695,10 @@ def _ensure_content_version(
             (identity_key,),
         )
     row = cursor.fetchone()
-    if row is None or row[1] != url_json or row[2] != identity_key:
+    # A content version is identified by its exact URL and raw bytes. A later
+    # source snapshot may describe the same capture with different provenance;
+    # that should add an observation, not manufacture a competing version.
+    if row is None or row[1] != url_json:
         raise ContentHubError("Content version identity conflicts with an existing source")
     return int(row[0])
 
@@ -1583,14 +2550,15 @@ def content_hub_status(
             _require_current_schema(cursor, schema)
             cursor.execute(
                 "SELECT source_name, snapshot_sha256, manifest_sha256, sqlite_user_version, "
-                "staging_database_name, imported_at FROM source_snapshots ORDER BY source_name"
+                "staging_database_name, imported_at, source_kind FROM source_snapshots ORDER BY source_name"
             )
             sources = [
                 {
                     "source_name": row[0],
                     "snapshot_sha256": str(row[1]).strip(),
                     "manifest_sha256": str(row[2]).strip(),
-                    "sqlite_user_version": int(row[3]),
+                    "sqlite_user_version": int(row[3]) if row[3] is not None else None,
+                    "source_kind": str(row[6]),
                     "staging_database_name": row[4],
                     "imported_at": row[5].isoformat(),
                 }
@@ -1623,6 +2591,10 @@ def content_hub_status(
                 "schema": schema,
                 "schema_version": HUB_SCHEMA_VERSION,
                 "source_count": len(sources),
+                "source_kind_counts": {
+                    kind: sum(source["source_kind"] == kind for source in sources)
+                    for kind in ("sqlite_v16", "live_capture")
+                },
                 "sources": sources,
                 "content_version_count": version_count,
                 "content_blob_counts": {
@@ -1796,6 +2768,172 @@ def content_hub_show_url(
         connection.close()
 
 
+def content_hub_read_version(
+    url: str,
+    raw_sha256: str,
+    database_url: DatabaseConfig | str | None = None,
+    *,
+    schema: str = HUB_SCHEMA,
+) -> dict[str, Any] | None:
+    """Read one exact URL/raw-byte version and its verified reusable enrichment."""
+    if not isinstance(url, str) or not url.strip() or not _HASH_RE.fullmatch(str(raw_sha256)):
+        raise ContentHubError("Exact URL and lowercase raw SHA-256 are required")
+    schema = _validate_schema(schema)
+    url_digest = hashlib.sha256(url.encode("utf-8")).hexdigest()
+    connection = _connect(database_url)
+    try:
+        with connection.cursor() as cursor:
+            _require_current_schema(cursor, schema)
+            cursor.execute(
+                "SELECT content_version_id, url_value_json, raw_sha256, blob_sha256 "
+                "FROM content_versions WHERE url_identity_sha256 = %s AND raw_sha256 = %s",
+                (url_digest, raw_sha256),
+            )
+            version = cursor.fetchone()
+            if version is None:
+                return None
+            version_id, url_value, stored_sha, blob_sha = version
+            if _load_json(url_value) != url or str(stored_sha).strip() != raw_sha256:
+                raise ContentHubError("Stored URL/raw hash identity conflicts with its source")
+            cursor.execute(
+                "SELECT text_variant_id, payload_value_json, payload_is_null, provenance_json, payload_sha256 "
+                "FROM text_variants WHERE content_version_id = %s AND field_name = 'markdown_content' "
+                "ORDER BY text_variant_id DESC",
+                (version_id,),
+            )
+            variants = cursor.fetchall()
+            cursor.execute(
+                "SELECT source_text_variant_id, source_markdown_sha256, source_primary_category, "
+                "categories_json, date_facts_json, date_review_status, date_review_reason, "
+                "date_review_unresolved_json, source_signature, result_sha256 "
+                "FROM article_enrichment_annotations WHERE content_version_id = %s",
+                (version_id,),
+            )
+            annotation = cursor.fetchone()
+            selected = None
+            hub_markdown_sha = None
+            hub_markdown_sha_kind = None
+            if annotation is not None:
+                selected = next(
+                    (row for row in variants if int(row[0]) == int(annotation[0])), None
+                )
+                if selected is None or bool(selected[2]):
+                    raise ContentHubError("Stored enrichment Markdown binding is missing")
+                markdown = _load_json(selected[1])
+                hub_markdown_sha = str(annotation[1]).strip()
+                markdown_sha, hub_markdown_sha_kind = _verify_hub_markdown_binding(
+                    markdown, selected[1], selected[4], hub_markdown_sha
+                )
+            else:
+                selected = next((row for row in variants if not bool(row[2])), None)
+                markdown = _load_json(selected[1]) if selected else None
+                markdown_sha = (
+                    hashlib.sha256(markdown.encode("utf-8")).hexdigest()
+                    if isinstance(markdown, str)
+                    else None
+                )
+            null_markdown_variant = next((row for row in variants if bool(row[2])), None)
+            extraction_status = "available" if selected else "missing"
+            if selected is None and null_markdown_variant is not None:
+                provenance = _load_json(null_markdown_variant[3])
+                if isinstance(provenance, dict) and isinstance(
+                    provenance.get("extraction_status"), str
+                ):
+                    extraction_status = provenance["extraction_status"]
+            bilingual: dict[str, dict[str, Any]] = {}
+            if selected is not None:
+                cursor.execute(
+                    "SELECT language_code, markdown_text_variant_id, markdown_sha256, title, summary, "
+                    "category, keywords_json FROM bilingual_metadata WHERE content_version_id = %s",
+                    (version_id,),
+                )
+                for row in cursor.fetchall():
+                    if annotation is not None and (
+                        int(row[1]) != int(selected[0]) or str(row[2]).strip() != hub_markdown_sha
+                    ):
+                        raise ContentHubError(
+                            "Stored bilingual Markdown binding conflicts with its enrichment"
+                        )
+                    expected_binding_sha = hub_markdown_sha or markdown_sha
+                    if int(row[1]) != int(selected[0]) or str(row[2]).strip() != str(
+                        expected_binding_sha or ""
+                    ):
+                        continue
+                    language = str(row[0])
+                    if language in bilingual:
+                        raise ContentHubError("Stored bilingual language binding is duplicated")
+                    bilingual[language] = {
+                        "title": row[3],
+                        "summary": row[4],
+                        "category": row[5],
+                        "keywords": (
+                            row[6] if isinstance(row[6], list) else _load_json(row[6]) or []
+                        ),
+                    }
+                if annotation is not None and set(bilingual) != {"zh", "en"}:
+                    raise ContentHubError("Stored enrichment requires matching zh/en bindings")
+            cursor.execute(
+                "SELECT cas_relpath, byte_size, availability FROM content_blobs WHERE sha256 = %s",
+                (blob_sha,),
+            )
+            blob = cursor.fetchone()
+            cursor.execute(
+                "SELECT url_value_json, reason FROM excluded_urls WHERE url_identity_sha256 = %s",
+                (url_digest,),
+            )
+            exclusion = cursor.fetchone()
+            if exclusion is not None and _load_json(exclusion[0]) != url:
+                raise ContentHubError("Stored excluded URL identity conflicts with its source")
+            categories = (
+                annotation[3]
+                if annotation and isinstance(annotation[3], list)
+                else (_load_json(annotation[3]) if annotation else [])
+            )
+            dates = (
+                annotation[4]
+                if annotation and isinstance(annotation[4], dict)
+                else (_load_json(annotation[4]) if annotation else {})
+            )
+            return {
+                "content_version_id": int(version_id),
+                "url": url,
+                "raw_sha256": raw_sha256,
+                "blob_sha256": str(blob_sha).strip() if blob_sha else None,
+                "cas_relpath": blob[0] if blob else None,
+                "byte_size": int(blob[1]) if blob and blob[1] is not None else None,
+                "blob_available": bool(blob and blob[2] == "present"),
+                "markdown_text_variant_id": int(selected[0]) if selected else None,
+                "markdown_sha256": markdown_sha,
+                "hub_markdown_sha256": hub_markdown_sha,
+                "hub_markdown_sha256_kind": hub_markdown_sha_kind,
+                "markdown": markdown,
+                "markdown_extraction_status": extraction_status,
+                "bilingual_metadata": bilingual,
+                "annotation": (
+                    {
+                        "categories": categories or [],
+                        "date_facts": dates or {},
+                        "date_review_status": annotation[5],
+                        "date_review_reason": annotation[6],
+                        "date_review_unresolved": (
+                            annotation[7]
+                            if isinstance(annotation[7], list)
+                            else _load_json(annotation[7])
+                        ),
+                        "source_signature": str(annotation[8]).strip(),
+                        "result_sha256": str(annotation[9]).strip(),
+                    }
+                    if annotation
+                    else None
+                ),
+                "excluded_reason": str(exclusion[1]) if exclusion else None,
+            }
+    except psycopg2.Error as exc:
+        raise ContentHubError("Content hub exact version query failed") from exc
+    finally:
+        connection.close()
+
+
 def sync_content_hub_catalog_metadata(
     target_database_url: DatabaseConfig | str,
     hub_database_url: DatabaseConfig | str | None = None,
@@ -1805,7 +2943,9 @@ def sync_content_hub_catalog_metadata(
     """Fill missing catalog translations from exact URL and original-file versions.
 
     The content hub connection is read-only. The target must already be an initialized
-    application database; it is checked before Storage is allowed to run migrations.
+    application database; it is checked before Storage is allowed to run migrations. The
+    verifier accepts both exact Hub Markdown hash forms, while this legacy projection retains
+    its existing three-field ``hub_binding`` shape for fill-only target compatibility.
     """
     schema = _validate_schema(schema)
     from .postgres import PostgresConnection
@@ -1924,9 +3064,8 @@ def sync_content_hub_catalog_metadata(
             and int(variant_version_id) == int(version_id)
             and field_name == "markdown_content"
             and not bool(markdown_is_null)
-            and isinstance(markdown_sha, str)
-            and _HASH_RE.fullmatch(str(markdown_sha).strip().lower())
-            and str(variant_sha or "").strip().lower() == str(markdown_sha).strip().lower()
+            and isinstance(variant_sha, str)
+            and _HASH_RE.fullmatch(str(variant_sha).strip().lower())
         )
         try:
             markdown_value = (
@@ -1937,13 +3076,21 @@ def sync_content_hub_catalog_metadata(
         markdown_json_text = (
             markdown_json if isinstance(markdown_json, str) else _json_text(markdown_json)
         )
-        expected_markdown_sha = hashlib.sha256(markdown_json_text.encode("utf-8")).hexdigest()
         if (
             not is_valid_variant
             or not isinstance(markdown_value, str)
             or not markdown_value.strip()
-            or str(variant_sha or "").strip().lower() != expected_markdown_sha
         ):
+            invalid_identities.add(identity)
+            continue
+        try:
+            _verify_hub_markdown_binding(
+                markdown_value,
+                markdown_json_text,
+                variant_sha,
+                str(markdown_sha or "").strip(),
+            )
+        except ContentHubError:
             invalid_identities.add(identity)
             continue
         if language not in {"zh", "en"}:
@@ -1982,6 +3129,14 @@ def sync_content_hub_catalog_metadata(
         if previous is not None and previous != language_record:
             invalid_identities.add(identity)
         record["metadata_by_language"][language] = language_record
+
+    for identity, record in versions.items():
+        languages = record["metadata_by_language"]
+        bindings = {
+            language: metadata.get("hub_binding") for language, metadata in languages.items()
+        }
+        if set(bindings) != {"zh", "en"} or bindings["zh"] != bindings["en"]:
+            invalid_identities.add(identity)
 
     for identity, version_ids in identity_versions.items():
         if len(version_ids) != 1:

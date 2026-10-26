@@ -254,6 +254,14 @@ jobs:
       - name: Run local collection flow contract tests
         run: python -m unittest discover -s .agents/skills/local-actuarial-flow/scripts -p test_local_flow.py -v
 
+      - name: Run Content Hub live-capture and local runtime tests
+        run: >-
+          python -m pytest
+          tests/test_content_hub.py
+          tests/test_local_collection_runtime.py
+          tests/test_local_collection_target_worker.py
+          -q
+
       - name: Run FastAPI smoke tests
         env:
           FASTAPI_SESSION_SECRET: ci-fastapi-session-secret

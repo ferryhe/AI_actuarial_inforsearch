@@ -7,6 +7,7 @@ requires-python = ">=3.10"
 
 [project.scripts]
 ai-actuarial = "ai_actuarial.cli:main"
+ai-actuarial-local-flow = "ai_actuarial.local_collection_runtime:main"
 
 [tool.black]
 line-length = 100
@@ -63,6 +64,8 @@ production_entries = [
     "ai_actuarial.cli",
     "ai_actuarial.api.app",
     "ai_actuarial.agentic_rag.eval",
+    "ai_actuarial.local_collection_runtime",
+    "ai_actuarial.local_collection_target_worker", # Streamed over SSH and executed as its own worker.
 ]
 script_entry_globs = ["scripts/*.py", "scripts/maintenance/*.py"]
 test_entry_globs = ["tests/**/*.py"]

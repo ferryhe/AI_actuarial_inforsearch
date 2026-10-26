@@ -1,3 +1,20 @@
+# 当前运行候选 — 2026-10-26
+
+- 项目 `AI_actuarial_inforsearch`；工作树 `reports/local-automation-worktree`，分支 `feat/local-collection-runtime`；当前候选含 16 个文件，兄弟仓库未访问。
+- 本次候选另修复 Ready 恢复中的 embedding 选择：每个当前 URL 必须恰有一条本次 chunk 任务结果，profile 必须匹配当前 KB，chunk-set ID 必须非空且互不重复；embedding 只收到这些精确 ID 和当前 KB embedding identity。历史 ready set 不再按 URL/profile 猜选。31 项 target-worker 测试 PASS（3 项 SWIG deprecation warnings），覆盖歧义 selector、缺失/错配结果拒绝和 embedding 失败后按原生 ID 重试；Black、isort、Ruff、Pylint errors-only、py_compile、CLI help、dead-code files/symbols、diff check 均 PASS。无需数据库；本轮没有生产调用或写入。候选待独立审查。
+- Hub 对外 `markdown_sha256` 表示 Markdown UTF-8 原文摘要；另带 `hub_markdown_sha256` 和 `hub_markdown_sha256_kind`。共享严格校验器独立验证存储 JSON payload 摘要，并仅接受确切的 `raw_utf8` 或 `json_payload_utf8` 绑定；两种语言必须共用 variant ID 与原始绑定。旧 fill-only projection 保留原三字段 `hub_binding` 形状。
+- 双端 target fingerprint、流式输入、持久元数据和回读校验均保留上述新绑定对；原生 chunk 仍按原 Markdown UTF-8 文本计算。
+- 显式声明 `openpyxl>=3.1.5,<4`，使不安装 MarkItDown extras 的 CI 环境也具备现有 XLSX 提取依赖；DOCX/PPTX/XLSX 与普通 ZIP 的识别规则保持现有测试覆盖。
+- 隔离 PostgreSQL 55435 上 Hub/runtime/target focused tests 为 78/78 PASS（3 项上游 SWIG deprecation warnings）；Ruff、Black、isort、pylint errors-only、py_compile、dead-code files/symbols、CLI help、CI 过滤依赖检查和 `git diff --check` 均 PASS。
+- 全量 quality gate 已启动并收集 2,558 项测试，冻结时仍在运行；结果只追加到 ignored `reports/local-runtime-20261025/implementation.json`。
+- 此次修复未调用生产 Hub 或 target。此前 IAA 单篇真实生产验收记录为 receipt succeeded，Hub 双语与中国 ai/all、海外 ai Ready/query 检查均通过；该记录来自修复前 HEAD。此候选冻结等待独立审查，生产兼容只读审计由 controller 执行；未提交或推送。详情见 `reports/local-runtime-20261025/implementation.json`。此前所有历史状态如下保留。
+
+### Target source-site provenance compatibility — 2026-10-26
+
+- Historical v16 `source_site` values can be organization display names; new captures use registry site IDs. The target worker now preserves any nonblank source-site string exactly, keeps `null` unknown, and rejects blank/non-string values. Historical raw-blob recovery is unchanged.
+- Target worker regression: CCA and AAE legacy labels plus `iaa` pass persistence, exact readback, and idempotent retry on China and Overseas profiles; `null` remains supported and malformed values fail. Focused target tests pass 24/24; Black, isort, Ruff, Pylint errors-only, py_compile, CLI help, and diff check pass.
+- This repair made no production calls or writes. Candidate remains the existing 16-file scope; ready for fresh independent review and controller retry of the first five backlog records. No commit or push by this worker.
+
 # 本地资料每日轮换与失败研究 — 2026-10-25
 
 - 工作树 `reports/local-automation-worktree`，分支 `docs/local-collection-automation`（PR #427）；范围为 skill、离线 `plan/status/report --json`、回执/ledger合同、行为测试和 CI smoke 测试。
@@ -5814,3 +5831,21 @@ Current branch head 4f030be has uncommitted small catalog/Storage variable defau
 
 - 当前HEAD4f030be完整CI的2495PASS/3testsFAIL及2Pylint错误已最小修复：两个前台源码合同断言适配localized metadata/canonical filename fallback；成功写入不再strip旧category原文；metadata默认值显式初始化。没有改UI运行源码、全局CI或baseline。
 - Linux隔离PG联合223测试/13子测试PASS；唯一Node包装在无npm依赖的Python镜像无法启动，同一Vitest目标已于本机1/1PASS。已补CI同款Pylint errors-only两模块PASS；Black/isort/Ruff/compileall/diffPASS。fresh独立Sol/high frontend-ci-review-4 PASS。随后自动推送并等待实际新HEAD全部CI；旧head质量门FAIL不作新headPASS。
+# 当前运行端实现 — 2026-10-25
+
+- 当前 worker 在独立工作树 `reports/local-automation-worktree` / `feat/local-collection-runtime` 实现用户已授权的本机流程：32 项 bounded adapter；Hub v3 `live_capture`/URL+raw SHA 版本及现有 exclusion；双语 25 类与三语义日期 enrich；两目标独立写入、原生 profile-specific chunk/embed/index/Ready；state/CAS/frontier 与 v2 receipt restart recovery。
+- 现有 offline helper 和 06:00/09:00 automation 合同保留。该变更不自动启用 Scheduler，不用旧全量替换脚本；只触碰本仓库。本阶段禁止生产 Hub/服务写入，待 fresh review PASS 后由 controller 使用真实 IAA 新版本和 CAS secondary-AI 跑 pilot。
++ 当前代码修复包括 target AI serving bucket readback、单文章写入/Ready ledger 与 chunk failure vs Ready-only retry 区别，并修正 Hub ingest 后模型失败的分阶段回执计数和实际下载数。`tests/test_local_collection_runtime.py` 与 `tests/test_local_collection_target_worker.py` 12/12、独立 PostgreSQL `tests/test_content_hub.py` 17/17；dead-code files/symbols、Pylint -E、Ruff、Black、isort、py_compile、CLI help/plan JSON、skill-creator validate、`git diff --check` 通过。CI python-smoke 显式纳入三组本地流程/Hub 测试。
+- 既有 AI backlog 有 449 unique URLs；历史现有 primary-only 322 个 target 不代表完整覆盖。源 bytes 缺失与旧多版本歧义保持 pending/deferred，不计为同步完成。
+- Controller 的真实只读 `preflight --remote` 已核对两端 China ai+all Qwen1024、Overseas ai OpenAI3072、容量低于80%；仅 Hub v3 尚待显式迁移。未写生产 Hub/服务。代码冻结，等待 fresh Sol/high review；通过后由 controller 使用 IAA 新版本与 CAS secondary-AI 进行实际验收。
+
+### Runtime review repairs R1–R4 — 2026-10-25
+
+- 修复 Ready-only 重试回执误计 pending、preview 失败/部分完成仍返回 0、IAA organization chart 误收及 AI governance 研究论文误挡、target source_site 丢失四项 review finding。目标来源现在精确回读；没有来源记录的历史内容保留空值，不标成 `content-hub`。
+- 独立 PostgreSQL 55435 上聚焦 36/36 PASS；Black、isort、Ruff、Pylint errors-only、py_compile、dead-code files/symbols、`git diff --check` 均 PASS。生产 Hub 和服务端没有写入；隔离 PG 容器留给 fresh reviewer 复现。已冻结工作树，等待 controller 启动新的 Sol/high review。
+
+
+### Local collection runtime independent review 2 — 2026-10-26
+
+- Fresh review verdict: CHANGES_REQUESTED. Three reproducible P2 issues are recorded in `reports/local-runtime-20261025/review-2.json`: parser retry items are skipped after being marked visited; CAA/Australia bootstrap errors can leave no v2 receipt; and exact-URL same-host redirects can report success without Hub processing.
+- Verification: 36 focused Hub/runtime/target tests and 19 existing offline helper tests pass; `git diff --check origin/main` passes. No production Hub/target writes or real source previews were performed. Same implementation worker should repair the three findings before fresh review.

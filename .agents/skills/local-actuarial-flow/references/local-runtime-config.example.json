@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "data_root": "D:/LOCAL_PRIVATE_PATH/actuarial-collection/data",
+  "state_root": "D:/LOCAL_PRIVATE_PATH/actuarial-collection/state",
+  "receipts_root": "D:/LOCAL_PRIVATE_PATH/actuarial-collection/receipts",
+  "hub_connection_file": "D:/LOCAL_PRIVATE_PATH/content-hub-connection.json",
+  "codex_executable": null,
+  "targets": {
+    "china": {
+      "host": "<existing-authorized-china-ssh-alias>",
+      "sudo": true,
+      "container": "ai-api",
+      "timeout_seconds": 21600
+    },
+    "overseas": {
+      "host": "<existing-authorized-overseas-ssh-alias>",
+      "container": "ai-api",
+      "timeout_seconds": 21600
+    }
+  }
+}

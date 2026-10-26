@@ -3,6 +3,8 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -14,15 +16,21 @@ import pytest
 from psycopg2 import sql
 
 import ai_actuarial.content_hub as content_hub
+import ai_actuarial.postgres as postgres
 import ai_actuarial.source_stage as source_stage
 from ai_actuarial.content_hub import (
     ContentHubError,
     apply_content_hub_schema,
+    content_hub_ai_url_versions,
+    content_hub_list_ai_versions,
+    content_hub_read_version,
     content_hub_schema_plan,
     content_hub_show_url,
     content_hub_status,
     import_bilingual_metadata,
     import_content_snapshot,
+    ingest_live_article,
+    save_live_enrichment,
 )
 from ai_actuarial.postgres_import import _source_snapshot
 from ai_actuarial.source_stage import (
@@ -65,12 +73,13 @@ def test_git_checkout_keeps_migration_sql_lf_with_autocrlf_enabled(
     migration_paths = [
         "ai_actuarial/content_hub_migrations/0001_content_hub.sql",
         "ai_actuarial/content_hub_migrations/0002_bilingual_metadata.sql",
+        "ai_actuarial/content_hub_migrations/0003_live_capture.sql",
         "ai_actuarial/source_stage_migrations/0001_lossless_source_stage.sql",
     ]
     source_blobs = {
         relative_path: (
             (source_root / relative_path).read_bytes()
-            if relative_path.endswith("0002_bilingual_metadata.sql")
+            if relative_path.endswith(("0002_bilingual_metadata.sql", "0003_live_capture.sql"))
             else run_git("show", f"HEAD:{relative_path}", cwd=source_root)
         )
         for relative_path in migration_paths
@@ -122,8 +131,9 @@ def test_git_checkout_keeps_migration_sql_lf_with_autocrlf_enabled(
     assert content_plan["pending"] == [
         {"version": 1, "file": migration_paths[0].split("/")[-1]},
         {"version": 2, "file": migration_paths[1].split("/")[-1]},
+        {"version": 3, "file": migration_paths[2].split("/")[-1]},
     ]
-    assert stage_plan["pending"] == [{"version": 1, "file": migration_paths[2].split("/")[-1]}]
+    assert stage_plan["pending"] == [{"version": 1, "file": migration_paths[3].split("/")[-1]}]
 
 
 @pytest.mark.parametrize(
@@ -340,6 +350,8 @@ def _content_hub_state(database_url: str, schema: str) -> dict[str, dict[str, in
         "text_variants",
         "legacy_index_artifacts",
         "bilingual_metadata",
+        "article_enrichment_annotations",
+        "excluded_urls",
     )
     connection = psycopg2.connect(database_url)
     try:
@@ -516,7 +528,7 @@ def test_source_stage_preserves_nul_blob_rowid_and_rejects_conflicts(
 def test_content_hub_import_keeps_alias_versions_text_and_source_namespaces(tmp_path: Path) -> None:
     hub_url, schema = _isolated_database_schema(tmp_path, "hub")
     assert content_hub_schema_plan(hub_url, schema=schema)["current_version"] == 0
-    assert apply_content_hub_schema(hub_url, schema=schema)["version"] == 2
+    assert apply_content_hub_schema(hub_url, schema=schema)["version"] == 3
     artifact_root = tmp_path / "shared-hub-root"
     first_path = tmp_path / "overseas-v16.db"
     second_path = tmp_path / "china-v16.db"
@@ -672,6 +684,604 @@ def test_content_hub_import_keeps_alias_versions_text_and_source_namespaces(tmp_
             expected_source_name="overseas",
         )
     assert hashlib.sha256(first_path.read_bytes()).hexdigest() == first_sha
+
+
+def test_live_capture_migration_preserves_immutable_v16_and_existing_operational_rows(
+    tmp_path: Path, monkeypatch
+) -> None:
+    hub_url, schema = _isolated_database_schema(tmp_path, "live-migration")
+    repository_migrations = Path(content_hub.__file__).with_name("content_hub_migrations")
+    legacy_migrations = tmp_path / "legacy-migrations"
+    legacy_migrations.mkdir()
+    for name in ("0001_content_hub.sql", "0002_bilingual_metadata.sql"):
+        shutil.copy2(repository_migrations / name, legacy_migrations / name)
+    monkeypatch.setattr(content_hub, "_MIGRATION_DIR", legacy_migrations)
+    assert apply_content_hub_schema(hub_url, schema=schema)["version"] == 2
+
+    url = "https://example.test/old-excluded-tender"
+    digest = hashlib.sha256(url.encode()).hexdigest()
+    migration = (repository_migrations / "0003_live_capture.sql").read_text(encoding="utf-8")
+    annotation_ddl = re.search(
+        r"CREATE TABLE IF NOT EXISTS article_enrichment_annotations\s*\(.*?\);",
+        migration,
+        flags=re.DOTALL,
+    )
+    exclusion_ddl = re.search(
+        r"CREATE TABLE IF NOT EXISTS excluded_urls\s*\(.*?\);",
+        migration,
+        flags=re.DOTALL,
+    )
+    assert annotation_ddl and exclusion_ddl
+    connection = psycopg2.connect(hub_url)
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(annotation_ddl.group(0))
+            cursor.execute(exclusion_ddl.group(0))
+            cursor.execute(
+                "INSERT INTO source_snapshots (source_name, snapshot_sha256, snapshot_bytes, "
+                "sqlite_user_version, manifest_sha256) VALUES (%s, %s, 1, 16, %s) RETURNING source_snapshot_id",
+                ("old-v16-source", "a" * 64, "b" * 64),
+            )
+            snapshot_id = cursor.fetchone()[0]
+            cursor.execute(
+                "INSERT INTO source_table_counts (source_snapshot_id, table_name, row_count) "
+                "VALUES (%s, 'files', 1)",
+                (snapshot_id,),
+            )
+            cursor.execute(
+                "INSERT INTO content_versions (url_value_json, url_identity_sha256, raw_sha256, "
+                "identity_key, blob_sha256) VALUES (%s, %s, NULL, %s, NULL) RETURNING content_version_id",
+                (json.dumps("https://example.test/annotated-legacy"), digest, "c" * 64),
+            )
+            old_version_id = cursor.fetchone()[0]
+            cursor.execute(
+                "INSERT INTO article_enrichment_annotations (content_version_id, source_text_variant_id, "
+                "source_markdown_sha256, source_primary_category, source_signature, categories_json, "
+                "date_facts_json, date_review_status, date_review_unresolved_json, result_sha256, recipe, run_id) "
+                "VALUES (%s, 77, %s, 'AI', %s, %s::jsonb, '{}'::jsonb, 'complete', '[]'::jsonb, %s, 'legacy', 'legacy-run')",
+                (
+                    old_version_id,
+                    "d" * 64,
+                    "e" * 64,
+                    json.dumps([{"key": "AI", "evidence": ["old evidence"]}]),
+                    "f" * 64,
+                ),
+            )
+            cursor.execute(
+                "INSERT INTO excluded_urls (url_identity_sha256, url_value_json, reason) "
+                "VALUES (%s, %s, 'tender')",
+                (digest, json.dumps(url)),
+            )
+        connection.commit()
+    finally:
+        connection.close()
+
+    monkeypatch.setattr(content_hub, "_MIGRATION_DIR", repository_migrations)
+    assert apply_content_hub_schema(hub_url, schema=schema)["version"] == 3
+    connection = psycopg2.connect(hub_url)
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT source_name, sqlite_user_version, source_kind FROM source_snapshots"
+            )
+            assert cursor.fetchall() == [("old-v16-source", 16, "sqlite_v16")]
+            cursor.execute("SELECT COUNT(*) FROM source_table_counts")
+            assert cursor.fetchone()[0] == 1
+            cursor.execute(
+                "SELECT content_version_id, categories_json, recipe, run_id "
+                "FROM article_enrichment_annotations"
+            )
+            assert cursor.fetchall() == [
+                (
+                    old_version_id,
+                    [{"key": "AI", "evidence": ["old evidence"]}],
+                    "legacy",
+                    "legacy-run",
+                )
+            ]
+            cursor.execute("SELECT url_identity_sha256, reason FROM excluded_urls")
+            assert cursor.fetchall() == [(digest, "tender")]
+            with pytest.raises(psycopg2.Error, match="content hub source snapshots are immutable"):
+                cursor.execute("UPDATE source_snapshots SET source_kind = 'live_capture'")
+            connection.rollback()
+    finally:
+        connection.close()
+
+
+def test_live_capture_is_idempotent_versioned_and_secondary_ai_is_eligible(tmp_path: Path) -> None:
+    hub_url, schema = _isolated_database_schema(tmp_path, "live-capture")
+    apply_content_hub_schema(hub_url, schema=schema)
+    url = "https://research.example.test/ai-pricing.pdf"
+    raw = b"original PDF bytes"
+    markdown = "Pricing markets apply AI analysis. Published September 2026."
+    args = {
+        "canonical_url": url,
+        "source_site": "iaa",
+        "source_page_url": "https://research.example.test/research",
+        "title": "Pricing and AI",
+        "raw_bytes": raw,
+        "markdown": markdown,
+        "content_type": "application/pdf",
+        "data_root": tmp_path / "live-data",
+        "database_url": hub_url,
+        "schema": schema,
+        "metadata": {"observed_at": "2026-10-25T12:00:00.123456+00:00"},
+    }
+    first = ingest_live_article(**args)
+    repeated = ingest_live_article(**args)
+    assert first["already_imported"] is False
+    assert repeated["already_imported"] is True
+    assert repeated["content_version_id"] == first["content_version_id"]
+    assert repeated["markdown_text_variant_id"] == first["markdown_text_variant_id"]
+
+    categories = [
+        {"key": "Pricing", "evidence": ["Pricing markets"]},
+        {"key": "AI", "evidence": ["AI analysis"]},
+    ]
+    package = {
+        "title": "Pricing and AI",
+        "summary": "Pricing markets and AI analysis.",
+        "category": "Pricing",
+        "keywords": ["pricing", "AI"],
+    }
+    date_facts = {
+        "publication_date": {
+            "value": "2026-09",
+            "precision": "month",
+            "semantic": "publication",
+            "evidence": "September 2026",
+            "location": "cover",
+        },
+        "revision_date": None,
+        "document_version_date": None,
+    }
+    with pytest.raises(ContentHubError, match="one to three exact quotes"):
+        save_live_enrichment(
+            content_version_id=first["content_version_id"],
+            markdown_text_variant_id=first["markdown_text_variant_id"],
+            markdown_sha256=first["markdown_sha256"],
+            primary_category="Pricing",
+            bilingual_metadata={"zh": package, "en": package},
+            categories=[categories[0], {"key": "AI", "evidence": []}],
+            date_facts=date_facts,
+            date_review_status="complete",
+            date_review_reason=None,
+            date_review_unresolved=[],
+            recipe="test-fixture",
+            run_id="test-empty-category-evidence",
+            database_url=hub_url,
+            schema=schema,
+        )
+    connection = psycopg2.connect(hub_url)
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT COUNT(*) FROM article_enrichment_annotations "
+                "WHERE content_version_id = %s",
+                (first["content_version_id"],),
+            )
+            assert cursor.fetchone()[0] == 0
+    finally:
+        connection.close()
+
+    saved = save_live_enrichment(
+        content_version_id=first["content_version_id"],
+        markdown_text_variant_id=first["markdown_text_variant_id"],
+        markdown_sha256=first["markdown_sha256"],
+        primary_category="Pricing",
+        bilingual_metadata={"zh": package, "en": package},
+        categories=categories,
+        date_facts=date_facts,
+        date_review_status="complete",
+        date_review_reason=None,
+        date_review_unresolved=[],
+        recipe="test-fixture",
+        run_id="test-live-capture",
+        database_url=hub_url,
+        schema=schema,
+    )
+    assert saved["success"] is True
+    shown = content_hub_read_version(url, first["raw_sha256"], hub_url, schema=schema)
+    assert shown and shown["annotation"]["categories"] == categories
+    assert shown["annotation"]["date_facts"]["publication_date"]["precision"] == "month"
+    assert shown["markdown_sha256"] == first["markdown_sha256"]
+    assert shown["hub_markdown_sha256"] == first["markdown_sha256"]
+    assert shown["hub_markdown_sha256_kind"] == "raw_utf8"
+    assert content_hub_ai_url_versions([url], database_url=hub_url, schema=schema) == {
+        url: [first["content_version_id"]]
+    }
+    ai_page = content_hub_list_ai_versions(
+        after_version_id=0, limit=10, database_url=hub_url, schema=schema
+    )
+    assert ai_page["eligible_ai_count"] == 1
+    assert ai_page["versions"][0]["content_version_id"] == first["content_version_id"]
+    assert ai_page["versions"][0]["source_site"] == "iaa"
+    assert ai_page["versions"][0]["hub_markdown_sha256_kind"] == "raw_utf8"
+
+    connection = psycopg2.connect(hub_url)
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "UPDATE source_record_map SET source_metadata_json = '{}' "
+                "WHERE content_version_id = %s",
+                (first["content_version_id"],),
+            )
+        connection.commit()
+    finally:
+        connection.close()
+    unknown_source_page = content_hub_list_ai_versions(
+        after_version_id=0, limit=10, database_url=hub_url, schema=schema
+    )
+    assert unknown_source_page["versions"][0]["source_site"] is None
+
+    changed = ingest_live_article(
+        **{**args, "raw_bytes": b"changed PDF bytes", "markdown": markdown + " Revised."}
+    )
+    assert changed["content_version_id"] != first["content_version_id"]
+    status = content_hub_status(hub_url, schema=schema)
+    assert status["source_kind_counts"] == {"sqlite_v16": 0, "live_capture": 2}
+    connection = psycopg2.connect(hub_url)
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT sqlite_user_version, source_kind FROM source_snapshots ORDER BY source_snapshot_id"
+            )
+            assert cursor.fetchall() == [(None, "live_capture"), (None, "live_capture")]
+    finally:
+        connection.close()
+
+
+def test_legacy_json_payload_binding_reads_and_lists_with_raw_digest(tmp_path: Path) -> None:
+    hub_url, schema = _isolated_database_schema(tmp_path, "legacy-markdown-binding")
+    apply_content_hub_schema(hub_url, schema=schema)
+    artifact_root = tmp_path / "legacy-artifacts"
+    source_path = tmp_path / "legacy-binding-v16.db"
+    source_payload = b"legacy original PDF bytes"
+    _, counts = _create_v16_source(source_path, source_payload, source_label="binding")
+    manifest_path, _ = _write_manifest(
+        source_path, "binding", artifact_root, source_payload, counts
+    )
+    import_content_snapshot(
+        source_path,
+        manifest_path,
+        artifact_root,
+        tmp_path / "legacy-data",
+        hub_url,
+        schema=schema,
+        expected_source_name="binding",
+    )
+    url = "https://content.example.test/primary?version=1"
+    shown = content_hub_show_url(url, hub_url, schema=schema)
+    version_id = shown["versions"][0]["content_version_id"]
+    raw_sha = shown["versions"][0]["raw_sha256"]
+    markdown_variant = next(
+        item for item in shown["text_variants"] if item["field_name"] == "markdown_content"
+    )
+    markdown = markdown_variant["value"]
+    assert isinstance(markdown, str)
+    raw_markdown_sha = hashlib.sha256(markdown.encode("utf-8")).hexdigest()
+    legacy_binding_sha = hashlib.sha256(
+        content_hub._json_text(markdown).encode("utf-8")
+    ).hexdigest()
+    assert legacy_binding_sha == markdown_variant["payload_sha256"]
+    assert raw_markdown_sha != legacy_binding_sha
+
+    metadata_path = tmp_path / "legacy-binding-metadata.json"
+    metadata_path.write_text(
+        json.dumps(
+            {
+                "format": "ai_actuarial.content_hub.generated_metadata",
+                "version": 1,
+                "items": [
+                    {
+                        "content_version_id": version_id,
+                        "language_code": language,
+                        "markdown_text_variant_id": markdown_variant["text_variant_id"],
+                        "markdown_sha256": legacy_binding_sha,
+                        "title": f"AI research {language}",
+                        "summary": f"AI actuarial research {language} summary",
+                        "category": "Pricing",
+                        "keywords": ["actuarial", "AI"],
+                        "recipe": "legacy-metadata-fixture",
+                        "author": "test",
+                    }
+                    for language in ("zh", "en")
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    import_bilingual_metadata(metadata_path, hub_url, schema=schema)
+
+    signature = "a" * 64
+    result_sha = "b" * 64
+    categories = [
+        {"key": "Pricing", "evidence": ["Pricing"]},
+        {"key": "AI", "evidence": ["AI research"]},
+    ]
+    connection = psycopg2.connect(hub_url)
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(sql.SQL("SET search_path TO {}").format(sql.Identifier(schema)))
+            cursor.execute(
+                "INSERT INTO article_enrichment_annotations "
+                "(content_version_id, source_text_variant_id, source_markdown_sha256, "
+                "source_primary_category, source_signature, categories_json, date_facts_json, "
+                "date_review_status, date_review_unresolved_json, result_sha256, recipe, run_id) "
+                "VALUES (%s, %s, %s, 'Pricing', %s, %s::jsonb, '{}'::jsonb, 'complete', "
+                "'[]'::jsonb, %s, 'legacy-fixture', 'legacy-binding-run')",
+                (
+                    version_id,
+                    markdown_variant["text_variant_id"],
+                    legacy_binding_sha,
+                    signature,
+                    json.dumps(categories),
+                    result_sha,
+                ),
+            )
+        connection.commit()
+    finally:
+        connection.close()
+
+    direct = content_hub_read_version(url, raw_sha, hub_url, schema=schema)
+    assert direct["markdown_sha256"] == raw_markdown_sha
+    assert direct["hub_markdown_sha256"] == legacy_binding_sha
+    assert direct["hub_markdown_sha256_kind"] == "json_payload_utf8"
+    assert set(direct["bilingual_metadata"]) == {"zh", "en"}
+    page = content_hub_list_ai_versions(
+        after_version_id=0, limit=10, database_url=hub_url, schema=schema
+    )
+    assert page["versions"][0]["content_version_id"] == version_id
+    assert page["versions"][0]["markdown_sha256"] == raw_markdown_sha
+    assert page["versions"][0]["hub_markdown_sha256"] == legacy_binding_sha
+    assert page["versions"][0]["hub_markdown_sha256_kind"] == "json_payload_utf8"
+
+    connection = psycopg2.connect(hub_url)
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(sql.SQL("SET search_path TO {}").format(sql.Identifier(schema)))
+            cursor.execute(
+                "UPDATE article_enrichment_annotations SET source_markdown_sha256 = %s "
+                "WHERE content_version_id = %s",
+                ("0" * 64, version_id),
+            )
+        connection.commit()
+    finally:
+        connection.close()
+    with pytest.raises(ContentHubError, match="binding is invalid"):
+        content_hub_read_version(url, raw_sha, hub_url, schema=schema)
+    malformed_page = content_hub_list_ai_versions(
+        after_version_id=0, limit=10, database_url=hub_url, schema=schema
+    )
+    assert malformed_page["versions"] == []
+
+
+@pytest.mark.parametrize(
+    "binding_kind",
+    [
+        "json_payload_utf8",
+        "raw_utf8",
+        "mismatch",
+        "different_bilingual_variant",
+        "different_language_binding",
+    ],
+)
+def test_catalog_projection_keeps_legacy_or_live_binding_exact(
+    monkeypatch, binding_kind: str
+) -> None:
+    url = "https://projection.example.test/article.pdf"
+    markdown = "Source Markdown for projection."
+    payload_json = content_hub._json_text(markdown)
+    payload_sha = hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
+    raw_markdown_sha = hashlib.sha256(markdown.encode("utf-8")).hexdigest()
+    binding_sha = {
+        "json_payload_utf8": payload_sha,
+        "raw_utf8": raw_markdown_sha,
+        "mismatch": "0" * 64,
+        "different_bilingual_variant": payload_sha,
+        "different_language_binding": payload_sha,
+    }[binding_kind]
+    rows = [
+        (
+            71,
+            json.dumps(url),
+            hashlib.sha256(url.encode("utf-8")).hexdigest(),
+            "a" * 64,
+            language,
+            82 if binding_kind == "different_bilingual_variant" and language == "en" else 81,
+            (
+                raw_markdown_sha
+                if binding_kind == "different_language_binding" and language == "en"
+                else binding_sha
+            ),
+            f"title {language}",
+            f"summary {language}",
+            "Other",
+            [f"keyword {language}"],
+            71,
+            "markdown_content",
+            payload_json,
+            False,
+            payload_sha,
+        )
+        for language in ("zh", "en")
+    ]
+    target_identity = ("target", "127.0.0.1", 5432, "public")
+    hub_identity = ("hub", "127.0.0.1", 5432, "content_hub")
+
+    class FakeTargetConnection:
+        def __init__(self, _database, *, read_only=False):
+            assert read_only
+
+        def execute(self, query, _parameters=None):
+            if "current_database()" in query:
+                value = target_identity
+            else:
+                value = (3,)
+            return type("Result", (), {"fetchone": lambda _self: value})()
+
+        def table_exists(self, _table):
+            return True
+
+        def table_columns(self, _table):
+            return {"file_url", "sha256", "category"}
+
+        def close(self):
+            pass
+
+    class FakeCursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def execute(self, query):
+            self.query = query
+
+        def fetchone(self):
+            return hub_identity
+
+        def fetchall(self):
+            return rows
+
+    class FakeHubConnection:
+        def set_session(self, **_kwargs):
+            pass
+
+        def cursor(self):
+            return FakeCursor()
+
+        def close(self):
+            pass
+
+    merged = []
+
+    class FakeStorage:
+        def __init__(self, _database, *, data_root):
+            assert data_root
+
+        def merge_hub_bilingual_metadata(self, **kwargs):
+            merged.append(kwargs)
+            return ("updated", 1)
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(postgres, "PostgresConnection", FakeTargetConnection)
+    monkeypatch.setattr(content_hub, "_connect", lambda _url: FakeHubConnection())
+    monkeypatch.setattr(content_hub, "_require_current_schema", lambda *_args: None)
+    monkeypatch.setattr("ai_actuarial.storage.Storage", FakeStorage)
+
+    result = content_hub.sync_content_hub_catalog_metadata(
+        "postgresql://target.invalid/app", "postgresql://hub.invalid/content_hub"
+    )
+    if binding_kind not in {"json_payload_utf8", "raw_utf8"}:
+        assert result["conflict_count"] == 1
+        assert merged == []
+        return
+    assert result["updated_count"] == 1
+    assert merged[0]["metadata_by_language"]["zh"]["hub_binding"] == {
+        "content_version_id": 71,
+        "markdown_text_variant_id": 81,
+        "markdown_sha256": binding_sha,
+    }
+
+
+def test_raw_only_live_capture_can_be_completed_on_same_content_version(tmp_path: Path) -> None:
+    hub_url, schema = _isolated_database_schema(tmp_path, "live-raw-only")
+    apply_content_hub_schema(hub_url, schema=schema)
+    url = "https://research.example.test/legacy-office.doc"
+    raw = bytes.fromhex("d0cf11e0a1b11ae1") + b"legacy office bytes"
+    args = {
+        "canonical_url": url,
+        "source_site": "iaa",
+        "source_page_url": "https://research.example.test/papers",
+        "title": "Legacy source document",
+        "raw_bytes": raw,
+        "content_type": "application/msword",
+        "data_root": tmp_path / "live-data",
+        "database_url": hub_url,
+        "schema": schema,
+    }
+    pending = ingest_live_article(**args, markdown=None)
+    repeated_pending = ingest_live_article(**args, markdown=None)
+    assert pending["already_versioned"] is False
+    assert pending["markdown_text_variant_id"] is None
+    assert repeated_pending["already_imported"] is True
+    assert repeated_pending["content_version_id"] == pending["content_version_id"]
+    assert repeated_pending["markdown_text_variant_id"] is None
+    raw_readback = content_hub_read_version(url, pending["raw_sha256"], hub_url, schema=schema)
+    assert raw_readback["content_version_id"] == pending["content_version_id"]
+    assert raw_readback["blob_available"] is True
+    assert raw_readback["markdown"] is None
+    assert raw_readback["markdown_text_variant_id"] is None
+    assert raw_readback["markdown_extraction_status"] == "extraction_gap"
+    assert raw_readback["annotation"] is None
+
+    markdown = "The same original source is now parseable with a supported converter."
+    completed = ingest_live_article(**args, markdown=markdown)
+    assert completed["already_versioned"] is True
+    assert completed["content_version_id"] == pending["content_version_id"]
+    assert completed["markdown_text_variant_id"] is not None
+    completed_again = ingest_live_article(**args, markdown=markdown)
+    assert completed_again["already_imported"] is True
+    assert completed_again["content_version_id"] == pending["content_version_id"]
+    readback = content_hub_read_version(url, pending["raw_sha256"], hub_url, schema=schema)
+    assert readback["content_version_id"] == pending["content_version_id"]
+    assert readback["markdown"] == markdown
+    assert readback["markdown_extraction_status"] == "available"
+    connection = psycopg2.connect(hub_url)
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                sql.SQL("SELECT COUNT(*) FROM {}.content_versions").format(sql.Identifier(schema))
+            )
+            assert cursor.fetchone()[0] == 1
+            cursor.execute(
+                sql.SQL("SELECT COUNT(*) FROM {}.source_snapshots").format(sql.Identifier(schema))
+            )
+            assert cursor.fetchone()[0] == 2
+    finally:
+        connection.close()
+
+
+def test_live_capture_refuses_existing_recruitment_or_tender_exclusion(tmp_path: Path) -> None:
+    hub_url, schema = _isolated_database_schema(tmp_path, "live-exclusion")
+    apply_content_hub_schema(hub_url, schema=schema)
+    url = "https://research.example.test/known-tender.pdf"
+    identity = hashlib.sha256(url.encode("utf-8")).hexdigest()
+    connection = psycopg2.connect(hub_url)
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                sql.SQL(
+                    "INSERT INTO {}.excluded_urls (url_identity_sha256, url_value_json, reason) "
+                    "VALUES (%s, %s, 'tender')"
+                ).format(sql.Identifier(schema)),
+                (identity, json.dumps(url)),
+            )
+        connection.commit()
+    finally:
+        connection.close()
+    with pytest.raises(ContentHubError, match="Hub excludes this URL as tender"):
+        ingest_live_article(
+            canonical_url=url,
+            source_site="cas",
+            source_page_url="https://research.example.test/",
+            title="Tender",
+            raw_bytes=b"unwanted source",
+            markdown="Tender notice.",
+            content_type="application/pdf",
+            data_root=tmp_path / "live-data",
+            database_url=hub_url,
+            schema=schema,
+        )
+    assert content_hub.content_hub_url_exclusion(url, hub_url, schema=schema) == {
+        "url": url,
+        "reason": "tender",
+    }
 
 
 def test_bilingual_metadata_validator_requires_one_category_per_content_version(
@@ -989,7 +1599,7 @@ def test_import_rejects_corrupt_present_cas_without_mutating_hub_or_source_stage
     hub_before = _content_hub_state(hub_url, hub_schema)
     stage_before = _source_stage_state(stage_url, stage_schema)
     assert all(
-        state["count"] == (2 if table == "schema_migrations" else 0)
+        state["count"] == (3 if table == "schema_migrations" else 0)
         for table, state in hub_before.items()
     )
     assert stage_before["actual_counts"] == stage_before["stored_counts"]
@@ -1045,7 +1655,7 @@ def test_import_rolls_back_when_sqlite_source_changes_after_canonical_rows_are_w
     hub_before = _content_hub_state(hub_url, hub_schema)
     stage_before = _source_stage_state(stage_url, stage_schema)
     assert all(
-        state["count"] == (2 if table == "schema_migrations" else 0)
+        state["count"] == (3 if table == "schema_migrations" else 0)
         for table, state in hub_before.items()
     )
     assert stage_before["actual_counts"] == stage_before["stored_counts"]
