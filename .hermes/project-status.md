@@ -1,6 +1,7 @@
 # 当前运行候选 — 2026-10-26
 
 - 项目 `AI_actuarial_inforsearch`；工作树 `reports/local-automation-worktree`，分支 `feat/local-collection-runtime`；当前候选含 16 个文件，兄弟仓库未访问。
+- 本次候选另修复 Ready 恢复中的 embedding 选择：每个当前 URL 必须恰有一条本次 chunk 任务结果，profile 必须匹配当前 KB，chunk-set ID 必须非空且互不重复；embedding 只收到这些精确 ID 和当前 KB embedding identity。历史 ready set 不再按 URL/profile 猜选。31 项 target-worker 测试 PASS（3 项 SWIG deprecation warnings），覆盖歧义 selector、缺失/错配结果拒绝和 embedding 失败后按原生 ID 重试；Black、isort、Ruff、Pylint errors-only、py_compile、CLI help、dead-code files/symbols、diff check 均 PASS。无需数据库；本轮没有生产调用或写入。候选待独立审查。
 - Hub 对外 `markdown_sha256` 表示 Markdown UTF-8 原文摘要；另带 `hub_markdown_sha256` 和 `hub_markdown_sha256_kind`。共享严格校验器独立验证存储 JSON payload 摘要，并仅接受确切的 `raw_utf8` 或 `json_payload_utf8` 绑定；两种语言必须共用 variant ID 与原始绑定。旧 fill-only projection 保留原三字段 `hub_binding` 形状。
 - 双端 target fingerprint、流式输入、持久元数据和回读校验均保留上述新绑定对；原生 chunk 仍按原 Markdown UTF-8 文本计算。
 - 显式声明 `openpyxl>=3.1.5,<4`，使不安装 MarkItDown extras 的 CI 环境也具备现有 XLSX 提取依赖；DOCX/PPTX/XLSX 与普通 ZIP 的识别规则保持现有测试覆盖。

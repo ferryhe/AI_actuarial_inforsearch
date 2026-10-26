@@ -545,15 +545,37 @@ def _refresh_ready(runtime: Any, storage: Any, kb: Any, file_urls: list[str]) ->
             task_name=f"Local ingest chunks: {kb.kb_id}",
         )
         chunk_result = _wait_task(runtime, chunk_task_id)
-        chunk_sets = list((chunk_result.get("result") or {}).get("chunk_sets") or [])
+        chunk_result_data = chunk_result.get("result")
+        chunk_sets = (
+            chunk_result_data.get("chunk_sets") if isinstance(chunk_result_data, dict) else None
+        )
+        if not isinstance(chunk_sets, list):
+            raise RuntimeError("native chunk task returned a malformed chunk-set result")
         expected_urls = set(file_urls)
-        if {str(row.get("file_url") or "") for row in chunk_sets} != expected_urls:
-            raise RuntimeError("native chunk task did not return all changed article chunk sets")
+        returned_urls = [
+            row.get("file_url") if isinstance(row, dict) else None for row in chunk_sets
+        ]
+        if (
+            len(chunk_sets) != len(expected_urls)
+            or any(not isinstance(url, str) or not url for url in returned_urls)
+            or set(returned_urls) != expected_urls
+        ):
+            raise RuntimeError(
+                "native chunk task did not return exactly one current chunk set per changed article"
+            )
+        profile_id = str(kb.chunk_profile_id or "")
+        if not profile_id or any(row.get("profile_id") != profile_id for row in chunk_sets):
+            raise RuntimeError("native chunk task returned a chunk set for a different KB profile")
+        chunk_set_ids = [row.get("chunk_set_id") for row in chunk_sets]
+        if any(
+            not isinstance(chunk_set_id, str) or not chunk_set_id.strip()
+            for chunk_set_id in chunk_set_ids
+        ) or len(set(chunk_set_ids)) != len(chunk_set_ids):
+            raise RuntimeError("native chunk task did not return distinct nonblank chunk-set IDs")
         embed_id = runtime.start_background_task(
             "embedding_generation",
             {
-                "file_urls": file_urls,
-                "profile_id": str(kb.chunk_profile_id),
+                "chunk_set_ids": chunk_set_ids,
                 "embedding_identity_key": str(kb.embedding_identity_key),
             },
             task_name=f"Local ingest embeddings: {kb.kb_id}",

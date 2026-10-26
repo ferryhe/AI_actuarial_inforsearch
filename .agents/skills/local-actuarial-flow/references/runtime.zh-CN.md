@@ -53,4 +53,6 @@ python .agents/skills/local-actuarial-flow/scripts/local_flow.py report --date 2
 
 每日计划为六项 baseline、最多两个不同失败重试；hold 保留位置但不执行。每次目标写入按 URL/Hub version/content fingerprint 单独确认；中国 AI 与 all 两个现有 KB 使用各自已配置 profile，海外只更新 AI KB。失败的文章 acknowledgement、chunk/embed/binding 与 Ready 阶段可单独续跑，目标之间不互相代替。任何 AI 类别都可进入 AI serving bucket；完整顺序类别和来源 primary category 留在 bilingual payload 的 Hub evidence 中。目标容量使用原生 80% gate。旧全量替换脚本、清空/重建旧目录和向量复制不属于本运行入口。
 
+Chunk/embed 恢复会针对当前 URL 幂等重跑原生 chunk generation，并把该任务返回的确切 `chunk_set_id` 列表与当前 KB `embedding_identity_key` 传给 embedding generation；不会按 URL/profile 在历史 ready sets 中猜选。该阶段失败时 pending URL 保留，重试完成 chunk、embedding 和 binding 后才继续完整 KB index 与 Ready。
+
 `run-daily` 不是 Scheduler。日报 09:00 触发和任务开关继续沿用现有 automation owner；本地运行 CLI 不迁移或新建调度。首次真实写入和 automation 启用须由独立 review/验收流程批准。

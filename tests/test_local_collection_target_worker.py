@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 import ai_actuarial.capacity as capacity
+import ai_actuarial.embedding_service as embedding_service
 import ai_actuarial.local_collection_runtime as runtime
 import ai_actuarial.local_collection_target_worker as worker
 
@@ -56,6 +57,79 @@ def _item(url: str, raw: bytes, markdown: str, *, version: int = 17) -> dict:
             for language in ("zh", "en")
         },
     }
+
+
+class _ChunkSetCursor:
+    def __init__(self, rows: list[tuple]) -> None:
+        self.rows = rows
+
+    def fetchall(self):
+        return self.rows
+
+
+class _ChunkSetConnection:
+    def __init__(self, rows: list[tuple]) -> None:
+        self.rows = rows
+
+    def execute(self, statement: str, params: tuple):
+        if "chunk_set_id IN" in statement:
+            return _ChunkSetCursor([row for row in self.rows if row[0] in params])
+        if "file_url = ?" in statement and "profile_id = ?" in statement:
+            url, profile_id = params
+            return _ChunkSetCursor(
+                [row for row in self.rows if row[1] == url and row[2] == profile_id]
+            )
+        raise AssertionError(f"unexpected chunk selection SQL: {statement}")
+
+
+class _ChunkSetStorage:
+    def __init__(self, rows: list[tuple]) -> None:
+        self._conn = _ChunkSetConnection(rows)
+        self.rows = rows
+
+    def list_chunks_for_embedding(self, chunk_set_ids: list[str]) -> list[dict]:
+        selected = [row for row in self.rows if row[0] in chunk_set_ids]
+        return [
+            {
+                "chunk_id": f"{chunk_set_id}-{index}",
+                "chunk_set_id": chunk_set_id,
+                "content": "valid native chunk",
+            }
+            for row in selected
+            for chunk_set_id in [row[0]]
+            for index in range(row[5])
+        ]
+
+
+def test_native_embedding_selector_uses_exact_chunk_set_id_when_url_is_ambiguous() -> None:
+    url = "https://example.test/article.pdf"
+    profile_id = "profile-ai"
+    rows = [
+        ("set-older", url, profile_id, "a" * 64, "profile-hash", 2),
+        ("set-current", url, profile_id, "b" * 64, "profile-hash", 3),
+    ]
+    storage = _ChunkSetStorage(rows)
+
+    with pytest.raises(
+        embedding_service.EmbeddingSelectionError, match="ambiguous ready chunk sets"
+    ):
+        embedding_service.resolve_embedding_selection(
+            storage, file_urls=[url], profile_id=profile_id
+        )
+
+    selected = embedding_service.resolve_embedding_selection(storage, chunk_set_ids=["set-current"])
+    assert selected["chunk_set_ids"] == ["set-current"]
+    assert selected["chunk_sets"] == [
+        {
+            "chunk_set_id": "set-current",
+            "file_url": url,
+            "profile_id": profile_id,
+            "markdown_hash": "b" * 64,
+            "profile_config_hash": "profile-hash",
+            "chunk_count": 3,
+        }
+    ]
+    assert {row["chunk_set_id"] for row in selected["chunks"]} == {"set-current"}
 
 
 def test_target_item_preserves_secondary_ai_and_hash_bound_enrichment() -> None:
@@ -641,32 +715,71 @@ def test_target_item_failure_isolated_and_retry_keeps_successful_data(
 
 class _TaskRuntime:
     def __init__(
-        self, data_root: Path, *, fail_chunk: bool = False, fail_ready: bool = False
+        self,
+        data_root: Path,
+        *,
+        fail_chunk: bool = False,
+        fail_embedding: bool = False,
+        fail_ready: bool = False,
+        chunk_sets: list[dict] | None = None,
     ) -> None:
         self.data_root = data_root
         self.fail_chunk = fail_chunk
+        self.fail_embedding = fail_embedding
         self.fail_ready = fail_ready
         self.task_types: list[str] = []
+        self.embedding_payloads: list[dict] = []
+        self.chunk_sets = chunk_sets
 
     def start_background_task(self, task_type: str, payload: dict, **_kwargs):
         self.task_types.append(task_type)
         if task_type == "chunk_generation":
-            self.chunk_url = payload["files"][0]["file_url"]
+            if self.chunk_sets is None:
+                self.chunk_sets = [
+                    {
+                        "file_url": file["file_url"],
+                        "markdown_hash": file["markdown_hash"],
+                        "profile_id": payload["profile_id"],
+                        "profile_config_hash": "profile-config",
+                        "chunk_set_id": f"set-{index}",
+                        "chunk_count": 1,
+                        "reused_existing": False,
+                    }
+                    for index, file in enumerate(payload["files"], start=1)
+                ]
             return "chunk"
         if task_type == "embedding_generation":
+            self.embedding_payloads.append(payload)
             return "embedding"
         if task_type == "rag_indexing":
             return "index"
         raise AssertionError(task_type)
 
     def _pipeline_task_status(self, task_id: str):
-        return "error" if task_id == "chunk" and self.fail_chunk else "completed"
+        return (
+            "error"
+            if (task_id == "chunk" and self.fail_chunk)
+            or (task_id == "embedding" and self.fail_embedding)
+            else "completed"
+        )
 
     def _pipeline_task_result(self, task_id: str):
         if task_id == "chunk":
             return {
+                "id": task_id,
                 "type": "chunk_generation",
-                "result": {"chunk_sets": [{"file_url": self.chunk_url, "chunk_set_id": "set-1"}]},
+                "status": "error" if self.fail_chunk else "completed",
+                "errors": ["chunk generation failed"] if self.fail_chunk else [],
+                "result": {"contract_version": 1, "chunk_sets": self.chunk_sets},
+            }
+        if task_id == "embedding":
+            return {
+                "id": task_id,
+                "type": "embedding_generation",
+                "status": "error" if self.fail_embedding else "completed",
+                "errors": ["Embedding generation failed."] if self.fail_embedding else [],
+                "log_file": "/logs/embedding.log",
+                "result": {},
             }
         if task_id == "index":
             return {"result": {"index_version_id": "index-1"}, "ready_data_task_id": "ready"}
@@ -702,9 +815,97 @@ def test_chunk_stage_failure_resumes_but_ready_only_failure_skips_chunks(
     with pytest.raises(RuntimeError, match="Ready Data build did not publish"):
         worker._refresh_ready(second, storage, kb, [url])
     assert second.task_types == ["chunk_generation", "embedding_generation", "rag_indexing"]
+    assert second.embedding_payloads == [
+        {
+            "chunk_set_ids": ["set-1"],
+            "embedding_identity_key": kb.embedding_identity_key,
+        }
+    ]
     assert worker._read_pending_ready(tmp_path, "overseas") == {}
 
     ready_only = _TaskRuntime(tmp_path)
     result = worker._refresh_ready(ready_only, storage, kb, [])
     assert ready_only.task_types == ["rag_indexing"]
     assert result["index_version_id"] == "index-1"
+
+
+@pytest.mark.parametrize(
+    ("defect", "expected_error"),
+    [
+        ("missing", "exactly one current chunk set"),
+        ("wrong_url", "exactly one current chunk set"),
+        ("duplicate_url", "exactly one current chunk set"),
+        ("wrong_profile", "different KB profile"),
+        ("blank_id", "distinct nonblank chunk-set IDs"),
+    ],
+)
+def test_refresh_ready_rejects_invalid_current_chunk_task_results(
+    defect: str, expected_error: str, tmp_path: Path, monkeypatch
+) -> None:
+    from ai_actuarial.rag import kb_index
+
+    monkeypatch.setattr(
+        kb_index,
+        "resolve_kb_bound_chunks",
+        lambda *_args, **_kwargs: {"binding_snapshot_fingerprint": "bindings"},
+    )
+    url = "https://example.test/chunk-result-contract.pdf"
+    storage = _FakeStorage(tmp_path)
+    storage.rows[url] = {"url": url, "markdown_content": "Pricing models use AI methods."}
+    valid = {
+        "file_url": url,
+        "markdown_hash": hashlib.sha256(
+            storage.rows[url]["markdown_content"].encode("utf-8")
+        ).hexdigest(),
+        "profile_id": "profile:ai",
+        "profile_config_hash": "profile-config",
+        "chunk_set_id": "set-1",
+        "chunk_count": 1,
+        "reused_existing": False,
+    }
+    rows = {
+        "missing": [],
+        "wrong_url": [{**valid, "file_url": "https://example.test/other.pdf"}],
+        "duplicate_url": [valid, {**valid, "chunk_set_id": "set-2"}],
+        "wrong_profile": [{**valid, "profile_id": "profile:other"}],
+        "blank_id": [{**valid, "chunk_set_id": "  "}],
+    }[defect]
+    task_runtime = _TaskRuntime(tmp_path, chunk_sets=rows)
+
+    with pytest.raises(RuntimeError, match=expected_error):
+        worker._refresh_ready(task_runtime, storage, _FakeKB("ai", 1024), [url])
+
+    assert task_runtime.task_types == ["chunk_generation"]
+    assert task_runtime.embedding_payloads == []
+
+
+def test_embedding_failure_keeps_pending_urls_for_exact_id_restart_retry(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from ai_actuarial.rag import kb_index
+
+    monkeypatch.setattr(
+        kb_index,
+        "resolve_kb_bound_chunks",
+        lambda *_args, **_kwargs: {"binding_snapshot_fingerprint": "bindings"},
+    )
+    url = "https://example.test/embedding-restart.pdf"
+    storage = _FakeStorage(tmp_path)
+    storage.rows[url] = {"url": url, "markdown_content": "Pricing models use AI methods."}
+    kb = _FakeKB("ai", 3072)
+    worker._add_pending_ready(tmp_path, "overseas", ["ai"], [url])
+
+    first = _TaskRuntime(tmp_path, fail_embedding=True)
+    with pytest.raises(RuntimeError, match="native embedding_generation task ended with error"):
+        worker._refresh_ready(first, storage, kb, [url])
+    assert first.embedding_payloads == [
+        {"chunk_set_ids": ["set-1"], "embedding_identity_key": kb.embedding_identity_key}
+    ]
+    assert worker._read_pending_ready(tmp_path, "overseas") == {"ai": [url]}
+
+    retry = _TaskRuntime(tmp_path)
+    result = worker._refresh_ready(retry, storage, kb, [url])
+    assert retry.task_types == ["chunk_generation", "embedding_generation", "rag_indexing"]
+    assert retry.embedding_payloads == first.embedding_payloads
+    assert result["index_version_id"] == "index-1"
+    assert worker._read_pending_ready(tmp_path, "overseas") == {}
