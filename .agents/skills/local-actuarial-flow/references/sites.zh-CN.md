@@ -15,15 +15,15 @@
 | 05 | `soa-ai-bulletin-focused` / SOA AI Bulletin | collect | 并入 SOA 父站周期并按 URL 去重；保留来源页身份以区分发现来源。 |
 | 06 | `cas` / Casualty Actuarial Society | collect | 每次传 `--refresh` 更新 sitemap；报告只计可采文件并拆分 research 页面，不把历史 `status.candidates` 当文件数。 |
 | 07 | `aaa` / American Academy of Actuaries | collect | 保留 REST 全量核对并按 URL/SHA 幂等去重；`--since` 当前未约束 REST AI-resource 列表，增量上线前补更新时间过滤。 |
-| 08 | `cia-ica` / Canadian Institute of Actuaries | collect | 候选写入前排除 `/private-files/`；`members_only` 标志会漏报，filters 路径规则需接到 collector。 |
-| 09 | `cia-research-publications` / CIA Research & Publications | collect | 与父项候选 URL 完全重叠；合并或仅跑父项未覆盖栏目，并在导出前过滤 `/private-files/`。 |
-| 10 | `cca` / Conference of Consulting Actuaries | collect | 固定 hub 重扫并拆开 research/uncertain；调整按关键词生效的全局 `proceedings` 排除，避免错删经确认的会议录资料。 |
+| 08 | `cia-ica` / Canadian Institute of Actuaries | collect | 同时从 `/publications/` 与原 WordPress REST frontier 发现；只接收公开 `/app/themes/wicket/custom/dl_file.php` 且带 `p`、`fid` 参数的附件，始终拒绝 `/private-files/`。已保存 REST frontier 会在保留游标时补入公开页面。 |
+| 09 | `cia-research-publications` / CIA Research & Publications | collect | 与父项候选 URL 有重叠；保留独立监控 ID 和现有 REST 队列，并把 `/publications/` 作为有界 HTML 发现入口；不从私有 media API 合成附件地址。 |
+| 10 | `cca` / Conference of Consulting Actuaries | collect | 入口使用 `/professional-resources/papers` 和 `/professional-resources/technical-resource-library-main`；旧错误路径从待处理队列中幂等替换，跳过 my 子域的 Security/Sign-In 导航，不追登录页。 |
 | 11 | `aae` / Actuarial Association of Europe | collect | 保留 sitemap `lastmod` 作为变化线索；`/paper/` 只能召回，最终分类后才决定 AI 发布。 |
 | 12 | `eaa` / European Actuarial Academy | monitor_only | 保留低频 sitemap 结构检查，核对跨域 URL；旧 research-only 规则要按已批准 Education/Events 范围校准，不能直接排除培训、教育类资料。 |
 | 13 | `ifoa-uk` / Institute and Faculty of Actuaries | collect | 配置入口换成无 `www` canonical；保留旧 `www` PDF URL 作别名；每批上限 30 页并合并分页结果。 |
-| 14 | `france` / Institut des Actuaires | collect | 逐批使用 `hub-limit` / `hub-skip` 并持久化 offset；论文详情页另接正文采集。 |
+| 14 | `france` / Institut des Actuaires | collect | 使用当前 `/se-documenter/memoires/memoires-d-actuariat-4651` 和 `/se-documenter/supports-des-presentations-39`，继续发现真实文章页；仅识别公开 `global/gene/link.php` 且 `doc_id > 1`、`fg=1` 的文件链接。保存的旧前沿会只移除已观察到的失效 memoir 路径，并一次性优先检查当前 memoir 列表。 |
 | 15 | `dav` / German Association of Actuaries | collect | 用 sitemap `lastmod` 驱动 `--since`；AI 路径正则只是召回预筛，最终按摘要/正文分类。 |
-| 16 | `swiss-association-of-actuaries` / Swiss Association of Actuaries | collect | 低频最多抓 5 页；AI 演讲需有 core/context，或显式 `ai_related`，不能由 URL 单独定发布。 |
+| 16 | `swiss-association-of-actuaries` / Swiss Association of Actuaries | collect | 保持来源过滤和 0.6 秒请求间隔；默认 HTTP cap 30，单站 CLI 可明确使用 `--request-limit 60`。小批次最多复用/重试 24 篇并独立富信息处理最多 8 篇；预算暂停保留 frontier。 |
 | 17 | `italy` / Ordine Nazionale degli Attuari | collect | 接通或移除当前未生效的 `--depth`；补 `/documenti/sezioni-statiche` 种子，低频轮询。 |
 | 18 | `istituto-italiano-degli-attuari` / Istituto Italiano degli Attuari | hold | 探测返回 placeholder/demo；不进日常下载或发布，低频确认是否恢复或改用权威来源。仍保留日轮换序号和 coverage。 |
 | 19 | `spain` / Instituto de Actuarios Españoles | collect | 修 canonical host；保存时间和分页游标后再增量过滤，继续复用 REST/sitemap 枚举。 |

@@ -8,7 +8,7 @@ import hashlib
 import json
 import sys
 from collections import Counter
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -65,13 +65,13 @@ def _string_list(value: Any, field: str) -> list[str]:
     return list(value)
 
 
-def _normalize_failure_fields(raw: dict[str, Any], prefix: str) -> dict[str, Any]:
+def _normalize_failure_fields(raw: dict[str, Any], prefix: str, *, require_partial_error: bool = True) -> dict[str, Any]:
     error = raw.get("error")
     evidence = _string_list(raw.get("evidence", []), f"{prefix}.evidence")
     if error is not None and (not isinstance(error, str) or not error.strip()):
         raise FlowError(f"{prefix}.error must be a non-empty string when supplied")
     status = raw.get("status", "unknown")
-    if status in {"failed", "partial"} and not error:
+    if status in {"failed", "partial"} and require_partial_error and not error:
         raise FlowError(f"{prefix}.error is required for {status} status")
     return {"error": error, "evidence": evidence}
 
@@ -82,7 +82,9 @@ def _normalize_stage(raw: Any, stage: str) -> dict[str, Any]:
     if stage == "monitor":
         allowed = {"status", "error", "evidence"}
     elif stage in COUNT_STAGES:
-        allowed = {"status", "count", "error", "evidence"}
+        allowed = {"status", "count", "pending_count", "error", "evidence"}
+        if stage == "downloaded":
+            allowed.add("request_budget")
     else:
         allowed = {"status", *ACK_COUNTS, "ready_status", "ready_error", "ready_evidence", "error", "evidence"}
     extra = set(raw) - allowed
@@ -91,10 +93,28 @@ def _normalize_stage(raw: Any, stage: str) -> dict[str, Any]:
     status = raw.get("status", "unknown")
     if not isinstance(status, str) or status not in STAGE_STATUSES:
         raise FlowError(f"stages.{stage}.status must be one of {sorted(STAGE_STATUSES)}")
-    result: dict[str, Any] = {"status": status, **_normalize_failure_fields(raw, f"stages.{stage}")}
+    request_budget = None
+    if stage == "downloaded" and "request_budget" in raw:
+        budget = raw["request_budget"]
+        if not isinstance(budget, dict) or set(budget) != {"used", "cap", "paused", "frontier_remaining"}:
+            raise FlowError("stages.downloaded.request_budget has an invalid shape")
+        used = _nonnegative_int(budget["used"], "stages.downloaded.request_budget.used")
+        cap = _nonnegative_int(budget["cap"], "stages.downloaded.request_budget.cap")
+        remaining = _nonnegative_int(budget["frontier_remaining"], "stages.downloaded.request_budget.frontier_remaining")
+        paused = budget["paused"]
+        if not isinstance(paused, bool) or cap < 1 or used > cap:
+            raise FlowError("stages.downloaded.request_budget values are inconsistent")
+        request_budget = {"used": used, "cap": cap, "paused": paused, "frontier_remaining": remaining}
+    pure_budget_pause = bool(stage == "downloaded" and status == "partial" and request_budget and request_budget["paused"] and raw.get("error") is None)
+    result: dict[str, Any] = {"status": status, **_normalize_failure_fields(raw, f"stages.{stage}", require_partial_error=not pure_budget_pause)}
     if stage in COUNT_STAGES:
         count = raw.get("count")
         result["count"] = None if count is None else _nonnegative_int(count, f"stages.{stage}.count")
+        if "pending_count" in raw:
+            pending_count = raw["pending_count"]
+            result["pending_count"] = None if pending_count is None else _nonnegative_int(pending_count, f"stages.{stage}.pending_count")
+        if stage == "downloaded" and "request_budget" in raw:
+            result["request_budget"] = request_budget
     elif stage in ACK_STAGES:
         for field in ACK_COUNTS:
             count = raw.get(field)
@@ -219,13 +239,30 @@ def _stage_failures(receipt: dict[str, Any]) -> list[dict[str, Any]]:
     failures: list[dict[str, Any]] = []
     stages = receipt["stages"]
     for name, stage in stages.items():
-        if stage["status"] in {"failed", "partial"}:
+        budget_only = name == "downloaded" and stage["status"] == "partial" and stage.get("error") is None and stage.get("request_budget", {}).get("paused") is True
+        if stage["status"] in {"failed", "partial"} and not budget_only:
             failures.append({"stage": name, "error": stage["error"] or receipt.get("reason") or "stage reported failure", "evidence": stage["evidence"] or receipt["evidence"]})
         if name in ACK_STAGES and stage.get("ready_status") in {"failed", "partial"}:
             failures.append({"stage": name.replace("_ack", "_ready"), "error": stage["ready_error"] or "Ready reported failure", "evidence": stage["ready_evidence"]})
-    if receipt["run_status"] in {"failed", "partial"} and not failures:
+    if receipt["run_status"] in {"failed", "partial"} and not failures and not _budget_pause_only(receipt):
         failures.append({"stage": "run", "error": receipt["reason"] or f"run status {receipt['run_status']}", "evidence": receipt["evidence"]})
     return failures
+
+
+def _budget_pause_only(receipt: dict[str, Any]) -> bool:
+    stages = receipt.get("stages") or {}
+    downloaded = stages.get("downloaded") or {}
+    budget = downloaded.get("request_budget") or {}
+    if not (receipt.get("run_status") == "partial" and downloaded.get("status") == "partial" and downloaded.get("error") is None and budget.get("paused") is True):
+        return False
+    for name, stage in stages.items():
+        if name == "downloaded":
+            continue
+        if stage.get("status") not in {"succeeded", "unknown"}:
+            return False
+        if name in ACK_STAGES and stage.get("ready_status") not in {"succeeded", "unknown"}:
+            return False
+    return True
 
 
 def _effective_status(receipt: dict[str, Any]) -> tuple[str, str | None]:
@@ -357,9 +394,11 @@ def _failure_fold(receipts: dict[tuple[str, str], dict[str, Any]], through: date
         events: list[tuple[str, str, dict[str, Any]]] = []
         if receipt["run_status"] == "succeeded":
             events.append(("run", "succeeded", {"error": None, "evidence": receipt["evidence"]}))
-        elif not stage_failures:
+        elif not stage_failures and not _budget_pause_only(receipt):
             events.append(("run", receipt["run_status"], {"error": receipt.get("reason"), "evidence": receipt["evidence"]}))
         for stage, value in receipt["stages"].items():
+            if stage == "downloaded" and value["status"] == "partial" and value.get("error") is None and value.get("request_budget", {}).get("paused") is True:
+                continue
             events.append((stage, value["status"], {"error": value["error"], "evidence": value["evidence"]}))
             if stage in ACK_STAGES:
                 events.append((stage.replace("_ack", "_ready"), value["ready_status"], {
@@ -461,7 +500,9 @@ def _site_row(site: str, day: date, plan: dict[str, Any], actual: dict[str, dict
     else:
         state, reason = _effective_status(receipt)
     failures = _stage_failures(receipt) if receipt else []
-    return {
+    stages = receipt.get("stages", {}) if receipt else {}
+    pending_stage = stages.get("enriched") or stages.get("new_versions") or {}
+    result = {
         "site_id": site,
         "action": action,
         "plan_slot": planned_item["slot"] if planned_item else None,
@@ -472,6 +513,12 @@ def _site_row(site: str, day: date, plan: dict[str, Any], actual: dict[str, dict
         "attempt_count": receipt["attempt_count"] if receipt else 0,
         "evidence": receipt["evidence"] if receipt else [],
     }
+    if pending_stage.get("pending_count") is not None:
+        result["pending_article_count"] = pending_stage["pending_count"]
+    request_budget = (stages.get("downloaded") or {}).get("request_budget")
+    if request_budget is not None:
+        result["request_budget"] = request_budget
+    return result
 
 
 def make_status(day: date, receipts: dict[tuple[str, str], dict[str, Any]]) -> dict[str, Any]:
@@ -544,6 +591,8 @@ def _aggregate_count_stage(receipts: list[dict[str, Any]], stage: str) -> dict[s
     states = Counter()
     known_counts: list[int] = []
     unknown_count = 0
+    pending_counts: list[int] = []
+    pending_unknown = 0
     for receipt in receipts:
         value = receipt["stages"].get(stage)
         if value is None:
@@ -555,7 +604,17 @@ def _aggregate_count_stage(receipts: list[dict[str, Any]], stage: str) -> dict[s
                 unknown_count += 1
             else:
                 known_counts.append(value["count"])
-    return {"run_observation_sum": sum(known_counts) if known_counts else None, "known_receipts": len(known_counts), "unknown_receipts": unknown_count, "status_counts": dict(sorted(states.items()))}
+            if "pending_count" in value:
+                if value["pending_count"] is None:
+                    pending_unknown += 1
+                else:
+                    pending_counts.append(value["pending_count"])
+    result = {"run_observation_sum": sum(known_counts) if known_counts else None, "known_receipts": len(known_counts), "unknown_receipts": unknown_count, "status_counts": dict(sorted(states.items()))}
+    if pending_counts or pending_unknown:
+        result["pending_article_count_observation_sum"] = sum(pending_counts) if pending_counts else None
+        result["pending_article_count_known_receipts"] = len(pending_counts)
+        result["pending_article_count_unknown_receipts"] = pending_unknown
+    return result
 
 
 def _aggregate_ack_stage(receipts: list[dict[str, Any]], stage: str) -> dict[str, Any]:
@@ -590,7 +649,6 @@ def make_report(day: date, receipts: dict[tuple[str, str], dict[str, Any]], ledg
     status = make_status(day, receipts)
     actual = _date_receipts(receipts, day)
     collection = [actual[site] for site in SITES if site in actual and _action(site) == "collect"]
-    monitors = [actual[site] for site in SITES if site in actual and _action(site) == "monitor_only"]
     stages = {
         **{stage: _aggregate_count_stage(collection, stage) for stage in COUNT_STAGES},
         **{stage: _aggregate_ack_stage(collection, stage) for stage in ACK_STAGES},
@@ -646,7 +704,21 @@ def make_report(day: date, receipts: dict[tuple[str, str], dict[str, Any]], ledg
         "research_queue_deferred_count": max(0, len(research_queue) - 2),
         "case_ledger_contract": {"schema_version": 1, "empty_json": {"schema_version": 1, "cases": []}, "helper_writes_ledger": False},
         "receipts": [
-            {"receipt_id": r["receipt_id"], "date_local": r["date_local"], "site_id": r["site_id"], "action": _action(r["site_id"]), "run_status": r["run_status"], "effective_status": _effective_status(r)[0], "attempt_count": r["attempt_count"]}
+            {
+                "receipt_id": r["receipt_id"], "date_local": r["date_local"], "site_id": r["site_id"],
+                "action": _action(r["site_id"]), "run_status": r["run_status"],
+                "effective_status": _effective_status(r)[0], "attempt_count": r["attempt_count"],
+                **(
+                    {"pending_article_count": (r["stages"].get("enriched") or r["stages"].get("new_versions") or {}).get("pending_count")}
+                    if (r["stages"].get("enriched") or r["stages"].get("new_versions") or {}).get("pending_count") is not None
+                    else {}
+                ),
+                **(
+                    {"request_budget": r["stages"]["downloaded"]["request_budget"]}
+                    if r["stages"].get("downloaded", {}).get("request_budget") is not None
+                    else {}
+                ),
+            }
             for r in sorted(actual.values(), key=lambda r: r["site_id"])
         ],
         "executes_collection": False,

@@ -1,3 +1,61 @@
+# 当前候选 — SSH 静默期连接存活 — 2026-10-27
+
+- 项目 `AI_actuarial_inforsearch`；工作树 `C:/Users/ferry/.codex/worktrees/local-source-budget-fixes/AI_actuarial_inforsearch`，分支 `fix/local-source-discovery-budgets`。仅此仓库；修改 `_stream_target` 单次 SSH 参数、命令契约回归和 runtime 运行说明。
+- 单次 SSH 调用显式设为 `ServerAliveInterval=30`、`ServerAliveCountMax=3`。不改全局 SSH 配置，保留 `BatchMode`、`ConnectTimeout` 与原 21600 秒 subprocess timeout。keepalive 约 90 秒未获响应时走原失败路径；它不确认目标写入，成功仍需实际 worker ACK 和 Ready 回读。
+- 验证：隔离 PostgreSQL `127.0.0.1:55435` 上 runtime 65/65 PASS；target worker 31/31 PASS；Ruff、Black、isort、compileall、skill-creator quick_validate 与 `git diff --check` PASS。该实现运行未连接生产或修改运行状态。
+- Swiss60 中国端的远端 Ready 已由控制器只读证据确认；本地 SSH 返回/回执恢复由控制器处理。本轮未提交或推送。
+
+# 当前候选 — 法国 memoir frontier 恢复 — 2026-10-27
+
+- 项目 `AI_actuarial_inforsearch`；工作树 `C:/Users/ferry/.codex/worktrees/local-source-budget-fixes/AI_actuarial_inforsearch`，分支 `fix/local-source-discovery-budgets`。仅此仓库；涉及法国站点入口、已保存 frontier 的 v2 修补、回归及 skill 参考。
+- France memoir 入口更新到 `/se-documenter/memoires/memoires-d-actuariat-4651`。迁移只移除已观察的两个失效路径与旧 `doc_id=1` 地址；未成功访问的当前列表只排到既有待处理附件之前一次。若该列表已存在，会原位提升为 depth 0；其他队列前缀、重试和文章历史保留。
+- 验证：隔离 PostgreSQL `127.0.0.1:55435` 上 runtime 64/64 PASS；offline flow 19/19 PASS；Ruff、Black、isort、compileall、skill-creator quick_validate 与 `git diff --check` PASS。
+- 控制器已完成 CIA、CCA、法国 live 与幂等验收；Swiss60 中国端 Ready 回读及本地回执恢复由控制器处理。本轮未运行生产采集或写入，未提交或推送。
+
+# 当前候选 — 有界目标重试游标公平推进 — 2026-10-27
+
+- 项目 `AI_actuarial_inforsearch`；隔离工作树 `C:/Users/ferry/.codex/worktrees/local-source-budget-fixes/AI_actuarial_inforsearch`，分支 `fix/local-source-discovery-budgets`。范围限于文章批次 cursor、runtime 回归与本状态记录；仅此仓库。
+- 普通运行在本站完整持久文章顺序中旋转 cursor，扫描32篇后只将其前缀内已选文章作为进度锚点；第一篇 deferred 会在下轮优先进入批次。全部扫描记录均被选中时锚定最后一篇。reuse/target retry24、模型8、exact URL 不推进普通 cursor 与本站 pending 计数保持不变。
+- 验证：隔离 PostgreSQL `127.0.0.1:55435` 上 runtime 59/59 PASS；offline flow 19/19 PASS；Ruff、Black、isort、compileall、skill-creator quick_validate、`git diff --check` PASS。持久化回归覆盖32篇 target retry 失败、混合25篇模型失败+7篇reuse/target失败，以及逐轮恢复。
+- 未运行生产采集或写入，未提交或推送。候选等待 fresh independent Sol/high review。
+
+# 当前候选 — exact URL 捕获隔离 — 2026-10-27
+
+- 项目 `AI_actuarial_inforsearch`；隔离工作树 `C:/Users/ferry/.codex/worktrees/local-source-budget-fixes/AI_actuarial_inforsearch`，分支 `fix/local-source-discovery-budgets`。范围为 exact URL frontier 隔离、四 ID 请求序列回归和技能说明；仅此仓库。
+- 明确传入单项 `initial_frontier` 时跳过普通保存前沿修补；CIA 两个 ID、CCA、法国 exact 重放仅捕获指定 URL 及经验证的同站重定向。普通发现仍运行旧前沿修补，正常站点 cursor 不变。
+- 验证通过：runtime focused tests 57/57（隔离 PostgreSQL `127.0.0.1:55435`）、offline flow 19/19、Ruff、Black、isort、compileall、skill-creator quick_validate 和 `git diff --check`。四 ID 参数化测试各两次 exact 重放均只请求 canonical exact URL；既有普通 CIA/CCA/法国修补和 redirect 回归通过。
+- 未运行生产采集或写入，未提交或推送。候选等待 fresh independent Sol/high review。
+
+# 当前候选 — 精确 URL pending 队列口径 — 2026-10-27
+
+- 项目 `AI_actuarial_inforsearch`；工作树 `C:/Users/ferry/.codex/worktrees/local-source-budget-fixes/AI_actuarial_inforsearch`，分支 `fix/local-source-discovery-budgets`。范围限于站点积压计数、回归和技能字段说明；仅此仓库，未访问/修改生产状态。
+- `pending_article_count` 按本站所有 incomplete 文章减去本次实际选择数。`--exact-url` 仍只处理该 URL，并保留普通站点 cursor；所选文章后续失败、等待目标确认或 Ready 的状态仍单列。
+- 验证：隔离 PostgreSQL 55435 上 runtime focused tests 53/53 PASS；offline flow tests 19/19 PASS；Ruff、Black、isort、compileall、skill-creator quick_validate 和 `git diff --check` PASS。40 篇两次 exact replay 回归确认每次只触发指定 URL、pending=39，日报从 prior 38 正确更新到 39，cursor 不变。
+- 未运行生产 runtime、未提交或推送。候选等待 fresh independent Sol/high review。
+
+# 当前候选 — 已发现公开附件优先 — 2026-10-27
+
+- 项目 `AI_actuarial_inforsearch`；隔离工作树 `C:/Users/ferry/.codex/worktrees/local-source-budget-fixes/AI_actuarial_inforsearch`，分支 `fix/local-source-discovery-budgets`。只处理本仓库；未访问或修改生产状态。
+- 仅 CIA 两项、CCA 与法国站对 frontier 未处理后缀稳定优先已发现且通过现有公开文档规则的附件。消费前缀、cursor、visited、重试项、文章历史、HTTP cap 与请求间隔保持不变；其他站点队列顺序不变。
+- 验证：runtime/PostgreSQL 隔离测试 52/52（仅 localhost:55435）、offline helper 19/19、compileall、Ruff、isort、Black（runtime 与测试）、diff check、skill-creator quick validation 均通过。
+- 回归覆盖旧导航队列中第100位后的 CIA PDF、页面当轮发现附件后下一请求优先处理、30请求上限与 restart 无重抓/跳过、CCA/法国规则及 Swiss 原队列不变。
+- 未运行真实生产采集或目标同步；未提交或推送。等待新的独立 Sol/high review；通过后 controller 控制 CIA 正常 discovery 重跑与附件幂等验证。
+
+# 当前候选 — 资料队列游标恢复 — 2026-10-27
+
+- 项目 `AI_actuarial_inforsearch`；工作树 `C:/Users/ferry/.codex/worktrees/local-source-budget-fixes/AI_actuarial_inforsearch`，分支 `fix/local-source-discovery-budgets`。仅此仓库；生产状态和服务未访问或修改。
+- 普通批次先在本站持久文章全列表中定位并旋转现有 identity 游标，再过滤 `complete` 行；精确 URL 批次不改站点游标。扫描32、既有内容复用/目标重试24和模型补全8上限保持不变，失败项仍保留 `pending_retry` 与错误文本。
+- 验证通过：runtime/PostgreSQL 隔离测试 47/47（仅 localhost:55435）、offline helper 19/19、compileall、Ruff、isort、Black（runtime 与测试文件）及 `git diff --check`。
+- 40 篇/三次持久化运行回归覆盖：8篇模型超时、24篇复用完成、游标锚点完成后下一轮处理8篇新文献、失败项后续仍可重试；精确 URL 重试保留站点游标。
+- 未运行生产采集/目标同步，未提交或推送。候选等待新的独立 Sol/high review；通过后 controller 安排真实 CIA、CCA、法国与瑞士试跑。
+
+# 当前候选 — 本地来源发现与预算修复 — 2026-10-27
+
+- 项目 `AI_actuarial_inforsearch`；隔离工作树 `C:/Users/ferry/.codex/worktrees/local-source-budget-fixes/AI_actuarial_inforsearch`，分支 `fix/local-source-discovery-budgets`。仅修改此仓库；兄弟仓库与原生产工作树均未访问/编辑。
+- 当前 7 个文件覆盖安全跳过非 HTTP 链接、CIA/CCA/法国已验证入口与旧 frontier 修补、瑞士单轮 60 请求续跑、文章重用/模型配额公平、v2 阶段预算/错误和日报字段，以及技能文档与回归测试。
+- 验证通过：runtime/PostgreSQL 隔离测试 46/46（仅 `127.0.0.1:55435`）、offline helper 19/19、`compileall`、Ruff、Black（runtime 与测试文件）、`git diff --check`、skill-creator `quick_validate.py`。CLI help/JSON 与幂等行为由测试覆盖。
+- 尚未运行生产 CIA/CCA/France/瑞士采集；未访问生产 Hub/目标、未提交或推送。候选待新的独立 Sol/high review；通过后由 controller 安排真实站点试跑与发表。
+
 # PR #428 main CI claim-race repair — 2026-10-26
 
 - 项目 `AI_actuarial_inforsearch`；工作树 `reports/pr428-main-ci-worktree`，分支 `fix/pr428-main-ci-single-flight`，基于 `e3ed5c981aa7ab1d7f042998b46bb2ea93111af7`。范围限于 `ai_actuarial/storage.py`、两个周报测试文件和本状态文件；未访问兄弟仓库。
