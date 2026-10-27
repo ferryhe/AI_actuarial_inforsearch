@@ -401,7 +401,8 @@ def test_concurrent_same_fingerprint_calls_single_flight_and_preserve_complete_r
 ) -> None:
     weekly_explanations = _weekly_explanations_module()
     db_path, config_path, config = _write_config(tmp_path)
-    config["ai_config"]["weekly_explanation"]["timeout_seconds"] = 0.1
+    # This test covers live-lease single-flight; lease expiry is covered below.
+    config["ai_config"]["weekly_explanation"]["timeout_seconds"] = 10.0
     config_path.write_text(
         yaml.safe_dump(config, sort_keys=False, allow_unicode=True),
         encoding="utf-8",
@@ -410,11 +411,25 @@ def test_concurrent_same_fingerprint_calls_single_flight_and_preserve_complete_r
     _seed_files(db_path, count=1)
     snapshot = _snapshot(db_path)
     start = threading.Barrier(2)
+    probe = Storage(postgres_url_for_path(str(db_path)))
+    second_claim_returned = threading.Event()
+    claim_count = [0]
+    claim_lock = threading.Lock()
+    original_claim = Storage.claim_weekly_explanation
+
+    def observe_claim(self, *args, **kwargs):
+        result = original_claim(self, *args, **kwargs)
+        with claim_lock:
+            claim_count[0] += 1
+            if claim_count[0] >= 2:
+                second_claim_returned.set()
+        return result
+
+    monkeypatch.setattr(Storage, "claim_weekly_explanation", observe_claim)
 
     class CompleteThenLateTimeoutGenerator:
         def __init__(self) -> None:
             self._lock = threading.Lock()
-            self._second_entered = threading.Event()
             self.calls = 0
             self.provider_call_allows_db_writes = False
 
@@ -424,26 +439,26 @@ def test_concurrent_same_fingerprint_calls_single_flight_and_preserve_complete_r
             *,
             timeout_seconds: float,
         ) -> str:
-            del messages, timeout_seconds
+            del messages
             with self._lock:
                 self.calls += 1
                 call_number = self.calls
             if call_number == 1:
-                probe = Storage(postgres_url_for_path(str(db_path)))
                 try:
                     probe._conn.execute("BEGIN")
                     probe._conn.execute(
                         "SELECT id FROM weekly_snapshots WHERE id = ? FOR UPDATE NOWAIT",
                         (snapshot["id"],),
                     )
-                    probe._conn.rollback()
                 finally:
-                    probe.close()
+                    probe._conn.rollback()
                 self.provider_call_allows_db_writes = True
-                self._second_entered.wait(timeout=0.5)
+                if not second_claim_returned.wait(
+                    timeout=timeout_seconds + weekly_explanations.CLAIM_LEASE_GRACE_SECONDS
+                ):
+                    raise TimeoutError("the concurrent claim did not return during the live lease")
                 return '{"zh":"并发成功","en":"Concurrent success"}'
 
-            self._second_entered.set()
             deadline = time.monotonic() + 2
             while time.monotonic() < deadline:
                 storage = Storage(postgres_url_for_path(str(db_path)))
@@ -466,17 +481,24 @@ def test_concurrent_same_fingerprint_calls_single_flight_and_preserve_complete_r
             generator=generator,
         )
 
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        results = list(executor.map(lambda _index: generate(), range(2)))
-
-    storage = Storage(postgres_url_for_path(str(db_path)))
+    executor = ThreadPoolExecutor(max_workers=2)
     try:
-        persisted = storage.get_weekly_explanation(snapshot_id=snapshot["id"])
+        results = list(executor.map(lambda _index: generate(), range(2)))
+        storage = Storage(postgres_url_for_path(str(db_path)))
+        try:
+            persisted = storage.get_weekly_explanation(snapshot_id=snapshot["id"])
+        finally:
+            storage.close()
     finally:
-        storage.close()
+        second_claim_returned.set()
+        try:
+            executor.shutdown(wait=True)
+        finally:
+            probe.close()
 
     assert generator.calls == 1
     assert generator.provider_call_allows_db_writes is True
+    assert claim_count[0] >= 2
     assert {result["status"] for result in results} == {"complete"}
     assert persisted is not None
     assert persisted["status"] == "complete"
