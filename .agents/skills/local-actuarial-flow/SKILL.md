@@ -19,6 +19,10 @@ python .agents/skills/local-actuarial-flow/scripts/local_flow.py report --date 2
 
 日报按美东 09:00 触发时由调用端提供前一自然日。缺回执是 `not_run` 或 `not_scheduled`，不是源站失败；缺字段是 `unknown`，不是成功或零。AI 发布 acknowledgement 与各自 Ready 状态分开记录。回执格式、Case ledger 的原子更新及状态定义见每日合同。
 
+单站 HTTP 请求默认上限为 30；只有瑞士监控项可通过 `run-site --request-limit 60` 显式提高到 60。达到请求上限会留下可恢复游标并报告 `partial`。只有纯预算暂停时不创建失败研究 case；同时出现的真实站点/文章错误仍保留并进入常规研究队列。来源复用/目标重试最多处理 24 篇，模型富信息工作仍最多 8 篇；超出部分会在后续运行轮转处理。
+
+CIA、CCA 与法国站只在尚未处理的 frontier 后缀中稳定优先有效公开附件；已处理前缀、失败历史与请求预算保持不变。瑞士及其他站点维持原队列顺序。
+
 ## 本机运行入口
 
 跟踪源码 `ai_actuarial.local_collection_runtime` 提供 bounded live collection、Hub live-capture 入库、Luna 双语分类/日期补全、国内与海外目标增量同步、独立回执与任何阶段的恢复。只使用单独的 `config.local.json`，不要把连接文件路径或主机地址写入共享例子。操作命令、试跑顺序和范围限制见 [本机运行指南](references/runtime.zh-CN.md)。该 CLI 不安装或启用计划任务；现有 06:00/09:00 automation 由外部 owner 单独管理。

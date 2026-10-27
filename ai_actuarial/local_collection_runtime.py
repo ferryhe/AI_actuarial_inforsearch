@@ -51,9 +51,12 @@ FLOW_SCRIPT = SKILL_ROOT / "scripts" / "local_flow.py"
 TARGET_WORKER = Path(__file__).with_name("local_collection_target_worker.py")
 TIME_ZONE = ZoneInfo("America/New_York")
 MAX_SITE_REQUESTS = 30
+MAX_SWISS_SITE_REQUESTS = 60
 MAX_DAILY_SITE_RUNS = 8
 MAX_RECONCILE_PAGE = 100
 MAX_ENRICHMENTS_PER_SITE_RUN = 8
+MAX_CHEAP_ARTICLES_PER_SITE_RUN = 24
+MAX_ARTICLE_SCAN_PER_SITE_RUN = MAX_CHEAP_ARTICLES_PER_SITE_RUN + MAX_ENRICHMENTS_PER_SITE_RUN
 ALGOLIA_HOST = "54YLV1QRFB-dsn.algolia.net"
 AUSTRALIA_RESEARCH_TYPES = (
     "Publication > Report",
@@ -227,8 +230,8 @@ SITES: dict[str, Site] = {
         (
             "https://www.ccactuaries.org/professional-resources",
             "https://www.ccactuaries.org/professional-resources/archives",
-            "https://www.ccactuaries.org/papers",
-            "https://www.ccactuaries.org/technical-resource-library-main",
+            "https://www.ccactuaries.org/professional-resources/papers",
+            "https://www.ccactuaries.org/professional-resources/technical-resource-library-main",
         ),
         ("ccactuaries.org",),
         0.5,
@@ -268,8 +271,8 @@ SITES: dict[str, Site] = {
         "france",
         "collect",
         (
-            "https://www.institutdesactuaires.com/",
-            "https://www.institutdesactuaires.com/global/gene/link.php?doc_id=1&fg=1",
+            "https://www.institutdesactuaires.com/se-documenter/memoires/memoires-d-actuariat-4651",
+            "https://www.institutdesactuaires.com/se-documenter/supports-des-presentations-39",
         ),
         ("institutdesactuaires.com",),
         0.5,
@@ -484,7 +487,7 @@ class _BudgetCrawler(Crawler):
 
     def begin_site(self, budget: int = MAX_SITE_REQUESTS) -> None:
         self.site_attempts = 0
-        self.site_budget = min(MAX_SITE_REQUESTS, max(1, int(budget)))
+        self.site_budget = min(MAX_SWISS_SITE_REQUESTS, max(1, int(budget)))
 
     def _open_pinned_http(
         self, url: str, resolution: Any, *, timeout: int, delay_seconds: float | None
@@ -684,10 +687,57 @@ def _looks_document(url: str, label: str = "") -> bool:
     )
 
 
+def _looks_site_document(url: str, label: str, site: Site) -> bool:
+    path = urlsplit(url).path.lower()
+    if any(token in path for token in ("/private-files/", "/member-only/")):
+        return False
+    if _looks_document(url, label):
+        return True
+    parsed = urlsplit(url)
+    if site.site_id in {"cia-ica", "cia-research-publications"}:
+        query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+        return (
+            parsed.path.lower() == "/app/themes/wicket/custom/dl_file.php"
+            and bool(query.get("p"))
+            and bool(query.get("fid"))
+        )
+    if site.site_id == "france" and parsed.path.lower() == "/global/gene/link.php":
+        query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+        try:
+            document_id = int(query.get("doc_id") or 0)
+        except (TypeError, ValueError):
+            return False
+        return document_id > 1 and query.get("fg") == "1"
+    return False
+
+
+def _canonical_http_link(base_url: str, href: str) -> str | None:
+    try:
+        candidate = urljoin(base_url, html.unescape(href).strip())
+        if urlsplit(candidate).scheme.lower() not in {"http", "https"}:
+            return None
+        return _canonical_url(candidate)
+    except (RuntimeErrorSafe, ValueError):
+        return None
+
+
 def _relevant_page(url: str, label: str, site: Site) -> bool:
     probe = f"{url} {label}".lower()
+    parsed = urlsplit(url)
+    if (
+        site.site_id == "cca"
+        and (parsed.hostname or "").lower() == "my.ccactuaries.org"
+        and parsed.path.lower() == "/security/sign-in"
+    ):
+        return False
     if any(token in probe for token in _EXCLUDE_HINTS):
         return False
+    if site.site_id == "france" and re.search(
+        r"mémoire|memoire|présentation|presentation|conférences|conferences|congrès|congres|actuariat",
+        probe,
+        re.I,
+    ):
+        return not bool(re.search(r"inscription|agenda général|événementiel", probe, re.I))
     return any(token in probe for token in site.page_hints)
 
 
@@ -721,7 +771,11 @@ def _initial_frontier(site: Site) -> list[dict[str, Any]]:
         ]
     if site.site_id in {"cia-ica", "cia-research-publications"}:
         rest_url = "https://www.cia-ica.ca/wp-json/wp/v2/publication?per_page=100&page=1&_fields=id,slug,link,title,content,acf,publication-category,publication-type,publication-topic"
-        return [{"url": rest_url, "kind": "json_rest", "page": 1, "referrer": site.seeds[0]}]
+        page_url = "https://www.cia-ica.ca/publications/"
+        return [
+            {"url": page_url, "kind": "page", "depth": 0, "referrer": page_url},
+            {"url": rest_url, "kind": "json_rest", "page": 1, "referrer": page_url},
+        ]
     if site.site_id == "iba-brazil":
         return [
             {
@@ -926,6 +980,173 @@ def _queue_identity(item: dict[str, Any]) -> str:
     return str(item.get("url") or "")
 
 
+_DOCUMENT_PRIORITY_SITES = {
+    "cia-ica",
+    "cia-research-publications",
+    "cca",
+    "france",
+}
+
+
+def _prioritize_pending_documents(site: Site, queue: list[dict[str, Any]], cursor: int) -> None:
+    """Stable-partition the unconsumed queue suffix for audited sources only."""
+    if site.site_id not in _DOCUMENT_PRIORITY_SITES or cursor < 0 or cursor >= len(queue):
+        return
+
+    def priority(item: dict[str, Any]) -> int:
+        if not isinstance(item, dict):
+            return 1
+        if site.site_id == "france" and item.get("frontier_priority") == "france_memoirs_v2":
+            return -1
+        if item.get("kind") != "document":
+            return 1
+        url = str(item.get("url") or "")
+        title = str(item.get("title") or "")
+        referrer = str(item.get("referrer") or "")
+        metadata = item.get("discovery_metadata")
+        if not isinstance(metadata, dict):
+            metadata = {}
+        try:
+            path = urlsplit(url).path.lower()
+            if any(token in path for token in ("/private-files/", "/member-only/")):
+                return 1
+            public = (
+                _allowed_host(url, site)
+                and _allowed_path(url, site)
+                and _looks_site_document(url, title, site)
+                and _site_candidate_allowed(site, url, title, metadata)
+                and _site_document_relevant(site, url, title, referrer, metadata)
+            )
+        except (RuntimeErrorSafe, ValueError):
+            public = False
+        return 0 if public else 1
+
+    queue[cursor:] = sorted(queue[cursor:], key=priority)
+
+
+def _frontier_repair_items(site: Site) -> tuple[set[str], list[dict[str, Any]]]:
+    if site.site_id in {"cia-ica", "cia-research-publications"}:
+        page = "https://www.cia-ica.ca/publications/"
+        return set(), [{"url": page, "kind": "page", "depth": 0, "referrer": page}]
+    if site.site_id == "cca":
+        old = {
+            "https://www.ccactuaries.org/papers",
+            "https://www.ccactuaries.org/technical-resource-library-main",
+        }
+        replacements = (
+            "https://www.ccactuaries.org/professional-resources/papers",
+            "https://www.ccactuaries.org/professional-resources/technical-resource-library-main",
+        )
+        return old, [
+            {"url": url, "kind": "page", "depth": 0, "referrer": url} for url in replacements
+        ]
+    if site.site_id == "france":
+        obsolete = {
+            "https://www.institutdesactuaires.com/global/gene/link.php?doc_id=1&fg=1",
+            "https://www.institutdesactuaires.com/se-documenter/memoire-d-actuariat-38",
+            "https://www.institutdesactuaires.com/se-documenter/memoires-38",
+        }
+        memoir_listing, presentations_listing = site.seeds
+        return obsolete, [
+            {
+                "url": memoir_listing,
+                "kind": "page",
+                "depth": 0,
+                "referrer": memoir_listing,
+                "frontier_priority": "france_memoirs_v2",
+            },
+            {
+                "url": presentations_listing,
+                "kind": "page",
+                "depth": 0,
+                "referrer": presentations_listing,
+            },
+        ]
+    return set(), []
+
+
+def _repair_saved_frontier(site: Site, site_state: dict[str, Any]) -> None:
+    """Patch only the observed obsolete seeds in persisted source frontiers."""
+    marker_version = "v2" if site.site_id == "france" else "v1"
+    marker = f"frontier_repair_{site.site_id}_{marker_version}"
+    if site_state.get(marker):
+        return
+    queue = list(site_state.get("queue") or [])
+    retry_queue = list(site_state.get("retry_queue") or [])
+    cursor = min(max(0, int(site_state.get("cursor") or 0)), len(queue))
+    visited = set(site_state.get("visited") or [])
+    obsolete, replacements = _frontier_repair_items(site)
+    obsolete_keys = set()
+    for value in obsolete:
+        try:
+            obsolete_keys.add(_canonical_url(value))
+        except RuntimeErrorSafe:
+            continue
+
+    kept: list[dict[str, Any]] = []
+    removed_before_cursor = 0
+    for index, row in enumerate(queue):
+        if not isinstance(row, dict):
+            if index < cursor:
+                removed_before_cursor += 1
+            continue
+        raw_url = str(row.get("url") or "")
+        try:
+            scheme = urlsplit(raw_url).scheme.lower()
+        except ValueError:
+            scheme = ""
+        try:
+            canonical = _canonical_url(raw_url) if scheme in {"http", "https"} else None
+        except (RuntimeErrorSafe, ValueError):
+            canonical = None
+        if canonical is None or canonical in obsolete_keys:
+            if index < cursor:
+                removed_before_cursor += 1
+            continue
+        kept.append(row)
+    queue = kept
+    cursor = max(0, cursor - removed_before_cursor)
+
+    kept_retries = []
+    for row in retry_queue:
+        if not isinstance(row, dict):
+            continue
+        raw_url = str(row.get("url") or "")
+        try:
+            scheme = urlsplit(raw_url).scheme.lower()
+        except ValueError:
+            scheme = ""
+        if scheme not in {"http", "https"}:
+            continue
+        try:
+            if _canonical_url(raw_url) in obsolete_keys:
+                continue
+        except (RuntimeErrorSafe, ValueError):
+            continue
+        kept_retries.append(row)
+
+    if site.site_id == "france":
+        memoir_listing = site.seeds[0]
+        memoir_identity = _queue_identity({"url": memoir_listing, "kind": "page"})
+        if memoir_identity not in visited:
+            for row in [*queue[cursor:], *kept_retries]:
+                if isinstance(row, dict) and _queue_identity(row) == memoir_identity:
+                    row["kind"] = "page"
+                    row["depth"] = 0
+                    row["frontier_priority"] = "france_memoirs_v2"
+
+    existing = {
+        _queue_identity(row) for row in [*queue, *kept_retries] if isinstance(row, dict)
+    } | visited
+    insertions = [row for row in replacements if _queue_identity(row) not in existing]
+    if insertions:
+        queue[cursor:cursor] = insertions
+    site_state["queue"] = queue
+    site_state["cursor"] = cursor
+    site_state["retry_queue"] = kept_retries
+    site_state[marker] = True
+
+
 def _enqueue_url(
     site: Site,
     queue: list[dict[str, Any]],
@@ -937,9 +1158,11 @@ def _enqueue_url(
     metadata: dict[str, Any] | None = None,
     kind: str | None = None,
 ) -> None:
-    candidate = _canonical_url(url)
+    candidate = _canonical_http_link(referrer, url)
+    if candidate is None:
+        return
     metadata = metadata or {}
-    document = kind == "document" or (kind is None and _looks_document(candidate, title))
+    document = kind == "document" or (kind is None and _looks_site_document(candidate, title, site))
     if not _allowed_host(candidate, site) or not _site_candidate_allowed(
         site, candidate, title, metadata
     ):
@@ -1034,8 +1257,10 @@ def _wp_html_links(
     parser = _LinkParser()
     parser.feed(html_body)
     for href, label in parser.links:
-        candidate = _canonical_url(urljoin(referrer, html.unescape(href)))
-        if _looks_document(candidate, label):
+        candidate = _canonical_http_link(referrer, href)
+        if candidate is None:
+            continue
+        if _looks_site_document(candidate, label, site):
             _enqueue_url(
                 site,
                 queue,
@@ -1566,6 +1791,10 @@ def _file_key(url: str, raw_sha: str) -> str:
     return hashlib.sha256(f"{url}\0{raw_sha}".encode("utf-8")).hexdigest()
 
 
+def _article_identity(article: dict[str, Any]) -> str:
+    return _file_key(str(article.get("url") or ""), str(article.get("raw_sha256") or ""))
+
+
 def _load_category_keys() -> list[str]:
     from ai_actuarial.content_hub import APPROVED_CATEGORY_KEYS
 
@@ -1970,6 +2199,7 @@ def _capture(
     site_state: dict[str, Any],
     *,
     initial_frontier: list[dict[str, Any]] | None = None,
+    request_limit: int = MAX_SITE_REQUESTS,
 ) -> dict[str, Any]:
     """Enumerate one resumable source frontier, capturing verified files/pages."""
     if site_state.get("completed_frontier"):
@@ -1984,9 +2214,19 @@ def _capture(
         site_state["visited"] = []
         site_state["cursor"] = 0
         site_state["retry_queue"] = []
+    maximum = (
+        MAX_SWISS_SITE_REQUESTS
+        if site.site_id == "swiss-association-of-actuaries"
+        else MAX_SITE_REQUESTS
+    )
+    request_limit = int(request_limit)
+    if not 1 <= request_limit <= maximum:
+        raise RuntimeErrorSafe(f"request limit for {site.site_id} must be between 1 and {maximum}")
+    if initial_frontier is None:
+        _repair_saved_frontier(site, site_state)
     # A previous partial/budget result describes that attempt only.
     site_state.pop("partial_reason", None)
-    crawler.begin_site(MAX_SITE_REQUESTS)
+    crawler.begin_site(request_limit)
     downloads: list[dict[str, Any]] = []
     errors: list[str] = []
     successful_requests = 0
@@ -1995,6 +2235,7 @@ def _capture(
     cursor = int(site_state.get("cursor") or 0)
     queue.extend(site_state.pop("retry_queue", []))
     queued_urls = {_queue_identity(row) for row in queue if isinstance(row, dict)}
+    _prioritize_pending_documents(site, queue, cursor)
 
     if site.site_id == "caa" and any(
         str(row.get("kind") or "").startswith("caa_") or row.get("kind") == "json_post"
@@ -2044,7 +2285,9 @@ def _capture(
             continue
         try:
             if crawler.site_attempts >= crawler.site_budget:
-                raise RequestBudgetExceeded("site reached the 30-request ceiling; cursor retained")
+                raise RequestBudgetExceeded(
+                    f"site reached its {crawler.site_budget}-request limit; cursor retained"
+                )
             if item.get("kind") == "document":
                 from ai_actuarial.capacity import ensure_capacity
 
@@ -2107,6 +2350,7 @@ def _capture(
                 item.pop("last_error", None)
                 item.pop("attempts", None)
                 cursor += 1
+                _prioritize_pending_documents(site, queue, cursor)
                 successful_requests += 1
                 _atomic_json(_state_path_for_data(state), state)
                 continue
@@ -2239,7 +2483,9 @@ def _capture(
                 except ET.ParseError as exc:
                     raise RuntimeErrorSafe("sitemap XML did not parse") from exc
                 for loc in locs:
-                    candidate = _canonical_url(urljoin(final_url, loc))
+                    candidate = _canonical_http_link(final_url, loc)
+                    if candidate is None:
+                        continue
                     if (
                         not _allowed_host(candidate, site)
                         or not _allowed_path(candidate, site)
@@ -2247,17 +2493,14 @@ def _capture(
                         or candidate in visited
                     ):
                         continue
-                    is_map = "sitemap" in urlsplit(candidate).path.lower() and not _looks_document(
-                        candidate
-                    )
-                    if is_map or _looks_document(candidate) or _relevant_page(candidate, "", site):
+                    is_document = _looks_site_document(candidate, "", site)
+                    is_map = "sitemap" in urlsplit(candidate).path.lower() and not is_document
+                    if is_map or is_document or _relevant_page(candidate, "", site):
                         queue.append(
                             {
                                 "url": candidate,
                                 "kind": (
-                                    "sitemap"
-                                    if is_map
-                                    else "document" if _looks_document(candidate) else "page"
+                                    "sitemap" if is_map else "document" if is_document else "page"
                                 ),
                                 "depth": 1,
                                 "referrer": final_url,
@@ -2271,7 +2514,9 @@ def _capture(
                     for document in _parse_swiss_embedded_documents(
                         body.decode("utf-8", errors="replace")
                     ):
-                        candidate = _canonical_url(urljoin(final_url, document["url"]))
+                        candidate = _canonical_http_link(final_url, document["url"])
+                        if candidate is None:
+                            continue
                         if (
                             _allowed_host(candidate, site)
                             and candidate not in queued_urls
@@ -2311,7 +2556,9 @@ def _capture(
                             queue.append(query_item)
                             queued_urls.add(identity)
                 for href, label in parser.links:
-                    candidate = _canonical_url(urljoin(final_url, html.unescape(href)))
+                    candidate = _canonical_http_link(final_url, href)
+                    if candidate is None:
+                        continue
                     if (
                         not _allowed_host(candidate, site)
                         or not _allowed_path(candidate, site)
@@ -2324,7 +2571,7 @@ def _capture(
                         for token in ("/private-files/", "/member-only/")
                     ):
                         continue
-                    if _looks_document(candidate, label):
+                    if _looks_site_document(candidate, label, site):
                         if site.site_id == "iaa" and not _site_candidate_allowed(
                             site, candidate, label
                         ):
@@ -2396,6 +2643,7 @@ def _capture(
             # Failed JSON/XML parsing remains eligible for the durable retry queue.
             visited.add(work_key)
             cursor += 1
+            _prioritize_pending_documents(site, queue, cursor)
             site_state["cursor"] = cursor
             site_state["visited"] = sorted(visited)
             _atomic_json(_state_path_for_data(state), state)
@@ -2416,6 +2664,7 @@ def _capture(
                 retry.append(item)
                 site_state["retry_queue"] = retry
             cursor += 1
+            _prioritize_pending_documents(site, queue, cursor)
             site_state["cursor"] = cursor
             site_state["visited"] = sorted(visited)
             _atomic_json(_state_path_for_data(state), state)
@@ -2431,6 +2680,7 @@ def _capture(
         "downloads": downloads,
         "errors": errors,
         "request_count": crawler.site_attempts,
+        "request_limit": crawler.site_budget,
         "successful_requests": successful_requests,
         "budget_exhausted": bool(site_state.get("partial_reason")),
         "frontier_remaining": max(0, len(queue) - cursor),
@@ -2868,6 +3118,10 @@ def _stream_target(
                 "BatchMode=yes",
                 "-o",
                 "ConnectTimeout=20",
+                "-o",
+                "ServerAliveInterval=30",
+                "-o",
+                "ServerAliveCountMax=3",
                 str(target_cfg["host"]),
                 remote,
             ],
@@ -2930,18 +3184,81 @@ def _process_articles(
     article_limit: int = MAX_ENRICHMENTS_PER_SITE_RUN,
     include_url: str | None = None,
 ) -> dict[str, Any]:
-    articles = [
-        row
-        for row in state["articles"].values()
-        if site_id in (row.get("discovery_sites") or []) and row.get("stage") != "complete"
+    site_articles = [
+        row for row in state["articles"].values() if site_id in (row.get("discovery_sites") or [])
     ]
+    site_incomplete_count = sum(row.get("stage") != "complete" for row in site_articles)
     if include_url:
-        articles = [row for row in articles if row.get("url") == include_url]
+        articles = [
+            row
+            for row in site_articles
+            if row.get("url") == include_url and row.get("stage") != "complete"
+        ]
+    else:
+        cursor_key = state.setdefault("article_cursors", {}).get(site_id)
+        if cursor_key:
+            prior_index = next(
+                (
+                    index
+                    for index, row in enumerate(site_articles)
+                    if _article_identity(row) == cursor_key
+                ),
+                None,
+            )
+            if prior_index is not None:
+                # Completed entries remain useful cursor anchors across runs.
+                site_articles = site_articles[prior_index + 1 :] + site_articles[: prior_index + 1]
+        articles = [row for row in site_articles if row.get("stage") != "complete"]
     article_limit = min(MAX_ENRICHMENTS_PER_SITE_RUN, max(1, int(article_limit)))
-    selected_articles = articles[:article_limit]
+    scanned_articles = articles[:MAX_ARTICLE_SCAN_PER_SITE_RUN]
+    if preview:
+        selected_articles = scanned_articles[:article_limit]
+        reuse_articles: list[dict[str, Any]] = []
+        enrichment_articles = selected_articles
+    else:
+        reuse_articles = []
+        enrichment_articles = []
+        for article in scanned_articles:
+            existing = None
+            if article.get("stage") == "hub_verified" and isinstance(
+                article.get("enrichment"), dict
+            ):
+                existing = article["enrichment"]
+            else:
+                try:
+                    existing = content_hub_read_version(
+                        str(article.get("url") or ""),
+                        str(article.get("raw_sha256") or ""),
+                        hub,
+                    )
+                except Exception:
+                    # The normal per-article path records the concrete failure.
+                    existing = None
+            if _valid_existing_enrichment(existing):
+                reuse_articles.append(article)
+            else:
+                enrichment_articles.append(article)
+        # Existing Hub reuse and target-only retries have a separate finite cap.
+        # They cannot consume the model-generation allowance for new enrichment.
+        reuse_articles = reuse_articles[:MAX_CHEAP_ARTICLES_PER_SITE_RUN]
+        enrichment_articles = enrichment_articles[:article_limit]
+        selected_articles = enrichment_articles + reuse_articles
+    selected_identities = {_article_identity(article) for article in selected_articles}
+    # Stop before the first deferred row so it leads the next bounded scan.
+    first_deferred_index = next(
+        (
+            index
+            for index, article in enumerate(scanned_articles)
+            if _article_identity(article) not in selected_identities
+        ),
+        len(scanned_articles),
+    )
+    cursor_anchor = scanned_articles[first_deferred_index - 1] if first_deferred_index else None
     summary = {
         "candidate_count": len(selected_articles),
-        "pending_article_count": max(0, len(articles) - len(selected_articles)),
+        "pending_article_count": max(0, site_incomplete_count - len(selected_articles)),
+        "enrichment_candidate_count": len(enrichment_articles),
+        "reuse_candidate_count": len(reuse_articles),
         "new_versions": 0,
         "duplicates": 0,
         "enriched": 0,
@@ -3160,6 +3477,9 @@ def _process_articles(
         elif article.get("stage") == "hub_verified":
             article["stage"] = "complete"
     _atomic_json(_state_path_for_data(state), state)
+    if not preview and not include_url and cursor_anchor is not None:
+        state.setdefault("article_cursors", {})[site_id] = _article_identity(cursor_anchor)
+        _atomic_json(_state_path_for_data(state), state)
     return summary
 
 
@@ -3167,14 +3487,20 @@ def _receipt_stage(
     status: str,
     *,
     count: int | None = None,
+    pending_count: int | None = None,
     error: str | None = None,
     evidence: list[str] | None = None,
+    request_budget: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     row: dict[str, Any] = {"status": status, "evidence": evidence or []}
     if count is not None:
         row["count"] = count
+    if pending_count is not None:
+        row["pending_count"] = pending_count
     if error:
         row["error"] = error
+    if request_budget is not None:
+        row["request_budget"] = request_budget
     return row
 
 
@@ -3260,6 +3586,11 @@ def _write_receipt(
                     else count if count is not None else old_count
                 ),
             }
+            if "pending_count" not in value and "pending_count" in previous:
+                value["pending_count"] = previous["pending_count"]
+            if stage == "downloaded" and "request_budget" not in value:
+                if "request_budget" in previous:
+                    value["request_budget"] = previous["request_budget"]
         elif stage in flow.ACK_STAGES:
             previous = merged.get(stage, {})
             for name in ("acknowledged", "pending", "failed"):
@@ -3358,6 +3689,7 @@ def _run_site(
     preview: bool = False,
     exact_url: str | None = None,
     article_limit: int = MAX_ENRICHMENTS_PER_SITE_RUN,
+    request_limit: int = MAX_SITE_REQUESTS,
     source_page_url: str | None = None,
 ) -> dict[str, Any]:
     if site_id not in SITES:
@@ -3365,6 +3697,15 @@ def _run_site(
     site = SITES[site_id]
     if site.action == "hold":
         raise RuntimeErrorSafe("held source cannot be executed")
+    request_maximum = (
+        MAX_SWISS_SITE_REQUESTS
+        if site_id == "swiss-association-of-actuaries"
+        else MAX_SITE_REQUESTS
+    )
+    if not 1 <= int(request_limit) <= request_maximum:
+        raise RuntimeErrorSafe(
+            f"--request-limit for {site_id} must be between 1 and {request_maximum}"
+        )
     receipts_dir = Path(
         config.get("receipts_root") or (Path(config["state_root"]) / "receipts")
     ).resolve()
@@ -3422,6 +3763,7 @@ def _run_site(
         Path(config["data_root"]).resolve(),
         capture_state,
         initial_frontier=initial_frontier,
+        request_limit=request_limit,
     )
     process_url = selected_url
     if selected_url and captured["downloads"]:
@@ -3438,18 +3780,26 @@ def _run_site(
         article_limit=article_limit,
         include_url=process_url,
     )
-    source_errors = captured["errors"] + processed["article_errors"]
+    source_errors = captured["errors"]
     downloaded = captured["downloads"]
-    if captured["budget_exhausted"]:
+    budget_pause = {
+        "used": int(captured["request_count"]),
+        "cap": int(captured.get("request_limit") or request_limit),
+        "paused": bool(captured["budget_exhausted"]),
+        "frontier_remaining": int(captured["frontier_remaining"]),
+    }
+    if source_errors:
+        source_error = "; ".join(source_errors[:3])
+        if captured["budget_exhausted"]:
+            source_error += "; request budget reached with discovery cursor retained"
+        source_status = "partial" if downloaded or processed["candidate_count"] else "failed"
+    elif captured["budget_exhausted"]:
         source_error = "site reached its bounded HTTP request budget; discovery cursor was retained"
         source_status = "partial"
     elif captured["request_count"] == 0:
         source_error = "source made no verified HTTP requests"
         source_status = "failed"
-    elif source_errors:
-        source_error = "; ".join(source_errors[:3])
-        source_status = "partial" if downloaded or processed["candidate_count"] else "failed"
-    elif not downloaded and not processed["candidate_count"]:
+    elif not downloaded and not processed["candidate_count"] and not processed["article_errors"]:
         source_error = (
             "bounded source discovery produced no verified article or document candidates"
         )
@@ -3459,11 +3809,15 @@ def _run_site(
         source_status = "succeeded"
     if captured["request_count"]:
         evidence.append(
-            f"HTTP requests={captured['request_count']}; frontier_remaining={captured['frontier_remaining']}; downloaded={len(downloaded)}"
+            f"HTTP requests={captured['request_count']}/{budget_pause['cap']}; frontier_remaining={captured['frontier_remaining']}; downloaded={len(downloaded)}"
         )
     stages = {
         "downloaded": _receipt_stage(
-            source_status, count=len(downloaded), error=source_error, evidence=evidence
+            source_status,
+            count=len(downloaded),
+            error=(source_error if source_errors or not captured["budget_exhausted"] else None),
+            evidence=evidence,
+            request_budget=budget_pause,
         ),
         "new_versions": _receipt_stage(
             "partial" if processed["article_errors"] else "succeeded",
@@ -3471,6 +3825,7 @@ def _run_site(
             error=(
                 "; ".join(processed["article_errors"][:3]) if processed["article_errors"] else None
             ),
+            pending_count=processed.get("pending_article_count", 0),
         ),
         "duplicates": _receipt_stage("succeeded", count=processed["duplicates"]),
         "enriched": _receipt_stage(
@@ -3479,6 +3834,7 @@ def _run_site(
             error=(
                 "; ".join(processed["article_errors"][:3]) if processed["article_errors"] else None
             ),
+            pending_count=processed.get("pending_article_count", 0),
         ),
         "ai_candidates": _receipt_stage(
             "partial" if processed["article_errors"] else "succeeded",
@@ -3502,6 +3858,8 @@ def _run_site(
             "stages": stages,
             "target_candidates": processed["ai_candidates"],
             "http_requests": captured["request_count"],
+            "request_limit": budget_pause["cap"],
+            "pending_article_count": processed.get("pending_article_count", 0),
         }
     return _write_receipt(receipts_dir, date_text, site_id, stages, evidence, source_error)
 
@@ -3969,6 +4327,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="maximum pending articles to enrich/publish in this site run (1-8)",
     )
     site.add_argument(
+        "--request-limit",
+        type=int,
+        default=MAX_SITE_REQUESTS,
+        help=("HTTP request cap for this run (1-30; Switzerland may explicitly use 1-60)"),
+    )
+    site.add_argument(
         "--json", action="store_true", help="emit machine-readable JSON (the default output format)"
     )
     backlog = sub.add_parser(
@@ -4017,6 +4381,15 @@ def main(argv: list[str] | None = None) -> int:
                 raise RuntimeErrorSafe(
                     f"--article-limit must be between 1 and {MAX_ENRICHMENTS_PER_SITE_RUN}"
                 )
+            maximum_requests = (
+                MAX_SWISS_SITE_REQUESTS
+                if args.site == "swiss-association-of-actuaries"
+                else MAX_SITE_REQUESTS
+            )
+            if not 1 <= args.request_limit <= maximum_requests:
+                raise RuntimeErrorSafe(
+                    f"--request-limit for {args.site} must be between 1 and {maximum_requests}"
+                )
             config = _load_config(args.config.resolve())
             _ACTIVE_STATE_PATH = _state_path(config)
             with _exclusive_lock(Path(config["state_root"]).resolve() / "runtime.lock"):
@@ -4031,6 +4404,7 @@ def main(argv: list[str] | None = None) -> int:
                     preview=args.preview,
                     exact_url=args.exact_url,
                     article_limit=args.article_limit,
+                    request_limit=args.request_limit,
                     source_page_url=args.source_page_url,
                 )
                 if not args.preview:
