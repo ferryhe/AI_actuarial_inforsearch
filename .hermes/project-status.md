@@ -1,3 +1,11 @@
+# PR #428 main CI claim-race repair — 2026-10-26
+
+- 项目 `AI_actuarial_inforsearch`；工作树 `reports/pr428-main-ci-worktree`，分支 `fix/pr428-main-ci-single-flight`，基于 `e3ed5c981aa7ab1d7f042998b46bb2ea93111af7`。范围限于 `ai_actuarial/storage.py`、两个周报测试文件和本状态文件；未访问兄弟仓库。
+- 在 task-owned localhost:55435 PostgreSQL 上用事件屏障确定性复现未修改主分支竞争：竞争者读到同指纹 failed/空 token，暂停；另一连接 claim 并 finalize complete；竞争者恢复后旧 UPDATE 仍 claim 成功。原复现证据在 `reports/pr428-main-ci-repair-20261026/repro-untouched-main.json`。
+- 修复在 UPDATE 条件排除已完成的同指纹记录；未 claim 的竞争者在事务后的回读发现该结果已完成时直接返回 complete。失败和过期租约仍可重试，不同指纹仍可重新生成，finalizer 的 claim-token 保护未变。CI 单飞测试改用仅测试配置的 10 秒 timeout、并发前预建探针连接、以及竞争 claim 返回事件；原 NOWAIT 检查与 `generator.calls == 1` 断言保留。
+- 真实 PG 组合运行：`tests/test_issue_267_weekly_explanations.py` 与 `tests/test_postgres_weekly_claim.py` 31/31 PASS，覆盖 CI 失败用例、确定性完成/claim 竞争、初次 claim 排他、过期租约重试、指纹变化和过期 finalizer。精确两项回归 2/2 PASS。Black、isort、Ruff、Pylint errors-only、py_compile、diff check 均 PASS。测试仅使用隔离数据库；未调用生产数据库或服务。
+- 当前候选待新一轮 fresh independent review；尚未 commit/push/创建 PR。隔离 PostgreSQL 容器 `local-runtime-tests-pg-20261025` 保持运行供复审复现。
+
 # 当前运行候选 — 2026-10-26
 
 - 项目 `AI_actuarial_inforsearch`；工作树 `reports/local-automation-worktree`，分支 `feat/local-collection-runtime`；当前候选含 16 个文件，兄弟仓库未访问。

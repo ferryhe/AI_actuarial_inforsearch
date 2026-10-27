@@ -3572,6 +3572,7 @@ class Storage:
                     UPDATE weekly_explanations
                     SET claim_fingerprint = ?, claim_token = ?, claim_expires_at = ?
                     WHERE snapshot_id = ?
+                      AND NOT (status = 'complete' AND input_fingerprint = ?)
                       AND (
                           claim_token = '' OR claim_expires_at = ''
                           OR ai_julianday(claim_expires_at) <= ai_julianday(?)
@@ -3582,12 +3583,22 @@ class Storage:
                         claim_token,
                         claim_expires_at,
                         snapshot_id,
+                        input_fingerprint,
                         now_text,
                     ),
                 )
                 if updated.rowcount == 1:
                     state = "claimed"
         current = self.get_weekly_explanation(snapshot_id=snapshot_id)
+        if (
+            state != "claimed"
+            and current is not None
+            and current.get("status") == "complete"
+            and current.get("input_fingerprint") == input_fingerprint
+        ):
+            state = "complete"
+            claim_token = ""
+            return {"state": state, "claim_token": claim_token, "explanation": current}
         return {
             "state": state,
             "claim_token": claim_token if state == "claimed" else "",

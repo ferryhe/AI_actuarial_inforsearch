@@ -115,3 +115,91 @@ def test_first_weekly_explanation_claim_is_atomic_across_connections(
         storage.close()
         contender.close()
         _drop_schema(base_url, schema)
+
+
+def test_same_fingerprint_claim_cannot_reclaim_after_complete_finalization(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    base_url = _test_url()
+    schema, database_url = _new_schema_url(base_url, prefix="test_weekly_claim_complete_race")
+    seed = Storage(database_url)
+    contender = Storage(database_url)
+    owner = Storage(database_url)
+    snapshot_id = "weekly-complete-race"
+    seed.publish_weekly_snapshot(
+        {
+            "id": snapshot_id,
+            "period_start": "2026-10-01",
+            "period_end": "2026-10-07",
+            "file_count": 0,
+        },
+        members=[],
+    )
+    attempt = {
+        "snapshot_id": snapshot_id,
+        "input_fingerprint": "fingerprint-v1",
+        "provider": "fixture",
+        "model": "fixture",
+        "prompt_version": "weekly-v1",
+    }
+    seed_claim = seed.claim_weekly_explanation(attempt, lease_ttl_seconds=60)
+    assert seed_claim["state"] == "claimed"
+    failed = seed.finalize_weekly_explanation(
+        {**attempt, "status": "failed", "error": "seed failure"},
+        claim_token=seed_claim["claim_token"],
+    )
+    assert failed["finalized"] is True
+
+    initial_read_complete = threading.Event()
+    resume_contender = threading.Event()
+    first_read = [True]
+    original_get = contender.get_weekly_explanation
+
+    def pause_after_read(*, snapshot_id: str):
+        current = original_get(snapshot_id=snapshot_id)
+        if first_read[0]:
+            first_read[0] = False
+            assert current is not None
+            assert current["status"] == "failed"
+            assert current["claim_token"] == ""
+            initial_read_complete.set()
+            assert resume_contender.wait(timeout=10)
+        return current
+
+    monkeypatch.setattr(contender, "get_weekly_explanation", pause_after_read)
+    executor = ThreadPoolExecutor(max_workers=1)
+    try:
+        contender_future = executor.submit(
+            contender.claim_weekly_explanation, attempt, lease_ttl_seconds=60
+        )
+        assert initial_read_complete.wait(timeout=10)
+        owner_claim = owner.claim_weekly_explanation(attempt, lease_ttl_seconds=60)
+        assert owner_claim["state"] == "claimed"
+        owner_finalized = owner.finalize_weekly_explanation(
+            {
+                **attempt,
+                "explanation_zh": "完成",
+                "explanation_en": "Complete",
+                "status": "complete",
+                "error": "",
+            },
+            claim_token=owner_claim["claim_token"],
+        )
+        assert owner_finalized["finalized"] is True
+        resume_contender.set()
+        contender_result = contender_future.result(timeout=10)
+        persisted = owner.get_weekly_explanation(snapshot_id=snapshot_id)
+    finally:
+        resume_contender.set()
+        executor.shutdown(wait=True)
+        seed.close()
+        contender.close()
+        owner.close()
+        _drop_schema(base_url, schema)
+
+    assert contender_result["state"] == "complete"
+    assert contender_result["claim_token"] == ""
+    assert contender_result["explanation"]["status"] == "complete"
+    assert persisted is not None
+    assert persisted["status"] == "complete"
+    assert persisted["claim_token"] == ""
