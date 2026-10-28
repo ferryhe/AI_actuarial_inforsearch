@@ -66,7 +66,97 @@ python -m ai_actuarial.local_collection_runtime reconcile-targets --limit 10 --j
 python .agents/skills/local-actuarial-flow/scripts/local_flow.py report --date 2026-10-25 --receipts reports/local-automation-state/receipts --json
 ```
 
-每日计划为六项 baseline、最多两个不同失败重试；hold 保留位置但不执行。每次目标写入按 URL/Hub version/content fingerprint 单独确认；中国 AI 与 all 两个现有 KB 使用各自已配置 profile，海外只更新 AI KB。失败的文章 acknowledgement、chunk/embed/binding 与 Ready 阶段可单独续跑，目标之间不互相代替。任何 AI 类别都可进入 AI serving bucket；完整顺序类别和来源 primary category 留在 bilingual payload 的 Hub evidence 中。目标容量使用原生 80% gate。旧全量替换脚本、清空/重建旧目录和向量复制不属于本运行入口。
+每日计划为六项 baseline、最多两个不同失败重试；hold 保留位置但不执行。每次目标写入按 URL/Hub version/content fingerprint 单独确认；中国 AI 与 all 两个现有 KB 使用各自已配置 profile，海外只更新 AI KB。失败的文章 acknowledgement、chunk/embed/binding 与 Ready 阶段可单独续跑，目标之间不互相代替。只有有序 `categories[0].key == "AI"` 的 Hub 版本能进入 AI serving bucket；第二至第四类及其证据继续原样保存在 Hub enrichment 中。实时、缓存、历史 backlog、pending 重试和 target worker 都复核同一首类规则。目标容量使用原生 80% gate。旧全量替换脚本、清空/重建旧目录和向量复制不属于本运行入口。
+
+### 发布日期投影与目标清理
+
+目标 `files.published_time` 只从已验证的 `date_facts.publication_date.value` 投影。原始 ISO 精度保持为 `YYYY`、`YYYY-MM` 或 `YYYY-MM-DD`；缺失/unknown 对新记录保持 `null`，不得用 revision、document-version、事件日期、HTTP Last-Modified 或抓取日期补值。常规发布对日期或 enrichment-only 更新会重建完整索引与 Ready；原件 bytes、Markdown 和 KB membership 未变化时不重跑 chunk/embed。已有语言包、summary、keywords 和 `hub_binding` 等额外字段会保留；旧目标若已有发布日期而 Hub 发布日期未知，则保留目标值并报告为 `legacy_preserved_unverified`。
+
+只对已存在的保留文件做批量类别/日期回填时，使用下面的独立 metadata-only 入口。它逐条核对目标 URL/raw SHA、目标现存 Markdown 与 Hub Markdown binding、AI 首类及有序分类/日期证据、目标既有 `published_time` 和完整 KB membership。它不会读取/传输原件，不创建或重分类文件，也不执行 chunk、embedding、索引或 Ready。已变更的 KB 会写入可恢复的 pending index-refresh ledger；随后同一目标的 `cleanup-targets --apply` 会合并这批 KB 和清理涉及的 KB，在全部回填及清理完成后每个 KB 刷新一次 index/Ready。每份 manifest 最多 100 条，按目标与批次拆开，dry-run 默认开启。
+
+```powershell
+python -m ai_actuarial.local_collection_runtime backfill-target-metadata --target overseas --manifest reports/local-automation-state/overseas-metadata-manifest-1.json --config reports/local-automation-state/config.local.json --json
+python -m ai_actuarial.local_collection_runtime backfill-target-metadata --target overseas --manifest reports/local-automation-state/overseas-metadata-manifest-1.json --config reports/local-automation-state/config.local.json --apply --json
+```
+
+manifest 结构示例：
+
+```json
+{
+  "schema_version": 1,
+  "records": [
+    {
+      "url": "https://example.org/actuarial-ai-paper.pdf",
+      "raw_sha256": "<64 lowercase hex characters>",
+      "content_version_id": 123,
+      "markdown_text_variant_id": 456,
+      "markdown_sha256": "<64 lowercase hex characters>",
+      "hub_markdown_sha256": "<64 lowercase hex characters>",
+      "hub_markdown_sha256_kind": "raw_utf8",
+      "source_primary_category": "AI",
+      "categories": [
+        {"key": "AI", "evidence": ["artificial intelligence"]},
+        {"key": "Pricing", "evidence": ["insurance pricing"]}
+      ],
+      "date_facts": {
+        "publication_date": {
+          "semantic": "publication",
+          "value": "2024-12",
+          "precision": "month",
+          "evidence": "Published December 2024",
+          "location": "page 1"
+        },
+        "revision_date": null,
+        "document_version_date": null
+      },
+      "date_review_status": "complete",
+      "date_review_reason": null,
+      "date_review_unresolved": [],
+      "source_signature": "<64 lowercase hex characters>",
+      "result_sha256": "<64 lowercase hex characters>",
+      "expected_published_time": "2023-06"
+    }
+  ]
+}
+```
+
+manifest 每条记录必须包含 `url`、`raw_sha256`、正整数 `content_version_id`/`markdown_text_variant_id`、`markdown_sha256`、`hub_markdown_sha256`/`hub_markdown_sha256_kind`、`source_primary_category: "AI"`、1–4 个有序 `categories`、三字段 `date_facts`、日期审核字段及 `source_signature`/`result_sha256`。正常注释的每类需有 1–3 条 exact quote evidence；仅对已存 Hub 注释中首类证据为空的 legacy 记录，可原样保留空数组。Hub 日期字段的语义映射为 `publication_date -> publication`、`revision_date -> revision`、`document_version_date -> document_version`，保留该语义值；`files.published_time` 只读取 `date_facts.publication_date.value`。目标 worker 会对每条回填或新发布记录重新计算 `result_sha256`；对当前 Hub writer 生成的新注释，也会按 content version、Markdown variant/hash 与 primary category 重新计算 `source_signature`。历史 v2 注释的签名使用旧输入，精简 manifest 不含重算它所需的字段，因此本机回填命令会在发往目标前按 exact URL/raw SHA 重新读取 Hub，并逐项比对版本、Markdown、类别、日期、签名和结果摘要；目标保留该历史签名原值，不声称在目标端重算了它。不得从 Markdown 猜引文或填入占位引文。`expected_published_time` 必须明确包含目标读回值（可为 `null`），防止 audit 后目标被并发修改；若重放时其值已等于同一份已验证的发布日期，命令接受幂等重试。回填只更新 native `hub_enrichment` 及已验证的 `files.published_time`，保留原来的 zh/en 包及所有 extra fields。已知日期按其 year/month/day 精度投影；未知日期保留已存在的旧值并标记 `legacy_preserved_unverified`，没有旧值则继续为 `null`。
+
+`published_time` 是 native 文件字段；是否可按日期排序还取决于对应列表/API 的排序字段 allowlist。不要仅凭数据库列存在就承诺 UI 或 API 支持；先检查当前 endpoint allowlist。当前本机流程不改 UI/API 排序。
+
+仅当父级清单逐条绑定了 exact URL、raw SHA、正整数 Hub `content_version_id` 和有序首类类别时，才能运行窄范围目标清理。中国和海外需使用各自从只读 inventory 生成的 manifest，不要把一端 URL 集合直接套到另一端。Hub reader 原样保留的历史首类证据可为空；其他类别仍需 1–3 条证据，不生成替代 quote。manifest schema 为：
+
+```json
+{
+  "schema_version": 1,
+  "records": [
+    {
+      "url": "https://example.org/research.pdf",
+      "raw_sha256": "<64 lowercase hex characters>",
+      "hub_evidence": {
+        "content_version_id": 123,
+        "url": "https://example.org/research.pdf",
+        "raw_sha256": "<same SHA-256>",
+        "primary_category": "Pricing",
+        "categories": [
+          {"key": "Pricing", "evidence": []},
+          {"key": "AI", "evidence": ["exact source quote"]}
+        ]
+      }
+    }
+  ]
+}
+```
+
+空数组只代表 Hub 中已持久化的 legacy 首类证据；manifest 仍须由精确 URL/raw-SHA/version 读回生成，并核对 ordered primary。不得仅凭空 evidence 直接扩大删除范围。
+
+先使用默认 dry-run 核对每条目标 URL/SHA、当前 catalog 状态、KB membership、容量和已有 pending URL：
+
+```powershell
+python -m ai_actuarial.local_collection_runtime cleanup-targets --target china --manifest reports/local-automation-state/china-cleanup-manifest.json --config reports/local-automation-state/config.local.json --json
+```
+
+只有该只读报告逐条匹配后才加 `--apply`。命令会通过 native manager 从中国 `ai`/`all` 或海外 `ai` membership 移除精确 URL，用 `Storage.mark_file_deleted` 隐藏目标 catalog 记录，并用空 chunk URL 列表重建受影响的 native index/Ready。它不删除 Hub/CAS 原件、源历史、用户、聊天或模型。如果目标 URL 已不存在或已 retired，重放是幂等的；若 index/Ready 失败，命令会明确报告已完成的清理、pending KB 与错误，之后用相同 manifest 重试。若容量预检已达到 80% gate，命令在目标文件或 membership 修改前停止；运行中的 Ready 若之后遇到容量错误，也不会冒报成功。
 
 Chunk/embed 恢复会针对当前 URL 幂等重跑原生 chunk generation，并把该任务返回的确切 `chunk_set_id` 列表与当前 KB `embedding_identity_key` 传给 embedding generation；不会按 URL/profile 在历史 ready sets 中猜选。该阶段失败时 pending URL 保留，重试完成 chunk、embedding 和 binding 后才继续完整 KB index 与 Ready。
 

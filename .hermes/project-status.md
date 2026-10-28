@@ -1,3 +1,11 @@
+# 当前候选 — AI 首类发布、日期回填与 legacy 证据修复 — 2026-10-28
+
+- 项目 `AI_actuarial_inforsearch`；工作树 `C:/Users/ferry/.codex/worktrees/ai-primary-publication/AI_actuarial_inforsearch`，分支 `fix/ai-primary-publication-dates`。仅本仓库可写；未读写兄弟仓库或生产配置。
+- Hub、缓存、历史列表/count、目标 payload 和 pending retry 均按 `categories[0].key == "AI"` 决定发布；Hub reader 原样保留已存 legacy 首类空 evidence，但只有 exact Hub annotation digest 绑定的已存读/回填路径接受，新的 Hub enrichment 写入仍要求每类 1–3 条 exact quote。源日期按 `publication_date.value` 原精度写入 `files.published_time`；Hub 日期语义保留 `publication`/`revision`/`document_version`，未知日期不回退。
+- 窄 cleanup 与 metadata backfill 默认 dry-run。目标 worker 对所有输入重算 `result_sha256`，并对当前 Hub writer 生成的新注释重算 source signature。历史 v2 signature 不在目标端重算；metadata backfill 在发送前按 exact URL/raw SHA 重新读取 Hub，并比较完整版本、Markdown、类别、日期、签名和摘要字段，匹配后保留历史签名原值。
+- 10 个真实 manifest 在本地 normalizer 检查通过（China/overseas cleanup 各 21/15 条，metadata 各 100/100/100/24 条）。三个聚焦测试文件使用隔离 PostgreSQL 55436 联跑 149/149 PASS；Black、isort、Ruff、Pylint errors-only、py_compile、两个维护 CLI `--help` 和 `git diff --check` PASS。
+- 最终允许的第 3 次 review 后，本轮按 Judge 决定修复；这是 review limit 下的最终已验证修复，没有第 4 次 review，也没有记录 reviewer PASS。此 worker 未运行生产 CLI、未写生产目录/数据库，未提交或推送。控制器负责再次做 10 个只读 dry-run、按批准范围执行目标维护，并处理 PR/当前 HEAD 检查；overseas apply 仍等待容量相关批准。
+
 # 当前候选 — SSH 静默期连接存活 — 2026-10-27
 
 - 项目 `AI_actuarial_inforsearch`；工作树 `C:/Users/ferry/.codex/worktrees/local-source-budget-fixes/AI_actuarial_inforsearch`，分支 `fix/local-source-discovery-budgets`。仅此仓库；修改 `_stream_target` 单次 SSH 参数、命令契约回归和 runtime 运行说明。
@@ -5915,3 +5923,12 @@ Current branch head 4f030be has uncommitted small catalog/Storage variable defau
 
 - Fresh review verdict: CHANGES_REQUESTED. Three reproducible P2 issues are recorded in `reports/local-runtime-20261025/review-2.json`: parser retry items are skipped after being marked visited; CAA/Australia bootstrap errors can leave no v2 receipt; and exact-URL same-host redirects can report success without Hub processing.
 - Verification: 36 focused Hub/runtime/target tests and 19 existing offline helper tests pass; `git diff --check origin/main` passes. No production Hub/target writes or real source previews were performed. Same implementation worker should repair the three findings before fresh review.
+
+### AI-first publication and article-date projection — 2026-10-28
+
+- Scoped to `fix/ai-primary-publication-dates` in this repository; sibling repositories remain off-limits. Hub and target eligibility now require `categories[0].key == "AI"` and matching source primary metadata. Secondary categories and exact evidence remain in ordered Hub enrichment. Historical listing/counts, cache preparation, stale local flags, queued retries, and target-payload validation share the same rule.
+- Added exact, one-target `cleanup-targets` audit/apply support for non-AI-first records. It verifies URL/raw SHA/Hub evidence, removes only native target memberships/catalog visibility, retains source/CAS data, clears pending chunk URLs, and persists index/Ready retries. A capacity-blocked target stops before retirement.
+- Added `backfill-target-metadata` for existing records only. It verifies exact target URL/SHA/Markdown and Hub bindings, categories, dates, and memberships; merges only `hub_enrichment`, projects verified publication dates at source precision, preserves unknown legacy target dates and bilingual packages, and never transfers source bytes or invokes chunk/embed/Ready. It persists pending KB refresh state for the later cleanup pass to rebuild once per KB.
+- Updated the skill's main instructions plus local-actuarial-flow runtime/workflow references with AI-first semantics, date projection rules, and both maintenance manifest/CLI contracts. UI/API sorting was not changed.
+- Validation: all three scoped files (`test_local_collection_target_worker.py`, `test_local_collection_runtime.py`, and `test_content_hub.py`) passed against an isolated PostgreSQL instance: `141 passed`. Python compilation, Black, isort, Ruff, Pylint errors-only, CLI `--help`, and `git diff --check` passed. The only warnings are three existing SWIG deprecations from the embedding-selector test.
+- No production Hub/catalog write, commit, push, PR, or deployment was performed by this worker. Parent owns fresh review and the approved target maintenance run.

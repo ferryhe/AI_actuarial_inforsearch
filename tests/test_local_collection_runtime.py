@@ -1968,6 +1968,235 @@ def test_cli_help_and_plan_json_contract(tmp_path: Path, monkeypatch, capsys) ->
     assert len(output["items"]) == output["baseline_size"]
 
 
+def test_cleanup_cli_reads_manifest_and_defaults_to_dry_run(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    manifest_path = tmp_path / "cleanup-manifest.json"
+    manifest = {
+        "schema_version": 1,
+        "records": [
+            {
+                "url": "https://example.test/non-ai-first.pdf",
+                "raw_sha256": "a" * 64,
+                "hub_evidence": {
+                    "content_version_id": 17,
+                    "url": "https://example.test/non-ai-first.pdf",
+                    "raw_sha256": "a" * 64,
+                    "primary_category": "Pricing",
+                    "categories": [
+                        {"key": "Pricing", "evidence": ["Pricing models"]},
+                        {"key": "AI", "evidence": ["AI methods"]},
+                    ],
+                },
+            }
+        ],
+    }
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    monkeypatch.setattr(runtime, "_load_config", lambda _path: {"test": True})
+    calls: list[tuple[str, list[dict[str, Any]], bool]] = []
+
+    def cleanup(_config, target, records, *, dry_run):
+        calls.append((target, records, dry_run))
+        return {"schema_version": 1, "target": target, "dry_run": dry_run}
+
+    monkeypatch.setattr(runtime, "_stream_target_cleanup", cleanup)
+    assert (
+        runtime.main(
+            [
+                "cleanup-targets",
+                "--manifest",
+                str(manifest_path),
+                "--target",
+                "china",
+                "--config",
+                str(tmp_path / "config.json"),
+                "--json",
+            ]
+        )
+        == 0
+    )
+    assert json.loads(capsys.readouterr().out)["dry_run"] is True
+    assert calls[-1] == ("china", manifest["records"], True)
+
+    assert (
+        runtime.main(
+            [
+                "cleanup-targets",
+                "--manifest",
+                str(manifest_path),
+                "--target",
+                "china",
+                "--config",
+                str(tmp_path / "config.json"),
+                "--apply",
+                "--json",
+            ]
+        )
+        == 0
+    )
+    assert json.loads(capsys.readouterr().out)["dry_run"] is False
+    assert calls[-1] == ("china", manifest["records"], False)
+
+
+def test_metadata_backfill_cli_forwards_exact_manifest_in_dry_run_and_apply(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    manifest_path = tmp_path / "metadata-manifest.json"
+    records = [
+        {
+            "url": "https://example.test/existing-ai.pdf",
+            "raw_sha256": "a" * 64,
+            "content_version_id": 17,
+            "markdown_text_variant_id": 117,
+            "expected_published_time": "2024-12",
+        }
+    ]
+    manifest_path.write_text(
+        json.dumps({"schema_version": 1, "records": records}), encoding="utf-8"
+    )
+    monkeypatch.setattr(runtime, "_load_config", lambda _path: {"test": True})
+    calls: list[tuple[str, list[dict[str, Any]], bool]] = []
+
+    def backfill(_config, target, manifest_records, *, dry_run):
+        calls.append((target, manifest_records, dry_run))
+        return {"schema_version": 1, "target": target, "dry_run": dry_run}
+
+    monkeypatch.setattr(runtime, "_stream_target_metadata_backfill", backfill)
+    assert (
+        runtime.main(
+            [
+                "backfill-target-metadata",
+                "--manifest",
+                str(manifest_path),
+                "--target",
+                "overseas",
+                "--config",
+                str(tmp_path / "config.json"),
+                "--json",
+            ]
+        )
+        == 0
+    )
+    assert json.loads(capsys.readouterr().out)["dry_run"] is True
+    assert calls[-1] == ("overseas", records, True)
+
+    assert (
+        runtime.main(
+            [
+                "backfill-target-metadata",
+                "--manifest",
+                str(manifest_path),
+                "--target",
+                "overseas",
+                "--config",
+                str(tmp_path / "config.json"),
+                "--apply",
+                "--json",
+            ]
+        )
+        == 0
+    )
+    assert json.loads(capsys.readouterr().out)["dry_run"] is False
+    assert calls[-1] == ("overseas", records, False)
+
+
+def test_metadata_backfill_preserves_historical_hub_signature_and_rejects_stale_manifest(
+    monkeypatch,
+) -> None:
+    url = "https://example.test/historical-ai.pdf"
+    raw_sha = hashlib.sha256(b"historical source bytes").hexdigest()
+    markdown_sha = hashlib.sha256(b"AI actuarial analysis").hexdigest()
+    annotation = {
+        "categories": [
+            {"key": "AI", "evidence": []},
+            {"key": "Pricing", "evidence": ["actuarial analysis"]},
+        ],
+        "source_primary_category": "AI",
+        "date_facts": {
+            "publication_date": None,
+            "revision_date": None,
+            "document_version_date": None,
+        },
+        "date_review_status": "complete",
+        "date_review_reason": None,
+        "date_review_unresolved": [],
+        "source_signature": "f" * 64,
+    }
+    digest_fields = {
+        key: annotation.get(key)
+        for key in (
+            "categories",
+            "date_facts",
+            "date_review_status",
+            "date_review_reason",
+            "date_review_unresolved",
+        )
+    }
+    annotation["result_sha256"] = hashlib.sha256(
+        json.dumps(digest_fields, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode(
+            "utf-8"
+        )
+    ).hexdigest()
+    record = {
+        "url": url,
+        "raw_sha256": raw_sha,
+        "content_version_id": 17,
+        "markdown_text_variant_id": 117,
+        "markdown_sha256": markdown_sha,
+        "hub_markdown_sha256": markdown_sha,
+        "hub_markdown_sha256_kind": "raw_utf8",
+        "source_primary_category": annotation["source_primary_category"],
+        "categories": annotation["categories"],
+        "date_facts": annotation["date_facts"],
+        "date_review_status": annotation["date_review_status"],
+        "date_review_reason": annotation["date_review_reason"],
+        "date_review_unresolved": annotation["date_review_unresolved"],
+        "source_signature": annotation["source_signature"],
+        "result_sha256": annotation["result_sha256"],
+        "expected_published_time": None,
+    }
+    current = {
+        "url": url,
+        "raw_sha256": raw_sha,
+        "content_version_id": 17,
+        "markdown_text_variant_id": 117,
+        "markdown_sha256": markdown_sha,
+        "hub_markdown_sha256": markdown_sha,
+        "hub_markdown_sha256_kind": "raw_utf8",
+        "annotation": annotation,
+        "excluded_reason": None,
+    }
+    sent_payloads: list[dict[str, Any]] = []
+    monkeypatch.setattr(runtime, "_connection_url", lambda _path: "test-hub")
+    monkeypatch.setattr(
+        runtime,
+        "content_hub_read_version",
+        lambda read_url, read_sha, hub: (
+            current if (read_url, read_sha, hub) == (url, raw_sha, "test-hub") else None
+        ),
+    )
+    monkeypatch.setattr(
+        runtime,
+        "_invoke_target_worker",
+        lambda _config, _target, payload: sent_payloads.append(payload)
+        or {"schema_version": 1, "target": "china", "dry_run": True},
+    )
+    config = {"hub_connection_file": "hub.json"}
+
+    runtime._stream_target_metadata_backfill(config, "china", [record], dry_run=True)
+    assert sent_payloads[0]["records"][0]["source_signature"] == "f" * 64
+
+    stale_signature = {**record, "source_signature": "0" * 64}
+    with pytest.raises(runtime.RuntimeErrorSafe, match="fresh exact Hub read"):
+        runtime._stream_target_metadata_backfill(config, "china", [stale_signature], dry_run=True)
+    assert len(sent_payloads) == 1
+
+    stale_binding = {**record, "markdown_text_variant_id": 118}
+    with pytest.raises(runtime.RuntimeErrorSafe, match="fresh exact Hub read"):
+        runtime._stream_target_metadata_backfill(config, "china", [stale_binding], dry_run=True)
+    assert len(sent_payloads) == 1
+
+
 @pytest.mark.parametrize(
     ("stage_status", "expected_code"), [("failed", 2), ("partial", 3), ("succeeded", 0)]
 )
@@ -3544,3 +3773,320 @@ def test_document_discovered_from_page_is_next_and_restart_skips_visited_work(
     assert resumed_crawler.calls == navigation_urls
     assert resumed["request_count"] == 2
     assert set(crawler.calls).isdisjoint(resumed_crawler.calls)
+
+
+def test_cached_hub_metadata_uses_primary_category_not_old_ai_candidate_flag(monkeypatch) -> None:
+    url = "https://example.test/pricing-secondary-ai.pdf"
+    raw_sha = "a" * 64
+    markdown = "Pricing research uses AI methods."
+    existing = {
+        "content_version_id": 51,
+        "url": url,
+        "raw_sha256": raw_sha,
+        "markdown_text_variant_id": 61,
+        "markdown_sha256": hashlib.sha256(markdown.encode()).hexdigest(),
+        "hub_markdown_sha256": hashlib.sha256(markdown.encode()).hexdigest(),
+        "hub_markdown_sha256_kind": "raw_utf8",
+        "markdown": markdown,
+        "bilingual_metadata": {
+            language: {
+                "title": "Pricing and AI",
+                "summary": "Pricing research uses AI methods.",
+                "category": "Pricing",
+                "keywords": ["pricing", "AI"],
+            }
+            for language in ("zh", "en")
+        },
+        "annotation": {
+            "categories": [
+                {"key": "Pricing", "evidence": ["Pricing research"]},
+                {"key": "AI", "evidence": ["AI methods"]},
+            ],
+            "source_primary_category": "Pricing",
+            "date_facts": {},
+            "date_review_status": "complete",
+            "date_review_reason": None,
+            "date_review_unresolved": [],
+            "source_signature": "b" * 64,
+            "result_sha256": "c" * 64,
+        },
+    }
+    monkeypatch.setattr(runtime, "content_hub_read_version", lambda *_args: existing)
+    monkeypatch.setattr(runtime, "_valid_existing_enrichment", lambda _value: True)
+    article = {"url": url, "raw_sha256": raw_sha, "ai_candidate": True}
+
+    prepared, _new, _enriched = runtime._prepare_hub_article(
+        article, {}, {"data_root": "."}, "unused-hub", False
+    )
+
+    assert prepared["categories"] == existing["annotation"]["categories"]
+    assert prepared["source_primary_category"] == "Pricing"
+    assert prepared["ai_candidate"] is False
+
+
+def test_cached_hub_legacy_empty_primary_evidence_stays_bound_and_publishable(monkeypatch) -> None:
+    url = "https://example.test/legacy-empty-ai-evidence.pdf"
+    raw_sha = hashlib.sha256(b"legacy source bytes").hexdigest()
+    markdown = "Pricing research applies AI methods."
+    categories = [
+        {"key": "AI", "evidence": []},
+        {"key": "Pricing", "evidence": ["Pricing research"]},
+    ]
+    date_facts = {
+        "publication_date": None,
+        "revision_date": None,
+        "document_version_date": None,
+    }
+    annotation = {
+        "categories": categories,
+        "date_facts": date_facts,
+        "date_review_status": "complete",
+        "date_review_reason": None,
+        "date_review_unresolved": [],
+    }
+    result_sha256 = hashlib.sha256(
+        json.dumps(annotation, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    existing = {
+        "content_version_id": 81,
+        "url": url,
+        "raw_sha256": raw_sha,
+        "markdown_text_variant_id": 91,
+        "markdown_sha256": hashlib.sha256(markdown.encode()).hexdigest(),
+        "hub_markdown_sha256": hashlib.sha256(markdown.encode()).hexdigest(),
+        "hub_markdown_sha256_kind": "raw_utf8",
+        "markdown": markdown,
+        "bilingual_metadata": {
+            language: {
+                "title": "Pricing research",
+                "summary": "Pricing research applies AI methods.",
+                "category": "AI",
+                "keywords": ["pricing", "AI"],
+            }
+            for language in ("zh", "en")
+        },
+        "annotation": {
+            **annotation,
+            "source_primary_category": "AI",
+            "source_signature": "a" * 64,
+            "result_sha256": result_sha256,
+        },
+    }
+    monkeypatch.setattr(runtime, "content_hub_read_version", lambda *_args: existing)
+
+    prepared, new_version, newly_enriched = runtime._prepare_hub_article(
+        {"url": url, "raw_sha256": raw_sha, "ai_candidate": False},
+        {},
+        {"data_root": "."},
+        "unused-hub",
+        False,
+    )
+
+    assert not new_version and not newly_enriched
+    assert prepared["categories"] == categories
+    assert prepared["ai_candidate"] is True
+    assert prepared["legacy_hub_annotation"] is True
+
+
+def test_cached_hub_category_does_not_rewrite_conflicting_source_primary(monkeypatch) -> None:
+    markdown = "AI research methods."
+    existing = {
+        "content_version_id": 52,
+        "url": "https://example.test/conflicting-primary.pdf",
+        "raw_sha256": "b" * 64,
+        "markdown_text_variant_id": 62,
+        "markdown_sha256": hashlib.sha256(markdown.encode()).hexdigest(),
+        "hub_markdown_sha256": hashlib.sha256(markdown.encode()).hexdigest(),
+        "hub_markdown_sha256_kind": "raw_utf8",
+        "markdown": markdown,
+        "bilingual_metadata": {
+            language: {
+                "title": "AI research",
+                "summary": "AI research methods.",
+                "category": "AI",
+                "keywords": ["AI"],
+            }
+            for language in ("zh", "en")
+        },
+        "annotation": {
+            "categories": [{"key": "AI", "evidence": ["AI research"]}],
+            "source_primary_category": "Pricing",
+            "date_facts": {},
+            "date_review_status": "complete",
+            "date_review_reason": None,
+            "date_review_unresolved": [],
+            "source_signature": "c" * 64,
+            "result_sha256": "d" * 64,
+        },
+    }
+    monkeypatch.setattr(runtime, "content_hub_read_version", lambda *_args: existing)
+    monkeypatch.setattr(runtime, "_valid_existing_enrichment", lambda _value: True)
+
+    prepared, _new, _enriched = runtime._prepare_hub_article(
+        {"url": existing["url"], "raw_sha256": existing["raw_sha256"]},
+        {},
+        {"data_root": "."},
+        "unused-hub",
+        False,
+    )
+
+    assert prepared["categories"][0]["key"] == "AI"
+    assert prepared["source_primary_category"] == "Pricing"
+    assert prepared["ai_candidate"] is False
+
+
+def test_pending_historic_any_ai_retry_is_rechecked_and_never_streamed(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(runtime, "_ACTIVE_STATE_PATH", tmp_path / "state.json")
+    url = "https://example.test/pending-secondary-ai.pdf"
+    raw_sha = hashlib.sha256(b"pending source bytes").hexdigest()
+    old_pending = {
+        "url": url,
+        "raw_sha256": raw_sha,
+        "content_version_id": 72,
+        "markdown_text_variant_id": 82,
+        "categories": [
+            {"key": "Pricing", "evidence": ["Pricing research"]},
+            {"key": "AI", "evidence": ["AI methods"]},
+        ],
+        "source_primary_category": "Pricing",
+        "bilingual_metadata": {
+            language: {
+                "title": "Pricing and AI",
+                "summary": "Pricing research uses AI methods.",
+                "category": "Pricing",
+                "keywords": ["pricing", "AI"],
+            }
+            for language in ("zh", "en")
+        },
+    }
+    current = {
+        **old_pending,
+        "excluded_reason": None,
+        "markdown": "Pricing research uses AI methods.",
+        "markdown_sha256": "d" * 64,
+        "hub_markdown_sha256": "d" * 64,
+        "hub_markdown_sha256_kind": "raw_utf8",
+        "blob_available": True,
+        "annotation": {
+            "categories": old_pending["categories"],
+            "source_primary_category": "Pricing",
+            "date_facts": {},
+            "date_review_status": "complete",
+            "date_review_reason": None,
+            "date_review_unresolved": [],
+            "source_signature": "e" * 64,
+            "result_sha256": "f" * 64,
+        },
+    }
+    monkeypatch.setattr(runtime, "content_hub_read_version", lambda *_args: current)
+    monkeypatch.setattr(
+        runtime,
+        "content_hub_list_ai_versions",
+        lambda **_kwargs: {
+            "versions": [],
+            "has_more": False,
+            "eligible_ai_count": 0,
+            "missing_blob_ai_count": 0,
+            "next_after_version_id": 0,
+        },
+    )
+    monkeypatch.setattr(
+        runtime,
+        "_stream_target",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("must not stream")),
+    )
+    state = {
+        "backlog_cursor": 0,
+        "pending_target_reconciliation": {"72": old_pending},
+        "target_acks": {
+            runtime._target_ack_key(target, old_pending): {"status": "acknowledged"}
+            for target in ("china", "overseas")
+        },
+    }
+
+    result = runtime.reconcile_backlog({"data_root": str(tmp_path)}, state, "unused-hub", limit=10)
+
+    assert result["processed"] == 0
+    assert state["pending_target_reconciliation"] == {}
+    assert state["target_acks"] == {}
+    assert state["ineligible_target_reconciliation"]["72"]["reason"].endswith("'Pricing'")
+
+
+def test_pending_ai_first_legacy_empty_primary_evidence_is_rebound_from_hub(monkeypatch) -> None:
+    url = "https://example.test/pending-empty-ai-evidence.pdf"
+    raw_sha = hashlib.sha256(b"pending legacy source").hexdigest()
+    markdown = "Pricing analysis uses AI methods."
+    categories = [
+        {"key": "AI", "evidence": []},
+        {"key": "Pricing", "evidence": ["Pricing analysis"]},
+    ]
+    date_facts = {
+        "publication_date": None,
+        "revision_date": None,
+        "document_version_date": None,
+    }
+    annotation_digest = hashlib.sha256(
+        json.dumps(
+            {
+                "categories": categories,
+                "date_facts": date_facts,
+                "date_review_status": "complete",
+                "date_review_reason": None,
+                "date_review_unresolved": [],
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+    current = {
+        "content_version_id": 91,
+        "url": url,
+        "raw_sha256": raw_sha,
+        "markdown_text_variant_id": 101,
+        "markdown_sha256": hashlib.sha256(markdown.encode()).hexdigest(),
+        "hub_markdown_sha256": hashlib.sha256(markdown.encode()).hexdigest(),
+        "hub_markdown_sha256_kind": "raw_utf8",
+        "markdown": markdown,
+        "blob_available": True,
+        "bilingual_metadata": {
+            language: {
+                "title": "Pricing analysis",
+                "summary": "Pricing analysis uses AI methods.",
+                "category": "AI",
+                "keywords": ["pricing", "AI"],
+            }
+            for language in ("zh", "en")
+        },
+        "annotation": {
+            "categories": categories,
+            "source_primary_category": "AI",
+            "date_facts": date_facts,
+            "date_review_status": "complete",
+            "date_review_reason": None,
+            "date_review_unresolved": [],
+            "source_signature": "b" * 64,
+            "result_sha256": annotation_digest,
+        },
+    }
+    monkeypatch.setattr(runtime, "content_hub_read_version", lambda *_args: current)
+    pending = {
+        "url": url,
+        "raw_sha256": raw_sha,
+        "content_version_id": 91,
+        "categories": [
+            {"key": "Pricing", "evidence": ["stale"]},
+            {"key": "AI", "evidence": []},
+        ],
+        "source_primary_category": "Pricing",
+    }
+
+    refreshed, reason = runtime._refresh_pending_target_item(pending, "unused-hub")
+
+    assert reason is None
+    assert refreshed is not None
+    assert refreshed["categories"] == categories
+    assert refreshed["source_primary_category"] == "AI"
+    assert refreshed["legacy_hub_annotation"] is True
