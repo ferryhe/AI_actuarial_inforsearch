@@ -788,7 +788,9 @@ def test_live_capture_migration_preserves_immutable_v16_and_existing_operational
         connection.close()
 
 
-def test_live_capture_is_idempotent_versioned_and_secondary_ai_is_eligible(tmp_path: Path) -> None:
+def test_live_capture_lists_only_ai_primary_and_preserves_secondary_categories(
+    tmp_path: Path,
+) -> None:
     hub_url, schema = _isolated_database_schema(tmp_path, "live-capture")
     apply_content_hub_schema(hub_url, schema=schema)
     url = "https://research.example.test/ai-pricing.pdf"
@@ -815,13 +817,15 @@ def test_live_capture_is_idempotent_versioned_and_secondary_ai_is_eligible(tmp_p
     assert repeated["markdown_text_variant_id"] == first["markdown_text_variant_id"]
 
     categories = [
-        {"key": "Pricing", "evidence": ["Pricing markets"]},
         {"key": "AI", "evidence": ["AI analysis"]},
+        {"key": "Pricing", "evidence": ["Pricing markets"]},
+        {"key": "Product Development & Profitability", "evidence": ["Pricing markets"]},
+        {"key": "Other", "evidence": ["AI analysis"]},
     ]
     package = {
         "title": "Pricing and AI",
         "summary": "Pricing markets and AI analysis.",
-        "category": "Pricing",
+        "category": "AI",
         "keywords": ["pricing", "AI"],
     }
     date_facts = {
@@ -842,13 +846,30 @@ def test_live_capture_is_idempotent_versioned_and_secondary_ai_is_eligible(tmp_p
             markdown_sha256=first["markdown_sha256"],
             primary_category="Pricing",
             bilingual_metadata={"zh": package, "en": package},
-            categories=[categories[0], {"key": "AI", "evidence": []}],
+            categories=[categories[0], {"key": "Pricing", "evidence": []}],
             date_facts=date_facts,
             date_review_status="complete",
             date_review_reason=None,
             date_review_unresolved=[],
             recipe="test-fixture",
             run_id="test-empty-category-evidence",
+            database_url=hub_url,
+            schema=schema,
+        )
+    with pytest.raises(ContentHubError, match="one to three exact quotes"):
+        save_live_enrichment(
+            content_version_id=first["content_version_id"],
+            markdown_text_variant_id=first["markdown_text_variant_id"],
+            markdown_sha256=first["markdown_sha256"],
+            primary_category="AI",
+            bilingual_metadata={"zh": package, "en": package},
+            categories=[{"key": "AI", "evidence": []}, *categories[1:]],
+            date_facts=date_facts,
+            date_review_status="complete",
+            date_review_reason=None,
+            date_review_unresolved=[],
+            recipe="test-fixture",
+            run_id="test-empty-primary-evidence",
             database_url=hub_url,
             schema=schema,
         )
@@ -868,7 +889,7 @@ def test_live_capture_is_idempotent_versioned_and_secondary_ai_is_eligible(tmp_p
         content_version_id=first["content_version_id"],
         markdown_text_variant_id=first["markdown_text_variant_id"],
         markdown_sha256=first["markdown_sha256"],
-        primary_category="Pricing",
+        primary_category="AI",
         bilingual_metadata={"zh": package, "en": package},
         categories=categories,
         date_facts=date_facts,
@@ -881,6 +902,30 @@ def test_live_capture_is_idempotent_versioned_and_secondary_ai_is_eligible(tmp_p
         schema=schema,
     )
     assert saved["success"] is True
+    legacy_categories = [{**categories[0], "evidence": []}, *categories[1:]]
+    legacy_annotation = {
+        "categories": legacy_categories,
+        "date_facts": date_facts,
+        "date_review_status": "complete",
+        "date_review_reason": None,
+        "date_review_unresolved": [],
+    }
+    legacy_result_sha = hashlib.sha256(
+        content_hub._canonical_json(legacy_annotation).encode("utf-8")
+    ).hexdigest()
+    connection = psycopg2.connect(hub_url)
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "UPDATE article_enrichment_annotations "
+                "SET categories_json = %s::jsonb, result_sha256 = %s "
+                "WHERE content_version_id = %s",
+                (json.dumps(legacy_categories), legacy_result_sha, first["content_version_id"]),
+            )
+        connection.commit()
+    finally:
+        connection.close()
+    categories = legacy_categories
     shown = content_hub_read_version(url, first["raw_sha256"], hub_url, schema=schema)
     assert shown and shown["annotation"]["categories"] == categories
     assert shown["annotation"]["date_facts"]["publication_date"]["precision"] == "month"
@@ -897,6 +942,54 @@ def test_live_capture_is_idempotent_versioned_and_secondary_ai_is_eligible(tmp_p
     assert ai_page["versions"][0]["content_version_id"] == first["content_version_id"]
     assert ai_page["versions"][0]["source_site"] == "iaa"
     assert ai_page["versions"][0]["hub_markdown_sha256_kind"] == "raw_utf8"
+    assert ai_page["versions"][0]["categories"] == categories
+    assert saved["is_ai_candidate"] is True
+
+    secondary_url = "https://research.example.test/pricing-secondary-ai.pdf"
+    secondary_markdown = "Pricing markets use AI analysis. Published September 2026."
+    secondary_args = {
+        **args,
+        "canonical_url": secondary_url,
+        "raw_bytes": b"secondary AI PDF bytes",
+        "markdown": secondary_markdown,
+    }
+    secondary = ingest_live_article(**secondary_args)
+    secondary_categories = [
+        {"key": "Pricing", "evidence": ["Pricing markets"]},
+        {"key": "AI", "evidence": ["AI analysis"]},
+    ]
+    secondary_package = {**package, "category": "Pricing"}
+    secondary_saved = save_live_enrichment(
+        content_version_id=secondary["content_version_id"],
+        markdown_text_variant_id=secondary["markdown_text_variant_id"],
+        markdown_sha256=secondary["markdown_sha256"],
+        primary_category="Pricing",
+        bilingual_metadata={"zh": secondary_package, "en": secondary_package},
+        categories=secondary_categories,
+        date_facts={
+            "publication_date": None,
+            "revision_date": None,
+            "document_version_date": None,
+        },
+        date_review_status="complete",
+        date_review_reason=None,
+        date_review_unresolved=[],
+        recipe="test-fixture",
+        run_id="test-secondary-ai",
+        database_url=hub_url,
+        schema=schema,
+    )
+    assert secondary_saved["is_ai_candidate"] is False
+    assert content_hub_ai_url_versions([secondary_url], database_url=hub_url, schema=schema) == {
+        secondary_url: []
+    }
+    primary_page = content_hub_list_ai_versions(
+        after_version_id=0, limit=10, database_url=hub_url, schema=schema
+    )
+    assert primary_page["eligible_ai_count"] == 1
+    assert [row["content_version_id"] for row in primary_page["versions"]] == [
+        first["content_version_id"]
+    ]
 
     connection = psycopg2.connect(hub_url)
     try:
@@ -919,14 +1012,18 @@ def test_live_capture_is_idempotent_versioned_and_secondary_ai_is_eligible(tmp_p
     )
     assert changed["content_version_id"] != first["content_version_id"]
     status = content_hub_status(hub_url, schema=schema)
-    assert status["source_kind_counts"] == {"sqlite_v16": 0, "live_capture": 2}
+    assert status["source_kind_counts"] == {"sqlite_v16": 0, "live_capture": 3}
     connection = psycopg2.connect(hub_url)
     try:
         with connection.cursor() as cursor:
             cursor.execute(
                 "SELECT sqlite_user_version, source_kind FROM source_snapshots ORDER BY source_snapshot_id"
             )
-            assert cursor.fetchall() == [(None, "live_capture"), (None, "live_capture")]
+            assert cursor.fetchall() == [
+                (None, "live_capture"),
+                (None, "live_capture"),
+                (None, "live_capture"),
+            ]
     finally:
         connection.close()
 
@@ -1029,13 +1126,13 @@ def test_legacy_json_payload_binding_reads_and_lists_with_raw_digest(tmp_path: P
     assert direct["hub_markdown_sha256"] == legacy_binding_sha
     assert direct["hub_markdown_sha256_kind"] == "json_payload_utf8"
     assert set(direct["bilingual_metadata"]) == {"zh", "en"}
+    assert direct["annotation"]["source_primary_category"] == "Pricing"
     page = content_hub_list_ai_versions(
         after_version_id=0, limit=10, database_url=hub_url, schema=schema
     )
-    assert page["versions"][0]["content_version_id"] == version_id
-    assert page["versions"][0]["markdown_sha256"] == raw_markdown_sha
-    assert page["versions"][0]["hub_markdown_sha256"] == legacy_binding_sha
-    assert page["versions"][0]["hub_markdown_sha256_kind"] == "json_payload_utf8"
+    assert page["versions"] == []
+    assert page["eligible_ai_count"] == 0
+    assert content_hub_ai_url_versions([url], database_url=hub_url, schema=schema) == {url: []}
 
     connection = psycopg2.connect(hub_url)
     try:

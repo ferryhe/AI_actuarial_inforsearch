@@ -2972,6 +2972,7 @@ def _prepare_hub_article(
     annotation = existing["annotation"]
     categories = annotation.get("categories") or []
     category_keys = [item.get("key") for item in categories if isinstance(item, dict)]
+    source_primary_category = str(annotation.get("source_primary_category") or "")
     return (
         {
             **article,
@@ -2988,10 +2989,13 @@ def _prepare_hub_article(
             "date_review_status": annotation.get("date_review_status"),
             "date_review_reason": annotation.get("date_review_reason"),
             "date_review_unresolved": annotation.get("date_review_unresolved") or [],
-            "source_primary_category": category_keys[0] if category_keys else "",
+            "source_primary_category": source_primary_category,
             "source_signature": annotation.get("source_signature"),
             "result_sha256": annotation.get("result_sha256"),
-            "ai_candidate": "AI" in category_keys,
+            "ai_candidate": bool(
+                category_keys and category_keys[0] == "AI" and source_primary_category == "AI"
+            ),
+            "legacy_hub_annotation": not newly_enriched,
         },
         new_version,
         newly_enriched,
@@ -3033,67 +3037,24 @@ def _target_metadata_fingerprint(item: dict[str, Any]) -> str:
             "result_sha256",
         )
     }
+    publication_date = (item.get("date_facts") or {}).get("publication_date")
+    projected_date = publication_date.get("value") if isinstance(publication_date, dict) else None
+    # Keep the historical fingerprint for unknown dates; a verified date must
+    # invalidate old acknowledgements so target published_time is backfilled.
+    if projected_date is not None:
+        value["published_time"] = projected_date
     return hashlib.sha256(
         json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
 
 
-def _stream_target(
-    config: dict[str, Any],
-    target: str,
-    items: list[dict[str, Any]],
-    ready_pending: bool,
-    *,
-    preview: bool = False,
+def _invoke_target_worker(
+    config: dict[str, Any], target: str, payload: dict[str, Any]
 ) -> dict[str, Any]:
     target_cfg = config["targets"].get(target)
     if not isinstance(target_cfg, dict) or not target_cfg.get("host"):
         raise RuntimeErrorSafe(f"target {target} has no configured SSH host")
     worker_code = TARGET_WORKER.read_bytes()
-    payload_items = []
-    for item in items:
-        raw = Path(item["artifact_path"]).read_bytes()
-        if hashlib.sha256(raw).hexdigest() != item["raw_sha256"]:
-            raise RuntimeErrorSafe("target source bytes changed after Hub validation")
-        payload_items.append(
-            {
-                key: item.get(key)
-                for key in (
-                    "url",
-                    "raw_sha256",
-                    "markdown",
-                    "markdown_sha256",
-                    "hub_markdown_sha256",
-                    "hub_markdown_sha256_kind",
-                    "content_version_id",
-                    "markdown_text_variant_id",
-                    "bilingual_metadata",
-                    "categories",
-                    "date_facts",
-                    "title",
-                    "source_site",
-                    "source_page_url",
-                    "content_type",
-                    "last_modified",
-                    "etag",
-                    "source_primary_category",
-                    "date_review_status",
-                    "date_review_reason",
-                    "date_review_unresolved",
-                    "source_signature",
-                    "result_sha256",
-                )
-            }
-            | {"raw_bytes_b64": base64.b64encode(raw).decode("ascii")}
-        )
-    payload = {
-        "schema_version": 1,
-        "target": target,
-        "items": payload_items,
-        "ready_pending": bool(ready_pending),
-        "preview_only": bool(preview),
-        "approved_categories": _load_category_keys(),
-    }
     b64_code = base64.b64encode(worker_code).decode("ascii")
     one_shot = (
         b64_code + "\n" + json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n"
@@ -3172,6 +3133,145 @@ def _stream_target(
     ):
         raise RuntimeErrorSafe(f"{target} target worker did not confirm its own target identity")
     return reply
+
+
+def _stream_target(
+    config: dict[str, Any],
+    target: str,
+    items: list[dict[str, Any]],
+    ready_pending: bool,
+    *,
+    preview: bool = False,
+) -> dict[str, Any]:
+    payload_items = []
+    for item in items:
+        raw = Path(item["artifact_path"]).read_bytes()
+        if hashlib.sha256(raw).hexdigest() != item["raw_sha256"]:
+            raise RuntimeErrorSafe("target source bytes changed after Hub validation")
+        payload_items.append(
+            {
+                key: item.get(key)
+                for key in (
+                    "url",
+                    "raw_sha256",
+                    "markdown",
+                    "markdown_sha256",
+                    "hub_markdown_sha256",
+                    "hub_markdown_sha256_kind",
+                    "content_version_id",
+                    "markdown_text_variant_id",
+                    "bilingual_metadata",
+                    "categories",
+                    "date_facts",
+                    "title",
+                    "source_site",
+                    "source_page_url",
+                    "content_type",
+                    "last_modified",
+                    "etag",
+                    "source_primary_category",
+                    "date_review_status",
+                    "date_review_reason",
+                    "date_review_unresolved",
+                    "source_signature",
+                    "result_sha256",
+                    "legacy_hub_annotation",
+                )
+            }
+            | {"raw_bytes_b64": base64.b64encode(raw).decode("ascii")}
+        )
+    return _invoke_target_worker(
+        config,
+        target,
+        {
+            "schema_version": 1,
+            "target": target,
+            "items": payload_items,
+            "ready_pending": bool(ready_pending),
+            "preview_only": bool(preview),
+            "approved_categories": _load_category_keys(),
+        },
+    )
+
+
+def _stream_target_cleanup(
+    config: dict[str, Any],
+    target: str,
+    records: list[dict[str, Any]],
+    *,
+    dry_run: bool,
+) -> dict[str, Any]:
+    return _invoke_target_worker(
+        config,
+        target,
+        {
+            "schema_version": 1,
+            "operation": "retire_non_ai_primary",
+            "target": target,
+            "dry_run": bool(dry_run),
+            "records": records,
+            "approved_categories": _load_category_keys(),
+        },
+    )
+
+
+def _stream_target_metadata_backfill(
+    config: dict[str, Any],
+    target: str,
+    records: list[dict[str, Any]],
+    *,
+    dry_run: bool,
+) -> dict[str, Any]:
+    if not isinstance(records, list) or not 1 <= len(records) <= MAX_RECONCILE_PAGE:
+        raise RuntimeErrorSafe("metadata backfill requires one to 100 exact records")
+    hub = _connection_url(Path(config["hub_connection_file"]).expanduser())
+    for record in records:
+        if not isinstance(record, dict):
+            raise RuntimeErrorSafe("metadata backfill record must be an object")
+        url = record.get("url")
+        raw_sha = record.get("raw_sha256")
+        if (
+            not isinstance(url, str)
+            or not url.startswith(("http://", "https://"))
+            or not isinstance(raw_sha, str)
+            or not re.fullmatch(r"[0-9a-f]{64}", raw_sha)
+        ):
+            raise RuntimeErrorSafe("metadata backfill requires exact URL/raw-SHA identities")
+        current = content_hub_read_version(url, raw_sha, hub)
+        annotation = current.get("annotation") if current else None
+        if not current or current.get("excluded_reason") or not isinstance(annotation, dict):
+            raise RuntimeErrorSafe("metadata manifest has no current exact Hub annotation")
+        authoritative = {
+            "url": current.get("url"),
+            "raw_sha256": current.get("raw_sha256"),
+            "content_version_id": current.get("content_version_id"),
+            "markdown_text_variant_id": current.get("markdown_text_variant_id"),
+            "markdown_sha256": current.get("markdown_sha256"),
+            "hub_markdown_sha256": current.get("hub_markdown_sha256"),
+            "hub_markdown_sha256_kind": current.get("hub_markdown_sha256_kind"),
+            "source_primary_category": annotation.get("source_primary_category"),
+            "categories": annotation.get("categories") or [],
+            "date_facts": annotation.get("date_facts") or {},
+            "date_review_status": annotation.get("date_review_status"),
+            "date_review_reason": annotation.get("date_review_reason"),
+            "date_review_unresolved": annotation.get("date_review_unresolved") or [],
+            "source_signature": annotation.get("source_signature"),
+            "result_sha256": annotation.get("result_sha256"),
+        }
+        if any(record.get(field) != value for field, value in authoritative.items()):
+            raise RuntimeErrorSafe("metadata manifest no longer matches its fresh exact Hub read")
+    return _invoke_target_worker(
+        config,
+        target,
+        {
+            "schema_version": 1,
+            "operation": "backfill_ai_primary_metadata",
+            "target": target,
+            "dry_run": bool(dry_run),
+            "records": records,
+            "approved_categories": _load_category_keys(),
+        },
+    )
 
 
 def _process_articles(
@@ -3280,6 +3380,9 @@ def _process_articles(
     prepared: list[dict[str, Any]] = []
     for article in selected_articles:
         version_counted = False
+        # Local v2 state can contain the former any-category-AI flag. The exact
+        # Hub read in _prepare_hub_article below is the current eligibility source.
+        article["ai_candidate"] = False
 
         def count_hub_version(is_new: bool, version: dict[str, Any]) -> None:
             nonlocal version_counted
@@ -3335,6 +3438,23 @@ def _process_articles(
                 summary["ai_candidates"] += 1
                 prepared.append(full)
             else:
+                categories = full.get("categories") or []
+                primary = (
+                    categories[0].get("key")
+                    if categories and isinstance(categories[0], dict)
+                    else "unknown"
+                )
+                reason = (
+                    f"Hub source primary category {full.get('source_primary_category')!r} "
+                    "conflicts with categories[0]"
+                    if primary == "AI"
+                    else f"current Hub primary category is {primary!r}"
+                )
+                _suppress_non_primary_retry(
+                    state,
+                    full,
+                    reason,
+                )
                 article["stage"] = "complete"
             _atomic_json(_state_path_for_data(state), state)
         except Exception as exc:
@@ -3896,6 +4016,70 @@ def _restore_hub_blob(version: dict[str, Any], raw: bytes, hub: DatabaseConfig) 
         raise RuntimeErrorSafe("restored Hub version failed exact URL/raw-SHA readback")
 
 
+def _refresh_pending_target_item(
+    item: dict[str, Any], hub: DatabaseConfig
+) -> tuple[dict[str, Any] | None, str | None]:
+    """Re-read durable retries so old any-category-AI snapshots cannot publish."""
+    current = content_hub_read_version(
+        str(item.get("url") or ""), str(item.get("raw_sha256") or ""), hub
+    )
+    if not current or current.get("excluded_reason"):
+        return None, "exact Hub version is missing, excluded, or no longer enriched"
+    if int(current.get("content_version_id") or 0) != int(item.get("content_version_id") or 0):
+        return None, "exact Hub version ID changed"
+    if not _valid_existing_enrichment(current):
+        return None, "exact Hub enrichment is no longer valid"
+    annotation = current["annotation"]
+    categories = annotation.get("categories") or []
+    keys = [entry.get("key") for entry in categories if isinstance(entry, dict)]
+    if not keys or keys[0] != "AI" or annotation.get("source_primary_category") != "AI":
+        primary = keys[0] if keys else "unknown"
+        if primary == "AI":
+            return None, (
+                f"Hub source primary category {annotation.get('source_primary_category')!r} "
+                "conflicts with categories[0]"
+            )
+        return None, f"current Hub primary category is {primary!r}"
+    refreshed = {
+        **item,
+        "url": current["url"],
+        "raw_sha256": current["raw_sha256"],
+        "content_version_id": current["content_version_id"],
+        "markdown_text_variant_id": current["markdown_text_variant_id"],
+        "markdown_sha256": current["markdown_sha256"],
+        "hub_markdown_sha256": current["hub_markdown_sha256"],
+        "hub_markdown_sha256_kind": current["hub_markdown_sha256_kind"],
+        "markdown": current["markdown"],
+        "bilingual_metadata": current["bilingual_metadata"],
+        "categories": categories,
+        "source_primary_category": annotation["source_primary_category"],
+        "date_facts": annotation.get("date_facts") or {},
+        "date_review_status": annotation.get("date_review_status"),
+        "date_review_reason": annotation.get("date_review_reason"),
+        "date_review_unresolved": annotation.get("date_review_unresolved") or [],
+        "source_signature": annotation.get("source_signature"),
+        "result_sha256": annotation.get("result_sha256"),
+        "legacy_hub_annotation": True,
+        "blob_availability": "present" if current.get("blob_available") else "missing",
+    }
+    return refreshed, None
+
+
+def _suppress_non_primary_retry(state: dict[str, Any], item: dict[str, Any], reason: str) -> None:
+    version_id = str(item.get("content_version_id") or "")
+    if version_id:
+        state.setdefault("pending_target_reconciliation", {}).pop(version_id, None)
+        state.setdefault("pending_source_recovery", {}).pop(version_id, None)
+        state.setdefault("ineligible_target_reconciliation", {})[version_id] = {
+            "url": item.get("url"),
+            "raw_sha256": item.get("raw_sha256"),
+            "reason": reason,
+            "checked_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+        }
+        for target in ("china", "overseas"):
+            state.setdefault("target_acks", {}).pop(_target_ack_key(target, item), None)
+
+
 def _recover_one_source(
     state: dict[str, Any], data_root: Path, hub: DatabaseConfig
 ) -> dict[str, Any] | None:
@@ -3905,6 +4089,13 @@ def _recover_one_source(
     key = sorted(pending, key=lambda value: int(value))[0]
     version = pending[key]
     try:
+        refreshed, ineligible_reason = _refresh_pending_target_item(version, hub)
+        if refreshed is None:
+            del pending[key]
+            _suppress_non_primary_retry(state, version, ineligible_reason or "not AI-first")
+            _atomic_json(_state_path_for_data(state), state)
+            return None
+        version = refreshed
         url = str(version["url"])
         crawler = _new_crawler(data_root)
         crawler.begin_site(1)
@@ -3956,16 +4147,31 @@ def reconcile_backlog(
         pending_targets[key]
         for key in sorted(pending_targets, key=lambda value: int(value))[:pending_cap]
     ]
+    refreshed_pending_items: list[dict[str, Any]] = []
+    for item in pending_items:
+        refreshed, ineligible_reason = _refresh_pending_target_item(item, hub)
+        if refreshed is None:
+            _suppress_non_primary_retry(
+                state, item, ineligible_reason or "current Hub version is not AI-first"
+            )
+            continue
+        pending_targets[str(refreshed["content_version_id"])] = refreshed
+        refreshed_pending_items.append(refreshed)
+    pending_items = refreshed_pending_items
     page_limit = min(limit, MAX_RECONCILE_PAGE - len(pending_items) - int(recovered is not None))
     page_limit = max(1, page_limit)
     page = content_hub_list_ai_versions(after_version_id=cursor, limit=page_limit, database_url=hub)
     page_versions = page.get("versions") or []
+    fresh_version_ids = {int(row["content_version_id"]) for row in page_versions}
     candidates = {int(row["content_version_id"]): row for row in page_versions}
     if recovered:
         candidates[int(recovered["content_version_id"])] = recovered
+        fresh_version_ids.discard(int(recovered["content_version_id"]))
     for item in pending_items:
         candidates[int(item["content_version_id"])] = item
+        fresh_version_ids.discard(int(item["content_version_id"]))
     if not candidates:
+        _atomic_json(_state_path_for_data(state), state)
         return {
             "processed": 0,
             "cursor": cursor,
@@ -4001,6 +4207,16 @@ def reconcile_backlog(
     newly_missing: list[dict[str, Any]] = []
     for version in eligible_versions:
         version_id = int(version["content_version_id"])
+        if version_id in fresh_version_ids:
+            refreshed, ineligible_reason = _refresh_pending_target_item(version, hub)
+            if refreshed is None:
+                _suppress_non_primary_retry(
+                    state,
+                    version,
+                    ineligible_reason or "current Hub version is no longer AI-first",
+                )
+                continue
+            version = refreshed
         artifact = Path(
             version.get("artifact_path") or _local_cas_path(data_root, str(version["raw_sha256"]))
         )
@@ -4336,13 +4552,43 @@ def build_parser() -> argparse.ArgumentParser:
         "--json", action="store_true", help="emit machine-readable JSON (the default output format)"
     )
     backlog = sub.add_parser(
-        "reconcile-targets", help="resume bounded any-category-AI backlog acknowledgement"
+        "reconcile-targets", help="resume bounded AI-primary target acknowledgements"
     )
     backlog.add_argument("--limit", type=int, default=10)
     backlog.add_argument(
         "--config", type=Path, default=Path("reports/local-automation-state/config.local.json")
     )
     backlog.add_argument(
+        "--json", action="store_true", help="emit machine-readable JSON (the default output format)"
+    )
+    cleanup = sub.add_parser(
+        "cleanup-targets",
+        help="audit or retire exact Hub-verified non-AI-primary files on one serving target",
+    )
+    cleanup.add_argument("--manifest", type=Path, required=True)
+    cleanup.add_argument("--target", choices=("china", "overseas"), required=True)
+    cleanup.add_argument(
+        "--config", type=Path, default=Path("reports/local-automation-state/config.local.json")
+    )
+    cleanup.add_argument(
+        "--apply", action="store_true", help="apply exact file retirement after the default dry-run"
+    )
+    cleanup.add_argument(
+        "--json", action="store_true", help="emit machine-readable JSON (the default output format)"
+    )
+    backfill = sub.add_parser(
+        "backfill-target-metadata",
+        help="audit or backfill exact existing AI-primary Hub metadata and article dates",
+    )
+    backfill.add_argument("--manifest", type=Path, required=True)
+    backfill.add_argument("--target", choices=("china", "overseas"), required=True)
+    backfill.add_argument(
+        "--config", type=Path, default=Path("reports/local-automation-state/config.local.json")
+    )
+    backfill.add_argument(
+        "--apply", action="store_true", help="apply metadata-only updates after the default dry-run"
+    )
+    backfill.add_argument(
         "--json", action="store_true", help="emit machine-readable JSON (the default output format)"
     )
     return parser
@@ -4409,6 +4655,38 @@ def main(argv: list[str] | None = None) -> int:
                 )
                 if not args.preview:
                     _atomic_json(_ACTIVE_STATE_PATH, state)
+        elif args.command == "cleanup-targets":
+            config = _load_config(args.config.resolve())
+            manifest = json.loads(args.manifest.resolve().read_text(encoding="utf-8"))
+            if (
+                not isinstance(manifest, dict)
+                or manifest.get("schema_version") != 1
+                or not isinstance(manifest.get("records"), list)
+            ):
+                raise RuntimeErrorSafe("cleanup manifest must use schema_version 1 with records")
+            output = _stream_target_cleanup(
+                config,
+                args.target,
+                manifest["records"],
+                dry_run=not args.apply,
+            )
+        elif args.command == "backfill-target-metadata":
+            config = _load_config(args.config.resolve())
+            manifest = json.loads(args.manifest.resolve().read_text(encoding="utf-8"))
+            if (
+                not isinstance(manifest, dict)
+                or manifest.get("schema_version") != 1
+                or not isinstance(manifest.get("records"), list)
+            ):
+                raise RuntimeErrorSafe(
+                    "metadata backfill manifest must use schema_version 1 with records"
+                )
+            output = _stream_target_metadata_backfill(
+                config,
+                args.target,
+                manifest["records"],
+                dry_run=not args.apply,
+            )
         else:
             config = _load_config(args.config.resolve())
             _ACTIVE_STATE_PATH = _state_path(config)
@@ -4452,6 +4730,10 @@ def main(argv: list[str] | None = None) -> int:
             backlog = output.get("backlog") or {}
             failed = failed or bool(backlog.get("error") or backlog.get("ready_errors"))
             return 2 if failed else 0
+        if args.command == "cleanup-targets":
+            return 2 if output.get("failures") or output.get("ready_status") == "failed" else 0
+        if args.command == "backfill-target-metadata":
+            return 2 if output.get("failures") else 0
         if args.command == "reconcile-targets":
             return 2 if output.get("ready_errors") or output.get("error") else 0
         return 0

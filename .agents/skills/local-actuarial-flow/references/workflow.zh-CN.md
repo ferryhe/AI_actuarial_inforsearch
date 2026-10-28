@@ -18,7 +18,7 @@ flowchart LR
   D --> E[Markdown 提取与缺口]
   E --> F[双语摘要 / 25 类有序 1–4 注释 / 日期证据]
   F --> G[明确招聘招标排除]
-  G --> H{任一已验证类别为 AI?}
+  G --> H{第一类别是否为 AI?}
   H -->|否| I[保留 Hub，不进 AI 发布集合]
   H -->|是| J[国内增量发布]
   H -->|是| K[海外增量发布]
@@ -37,7 +37,7 @@ flowchart LR
 
 32 个监控项（29 个唯一入口 hostname；SOA 和 CIA 各含专题监控项，CAS 还跨期刊 host）均已有 `collect.py`、`playbook.md`、`filters.json`、`status.json` 的只读副本。它们不是 32 个独立 Skill，仓库另有一个共享采集 Skill。脚本均可解析，但产物、运行时依赖、游标与过滤语义并不统一；候选枚举不等于下载、Hub 入库或完成摘要分类。`status.json` 是历史快照，不是本轮回执。逐项问题和建议见 [监控项目录](sites.zh-CN.md)。
 
-可复用既有 Hub 的原文件/Markdown 入库、双语生成与导入、25 类版本注释、AI-only 发布下游组件；但当前 Hub importer 使用关闭的 SQLite v16 快照，不是 live 增量 API；simple-runner 绑定了固定历史 run。先参数化 runner，再给发现、生成与导入加逐来源版本、URL/SHA 和幂等续跑的输入/回执合同。PipelineBaton 可继续用于文章进入应用库后的 Markdown、catalog、chunks、embedding、KB/Ready 任务和 task history；它固定一个下游步骤链，其每小时巡检 tick 是另一条下游队列，与本次每日来源轮换无关。文章富信息回填脚本可复用哈希绑定和追加注释规则，不应重跑历史全量回填。分类复用 `reports/category-taxonomy-review-20261016/proposal.json` 的 25 类规范 key；日期三字段与精度/证据规则沿用已批准的 article-enrichment 规则。现有旧 AI 导出仅检查 `lower(category)='ai'`，会漏掉 AI 为第二至第四类的文章；AI 发布集合应按任一已验证 25 类注释的规范键精确命中 `AI`，并保留招聘/招标排除，不以 `"ai"` 字符串或未核准标签出现作为条件。
+可复用既有 Hub 的原文件/Markdown 入库、双语生成与导入、25 类版本注释、AI-only 发布下游组件；但当前 Hub importer 使用关闭的 SQLite v16 快照，不是 live 增量 API；simple-runner 绑定了固定历史 run。先参数化 runner，再给发现、生成与导入加逐来源版本、URL/SHA 和幂等续跑的输入/回执合同。PipelineBaton 可继续用于文章进入应用库后的 Markdown、catalog、chunks、embedding、KB/Ready 任务和 task history；它固定一个下游步骤链，其每小时巡检 tick 是另一条下游队列，与本次每日来源轮换无关。文章富信息回填脚本可复用哈希绑定与追加注释规则，不应重跑历史全量回填。分类复用 `reports/category-taxonomy-review-20261016/proposal.json` 的 25 类规范 key；日期三字段与精度/证据规则沿用已批准的 article-enrichment 规则。当前发布规则只接受有序 `categories[0].key == "AI"` 的 Hub 版本。第二至第四类仍按原顺序及证据保存，但不能让 AI 次分类入选。历史列表、计数、缓存重试与目标 worker 都使用同一首类规则；不要改写 Hub 原始 primary 类别来制造入选资格。
 
 | 可复用历史组件 | 原仓库本机路径 | 本轮可复用内容与边界 |
 |---|---|---|

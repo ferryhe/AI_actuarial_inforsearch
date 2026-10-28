@@ -1455,7 +1455,7 @@ def save_live_enrichment(
             "source_signature": source_signature,
             "result_sha256": result_sha256,
             "category_keys": [item["key"] for item in normalized_categories],
-            "is_ai_candidate": any(item["key"] == "AI" for item in normalized_categories),
+            "is_ai_candidate": normalized_categories[0]["key"] == "AI",
         }
     except psycopg2.Error as exc:
         connection.rollback()
@@ -1507,7 +1507,7 @@ def content_hub_list_ai_versions(
                 "JOIN bilingual_metadata bmzh ON bmzh.content_version_id = v.content_version_id AND bmzh.language_code = 'zh' "
                 "JOIN bilingual_metadata bmen ON bmen.content_version_id = v.content_version_id AND bmen.language_code = 'en' "
                 "WHERE v.content_version_id > %s AND v.raw_sha256 IS NOT NULL "
-                'AND a.categories_json @> \'[{"key":"AI"}]\'::jsonb '
+                "AND a.categories_json->0->>'key' = 'AI' AND a.source_primary_category = 'AI' "
                 "AND a.source_markdown_sha256 = bmzh.markdown_sha256 AND bmzh.markdown_sha256 = bmen.markdown_sha256 "
                 "AND a.source_text_variant_id = bmzh.markdown_text_variant_id "
                 "AND bmzh.markdown_text_variant_id = bmen.markdown_text_variant_id "
@@ -1539,7 +1539,7 @@ def content_hub_list_ai_versions(
                     continue
                 categories = row[8] if isinstance(row[8], list) else json.loads(row[8])
                 keys = [str(item.get("key") or "") for item in categories if isinstance(item, dict)]
-                if "AI" not in keys or not keys or keys[0] != str(row[7] or ""):
+                if not keys or keys[0] != "AI" or keys[0] != str(row[7] or ""):
                     continue
                 source_metadata = _load_json(row[24])
                 metadata = {
@@ -1588,12 +1588,12 @@ def content_hub_list_ai_versions(
                 )
             cursor.execute(
                 "SELECT count(*) FROM article_enrichment_annotations a "
-                'WHERE a.categories_json @> \'[{"key":"AI"}]\'::jsonb'
+                "WHERE a.categories_json->0->>'key' = 'AI' AND a.source_primary_category = 'AI'"
             )
             annotated_ai_count = int(cursor.fetchone()[0])
             cursor.execute(
                 "SELECT count(*) FROM article_enrichment_annotations a JOIN content_versions v USING (content_version_id) "
-                'WHERE a.categories_json @> \'[{"key":"AI"}]\'::jsonb AND NOT EXISTS '
+                "WHERE a.categories_json->0->>'key' = 'AI' AND a.source_primary_category = 'AI' AND NOT EXISTS "
                 "(SELECT 1 FROM excluded_urls e WHERE e.url_identity_sha256 = v.url_identity_sha256)"
             )
             eligible_ai_count = int(cursor.fetchone()[0])
@@ -1601,7 +1601,7 @@ def content_hub_list_ai_versions(
                 "SELECT count(*) FROM article_enrichment_annotations a "
                 "JOIN content_versions v USING (content_version_id) "
                 "LEFT JOIN content_blobs b ON b.sha256 = v.blob_sha256 "
-                "WHERE a.categories_json @> '[{\"key\":\"AI\"}]'::jsonb AND (b.sha256 IS NULL OR b.availability != 'present') "
+                "WHERE a.categories_json->0->>'key' = 'AI' AND a.source_primary_category = 'AI' AND (b.sha256 IS NULL OR b.availability != 'present') "
                 "AND NOT EXISTS (SELECT 1 FROM excluded_urls e WHERE e.url_identity_sha256 = v.url_identity_sha256)"
             )
             missing_blob_ai_count = int(cursor.fetchone()[0])
@@ -1645,7 +1645,8 @@ def content_hub_ai_url_versions(
             cursor.execute(
                 "SELECT v.content_version_id, v.url_value_json, v.url_identity_sha256 FROM content_versions v "
                 "JOIN article_enrichment_annotations a USING (content_version_id) "
-                'WHERE v.url_identity_sha256 = ANY(%s) AND a.categories_json @> \'[{"key":"AI"}]\'::jsonb '
+                "WHERE v.url_identity_sha256 = ANY(%s) AND a.categories_json->0->>'key' = 'AI' "
+                "AND a.source_primary_category = 'AI' "
                 "AND NOT EXISTS (SELECT 1 FROM excluded_urls e WHERE e.url_identity_sha256 = v.url_identity_sha256) "
                 "ORDER BY v.url_identity_sha256, v.content_version_id",
                 (url_hashes,),
@@ -2912,6 +2913,7 @@ def content_hub_read_version(
                 "annotation": (
                     {
                         "categories": categories or [],
+                        "source_primary_category": str(annotation[2] or ""),
                         "date_facts": dates or {},
                         "date_review_status": annotation[5],
                         "date_review_reason": annotation[6],

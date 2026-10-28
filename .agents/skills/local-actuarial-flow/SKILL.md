@@ -27,6 +27,14 @@ CIA、CCA 与法国站只在尚未处理的 frontier 后缀中稳定优先有效
 
 跟踪源码 `ai_actuarial.local_collection_runtime` 提供 bounded live collection、Hub live-capture 入库、Luna 双语分类/日期补全、国内与海外目标增量同步、独立回执与任何阶段的恢复。只使用单独的 `config.local.json`，不要把连接文件路径或主机地址写入共享例子。操作命令、试跑顺序和范围限制见 [本机运行指南](references/runtime.zh-CN.md)。该 CLI 不安装或启用计划任务；现有 06:00/09:00 automation 由外部 owner 单独管理。
 
+## AI 发布与文章日期
+
+只有 Hub 有序 `categories[0].key == "AI"` 且 `source_primary_category == "AI"` 的精确版本可进入 China/Overseas AI serving bucket。第二至第四类及其原始证据保留顺序并随目标 metadata 保存；不得因为任一后续类别是 AI 就发布，也不得改写 Hub primary metadata 来取得发布资格。实时文章、缓存对象、历史查询/count、目标 payload 与 pending retry 必须使用同一首类规则。
+
+Hub reader 会原样返回既有注释；少数历史注释的首类 `evidence` 为空。只在精确版本/Markdown/result-digest 绑定已验证的既有记录回填或重试时保留这个空数组，不得补造引文。新生成或新写入的分类仍必须有 1–3 条通过 Markdown 核验的引文，后续类别也必须有证据。
+
+目标 `files.published_time` 只投影已验证 `date_facts.publication_date.value`，保留 year/month/day 精度。Hub 的日期语义名为 `publication`、`revision`、`document_version`；原样保留这些字段，但只从 `publication_date` 槽位投影。unknown/null 保持新记录的日期为空，不用 revision、document-version、事件、crawl 或 HTTP Last-Modified 回退。对现存文件做 metadata backfill 时保留原 zh/en 包和 extra fields；Hub 日期 unknown 时保留已有目标日期并报告为未验证的 legacy 值。回填与清理命令、exact manifest 及 resumable index/Ready 合同见 [本机运行指南](references/runtime.zh-CN.md)。
+
 真实失败的修复闭环：用回执 case ID 和证据复现；判断是临时网络/服务问题还是 DOM、URL、分页、CLI、过滤器/分类规则变更；对本仓库可维护的实际脚本、playbook 或 skill 做最小修改；跑聚焦测试和低流量真实验证，再交 fresh reviewer；下一日用新的真实回执确认恢复。每日日报后最多研究两项；同一 case 和证据不得每天重复研究。外部源仍不可用时保留未解决和退避建议。不得编辑 skill/报告把状态改成成功，也不得修改 ignored 历史快照冒充已部署修复。
 
 入口响应、离线测试、历史 `status.json` 和计划项都不是采集回执。采集内容入库、两站增量发布及适配器若尚未有真实回执，必须明确写阻塞，不能声称完成。运行需要 Python 3.10+ 与 `America/New_York` 时区数据；Windows 缺失时在使用的 Python 环境安装 `tzdata`。

@@ -1,3 +1,11 @@
+# 当前候选 — AI 首类发布、日期回填与 legacy 证据修复 — 2026-10-28
+
+- 项目 `AI_actuarial_inforsearch`；工作树 `C:/Users/ferry/.codex/worktrees/ai-primary-publication/AI_actuarial_inforsearch`，分支 `fix/ai-primary-publication-dates`。仅本仓库可写；未读写兄弟仓库或生产配置。
+- Hub、缓存、历史列表/count、目标 payload 和 pending retry 均按 `categories[0].key == "AI"` 决定发布；Hub reader 原样保留已存 legacy 首类空 evidence，但只有 exact Hub annotation digest 绑定的已存读/回填路径接受，新的 Hub enrichment 写入仍要求每类 1–3 条 exact quote。源日期按 `publication_date.value` 原精度写入 `files.published_time`；Hub 日期语义保留 `publication`/`revision`/`document_version`，未知日期不回退。
+- 五项 PR #431 Copilot finding 经 TypeSafe Judge3 接受有界修复：cleanup 现用文件 advisory lock、exact URL/raw-SHA 与成员关系复核及单记录事务；fresh backlog rows 也经过 exact Hub refresh；soft-deleted/invisible row 走完整 reactivation；只有 raw SHA 和 Markdown 不变时才保留旧双语包；未知 Hub 日期在写入事务中只允许预检观察到的有效旧值。历史 v2 signature 仍由发送前的 exact Hub read 校验并原样保留。
+- 真实 cleanup interleave 回归在隔离 PostgreSQL `55436` 上确认：并发 replacement writer 等待 cleanup 文件锁；cleanup 提交后 replacement 保持 active 且成员关系恢复。三个聚焦测试文件 `test_local_collection_runtime.py`、`test_local_collection_target_worker.py`、`test_content_hub.py` 在隔离 PostgreSQL `55436` 联跑 156/156 PASS（3 项上游 SWIG deprecation warnings）。Black、isort、Ruff、Pylint errors-only、py_compile、两个维护 CLI `--help` 和 `git diff --check` PASS。
+- 本修复发生在本地 review limit 3 之后，按 Judge3 实施并验证；没有第 4 次 review，也没有声称 reviewer PASS。控制器此前已完成单独批准的 China maintenance 与幂等回放；此 worker 未写生产目标，未提交或推送。控制器负责真实维护其余批次、更新冻结状态、提交推送、当前 HEAD CI 与既有 review threads；overseas apply 仍等待容量相关批准。
+
 # 当前候选 — SSH 静默期连接存活 — 2026-10-27
 
 - 项目 `AI_actuarial_inforsearch`；工作树 `C:/Users/ferry/.codex/worktrees/local-source-budget-fixes/AI_actuarial_inforsearch`，分支 `fix/local-source-discovery-budgets`。仅此仓库；修改 `_stream_target` 单次 SSH 参数、命令契约回归和 runtime 运行说明。
@@ -5915,3 +5923,12 @@ Current branch head 4f030be has uncommitted small catalog/Storage variable defau
 
 - Fresh review verdict: CHANGES_REQUESTED. Three reproducible P2 issues are recorded in `reports/local-runtime-20261025/review-2.json`: parser retry items are skipped after being marked visited; CAA/Australia bootstrap errors can leave no v2 receipt; and exact-URL same-host redirects can report success without Hub processing.
 - Verification: 36 focused Hub/runtime/target tests and 19 existing offline helper tests pass; `git diff --check origin/main` passes. No production Hub/target writes or real source previews were performed. Same implementation worker should repair the three findings before fresh review.
+
+### AI-first publication and article-date projection — 2026-10-28
+
+- Scoped to `fix/ai-primary-publication-dates` in this repository; sibling repositories remain off-limits. Hub and target eligibility now require `categories[0].key == "AI"` and matching source primary metadata. Secondary categories and exact evidence remain in ordered Hub enrichment. Historical listing/counts, cache preparation, stale local flags, queued retries, and target-payload validation share the same rule.
+- Added exact, one-target `cleanup-targets` audit/apply support for non-AI-first records. It verifies URL/raw SHA/Hub evidence, removes only native target memberships/catalog visibility, retains source/CAS data, clears pending chunk URLs, and persists index/Ready retries. A capacity-blocked target stops before retirement.
+- Added `backfill-target-metadata` for existing records only. It verifies exact target URL/SHA/Markdown and Hub bindings, categories, dates, and memberships; merges only `hub_enrichment`, projects verified publication dates at source precision, preserves unknown legacy target dates and bilingual packages, and never transfers source bytes or invokes chunk/embed/Ready. It persists pending KB refresh state for the later cleanup pass to rebuild once per KB.
+- Updated the skill's main instructions plus local-actuarial-flow runtime/workflow references with AI-first semantics, date projection rules, and both maintenance manifest/CLI contracts. UI/API sorting was not changed.
+- Validation: all three scoped files (`test_local_collection_target_worker.py`, `test_local_collection_runtime.py`, and `test_content_hub.py`) passed against an isolated PostgreSQL instance: `141 passed`. Python compilation, Black, isort, Ruff, Pylint errors-only, CLI `--help`, and `git diff --check` passed. The only warnings are three existing SWIG deprecations from the embedding-selector test.
+- No production Hub/catalog write, commit, push, PR, or deployment was performed by this worker. Parent owns fresh review and the approved target maintenance run.
