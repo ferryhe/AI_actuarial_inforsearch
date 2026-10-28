@@ -3,6 +3,8 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import os
+import threading
 from contextlib import contextmanager
 from io import StringIO
 from pathlib import Path
@@ -1910,3 +1912,380 @@ def test_cleanup_rejects_raw_sha_mismatch_before_any_target_write(tmp_path: Path
 
     assert storage.rows[url]["deleted_at"] is None
     assert storage.memberships == {("ai", url)}
+
+
+def test_cleanup_rechecks_exact_identity_after_initial_audit(tmp_path: Path, monkeypatch) -> None:
+    url = "https://example.test/cleanup-replaced-between-audit.pdf"
+    original = b"approved cleanup bytes"
+    replacement = b"concurrent replacement bytes"
+    record = _cleanup_record(url, original)
+    storage = _FakeStorage(tmp_path)
+    storage.rows[url] = {
+        "url": url,
+        "sha256": record["raw_sha256"],
+        "deleted_at": None,
+        "catalog_status": "ok",
+    }
+    storage.memberships.add(("ai", url))
+
+    def replace_after_audit(**_kwargs):
+        storage.rows[url]["sha256"] = hashlib.sha256(replacement).hexdigest()
+        return {"blocked": False, "used_percent": 70}
+
+    monkeypatch.setattr(capacity, "capacity_status", replace_after_audit)
+    monkeypatch.setattr(capacity, "ensure_capacity", lambda **_kwargs: None)
+
+    result, managers = _run_cleanup(tmp_path, storage, "overseas", [record], dry_run=False)
+
+    assert result["cleanup_status"] == "partial"
+    assert "raw SHA-256 changed after cleanup audit" in result["failures"][0]["error"]
+    assert storage.rows[url]["sha256"] == hashlib.sha256(replacement).hexdigest()
+    assert storage.rows[url]["deleted_at"] is None
+    assert storage.memberships == {("ai", url)}
+    assert managers[0].remove_calls == []
+    assert worker._read_pending_cleanup(tmp_path, "overseas") == ["ai"]
+
+
+def test_cleanup_rolls_back_membership_removal_when_retirement_fails(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(capacity, "capacity_status", lambda **_kwargs: {"blocked": False})
+    monkeypatch.setattr(capacity, "ensure_capacity", lambda **_kwargs: None)
+    url = "https://example.test/cleanup-retirement-rollback.pdf"
+    record = _cleanup_record(url, b"rollback cleanup bytes")
+    storage = _FakeStorage(tmp_path)
+    storage.rows[url] = {
+        "url": url,
+        "sha256": record["raw_sha256"],
+        "deleted_at": None,
+        "catalog_status": "ok",
+    }
+    storage.memberships.update({("ai", url), ("all", url)})
+    worker._add_pending_ready(tmp_path, "china", ["ai", "all"], [url])
+    original_mark_deleted = storage.mark_file_deleted
+
+    def fail_retirement(*_args, **_kwargs):
+        raise RuntimeError("injected retirement failure")
+
+    storage.mark_file_deleted = fail_retirement
+    managers = []
+
+    def manager_factory(value):
+        manager = _FakeManager(value, "china")
+        managers.append(manager)
+        return manager
+
+    result = worker.apply_cleanup(
+        {
+            "schema_version": 1,
+            "target": "china",
+            "dry_run": False,
+            "records": [record],
+            "approved_categories": ["AI", "Pricing", "Other"],
+        },
+        runtime_factory=lambda: _FakeRuntime(tmp_path),
+        storage_factory=lambda *_args, **_kwargs: storage,
+        manager_factory=manager_factory,
+        ready_builder=lambda *_args: pytest.fail("Ready must wait for the rolled back cleanup"),
+    )
+    storage.mark_file_deleted = original_mark_deleted
+
+    assert result["cleanup_status"] == "partial"
+    assert "injected retirement failure" in result["failures"][0]["error"]
+    assert storage.rows[url]["deleted_at"] is None
+    assert storage.memberships == {("ai", url), ("all", url)}
+    assert worker._read_pending_ready(tmp_path, "china") == {"ai": [url], "all": [url]}
+    assert worker._read_pending_cleanup(tmp_path, "china") == ["ai", "all"]
+    assert set(managers[0].remove_calls) == {("ai", url), ("all", url)}
+
+
+def test_unchanged_soft_deleted_content_uses_full_reactivation_path(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(capacity, "capacity_status", lambda **_kwargs: {"blocked": False})
+    monkeypatch.setattr(capacity, "ensure_capacity", lambda **_kwargs: None)
+    url = "https://example.test/reactivate-soft-deleted.pdf"
+    item = _item(url, b"reactivation bytes", "Pricing models use AI methods.")
+    storage = _FakeStorage(tmp_path)
+    storage.rows[url] = {
+        "url": url,
+        "sha256": item["raw_sha256"],
+        "markdown_content": item["markdown"],
+        "published_time": None,
+        "deleted_at": "2026-10-01T00:00:00+00:00",
+        "category": "AI",
+        "catalog_status": "deleted",
+        "summary": "old summary",
+        "keywords": ["old"],
+        "bilingual_metadata": copy.deepcopy(item["bilingual_metadata"]),
+    }
+    storage.memberships.update({("ai", url), ("all", url)})
+
+    result = _apply_payload(tmp_path, storage, "china", [item], [])
+
+    assert result["failures"] == []
+    assert result["acknowledgements"][0]["status"] == "written"
+    assert storage.rows[url]["deleted_at"] is None
+    assert storage.rows[url]["catalog_status"] == "ok"
+    assert storage.memberships == {("ai", url), ("all", url)}
+
+
+def test_changed_source_content_uses_new_bilingual_packages(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(capacity, "capacity_status", lambda **_kwargs: {"blocked": False})
+    monkeypatch.setattr(capacity, "ensure_capacity", lambda **_kwargs: None)
+    url = "https://example.test/replacement-bilingual-metadata.pdf"
+    storage = _FakeStorage(tmp_path)
+    ready_rows = []
+    original = _item(url, b"old source bytes", "Old pricing research uses AI methods.", version=31)
+    _apply_payload(tmp_path, storage, "china", [original], ready_rows)
+
+    replacement = _item(url, b"new source bytes", "New model research uses AI methods.", version=32)
+    replacement["title"] = "New source title"
+    for language in ("zh", "en"):
+        replacement["bilingual_metadata"][language].update(
+            {
+                "title": f"New {language} title",
+                "summary": f"New {language} source-bound summary",
+                "keywords": ["new-source-keyword"],
+            }
+        )
+    _bind_item_enrichment(replacement)
+
+    result = _apply_payload(tmp_path, storage, "china", [replacement], ready_rows)
+    saved = storage.rows[url]["bilingual_metadata"]
+
+    assert result["failures"] == []
+    assert storage.rows[url]["sha256"] == replacement["raw_sha256"]
+    assert saved["hub_enrichment"]["content_version_id"] == 32
+    for language in ("zh", "en"):
+        assert saved[language]["title"] == replacement["bilingual_metadata"][language]["title"]
+        assert saved[language]["summary"] == replacement["bilingual_metadata"][language]["summary"]
+        assert saved[language]["keywords"] == ["new-source-keyword"]
+
+
+def test_unknown_date_backfill_rejects_concurrent_legacy_date_clear(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(capacity, "capacity_status", lambda **_kwargs: {"blocked": False})
+    url = "https://example.test/unknown-date-concurrent-clear.pdf"
+    markdown = "Pricing models use AI methods."
+    item = _item(url, b"unknown publication date bytes", markdown)
+    record = _metadata_backfill_record(item, "2024-12")
+
+    class DateClearedBeforeWriteStorage(_FakeStorage):
+        cleared = False
+
+        @contextmanager
+        def transaction(self, **kwargs):
+            if not self.cleared:
+                self.rows[url]["published_time"] = None
+                self.cleared = True
+            with super().transaction(**kwargs):
+                yield
+
+    storage = DateClearedBeforeWriteStorage(tmp_path)
+    storage.rows[url] = {
+        "url": url,
+        "sha256": item["raw_sha256"],
+        "markdown_content": markdown,
+        "published_time": "2024-12",
+        "deleted_at": None,
+        "category": "AI",
+        "catalog_status": "ok",
+        "summary": "legacy summary",
+        "keywords": ["legacy"],
+        "bilingual_metadata": {"en": {"legacy_note": "keep"}, "zh": {"legacy_note": "保留"}},
+    }
+    storage.memberships.add(("ai", url))
+
+    result, _ = _run_metadata_backfill(tmp_path, storage, "overseas", [record], dry_run=False)
+
+    assert result["backfill_status"] == "partial"
+    assert "exact target precondition changed before write" in result["failures"][0]["error"]
+    assert storage.cleared is True
+    assert storage.rows[url]["published_time"] is None
+
+
+@pytest.mark.skipif(
+    not os.getenv("POSTGRES_TEST_URL"),
+    reason="real PostgreSQL cleanup lock test requires isolated POSTGRES_TEST_URL",
+)
+def test_cleanup_file_lock_serializes_concurrent_content_replacement(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from ai_actuarial.rag.config import RAGConfig
+    from ai_actuarial.rag.knowledge_base import KnowledgeBaseManager
+    from ai_actuarial.storage import Storage
+    from tests.postgres_helpers import postgres_url_for_path
+
+    monkeypatch.setattr(capacity, "capacity_status", lambda **_kwargs: {"blocked": False})
+    monkeypatch.setattr(capacity, "ensure_capacity", lambda **_kwargs: None)
+    db_url = postgres_url_for_path(tmp_path / "cleanup-concurrency.db")
+    data_root = tmp_path / "data"
+    rag_config = RAGConfig(data_dir=str(tmp_path / "rag"))
+    url = "https://example.test/postgres-cleanup-concurrency.pdf"
+    original = b"approved PostgreSQL cleanup bytes"
+    replacement = b"concurrent PostgreSQL replacement bytes"
+    record = _cleanup_record(url, original)
+    initial = Storage(db_url, data_root=data_root)
+    try:
+        setup_manager = KnowledgeBaseManager(initial, config=rag_config)
+        setup_manager.create_kb(
+            kb_id="ai",
+            name="AI",
+            kb_mode="manual",
+            embedding_provider="openai",
+            embedding_model="text-embedding-3-large",
+            embedding_dimension=3072,
+            embedding_identity_key="isolated-test-ai-3072",
+        )
+        old_sha = hashlib.sha256(original).hexdigest()
+        initial.insert_file(
+            url=url,
+            sha256=old_sha,
+            title="Approved source",
+            source_site="test",
+            source_page_url=url,
+            original_filename="source.pdf",
+            local_path=str(tmp_path / "source.pdf"),
+            bytes=len(original),
+            content_type="application/pdf",
+        )
+        initial.upsert_catalog_item(
+            {
+                "url": url,
+                "sha256": old_sha,
+                "category": "AI",
+                "summary": "Approved source",
+                "keywords": ["test"],
+            },
+            pipeline_version="cleanup-lock-test",
+            status="ok",
+        )
+        setup_manager.add_files_to_kb("ai", [url])
+    finally:
+        initial.close()
+
+    cleanup_has_lock = threading.Event()
+    allow_cleanup_to_remove = threading.Event()
+    writer_lock_attempted = threading.Event()
+    writer_done = threading.Event()
+    outcomes: dict[str, object] = {}
+    writer_errors: list[str] = []
+    writer_storage = Storage(db_url, data_root=data_root)
+    writer_manager = KnowledgeBaseManager(writer_storage, config=rag_config)
+    original_lock = writer_storage._lock_postgres_key
+
+    def tracked_lock(namespace: str, key: str) -> None:
+        if namespace == "file" and key == url:
+            writer_lock_attempted.set()
+        original_lock(namespace, key)
+
+    writer_storage._lock_postgres_key = tracked_lock
+
+    def cleanup_manager_factory(storage):
+        delegate = KnowledgeBaseManager(storage, config=rag_config)
+
+        class BlockingManager:
+            def get_kb(self, kb_id):
+                return delegate.get_kb(kb_id)
+
+            def remove_files_from_kb(self, kb_id, urls):
+                if not cleanup_has_lock.is_set():
+                    cleanup_has_lock.set()
+                    if not allow_cleanup_to_remove.wait(10):
+                        raise TimeoutError("test did not release cleanup interleave")
+                return delegate.remove_files_from_kb(kb_id, urls)
+
+        return BlockingManager()
+
+    def run_cleanup() -> None:
+        try:
+            outcomes["cleanup"] = worker.apply_cleanup(
+                {
+                    "schema_version": 1,
+                    "target": "overseas",
+                    "dry_run": False,
+                    "records": [record],
+                    "approved_categories": ["AI", "Pricing", "Other"],
+                },
+                runtime_factory=lambda: _FakeRuntime(data_root),
+                storage_factory=lambda *_args, **_kwargs: Storage(db_url, data_root=data_root),
+                manager_factory=cleanup_manager_factory,
+                ready_builder=lambda *_args: {"index_version_id": "lock-test"},
+            )
+        except Exception as exc:
+            outcomes["cleanup_error"] = f"{type(exc).__name__}: {exc}"
+
+    def run_replacement() -> None:
+        try:
+            replacement_sha = hashlib.sha256(replacement).hexdigest()
+            with writer_storage.transaction(immediate=True):
+                writer_storage.upsert_file(
+                    url,
+                    replacement_sha,
+                    "Replacement source",
+                    "test",
+                    url,
+                    "replacement.pdf",
+                    str(tmp_path / "replacement.pdf"),
+                    len(replacement),
+                    "application/pdf",
+                    None,
+                    None,
+                    None,
+                )
+                writer_storage._conn.execute(
+                    "UPDATE files SET deleted_at = NULL WHERE url = ?", (url,)
+                )
+                writer_storage.upsert_catalog_item(
+                    {
+                        "url": url,
+                        "sha256": replacement_sha,
+                        "category": "AI",
+                        "summary": "Replacement source",
+                        "keywords": ["replacement"],
+                    },
+                    pipeline_version="cleanup-lock-replacement-test",
+                    status="ok",
+                )
+                writer_manager.add_files_to_kb("ai", [url])
+        except Exception as exc:
+            writer_errors.append(f"{type(exc).__name__}: {exc}")
+        finally:
+            writer_done.set()
+
+    cleanup_thread = threading.Thread(target=run_cleanup)
+    writer_thread = threading.Thread(target=run_replacement)
+    cleanup_thread.start()
+    assert cleanup_has_lock.wait(10), "cleanup did not reach its locked membership-removal step"
+    writer_thread.start()
+    try:
+        assert writer_lock_attempted.wait(10), "replacement did not attempt the native file lock"
+        assert not writer_done.wait(0.25), "replacement passed cleanup's file lock"
+    finally:
+        allow_cleanup_to_remove.set()
+        cleanup_thread.join(15)
+        writer_thread.join(15)
+        writer_storage.close()
+
+    assert not cleanup_thread.is_alive()
+    assert not writer_thread.is_alive()
+    assert "cleanup_error" not in outcomes, outcomes.get("cleanup_error")
+    assert writer_errors == []
+    assert outcomes["cleanup"]["cleanup_status"] == "succeeded"
+    final_storage = Storage(db_url, data_root=data_root)
+    try:
+        row = final_storage.get_file_with_catalog(url)
+        memberships = sorted(
+            item[0]
+            for item in final_storage._conn.execute(
+                "SELECT kb_id FROM rag_kb_files WHERE file_url = ?", (url,)
+            ).fetchall()
+        )
+    finally:
+        final_storage.close()
+    assert row["sha256"] == hashlib.sha256(replacement).hexdigest()
+    assert row["deleted_at"] is None
+    assert row["catalog_status"] == "ok"
+    assert memberships == ["ai"]

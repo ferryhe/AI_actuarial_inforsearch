@@ -571,7 +571,12 @@ def _existing_content_and_memberships_current(
     storage: Any, item: dict[str, Any], kb_ids: list[str]
 ) -> bool:
     row = storage.get_file_with_catalog(item["url"])
-    if not row or row.get("sha256") != item["raw_sha256"]:
+    if (
+        not row
+        or row.get("deleted_at") is not None
+        or row.get("catalog_status") != "ok"
+        or row.get("sha256") != item["raw_sha256"]
+    ):
         return False
     if row.get("markdown_content") != item["markdown"]:
         return False
@@ -624,7 +629,12 @@ def _write_item(
         if isinstance(existing_before_write, dict)
         else None
     )
-    if isinstance(prior_metadata, dict):
+    source_content_unchanged = bool(
+        isinstance(existing_before_write, dict)
+        and existing_before_write.get("sha256") == item["raw_sha256"]
+        and existing_before_write.get("markdown_content") == item["markdown"]
+    )
+    if source_content_unchanged and isinstance(prior_metadata, dict):
         serving_metadata = {**prior_metadata, **serving_metadata}
         for language in ("zh", "en"):
             prior_package = prior_metadata.get(language)
@@ -1452,8 +1462,8 @@ def apply_metadata_backfill(
                         or current.get("markdown_content") != item["row"].get("markdown_content")
                         or current.get("published_time")
                         not in {
-                            record["expected_published_time"],
-                            _publication_date_value(record["date_facts"]),
+                            item["current_published_time"],
+                            item["effective_published_time"],
                         }
                         or set(_cleanup_memberships(storage, record["url"])) != set(expected_kbs)
                     ):
@@ -1679,28 +1689,86 @@ def apply_cleanup(
         failed_kbs: set[str] = set()
         for record, detail in zip(records, audit, strict=True):
             url = record["url"]
-            record_failed_kbs: set[str] = set()
-            for kb_id in expected_kbs:
-                if _pending_ready_path(data_root, target).exists():
-                    _clear_pending_ready(data_root, target, kb_id, [url])
-                try:
-                    manager.remove_files_from_kb(kb_id, [url])
-                except Exception as exc:
-                    failed_kbs.add(kb_id)
-                    record_failed_kbs.add(kb_id)
-                    failures.append({"url": url, "error": f"{kb_id} membership removal: {exc}"})
-            if detail["target_status"] != "already_retired" and not record_failed_kbs:
-                try:
-                    storage.mark_file_deleted(url, datetime.now(timezone.utc).isoformat())
-                    detail["catalog_retired"] = True
-                except Exception as exc:
-                    failures.append({"url": url, "error": f"catalog retirement: {exc}"})
-            elif record_failed_kbs:
+            audited_memberships = set(detail["knowledge_base_memberships"])
+            pending_memberships = set(detail["pending_ready_memberships"])
+            record_kbs = audited_memberships | pending_memberships
+            cleared_pending_memberships: set[str] = set()
+            try:
+                # File writers take this advisory key lock while holding their
+                # outer transaction. Keep it through the exact SHA/membership
+                # recheck, all membership removals, and catalog retirement.
+                with storage.transaction(immediate=True):
+                    storage._lock_postgres_key("file", url)
+                    current = storage.get_file_with_catalog(url)
+                    if detail["target_status"] == "already_absent":
+                        if current is not None:
+                            raise RuntimeError(
+                                "target URL appeared after cleanup audit; refusing cleanup"
+                            )
+                    else:
+                        if current is None:
+                            raise RuntimeError(
+                                "target URL disappeared after cleanup audit; refusing cleanup"
+                            )
+                        if current.get("sha256") != record["raw_sha256"]:
+                            raise RuntimeError(
+                                "target URL raw SHA-256 changed after cleanup audit; refusing cleanup"
+                            )
+                        if (
+                            current.get("deleted_at") != detail["deleted_at"]
+                            or current.get("catalog_status") != detail["catalog_status"]
+                        ):
+                            raise RuntimeError(
+                                "target visibility changed after cleanup audit; refusing cleanup"
+                            )
+
+                    current_memberships = _cleanup_memberships(storage, url)
+                    current_kbs = set(current_memberships)
+                    record_kbs.update(current_kbs)
+                    if current_kbs - set(expected_kbs):
+                        raise RuntimeError(
+                            "target URL gained a knowledge-base membership outside the approved profile"
+                        )
+                    if current_kbs != audited_memberships:
+                        raise RuntimeError(
+                            "target knowledge-base memberships changed after cleanup audit"
+                        )
+
+                    latest_pending = _read_pending_ready(data_root, target)
+                    cleared_pending_memberships = {
+                        kb_id for kb_id in expected_kbs if url in latest_pending.get(kb_id, [])
+                    }
+                    record_kbs.update(cleared_pending_memberships)
+                    if cleared_pending_memberships:
+                        current_cleanup = set(_read_pending_cleanup(data_root, target))
+                        _write_pending_cleanup(
+                            data_root,
+                            target,
+                            sorted(current_cleanup | cleared_pending_memberships),
+                        )
+                        for kb_id in sorted(cleared_pending_memberships):
+                            _clear_pending_ready(data_root, target, kb_id, [url])
+
+                    for kb_id in expected_kbs:
+                        manager.remove_files_from_kb(kb_id, [url])
+                    if detail["target_status"] != "already_retired":
+                        storage.mark_file_deleted(url, datetime.now(timezone.utc).isoformat())
+
+                detail["catalog_retired"] = True
+                detail["membership_removals"] = {kb_id: "completed" for kb_id in expected_kbs}
+            except Exception as exc:
+                failed_kbs.update(record_kbs)
+                # A precondition or native write failure leaves the database
+                # transaction unchanged; preserve any pending chunk work too.
+                pending_to_restore = pending_memberships | cleared_pending_memberships
+                if pending_to_restore:
+                    _add_pending_ready(data_root, target, sorted(pending_to_restore), [url])
+                failures.append({"url": url, "error": f"cleanup transaction: {exc}"})
                 detail["catalog_retired"] = False
-            detail["membership_removals"] = {
-                kb_id: "pending" if kb_id in record_failed_kbs else "completed"
-                for kb_id in expected_kbs
-            }
+                detail["membership_removals"] = {
+                    kb_id: "pending" if kb_id in record_kbs else "not_required"
+                    for kb_id in expected_kbs
+                }
 
         ready = {}
         ready_errors = {}

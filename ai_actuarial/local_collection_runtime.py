@@ -4162,11 +4162,14 @@ def reconcile_backlog(
     page_limit = max(1, page_limit)
     page = content_hub_list_ai_versions(after_version_id=cursor, limit=page_limit, database_url=hub)
     page_versions = page.get("versions") or []
+    fresh_version_ids = {int(row["content_version_id"]) for row in page_versions}
     candidates = {int(row["content_version_id"]): row for row in page_versions}
     if recovered:
         candidates[int(recovered["content_version_id"])] = recovered
+        fresh_version_ids.discard(int(recovered["content_version_id"]))
     for item in pending_items:
         candidates[int(item["content_version_id"])] = item
+        fresh_version_ids.discard(int(item["content_version_id"]))
     if not candidates:
         _atomic_json(_state_path_for_data(state), state)
         return {
@@ -4204,6 +4207,16 @@ def reconcile_backlog(
     newly_missing: list[dict[str, Any]] = []
     for version in eligible_versions:
         version_id = int(version["content_version_id"])
+        if version_id in fresh_version_ids:
+            refreshed, ineligible_reason = _refresh_pending_target_item(version, hub)
+            if refreshed is None:
+                _suppress_non_primary_retry(
+                    state,
+                    version,
+                    ineligible_reason or "current Hub version is no longer AI-first",
+                )
+                continue
+            version = refreshed
         artifact = Path(
             version.get("artifact_path") or _local_cas_path(data_root, str(version["raw_sha256"]))
         )

@@ -4090,3 +4090,140 @@ def test_pending_ai_first_legacy_empty_primary_evidence_is_rebound_from_hub(monk
     assert refreshed["categories"] == categories
     assert refreshed["source_primary_category"] == "AI"
     assert refreshed["legacy_hub_annotation"] is True
+
+
+def test_fresh_ai_backlog_rows_refresh_legacy_annotation_before_target_stream(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from ai_actuarial import local_collection_target_worker as target_worker
+
+    monkeypatch.setattr(runtime, "_ACTIVE_STATE_PATH", tmp_path / "state.json")
+    url = "https://example.test/fresh-legacy-ai-first.pdf"
+    raw = b"fresh historical AI-first source bytes"
+    raw_sha = hashlib.sha256(raw).hexdigest()
+    markdown = "Pricing analysis uses AI methods."
+    markdown_sha = hashlib.sha256(markdown.encode()).hexdigest()
+    categories = [
+        {"key": "AI", "evidence": []},
+        {"key": "Pricing", "evidence": ["Pricing analysis"]},
+    ]
+    date_facts = {
+        "publication_date": None,
+        "revision_date": None,
+        "document_version_date": None,
+    }
+    annotation = {
+        "categories": categories,
+        "date_facts": date_facts,
+        "date_review_status": "complete",
+        "date_review_reason": None,
+        "date_review_unresolved": [],
+    }
+    result_sha = target_worker._hash(target_worker._canonical_json(annotation).encode("utf-8"))
+    bilingual_metadata = {
+        language: {
+            "title": "Historical pricing AI article",
+            "summary": "Pricing analysis uses AI methods.",
+            "category": "AI",
+            "keywords": ["pricing", "AI"],
+        }
+        for language in ("zh", "en")
+    }
+    source_signature = "b" * 64
+    current = {
+        "content_version_id": 91,
+        "url": url,
+        "raw_sha256": raw_sha,
+        "markdown_text_variant_id": 101,
+        "markdown_sha256": markdown_sha,
+        "hub_markdown_sha256": markdown_sha,
+        "hub_markdown_sha256_kind": "raw_utf8",
+        "markdown": markdown,
+        "blob_available": True,
+        "bilingual_metadata": bilingual_metadata,
+        "annotation": {
+            **annotation,
+            "source_primary_category": "AI",
+            "source_signature": source_signature,
+            "result_sha256": result_sha,
+        },
+    }
+    cas_path = runtime._local_cas_path(tmp_path, raw_sha)
+    cas_path.parent.mkdir(parents=True, exist_ok=True)
+    cas_path.write_bytes(raw)
+    fresh_row = {
+        "content_version_id": 91,
+        "url": url,
+        "raw_sha256": raw_sha,
+        "cas_relpath": raw_sha,
+        "byte_size": len(raw),
+        "markdown_text_variant_id": 101,
+        "markdown_sha256": markdown_sha,
+        "hub_markdown_sha256": markdown_sha,
+        "hub_markdown_sha256_kind": "raw_utf8",
+        "source_primary_category": "AI",
+        "categories": categories,
+        "date_facts": date_facts,
+        "date_review_status": "complete",
+        "date_review_reason": None,
+        "date_review_unresolved": [],
+        "source_signature": source_signature,
+        "result_sha256": result_sha,
+        "markdown": markdown,
+        "bilingual_metadata": bilingual_metadata,
+        "source_site": "iaa",
+        "source_page_url": url,
+        "content_type": "application/pdf",
+        "blob_availability": "present",
+    }
+    monkeypatch.setattr(runtime, "content_hub_read_version", lambda *_args: current)
+    monkeypatch.setattr(
+        runtime,
+        "content_hub_list_ai_versions",
+        lambda **_kwargs: {
+            "versions": [fresh_row],
+            "has_more": False,
+            "eligible_ai_count": 1,
+            "missing_blob_ai_count": 0,
+            "next_after_version_id": 91,
+        },
+    )
+    monkeypatch.setattr(
+        runtime, "content_hub_ai_url_versions", lambda *_args, **_kwargs: {url: [91]}
+    )
+    streamed = []
+
+    def stream(_config, target, items, _ready_pending):
+        acknowledgements = []
+        for item in items:
+            assert item["legacy_hub_annotation"] is True
+            normalized = target_worker._normalize_item(
+                {
+                    **item,
+                    "raw_bytes_b64": base64.b64encode(raw).decode("ascii"),
+                },
+                target,
+                ["AI", "Pricing", "Other"],
+            )
+            assert normalized["categories"] == categories
+            assert normalized["source_signature"] == source_signature
+            streamed.append((target, normalized["content_version_id"]))
+            acknowledgements.append(
+                {
+                    "content_version_id": item["content_version_id"],
+                    "raw_sha256": item["raw_sha256"],
+                    "status": "written",
+                    "metadata_fingerprint": runtime._target_metadata_fingerprint(item),
+                }
+            )
+        return {"acknowledgements": acknowledgements, "ready_status": "succeeded"}
+
+    monkeypatch.setattr(runtime, "_stream_target", stream)
+    state = {"backlog_cursor": 0, "target_acks": {}}
+
+    result = runtime.reconcile_backlog({"data_root": str(tmp_path)}, state, "unused-hub", limit=10)
+
+    assert result["processed"] == 1
+    assert result["pending_target_reconciliation"] == 0
+    assert streamed == [("china", 91), ("overseas", 91)]
+    assert state["reconciled_version_ids"] == [91]
