@@ -333,6 +333,143 @@ class LocalFlowTests(unittest.TestCase):
         self.assertNotIn("无需同步", markdown)
         self.assertNotIn("已确认可搜索 7 项", markdown)
 
+    def test_english_markdown_localizes_labels_without_changing_report_semantics(self):
+        day = date(2026, 10, 29)
+        current = receipt_for(
+            day,
+            "caa",
+            run_status="partial",
+            failed_stage="downloaded",
+            error="RuntimeError: upstream response code 499 at https://example.test/feed; request budget reached",
+            ai=2,
+        )
+        current["attempt_count"] = 2
+        current["stages"]["downloaded"]["count"] = 12
+        current["stages"]["downloaded"]["request_budget"] = {
+            "used": 30,
+            "cap": 30,
+            "paused": True,
+            "frontier_remaining": 2,
+        }
+        current["stages"]["new_versions"]["count"] = 5
+        current["stages"]["duplicates"]["count"] = 3
+        current["stages"]["enriched"]["count"] = 4
+        current["stages"]["china_ack"] = {
+            "status": "succeeded",
+            "acknowledged": 1,
+            "pending": 0,
+            "failed": 0,
+            "ready_status": "succeeded",
+        }
+        current["stages"]["overseas_ack"] = {
+            "status": "succeeded",
+            "acknowledged": 1,
+            "pending": 0,
+            "failed": 0,
+            "ready_status": "pending",
+        }
+        current["telemetry"] = {
+            "source": {
+                "request_count": 6,
+                "pages_visited": 2,
+                "links_discovered": 7,
+                "files_by_type": {"html": 3, "pdf": 2, "other": 1},
+            },
+            "conversion": {"succeeded_count": 2, "failed_count": 1},
+            "ai_first_candidate_count": 2,
+            "targets": {
+                "china": {
+                    "acknowledged_ids": ["version-1"],
+                    "ready_status": "succeeded",
+                    "ready_ids": ["version-1"],
+                },
+                "overseas": {
+                    "acknowledged_ids": ["version-1"],
+                    "ready_status": "pending",
+                    "ready_ids": [],
+                },
+            },
+        }
+        legacy = receipt_for(day, "ifoa-uk", ai=4)
+        monitor = normalized(monitor_receipt(day, "iaba"))
+        receipts = history(current, legacy, monitor_receipt(day, "iaba"))
+        runtime = flow._normalize_runtime_output(
+            {
+                "schema_version": 1,
+                "date_local": day.isoformat(),
+                "preview": False,
+                "elapsed_seconds": 123,
+                "runs": [
+                    {
+                        "site_id": "caa",
+                        "receipt_id": current["receipt_id"],
+                        "attempt_count": 2,
+                        "run_status": "partial",
+                    },
+                    {"site_id": "ifoa-uk", "error": "RuntimeError: current retry has no receipt"},
+                    {
+                        "site_id": "iaba",
+                        "receipt_id": monitor["receipt_id"],
+                        "attempt_count": monitor["attempt_count"],
+                        "run_status": monitor["run_status"],
+                    },
+                ],
+            },
+            day,
+            Path("runtime-output.json"),
+        )
+        report = flow.make_report(day, receipts, runtime_output=runtime)
+        original_json = json.dumps(report, ensure_ascii=False, sort_keys=True)
+        chinese = flow.render_markdown(report)
+        chinese_explicit = flow.render_markdown(report, language="zh")
+        english = flow.render_markdown(report, language="en")
+
+        self.assertEqual(chinese, chinese_explicit)
+        self.assertEqual(english, flow.render_markdown(report, language="en"))
+        self.assertEqual(original_json, json.dumps(report, ensure_ascii=False, sort_keys=True))
+        self.assertLess(
+            english.index("## Executive summary"), english.index("| Item | Result for the day |")
+        )
+        self.assertIn(
+            "Run evidence covers 2 collection sites: current receipts 1 site; missing receipts 1 site",
+            english,
+        )
+        self.assertIn("6 routine + 0 retry sites planned", english)
+        self.assertIn("30-request budget is exhausted; continue next time", english)
+        self.assertIn("HTTP 6; 12 files downloaded", english)
+        self.assertIn("new 5; reused 3; classified 4", english)
+        self.assertIn("Body conversion succeeded 2 files; failed 1 file", english)
+        self.assertIn("AI-first 2 articles", english)
+        self.assertIn("China: 1 ingestion confirmation", english)
+        self.assertIn("1 searchable article", english)
+        self.assertIn("Overseas: 1 ingestion confirmation", english)
+        self.assertIn("0 searchable articles", english)
+        self.assertIn(
+            "Raw source evidence: RuntimeError: upstream response code 499 at https://example.test/feed",
+            english,
+        )
+        self.assertIn("AI-first not recorded (legacy any-category AI candidates 4)", english)
+        self.assertIn("Current run receipt missing", english)
+        self.assertIn("Monitoring items (reported separately, excluded from collection)", english)
+        self.assertIn(
+            "International Association of Black Actuaries: Current receipt: Check succeeded",
+            english,
+        )
+        self.assertNotRegex(english, r"[\u4e00-\u9fff]")
+        self.assertIn("30次访问预算用完，下次继续", chinese)
+        self.assertIn("HTTP 6；下载 12份", chinese)
+        self.assertIn("本次运行回执覆盖1/2项", chinese)
+        self.assertIn(
+            "RuntimeError: upstream response code 499 at https://example.test/feed", chinese
+        )
+        held_day = next(
+            day + timedelta(days=offset)
+            for offset in range(7)
+            if flow.HELD_SITES & set(flow.baseline_sites(day + timedelta(days=offset)))
+        )
+        held_report = flow.make_report(held_day, {})
+        self.assertIn("Held; not run:", flow.render_markdown(held_report, language="en"))
+
     def test_markdown_scopes_missing_receipts_and_never_sums_retry_budget_as_day_total(self):
         day = date(2026, 10, 28)
         raw = receipt_for(day, "caa")
@@ -1140,11 +1277,56 @@ class LocalFlowTests(unittest.TestCase):
                 self.assertEqual(flow.main(markdown_args), 0)
             self.assertEqual(first.getvalue(), second.getvalue())
             self.assertIn("## 各站进度与停点", first.getvalue())
+            english_args = [*markdown_args, "--language", "en"]
+            english_first, english_second = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(english_first):
+                self.assertEqual(flow.main(english_args), 0)
+            with contextlib.redirect_stdout(english_second):
+                self.assertEqual(flow.main(english_args), 0)
+            self.assertEqual(english_first.getvalue(), english_second.getvalue())
+            self.assertIn("## Executive summary", english_first.getvalue())
+            self.assertIn("## Site progress and stopping points", english_first.getvalue())
+            zh_json, en_json = io.StringIO(), io.StringIO()
+            for language, output in (("zh", zh_json), ("en", en_json)):
+                with contextlib.redirect_stdout(output):
+                    self.assertEqual(
+                        flow.main(
+                            [
+                                "report",
+                                "--date",
+                                day.isoformat(),
+                                "--receipts",
+                                str(root),
+                                "--case-ledger",
+                                str(ledger),
+                                "--json",
+                                "--language",
+                                language,
+                            ]
+                        ),
+                        0,
+                    )
+            self.assertEqual(zh_json.getvalue(), en_json.getvalue())
+            error_output = io.StringIO()
+            with contextlib.redirect_stderr(error_output), self.assertRaises(SystemExit) as invalid:
+                flow.main([*markdown_args, "--language", "fr"])
+            self.assertEqual(invalid.exception.code, 2)
+            self.assertIn("invalid choice", error_output.getvalue())
             help_output = io.StringIO()
             with contextlib.redirect_stdout(help_output), self.assertRaises(SystemExit) as error:
-                flow.main(["--help"])
+                flow.main(["report", "--help"])
             self.assertEqual(error.exception.code, 0)
-            self.assertIn("plan", help_output.getvalue())
+            self.assertIn("--language {zh,en}", help_output.getvalue())
+            root_help = io.StringIO()
+            with contextlib.redirect_stdout(root_help), self.assertRaises(SystemExit) as root_error:
+                flow.main(["--help"])
+            self.assertEqual(root_error.exception.code, 0)
+            self.assertIn("plan", root_help.getvalue())
+            root_help = io.StringIO()
+            with contextlib.redirect_stdout(root_help), self.assertRaises(SystemExit) as root_error:
+                flow.main(["--help"])
+            self.assertEqual(root_error.exception.code, 0)
+            self.assertIn("plan", root_help.getvalue())
 
 
 if __name__ == "__main__":

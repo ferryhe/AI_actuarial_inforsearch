@@ -94,13 +94,14 @@ report 的 `failure_cases` 是按 site/stage 跨回执折叠后仍未由该阶�
 ```powershell
 python .agents/skills/local-actuarial-flow/scripts/local_flow.py plan --date 2026-10-25 --receipts reports/local-automation-state/receipts --json
 python .agents/skills/local-actuarial-flow/scripts/local_flow.py status --date 2026-10-25 --receipts reports/local-automation-state/receipts --json
-python .agents/skills/local-actuarial-flow/scripts/local_flow.py report --date 2026-10-25 --receipts reports/local-automation-state/receipts --case-ledger reports/local-automation-state/cases/ledger.json --format markdown
+python .agents/skills/local-actuarial-flow/scripts/local_flow.py report --date 2026-10-25 --receipts reports/local-automation-state/receipts --case-ledger reports/local-automation-state/cases/ledger.json --format markdown --language zh
+python .agents/skills/local-actuarial-flow/scripts/local_flow.py report --date 2026-10-25 --receipts reports/local-automation-state/receipts --format markdown --language en
 ```
 
 `plan` 显示 06:00 美东固定六项 baseline 和最多两个不同站点的额外失败重试。每日日期锚定，不按 DST 小时滚动；连续任意七个自然日的 baseline 计划覆盖 32 项。失败重试有日期轮转游标，不改变 baseline；这代表计划覆盖，不能保证实际运行或成功覆盖。hold 占一个 baseline 位置但不计为尝试或成功。monitor-only 项只做结构检查。
 
 `status` 对全部 32 项列出 `succeeded`、`partial`、`failed`、`not_run`、`not_scheduled` 或 `hold`，并给计划位置、原因、失败阶段和证据。planned 项缺回执是 `not_run`（调度缺口），不是网页失败。计划外回执、单站多次尝试以及总 distinct site/attempt 数超过 8 都会在 `budget_exceptions` 分别列明，绝不静默丢掉。
 
-`report` 默认仍输出 JSON；`--format markdown` 输出简洁中文表，`--json` 保持兼容。Markdown 开头的执行摘要应简述整体完成度、可见产出、主要阻塞/纯预算暂停和建议。传入 `--runtime-output` 后，只有与当前非预览运行精确匹配的回执可作为本次结果；同日较早回执保留为历史，不可替代失败或缺失的当前尝试。未提供运行输出时可按日期展示已有回执数量和错误，但须明确当前运行关联未知；不得把它们写成本次运行成功。建议把计划内未运行与已尝试但缺回执分开：前者核实是否应执行，后者核对当前回执。预览、monitor-only 和 hold 分开说明，不计入来源采集。实际来源、转换、目标错误不可被预算提示遮盖；纯预算暂停单列。缺少指标保持未知。建议仅为后续检查，不表示已执行重试、提升预算、删除数据或更改发布规则。可选 `--runtime-output` 读取同日期 `run-daily` JSON，指出有运行证据但缺 final receipt 的站点并显示实际整轮耗时。运行输出只提供可见性，不参与失败 case 折叠、关闭或研究队列。报告包含当日计划/实际站点、来源请求/页面/新链接、文件类型、Hub 新增/重复、转换、AI 首类候选、国内/海外入库及可搜索状态和逐站停止阶段。观察统计包括同日重跑，唯一计数只从精确身份集合生成。`ack` 与各自的 Ready 状态分开；pending/unknown/not_required 不被误报为成功或网页故障。跨日积压需未来按目标和 `content_version_id` 去重读取，不能把多份回执快照直接相加。
+`report` 默认仍输出 JSON；`--format markdown` 输出人类可读表，`--language zh|en` 选择中文或英文（默认 zh），仅影响 Markdown，不改变 JSON、数据范围或状态。偏好优先级为显式 CLI 参数、用户明确指定的报告语言、对话语言、中文回退。中文 30 请求预算提示固定使用“30次访问预算用完，下次继续”，英文对应 “The 30-request budget is exhausted; continue next time.” `--json` 保持兼容。Markdown 开头的执行摘要应简述整体完成度、可见产出、主要阻塞/纯预算暂停和建议。传入 `--runtime-output` 后，只有与当前非预览运行精确匹配的回执可作为本次结果；同日较早回执保留为历史，不可替代失败或缺失的当前尝试。未提供运行输出时可按日期展示已有回执数量和错误，但须明确当前运行关联未知；不得把它们写成本次运行成功。建议把计划内未运行与已尝试但缺回执分开：前者核实是否应执行，后者核对当前回执。预览、monitor-only 和 hold 分开说明，不计入来源采集。实际来源、转换、目标错误不可被预算提示遮盖；纯预算暂停单列。缺少指标保持未知。建议仅为后续检查，不表示已执行重试、提升预算、删除数据或更改发布规则。可选 `--runtime-output` 读取同日期 `run-daily` JSON，指出有运行证据但缺 final receipt 的站点并显示实际整轮耗时。运行输出只提供可见性，不参与失败 case 折叠、关闭或研究队列。报告包含当日计划/实际站点、来源请求/页面/新链接、文件类型、Hub 新增/重复、转换、AI 首类候选、国内/海外入库及可搜索状态和逐站停止阶段。观察统计包括同日重跑，唯一计数只从精确身份集合生成。`ack` 与各自的 Ready 状态分开；pending/unknown/not_required 不被误报为成功或网页故障。跨日积压需未来按目标和 `content_version_id` 去重读取，不能把多份回执快照直接相加。
 
 需要 Python 3.10+ 和可用的 `America/New_York` IANA 时区数据；Windows 如缺数据，在同一 Python 环境安装 `tzdata`。helper 只规划、读取 JSON 并输出 JSON 或 Markdown，不访问网站、Hub 或目标服务，不写 ledger，也不启用定时任务。

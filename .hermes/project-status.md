@@ -1,3 +1,9 @@
+# 当前候选 — 日报中英文语言选项 — 2026-10-29
+
+- 项目 `AI_actuarial_inforsearch`；工作树 `C:/Users/ferry/.codex/worktrees/local-flow-report-language/AI_actuarial_inforsearch`，分支 `feat/local-flow-report-language`。仅离线日报 Markdown 支持 `--language zh|en`；默认中文；JSON 与汇总数据不受语言选项影响。
+- 完成 helper/CLI 双语回归（35/35 PASS）、CLI 帮助与无效语言检查、Black、isort、compileall、`git diff --check`、skill-creator quick_validate。Oct28/29 双语真实回执+runtime 报告已生成到原项目 `reports/report-language-20261029/`，确认中文默认等于显式 zh、JSON 双语一致且输入未改变。中文相对基线仅有按要求替换的预算建议短语。
+- 本轮未改采集 runtime、回执、ledger、自动化或生产状态，未提交或推送；等待独立 Sol/high review。
+
 # 当前候选 — CI 容量错误用语修正 — 2026-10-29
 
 - 项目 `AI_actuarial_inforsearch`；工作树 `C:/Users/ferry/.codex/worktrees/local-flow-readable-report/AI_actuarial_inforsearch`，分支 `feat/readable-local-flow-report`。日报仅在容量错误明确写出 `% used` 时显示已用比例；只有阈值或语义含糊的百分比保持通用“目标容量门槛”。原 runtime 集成断言未改。
