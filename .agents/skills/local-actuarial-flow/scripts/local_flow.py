@@ -1531,6 +1531,25 @@ def parse_day(value: str) -> date:
     return result
 
 
+def _text(language: str, chinese: str, english: str) -> str:
+    return english if language == "en" else chinese
+
+
+def _count_text(value: int, unit: str, language: str, english_unit: str | None = None) -> str:
+    if language == "zh":
+        return f"{value}{unit}"
+    label = english_unit or {
+        "次": "times",
+        "份": "files",
+        "条": "items",
+        "篇": "articles",
+        "": "",
+    }.get(unit, unit)
+    if value == 1 and label.endswith("s"):
+        label = label[:-1]
+    return f"{value} {label}" if label else str(value)
+
+
 def _metric_value(metric: dict[str, Any], *keys: str) -> int | None:
     for key in keys:
         value = metric.get(key)
@@ -1539,30 +1558,55 @@ def _metric_value(metric: dict[str, Any], *keys: str) -> int | None:
     return None
 
 
-def _scoped_metric_text(report: dict[str, Any], metric: dict[str, Any], *, unit: str = "次") -> str:
+def _scoped_metric_text(
+    report: dict[str, Any],
+    metric: dict[str, Any],
+    *,
+    unit: str = "次",
+    english_unit: str | None = None,
+    language: str = "zh",
+) -> str:
     value = _metric_value(metric, "observation_sum", "run_observation_sum")
     if value is None:
-        return "未记录"
+        return _text(language, "未记录", "not recorded")
+    rendered_value = _count_text(value, unit, language, english_unit)
     total = len(report["coverage"]["actual_collection_receipt_sites"])
     known = metric.get("known_receipts", total)
     if known < total:
-        return f"已有{known}/{total}项回执记录，合计{value}{unit}"
-    return f"{value}{unit}"
+        return _text(
+            language,
+            f"已有{known}/{total}项回执记录，合计{value}{unit}",
+            f"{rendered_value} recorded in {known}/{total} receipts",
+        )
+    return rendered_value
 
 
-def _scoped_unique_text(report: dict[str, Any], metric: dict[str, Any], *, unit: str) -> str:
+def _scoped_unique_text(
+    report: dict[str, Any],
+    metric: dict[str, Any],
+    *,
+    unit: str,
+    language: str = "zh",
+) -> str:
     value = metric.get("exact_unique_count")
     if value is None:
-        return "未记录"
+        return _text(language, "未记录", "not recorded")
+    rendered_value = _count_text(value, unit, language)
     total = len(report["coverage"]["actual_collection_receipt_sites"])
     known = metric.get("known_receipts", total)
     if known < total:
-        return f"身份信息已知{known}/{total}项回执，至少{value}{unit}"
-    return f"{value}{unit}"
+        return _text(
+            language,
+            f"身份信息已知{known}/{total}项回执，至少{value}{unit}",
+            f"at least {rendered_value}; identities known in {known}/{total} receipts",
+        )
+    return rendered_value
 
 
-def _stage_metric_text(report: dict[str, Any], stage: str, *, unit: str = "份") -> str:
-    return _scoped_metric_text(report, report["stages"][stage], unit=unit)
+def _stage_metric_text(
+    report: dict[str, Any], stage: str, *, unit: str = "份", language: str = "zh"
+) -> str:
+    return _scoped_metric_text(report, report["stages"][stage], unit=unit, language=language)
 
 
 def _receipt_request_count(receipt: dict[str, Any]) -> int | None:
@@ -1589,7 +1633,7 @@ def _daily_request_count(report: dict[str, Any]) -> tuple[int | None, str]:
     return None, ""
 
 
-def _receipt_scope(report: dict[str, Any]) -> str:
+def _receipt_scope(report: dict[str, Any], language: str = "zh") -> str:
     collection_count = len(report["coverage"]["actual_collection_receipt_sites"])
     runtime = report.get("runtime_evidence")
     if runtime is not None and not runtime["preview"]:
@@ -1602,22 +1646,31 @@ def _receipt_scope(report: dict[str, Any]) -> str:
         )
         run_count = len(run_sites)
         if unmatched_dated:
-            return (
+            return _text(
+                language,
                 f"{collection_count}站日期回执（{matched_count}/{run_count}项对应本次运行，"
-                f"{unmatched_dated}项仅作历史记录）"
+                f"{unmatched_dated}项仅作历史记录）",
+                f"{collection_count} dated site receipts ({matched_count}/{run_count} matched "
+                f"this run; {unmatched_dated} historical only)",
             )
         if run_count > collection_count or matched_count < run_count:
-            return f"已有{matched_count}/{run_count}站回执"
-    return f"{collection_count}站回执"
+            return _text(
+                language,
+                f"已有{matched_count}/{run_count}站回执",
+                f"receipts for {matched_count}/{run_count} sites",
+            )
+    return _text(language, f"{collection_count}站回执", f"{collection_count} site receipts")
 
 
 def _escape_cell(value: Any) -> str:
     return " ".join(str(value).replace("|", "\\|").split())
 
 
-def _short_failure_reason(reason: Any, stage: str) -> str:
+def _short_failure_reason(reason: Any, stage: str, language: str = "zh") -> str:
     """Keep the summary readable while leaving the source receipt untouched."""
-    raw = " ".join(str(reason or "未记录具体原因").split())
+    raw = " ".join(
+        str(reason or _text(language, "未记录具体原因", "No specific reason recorded")).split()
+    )
     lowered = raw.casefold()
     budget_pause = any(
         token in lowered
@@ -1629,7 +1682,7 @@ def _short_failure_reason(reason: Any, stage: str) -> str:
             "来源采集因请求预算暂停",
         )
     )
-    budget_note = "请求预算暂停"
+    budget_note = _text(language, "请求预算暂停", "Request budget paused")
     if budget_pause:
         remaining = None
         for token in ("frontier_remaining=", "frontier remaining ", "剩余队列 "):
@@ -1639,76 +1692,134 @@ def _short_failure_reason(reason: Any, stage: str) -> str:
                 if digits:
                     remaining = digits
                     break
-        budget_note += f"（剩余队列 {remaining} 项）" if remaining is not None else ""
+        budget_note += (
+            _text(
+                language,
+                f"（剩余队列 {remaining} 项）",
+                f" ({remaining} queued)",
+            )
+            if remaining is not None
+            else ""
+        )
     details = []
     if "redirect left the approved source host" in lowered:
-        details.append("文档重定向离开允许来源")
+        details.append(
+            _text(
+                language,
+                "文档重定向离开允许来源",
+                "Document redirected outside the approved source host",
+            )
+        )
     if "download exceeded size limit" in lowered or "streamed digest check" in lowered:
-        details.append("下载超出大小限制或摘要校验失败")
+        details.append(
+            _text(
+                language,
+                "下载超出大小限制或摘要校验失败",
+                "Download exceeded the size limit or failed digest verification",
+            )
+        )
     if (
         stage == "downloaded"
         and "404" in lowered
         and any(token in lowered for token in ("http", "status_code", "status="))
     ):
-        details.append("HTTP 404：链接不存在")
+        details.append(_text(language, "HTTP 404：链接不存在", "HTTP 404: link not found"))
     if (
         stage == "downloaded"
         and "400" in lowered
         and any(token in lowered for token in ("http", "status_code", "status="))
     ):
-        details.append("HTTP 400：链接格式或请求错误")
+        details.append(
+            _text(language, "HTTP 400：链接格式或请求错误", "HTTP 400: malformed link or request")
+        )
     if "pdf" in lowered and any(token in lowered for token in ("encrypt", "password", "加密")):
-        details.append("加密 PDF 无法转换")
+        details.append(_text(language, "加密 PDF 无法转换", "Encrypted PDF could not be converted"))
     target_stage = stage in ACK_STAGES or stage.endswith("_ready")
     if target_stage and any(token in lowered for token in ("capacity", "80%", "容量门槛")):
         percentage = re.search(r"(\d+(?:\.\d+)?)\s*%\s+used\b", raw, re.IGNORECASE)
         used = f"（已用{percentage.group(1)}%）" if percentage else ""
-        details.append(f"目标容量门槛{used}，发布未继续")
+        details.append(
+            _text(
+                language,
+                f"目标容量门槛{used}，发布未继续",
+                f"Target capacity gate{f' ({percentage.group(1)}% used)' if percentage else ''}; publishing did not proceed",
+            )
+        )
     if (
         target_stage
         and "ssh" in lowered
         and any(token in lowered for token in ("timeout", "timed out"))
     ):
-        details.append("SSH 连接超时")
+        details.append(_text(language, "SSH 连接超时", "SSH connection timed out"))
     if target_stage and "target worker failed" in lowered and "no json result" in lowered:
-        details.append("目标端未返回有效回执")
+        details.append(_text(language, "目标端未返回有效回执", "Target returned no valid receipt"))
     if "bounded source discovery produced no verified article or document candidates" in lowered:
-        details.append("未发现可验证文章或文档链接")
+        details.append(
+            _text(
+                language,
+                "未发现可验证文章或文档链接",
+                "No verifiable article or document links found",
+            )
+        )
     if "ready_status must be one of" in lowered:
-        details.append("回执可搜索状态值不兼容")
+        details.append(
+            _text(
+                language,
+                "回执可搜索状态值不兼容",
+                "Incompatible searchable-status value in receipt",
+            )
+        )
     if details:
-        return "；".join(dict.fromkeys(details + ([budget_note] if budget_pause else [])))
+        separator = _text(language, "；", "; ")
+        return separator.join(dict.fromkeys(details + ([budget_note] if budget_pause else [])))
     if budget_pause and (";" not in raw or raw.casefold().startswith("request budget")):
         return budget_note
     if len(raw) > 120:
         raw = raw[:117].rstrip() + "..."
-    return f"{raw}；{budget_note}" if budget_pause else raw
+    raw_evidence = _text(language, raw, f"Raw source evidence: {raw}")
+    return (
+        f"{raw_evidence}{_text(language, '；', '; ')}{budget_note}"
+        if budget_pause
+        else raw_evidence
+    )
 
 
-def _monitor_result_text(receipt: dict[str, Any]) -> str:
+def _monitor_result_text(receipt: dict[str, Any], language: str = "zh") -> str:
     status = receipt["effective_status"]
     if status == "succeeded":
-        return "检查成功"
+        return _text(language, "检查成功", "Check succeeded")
     monitor = receipt.get("stages", {}).get("monitor") or {}
     reason = monitor.get("error") or receipt.get("reason")
-    result = f"检查{_status_label(status)}"
-    return f"{result}：{_short_failure_reason(reason, 'monitor')}" if reason else result
+    result = _text(
+        language,
+        f"检查{_status_label(status, language)}",
+        f"Check {_status_label(status, language)}",
+    )
+    return (
+        f"{result}{_text(language, '：', ': ')}{_short_failure_reason(reason, 'monitor', language)}"
+        if reason
+        else result
+    )
 
 
-def _executive_count(receipts: list[dict[str, Any]], stage: str) -> str:
+def _executive_count(receipts: list[dict[str, Any]], stage: str, language: str = "zh") -> str:
     values = [(receipt.get("stages", {}).get(stage) or {}).get("count") for receipt in receipts]
     known = [value for value in values if value is not None]
     if not known:
-        return "未记录"
+        return _text(language, "未记录", "not recorded")
     total = sum(known)
     return (
         str(total)
         if len(known) == len(receipts)
-        else f"{total}（{len(known)}/{len(receipts)}项回执有记录）"
+        else _text(
+            language,
+            f"{total}（{len(known)}/{len(receipts)}项回执有记录）",
+            f"{total} ({len(known)}/{len(receipts)} receipts recorded)",
+        )
     )
 
 
-def _executive_telemetry(receipts: list[dict[str, Any]], *path: str) -> str:
+def _executive_telemetry(receipts: list[dict[str, Any]], *path: str, language: str = "zh") -> str:
     values = []
     for receipt in receipts:
         value: Any = receipt.get("telemetry") or {}
@@ -1717,16 +1828,20 @@ def _executive_telemetry(receipts: list[dict[str, Any]], *path: str) -> str:
         values.append(value)
     known = [value for value in values if isinstance(value, (int, float))]
     if not known:
-        return "未记录"
+        return _text(language, "未记录", "not recorded")
     total = sum(known)
     return (
         str(total)
         if len(known) == len(receipts)
-        else f"{total}（{len(known)}/{len(receipts)}项回执有记录）"
+        else _text(
+            language,
+            f"{total}（{len(known)}/{len(receipts)}项回执有记录）",
+            f"{total} ({len(known)}/{len(receipts)} receipts recorded)",
+        )
     )
 
 
-def _executive_summary(report: dict[str, Any]) -> list[str]:
+def _executive_summary(report: dict[str, Any], language: str = "zh") -> list[str]:
     """Summarize only exact current-run collection evidence and visible blockers."""
     coverage = report["coverage"]
     runtime = report.get("runtime_evidence")
@@ -1766,34 +1881,84 @@ def _executive_summary(report: dict[str, Any]) -> list[str]:
     )
     if runtime is None:
         overall = (
-            f"有{len(date_receipts)}站日期回执可参考，但本次运行覆盖未知"
+            _text(
+                language,
+                f"有{len(date_receipts)}站日期回执可参考，但本次运行覆盖未知",
+                f"Dated receipts are available for {len(date_receipts)} sites; current run coverage is unknown",
+            )
             if date_receipts
-            else "没有日期回执或运行清单，执行情况未知"
+            else _text(
+                language,
+                "没有日期回执或运行清单，执行情况未知",
+                "No dated receipts or run manifest; execution status is unknown",
+            )
         )
     elif runtime["preview"]:
-        overall = "仅有预览清单，不能据此确认本次来源采集成功"
+        overall = _text(
+            language,
+            "仅有预览清单，不能据此确认本次来源采集成功",
+            "Preview manifest only; it cannot confirm collection success for this run",
+        )
     elif not run_rows:
-        overall = "本次运行清单没有来源采集项"
+        overall = _text(
+            language,
+            "本次运行清单没有来源采集项",
+            "No collection sites appear in this run manifest",
+        )
     elif missing_sites:
-        overall = "有产出但未全部完成" if useful else "本次回执不完整，执行结果未能完整核验"
+        overall = _text(
+            language,
+            "有产出但未全部完成" if useful else "本次回执不完整，执行结果未能完整核验",
+            (
+                "Some output was collected, but the run is incomplete"
+                if useful
+                else "Receipts are incomplete; the run could not be fully verified"
+            ),
+        )
     elif planned_not_run or status_counts.get("partial") or status_counts.get("failed"):
-        overall = "有产出但未全部完成" if useful else "本次未全部完成"
+        overall = _text(
+            language,
+            "有产出但未全部完成" if useful else "本次未全部完成",
+            (
+                "Some output was collected, but the run is incomplete"
+                if useful
+                else "This run did not complete all planned work"
+            ),
+        )
     elif len(matched) == len(run_rows) and status_counts.get("succeeded") == len(matched):
-        overall = "本次对应回执显示来源采集完成"
+        overall = _text(
+            language, "本次对应回执显示来源采集完成", "Matched receipts show collection completed"
+        )
     else:
-        overall = "本次执行结果未能完整核验"
+        overall = _text(
+            language, "本次执行结果未能完整核验", "This run could not be fully verified"
+        )
 
-    useful_output = (
-        f"下载{_executive_count(summary_receipts, 'downloaded')}份；"
-        f"新增入库{_executive_count(summary_receipts, 'new_versions')}、"
-        f"复用{_executive_count(summary_receipts, 'duplicates')}、"
-        f"摘要分类{_executive_count(summary_receipts, 'enriched')}；"
-        f"AI首类候选{_executive_telemetry(summary_receipts, 'ai_first_candidate_count')}；"
-        f"正文转换成功{_executive_telemetry(summary_receipts, 'conversion', 'succeeded_count')}、"
-        f"失败{_executive_telemetry(summary_receipts, 'conversion', 'failed_count')}"
+    downloaded = _executive_count(summary_receipts, "downloaded", language)
+    new_versions = _executive_count(summary_receipts, "new_versions", language)
+    duplicates = _executive_count(summary_receipts, "duplicates", language)
+    enriched = _executive_count(summary_receipts, "enriched", language)
+    ai_first = _executive_telemetry(summary_receipts, "ai_first_candidate_count", language=language)
+    converted = _executive_telemetry(
+        summary_receipts, "conversion", "succeeded_count", language=language
+    )
+    conversion_failed = _executive_telemetry(
+        summary_receipts, "conversion", "failed_count", language=language
+    )
+    useful_output = _text(
+        language,
+        f"下载{downloaded}份；新增入库{new_versions}、复用{duplicates}、摘要分类{enriched}；"
+        f"AI首类候选{ai_first}；正文转换成功{converted}、失败{conversion_failed}",
+        f"Downloaded {downloaded} files; {new_versions} added to the local database, "
+        f"{duplicates} reused, {enriched} classified; AI-first candidates {ai_first}; body conversion "
+        f"succeeded {converted}, failed {conversion_failed}",
     )
     if not summary_receipts:
-        useful_output = "没有可用采集回执；下载、新增入库、复用、摘要分类和转换数量未记录"
+        useful_output = _text(
+            language,
+            "没有可用采集回执；下载、新增入库、复用、摘要分类和转换数量未记录",
+            "No collection receipts available; download, new, reused, classified, and conversion counts are not recorded",
+        )
 
     issue_groups: dict[str, list[str]] = {
         "source": [],
@@ -1810,7 +1975,7 @@ def _executive_summary(report: dict[str, Any]) -> list[str]:
 
     budget_only = 0
     for receipt in summary_receipts:
-        site = _site_label(receipt["site_id"])
+        site = _site_label(receipt["site_id"], language)
         if _budget_pause_only(receipt):
             budget_only += 1
         primary_failure = receipt.get("failure_point") or {}
@@ -1834,16 +1999,20 @@ def _executive_summary(report: dict[str, Any]) -> list[str]:
                     stage = "conversion"
                     raw_error = primary_reason
                     conversion_issue_added = True
-            reason = _short_failure_reason(raw_error, stage)
+            reason = _short_failure_reason(raw_error, stage, language)
             if (
                 (receipt.get("stages", {}).get("downloaded") or {})
                 .get("request_budget", {})
                 .get("paused")
                 and not _budget_pause_only(receipt)
-                and "请求预算暂停" not in reason
+                and _text(language, "请求预算暂停", "Request budget paused") not in reason
             ):
-                reason += "；兼有预算暂停"
-            issue = f"{site}·{_stage_label(stage)}：{reason}"
+                reason += _text(language, "；兼有预算暂停", "; request budget also paused")
+            issue = _text(
+                language,
+                f"{site}·{_stage_label(stage, language)}：{reason}",
+                f"{site} · {_stage_label(stage, language)}: {reason}",
+            )
             group = (
                 "source"
                 if stage == "downloaded"
@@ -1865,14 +2034,21 @@ def _executive_summary(report: dict[str, Any]) -> list[str]:
             and conversion_failed > 0
             and not conversion_issue_added
         ):
-            issue = f"{site}·正文转换（Markdown）：失败{conversion_failed}份"
+            issue = _text(
+                language,
+                f"{site}·正文转换（Markdown）：失败{conversion_failed}份",
+                f"{site} · Body conversion (Markdown): {_count_text(conversion_failed, '份', language)} failed",
+            )
             add_issue("conversion", issue)
         ai_count = telemetry.get("ai_first_candidate_count")
         ai_ids = telemetry.get("ai_first_candidate_ids")
         if ai_count is None and isinstance(ai_ids, list):
             ai_count = len(ai_ids)
         if ai_count != 0:
-            for target, label in (("china", "国内"), ("overseas", "海外")):
+            for target, label in (
+                ("china", _text(language, "国内", "China")),
+                ("overseas", _text(language, "海外", "Overseas")),
+            ):
                 stage = receipt.get("stages", {}).get(f"{target}_ack")
                 if stage is None and ai_count is None:
                     continue
@@ -1881,12 +2057,20 @@ def _executive_summary(report: dict[str, Any]) -> list[str]:
                 if ready_status in {"failed", "partial", "pending", "not_required"} or (
                     ai_count is not None and ready_status == "unknown"
                 ):
-                    qualifier = (
-                        "有 AI 首类候选，" if isinstance(ai_count, int) and ai_count > 0 else ""
+                    qualifier = _text(
+                        language,
+                        "有 AI 首类候选，" if isinstance(ai_count, int) and ai_count > 0 else "",
+                        (
+                            "AI-first candidates exist; "
+                            if isinstance(ai_count, int) and ai_count > 0
+                            else ""
+                        ),
                     )
-                    issue = (
-                        f"{site}·{label}可搜索确认：{qualifier}回执状态"
-                        f"{_ready_label(ready_status)}"
+                    issue = _text(
+                        language,
+                        f"{site}·{label}可搜索确认：{qualifier}回执状态{_ready_label(ready_status, language)}",
+                        f"{site} · {label} search confirmation: {qualifier}receipt status "
+                        f"{_ready_label(ready_status, language)}",
                     )
                     add_issue(target, issue)
 
@@ -1898,31 +2082,66 @@ def _executive_summary(report: dict[str, Any]) -> list[str]:
             if site not in missing_sites:
                 continue
             reason = row.get("error")
-            label = _site_label(site)
+            label = _site_label(site, language)
             if reason:
-                short_reason = _short_failure_reason(reason, "run")
+                short_reason = _short_failure_reason(reason, "run", language)
                 if "ready_status must be one of" in reason.casefold():
                     contract_failure_sites.append(label)
                 else:
-                    missing_details.append(f"{label}：运行报错（{short_reason}）")
+                    missing_details.append(
+                        _text(
+                            language,
+                            f"{label}：运行报错（{short_reason}）",
+                            f"{label}: run error ({short_reason})",
+                        )
+                    )
             else:
-                history_note = "（同日回执仅作历史记录）" if site in receipt_by_site else ""
-                missing_details.append(f"{label}：本次回执缺失或无法关联{history_note}")
+                history_note = _text(
+                    language,
+                    "（同日回执仅作历史记录）" if site in receipt_by_site else "",
+                    " (same-day receipt is historical only)" if site in receipt_by_site else "",
+                )
+                missing_details.append(
+                    _text(
+                        language,
+                        f"{label}：本次回执缺失或无法关联{history_note}",
+                        f"{label}: current receipt is missing or unmatched{history_note}",
+                    )
+                )
         if missing_sites:
             if contract_failure_sites:
                 missing_details.append(
-                    f"已运行但回执保存失败（状态值不兼容）：{'、'.join(contract_failure_sites)}"
+                    _text(
+                        language,
+                        f"已运行但回执保存失败（状态值不兼容）：{'、'.join(contract_failure_sites)}",
+                        f"Ran, but receipt save failed (incompatible status value): {', '.join(contract_failure_sites)}",
+                    )
                 )
             add_issue(
                 "runtime",
-                f"本次运行{len(missing_sites)}站回执缺口（{'；'.join(missing_details[:3])}）",
+                _text(
+                    language,
+                    f"本次运行{len(missing_sites)}站回执缺口（{'；'.join(missing_details[:3])}）",
+                    f"Current run missing receipts for {_count_text(len(missing_sites), '', language, 'sites')} ({'; '.join(missing_details[:3])})",
+                ),
             )
     if planned_not_run:
-        names = "、".join(
-            _site_label(site) for site in sorted(planned_not_run, key=SITES.index)[:3]
+        names = _text(language, "、", ", ").join(
+            _site_label(site, language) for site in sorted(planned_not_run, key=SITES.index)[:3]
         )
-        suffix = f"等{len(planned_not_run)}站" if len(planned_not_run) > 3 else ""
-        add_issue("runtime", f"计划内未见运行：{names}{suffix}")
+        suffix = (
+            _text(language, f"等{len(planned_not_run)}站", f" and {len(planned_not_run) - 3} more")
+            if len(planned_not_run) > 3
+            else ""
+        )
+        add_issue(
+            "runtime",
+            _text(
+                language,
+                f"计划内未见运行：{names}{suffix}",
+                f"Planned sites not seen running: {names}{suffix}",
+            ),
+        )
 
     issues: list[str] = []
     for group, limit in (
@@ -1937,86 +2156,236 @@ def _executive_summary(report: dict[str, Any]) -> list[str]:
     omitted_count = sum(len(values) for values in issue_groups.values()) - len(issues)
 
     if not issues and budget_only:
-        blockers = f"纯请求预算暂停{budget_only}站；未见其他已记录故障"
+        blockers = _text(
+            language,
+            f"纯请求预算暂停{budget_only}站；未见其他已记录故障",
+            f"Request budget paused for {budget_only} sites; no other recorded failures",
+        )
     elif issues:
-        stage_names = {
-            "来源读取/收集": "来源",
-            "AI 补全/分类": "分类",
-            "AI 首类筛选": "AI首类",
-            "本地库新增": "本地库新增",
-            "本地库去重": "本地库去重",
-            "正文转换（Markdown）": "正文转换",
-            "国内入库确认": "国内入库",
-            "国内可搜索确认": "国内可搜索",
-            "海外入库确认": "海外入库",
-            "海外可搜索确认": "海外可搜索",
-        }
+        stage_names = (
+            {
+                "来源读取/收集": "来源",
+                "AI 补全/分类": "分类",
+                "AI 首类筛选": "AI首类",
+                "本地库新增": "本地库新增",
+                "本地库去重": "本地库去重",
+                "正文转换（Markdown）": "正文转换",
+                "国内入库确认": "国内入库",
+                "国内可搜索确认": "国内可搜索",
+                "海外入库确认": "海外入库",
+                "海外可搜索确认": "海外可搜索",
+            }
+            if language == "zh"
+            else {
+                "Source read/collection": "Source",
+                "AI enrichment/classification": "Classification",
+                "AI-first filter": "AI-first",
+                "Local database additions": "Database additions",
+                "Local database deduplication": "Deduplication",
+                "Body conversion (Markdown)": "Conversion",
+                "China ingestion confirmation": "China ingestion",
+                "China searchable confirmation": "China searchability",
+                "Overseas ingestion confirmation": "Overseas ingestion",
+                "Overseas searchable confirmation": "Overseas searchability",
+            }
+        )
         compact_issues = []
         for issue in issues:
-            if "·" in issue and "：" in issue:
-                site, detail = issue.split("·", 1)
-                stage, reason = detail.split("：", 1)
-                compact_issues.append(f"{site}{stage_names.get(stage, stage)}：{reason}")
+            separator, colon = _text(language, "·", " · "), _text(language, "：", ": ")
+            if separator in issue and colon in issue:
+                site, detail = issue.split(separator, 1)
+                stage, reason = detail.split(colon, 1)
+                compact_issues.append(
+                    _text(
+                        language,
+                        f"{site}{stage_names.get(stage, stage)}：{reason}",
+                        f"{site} — {stage_names.get(stage, stage)}: {reason}",
+                    )
+                )
             else:
                 compact_issues.append(issue)
-        blockers = "；".join(compact_issues)
+        blockers = _text(language, "；", "; ").join(compact_issues)
         if omitted_count:
-            blockers += f"；另有{omitted_count}项详见逐站结果和 JSON"
+            blockers += _text(
+                language,
+                f"；另有{omitted_count}项详见逐站结果和 JSON",
+                f"; {omitted_count} more in site details and JSON",
+            )
         if budget_only:
-            blockers += f"；另有{budget_only}站为纯预算暂停"
+            blockers += _text(
+                language,
+                f"；另有{budget_only}站为纯预算暂停",
+                f"; budget-only pauses at {budget_only} more sites",
+            )
     else:
-        blockers = "未见已记录的阻塞；未记录字段仍属未知"
+        blockers = _text(
+            language,
+            "未见已记录的阻塞；未记录字段仍属未知",
+            "No recorded blockers; unrecorded fields remain unknown",
+        )
 
     recommendations = []
     if runtime is None:
-        recommendations.append("补看实际运行清单，确认日期回执对应的运行覆盖")
+        recommendations.append(
+            _text(
+                language,
+                "补看实际运行清单，确认日期回执对应的运行覆盖",
+                "Check the actual run manifest to establish receipt coverage",
+            )
+        )
     elif runtime["preview"]:
-        recommendations.append("取得实际运行记录后再判断本次覆盖")
+        recommendations.append(
+            _text(
+                language,
+                "取得实际运行记录后再判断本次覆盖",
+                "Use an actual run record to assess this run's coverage",
+            )
+        )
     else:
         if missing_sites:
-            recommendations.append("先核对本次运行回执缺口，避免把旧回执当成本次结果")
+            recommendations.append(
+                _text(
+                    language,
+                    "先核对本次运行回执缺口，避免把旧回执当成本次结果",
+                    "Check missing receipts for this run; do not treat old receipts as current",
+                )
+            )
         if planned_not_run:
-            recommendations.append("确认计划内未见运行的站点是否应按计划执行")
+            recommendations.append(
+                _text(
+                    language,
+                    "确认计划内未见运行的站点是否应按计划执行",
+                    "Confirm whether planned sites not seen running should have run",
+                )
+            )
     if issue_groups["source"] or issue_groups["conversion"] or issue_groups["other"]:
-        recommendations.append("复核来源、转换或处理错误，再按原有单站流程重试")
+        recommendations.append(
+            _text(
+                language,
+                "复核来源、转换或处理错误，再按原有单站流程重试",
+                "Review source, conversion, or processing errors, then retry through the existing per-site flow",
+            )
+        )
     target_groups = [name for name in ("china", "overseas") if issue_groups[name]]
     if target_groups:
-        target_names = "和".join("国内" if name == "china" else "海外" for name in target_groups)
-        recommendations.append(
-            f"核实{target_names}入库回执、可搜索状态及容量门槛，再按原有流程处理"
+        target_names = _text(language, "和", " and ").join(
+            (
+                _text(language, "国内", "China")
+                if name == "china"
+                else _text(language, "海外", "overseas")
+            )
+            for name in target_groups
         )
-    if budget_only or any("请求预算暂停" in issue for issue in issues):
-        recommendations.append("预算暂停按已有游标续采，维持当前请求上限")
+        recommendations.append(
+            _text(
+                language,
+                f"核实{target_names}入库回执、可搜索状态及容量门槛，再按原有流程处理",
+                f"Check {target_names} ingestion receipts, searchable status, and capacity gate; follow existing procedures",
+            )
+        )
+    budget_wording = _text(language, "请求预算暂停", "request budget")
+    if budget_only or any(budget_wording.casefold() in issue.casefold() for issue in issues):
+        caps = {
+            (receipt.get("stages", {}).get("downloaded") or {}).get("request_budget", {}).get("cap")
+            for receipt in summary_receipts
+            if (receipt.get("stages", {}).get("downloaded") or {})
+            .get("request_budget", {})
+            .get("paused")
+        }
+        if caps == {30}:
+            recommendations.append(
+                _text(
+                    language,
+                    "30次访问预算用完，下次继续",
+                    "The 30-request budget is exhausted; continue next time",
+                )
+            )
+        else:
+            recommendations.append(
+                _text(
+                    language,
+                    "预算暂停按已有游标续采，维持当前请求上限",
+                    "Resume from the saved cursor next time and keep the current request limit",
+                )
+            )
     if not recommendations:
-        recommendations.append("按原计划观察，缺失指标继续保留为未记录")
-    advice = "；".join(recommendations)
+        recommendations.append(
+            _text(
+                language,
+                "按原计划观察，缺失指标继续保留为未记录",
+                "Continue monitoring under the current plan; leave missing metrics unrecorded",
+            )
+        )
+    advice = _text(language, "；", "; ").join(recommendations)
     outcome_counts = (
-        f"；{'匹配回执' if runtime is not None and not runtime['preview'] else '日期回执'}状态："
-        f"完成{status_counts.get('succeeded', 0)}、"
-        f"部分{status_counts.get('partial', 0)}、失败{status_counts.get('failed', 0)}"
+        _text(
+            language,
+            f"；{'匹配回执' if runtime is not None and not runtime['preview'] else '日期回执'}状态："
+            f"完成{status_counts.get('succeeded', 0)}、部分{status_counts.get('partial', 0)}、"
+            f"失败{status_counts.get('failed', 0)}",
+            f"; {'matched receipt' if runtime is not None and not runtime['preview'] else 'dated receipt'} status: "
+            f"{status_counts.get('succeeded', 0)} complete, {status_counts.get('partial', 0)} partial, "
+            f"{status_counts.get('failed', 0)} failed",
+        )
         if summary_receipts
-        else "；暂无可统计回执状态"
+        else _text(language, "；暂无可统计回执状态", "; no receipt statuses available")
     )
     if runtime is None:
-        coverage_note = f"{len(date_receipts)}站日期回执；本次运行关联未知"
-        output_scope = "按日期回执合计，未确认运行覆盖"
+        coverage_note = _text(
+            language,
+            f"{len(date_receipts)}站日期回执；本次运行关联未知",
+            f"{len(date_receipts)} dated site receipts; current run linkage is unknown",
+        )
+        output_scope = _text(
+            language,
+            "按日期回执合计，未确认运行覆盖",
+            "Totals use dated receipts; run coverage not confirmed",
+        )
     elif runtime["preview"]:
-        coverage_note = "仅有预览清单，不计日期回执"
-        output_scope = "预览不构成本次成功证据"
+        coverage_note = _text(
+            language,
+            "仅有预览清单，不计日期回执",
+            "Preview manifest only; no dated receipts counted",
+        )
+        output_scope = _text(
+            language, "预览不构成本次成功证据", "Preview is not evidence of success for this run"
+        )
     else:
-        coverage_note = f"本次运行回执覆盖{len(matched)}/{len(run_rows)}项"
-        output_scope = "仅计本次匹配回执"
+        coverage_note = _text(
+            language,
+            f"本次运行回执覆盖{len(matched)}/{len(run_rows)}项",
+            f"Current run receipts cover {len(matched)}/{len(run_rows)} collection sites",
+        )
+        output_scope = _text(language, "仅计本次匹配回执", "Current matched receipts only")
     summary = [
-        f"- 结论：{overall}（{coverage_note}{outcome_counts}）。",
-        f"- 可见产出：{useful_output}（{output_scope}）。",
-        f"- 阻塞与暂停：{blockers}。监控项另列、不计入来源采集；保留项不执行。",
-        f"- 建议：{advice}。建议为后续检查，不代表已执行或改变预算、索引、发布规则。",
+        _text(
+            language,
+            f"- 结论：{overall}（{coverage_note}{outcome_counts}）。",
+            f"- Outcome: {overall} ({coverage_note}{outcome_counts}).",
+        ),
+        _text(
+            language,
+            f"- 可见产出：{useful_output}（{output_scope}）。",
+            f"- Visible output: {useful_output} ({output_scope}).",
+        ),
+        _text(
+            language,
+            f"- 阻塞与暂停：{blockers}。监控项另列、不计入来源采集；保留项不执行。",
+            f"- Blockers and pauses: {blockers}. Monitoring items are listed separately and excluded from collection; held items are not run.",
+        ),
+        _text(
+            language,
+            f"- 建议：{advice}。建议为后续检查，不代表已执行或改变预算、索引、发布规则。",
+            f"- Recommendations: {advice}. These are follow-up checks only; no budget, index, or publishing-rule changes were made.",
+        ),
     ]
     return summary
 
 
-def render_markdown(report: dict[str, Any]) -> str:
-    """Render a short Chinese summary and per-site progress table."""
+def render_markdown(report: dict[str, Any], language: str = "zh") -> str:
+    """Render a localized summary and per-site progress table."""
+    if language not in {"zh", "en"}:
+        raise ValueError("language must be 'zh' or 'en'")
     plan = report["plan"]
     coverage = report["coverage"]
     telemetry = report["telemetry"]
@@ -2034,32 +2403,52 @@ def render_markdown(report: dict[str, Any]) -> str:
             matched_runtime_sites.symmetric_difference(set(coverage["runtime_attempt_sites"]))
             & set(actual)
         )
-        actual_text = f"实际运行{run_count}项；对应本次回执{matched_count}项"
+        actual_text = _text(
+            language,
+            f"实际运行{run_count}项；对应本次回执{matched_count}项",
+            f"Ran {run_count} sites; {matched_count} matched current receipts",
+        )
         if historical_count:
-            actual_text += f"；同日另有{historical_count}项历史回执"
+            actual_text += _text(
+                language,
+                f"；同日另有{historical_count}项历史回执",
+                f"; {_count_text(historical_count, '', language, 'additional same-day historical receipts')}",
+            )
     else:
-        actual_text = f"收到回执{len(actual)}项"
+        actual_text = _text(
+            language, f"收到回执{len(actual)}项", f"{len(actual)} receipts received"
+        )
     lines = [
-        f"# 精算资料每日简报（{report['date_local']}）",
+        _text(
+            language,
+            f"# 精算资料每日简报（{report['date_local']}）",
+            f"# Actuarial research daily report ({report['date_local']})",
+        ),
         "",
-        "## 执行摘要",
+        _text(language, "## 执行摘要", "## Executive summary"),
         "",
-        *_executive_summary(report),
+        *_executive_summary(report, language),
         "",
-        "| 项目 | 当日结果 |",
+        _text(language, "| 项目 | 当日结果 |", "| Item | Result for the day |"),
         "| --- | --- |",
-        f"| 计划与实际 | 计划 {len(baseline)} 项常规 + {len(retries)} 项重试；{actual_text} |",
+        _text(
+            language,
+            f"| 计划与实际 | 计划 {len(baseline)} 项常规 + {len(retries)} 项重试；{actual_text} |",
+            f"| Plan and actual | {len(baseline)} routine + {len(retries)} retry sites planned; {actual_text} |",
+        ),
     ]
     receipt_sites = set(coverage["actual_collection_receipt_sites"])
     if runtime is None:
-        coverage_text = (
-            f"来源与处理数据只合计已有 {len(receipt_sites)} 站回执；"
-            "没有运行清单时无法判断是否还有缺失回执"
+        coverage_text = _text(
+            language,
+            f"来源与处理数据只合计已有 {len(receipt_sites)} 站回执；没有运行清单时无法判断是否还有缺失回执",
+            f"Collection and processing totals include {len(receipt_sites)} dated site receipts; without a run manifest, missing receipts cannot be determined",
         )
     elif runtime["preview"]:
-        coverage_text = (
-            f"运行清单为预览；来源与处理数据只合计已有 {len(receipt_sites)} 站回执，"
-            "不能据预览判断实际运行覆盖"
+        coverage_text = _text(
+            language,
+            f"运行清单为预览；来源与处理数据只合计已有 {len(receipt_sites)} 站回执，不能据预览判断实际运行覆盖",
+            f"Run manifest is a preview; collection and processing totals include {len(receipt_sites)} dated site receipts, and preview cannot establish actual run coverage",
         )
     else:
         collection_runs = [row for row in runtime["runs"] if _action(row["site_id"]) == "collect"]
@@ -2068,118 +2457,240 @@ def render_markdown(report: dict[str, Any]) -> str:
         missing_count = len(run_sites - matched_runtime_sites)
         historical_count = len(run_sites & receipt_sites - matched_runtime_sites)
         coverage_text = (
-            f"有运行证据 {len(run_sites)} 项，其中 {covered_count} 项有本次回执、{missing_count} 项缺回执"
-            + (f"、{historical_count} 项仅有同日历史回执；" if historical_count else "；")
-            + f"下方来源和处理数字为{_receipt_scope(report)}合计"
+            _text(
+                language,
+                f"有运行证据 {len(run_sites)} 项，其中 {covered_count} 项有本次回执、{missing_count} 项缺回执",
+                f"Run evidence covers {_count_text(len(run_sites), '', language, 'collection sites')}: "
+                f"current receipts {_count_text(covered_count, '', language, 'sites')}; "
+                f"missing receipts {_count_text(missing_count, '', language, 'sites')}",
+            )
+            + (
+                _text(
+                    language,
+                    f"、{historical_count} 项仅有同日历史回执；",
+                    f"; same-day historical receipts only: {_count_text(historical_count, '', language, 'sites')}; ",
+                )
+                if historical_count
+                else _text(language, "；", "; ")
+            )
+            + _text(
+                language,
+                f"下方来源和处理数字为{_receipt_scope(report, language)}合计",
+                f"totals below cover {_receipt_scope(report, language)}",
+            )
         )
-    lines.append(f"| 回执覆盖 | {coverage_text} |")
+    lines.append(
+        _text(
+            language, f"| 回执覆盖 | {coverage_text} |", f"| Receipt coverage | {coverage_text} |"
+        )
+    )
     if runtime is None:
         receipt_elapsed = telemetry["elapsed_seconds"]
         if receipt_elapsed["observation_sum"] is None:
-            runtime_text = "总耗时未记录；未提供运行明细，缺少回执不能证明未运行"
+            runtime_text = _text(
+                language,
+                "总耗时未记录；未提供运行明细，缺少回执不能证明未运行",
+                "Total elapsed time not recorded; without run details, a missing receipt does not prove a site was not run",
+            )
         else:
-            runtime_text = (
-                f"回执记录的站点耗时合计 {_duration_text(receipt_elapsed['observation_sum'])}；"
-                "未提供运行明细，缺少回执不能证明未运行"
+            runtime_text = _text(
+                language,
+                f"回执记录的站点耗时合计 {_duration_text(receipt_elapsed['observation_sum'], language)}；未提供运行明细，缺少回执不能证明未运行",
+                f"Recorded site elapsed times total {_duration_text(receipt_elapsed['observation_sum'], language)}; without run details, a missing receipt does not prove a site was not run",
             )
     else:
         elapsed = runtime.get("elapsed_seconds")
-        elapsed_text = _duration_text(elapsed) if elapsed is not None else "未记录"
+        elapsed_text = (
+            _duration_text(elapsed, language)
+            if elapsed is not None
+            else _text(language, "未记录", "not recorded")
+        )
         run_count = (
             len(runtime["runs"]) if runtime["preview"] else len(coverage["runtime_attempt_sites"])
         )
-        runtime_text = (
-            f"{'预览' if runtime['preview'] else '实际'}运行 {run_count} 项，用时 {elapsed_text}"
+        runtime_text = _text(
+            language,
+            f"{'预览' if runtime['preview'] else '实际'}运行 {run_count} 项，用时 {elapsed_text}",
+            f"{'Preview' if runtime['preview'] else 'Actual'} run: {run_count} sites; elapsed {elapsed_text}",
         )
         if runtime["missing_receipt_sites"]:
-            runtime_text += f"；缺少 {len(runtime['missing_receipt_sites'])} 项运行回执"
-    lines.append(f"| 运行时长 | {runtime_text} |")
+            runtime_text += _text(
+                language,
+                f"；缺少 {len(runtime['missing_receipt_sites'])} 项运行回执",
+                f"; {_count_text(len(runtime['missing_receipt_sites']), '', language, 'run receipts')} missing",
+            )
+    lines.append(
+        _text(language, f"| 运行时长 | {runtime_text} |", f"| Elapsed time | {runtime_text} |")
+    )
     request_count, _ = _daily_request_count(report)
-    request_text = "未记录" if request_count is None else f"{request_count}次"
-    lines.append(
-        f"| 来源发现 | HTTP 请求 {request_text}（{_receipt_scope(report)}，含重定向）；"
-        f"成功读取页面/接口（含目录与搜索数据） "
-        f"{_scoped_metric_text(report, telemetry['source']['pages_visited'], unit='次')}；"
-        f"发现并排队的链接候选 "
-        f"{_scoped_metric_text(report, telemetry['source']['links_discovered'], unit='条')} |"
-    )
-    downloaded = _stage_metric_text(report, "downloaded")
-    file_types = "；".join(
-        f"{label} {_scoped_metric_text(report, telemetry['source'][f'{kind}_files'], unit='份')}"
-        for kind, label in (("html", "HTML"), ("pdf", "PDF"), ("other", "其他"))
+    request_text = (
+        _text(language, "未记录", "not recorded")
+        if request_count is None
+        else _text(language, f"{request_count}次", str(request_count))
     )
     lines.append(
-        f"| 收集文件 | 下载{downloaded}（{_receipt_scope(report)}合计）；{file_types}；"
-        f"唯一文件数 {_scoped_unique_text(report, telemetry['source']['unique_file_count'], unit='份')} |"
+        _text(
+            language,
+            f"| 来源发现 | HTTP 请求 {request_text}（{_receipt_scope(report, language)}，含重定向）；成功读取页面/接口（含目录与搜索数据） {_scoped_metric_text(report, telemetry['source']['pages_visited'], unit='次', language=language)}；发现并排队的链接候选 {_scoped_metric_text(report, telemetry['source']['links_discovered'], unit='条', language=language, english_unit='link candidates')} |",
+            f"| Source discovery | HTTP requests {request_text} ({_receipt_scope(report, language)}, including redirects); pages/APIs read successfully (including directory and search data) {_scoped_metric_text(report, telemetry['source']['pages_visited'], unit='次', language=language, english_unit='pages')}; newly discovered and queued links {_scoped_metric_text(report, telemetry['source']['links_discovered'], unit='条', language=language, english_unit='link candidates')} |",
+        )
     )
-    new_versions = _stage_metric_text(report, "new_versions", unit="")
-    duplicates = _stage_metric_text(report, "duplicates", unit="")
-    enriched = _stage_metric_text(report, "enriched", unit="")
+    downloaded = _stage_metric_text(report, "downloaded", language=language)
+    file_types = _text(language, "；", "; ").join(
+        _text(
+            language,
+            f"{label} {_scoped_metric_text(report, telemetry['source'][f'{kind}_files'], unit='份', language=language)}",
+            f"{english_label} {_scoped_metric_text(report, telemetry['source'][f'{kind}_files'], unit='份', language=language)}",
+        )
+        for kind, label, english_label in (
+            ("html", "HTML", "HTML"),
+            ("pdf", "PDF", "PDF"),
+            ("other", "其他", "Other"),
+        )
+    )
+    lines.append(
+        _text(
+            language,
+            f"| 收集文件 | 下载{downloaded}（{_receipt_scope(report, language)}合计）；{file_types}；唯一文件数 {_scoped_unique_text(report, telemetry['source']['unique_file_count'], unit='份', language=language)} |",
+            f"| Collected files | Downloaded {downloaded} ({_receipt_scope(report, language)} total); {file_types}; unique files {_scoped_unique_text(report, telemetry['source']['unique_file_count'], unit='份', language=language)} |",
+        )
+    )
+    new_versions = _stage_metric_text(report, "new_versions", unit="", language=language)
+    duplicates = _stage_metric_text(report, "duplicates", unit="", language=language)
+    enriched = _stage_metric_text(report, "enriched", unit="", language=language)
     new_unique = telemetry["database"]["new_versions"].get("exact_unique_count")
     duplicate_unique = telemetry["database"]["duplicates"].get("exact_unique_count")
     enriched_unique = telemetry["enrichment"].get("exact_unique_count")
     if new_unique is not None:
-        new_versions += f"（唯一版本 {_scoped_unique_text(report, telemetry['database']['new_versions'], unit='份')}）"
+        new_versions += _text(
+            language,
+            f"（唯一版本 {_scoped_unique_text(report, telemetry['database']['new_versions'], unit='份', language=language)}）",
+            f" (unique versions: {_scoped_unique_text(report, telemetry['database']['new_versions'], unit='份', language=language)})",
+        )
     if duplicate_unique is not None:
-        duplicates += f"（唯一版本 {_scoped_unique_text(report, telemetry['database']['duplicates'], unit='份')}）"
+        duplicates += _text(
+            language,
+            f"（唯一版本 {_scoped_unique_text(report, telemetry['database']['duplicates'], unit='份', language=language)}）",
+            f" (unique versions: {_scoped_unique_text(report, telemetry['database']['duplicates'], unit='份', language=language)})",
+        )
     if enriched_unique is not None:
-        enriched += (
-            f"（唯一资料 {_scoped_unique_text(report, telemetry['enrichment'], unit='份')}）"
+        enriched += _text(
+            language,
+            f"（唯一资料 {_scoped_unique_text(report, telemetry['enrichment'], unit='份', language=language)}）",
+            f" (unique items: {_scoped_unique_text(report, telemetry['enrichment'], unit='份', language=language)})",
         )
     lines.append(
-        f"| 入库与摘要分类 | 新增入库 {new_versions}；复用 {duplicates}；摘要分类 {enriched} |"
+        _text(
+            language,
+            f"| 入库与摘要分类 | 新增入库 {new_versions}；复用 {duplicates}；摘要分类 {enriched} |",
+            f"| Database and summary classification | New {new_versions}; reused {duplicates}; classified {enriched} |",
+        )
     )
     lines.append(
-        f"| 正文转换（Markdown） | 成功 {_scoped_metric_text(report, telemetry['conversion']['succeeded'], unit='份')}；"
-        f"失败 {_scoped_metric_text(report, telemetry['conversion']['failed'], unit='份')} |"
+        _text(
+            language,
+            f"| 正文转换（Markdown） | 成功 {_scoped_metric_text(report, telemetry['conversion']['succeeded'], unit='份', language=language)}；失败 {_scoped_metric_text(report, telemetry['conversion']['failed'], unit='份', language=language)} |",
+            f"| Body conversion (Markdown) | Succeeded {_scoped_metric_text(report, telemetry['conversion']['succeeded'], unit='份', language=language)}; failed {_scoped_metric_text(report, telemetry['conversion']['failed'], unit='份', language=language)} |",
+        )
     )
     ai = telemetry["ai_first_candidates"]
     ai_observations = ai["observations"]
     ai_unique = ai["exact_unique_count"]["exact_unique_count"]
     if ai_observations.get("observation_sum") is not None:
-        ai_text = f"首类候选 {_scoped_metric_text(report, ai_observations, unit='')}"
+        ai_text = _text(
+            language,
+            f"首类候选 {_scoped_metric_text(report, ai_observations, unit='', language=language)}",
+            f"AI-first candidates {_scoped_metric_text(report, ai_observations, unit='', language=language)}",
+        )
         if ai_unique is not None:
-            ai_text += (
-                f"，唯一资料 {_scoped_unique_text(report, ai['exact_unique_count'], unit='篇')}"
+            ai_text += _text(
+                language,
+                f"，唯一资料 {_scoped_unique_text(report, ai['exact_unique_count'], unit='篇', language=language)}",
+                f", unique items {_scoped_unique_text(report, ai['exact_unique_count'], unit='篇', language=language)}",
             )
     else:
         old_ai = report["stages"]["ai_candidates"].get("run_observation_sum")
-        ai_text = "首类候选未记录"
+        ai_text = _text(language, "首类候选未记录", "AI-first candidates not recorded")
         if old_ai is not None:
-            ai_text += f"；旧口径 AI 候选 {old_ai}（不能推断首类）"
-    lines.append(f"| AI 首类候选 | {ai_text} |")
-    for target, label in (("china", "国内"), ("overseas", "海外")):
+            ai_text += _text(
+                language,
+                f"；旧口径 AI 候选 {old_ai}（不能推断首类）",
+                f"; legacy any-category AI candidates {old_ai} (primary category cannot be inferred)",
+            )
+    lines.append(
+        _text(language, f"| AI 首类候选 | {ai_text} |", f"| AI-first candidates | {ai_text} |")
+    )
+    for target, label in (
+        ("china", _text(language, "国内", "China")),
+        ("overseas", _text(language, "海外", "Overseas")),
+    ):
         value = telemetry["targets"][target]
         ack_metric = value["acknowledged"]
         ack_unique = value["acknowledged_exact_unique_count"]
-        ack_text = _scoped_metric_text(report, ack_metric, unit="")
+        ack_text = _scoped_metric_text(report, ack_metric, unit="", language=language)
         if ack_unique is not None:
-            ack_text += f"，唯一确认 {_scoped_unique_text(report, {'exact_unique_count': ack_unique, 'known_receipts': value['acknowledged_identity_known_receipts']}, unit='篇')}"
+            ack_text += _text(
+                language,
+                f"，唯一确认 {_scoped_unique_text(report, {'exact_unique_count': ack_unique, 'known_receipts': value['acknowledged_identity_known_receipts']}, unit='篇', language=language)}",
+                f", unique confirmations {_scoped_unique_text(report, {'exact_unique_count': ack_unique, 'known_receipts': value['acknowledged_identity_known_receipts']}, unit='篇', language=language)}",
+            )
         ready_unique = value["ready_confirmed_exact_unique_count"]
         identity_known = value["ready_identity_known_receipts"]
         receipt_count = len(coverage["actual_collection_receipt_sites"])
         ready_text = (
-            f"{ready_unique}篇"
+            _count_text(ready_unique, "篇", language)
             if ready_unique is not None and identity_known == receipt_count
             else (
-                f"至少 {ready_unique} 篇（身份信息覆盖 {identity_known}/{receipt_count} 站回执）"
+                _text(
+                    language,
+                    f"至少 {ready_unique} 篇（身份信息覆盖 {identity_known}/{receipt_count} 站回执）",
+                    f"at least {_count_text(ready_unique, '篇', language)} (identities covered by {identity_known}/{receipt_count} site receipts)",
+                )
                 if ready_unique is not None
-                else "未记录"
+                else _text(language, "未记录", "not recorded")
             )
         )
-        lines.append(f"| {label}同步与可搜索 | 入库确认 {ack_text}次；已可搜索篇数 {ready_text} |")
+        lines.append(
+            _text(
+                language,
+                f"| {label}同步与可搜索 | 入库确认 {ack_text}次；已可搜索篇数 {ready_text} |",
+                f"| {label} sync and searchability | Ingestion confirmations: {ack_text}; searchable articles: {ready_text} |",
+            )
+        )
 
     site_rows: dict[str, tuple[str, str, str, str]] = {}
     for site in collection_receipts:
         row = receipt_by_site[site]
         request_count = _receipt_request_count(row)
         download_count = (row.get("stages", {}).get("downloaded") or {}).get("count")
-        request_text = "HTTP未记录" if request_count is None else f"HTTP {request_count}"
-        download_text = "下载未记录" if download_count is None else f"下载 {download_count}份"
+        request_text = (
+            _text(language, "HTTP未记录", "HTTP requests not recorded")
+            if request_count is None
+            else f"HTTP {request_count}"
+        )
+        download_text = (
+            _text(language, "下载未记录", "downloads not recorded")
+            if download_count is None
+            else _text(
+                language,
+                f"下载 {download_count}份",
+                f"{_count_text(download_count, '份', language)} downloaded",
+            )
+        )
         hub_parts = []
-        for key, label in (("new_versions", "新增"), ("duplicates", "复用"), ("enriched", "分类")):
+        for key, label, english_label in (
+            ("new_versions", "新增", "new"),
+            ("duplicates", "复用", "reused"),
+            ("enriched", "分类", "classified"),
+        ):
             count = (row.get("stages", {}).get(key) or {}).get("count")
-            hub_parts.append(f"{label} {'未记录' if count is None else count}")
+            hub_parts.append(
+                _text(
+                    language,
+                    f"{label} {'未记录' if count is None else count}",
+                    f"{english_label} {'not recorded' if count is None else count}",
+                )
+            )
         site_telemetry = row.get("telemetry") or {}
         ai_first = site_telemetry.get("ai_first_candidate_count")
         ai_ids = site_telemetry.get("ai_first_candidate_ids")
@@ -2191,50 +2702,103 @@ def render_markdown(report: dict[str, Any]) -> str:
         conversion_failed = conversion.get("failed_count")
         hub_parts.extend(
             [
-                "正文转换成功 "
-                + ("未记录" if conversion_succeeded is None else f"{conversion_succeeded}份")
-                + "；失败 "
-                + ("未记录" if conversion_failed is None else f"{conversion_failed}份"),
+                _text(
+                    language,
+                    "正文转换成功 "
+                    + ("未记录" if conversion_succeeded is None else f"{conversion_succeeded}份")
+                    + "；失败 "
+                    + ("未记录" if conversion_failed is None else f"{conversion_failed}份"),
+                    "Body conversion succeeded "
+                    + (
+                        "not recorded"
+                        if conversion_succeeded is None
+                        else _count_text(conversion_succeeded, "份", language)
+                    )
+                    + "; failed "
+                    + (
+                        "not recorded"
+                        if conversion_failed is None
+                        else _count_text(conversion_failed, "份", language)
+                    ),
+                ),
                 (
-                    f"AI首类 {ai_first}篇"
+                    _text(language, f"AI首类 {ai_first}篇", f"AI-first {ai_first} articles")
                     if ai_first is not None
-                    else "AI首类未记录"
-                    + (f"（旧口径 AI 候选 {old_ai}）" if old_ai is not None else "")
+                    else _text(language, "AI首类未记录", "AI-first not recorded")
+                    + (
+                        _text(
+                            language,
+                            f"（旧口径 AI 候选 {old_ai}）",
+                            f" (legacy any-category AI candidates {old_ai})",
+                        )
+                        if old_ai is not None
+                        else ""
+                    )
                 ),
             ]
         )
         if ai_first == 0:
-            target_text = "无需同步"
+            target_text = _text(language, "无需同步", "No sync needed")
         else:
             target_parts = []
-            for target, target_label in (("china", "国内"), ("overseas", "海外")):
+            for target, target_label in (
+                ("china", _text(language, "国内", "China")),
+                ("overseas", _text(language, "海外", "Overseas")),
+            ):
                 ack = (row.get("stages", {}).get(f"{target}_ack") or {}).get("acknowledged")
-                ack_text = "入库确认未记录" if ack is None else f"入库确认{ack}次"
+                ack_text = (
+                    _text(language, "入库确认未记录", "ingestion confirmation not recorded")
+                    if ack is None
+                    else _text(
+                        language,
+                        f"入库确认{ack}次",
+                        f"{_count_text(ack, '次', language, 'ingestion confirmations')}",
+                    )
+                )
                 target_telemetry = site_telemetry.get("targets", {}).get(target) or {}
                 ready_ids = target_telemetry.get("ready_ids")
                 ready_text = (
-                    f"可搜索{len(ready_ids)}篇" if ready_ids is not None else "可搜索篇数未记录"
+                    _text(
+                        language,
+                        f"可搜索{len(ready_ids)}篇",
+                        f"{_count_text(len(ready_ids), '篇', language, 'searchable articles')}",
+                    )
+                    if ready_ids is not None
+                    else _text(language, "可搜索篇数未记录", "searchable count not recorded")
                 )
-                target_parts.append(f"{target_label}{ack_text}；{target_label}{ready_text}")
-            target_text = "；".join(target_parts)
+                target_parts.append(
+                    _text(
+                        language,
+                        f"{target_label}{ack_text}；{target_label}{ready_text}",
+                        f"{target_label}: {ack_text}; {target_label}: {ready_text}",
+                    )
+                )
+            target_text = _text(language, "；", "; ").join(target_parts)
             if ai_first is None:
-                target_text = "AI首类未记录；" + target_text
+                target_text = (
+                    _text(language, "AI首类未记录；", "AI-first status not recorded; ")
+                    + target_text
+                )
         issue = row.get("failure_point")
         if row["effective_status"] != "succeeded" or issue:
             issue = issue or {
                 "stage": "run",
                 "status": row["effective_status"],
-                "reason": row.get("reason") or "未记录具体原因",
+                "reason": row.get("reason")
+                or _text(language, "未记录具体原因", "No specific reason recorded"),
             }
-            stop_text = (
-                f"{_stage_label(issue['stage'])}："
-                f"{_short_failure_reason(issue['reason'], issue['stage'])}"
+            stop_text = _text(
+                language,
+                f"{_stage_label(issue['stage'], language)}：{_short_failure_reason(issue['reason'], issue['stage'], language)}",
+                f"{_stage_label(issue['stage'], language)}: {_short_failure_reason(issue['reason'], issue['stage'], language)}",
             )
         else:
-            stop_text = "已完成当前可证阶段"
+            stop_text = _text(
+                language, "已完成当前可证阶段", "All currently verifiable stages completed"
+            )
         site_rows[site] = (
-            f"{request_text}；{download_text}",
-            "；".join(hub_parts),
+            _text(language, f"{request_text}；{download_text}", f"{request_text}; {download_text}"),
+            _text(language, "；", "; ").join(hub_parts),
             target_text,
             stop_text,
         )
@@ -2243,33 +2807,63 @@ def render_markdown(report: dict[str, Any]) -> str:
             site = row["site_id"]
             if row["preview"] or site in matched_runtime_sites or _action(site) != "collect":
                 continue
-            reason = _short_failure_reason(row.get("error") or "本次运行未返回可关联回执", "run")
+            reason = (
+                _short_failure_reason(row["error"], "run", language)
+                if row.get("error")
+                else _text(
+                    language, "本次运行未返回可关联回执", "This run returned no linkable receipt"
+                )
+            )
             previous = site_rows.get(site)
             if previous is None:
                 site_rows[site] = (
-                    "HTTP未记录；下载未记录",
-                    "新增未记录；复用未记录；分类未记录；正文转换成功未记录；失败未记录；AI首类未记录",
-                    "国内/海外入库确认未记录；可搜索篇数未记录",
-                    f"本次运行回执缺失：{reason}",
+                    _text(
+                        language,
+                        "HTTP未记录；下载未记录",
+                        "HTTP requests not recorded; downloads not recorded",
+                    ),
+                    _text(
+                        language,
+                        "新增未记录；复用未记录；分类未记录；正文转换成功未记录；失败未记录；AI首类未记录",
+                        "New, reused, and classified counts not recorded; body conversion succeeded and failed counts not recorded; AI-first count not recorded",
+                    ),
+                    _text(
+                        language,
+                        "国内/海外入库确认未记录；可搜索篇数未记录",
+                        "China/overseas ingestion confirmations and searchable counts not recorded",
+                    ),
+                    _text(
+                        language,
+                        f"本次运行回执缺失：{reason}",
+                        f"Current run receipt missing: {reason}",
+                    ),
                 )
             else:
                 site_rows[site] = (
-                    f"历史 {previous[0]}",
-                    f"历史 {previous[1]}",
-                    f"历史 {previous[2]}",
-                    f"本次运行回执缺失：{reason}",
+                    _text(language, f"历史 {previous[0]}", f"Historical: {previous[0]}"),
+                    _text(language, f"历史 {previous[1]}", f"Historical: {previous[1]}"),
+                    _text(language, f"历史 {previous[2]}", f"Historical: {previous[2]}"),
+                    _text(
+                        language,
+                        f"本次运行回执缺失：{reason}",
+                        f"Current run receipt missing: {reason}",
+                    ),
                 )
     lines.extend(
         [
             "",
-            "## 各站进度与停点",
-            "| 站点 | 请求 / 下载 | 本地库新增 / 复用 / 分类 / 转换 / AI首类 | 同步与可搜索 | 停点或结果 |",
+            _text(language, "## 各站进度与停点", "## Site progress and stopping points"),
+            _text(
+                language,
+                "| 站点 | 请求 / 下载 | 本地库新增 / 复用 / 分类 / 转换 / AI首类 | 同步与可搜索 | 停点或结果 |",
+                "| Site | Requests / downloads | Local database new / reused / classified / conversion / AI-first | Sync and searchability | Stop or result |",
+            ),
             "| --- | --- | --- | --- | --- |",
         ]
     )
     for site, values in site_rows.items():
         lines.append(
-            f"| {_site_label(site)} | {_escape_cell(values[0])} | {_escape_cell(values[1])} | "
+            f"| {_site_label(site, language)} | {_escape_cell(values[0])} | {_escape_cell(values[1])} | "
             f"{_escape_cell(values[2])} | {_escape_cell(values[3])} |"
         )
     appendix = []
@@ -2289,34 +2883,97 @@ def render_markdown(report: dict[str, Any]) -> str:
             planned = site in report["monitoring_only"]["planned_sites"]
             if runtime is not None and runtime["preview"]:
                 result = (
-                    f"同日回执（{_monitor_result_text(receipt)}）；" "本次仅为预览"
+                    _text(
+                        language,
+                        f"同日回执（{_monitor_result_text(receipt, language)}）；本次仅为预览",
+                        f"Same-day receipt ({_monitor_result_text(receipt, language)}); current run is only a preview",
+                    )
                     if receipt
-                    else "预览列入计划，未证明检查已执行"
+                    else _text(
+                        language,
+                        "预览列入计划，未证明检查已执行",
+                        "Listed in preview plan; execution not confirmed",
+                    )
                 )
             elif run_row is not None and site in matched_runtime_sites and receipt:
-                result = "本次回执：" + _monitor_result_text(receipt)
-            elif run_row is not None:
-                previous = f"同日历史回执：{_monitor_result_text(receipt)}；" if receipt else ""
-                reason = _short_failure_reason(
-                    run_row.get("error") or "本次运行未返回可关联回执", "monitor"
+                result = _text(
+                    language,
+                    "本次回执：" + _monitor_result_text(receipt, language),
+                    "Current receipt: " + _monitor_result_text(receipt, language),
                 )
-                result = previous + f"本次检查回执缺失：{reason}"
+            elif run_row is not None:
+                previous = (
+                    _text(
+                        language,
+                        f"同日历史回执：{_monitor_result_text(receipt, language)}；",
+                        f"Same-day historical receipt: {_monitor_result_text(receipt, language)}; ",
+                    )
+                    if receipt
+                    else ""
+                )
+                reason = (
+                    _short_failure_reason(run_row["error"], "monitor", language)
+                    if run_row.get("error")
+                    else _text(
+                        language,
+                        "本次运行未返回可关联回执",
+                        "This run returned no linkable receipt",
+                    )
+                )
+                result = previous + _text(
+                    language,
+                    f"本次检查回执缺失：{reason}",
+                    f"Current check receipt missing: {reason}",
+                )
             elif receipt and runtime is not None:
-                result = f"同日回执：{_monitor_result_text(receipt)}；本次运行未见该项"
+                result = _text(
+                    language,
+                    f"同日回执：{_monitor_result_text(receipt, language)}；本次运行未见该项",
+                    f"Same-day receipt: {_monitor_result_text(receipt, language)}; not seen in this run",
+                )
             elif receipt:
-                result = "当日回执：" + _monitor_result_text(receipt)
+                result = _text(
+                    language,
+                    "当日回执：" + _monitor_result_text(receipt, language),
+                    "Dated receipt: " + _monitor_result_text(receipt, language),
+                )
             elif planned and runtime is not None:
-                result = "计划检查，未见本次运行证据"
+                result = _text(
+                    language, "计划检查，未见本次运行证据", "Planned check; no evidence in this run"
+                )
             elif planned:
-                result = "计划检查，未提供运行清单；是否执行未知"
+                result = _text(
+                    language,
+                    "计划检查，未提供运行清单；是否执行未知",
+                    "Planned check; no run manifest provided, so execution is unknown",
+                )
             else:
                 continue
-            monitor_results.append(f"{_site_label(site)}：{result}")
+            monitor_results.append(
+                _text(
+                    language,
+                    f"{_site_label(site, language)}：{result}",
+                    f"{_site_label(site, language)}: {result}",
+                )
+            )
         if monitor_results:
-            appendix.append("监控项（单独报告，不计入来源收集）：" + "；".join(monitor_results))
+            appendix.append(
+                _text(
+                    language,
+                    "监控项（单独报告，不计入来源收集）：" + "；".join(monitor_results),
+                    "Monitoring items (reported separately, excluded from collection): "
+                    + "; ".join(monitor_results),
+                )
+            )
     if plan["hold_sites"]:
         appendix.append(
-            "保留但不执行：" + ", ".join(_site_label(site) for site in plan["hold_sites"])
+            _text(
+                language,
+                "保留但不执行："
+                + ", ".join(_site_label(site, language) for site in plan["hold_sites"]),
+                "Held; not run: "
+                + ", ".join(_site_label(site, language) for site in plan["hold_sites"]),
+            )
         )
     if runtime is not None and not runtime["preview"]:
         not_run = [
@@ -2325,22 +2982,50 @@ def render_markdown(report: dict[str, Any]) -> str:
             if _action(site) == "collect"
         ]
         if not_run:
-            appendix.append("运行输出中未见：" + ", ".join(_site_label(site) for site in not_run))
+            appendix.append(
+                _text(
+                    language,
+                    "运行输出中未见：" + ", ".join(_site_label(site, language) for site in not_run),
+                    "Not seen in run output: "
+                    + ", ".join(_site_label(site, language) for site in not_run),
+                )
+            )
     if appendix:
-        lines.extend(["", "覆盖说明：" + "；".join(appendix) + "。"])
+        lines.extend(
+            [
+                "",
+                _text(
+                    language,
+                    "覆盖说明：" + "；".join(appendix) + "。",
+                    "Coverage notes: " + "; ".join(appendix) + ".",
+                ),
+            ]
+        )
     lines.extend(
         [
             "",
-            "> 数量按当日回执中的运行记录合计；重跑会重复计入。精确唯一数仅在身份集合齐全时显示。缺字段为未记录；旧口径 AI 候选不会被推断为 AI 首类。",
+            _text(
+                language,
+                "> 数量按当日回执中的运行记录合计；重跑会重复计入。精确唯一数仅在身份集合齐全时显示。缺字段为未记录；旧口径 AI 候选不会被推断为 AI 首类。",
+                "> Counts are receipt run observations; retries are counted again. Exact unique counts appear only when identity sets are complete. Missing fields are unrecorded; legacy any-category AI counts are not inferred as AI-first.",
+            ),
         ]
     )
     return "\n".join(lines) + "\n"
 
 
-def _duration_text(seconds: float | int) -> str:
+def _duration_text(seconds: float | int, language: str = "zh") -> str:
     total = int(round(seconds))
     hours, remainder = divmod(total, 3600)
     minutes, secs = divmod(remainder, 60)
+    if language == "en":
+        parts = []
+        if hours:
+            parts.append(f"{hours}h")
+        if minutes or hours:
+            parts.append(f"{minutes}m")
+        parts.append(f"{secs}s")
+        return " ".join(parts)
     if hours:
         return f"{hours} 小时 {minutes} 分 {secs} 秒"
     if minutes:
@@ -2348,81 +3033,90 @@ def _duration_text(seconds: float | int) -> str:
     return f"{secs} 秒"
 
 
-def _ready_label(status: str) -> str:
-    return {
-        "succeeded": "已可搜索",
-        "failed": "可搜索失败",
-        "partial": "部分可搜索",
-        "pending": "待确认可搜索",
-        "unknown": "可搜索未记录",
-        "not_required": "worker 未要求确认可搜索",
-    }.get(status, status)
-
-
-def _stage_label(stage: str) -> str:
-    return {
-        "downloaded": "来源读取/收集",
-        "new_versions": "本地库新增",
-        "duplicates": "本地库去重",
-        "enriched": "AI 补全/分类",
-        "conversion": "正文转换（Markdown）",
-        "ai_candidates": "AI 首类筛选",
-        "china_ack": "国内入库确认",
-        "china_ready": "国内可搜索确认",
-        "overseas_ack": "海外入库确认",
-        "overseas_ready": "海外可搜索确认",
-        "run": "运行",
-    }.get(stage, stage)
-
-
-def _status_label(status: str) -> str:
-    return {
-        "succeeded": "成功",
-        "failed": "失败",
-        "partial": "部分完成",
-        "pending": "待处理",
-        "unknown": "未知/未记录",
-        "not_required": "未要求，未确认可搜索",
-        "缺失": "缺少回执",
-    }.get(status, status)
-
-
-def _site_label(site: str) -> str:
+def _ready_label(status: str, language: str = "zh") -> str:
     labels = {
-        "iaa": "国际精算协会",
-        "iaba": "国际黑人精算师协会",
-        "soa": "美国精算师学会",
-        "soa-ai-topic-landing": "美国精算师学会 AI 主题页",
-        "soa-ai-bulletin-focused": "美国精算师学会 AI 简报",
-        "cas": "美国意外险精算师协会",
-        "aaa": "美国精算师学会 AAA",
-        "cia-ica": "加拿大精算师协会",
-        "cia-research-publications": "加拿大精算师协会研究出版",
-        "cca": "美国咨询精算师协会",
-        "aae": "欧洲精算师协会",
-        "eaa": "欧洲精算学院",
-        "ifoa-uk": "英国精算师协会 IFoA",
-        "france": "法国精算师协会",
-        "dav": "德国精算师协会",
-        "swiss-association-of-actuaries": "瑞士精算师协会",
-        "italy": "意大利国家精算师协会",
-        "istituto-italiano-degli-attuari": "意大利精算师学会",
-        "spain": "西班牙精算师协会",
-        "australia": "澳大利亚精算师协会",
-        "iai": "印度精算师协会",
-        "iaj": "日本精算师会",
-        "institute-of-actuaries-of": "韩国精算师学会",
-        "aict": "台湾精算学会",
-        "caa": "中国精算师协会",
-        "ashk": "香港精算学会",
-        "assa": "南非精算学会",
-        "task": "肯尼亚精算师协会",
-        "ama": "摩洛哥精算师协会",
-        "iba-brazil": "巴西精算师协会",
-        "aca-colombia": "哥伦比亚精算师协会",
-        "conac-mexico": "墨西哥精算师协会",
+        "succeeded": ("已可搜索", "searchable"),
+        "failed": ("可搜索失败", "searchability failed"),
+        "partial": ("部分可搜索", "partially searchable"),
+        "pending": ("待确认可搜索", "searchability pending confirmation"),
+        "unknown": ("可搜索未记录", "searchability not recorded"),
+        "not_required": (
+            "worker 未要求确认可搜索",
+            "worker did not request searchability confirmation",
+        ),
     }
-    return labels.get(site, site)
+    return labels.get(status, (status, status))[1 if language == "en" else 0]
+
+
+def _stage_label(stage: str, language: str = "zh") -> str:
+    labels = {
+        "downloaded": ("来源读取/收集", "Source read/collection"),
+        "new_versions": ("本地库新增", "Local database additions"),
+        "duplicates": ("本地库去重", "Local database deduplication"),
+        "enriched": ("AI 补全/分类", "AI enrichment/classification"),
+        "conversion": ("正文转换（Markdown）", "Body conversion (Markdown)"),
+        "ai_candidates": ("AI 首类筛选", "AI-first filter"),
+        "china_ack": ("国内入库确认", "China ingestion confirmation"),
+        "china_ready": ("国内可搜索确认", "China searchable confirmation"),
+        "overseas_ack": ("海外入库确认", "Overseas ingestion confirmation"),
+        "overseas_ready": ("海外可搜索确认", "Overseas searchable confirmation"),
+        "run": ("运行", "Run"),
+    }
+    pair = labels.get(stage, (stage, stage))
+    return pair[1 if language == "en" else 0]
+
+
+def _status_label(status: str, language: str = "zh") -> str:
+    labels = {
+        "succeeded": ("成功", "succeeded"),
+        "failed": ("失败", "failed"),
+        "partial": ("部分完成", "partial"),
+        "pending": ("待处理", "pending"),
+        "unknown": ("未知/未记录", "unknown/not recorded"),
+        "not_required": ("未要求，未确认可搜索", "not required; not confirmed searchable"),
+        "缺失": ("缺少回执", "receipt missing"),
+    }
+    pair = labels.get(status, (status, status))
+    return pair[1 if language == "en" else 0]
+
+
+def _site_label(site: str, language: str = "zh") -> str:
+    labels = {
+        "iaa": ("国际精算协会", "International Actuarial Association"),
+        "iaba": ("国际黑人精算师协会", "International Association of Black Actuaries"),
+        "soa": ("美国精算师学会", "Society of Actuaries"),
+        "soa-ai-topic-landing": ("美国精算师学会 AI 主题页", "SOA AI topic page"),
+        "soa-ai-bulletin-focused": ("美国精算师学会 AI 简报", "SOA AI bulletin"),
+        "cas": ("美国意外险精算师协会", "Casualty Actuarial Society"),
+        "aaa": ("美国精算师学会 AAA", "American Academy of Actuaries"),
+        "cia-ica": ("加拿大精算师协会", "Canadian Institute of Actuaries"),
+        "cia-research-publications": ("加拿大精算师协会研究出版", "CIA research publications"),
+        "cca": ("美国咨询精算师协会", "Conference of Consulting Actuaries"),
+        "aae": ("欧洲精算师协会", "Actuarial Association of Europe"),
+        "eaa": ("欧洲精算学院", "European Actuarial Academy"),
+        "ifoa-uk": ("英国精算师协会 IFoA", "Institute and Faculty of Actuaries (IFoA)"),
+        "france": ("法国精算师协会", "French Institute of Actuaries"),
+        "dav": ("德国精算师协会", "German Association of Actuaries (DAV)"),
+        "swiss-association-of-actuaries": ("瑞士精算师协会", "Swiss Association of Actuaries"),
+        "italy": ("意大利国家精算师协会", "Italian National Council of Actuaries"),
+        "istituto-italiano-degli-attuari": ("意大利精算师学会", "Italian Actuarial Institute"),
+        "spain": ("西班牙精算师协会", "Spanish Institute of Actuaries"),
+        "australia": ("澳大利亚精算师协会", "Actuaries Institute Australia"),
+        "iai": ("印度精算师协会", "Institute of Actuaries of India"),
+        "iaj": ("日本精算师会", "Institute of Actuaries of Japan"),
+        "institute-of-actuaries-of": ("韩国精算师学会", "Institute of Actuaries of Korea"),
+        "aict": ("台湾精算学会", "Actuarial Institute of Chinese Taipei"),
+        "caa": ("中国精算师协会", "China Association of Actuaries"),
+        "ashk": ("香港精算学会", "Actuarial Society of Hong Kong"),
+        "assa": ("南非精算学会", "Actuarial Society of South Africa"),
+        "task": ("肯尼亚精算师协会", "Actuarial Society of Kenya"),
+        "ama": ("摩洛哥精算师协会", "Moroccan Association of Actuaries"),
+        "iba-brazil": ("巴西精算师协会", "Brazilian Institute of Actuaries"),
+        "aca-colombia": ("哥伦比亚精算师协会", "Colombian Actuarial Association"),
+        "conac-mexico": ("墨西哥精算师协会", "Mexican College of Actuaries"),
+    }
+    pair = labels.get(site, (site, site))
+    return pair[1 if language == "en" else 0]
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -2463,6 +3157,12 @@ def build_parser() -> argparse.ArgumentParser:
                 default="json",
                 help="report output format (default: json)",
             )
+            sub.add_argument(
+                "--language",
+                choices=("zh", "en"),
+                default="zh",
+                help="Markdown language (default: zh); JSON output is locale-neutral",
+            )
         sub.add_argument("--json", action="store_true", help="emit JSON")
     return parser
 
@@ -2493,7 +3193,7 @@ def main(argv: list[str] | None = None) -> int:
     except FlowError as exc:
         parser.error(str(exc))
     if args.command == "report" and args.format == "markdown" and not args.json:
-        print(render_markdown(output), end="")
+        print(render_markdown(output, language=args.language), end="")
     else:
         print(json.dumps(output, ensure_ascii=False, indent=2, sort_keys=True))
     return 0
