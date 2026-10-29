@@ -1,3 +1,30 @@
+# 当前候选 — CI 容量错误用语修正 — 2026-10-29
+
+- 项目 `AI_actuarial_inforsearch`；工作树 `C:/Users/ferry/.codex/worktrees/local-flow-readable-report/AI_actuarial_inforsearch`，分支 `feat/readable-local-flow-report`。日报仅在容量错误明确写出 `% used` 时显示已用比例；只有阈值或语义含糊的百分比保持通用“目标容量门槛”。原 runtime 集成断言未改。
+- 验证：runtime 报告集成测试 3/3、offline helper 34/34 PASS；Black、isort、Ruff、Pylint errors-only、`py_compile`、`git diff --check` PASS。Oct28/29 runtime Markdown/JSON 与已冻结 v3 输出一致；Oct28 实际已用 80.2% 仍可见。30 份回执/runtime 输入 SHA256 未变。未运行 DB runtime suite。
+- 提交 `85a3faf` 对应候选通过第三轮独立 review；本轮 helper 修正发生在本地 review 轮次耗尽后，未再次独立 review，不能称最终 HEAD 获 reviewer PASS。等待父任务提交修正并重跑 required CI；本 worker 未提交或推送。
+
+# 当前候选 — 计划未运行建议与回执缺口区分 — 2026-10-29
+
+- 项目 `AI_actuarial_inforsearch`；工作树 `C:/Users/ferry/.codex/worktrees/local-flow-readable-report/AI_actuarial_inforsearch`，分支 `feat/readable-local-flow-report`。修改限于执行摘要 advice、回归测试、本技能说明和本状态记录；不涉及 runtime、生产数据或调度。
+- 计划内未运行与已尝试但无匹配回执分别给建议：前者核实是否应执行，后者核对当前回执。IABA 等 monitor-only 运行不会被误说成来源采集的回执缺口。
+- 本地评审历史如实保留：增量2有一项 review CHANGES_REQUESTED；累计失败评审周期5（此前阶段3的最终限额例外仍保留）。本轮修复后尚待新的独立评审；没有声称 reviewer PASS。
+- 验证：helper 34/34、Black/isort/Ruff/Pylint errors-only、`py_compile`、skill-creator quick_validate、CLI `--help` 与 `git diff --check` 通过。Oct28/29 runtime 与日期回执模式的 8 份 Markdown/JSON v3 输出均重复渲染字节一致；30 份回执/runtime 输入 SHA256 前后不变。未运行 DB runtime suite（runtime 未改）。父任务负责后续独立评审和 PR 发布；本 worker 未提交或推送，当前没有 reviewer PASS。
+
+# 当前候选 — 执行摘要覆盖与建议修复 — 2026-10-29
+
+- 项目 `AI_actuarial_inforsearch`；工作树 `C:/Users/ferry/.codex/worktrees/local-flow-readable-report/AI_actuarial_inforsearch`，分支 `feat/readable-local-flow-report`。范围限于离线日报 helper、聚焦测试、技能说明与状态记录；未读写生产状态。
+- 有 runtime-output 时，汇总只统计精确匹配的当前非预览回执；无 runtime-output 时按同日回执展示已知下载、入库/分类数量及故障，并标明当前运行覆盖未知。预览、过期回执和未匹配的当前尝试仍不计成功。转换错误沿用 `failure_point` 的转换阶段归并并去重；建议同时覆盖国内/海外 ACK、Ready/容量错误和普通来源/转换错误，且不表示已执行修复。
+- 验证：offline helper 33/33 PASS；Black、isort、Ruff、Pylint errors-only、`py_compile`、skill-creator quick_validate 与 `git diff --check` PASS。Oct28/29 含 runtime 与不含 runtime 的 Markdown/JSON 八份输出均重复渲染一致；无 runtime 的Oct29仍显示119下载、41新增、25复用、40分类，并明确运行覆盖未知。30份回执/runtime输入前后SHA256不变。
+- 未改采集 runtime、回执、ledger、automation、生产服务或历史人工报告；未提交或推送。父任务继续 fresh review 与 PR 后续。
+
+# 当前候选 — 每日采集报告执行摘要 — 2026-10-29
+
+- 项目 `AI_actuarial_inforsearch`；工作树 `C:/Users/ferry/.codex/worktrees/local-flow-readable-report/AI_actuarial_inforsearch`，分支 `feat/readable-local-flow-report`。修改范围为离线日报 Markdown 渲染、helper 回归和本技能的报告合同；未读写兄弟仓库或生产状态。
+- 日报开头新增四项中文执行摘要：本次精确匹配回执的完成/部分/失败数、可见下载与入库/分类/首类候选/转换数量、来源/转换/目标/运行回执缺口与预算暂停、后续建议。摘要不把预览、monitor-only、hold 或旧同日回执算成本次采集成功；当前来源、转换和目标问题分别保留，缺失数据仍显示未记录。
+- 验证：离线 helper 30/30 PASS；Black、isort、Ruff、Pylint errors-only、`py_compile`、skill-creator `quick_validate.py` 与 `git diff --check` PASS。真实 Oct28 命令输出匹配回执 5/8（完成0、部分4、失败1），Oct29 为 8/8（完成0、部分7、失败1）；摘要能显示 Oct28 海外 80.2% Ready 容量门槛、国内端回执失败和3项回执缺口。两天 Markdown 与 JSON 均重复渲染一致。CLI `report --help` PASS。运行时采集源码未改，未重跑 DB runtime suite。
+- 仅读取既有 Oct28/29 运行输出与回执，并记录输入 SHA256 前后校验；未改写回执、ledger、调度或报告历史。未提交或推送；父任务负责最终验收及 PR 后续。
+
 # 当前候选 — AI 首类发布、日期回填与 legacy 证据修复 — 2026-10-28
 
 - 项目 `AI_actuarial_inforsearch`；工作树 `C:/Users/ferry/.codex/worktrees/ai-primary-publication/AI_actuarial_inforsearch`，分支 `fix/ai-primary-publication-dates`。仅本仓库可写；未读写兄弟仓库或生产配置。
@@ -5932,3 +5959,14 @@ Current branch head 4f030be has uncommitted small catalog/Storage variable defau
 - Updated the skill's main instructions plus local-actuarial-flow runtime/workflow references with AI-first semantics, date projection rules, and both maintenance manifest/CLI contracts. UI/API sorting was not changed.
 - Validation: all three scoped files (`test_local_collection_target_worker.py`, `test_local_collection_runtime.py`, and `test_content_hub.py`) passed against an isolated PostgreSQL instance: `141 passed`. Python compilation, Black, isort, Ruff, Pylint errors-only, CLI `--help`, and `git diff --check` passed. The only warnings are three existing SWIG deprecations from the embedding-selector test.
 - No production Hub/catalog write, commit, push, PR, or deployment was performed by this worker. Parent owns fresh review and the approved target maintenance run.
+
+### Readable local-flow daily report — 2026-10-29
+
+- Scope: `feat/readable-local-flow-report` in this repository only. Runtime receipts now record elapsed time, request/page/link observations, collected content types, conversion/enrichment outcomes, AI-first identities, and China/overseas acknowledgement and Ready identity sets. Redirect hops remain included in the production request budget. The worker's `ready_status=not_required` is recorded as not confirmed Ready and does not close a case or erase earlier confirmed Ready identities without explicit invalidation evidence.
+- The offline helper accepts optional v2 telemetry and same-date `run-daily` output, preserves missing legacy fields as unknown, and keeps JSON/default and `--json` compatible. Runtime attempts are paired with receipts only when receipt ID, attempt number, and run status match. A previous same-day receipt remains visible as historical totals while the current missing receipt and runtime error are shown; this does not create a receipt or close a case.
+- Retry telemetry totals and identity sets are cumulative only when that field exists in every attempt. Missing fields and IDs remain unknown even when later retries provide them. Already-acknowledged target IDs are retained on no-work passes, while Ready IDs require an exact validated target acknowledgement with explicit `ready_pending=false`.
+- Markdown shows known partial HTML/PDF/other totals with receipt coverage, plus per-site request/download/Hub/conversion/AI-first/target progress. Missing AI-first telemetry stays unknown and old candidate counts retain the legacy label; old AI counts are not used to claim no sync is needed. Monitor-only results, current monitor errors, and planned checks without runtime evidence appear in a separate section outside collection totals.
+- Source counts distinguish successful page/interface reads (including directory and search data) from discovered and queued link candidates. Specific source errors remain visible beside request-budget pauses; detailed diagnostics stay in JSON.
+- Updated the `local-actuarial-flow` skill and references for the isolated web-listening 3.3.0 executable and manual local-only exploration boundaries. No scheduler, production fetch policy, source state, historical receipt, Hub, target, ledger, or automation configuration was changed.
+- Validation: `test_local_flow.py` passed 26/26. `tests/test_local_collection_runtime.py` last passed 79/79 on the isolated PostgreSQL test DB at port 55436; it was not rerun in this helper-only pass. New helper regressions cover partial file-type totals, per-site conversion and AI-first counts with legacy unknowns, monitor results/errors, and planned monitor checks without runtime evidence. CLI Markdown reruns were deterministic: Oct 28 showed 131 requests / 88 downloads across 5/8 matched receipts; Oct 29 showed 224 requests / 119 downloads across 8/8, with 41 new versions, 25 reused and 40 classified. The Oct 25 receipt-only render showed a planned monitor check without execution evidence. CLI JSON and `--help`, Black, isort, Ruff, Pylint errors-only, `py_compile`, and `git diff --check` passed.
+- No commit, push, historical receipt rewrite, Hub/target write, production fetch, or automation change was made. The Oct 28/29 JSON inputs were read only; their saved outputs were not modified.

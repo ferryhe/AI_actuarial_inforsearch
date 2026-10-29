@@ -30,6 +30,53 @@
 
 目标发布分别记录 `china_ack` 和 `overseas_ack`。ack 的累计 `acknowledged/pending/failed` 计数覆盖本日尝试；ack 的 `status` 与 `ready_status` 表示最近一次尝试的写入/回读与索引 Ready 结果，缺省 Ready 为 `unknown`。Ready 为 `partial`/`failed` 时要提供 `ready_error`，证据放 `ready_evidence`。例如 ack succeeded 而 overseas Ready pending 时，日报会将本站标为 `partial`，但不伪装成已确认的站点故障；缺失/unknown 不能关闭旧 Ready failure。AI 候选确认为 0 时，缺少两端 ack 不算失败。
 
+`ready_status` 还可以是 worker 明确返回的 `not_required`。它只表示该次请求没有要求或没有执行 native Ready 检查，不代表 Ready succeeded。若存在 AI 首类候选，回执保持未完成；该值不会关闭旧 Ready case，也不会单独生成网页故障 case。不能把 ACK、容量预检或 `not_required` 改写为可搜索成功。
+
+### 可选真实运行指标
+
+运行时可在 v2 回执新增可选的顶层 `telemetry`。旧回执没有该字段时，各指标是未知，不能换算成零。示例：
+
+```json
+{
+  "telemetry": {
+    "elapsed_seconds": 74.2,
+    "source": {
+      "request_count": 12,
+      "pages_visited": 4,
+      "links_discovered": 7,
+      "files_by_type": {"html": 2, "pdf": 1, "other": 0},
+      "file_ids": ["<url-and-raw-sha-identity>"],
+      "page_ids": ["<hashed-canonical-page-url>"],
+      "link_ids": ["<hashed-frontier-identity>"]
+    },
+    "database": {"new_version_ids": ["<content-version-id>"], "duplicate_version_ids": []},
+    "enrichment": {"succeeded_count": 1, "succeeded_ids": ["<content-version-id>"]},
+    "conversion": {
+      "succeeded_count": 1,
+      "failed_count": 0,
+      "succeeded_ids": ["<url-and-raw-sha-identity>"],
+      "failed_ids": []
+    },
+    "ai_first_candidate_count": 1,
+    "ai_first_candidate_ids": ["<content-version-id>"],
+    "targets": {
+      "china": {
+        "acknowledged_ids": ["<target-version-identity>"],
+        "ready_status": "succeeded",
+        "ready_ids": ["<target-version-identity>"],
+        "invalidated_ready_ids": []
+      }
+    }
+  }
+}
+```
+
+计数口径：`request_count` 按运行时发出的 HTTP 请求计，预算包含每一跳重定向；`pages_visited` 只数成功读取的非附件页面/目录/API 前沿，不能把仅发现的链接当成已访问页面；`links_discovered` 是解析后新加入队列的候选链接/条目。`files_by_type` 是当日各次运行成功收集的 HTML、PDF 和其他文件观察数。站点当日重跑时，阶段 `count` 和 `telemetry` 数值累计各次观察；ID 列表按身份去重，因此日报同时给出观察总数和唯一项数。数据库 ID 是 Hub 内容版本，下载/转换 ID 绑定规范 URL 与原件 SHA；页面/链接 ID 为哈希，不保存原始 URL。
+
+转换统计只记录本机 `_convert_article` 实际成功或失败的调用。已复用 Hub Markdown 不算一次转换；转换成功后模型超时、引文校验失败或摘要保存失败归入富信息/分类阶段，不能伪装成转换失败。`ai_first_candidate_count/ids` 只由当前 `categories[0].key == "AI"` 且 Hub primary 为 AI 的实时判定生成。旧 `ai_candidates.count` 可能使用任一类别含 AI 的旧口径；不能从旧计数或回执日期推断 AI 首类。
+
+`targets.*.acknowledged_ids` 是当日各次确认身份的并集。`ready_ids` 保留当日已由 native Ready 明确确认的身份，即使后续重试不需要重新构建 Ready；`invalidated_ready_ids` 只在目标状态明确回到待确认/失败时移除对应身份。`ready_status` 表示最新尝试，始终独立于累计 Ready 身份集合。`not_required` 不会合成 Ready 身份。整轮 `run-daily.elapsed_seconds` 包含本轮站点运行和已配置的 backlog reconcile；每站回执中的 `elapsed_seconds` 是该站全部同日尝试耗时之和。
+
 IABA/EAA 仅允许记录结构检查：`stages` 必须包含 `monitor`，且不能含下载、入库、enrichment、AI 或 publish 阶段。结构失败要在 `monitor` 中提供 `error` 和可用证据。Istituto 仍为 hold，不应生成执行回执。monitor-only 回执不能充作采集成功或入库数量。
 
 ## Case ledger 与失败恢复
@@ -47,13 +94,13 @@ report 的 `failure_cases` 是按 site/stage 跨回执折叠后仍未由该阶�
 ```powershell
 python .agents/skills/local-actuarial-flow/scripts/local_flow.py plan --date 2026-10-25 --receipts reports/local-automation-state/receipts --json
 python .agents/skills/local-actuarial-flow/scripts/local_flow.py status --date 2026-10-25 --receipts reports/local-automation-state/receipts --json
-python .agents/skills/local-actuarial-flow/scripts/local_flow.py report --date 2026-10-25 --receipts reports/local-automation-state/receipts --case-ledger reports/local-automation-state/cases/ledger.json --json
+python .agents/skills/local-actuarial-flow/scripts/local_flow.py report --date 2026-10-25 --receipts reports/local-automation-state/receipts --case-ledger reports/local-automation-state/cases/ledger.json --format markdown
 ```
 
 `plan` 显示 06:00 美东固定六项 baseline 和最多两个不同站点的额外失败重试。每日日期锚定，不按 DST 小时滚动；连续任意七个自然日的 baseline 计划覆盖 32 项。失败重试有日期轮转游标，不改变 baseline；这代表计划覆盖，不能保证实际运行或成功覆盖。hold 占一个 baseline 位置但不计为尝试或成功。monitor-only 项只做结构检查。
 
 `status` 对全部 32 项列出 `succeeded`、`partial`、`failed`、`not_run`、`not_scheduled` 或 `hold`，并给计划位置、原因、失败阶段和证据。planned 项缺回执是 `not_run`（调度缺口），不是网页失败。计划外回执、单站多次尝试以及总 distinct site/attempt 数超过 8 都会在 `budget_exceptions` 分别列明，绝不静默丢掉。
 
-`report` 包含当日站点明细、每阶段本轮观察统计、最近七日逐日 planned/attempted/succeeded/partial/failed/not_run/held 列表与数量、计划与真实覆盖差异，以及失败研究队列。`ack` 与各自的 `ready_status` 分开计数；pending/unknown 不被误报为外部故障。跨日积压需未来按目标和 `content_version_id` 去重读取，不能把多份回执快照直接相加。
+`report` 默认仍输出 JSON；`--format markdown` 输出简洁中文表，`--json` 保持兼容。Markdown 开头的执行摘要应简述整体完成度、可见产出、主要阻塞/纯预算暂停和建议。传入 `--runtime-output` 后，只有与当前非预览运行精确匹配的回执可作为本次结果；同日较早回执保留为历史，不可替代失败或缺失的当前尝试。未提供运行输出时可按日期展示已有回执数量和错误，但须明确当前运行关联未知；不得把它们写成本次运行成功。建议把计划内未运行与已尝试但缺回执分开：前者核实是否应执行，后者核对当前回执。预览、monitor-only 和 hold 分开说明，不计入来源采集。实际来源、转换、目标错误不可被预算提示遮盖；纯预算暂停单列。缺少指标保持未知。建议仅为后续检查，不表示已执行重试、提升预算、删除数据或更改发布规则。可选 `--runtime-output` 读取同日期 `run-daily` JSON，指出有运行证据但缺 final receipt 的站点并显示实际整轮耗时。运行输出只提供可见性，不参与失败 case 折叠、关闭或研究队列。报告包含当日计划/实际站点、来源请求/页面/新链接、文件类型、Hub 新增/重复、转换、AI 首类候选、国内/海外入库及可搜索状态和逐站停止阶段。观察统计包括同日重跑，唯一计数只从精确身份集合生成。`ack` 与各自的 Ready 状态分开；pending/unknown/not_required 不被误报为成功或网页故障。跨日积压需未来按目标和 `content_version_id` 去重读取，不能把多份回执快照直接相加。
 
-需要 Python 3.10+ 和可用的 `America/New_York` IANA 时区数据；Windows 如缺数据，在同一 Python 环境安装 `tzdata`。helper 只规划和读取 JSON，不访问网站、Hub 或目标服务，不写 ledger，也不启用定时任务。
+需要 Python 3.10+ 和可用的 `America/New_York` IANA 时区数据；Windows 如缺数据，在同一 Python 环境安装 `tzdata`。helper 只规划、读取 JSON 并输出 JSON 或 Markdown，不访问网站、Hub 或目标服务，不写 ledger，也不启用定时任务。

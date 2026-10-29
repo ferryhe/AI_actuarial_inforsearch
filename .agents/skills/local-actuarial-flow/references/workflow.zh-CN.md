@@ -6,7 +6,7 @@
 
 ## 每轮与日报
 
-用户确认的目标是每日轮换 32 个监控项：helper 按固定 America/New_York 日期锚点，每天取六个 baseline，最多再选两个不同站点做历史失败重试。连续任意七个自然日的六项 baseline 覆盖全部 32 项；这是计划覆盖，未运行站点仍报告 `not_run`，不能算成功。Istituto 保留 baseline 位置但为 hold，IABA/EAA 为仅做结构检查的 `monitor_only`。日计划目标为美东 06:00，09:00 日报覆盖前一美东自然日。日期而非 UTC 经过小时推进，因此跨 DST 不重复或跳过计划日。单站失败不减少其余 baseline，也不改变未来日期轮换。每站其他低频配置和真实执行端仍待实现。
+用户确认的目标是每日轮换 32 个监控项：helper 按固定 America/New_York 日期锚点，每天取六个 baseline，最多再选两个不同站点做历史失败重试。连续任意七个自然日的六项 baseline 覆盖全部 32 项；这是计划覆盖，未运行站点不能算成功。没有同日运行输出时，缺回执只表示未见回执；有 `--runtime-output` 时，日报可区分执行中断且缺回执与运行明细中未见的计划站点。Istituto 保留 baseline 位置但为 hold，IABA/EAA 为仅做结构检查的 `monitor_only`。日计划目标为美东 06:00，09:00 日报覆盖前一美东自然日。日期而非 UTC 经过小时推进，因此跨 DST 不重复或跳过计划日。单站失败不减少其余 baseline，也不改变未来日期轮换。每站其他低频配置和真实执行端仍待实现。
 
 流程目标如下。粗线外的站点脚本仅提供本仓库现有证据；适配器和持久调度尚待实现。
 
@@ -32,6 +32,8 @@ flowchart LR
 执行顺序应保持可恢复：单站独立超时和输出；原文件先按哈希归档，再关联规范来源 URL；Markdown 保存解析器版本、状态和空正文缺口；双语生成使用已核准的 25 类规范键，最多 4 个且有序，不依据 URL/标题关键字推断正文分类；分别保存 `publication_date`、`revision_date`、`document_version_date` 的值、precision 与 evidence，不把 HTTP Last-Modified 或活动日期混作发布日期。源阶段失败时保留已落盘证据，不重复改写既有内容。
 
 每日回执用 v2 `date_local/site_id` 唯一键记录本地自然日一次最终结果。失败/partial stage 携带错误和证据；report 从真实回执生成 case ID 和研究队列，最多建议两项。Case ledger 由调用端原子写入，不由 helper 修改。失败状态按同一 site/stage 保留，后续回执缺字段或 unknown 不会关闭它；只有该阶段新的 succeeded 证据才能关闭。最新 receipt 的下载成功不能掩盖之前 overseas Ready 失败。研究应先复现并定位证据，再更新仓库维护的实际 script/playbook/skill，跑聚焦测试与低流量验证、交独立 review，次日通过新回执确认；不得靠改报告/skill 把失败写成成功。相同 case 与 evidence fingerprint 不重复研究，单次日报最多处理两个；临时 HTTP/服务问题按证据退避。若维护源只存在 ignored snapshot，则不能伪装已经部署修复。
+
+`ready_status=not_required` 表示该尝试没有 native Ready 成功证据。它不能关闭之前的 Ready case；仅当确有 AI 首类候选而没有可搜索确认时，日报显示未完成停点。可选 `--runtime-output` 用来展示同日运行尝试/缺失回执，不参与 case 更新或研究队列。
 
 ## 已跟踪运行端与历史复用证据
 
@@ -70,4 +72,4 @@ flowchart LR
 4. 建立国内与海外两个增量 serving adapters。明确 upsert identity、文章/正文创建、缺口和删除处理；每目标独立验收文章、metadata、chunks、KB/Ready 和 native acknowledgement，任何一边失败不得以另一边成功代替。
 5. 真实 Hub 与两目标验收通过后，才启用每日 06:00 的六项 baseline/最多两项额外失败重试触发器，并落实单实例租约、可恢复状态、运行日志/保留期与机器关机后的追赶策略。美东 09:00 日报只能据真实回执报告逐站状态、计划与实际覆盖；无回执显示 not_run，不能代替采集或 Hub 写入。helper 本身不创建或启用触发器。
 
-此离线 helper 本身不创建或启用 Scheduler。若用 ChatGPT automation 作为触发器，官方说明要求电脑开机且 Codex app 运行；参见[官方 automations 说明](https://learn.chatgpt.com/docs/automations?surface=app)。
+此离线 helper 本身不创建或启用 Scheduler。日报支持 JSON 和精简中文 Markdown 输出。若用 ChatGPT automation 作为触发器，官方说明要求电脑开机且 Codex app 运行；参见[官方 automations 说明](https://learn.chatgpt.com/docs/automations?surface=app)。

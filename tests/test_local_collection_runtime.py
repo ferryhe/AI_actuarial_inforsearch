@@ -1363,6 +1363,22 @@ def test_receipt_counts_merge_across_restart_and_target_retries_are_independent(
     )
     assert second_run["target"]["china"]["acknowledged"] == 1
     assert second_run["target"]["overseas"]["acknowledged"] == 1
+    china_key = "china:17:" + item["raw_sha256"]
+    assert first_run["target"]["china"]["acknowledged_ids"] == [china_key]
+    assert first_run["target"]["china"]["ready_ids"] == [china_key]
+    assert second_run["target"]["china"]["acknowledged_ids"] == [china_key]
+    assert second_run["target"]["china"]["ready_ids"] == [china_key]
+
+    # An old acknowledged row without explicit Ready state keeps its exact
+    # acknowledgement identity, but cannot be reported as confirmed searchable.
+    state["target_acks"][china_key].pop("ready_pending")
+    state["articles"][article_key]["stage"] = "downloaded"
+    third_run = runtime._process_articles(
+        "fixture", state, config, "unused-hub", preview=False, article_limit=1
+    )
+    assert third_run["target"]["china"]["acknowledged_ids"] == [china_key]
+    assert third_run["target"]["china"]["ready_ids"] == []
+    assert third_run["target"]["china"]["ready_status"] == "unknown"
     assert calls == ["china", "overseas", "overseas"]
 
 
@@ -1577,7 +1593,9 @@ def test_hub_version_count_survives_enrichment_failure_without_retry_recount(
     }
     attempts = 0
 
-    def prepare(_article, _state, _config, _hub, _preview, *, on_hub_version=None):
+    def prepare(
+        _article, _state, _config, _hub, _preview, *, on_hub_version=None, on_conversion=None
+    ):
         nonlocal attempts
         attempts += 1
         on_hub_version(
@@ -1600,6 +1618,7 @@ def test_hub_version_count_survives_enrichment_failure_without_retry_recount(
     assert first["new_versions"] == 1
     assert first["duplicates"] == 0
     assert first["article_errors"]
+    assert first["database"]["new_version_ids"] == ["19"]
     assert article["hub_version"]["status"] == "new"
     assert state_path.is_file()
 
@@ -1609,6 +1628,8 @@ def test_hub_version_count_survives_enrichment_failure_without_retry_recount(
     assert second["new_versions"] == 0
     assert second["duplicates"] == 1
     assert second["enriched"] == 1
+    assert second["database"]["duplicate_version_ids"] == ["19"]
+    assert second["enrichment"]["succeeded_ids"] == ["19"]
     assert article["stage"] == "complete"
 
     receipt_root = tmp_path / "receipts"
@@ -1921,7 +1942,7 @@ def test_site_receipt_download_count_uses_capture_results_not_retry_queue(
         },
     )
 
-    def save_receipt(_root, _date, _site, stages, _evidence, reason):
+    def save_receipt(_root, _date, _site, stages, _evidence, reason, _telemetry=None):
         return {"stages": stages, "reason": reason}
 
     monkeypatch.setattr(runtime, "_write_receipt", save_receipt)
@@ -2623,6 +2644,505 @@ def test_site_receipt_keeps_source_error_when_request_budget_is_also_exhausted(
     assert "budget reached" in source_case["error"]
     cas = next(row for row in report["site_statuses"] if row["site_id"] == "cas")
     assert cas["pending_article_count"] == 12
+
+
+def test_readable_report_preserves_legacy_unknowns_and_keeps_runtime_evidence_separate(
+    tmp_path: Path,
+) -> None:
+    flow = runtime._load_flow_module()
+    receipt_root = tmp_path / "receipts"
+    stages = {name: runtime._receipt_stage("succeeded", count=0) for name in flow.COUNT_STAGES}
+    # This historical count uses the old any-category-AI meaning.
+    stages["ai_candidates"] = runtime._receipt_stage("succeeded", count=8)
+    for target in ("china", "overseas"):
+        stages[f"{target}_ack"] = runtime._ack_stage(
+            {
+                "acknowledged": 0,
+                "pending": 0,
+                "failed": 0,
+                "ready_status": "not_required",
+            }
+        )
+    saved = runtime._write_receipt(receipt_root, "2026-10-27", "cas", stages, [], "legacy receipt")
+    assert "telemetry" not in saved
+
+    day = __import__("datetime").date(2026, 10, 27)
+    receipts = flow.read_receipts(receipt_root)
+    report = flow.make_report(day, receipts)
+    assert report["telemetry"]["source"]["request_count"]["observation_sum"] is None
+    assert report["telemetry"]["ai_first_candidates"]["observations"]["observation_sum"] is None
+    assert report["telemetry"]["targets"]["china"]["ready_confirmed_exact_unique_count"] is None
+    assert report["failure_cases"] == []
+    markdown = flow.render_markdown(report)
+    assert "AI 首类候选 | 首类候选未记录；旧口径 AI 候选 8（不能推断首类）" in markdown
+    assert "已可搜索篇数 未记录" in markdown
+
+    runtime_path = tmp_path / "runtime-output.json"
+    runtime_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "date_local": "2026-10-27",
+                "elapsed_seconds": 73,
+                "preview": False,
+                "runs": [
+                    {
+                        "site_id": site,
+                        "preview": False,
+                        "elapsed_seconds": 20,
+                        **(
+                            {
+                                "receipt_id": saved["receipt_id"],
+                                "attempt_count": saved["attempt_count"],
+                                "run_status": saved["run_status"],
+                            }
+                            if site == "cas"
+                            else {}
+                        ),
+                    }
+                    for site in ("cas", "iaa", "aaa", "soa", "cia-ica", "cca", "ifoa-uk", "dav")
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    with_runtime = flow.make_report(
+        day,
+        receipts,
+        runtime_output=flow._normalize_runtime_output(
+            json.loads(runtime_path.read_text(encoding="utf-8")), day, runtime_path
+        ),
+    )
+    assert with_runtime["failure_cases"] == report["failure_cases"]
+    assert len(with_runtime["coverage"]["runtime_attempts_without_receipts"]) == 7
+    markdown_with_runtime = flow.render_markdown(with_runtime)
+    assert "缺少 7 项运行回执" in markdown_with_runtime
+    assert "有运行证据 8 项，其中 1 项有本次回执、7 项缺回执" in markdown_with_runtime
+
+    for raw, stage, expected in (
+        ("HTTPError: HTTP 404 while reading", "downloaded", "HTTP 404：链接不存在"),
+        ("HTTP 400 Bad Request", "downloaded", "HTTP 400：链接格式或请求错误"),
+        (
+            "request budget reached; frontier_remaining=5",
+            "downloaded",
+            "请求预算暂停（剩余队列 5 项）",
+        ),
+        ("encrypted PDF: password required", "conversion", "加密 PDF 无法转换"),
+        ("target capacity_blocked at 80% threshold", "china_ack", "目标容量门槛，发布未继续"),
+        ("SSH connect timeout after 20 seconds", "overseas_ack", "SSH 连接超时"),
+    ):
+        assert flow._short_failure_reason(raw, stage) == expected
+    long_error = "Exact source diagnostic " + ("detail " * 40)
+    assert flow._short_failure_reason(long_error, "downloaded") == long_error[:117].rstrip() + "..."
+    error_root = tmp_path / "long-error-receipts"
+    error_stages = {
+        name: runtime._receipt_stage("succeeded", count=0) for name in flow.COUNT_STAGES
+    }
+    error_stages["downloaded"] = runtime._receipt_stage("failed", count=0, error=long_error)
+    for target in ("china", "overseas"):
+        error_stages[f"{target}_ack"] = runtime._ack_stage(
+            {"acknowledged": 0, "pending": 0, "failed": 0, "ready_status": "unknown"}
+        )
+    runtime._write_receipt(error_root, "2026-10-27", "aaa", error_stages, [], long_error)
+    error_report = flow.make_report(day, flow.read_receipts(error_root))
+    raw_error = error_report["receipts"][0]["stages"]["downloaded"]["error"]
+    error_markdown = flow.render_markdown(error_report)
+    assert raw_error == long_error
+    assert long_error not in error_markdown
+    assert long_error[:117].rstrip() + "..." in error_markdown
+
+    command = [
+        sys.executable,
+        str(runtime.FLOW_SCRIPT),
+        "report",
+        "--date",
+        "2026-10-27",
+        "--receipts",
+        str(receipt_root),
+        "--runtime-output",
+        str(runtime_path),
+        "--format",
+        "markdown",
+    ]
+    first = subprocess.run(command, check=False, capture_output=True, text=True)
+    second = subprocess.run(command, check=False, capture_output=True, text=True)
+    assert first.returncode == second.returncode == 0, first.stderr + second.stderr
+    assert first.stdout == second.stdout
+    assert "| 国际精算协会 |" in first.stdout
+    assert "运行回执缺失" in first.stdout
+    json_result = subprocess.run(
+        [*command[:-2], "--json"], check=False, capture_output=True, text=True
+    )
+    assert json_result.returncode == 0, json_result.stderr
+    assert json.loads(json_result.stdout)["failure_cases"] == []
+
+
+def test_receipt_telemetry_accumulates_retries_and_preserves_ready_identity(
+    tmp_path: Path,
+) -> None:
+    flow = runtime._load_flow_module()
+    receipt_root = tmp_path / "receipts"
+    stages = {name: runtime._receipt_stage("succeeded", count=0) for name in flow.COUNT_STAGES}
+    stages["ai_candidates"] = runtime._receipt_stage("succeeded", count=1)
+    for target in ("china", "overseas"):
+        stages[f"{target}_ack"] = runtime._ack_stage(
+            {
+                "acknowledged": 1,
+                "pending": 0,
+                "failed": 0,
+                "ready_status": "succeeded",
+            }
+        )
+    first_telemetry = {
+        "elapsed_seconds": 6,
+        "source": {
+            "request_count": 5,
+            "pages_visited": 1,
+            "links_discovered": 2,
+            "files_by_type": {"html": 1, "pdf": 0, "other": 0},
+            "file_ids": ["file-a"],
+            "page_ids": ["page-a"],
+            "link_ids": ["link-a"],
+        },
+        "database": {"new_version_ids": ["version-a"], "duplicate_version_ids": []},
+        "enrichment": {"succeeded_count": 1, "succeeded_ids": ["version-a"]},
+        "conversion": {
+            "succeeded_count": 1,
+            "failed_count": 0,
+            "succeeded_ids": ["file-a"],
+            "failed_ids": [],
+        },
+        "ai_first_candidate_count": 1,
+        "ai_first_candidate_ids": ["version-a"],
+        "targets": {
+            target: {
+                "acknowledged_ids": [f"{target}-ack-a"],
+                "ready_status": "succeeded",
+                "ready_ids": [f"{target}-ready-a"],
+                "invalidated_ready_ids": [],
+            }
+            for target in ("china", "overseas")
+        },
+    }
+    second_stages = {
+        **stages,
+        "ai_candidates": runtime._receipt_stage("succeeded", count=0),
+    }
+    for target in ("china", "overseas"):
+        second_stages[f"{target}_ack"] = runtime._ack_stage(
+            {
+                "acknowledged": 0,
+                "pending": 0,
+                "failed": 0,
+                "ready_status": "not_required",
+            }
+        )
+    second_telemetry = {
+        "elapsed_seconds": 10,
+        "source": {
+            "request_count": 3,
+            "pages_visited": 2,
+            "links_discovered": 1,
+            "files_by_type": {"html": 0, "pdf": 1, "other": 0},
+            "file_ids": ["file-b"],
+            "page_ids": ["page-a", "page-b"],
+            "link_ids": ["link-b"],
+        },
+        "database": {"new_version_ids": [], "duplicate_version_ids": ["version-b"]},
+        "enrichment": {"succeeded_count": 0, "succeeded_ids": []},
+        "conversion": {
+            "succeeded_count": 0,
+            "failed_count": 1,
+            "succeeded_ids": [],
+            "failed_ids": ["file-b"],
+        },
+        "ai_first_candidate_count": 0,
+        "ai_first_candidate_ids": [],
+        "targets": {
+            target: {
+                "acknowledged_ids": [f"{target}-ack-b"],
+                "ready_status": "not_required",
+                "ready_ids": [],
+                "invalidated_ready_ids": [],
+            }
+            for target in ("china", "overseas")
+        },
+    }
+    runtime._write_receipt(receipt_root, "2026-10-27", "cas", stages, [], None, first_telemetry)
+    receipt = runtime._write_receipt(
+        receipt_root, "2026-10-27", "cas", second_stages, [], None, second_telemetry
+    )
+    assert receipt["attempt_count"] == 2
+    report = flow.make_report(
+        __import__("datetime").date(2026, 10, 27), flow.read_receipts(receipt_root)
+    )
+    telemetry = report["telemetry"]
+    assert telemetry["elapsed_seconds"]["observation_sum"] == 16
+    assert telemetry["source"]["request_count"]["observation_sum"] == 8
+    assert telemetry["source"]["pages_visited"]["observation_sum"] == 3
+    assert telemetry["source"]["unique_page_count"]["exact_unique_count"] == 2
+    assert telemetry["database"]["new_versions"]["exact_unique_count"] == 1
+    assert telemetry["conversion"]["succeeded"]["observation_sum"] == 1
+    assert telemetry["conversion"]["failed"]["observation_sum"] == 1
+    for target in ("china", "overseas"):
+        summary = telemetry["targets"][target]
+        assert summary["acknowledged_exact_unique_count"] == 2
+        assert summary["ready_confirmed_exact_unique_count"] == 1
+        assert summary["latest_ready_status_counts"] == {"not_required": 1}
+
+
+def test_retry_telemetry_keeps_missing_fields_unknown_through_three_attempts(
+    tmp_path: Path,
+) -> None:
+    flow = runtime._load_flow_module()
+    receipt_root = tmp_path / "receipts"
+    stages = {name: runtime._receipt_stage("succeeded", count=0) for name in flow.COUNT_STAGES}
+    for target in ("china", "overseas"):
+        stages[f"{target}_ack"] = runtime._ack_stage(
+            {"acknowledged": 0, "pending": 0, "failed": 0, "ready_status": "unknown"}
+        )
+
+    first = runtime._write_receipt(
+        receipt_root,
+        "2026-10-27",
+        "cas",
+        stages,
+        [],
+        None,
+        {
+            "elapsed_seconds": 1,
+            "source": {
+                "request_count": 4,
+                "links_discovered": 7,
+                "files_by_type": {"html": 1, "pdf": 0, "other": 0},
+                "file_ids": ["file-1"],
+                "link_ids": ["link-1"],
+            },
+            "database": {},
+            "enrichment": {"succeeded_count": 1},
+            "conversion": {"succeeded_count": 1, "failed_count": 0},
+            "ai_first_candidate_count": 1,
+            "targets": {target: {"ready_status": "succeeded"} for target in ("china", "overseas")},
+        },
+    )
+    assert "succeeded_ids" not in first["telemetry"]["enrichment"]
+
+    second = runtime._write_receipt(
+        receipt_root,
+        "2026-10-27",
+        "cas",
+        stages,
+        [],
+        None,
+        {
+            "elapsed_seconds": 2,
+            "source": {
+                "request_count": 3,
+                "pages_visited": 2,
+                "file_ids": ["file-2"],
+                "page_ids": ["page-2"],
+            },
+            "database": {"new_version_ids": ["version-1"]},
+            "enrichment": {"succeeded_count": 2, "succeeded_ids": ["version-1"]},
+            "conversion": {
+                "succeeded_count": 2,
+                "failed_count": 0,
+                "succeeded_ids": ["file-2"],
+            },
+            "ai_first_candidate_count": 2,
+            "ai_first_candidate_ids": ["version-1"],
+            "targets": {
+                target: {
+                    "acknowledged_ids": [f"{target}:17:sha"],
+                    "ready_status": "succeeded",
+                    "ready_ids": [f"{target}:17:sha"],
+                    "invalidated_ready_ids": [],
+                }
+                for target in ("china", "overseas")
+            },
+        },
+    )
+    assert "links_discovered" not in second["telemetry"].get("source", {})
+    assert "link_ids" not in second["telemetry"].get("source", {})
+    assert "new_version_ids" not in second["telemetry"].get("database", {})
+    assert "ai_first_candidate_ids" not in second["telemetry"]
+
+    third = runtime._write_receipt(
+        receipt_root,
+        "2026-10-27",
+        "cas",
+        stages,
+        [],
+        None,
+        {
+            "elapsed_seconds": 3,
+            "source": {
+                "request_count": 1,
+                "pages_visited": 3,
+                "links_discovered": 1,
+                "files_by_type": {"html": 0, "pdf": 1, "other": 0},
+                "file_ids": ["file-3"],
+                "page_ids": ["page-3"],
+                "link_ids": ["link-3"],
+            },
+            "database": {"new_version_ids": ["version-2"]},
+            "enrichment": {"succeeded_count": 3, "succeeded_ids": ["version-2"]},
+            "conversion": {
+                "succeeded_count": 3,
+                "failed_count": 0,
+                "succeeded_ids": ["file-3"],
+                "failed_ids": [],
+            },
+            "ai_first_candidate_count": 3,
+            "ai_first_candidate_ids": ["version-2"],
+            "targets": {
+                target: {
+                    "acknowledged_ids": [f"{target}:18:sha"],
+                    "ready_status": "succeeded",
+                    "ready_ids": [f"{target}:18:sha"],
+                    "invalidated_ready_ids": [],
+                }
+                for target in ("china", "overseas")
+            },
+        },
+    )
+    assert third["telemetry"]["source"]["request_count"] == 8
+    for field in ("pages_visited", "links_discovered", "page_ids", "link_ids", "files_by_type"):
+        assert field not in third["telemetry"].get("source", {})
+    assert "new_version_ids" not in third["telemetry"].get("database", {})
+    assert "succeeded_ids" not in third["telemetry"].get("enrichment", {})
+    assert "succeeded_ids" not in third["telemetry"].get("conversion", {})
+    assert "ai_first_candidate_ids" not in third["telemetry"]
+    for target in ("china", "overseas"):
+        assert "acknowledged_ids" not in third["telemetry"]["targets"][target]
+        assert "ready_ids" not in third["telemetry"]["targets"][target]
+
+    report = flow.make_report(
+        __import__("datetime").date(2026, 10, 27), flow.read_receipts(receipt_root)
+    )
+    telemetry = report["telemetry"]
+    assert telemetry["source"]["request_count"]["observation_sum"] == 8
+    assert telemetry["source"]["pages_visited"]["observation_sum"] is None
+    assert telemetry["source"]["links_discovered"]["observation_sum"] is None
+    assert telemetry["source"]["unique_page_count"]["exact_unique_count"] is None
+    assert telemetry["database"]["new_versions"]["exact_unique_count"] is None
+    assert telemetry["enrichment"]["observation_sum"] == 6
+    assert telemetry["enrichment"]["exact_unique_count"] is None
+    assert telemetry["conversion"]["succeeded"]["observation_sum"] == 6
+    assert telemetry["conversion"]["succeeded"]["exact_unique_count"] is None
+    assert telemetry["ai_first_candidates"]["observations"]["observation_sum"] == 6
+    assert telemetry["ai_first_candidates"]["exact_unique_count"]["exact_unique_count"] is None
+    for target in ("china", "overseas"):
+        assert telemetry["targets"][target]["acknowledged_exact_unique_count"] is None
+        assert telemetry["targets"][target]["ready_confirmed_exact_unique_count"] is None
+
+
+def test_conversion_failure_telemetry_stops_at_conversion_stage(
+    tmp_path: Path, monkeypatch
+) -> None:
+    flow = runtime._load_flow_module()
+    monkeypatch.setattr(runtime, "_ACTIVE_STATE_PATH", tmp_path / "state.json")
+    raw_sha = hashlib.sha256(b"encrypted pdf bytes").hexdigest()
+    article = {
+        "url": "https://example.test/encrypted.pdf",
+        "raw_sha256": raw_sha,
+        "stage": "downloaded",
+        "discovery_sites": ["cas"],
+    }
+    state = {
+        "articles": {runtime._file_key(article["url"], raw_sha): article},
+        "target_acks": {},
+    }
+
+    def fail_conversion(
+        _article, _state, _config, _hub, _preview, *, on_conversion=None, **_kwargs
+    ):
+        on_conversion(False)
+        raise RuntimeError("encrypted PDF requires a password")
+
+    monkeypatch.setattr(runtime, "_prepare_hub_article", fail_conversion)
+    summary = runtime._process_articles(
+        "cas",
+        state,
+        {"state_root": str(tmp_path), "data_root": str(tmp_path)},
+        "unused-hub",
+        preview=False,
+        article_limit=1,
+    )
+    assert summary["conversion"]["failed_count"] == 1
+    assert summary["conversion"]["failed_ids"] == [runtime._article_identity(article)]
+    assert summary["article_errors"]
+
+    stages = {name: runtime._receipt_stage("succeeded", count=0) for name in flow.COUNT_STAGES}
+    stages["enriched"] = runtime._receipt_stage(
+        "partial", count=0, error=summary["article_errors"][0]
+    )
+    for target in ("china", "overseas"):
+        stages[f"{target}_ack"] = runtime._ack_stage(
+            {
+                "acknowledged": 0,
+                "pending": 0,
+                "failed": 0,
+                "ready_status": "unknown",
+            }
+        )
+    receipt = runtime._write_receipt(
+        tmp_path / "receipts",
+        "2026-10-27",
+        "cas",
+        stages,
+        [],
+        summary["article_errors"][0],
+        {"conversion": summary["conversion"]},
+    )
+    report = flow.make_report(
+        __import__("datetime").date(2026, 10, 27),
+        flow.read_receipts(tmp_path / "receipts"),
+    )
+    assert receipt["telemetry"]["conversion"]["failed_count"] == 1
+    assert report["receipts"][0]["failure_point"]["stage"] == "conversion"
+    assert "加密 PDF 无法转换" in flow.render_markdown(report)
+
+
+def test_budget_pause_does_not_mask_later_encrypted_pdf_failure(tmp_path: Path) -> None:
+    flow = runtime._load_flow_module()
+    conversion_error = "encrypted PDF requires a password"
+    stages = {name: runtime._receipt_stage("succeeded", count=0) for name in flow.COUNT_STAGES}
+    stages["downloaded"] = runtime._receipt_stage(
+        "partial",
+        count=1,
+        request_budget={"used": 30, "cap": 30, "paused": True, "frontier_remaining": 5},
+    )
+    for name in ("new_versions", "enriched"):
+        stages[name] = runtime._receipt_stage("partial", count=0, error=conversion_error)
+    for target in ("china", "overseas"):
+        stages[f"{target}_ack"] = runtime._ack_stage(
+            {
+                "acknowledged": 0,
+                "pending": 0,
+                "failed": 0,
+                "ready_status": "unknown",
+            }
+        )
+    receipt_root = tmp_path / "receipts"
+    runtime._write_receipt(
+        receipt_root,
+        "2026-10-27",
+        "italy",
+        stages,
+        [],
+        "source budget paused; encrypted PDF conversion failed",
+    )
+    report = flow.make_report(
+        __import__("datetime").date(2026, 10, 27),
+        flow.read_receipts(receipt_root),
+    )
+    italy = next(row for row in report["receipts"] if row["site_id"] == "italy")
+    assert italy["failure_point"]["stage"] == "conversion"
+    assert "来源采集因请求预算暂停" in italy["failure_point"]["reason"]
+    markdown = flow.render_markdown(report)
+    assert "正文转换（Markdown）" in markdown
+    assert "加密 PDF 无法转换；请求预算暂停（剩余队列 5 项）" in markdown
 
 
 def test_article_model_limit_is_separate_from_bounded_reuse_and_target_retries(

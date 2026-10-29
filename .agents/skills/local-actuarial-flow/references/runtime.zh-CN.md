@@ -1,6 +1,6 @@
 # 本机采集与双端发布运行指南
 
-本指南对应跟踪代码 `ai_actuarial.local_collection_runtime`。CLI 默认输出 JSON，`--json` 可显式声明机器读取。所有命令均从仓库根目录运行；本地私有配置默认路径为 `reports/local-automation-state/config.local.json`，共享示例为 [local-runtime-config.example.json](local-runtime-config.example.json)。不要把 DSN、密钥或登录态复制到示例文件。
+本指南对应跟踪代码 `ai_actuarial.local_collection_runtime`。CLI 默认输出 JSON，`--json` 可显式声明机器读取。离线日报默认 JSON；`--format markdown` 可输出精简中文摘要。所有命令均从仓库根目录运行；本地私有配置默认路径为 `reports/local-automation-state/config.local.json`，共享示例为 [local-runtime-config.example.json](local-runtime-config.example.json)。不要把 DSN、密钥或登录态复制到示例文件。
 
 ## 准备与只读检查
 
@@ -64,9 +64,36 @@ python -m ai_actuarial.local_collection_runtime run-daily --date 2026-10-25 --pr
 python -m ai_actuarial.local_collection_runtime run-daily --date 2026-10-25 --json
 python -m ai_actuarial.local_collection_runtime reconcile-targets --limit 10 --json
 python .agents/skills/local-actuarial-flow/scripts/local_flow.py report --date 2026-10-25 --receipts reports/local-automation-state/receipts --json
+python .agents/skills/local-actuarial-flow/scripts/local_flow.py report --date 2026-10-25 --receipts reports/local-automation-state/receipts --format markdown
 ```
 
 每日计划为六项 baseline、最多两个不同失败重试；hold 保留位置但不执行。每次目标写入按 URL/Hub version/content fingerprint 单独确认；中国 AI 与 all 两个现有 KB 使用各自已配置 profile，海外只更新 AI KB。失败的文章 acknowledgement、chunk/embed/binding 与 Ready 阶段可单独续跑，目标之间不互相代替。只有有序 `categories[0].key == "AI"` 的 Hub 版本能进入 AI serving bucket；第二至第四类及其证据继续原样保存在 Hub enrichment 中。实时、缓存、历史 backlog、pending 重试和 target worker 都复核同一首类规则。目标容量使用原生 80% gate。旧全量替换脚本、清空/重建旧目录和向量复制不属于本运行入口。
+
+`run-daily` JSON 带整轮 `elapsed_seconds`，每站回执另存站点耗时和采集漏斗。要让离线报告区分“已运行但回执缺失”，将当次 stdout 以 UTF-8 JSON 保存，并用同日期参数传给 helper：
+
+```powershell
+$runLines = & python -m ai_actuarial.local_collection_runtime run-daily --date 2026-10-29 --json
+[System.IO.File]::WriteAllText("reports/local-automation-state/daily/2026-10-29-run-daily.json", ($runLines -join "`n"), [System.Text.UTF8Encoding]::new($false))
+python .agents/skills/local-actuarial-flow/scripts/local_flow.py report --date 2026-10-29 --receipts reports/local-automation-state/receipts --runtime-output reports/local-automation-state/daily/2026-10-29-run-daily.json --format markdown
+```
+
+`--runtime-output` 仅为日报补充执行、异常和总耗时证据，不改变回执或 case ledger。没有传运行输出时，无回执不能证明未运行；计划与实际收据站点仍分开显示。报告中的观察数会累加同日重试，唯一数按回执中的精确身份集合去重。旧回执没有的请求、页面、文件类型、转换或分类指标显示“未记录”，不能填成零。AI 首类仅读取运行时明确记录的首类候选，不能从旧版任意类别 AI 候选或日期推断。
+
+### 独立来源故障探索（web-listening 3.3.0）
+
+来源站点失败且需要单独复现公开页面或附件时，可运行隔离安装的 `web-listening 3.3.0`。该版本要求 Python 3.12；从仓库私有目录选择这个明确的可执行文件，不调用全局 `web-listening` 0.1.0，不自动安装或升级：
+
+```powershell
+$exploreCli = 'C:\Project\AI_actuarial_inforsearch\reports\local-automation-tools\web-listening-3.3.0\venv\Scripts\web-listening.exe'
+& $exploreCli list-exploration-tools --json
+& $exploreCli read-page --url https://www.e-caa.org.cn/ --method http --output-dir reports/readable-local-flow/exploration/caa-http --allowed-domain www.e-caa.org.cn --timeout-seconds 30 --max-http-bytes 2097152 --json
+& $exploreCli read-page --url https://www.e-caa.org.cn/ --method browser --browser-channel chrome --output-dir reports/readable-local-flow/exploration/caa-browser --allowed-domain www.e-caa.org.cn --max-requests 30 --max-dom-bytes 2097152 --max-http-bytes 2097152 --json
+& $exploreCli download-file --url https://example.org/report.pdf --output-dir reports/readable-local-flow/exploration/pdf --allowed-domain example.org --max-bytes 41943040 --json
+& $exploreCli extract-pdf --input reports/readable-local-flow/exploration/pdf/report.pdf --output-dir reports/readable-local-flow/exploration/pdf-text --source-url https://example.org/report.pdf --json
+& $exploreCli collect --urls-file reports/readable-local-flow/exploration/urls.txt --kind page --method http --output-dir reports/readable-local-flow/exploration/collect --allowed-domain www.e-caa.org.cn --json
+```
+
+`read-page` 支持 `http` 或 `browser`；HTTP 示例是一条页面读取，用超时和响应字节上限控制；`--max-requests` 只限制浏览器路线，浏览器页面资源也占预算。只有静态 HTTP 无法呈现链接时才使用浏览器。`download-file`/`collect` 输出及 `extract-pdf` 文本都是本地探索证据。探索 CLI 不继承 formal AccessGateway 控制，也不调用本仓库 production bounded crawler；production crawler 自有站点 host/path 白名单和每站 30 HTTP 请求预算。探索命令只用于手动单来源故障调查，不批量执行，也不写 Hub、目标、日回执或 AI 候选。浏览器结果中的 attempt 记录可能包含未实际发送的拦截请求；不要把 attempt 行数当作 HTTP 请求数。探索结果和采集成功、Hub 新增、AI 首类发布统计完全分开。
 
 ### 发布日期投影与目标清理
 
