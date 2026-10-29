@@ -1,3 +1,9 @@
+# 当前候选 — CI 容量错误用语修正 — 2026-10-29
+
+- 项目 `AI_actuarial_inforsearch`；工作树 `C:/Users/ferry/.codex/worktrees/local-flow-readable-report/AI_actuarial_inforsearch`，分支 `feat/readable-local-flow-report`。日报仅在容量错误明确写出 `% used` 时显示已用比例；只有阈值或语义含糊的百分比保持通用“目标容量门槛”。原 runtime 集成断言未改。
+- 验证：runtime 报告集成测试 3/3、offline helper 34/34 PASS；Black、isort、Ruff、Pylint errors-only、`py_compile`、`git diff --check` PASS。Oct28/29 runtime Markdown/JSON 与已冻结 v3 输出一致；Oct28 实际已用 80.2% 仍可见。30 份回执/runtime 输入 SHA256 未变。未运行 DB runtime suite。
+- 提交 `85a3faf` 对应候选通过第三轮独立 review；本轮 helper 修正发生在本地 review 轮次耗尽后，未再次独立 review，不能称最终 HEAD 获 reviewer PASS。等待父任务提交修正并重跑 required CI；本 worker 未提交或推送。
+
 # 当前候选 — 计划未运行建议与回执缺口区分 — 2026-10-29
 
 - 项目 `AI_actuarial_inforsearch`；工作树 `C:/Users/ferry/.codex/worktrees/local-flow-readable-report/AI_actuarial_inforsearch`，分支 `feat/readable-local-flow-report`。修改限于执行摘要 advice、回归测试、本技能说明和本状态记录；不涉及 runtime、生产数据或调度。

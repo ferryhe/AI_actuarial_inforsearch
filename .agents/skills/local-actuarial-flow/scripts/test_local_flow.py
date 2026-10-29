@@ -838,6 +838,15 @@ class LocalFlowTests(unittest.TestCase):
             "conversion",
         )
         capacity = flow._short_failure_reason(
+            "[CAPACITY_BLOCKED] / is 80.2% used, at or over the 80% threshold; "
+            "blocked 'ready_data_build'",
+            "overseas_ready",
+        )
+        threshold_only = flow._short_failure_reason(
+            "target capacity_blocked at 80% threshold",
+            "china_ack",
+        )
+        ambiguous_percentage = flow._short_failure_reason(
             "native ready_data_build blocked at 80.2%: [CAPACITY_BLOCKED] too full",
             "overseas_ready",
         )
@@ -853,6 +862,8 @@ class LocalFlowTests(unittest.TestCase):
         self.assertIn("加密 PDF 无法转换", italy)
         self.assertIn("请求预算暂停", italy)
         self.assertEqual(capacity, "目标容量门槛（已用80.2%），发布未继续")
+        self.assertEqual(threshold_only, "目标容量门槛，发布未继续")
+        self.assertEqual(ambiguous_percentage, "目标容量门槛，发布未继续")
         self.assertEqual(ack_no_result, "目标端未返回有效回执")
         self.assertEqual(
             flow._short_failure_reason(

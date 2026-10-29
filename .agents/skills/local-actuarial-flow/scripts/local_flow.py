@@ -1661,7 +1661,7 @@ def _short_failure_reason(reason: Any, stage: str) -> str:
         details.append("加密 PDF 无法转换")
     target_stage = stage in ACK_STAGES or stage.endswith("_ready")
     if target_stage and any(token in lowered for token in ("capacity", "80%", "容量门槛")):
-        percentage = re.search(r"(\d+(?:\.\d+)?)\s*%", raw)
+        percentage = re.search(r"(\d+(?:\.\d+)?)\s*%\s+used\b", raw, re.IGNORECASE)
         used = f"（已用{percentage.group(1)}%）" if percentage else ""
         details.append(f"目标容量门槛{used}，发布未继续")
     if (
