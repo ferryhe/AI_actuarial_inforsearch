@@ -375,6 +375,67 @@ class LocalFlowTests(unittest.TestCase):
         self.assertIn("运行回执缺失", markdown)
         self.assertIn("HTTP未记录；下载未记录", markdown)
 
+    def test_executive_summary_uses_date_receipts_when_runtime_is_not_provided(self):
+        day = date(2026, 10, 29)
+        raw = receipt_for(
+            day,
+            "caa",
+            run_status="partial",
+            failed_stage="downloaded",
+            error="HTTP Error 404: source article not found",
+        )
+        raw["attempt_count"] = 1
+        raw["stages"]["downloaded"]["count"] = 119
+        raw["stages"]["new_versions"]["count"] = 41
+        raw["stages"]["duplicates"]["count"] = 25
+        raw["stages"]["enriched"]["count"] = 40
+        summary = "\n".join(flow._executive_summary(flow.make_report(day, history(raw))))
+        self.assertIn("有1站日期回执可参考，但本次运行覆盖未知", summary)
+        self.assertIn("日期回执状态：完成0、部分1、失败0", summary)
+        self.assertIn("下载119份；新增入库41、复用25、摘要分类40", summary)
+        self.assertIn("HTTP 404：链接不存在", summary)
+        self.assertIn("按日期回执合计，未确认运行覆盖", summary)
+        self.assertNotIn("来源采集完成", summary)
+
+    def test_executive_summary_normalizes_and_deduplicates_dependent_conversion_errors(self):
+        day = date(2026, 10, 29)
+        raw = receipt_for(day, "italy", run_status="partial", ai=1)
+        error = "encrypted PDF cannot be extracted"
+        raw["reason"] = error
+        for stage in ("new_versions", "enriched", "ai_candidates"):
+            raw["stages"][stage] = {"status": "failed", "count": 0, "error": error}
+        raw["telemetry"] = {
+            "conversion": {"succeeded_count": 0, "failed_count": 1},
+            "ai_first_candidate_count": 1,
+        }
+        receipts = history(raw)
+        receipt = next(iter(receipts.values()))
+        runtime = flow._normalize_runtime_output(
+            {
+                "schema_version": 1,
+                "date_local": day.isoformat(),
+                "preview": False,
+                "elapsed_seconds": 1,
+                "runs": [
+                    {
+                        "site_id": "italy",
+                        "receipt_id": receipt["receipt_id"],
+                        "attempt_count": receipt["attempt_count"],
+                        "run_status": receipt["run_status"],
+                    }
+                ],
+            },
+            day,
+            Path("runtime-output.json"),
+        )
+        summary = "\n".join(
+            flow._executive_summary(flow.make_report(day, receipts, runtime_output=runtime))
+        )
+        blockers = next(line for line in summary.splitlines() if line.startswith("- 阻塞"))
+        self.assertEqual(blockers.count("加密 PDF 无法转换"), 1)
+        self.assertIn("意大利国家精算师协会正文转换：加密 PDF 无法转换", blockers)
+        self.assertNotIn("AI首类：加密 PDF 无法转换", blockers)
+
     def test_markdown_shows_partial_content_type_totals_with_receipt_coverage(self):
         day = date(2026, 10, 28)
         sites = [site for site in flow.SITES if flow._action(site) == "collect"][:8]
@@ -462,6 +523,249 @@ class LocalFlowTests(unittest.TestCase):
             "欧洲精算学院：计划检查，未见本次运行证据", flow.render_markdown(missing_report)
         )
 
+    def test_executive_summary_precedes_tables_and_uses_current_successful_receipts(self):
+        day = date(2026, 10, 29)
+        sites = [
+            site
+            for site in flow.make_plan(day)["baseline_sites"]
+            if flow._action(site) == "collect"
+        ]
+        raws = [receipt_for(day, site) for site in sites]
+        for index, raw in enumerate(raws):
+            raw["stages"]["downloaded"]["count"] = index + 1
+            raw["stages"]["new_versions"]["count"] = 1
+            raw["telemetry"] = {"conversion": {"succeeded_count": 1, "failed_count": 0}}
+        receipts = history(*raws)
+        runs = [
+            {
+                "site_id": receipt["site_id"],
+                "receipt_id": receipt["receipt_id"],
+                "attempt_count": receipt["attempt_count"],
+                "run_status": receipt["run_status"],
+            }
+            for receipt in receipts.values()
+        ]
+        runtime = flow._normalize_runtime_output(
+            {
+                "schema_version": 1,
+                "date_local": day.isoformat(),
+                "preview": False,
+                "elapsed_seconds": 30,
+                "runs": runs,
+            },
+            day,
+            Path("runtime-output.json"),
+        )
+        markdown = flow.render_markdown(flow.make_report(day, receipts, runtime_output=runtime))
+        self.assertLess(markdown.index("## 执行摘要"), markdown.index("| 项目 | 当日结果 |"))
+        self.assertIn("## 执行摘要\n\n- 结论：", markdown)
+        self.assertIn("本次对应回执显示来源采集完成", markdown)
+        self.assertIn("下载21份", markdown)
+        self.assertIn("新增入库6", markdown)
+        self.assertIn("正文转换成功6、失败0", markdown)
+
+    def test_executive_summary_keeps_real_faults_budget_and_target_confirmation_visible(self):
+        day = date(2026, 10, 29)
+        raw = receipt_for(day, "ashk", run_status="partial", ai=0)
+        raw["stages"]["downloaded"] = {
+            "status": "partial",
+            "count": 4,
+            "error": "HTTP Error 400: invalid URL",
+            "request_budget": {"used": 30, "cap": 30, "paused": True, "frontier_remaining": 2},
+        }
+        raw["stages"]["enriched"] = {"status": "failed", "count": 0, "error": "model stage failed"}
+        raw["stages"]["china_ack"] = {
+            "status": "succeeded",
+            "acknowledged": 1,
+            "pending": 0,
+            "failed": 0,
+            "ready_status": "pending",
+        }
+        raw["stages"]["overseas_ack"] = {
+            "status": "failed",
+            "acknowledged": 0,
+            "pending": 0,
+            "failed": 1,
+            "error": "SSH timed out",
+            "ready_status": "unknown",
+        }
+        raw["telemetry"] = {"ai_first_candidate_count": 1}
+        raw["telemetry"]["conversion"] = {"succeeded_count": 1, "failed_count": 1}
+        receipts = history(raw)
+        receipt = next(iter(receipts.values()))
+        runtime = flow._normalize_runtime_output(
+            {
+                "schema_version": 1,
+                "date_local": day.isoformat(),
+                "preview": False,
+                "elapsed_seconds": 60,
+                "runs": [
+                    {
+                        "site_id": "ashk",
+                        "receipt_id": receipt["receipt_id"],
+                        "attempt_count": receipt["attempt_count"],
+                        "run_status": receipt["run_status"],
+                    }
+                ],
+            },
+            day,
+            Path("runtime-output.json"),
+        )
+        summary = "\n".join(
+            flow._executive_summary(flow.make_report(day, receipts, runtime_output=runtime))
+        )
+        self.assertIn("有产出但未全部完成", summary)
+        self.assertIn("HTTP 400：链接格式或请求错误", summary)
+        self.assertIn("兼有预算暂停", summary)
+        self.assertIn("香港精算学会正文转换：失败1份", summary)
+        self.assertIn("海外入库：SSH 连接超时", summary)
+        self.assertIn("国内可搜索：有 AI 首类候选，回执状态待确认可搜索", summary)
+        self.assertIn("复核来源、转换或处理错误，再按原有单站流程重试", summary)
+        self.assertIn("核实国内和海外入库回执、可搜索状态及容量门槛", summary)
+
+    def test_executive_summary_does_not_count_stale_receipt_or_preview_monitor_as_success(self):
+        day = date(2026, 10, 29)
+        stale = receipt_for(day, "caa")
+        stale["stages"]["downloaded"]["count"] = 3
+        stale_receipts = history(stale)
+        stale_runtime = flow._normalize_runtime_output(
+            {
+                "schema_version": 1,
+                "date_local": day.isoformat(),
+                "preview": False,
+                "elapsed_seconds": 1,
+                "runs": [{"site_id": "caa", "error": "RuntimeError: current attempt failed"}],
+            },
+            day,
+            Path("runtime-output.json"),
+        )
+        stale_report = flow.make_report(day, stale_receipts, runtime_output=stale_runtime)
+        stale_summary = "\n".join(flow._executive_summary(stale_report))
+        self.assertIn("回执覆盖0/1项", stale_summary)
+        self.assertIn("下载、新增入库、复用、摘要分类和转换数量未记录", stale_summary)
+        self.assertIn("current attempt failed", stale_summary)
+        self.assertNotIn("下载3份", stale_summary)
+        self.assertIn("先核对本次运行回执缺口", stale_summary)
+
+        monitor = normalized(monitor_receipt(day, "iaba", "succeeded"))
+        preview_runtime = flow._normalize_runtime_output(
+            {
+                "schema_version": 1,
+                "date_local": day.isoformat(),
+                "preview": True,
+                "elapsed_seconds": 0,
+                "runs": [{"site_id": "iaba", "preview": True}],
+            },
+            day,
+            Path("runtime-output.json"),
+        )
+        preview_report = flow.make_report(
+            day, {(day.isoformat(), "iaba"): monitor}, runtime_output=preview_runtime
+        )
+        preview_summary = "\n".join(flow._executive_summary(preview_report))
+        self.assertIn("仅有预览清单", preview_summary)
+        self.assertIn("没有可用采集回执", preview_summary)
+        self.assertNotIn("检查成功", preview_summary)
+
+    def test_executive_summary_recommends_follow_up_for_ordinary_target_ack_failure(self):
+        day = date(2026, 10, 29)
+        planned = flow.make_plan(day)["baseline_sites"]
+        collect_sites = [site for site in planned if flow._action(site) == "collect"]
+        raws = [receipt_for(day, site) for site in collect_sites]
+        target_site = collect_sites[0]
+        target_raw = next(raw for raw in raws if raw["site_id"] == target_site)
+        target_raw["run_status"] = "partial"
+        target_raw["reason"] = "overseas write failed"
+        target_raw["stages"]["overseas_ack"] = {
+            "status": "failed",
+            "acknowledged": 0,
+            "pending": 0,
+            "failed": 1,
+            "error": "SSH timed out",
+            "ready_status": "unknown",
+        }
+        receipts = history(*raws)
+        runs = [
+            {
+                "site_id": receipt["site_id"],
+                "receipt_id": receipt["receipt_id"],
+                "attempt_count": receipt["attempt_count"],
+                "run_status": receipt["run_status"],
+            }
+            for receipt in receipts.values()
+        ]
+        runtime = flow._normalize_runtime_output(
+            {
+                "schema_version": 1,
+                "date_local": day.isoformat(),
+                "preview": False,
+                "elapsed_seconds": 10,
+                "runs": runs,
+            },
+            day,
+            Path("runtime-output.json"),
+        )
+        summary = "\n".join(
+            flow._executive_summary(flow.make_report(day, receipts, runtime_output=runtime))
+        )
+        self.assertIn("海外入库：SSH 连接超时", summary)
+        self.assertIn("核实海外入库回执、可搜索状态及容量门槛", summary)
+        self.assertNotIn("继续按原计划观察", summary)
+
+    def test_executive_summary_distinguishes_unattempted_sites_from_receipt_gaps(self):
+        day = date(2026, 10, 29)
+        monitor = normalized(monitor_receipt(day, "iaba", "succeeded"))
+        runtime = flow._normalize_runtime_output(
+            {
+                "schema_version": 1,
+                "date_local": day.isoformat(),
+                "preview": False,
+                "elapsed_seconds": 1,
+                "runs": [
+                    {
+                        "site_id": "iaba",
+                        "receipt_id": monitor["receipt_id"],
+                        "attempt_count": monitor["attempt_count"],
+                        "run_status": monitor["run_status"],
+                    }
+                ],
+            },
+            day,
+            Path("runtime-output.json"),
+        )
+        report = flow.make_report(day, {(day.isoformat(), "iaba"): monitor}, runtime_output=runtime)
+        summary = "\n".join(flow._executive_summary(report))
+        advice = next(line for line in summary.splitlines() if line.startswith("- 建议"))
+        self.assertEqual(report["coverage"]["runtime_attempts_without_receipts"], [])
+        self.assertEqual(report["coverage"]["actual_collection_receipt_sites"], [])
+        self.assertIn("计划内未见运行", summary)
+        self.assertIn("确认计划内未见运行的站点是否应按计划执行", advice)
+        self.assertNotIn("核对本次运行回执缺口", advice)
+
+    def test_executive_summary_translates_receipt_contract_failure(self):
+        day = date(2026, 10, 28)
+        runtime = flow._normalize_runtime_output(
+            {
+                "schema_version": 1,
+                "date_local": day.isoformat(),
+                "preview": False,
+                "elapsed_seconds": 1,
+                "runs": [
+                    {
+                        "site_id": "iaj",
+                        "error": "FlowError: stages.overseas_ack.ready_status must be one of ['succeeded']",
+                    }
+                ],
+            },
+            day,
+            Path("runtime-output.json"),
+        )
+        summary = "\n".join(
+            flow._executive_summary(flow.make_report(day, {}, runtime_output=runtime))
+        )
+        self.assertIn("已运行但回执保存失败（状态值不兼容）", summary)
+        self.assertNotIn("ready_status must be one of", summary)
+
     def test_runtime_attempt_must_match_receipt_attempt_not_only_date_and_site(self):
         day = date(2026, 10, 29)
         old = receipt_for(day, "caa")
@@ -533,6 +837,14 @@ class LocalFlowTests(unittest.TestCase):
             "encrypted PDF is unsupported; 来源采集因请求预算暂停，剩余队列 16 项",
             "conversion",
         )
+        capacity = flow._short_failure_reason(
+            "native ready_data_build blocked at 80.2%: [CAPACITY_BLOCKED] too full",
+            "overseas_ready",
+        )
+        ack_no_result = flow._short_failure_reason(
+            "_TargetWorkerFailure: china target worker failed: china target worker returned no JSON result (exit 255)",
+            "china_ack",
+        )
         self.assertIn("文档重定向离开允许来源", hong_kong)
         self.assertIn("请求预算暂停", hong_kong)
         self.assertIn("下载超出大小限制或摘要校验失败", brazil)
@@ -540,6 +852,8 @@ class LocalFlowTests(unittest.TestCase):
         self.assertIn("请求预算暂停", brazil)
         self.assertIn("加密 PDF 无法转换", italy)
         self.assertIn("请求预算暂停", italy)
+        self.assertEqual(capacity, "目标容量门槛（已用80.2%），发布未继续")
+        self.assertEqual(ack_no_result, "目标端未返回有效回执")
         self.assertEqual(
             flow._short_failure_reason(
                 "FlowError: stages.overseas_ack.ready_status must be one of ['failed', 'partial', 'pending', 'succeeded', 'unknown']",

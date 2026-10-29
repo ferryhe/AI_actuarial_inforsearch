@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import json
 import math
+import re
 import sys
 from collections import Counter
 from datetime import date, datetime, time, timedelta
@@ -1658,14 +1659,19 @@ def _short_failure_reason(reason: Any, stage: str) -> str:
         details.append("HTTP 400：链接格式或请求错误")
     if "pdf" in lowered and any(token in lowered for token in ("encrypt", "password", "加密")):
         details.append("加密 PDF 无法转换")
-    if stage in ACK_STAGES and any(token in lowered for token in ("capacity", "80%", "容量门槛")):
-        details.append("目标容量门槛，发布未继续")
+    target_stage = stage in ACK_STAGES or stage.endswith("_ready")
+    if target_stage and any(token in lowered for token in ("capacity", "80%", "容量门槛")):
+        percentage = re.search(r"(\d+(?:\.\d+)?)\s*%", raw)
+        used = f"（已用{percentage.group(1)}%）" if percentage else ""
+        details.append(f"目标容量门槛{used}，发布未继续")
     if (
-        stage in ACK_STAGES
+        target_stage
         and "ssh" in lowered
         and any(token in lowered for token in ("timeout", "timed out"))
     ):
         details.append("SSH 连接超时")
+    if target_stage and "target worker failed" in lowered and "no json result" in lowered:
+        details.append("目标端未返回有效回执")
     if "bounded source discovery produced no verified article or document candidates" in lowered:
         details.append("未发现可验证文章或文档链接")
     if "ready_status must be one of" in lowered:
@@ -1687,6 +1693,326 @@ def _monitor_result_text(receipt: dict[str, Any]) -> str:
     reason = monitor.get("error") or receipt.get("reason")
     result = f"检查{_status_label(status)}"
     return f"{result}：{_short_failure_reason(reason, 'monitor')}" if reason else result
+
+
+def _executive_count(receipts: list[dict[str, Any]], stage: str) -> str:
+    values = [(receipt.get("stages", {}).get(stage) or {}).get("count") for receipt in receipts]
+    known = [value for value in values if value is not None]
+    if not known:
+        return "未记录"
+    total = sum(known)
+    return (
+        str(total)
+        if len(known) == len(receipts)
+        else f"{total}（{len(known)}/{len(receipts)}项回执有记录）"
+    )
+
+
+def _executive_telemetry(receipts: list[dict[str, Any]], *path: str) -> str:
+    values = []
+    for receipt in receipts:
+        value: Any = receipt.get("telemetry") or {}
+        for key in path:
+            value = value.get(key) if isinstance(value, dict) else None
+        values.append(value)
+    known = [value for value in values if isinstance(value, (int, float))]
+    if not known:
+        return "未记录"
+    total = sum(known)
+    return (
+        str(total)
+        if len(known) == len(receipts)
+        else f"{total}（{len(known)}/{len(receipts)}项回执有记录）"
+    )
+
+
+def _executive_summary(report: dict[str, Any]) -> list[str]:
+    """Summarize only exact current-run collection evidence and visible blockers."""
+    coverage = report["coverage"]
+    runtime = report.get("runtime_evidence")
+    receipt_by_site = {row["site_id"]: row for row in report["receipts"]}
+    matched_sites = set(coverage.get("runtime_attempts_with_receipts") or [])
+    matched = [
+        receipt_by_site[site]
+        for site in coverage["actual_collection_receipt_sites"]
+        if site in matched_sites and site in receipt_by_site
+    ]
+    date_receipts = [
+        receipt_by_site[site]
+        for site in coverage["actual_collection_receipt_sites"]
+        if site in receipt_by_site
+    ]
+    summary_receipts = date_receipts if runtime is None else matched
+    run_rows = []
+    if runtime is not None and not runtime["preview"]:
+        run_rows = [
+            row
+            for row in runtime["runs"]
+            if not row["preview"] and _action(row["site_id"]) == "collect"
+        ]
+    run_sites = {row["site_id"] for row in run_rows}
+    missing_sites = run_sites - matched_sites
+    planned_not_run = {
+        site
+        for site in coverage.get("planned_sites_not_attempted") or []
+        if _action(site) == "collect"
+    }
+    status_counts = Counter(row["effective_status"] for row in summary_receipts)
+    useful = any(
+        (receipt.get("stages", {}).get(stage) or {}).get("count", 0) > 0
+        for receipt in summary_receipts
+        for stage in ("downloaded", "new_versions", "duplicates", "enriched")
+        if isinstance((receipt.get("stages", {}).get(stage) or {}).get("count"), (int, float))
+    )
+    if runtime is None:
+        overall = (
+            f"有{len(date_receipts)}站日期回执可参考，但本次运行覆盖未知"
+            if date_receipts
+            else "没有日期回执或运行清单，执行情况未知"
+        )
+    elif runtime["preview"]:
+        overall = "仅有预览清单，不能据此确认本次来源采集成功"
+    elif not run_rows:
+        overall = "本次运行清单没有来源采集项"
+    elif missing_sites:
+        overall = "有产出但未全部完成" if useful else "本次回执不完整，执行结果未能完整核验"
+    elif planned_not_run or status_counts.get("partial") or status_counts.get("failed"):
+        overall = "有产出但未全部完成" if useful else "本次未全部完成"
+    elif len(matched) == len(run_rows) and status_counts.get("succeeded") == len(matched):
+        overall = "本次对应回执显示来源采集完成"
+    else:
+        overall = "本次执行结果未能完整核验"
+
+    useful_output = (
+        f"下载{_executive_count(summary_receipts, 'downloaded')}份；"
+        f"新增入库{_executive_count(summary_receipts, 'new_versions')}、"
+        f"复用{_executive_count(summary_receipts, 'duplicates')}、"
+        f"摘要分类{_executive_count(summary_receipts, 'enriched')}；"
+        f"AI首类候选{_executive_telemetry(summary_receipts, 'ai_first_candidate_count')}；"
+        f"正文转换成功{_executive_telemetry(summary_receipts, 'conversion', 'succeeded_count')}、"
+        f"失败{_executive_telemetry(summary_receipts, 'conversion', 'failed_count')}"
+    )
+    if not summary_receipts:
+        useful_output = "没有可用采集回执；下载、新增入库、复用、摘要分类和转换数量未记录"
+
+    issue_groups: dict[str, list[str]] = {
+        "source": [],
+        "conversion": [],
+        "china": [],
+        "overseas": [],
+        "other": [],
+        "runtime": [],
+    }
+
+    def add_issue(group: str, issue: str) -> None:
+        if issue not in issue_groups[group]:
+            issue_groups[group].append(issue)
+
+    budget_only = 0
+    for receipt in summary_receipts:
+        site = _site_label(receipt["site_id"])
+        if _budget_pause_only(receipt):
+            budget_only += 1
+        primary_failure = receipt.get("failure_point") or {}
+        primary_reason = primary_failure.get("reason") or ""
+        conversion_issue_added = False
+        for failure in _stage_failures(receipt):
+            stage = failure["stage"]
+            raw_error = failure["error"]
+            if primary_failure.get("stage") == "conversion" and stage in {
+                "new_versions",
+                "enriched",
+                "ai_candidates",
+            }:
+                error_base = raw_error.casefold().split(";", 1)[0].split("；", 1)[0].strip()
+                primary_base = primary_reason.casefold().split(";", 1)[0].split("；", 1)[0].strip()
+                if (
+                    error_base == primary_base
+                    or error_base in primary_base
+                    or primary_base in error_base
+                ):
+                    stage = "conversion"
+                    raw_error = primary_reason
+                    conversion_issue_added = True
+            reason = _short_failure_reason(raw_error, stage)
+            if (
+                (receipt.get("stages", {}).get("downloaded") or {})
+                .get("request_budget", {})
+                .get("paused")
+                and not _budget_pause_only(receipt)
+                and "请求预算暂停" not in reason
+            ):
+                reason += "；兼有预算暂停"
+            issue = f"{site}·{_stage_label(stage)}：{reason}"
+            group = (
+                "source"
+                if stage == "downloaded"
+                else (
+                    "china"
+                    if stage.startswith("china_")
+                    else (
+                        "overseas"
+                        if stage.startswith("overseas_")
+                        else "conversion" if stage == "conversion" else "other"
+                    )
+                )
+            )
+            add_issue(group, issue)
+        telemetry = receipt.get("telemetry") or {}
+        conversion_failed = (telemetry.get("conversion") or {}).get("failed_count")
+        if (
+            isinstance(conversion_failed, int)
+            and conversion_failed > 0
+            and not conversion_issue_added
+        ):
+            issue = f"{site}·正文转换（Markdown）：失败{conversion_failed}份"
+            add_issue("conversion", issue)
+        ai_count = telemetry.get("ai_first_candidate_count")
+        ai_ids = telemetry.get("ai_first_candidate_ids")
+        if ai_count is None and isinstance(ai_ids, list):
+            ai_count = len(ai_ids)
+        if ai_count != 0:
+            for target, label in (("china", "国内"), ("overseas", "海外")):
+                stage = receipt.get("stages", {}).get(f"{target}_ack")
+                if stage is None and ai_count is None:
+                    continue
+                stage = stage or {}
+                ready_status = stage.get("ready_status", "unknown")
+                if ready_status in {"failed", "partial", "pending", "not_required"} or (
+                    ai_count is not None and ready_status == "unknown"
+                ):
+                    qualifier = (
+                        "有 AI 首类候选，" if isinstance(ai_count, int) and ai_count > 0 else ""
+                    )
+                    issue = (
+                        f"{site}·{label}可搜索确认：{qualifier}回执状态"
+                        f"{_ready_label(ready_status)}"
+                    )
+                    add_issue(target, issue)
+
+    if runtime is not None and not runtime["preview"]:
+        missing_details = []
+        contract_failure_sites = []
+        for row in run_rows:
+            site = row["site_id"]
+            if site not in missing_sites:
+                continue
+            reason = row.get("error")
+            label = _site_label(site)
+            if reason:
+                short_reason = _short_failure_reason(reason, "run")
+                if "ready_status must be one of" in reason.casefold():
+                    contract_failure_sites.append(label)
+                else:
+                    missing_details.append(f"{label}：运行报错（{short_reason}）")
+            else:
+                history_note = "（同日回执仅作历史记录）" if site in receipt_by_site else ""
+                missing_details.append(f"{label}：本次回执缺失或无法关联{history_note}")
+        if missing_sites:
+            if contract_failure_sites:
+                missing_details.append(
+                    f"已运行但回执保存失败（状态值不兼容）：{'、'.join(contract_failure_sites)}"
+                )
+            add_issue(
+                "runtime",
+                f"本次运行{len(missing_sites)}站回执缺口（{'；'.join(missing_details[:3])}）",
+            )
+    if planned_not_run:
+        names = "、".join(
+            _site_label(site) for site in sorted(planned_not_run, key=SITES.index)[:3]
+        )
+        suffix = f"等{len(planned_not_run)}站" if len(planned_not_run) > 3 else ""
+        add_issue("runtime", f"计划内未见运行：{names}{suffix}")
+
+    issues: list[str] = []
+    for group, limit in (
+        ("source", 1),
+        ("conversion", 1),
+        ("china", 1),
+        ("overseas", 1),
+        ("other", 1),
+        ("runtime", 1),
+    ):
+        issues.extend(issue_groups[group][:limit])
+    omitted_count = sum(len(values) for values in issue_groups.values()) - len(issues)
+
+    if not issues and budget_only:
+        blockers = f"纯请求预算暂停{budget_only}站；未见其他已记录故障"
+    elif issues:
+        stage_names = {
+            "来源读取/收集": "来源",
+            "AI 补全/分类": "分类",
+            "AI 首类筛选": "AI首类",
+            "本地库新增": "本地库新增",
+            "本地库去重": "本地库去重",
+            "正文转换（Markdown）": "正文转换",
+            "国内入库确认": "国内入库",
+            "国内可搜索确认": "国内可搜索",
+            "海外入库确认": "海外入库",
+            "海外可搜索确认": "海外可搜索",
+        }
+        compact_issues = []
+        for issue in issues:
+            if "·" in issue and "：" in issue:
+                site, detail = issue.split("·", 1)
+                stage, reason = detail.split("：", 1)
+                compact_issues.append(f"{site}{stage_names.get(stage, stage)}：{reason}")
+            else:
+                compact_issues.append(issue)
+        blockers = "；".join(compact_issues)
+        if omitted_count:
+            blockers += f"；另有{omitted_count}项详见逐站结果和 JSON"
+        if budget_only:
+            blockers += f"；另有{budget_only}站为纯预算暂停"
+    else:
+        blockers = "未见已记录的阻塞；未记录字段仍属未知"
+
+    recommendations = []
+    if runtime is None:
+        recommendations.append("补看实际运行清单，确认日期回执对应的运行覆盖")
+    elif runtime["preview"]:
+        recommendations.append("取得实际运行记录后再判断本次覆盖")
+    else:
+        if missing_sites:
+            recommendations.append("先核对本次运行回执缺口，避免把旧回执当成本次结果")
+        if planned_not_run:
+            recommendations.append("确认计划内未见运行的站点是否应按计划执行")
+    if issue_groups["source"] or issue_groups["conversion"] or issue_groups["other"]:
+        recommendations.append("复核来源、转换或处理错误，再按原有单站流程重试")
+    target_groups = [name for name in ("china", "overseas") if issue_groups[name]]
+    if target_groups:
+        target_names = "和".join("国内" if name == "china" else "海外" for name in target_groups)
+        recommendations.append(
+            f"核实{target_names}入库回执、可搜索状态及容量门槛，再按原有流程处理"
+        )
+    if budget_only or any("请求预算暂停" in issue for issue in issues):
+        recommendations.append("预算暂停按已有游标续采，维持当前请求上限")
+    if not recommendations:
+        recommendations.append("按原计划观察，缺失指标继续保留为未记录")
+    advice = "；".join(recommendations)
+    outcome_counts = (
+        f"；{'匹配回执' if runtime is not None and not runtime['preview'] else '日期回执'}状态："
+        f"完成{status_counts.get('succeeded', 0)}、"
+        f"部分{status_counts.get('partial', 0)}、失败{status_counts.get('failed', 0)}"
+        if summary_receipts
+        else "；暂无可统计回执状态"
+    )
+    if runtime is None:
+        coverage_note = f"{len(date_receipts)}站日期回执；本次运行关联未知"
+        output_scope = "按日期回执合计，未确认运行覆盖"
+    elif runtime["preview"]:
+        coverage_note = "仅有预览清单，不计日期回执"
+        output_scope = "预览不构成本次成功证据"
+    else:
+        coverage_note = f"本次运行回执覆盖{len(matched)}/{len(run_rows)}项"
+        output_scope = "仅计本次匹配回执"
+    summary = [
+        f"- 结论：{overall}（{coverage_note}{outcome_counts}）。",
+        f"- 可见产出：{useful_output}（{output_scope}）。",
+        f"- 阻塞与暂停：{blockers}。监控项另列、不计入来源采集；保留项不执行。",
+        f"- 建议：{advice}。建议为后续检查，不代表已执行或改变预算、索引、发布规则。",
+    ]
+    return summary
 
 
 def render_markdown(report: dict[str, Any]) -> str:
@@ -1715,6 +2041,10 @@ def render_markdown(report: dict[str, Any]) -> str:
         actual_text = f"收到回执{len(actual)}项"
     lines = [
         f"# 精算资料每日简报（{report['date_local']}）",
+        "",
+        "## 执行摘要",
+        "",
+        *_executive_summary(report),
         "",
         "| 项目 | 当日结果 |",
         "| --- | --- |",

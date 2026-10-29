@@ -18,7 +18,7 @@ python .agents/skills/local-actuarial-flow/scripts/local_flow.py report --date 2
 python .agents/skills/local-actuarial-flow/scripts/local_flow.py report --date 2026-10-25 --receipts reports/local-automation-state/receipts --format markdown
 ```
 
-`report` 默认输出 JSON；`--json` 保持兼容，`--format markdown` 输出精简中文日报。可传 `--runtime-output <同日run-daily.json>` 展示运行耗时、已启动但缺少回执的站点和计划内未见运行的站点；该证据只补充执行可见性，不写 case ledger，也不能关闭故障。日报按美东 09:00 触发时由调用端提供前一自然日。没有运行明细时，缺回执不能证明未运行；缺字段是未知，不是成功或零。AI 发布入库确认与两端可搜索状态分开记录。回执格式、Case ledger 的原子更新及状态定义见每日合同。
+`report` 默认输出 JSON；`--json` 保持兼容，`--format markdown` 输出精简中文日报，开头先给执行结论、可见产出、主要阻塞/预算暂停和建议。提供 `--runtime-output <同日run-daily.json>` 时，摘要只把与当前运行精确匹配的非预览回执计作本次结果；旧回执、预览、监控项和保留项不得算成本次采集成功。未提供运行清单时，摘要可汇总同日回执中的已知数量和错误，但必须标明本次运行覆盖未知。建议应区分计划内未运行与已运行但缺回执：前者核实是否应执行，后者核对当前回执。实际来源/转换/目标错误应与纯预算暂停分开呈现，建议仅供后续核查，不表示已提高预算、清理数据或改变发布规则。运行证据只补充执行可见性，不写 case ledger，也不能关闭故障。日报按美东 09:00 触发时由调用端提供前一自然日。没有运行明细时，缺回执不能证明未运行；缺字段是未知，不是成功或零。AI 发布入库确认与两端可搜索状态分开记录。回执格式、Case ledger 的原子更新及状态定义见每日合同。
 
 单站 HTTP 请求默认上限为 30；只有瑞士监控项可通过 `run-site --request-limit 60` 显式提高到 60。达到请求上限会留下可恢复游标并报告 `partial`。只有纯预算暂停时不创建失败研究 case；同时出现的真实站点/文章错误仍保留并进入常规研究队列。来源复用/目标重试最多处理 24 篇，模型富信息工作仍最多 8 篇；超出部分会在后续运行轮转处理。
 
