@@ -20,6 +20,7 @@ import ssl
 import subprocess
 import sys
 import tempfile
+import time
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from html.parser import HTMLParser
@@ -2230,6 +2231,16 @@ def _capture(
     downloads: list[dict[str, Any]] = []
     errors: list[str] = []
     successful_requests = 0
+    pages_visited = 0
+    links_discovered = 0
+    page_ids: set[str] = set()
+    link_ids: set[str] = set()
+
+    def record_page_read(url: str) -> None:
+        nonlocal pages_visited
+        pages_visited += 1
+        page_ids.add(hashlib.sha256(_canonical_url(url).encode("utf-8")).hexdigest())
+
     queue = site_state["queue"]
     visited = set(site_state.get("visited") or [])
     cursor = int(site_state.get("cursor") or 0)
@@ -2243,9 +2254,10 @@ def _capture(
     ):
         # CAA issues a session cookie on its public home page before accepting AJAX POSTs.
         try:
-            _body, headers, _final = crawler._request(
+            _body, headers, final_url = crawler._request(
                 site.seeds[0], timeout=30, delay_seconds=site.delay
             )
+            record_page_read(final_url)
             set_cookie = headers.get("set-cookie") or ""
             crawler.caa_cookie = set_cookie.split(";", 1)[0] if "=" in set_cookie else None
         except Exception as exc:
@@ -2261,9 +2273,10 @@ def _capture(
         )
         if script_url:
             try:
-                script_body, _headers, _final = crawler._request(
+                script_body, _headers, final_url = crawler._request(
                     str(script_url), timeout=30, delay_seconds=site.delay
                 )
+                record_page_read(final_url)
                 parsed = _parse_algolia_script(script_body.decode("utf-8", errors="replace"))
                 if parsed:
                     crawler.algolia_key = parsed["api_key"]
@@ -2283,6 +2296,7 @@ def _capture(
         if work_key in visited:
             cursor += 1
             continue
+        queued_before = set(queued_urls)
         try:
             if crawler.site_attempts >= crawler.site_budget:
                 raise RequestBudgetExceeded(
@@ -2421,6 +2435,8 @@ def _capture(
             if not _allowed_host(final_url, site):
                 raise RuntimeErrorSafe("source page redirect left the approved host list")
             successful_requests += 1
+            if item.get("kind") != "document":
+                record_page_read(final_url)
             content_type = headers.get("content-type", "")
             if item.get("kind") in {"json_post", "caa_children", "caa_shared"}:
                 _enqueue_caa_results(site, item, body, final_url, queue, queued_urls)
@@ -2641,6 +2657,12 @@ def _capture(
                                 downloads.append(state["articles"][key])
             # Parsing and adapter work must finish before this item becomes visited.
             # Failed JSON/XML parsing remains eligible for the durable retry queue.
+            if item.get("kind") != "document":
+                discovered = queued_urls - queued_before
+                links_discovered += len(discovered)
+                link_ids.update(
+                    hashlib.sha256(identity.encode("utf-8")).hexdigest() for identity in discovered
+                )
             visited.add(work_key)
             cursor += 1
             _prioritize_pending_documents(site, queue, cursor)
@@ -2676,6 +2698,12 @@ def _capture(
     site_state["last_successful_requests"] = successful_requests
     if cursor >= len(queue) and not site_state.get("retry_queue"):
         site_state["completed_frontier"] = True
+    file_types = {"html": 0, "pdf": 0, "other": 0}
+    file_ids = set()
+    for article in downloads:
+        kind = article.get("detected_kind")
+        file_types["html" if kind == "html" else "pdf" if kind == "pdf" else "other"] += 1
+        file_ids.add(_article_identity(article))
     return {
         "downloads": downloads,
         "errors": errors,
@@ -2684,6 +2712,15 @@ def _capture(
         "successful_requests": successful_requests,
         "budget_exhausted": bool(site_state.get("partial_reason")),
         "frontier_remaining": max(0, len(queue) - cursor),
+        "telemetry": {
+            "request_count": crawler.site_attempts,
+            "pages_visited": pages_visited,
+            "links_discovered": links_discovered,
+            "page_ids": sorted(page_ids),
+            "link_ids": sorted(link_ids),
+            "files_by_type": file_types,
+            "file_ids": sorted(file_ids),
+        },
     }
 
 
@@ -2753,7 +2790,19 @@ def _prepare_hub_article(
     preview: bool,
     *,
     on_hub_version: Callable[[bool, dict[str, Any]], None] | None = None,
+    on_conversion: Callable[[bool], None] | None = None,
 ) -> tuple[dict[str, Any], bool, bool]:
+    def convert_article() -> str:
+        try:
+            markdown = _convert_article(article, Path(config["data_root"]).expanduser().resolve())
+        except Exception:
+            if on_conversion:
+                on_conversion(False)
+            raise
+        if on_conversion:
+            on_conversion(True)
+        return markdown
+
     raw_sha = str(article["raw_sha256"])
     existing = content_hub_read_version(article["url"], raw_sha, hub)
     if existing and existing.get("excluded_reason"):
@@ -2774,9 +2823,7 @@ def _prepare_hub_article(
             markdown = existing["markdown"]
         else:
             try:
-                markdown = _convert_article(
-                    article, Path(config["data_root"]).expanduser().resolve()
-                )
+                markdown = convert_article()
             except Exception as exc:
                 detected_kind = str(article.get("detected_kind") or "unknown")
                 raise RuntimeErrorSafe(
@@ -2838,7 +2885,7 @@ def _prepare_hub_article(
             )
             hub_version_reported = True
         try:
-            markdown = _convert_article(article, Path(config["data_root"]).expanduser().resolve())
+            markdown = convert_article()
         except Exception as exc:
             detected_kind = str(article.get("detected_kind") or "unknown")
             raise RuntimeErrorSafe(
@@ -2848,7 +2895,7 @@ def _prepare_hub_article(
         markdown = existing["markdown"]
     else:
         try:
-            markdown = _convert_article(article, Path(config["data_root"]).expanduser().resolve())
+            markdown = convert_article()
         except Exception as exc:
             detected_kind = str(article.get("detected_kind") or "unknown")
             raise RuntimeErrorSafe(
@@ -3363,6 +3410,15 @@ def _process_articles(
         "duplicates": 0,
         "enriched": 0,
         "ai_candidates": 0,
+        "database": {"new_version_ids": [], "duplicate_version_ids": []},
+        "enrichment": {"succeeded_count": 0, "succeeded_ids": []},
+        "conversion": {
+            "succeeded_count": 0,
+            "failed_count": 0,
+            "succeeded_ids": [],
+            "failed_ids": [],
+        },
+        "ai_first_candidate_ids": [],
         "article_errors": [],
         "target": {
             name: {
@@ -3373,6 +3429,9 @@ def _process_articles(
                 "ready_status": "unknown",
                 "ready_error": None,
                 "ready_evidence": [],
+                "acknowledged_ids": [],
+                "ready_ids": [],
+                "invalidated_ready_ids": [],
             }
             for name in ("china", "overseas")
         },
@@ -3390,6 +3449,16 @@ def _process_articles(
                 raise RuntimeErrorSafe("Hub version stage was reported more than once")
             summary["new_versions"] += int(is_new)
             summary["duplicates"] += int(not is_new)
+            version_id = version.get("content_version_id")
+            if (
+                isinstance(version_id, (str, int))
+                and not isinstance(version_id, bool)
+                and str(version_id)
+            ):
+                version_id = str(version_id)
+                field = "new_version_ids" if is_new else "duplicate_version_ids"
+                if version_id not in summary["database"][field]:
+                    summary["database"][field].append(version_id)
             article["hub_version"] = {
                 **version,
                 "status": "new" if is_new else "existing",
@@ -3399,6 +3468,13 @@ def _process_articles(
             version_counted = True
             _atomic_json(_state_path_for_data(state), state)
 
+        def count_conversion(succeeded: bool) -> None:
+            key = "succeeded" if succeeded else "failed"
+            summary["conversion"][f"{key}_count"] += 1
+            identity = _article_identity(article)
+            if identity not in summary["conversion"][f"{key}_ids"]:
+                summary["conversion"][f"{key}_ids"].append(identity)
+
         try:
             full, is_new, enriched = _prepare_hub_article(
                 article,
@@ -3407,11 +3483,33 @@ def _process_articles(
                 hub,
                 preview,
                 on_hub_version=count_hub_version,
+                on_conversion=count_conversion,
             )
             if not version_counted:
                 summary["new_versions"] += int(is_new)
                 summary["duplicates"] += int(not is_new)
+                version_id = full.get("content_version_id")
+                if (
+                    isinstance(version_id, (str, int))
+                    and not isinstance(version_id, bool)
+                    and str(version_id)
+                ):
+                    version_id = str(version_id)
+                    field = "new_version_ids" if is_new else "duplicate_version_ids"
+                    if version_id not in summary["database"][field]:
+                        summary["database"][field].append(version_id)
             summary["enriched"] += int(enriched)
+            if enriched:
+                summary["enrichment"]["succeeded_count"] += 1
+                version_id = full.get("content_version_id")
+                if (
+                    isinstance(version_id, (str, int))
+                    and not isinstance(version_id, bool)
+                    and str(version_id)
+                ):
+                    version_id = str(version_id)
+                    if version_id not in summary["enrichment"]["succeeded_ids"]:
+                        summary["enrichment"]["succeeded_ids"].append(version_id)
             if preview:
                 article["stage"] = "preview"
                 article["preview"] = {
@@ -3436,6 +3534,15 @@ def _process_articles(
             )
             if full["ai_candidate"]:
                 summary["ai_candidates"] += 1
+                version_id = full.get("content_version_id")
+                if (
+                    isinstance(version_id, (str, int))
+                    and not isinstance(version_id, bool)
+                    and str(version_id)
+                ):
+                    version_id = str(version_id)
+                    if version_id not in summary["ai_first_candidate_ids"]:
+                        summary["ai_first_candidate_ids"].append(version_id)
                 prepared.append(full)
             else:
                 categories = full.get("categories") or []
@@ -3477,8 +3584,23 @@ def _process_articles(
                 # close an earlier Ready failure for this site.
                 summary["target"][target]["ready_status"] = "unknown"
                 continue
-            summary["target"][target]["ready_status"] = "succeeded"
-            summary["target"][target]["acknowledged"] = len(prepared)
+            ready_confirmed = True
+            for item in prepared:
+                state_key = _target_ack_key(target, item)
+                ack = state["target_acks"].get(state_key) or {}
+                if ack.get("status") != "acknowledged" or ack.get(
+                    "metadata_fingerprint"
+                ) != _target_metadata_fingerprint(item):
+                    continue
+                summary["target"][target]["acknowledged"] += 1
+                summary["target"][target]["acknowledged_ids"].append(state_key)
+                if ack.get("ready_pending") is False:
+                    summary["target"][target]["ready_ids"].append(state_key)
+                else:
+                    ready_confirmed = False
+            summary["target"][target]["ready_status"] = (
+                "succeeded" if ready_confirmed else "unknown"
+            )
             continue
         for item in needs:
             state_key = _target_ack_key(target, item)
@@ -3505,7 +3627,7 @@ def _process_articles(
                     state["target_acks"][state_key] = {
                         "status": "acknowledged",
                         "metadata_fingerprint": ack["metadata_fingerprint"],
-                        "ready_pending": reply.get("ready_status") == "failed",
+                        "ready_pending": reply.get("ready_status") != "succeeded",
                         "ack": ack,
                     }
                     summary["target"][target]["acknowledged"] += 1
@@ -3519,7 +3641,7 @@ def _process_articles(
                     state["target_acks"][state_key]["ready_pending"] = False
                     summary["target"][target]["acknowledged"] += 1
                 elif (
-                    reply.get("ready_status") == "failed"
+                    reply.get("ready_status") != "succeeded"
                     and isinstance(state["target_acks"].get(state_key), dict)
                     and state["target_acks"][state_key].get("status") == "acknowledged"
                     and state["target_acks"][state_key].get("metadata_fingerprint")
@@ -3582,14 +3704,31 @@ def _process_articles(
                     },
                 )
         _atomic_json(_state_path_for_data(state), state)
+        for item in prepared:
+            state_key = _target_ack_key(target, item)
+            ack = state["target_acks"].get(state_key) or {}
+            if ack.get("status") == "acknowledged" and ack.get(
+                "metadata_fingerprint"
+            ) == _target_metadata_fingerprint(item):
+                if state_key not in summary["target"][target]["acknowledged_ids"]:
+                    summary["target"][target]["acknowledged_ids"].append(state_key)
+                if (
+                    ack.get("ready_pending") is False
+                    and state_key not in summary["target"][target]["ready_ids"]
+                ):
+                    summary["target"][target]["ready_ids"].append(state_key)
+            elif ack.get("status") == "acknowledged" and ack.get("ready_pending"):
+                if state_key not in summary["target"][target]["invalidated_ready_ids"]:
+                    summary["target"][target]["invalidated_ready_ids"].append(state_key)
     for article in selected_articles:
         if article.get("ai_candidate"):
             flags = [
                 state["target_acks"].get(_target_ack_key(target, article), {}).get("status")
                 == "acknowledged"
-                and not state["target_acks"]
+                and state["target_acks"]
                 .get(_target_ack_key(target, article), {})
                 .get("ready_pending")
+                is False
                 for target in ("china", "overseas")
             ]
             if all(flags):
@@ -3684,6 +3823,7 @@ def _write_receipt(
     stages: dict[str, Any],
     evidence: list[str],
     reason: str | None,
+    telemetry: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     flow = _load_flow_module()
     destination = receipts_dir / date_text / f"{site_id}.json"
@@ -3721,6 +3861,11 @@ def _write_receipt(
                     else current if current is not None else prior
                 )
         merged[stage] = value
+    merged_telemetry = (
+        dict(telemetry or {})
+        if old is None
+        else _merge_attempt_telemetry(old.get("telemetry"), telemetry)
+    )
     statuses = [row.get("status", "unknown") for row in merged.values()]
     failed = [
         value
@@ -3728,6 +3873,13 @@ def _write_receipt(
         if value.get("status") in {"failed", "partial"}
         or value.get("ready_status") in {"failed", "partial"}
     ]
+    ai_count = (merged.get("ai_candidates") or {}).get("count") or 0
+    if ai_count and any(
+        value.get("ready_status") == "not_required"
+        for name, value in merged.items()
+        if name in flow.ACK_STAGES
+    ):
+        failed.append({"status": "partial", "error": "native Ready was marked not_required"})
     run_status = (
         "failed"
         if failed and all(value.get("status") == "failed" for value in failed)
@@ -3751,7 +3903,15 @@ def _write_receipt(
                 )
                 if isinstance(candidate, str) and candidate.strip()
             ),
-            "one or more stages reported failure or partial completion",
+            (
+                "native Ready was marked not_required"
+                if any(
+                    value.get("ready_status") == "not_required"
+                    for name, value in merged.items()
+                    if name in flow.ACK_STAGES
+                )
+                else "one or more stages reported failure or partial completion"
+            ),
         )
     all_evidence = list(dict.fromkeys((old or {}).get("evidence", []) + evidence))
     record = {
@@ -3765,9 +3925,106 @@ def _write_receipt(
         "attempt_count": int((old or {}).get("attempt_count") or 0) + 1,
         "stages": merged,
     }
+    if merged_telemetry:
+        record["telemetry"] = merged_telemetry
     normalized = flow.normalize_receipt(record, destination)
     _atomic_json(destination, normalized)
     return normalized
+
+
+def _merge_attempt_telemetry(
+    previous: dict[str, Any] | None, current: dict[str, Any] | None
+) -> dict[str, Any]:
+    """Keep cumulative fields only when every attempt supplied that field."""
+    if previous is None or current is None:
+        return {}
+
+    merged: dict[str, Any] = {}
+
+    def merge_sum(
+        target: dict[str, Any], old: dict[str, Any], new: dict[str, Any], name: str
+    ) -> None:
+        if name in old and name in new:
+            target[name] = old[name] + new[name]
+
+    def merge_ids(
+        target: dict[str, Any], old: dict[str, Any], new: dict[str, Any], name: str
+    ) -> None:
+        if name in old and name in new:
+            target[name] = sorted(set(old[name]) | set(new[name]))
+
+    merge_sum(merged, previous, current, "elapsed_seconds")
+    old_source = previous.get("source") or {}
+    new_source = current.get("source") or {}
+    if isinstance(old_source, dict) and isinstance(new_source, dict):
+        source: dict[str, Any] = {}
+        for name in ("request_count", "pages_visited", "links_discovered"):
+            merge_sum(source, old_source, new_source, name)
+        if "files_by_type" in old_source and "files_by_type" in new_source:
+            source["files_by_type"] = {
+                kind: old_source["files_by_type"][kind] + new_source["files_by_type"][kind]
+                for kind in ("html", "pdf", "other")
+            }
+        for name in ("file_ids", "page_ids", "link_ids"):
+            merge_ids(source, old_source, new_source, name)
+        if source:
+            merged["source"] = source
+
+    for group, counters, identities in (
+        ("database", (), ("new_version_ids", "duplicate_version_ids")),
+        ("enrichment", ("succeeded_count",), ("succeeded_ids",)),
+        ("conversion", ("succeeded_count", "failed_count"), ("succeeded_ids", "failed_ids")),
+    ):
+        old_group = previous.get(group) or {}
+        new_group = current.get(group) or {}
+        if isinstance(old_group, dict) and isinstance(new_group, dict):
+            value: dict[str, Any] = {}
+            for name in counters:
+                merge_sum(value, old_group, new_group, name)
+            for name in identities:
+                merge_ids(value, old_group, new_group, name)
+            if value:
+                merged[group] = value
+
+    merge_sum(merged, previous, current, "ai_first_candidate_count")
+    merge_ids(merged, previous, current, "ai_first_candidate_ids")
+
+    old_targets = previous.get("targets") or {}
+    new_targets = current.get("targets") or {}
+    if isinstance(old_targets, dict) and isinstance(new_targets, dict):
+        targets: dict[str, Any] = {}
+        for target in old_targets.keys() & new_targets.keys():
+            old_target = old_targets[target]
+            new_target = new_targets[target]
+            if not isinstance(old_target, dict) or not isinstance(new_target, dict):
+                continue
+            value: dict[str, Any] = {}
+            merge_ids(value, old_target, new_target, "acknowledged_ids")
+            if "ready_status" in new_target:
+                value["ready_status"] = new_target["ready_status"]
+            if (
+                "ready_ids" in old_target
+                and "ready_ids" in new_target
+                and "invalidated_ready_ids" in new_target
+            ):
+                ready_ids = set(old_target["ready_ids"])
+                ready_ids.difference_update(new_target["invalidated_ready_ids"])
+                ready_ids.update(new_target["ready_ids"])
+                value["ready_ids"] = sorted(ready_ids)
+            if (
+                "invalidated_ready_ids" in old_target
+                and "invalidated_ready_ids" in new_target
+                and "ready_ids" in new_target
+            ):
+                invalidated = set(old_target["invalidated_ready_ids"])
+                invalidated.update(new_target["invalidated_ready_ids"])
+                invalidated.difference_update(new_target["ready_ids"])
+                value["invalidated_ready_ids"] = sorted(invalidated)
+            if value:
+                targets[target] = value
+        if targets:
+            merged["targets"] = targets
+    return merged
 
 
 def run_monitor(
@@ -3782,12 +4039,24 @@ def run_monitor(
         return {
             "status": "succeeded" if success else "failed",
             "error": None if success else "monitor response was empty",
+            "request_count": crawler.site_attempts,
+            "page_id": (
+                hashlib.sha256(_canonical_url(final_url).encode("utf-8")).hexdigest()
+                if success
+                else None
+            ),
             "evidence": [
                 f"requested {url}; response bytes={len(body)}; final_host={urlsplit(final_url).hostname}"
             ],
         }
     except Exception as exc:
-        return {"status": "failed", "error": f"{type(exc).__name__}: {exc}", "evidence": [url]}
+        return {
+            "status": "failed",
+            "error": f"{type(exc).__name__}: {exc}",
+            "request_count": crawler.site_attempts,
+            "page_id": None,
+            "evidence": [url],
+        }
 
 
 def _new_crawler(data_root: Path) -> _BudgetCrawler:
@@ -3815,6 +4084,7 @@ def _run_site(
     if site_id not in SITES:
         raise RuntimeErrorSafe(f"unknown monitored site: {site_id}")
     site = SITES[site_id]
+    site_started = time.perf_counter()
     if site.action == "hold":
         raise RuntimeErrorSafe("held source cannot be executed")
     request_maximum = (
@@ -3835,8 +4105,26 @@ def _run_site(
             site_id, config, state, _new_crawler(Path(config["data_root"]).resolve())
         )
         stage = {"monitor": monitor}
+        telemetry = {
+            "elapsed_seconds": time.perf_counter() - site_started,
+            "source": {
+                "request_count": monitor.get("request_count", 0),
+                "pages_visited": int(monitor.get("page_id") is not None),
+                "links_discovered": 0,
+                "files_by_type": {"html": 0, "pdf": 0, "other": 0},
+                "file_ids": [],
+                "page_ids": [monitor["page_id"]] if monitor.get("page_id") else [],
+                "link_ids": [],
+            },
+        }
         if preview:
-            return {"site_id": site_id, "date_local": date_text, "preview": True, "stages": stage}
+            return {
+                "site_id": site_id,
+                "date_local": date_text,
+                "preview": True,
+                "stages": stage,
+                "telemetry": telemetry,
+            }
         return _write_receipt(
             receipts_dir,
             date_text,
@@ -3844,6 +4132,7 @@ def _run_site(
             stage,
             monitor.get("evidence") or [],
             monitor.get("error"),
+            telemetry,
         )
     site_state = state["sites"].setdefault(site_id, {})
     capture_state = site_state
@@ -3966,6 +4255,40 @@ def _run_site(
         "china_ack": _ack_stage(processed["target"]["china"]),
         "overseas_ack": _ack_stage(processed["target"]["overseas"]),
     }
+    telemetry = {
+        "elapsed_seconds": time.perf_counter() - site_started,
+        "source": captured.get("telemetry") or {"request_count": captured["request_count"]},
+        "targets": {
+            target: {
+                **(
+                    {"acknowledged_ids": processed["target"][target]["acknowledged_ids"]}
+                    if "acknowledged_ids" in processed["target"][target]
+                    else {}
+                ),
+                **(
+                    {"ready_ids": processed["target"][target]["ready_ids"]}
+                    if "ready_ids" in processed["target"][target]
+                    else {}
+                ),
+                **(
+                    {"invalidated_ready_ids": processed["target"][target]["invalidated_ready_ids"]}
+                    if "invalidated_ready_ids" in processed["target"][target]
+                    else {}
+                ),
+                "ready_status": processed["target"][target].get("ready_status", "unknown"),
+            }
+            for target in ("china", "overseas")
+        },
+    }
+    if "database" in processed:
+        telemetry["database"] = processed["database"]
+    if "enrichment" in processed:
+        telemetry["enrichment"] = processed["enrichment"]
+    if "conversion" in processed:
+        telemetry["conversion"] = processed["conversion"]
+    if "ai_first_candidate_ids" in processed:
+        telemetry["ai_first_candidate_count"] = processed["ai_candidates"]
+        telemetry["ai_first_candidate_ids"] = processed["ai_first_candidate_ids"]
     if preview:
         evidence.append(
             "preview only: no Hub, model, target or receipt writes were performed; local CAS and restart state may be updated"
@@ -3980,8 +4303,11 @@ def _run_site(
             "http_requests": captured["request_count"],
             "request_limit": budget_pause["cap"],
             "pending_article_count": processed.get("pending_article_count", 0),
+            "telemetry": telemetry,
         }
-    return _write_receipt(receipts_dir, date_text, site_id, stages, evidence, source_error)
+    return _write_receipt(
+        receipts_dir, date_text, site_id, stages, evidence, source_error, telemetry
+    )
 
 
 def _restore_hub_blob(version: dict[str, Any], raw: bytes, hub: DatabaseConfig) -> None:
@@ -4430,6 +4756,7 @@ def preflight(config: dict[str, Any], *, remote: bool = False) -> dict[str, Any]
 def _daily_run(
     date_text: str, config: dict[str, Any], *, preview: bool = False, limit_reconcile: int = 5
 ) -> dict[str, Any]:
+    run_started = time.perf_counter()
     date_value = dt.date.fromisoformat(date_text)
     receipts_dir = Path(
         config.get("receipts_root") or (Path(config["state_root"]) / "receipts")
@@ -4453,10 +4780,17 @@ def _daily_run(
             if preview:
                 results.append({"site_id": site, "action": plan_item["action"], "preview": True})
             else:
+                site_started = time.perf_counter()
                 try:
                     results.append(_run_site(site, date_text, config, state, hub))
                 except Exception as exc:
-                    results.append({"site_id": site, "error": f"{type(exc).__name__}: {exc}"})
+                    results.append(
+                        {
+                            "site_id": site,
+                            "error": f"{type(exc).__name__}: {exc}",
+                            "elapsed_seconds": time.perf_counter() - site_started,
+                        }
+                    )
             run_count += 1
             _atomic_json(state_path, state)
         backlog = None
@@ -4473,6 +4807,8 @@ def _daily_run(
             "backlog": backlog,
             "receipts_dir": str(receipts_dir),
             "run_count": run_count,
+            "preview": preview,
+            "elapsed_seconds": time.perf_counter() - run_started,
         }
 
 

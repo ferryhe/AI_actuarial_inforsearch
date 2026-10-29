@@ -10,7 +10,18 @@ from pathlib import Path
 import local_flow as flow
 
 
-def receipt_for(day, site, *, run_status="succeeded", ai=0, failed_stage=None, error="source parser failed", evidence=None, china=None, overseas=None):
+def receipt_for(
+    day,
+    site,
+    *,
+    run_status="succeeded",
+    ai=0,
+    failed_stage=None,
+    error="source parser failed",
+    evidence=None,
+    china=None,
+    overseas=None,
+):
     stages = {
         "downloaded": {"status": "succeeded", "count": 1},
         "new_versions": {"status": "succeeded", "count": 1},
@@ -19,7 +30,11 @@ def receipt_for(day, site, *, run_status="succeeded", ai=0, failed_stage=None, e
         "ai_candidates": {"status": "succeeded", "count": ai},
     }
     if failed_stage:
-        stages[failed_stage] = {"status": "failed", "error": error, "evidence": evidence or ["https://example.test/list"]}
+        stages[failed_stage] = {
+            "status": "failed",
+            "error": error,
+            "evidence": evidence or ["https://example.test/list"],
+        }
     if china is not None:
         stages["china_ack"] = china
     if overseas is not None:
@@ -68,7 +83,9 @@ def history(*raw_receipts):
 def failed_receipt(day, site):
     if site in flow.MONITOR_ONLY_SITES:
         return monitor_receipt(day, site, "failed")
-    return receipt_for(day, site, run_status="failed", failed_stage="downloaded", error=f"failure at {site}")
+    return receipt_for(
+        day, site, run_status="failed", failed_stage="downloaded", error=f"failure at {site}"
+    )
 
 
 class LocalFlowTests(unittest.TestCase):
@@ -80,7 +97,13 @@ class LocalFlowTests(unittest.TestCase):
             self.assertEqual(len(planned), 32)
             self.assertTrue(all(len(plan["baseline_sites"]) == 6 for plan in plans))
             self.assertTrue(all(len(plan["items"]) == 6 for plan in plans))
-        self.assertTrue(any("istituto-italiano-degli-attuari" in flow.baseline_sites(date(2026, 10, 25) + timedelta(days=i)) for i in range(6)))
+        self.assertTrue(
+            any(
+                "istituto-italiano-degli-attuari"
+                in flow.baseline_sites(date(2026, 10, 25) + timedelta(days=i))
+                for i in range(6)
+            )
+        )
 
     def test_plan_uses_local_date_at_six_and_handles_both_dst_offsets(self):
         spring = flow.make_plan(date(2026, 3, 8))
@@ -92,7 +115,11 @@ class LocalFlowTests(unittest.TestCase):
         day = date(2026, 10, 25)
         prior = day - timedelta(days=1)
         baseline = set(flow.baseline_sites(day))
-        candidates = [site for site in flow.SITES if site not in baseline and site != next(iter(flow.HELD_SITES))][:9]
+        candidates = [
+            site
+            for site in flow.SITES
+            if site not in baseline and site != next(iter(flow.HELD_SITES))
+        ][:9]
         failed = [failed_receipt(prior, site) for site in candidates]
         plan = flow.make_plan(day, history(*failed))
         self.assertEqual(len(plan["baseline_sites"]), 6)
@@ -104,7 +131,9 @@ class LocalFlowTests(unittest.TestCase):
     def test_failure_retry_rotation_prevents_unattempted_failure_queue_starvation(self):
         first = date(2026, 10, 25)
         prior = first - timedelta(days=1)
-        failures = [failed_receipt(prior, site) for site in flow.SITES if site not in flow.HELD_SITES]
+        failures = [
+            failed_receipt(prior, site) for site in flow.SITES if site not in flow.HELD_SITES
+        ]
         receipts = history(*failures)
         retried = set()
         for offset in range(32):
@@ -135,16 +164,22 @@ class LocalFlowTests(unittest.TestCase):
     def test_status_distinguishes_not_run_from_source_failure_and_daily_budget_exceptions(self):
         day = date(2026, 10, 25)
         planned = flow.baseline_sites(day)
-        actual = history(receipt_for(day, planned[0], run_status="failed", failed_stage="downloaded"))
+        actual = history(
+            receipt_for(day, planned[0], run_status="failed", failed_stage="downloaded")
+        )
         status = flow.make_status(day, actual)
         rows = {row["site_id"]: row for row in status["rows"]}
         self.assertEqual(rows[planned[0]]["state"], "failed")
         self.assertEqual(rows[planned[1]]["state"], "not_run")
         self.assertIn("scheduling gap", rows[planned[1]]["reason"])
         self.assertEqual(status["budget_exceptions"]["unplanned_actual_sites"], [])
-        outside = next(site for site in flow.SITES if site not in planned and site not in flow.HELD_SITES)
+        outside = next(
+            site for site in flow.SITES if site not in planned and site not in flow.HELD_SITES
+        )
         extra_actual = history(receipt_for(day, outside))
-        self.assertTrue(flow.make_status(day, extra_actual)["budget_exceptions"]["has_outside_plan_receipts"])
+        self.assertTrue(
+            flow.make_status(day, extra_actual)["budget_exceptions"]["has_outside_plan_receipts"]
+        )
         repeated_receipt = receipt_for(day, planned[0])
         repeated_receipt["attempt_count"] = 2
         repeated = flow.make_status(day, history(repeated_receipt))["budget_exceptions"]
@@ -161,19 +196,33 @@ class LocalFlowTests(unittest.TestCase):
         self.assertTrue(over_cap["exceeds_daily_attempt_cap"])
 
         prior_day = day - timedelta(days=1)
-        failed_site = next(site for site in flow.SITES if site not in flow.HELD_SITES and site not in planned)
+        failed_site = next(
+            site for site in flow.SITES if site not in flow.HELD_SITES and site not in planned
+        )
         with_retry = history(failed_receipt(prior_day, failed_site))
         retry = flow.make_plan(day, with_retry)["extra_retry_sites"][0]
-        planned_retry_status = flow.make_status(day, history(failed_receipt(prior_day, failed_site), receipt_for(day, retry)))
+        planned_retry_status = flow.make_status(
+            day, history(failed_receipt(prior_day, failed_site), receipt_for(day, retry))
+        )
         self.assertFalse(planned_retry_status["budget_exceptions"]["has_outside_plan_receipts"])
 
     def test_succeeded_top_level_with_failed_overseas_ready_is_partial_and_researchable(self):
         day = date(2026, 10, 25)
         site = flow.baseline_sites(day)[0]
-        raw = receipt_for(day, site, ai=1, overseas={
-            "status": "succeeded", "acknowledged": 1, "pending": 0, "failed": 0,
-            "ready_status": "failed", "ready_error": "index build failed", "ready_evidence": ["kb://version/123"],
-        })
+        raw = receipt_for(
+            day,
+            site,
+            ai=1,
+            overseas={
+                "status": "succeeded",
+                "acknowledged": 1,
+                "pending": 0,
+                "failed": 0,
+                "ready_status": "failed",
+                "ready_error": "index build failed",
+                "ready_evidence": ["kb://version/123"],
+            },
+        )
         report = flow.make_report(day, history(raw))
         row = next(row for row in report["site_statuses"] if row["site_id"] == site)
         self.assertEqual(raw["run_status"], "succeeded")
@@ -184,13 +233,25 @@ class LocalFlowTests(unittest.TestCase):
     def test_ack_success_does_not_hide_unknown_or_pending_ready(self):
         day = date(2026, 10, 25)
         site = flow.baseline_sites(day)[0]
-        raw = receipt_for(day, site, ai=1, china={
-            "status": "succeeded", "acknowledged": 1, "pending": 0, "failed": 0,
-            "ready_status": "succeeded",
-        }, overseas={
-            "status": "succeeded", "acknowledged": 1, "pending": 0, "failed": 0,
-            "ready_status": "pending",
-        })
+        raw = receipt_for(
+            day,
+            site,
+            ai=1,
+            china={
+                "status": "succeeded",
+                "acknowledged": 1,
+                "pending": 0,
+                "failed": 0,
+                "ready_status": "succeeded",
+            },
+            overseas={
+                "status": "succeeded",
+                "acknowledged": 1,
+                "pending": 0,
+                "failed": 0,
+                "ready_status": "pending",
+            },
+        )
         report = flow.make_report(day, history(raw))
         self.assertEqual(report["stages"]["china_ack"]["ready_status_counts"], {"succeeded": 1})
         self.assertEqual(report["stages"]["overseas_ack"]["ready_status_counts"], {"pending": 1})
@@ -220,6 +281,273 @@ class LocalFlowTests(unittest.TestCase):
         self.assertEqual(report["stages"]["downloaded"]["run_observation_sum"], 4)
         self.assertEqual(report["stages"]["new_versions"]["run_observation_sum"], 3)
 
+    def test_markdown_keeps_known_legacy_stage_totals_and_labels_old_ai_candidates(self):
+        day = date(2026, 10, 29)
+        raw = receipt_for(day, "caa", ai=1)
+        raw["attempt_count"] = 1
+        raw["stages"]["downloaded"] = {
+            "status": "partial",
+            "count": 119,
+            "request_budget": {
+                "used": 30,
+                "cap": 30,
+                "paused": True,
+                "frontier_remaining": 1,
+            },
+        }
+        raw["stages"]["new_versions"]["count"] = 41
+        raw["stages"]["duplicates"]["count"] = 25
+        raw["stages"]["enriched"]["count"] = 40
+        raw["stages"]["china_ack"] = {
+            "status": "succeeded",
+            "acknowledged": 1,
+            "pending": 0,
+            "failed": 0,
+            "ready_status": "succeeded",
+        }
+        raw["stages"]["overseas_ack"] = dict(raw["stages"]["china_ack"])
+        raw["run_status"] = "partial"
+        raw["reason"] = "source request budget pause"
+        zero_ai = receipt_for(day, "ashk", ai=0)
+        zero_ai["stages"]["downloaded"]["count"] = 0
+        zero_ai["stages"]["downloaded"]["request_budget"] = {
+            "used": 30,
+            "cap": 30,
+            "paused": False,
+            "frontier_remaining": 0,
+        }
+        zero_ai["stages"]["new_versions"]["count"] = 0
+        zero_ai["stages"]["duplicates"]["count"] = 0
+        zero_ai["stages"]["enriched"]["count"] = 0
+        report = flow.make_report(day, history(raw, zero_ai))
+        markdown = flow.render_markdown(report)
+        self.assertIn("下载119份（2站回执合计）", markdown)
+        self.assertIn("HTTP 请求 60次（2站回执，含重定向）", markdown)
+        self.assertIn("成功读取页面/接口（含目录与搜索数据） 未记录", markdown)
+        self.assertIn("发现并排队的链接候选 未记录", markdown)
+        self.assertIn("新增入库 41；复用 25；摘要分类 40", markdown)
+        self.assertIn("旧口径 AI 候选 1（不能推断首类）", markdown)
+        self.assertIn("AI首类未记录（旧口径 AI 候选 0）", markdown)
+        self.assertIn("已可搜索篇数 未记录", markdown)
+        self.assertIn("中国精算师协会", markdown)
+        self.assertNotIn("无需同步", markdown)
+        self.assertNotIn("已确认可搜索 7 项", markdown)
+
+    def test_markdown_scopes_missing_receipts_and_never_sums_retry_budget_as_day_total(self):
+        day = date(2026, 10, 28)
+        raw = receipt_for(day, "caa")
+        raw["attempt_count"] = 2
+        raw["stages"]["downloaded"]["count"] = 88
+        raw["stages"]["downloaded"]["request_budget"] = {
+            "used": 30,
+            "cap": 30,
+            "paused": True,
+            "frontier_remaining": 2,
+        }
+        receipts = history(raw)
+        runtime = {
+            "elapsed_seconds": None,
+            "preview": False,
+            "runs": [
+                {
+                    "site_id": "caa",
+                    "preview": False,
+                    "error": None,
+                    "run_status": "succeeded",
+                    "elapsed_seconds": None,
+                    "receipt_id": f"{day.isoformat()}/caa",
+                    "attempt_count": 2,
+                },
+                {
+                    "site_id": "ashk",
+                    "preview": False,
+                    "error": None,
+                    "run_status": "partial",
+                    "elapsed_seconds": None,
+                },
+            ],
+        }
+        report = flow.make_report(day, receipts, runtime_output=runtime)
+        markdown = flow.render_markdown(report)
+        self.assertIn("已有1/2站回执合计", markdown)
+        self.assertIn("HTTP 请求 未记录", markdown)
+        self.assertIn("下载88份（已有1/2站回执合计）", markdown)
+        self.assertIn("运行回执缺失", markdown)
+        self.assertIn("HTTP未记录；下载未记录", markdown)
+
+    def test_markdown_shows_partial_content_type_totals_with_receipt_coverage(self):
+        day = date(2026, 10, 28)
+        sites = [site for site in flow.SITES if flow._action(site) == "collect"][:8]
+        raws = []
+        for index, site in enumerate(sites):
+            raw = receipt_for(day, site)
+            if index < 5:
+                raw["telemetry"] = {
+                    "source": {
+                        "files_by_type": {
+                            "html": index + 1,
+                            "pdf": 1,
+                            "other": 0,
+                        }
+                    }
+                }
+            raws.append(raw)
+        markdown = flow.render_markdown(flow.make_report(day, history(*raws)))
+        row = next(line for line in markdown.splitlines() if line.startswith("| 收集文件 |"))
+        self.assertIn("HTML 已有5/8项回执记录，合计15份", row)
+        self.assertIn("PDF 已有5/8项回执记录，合计5份", row)
+        self.assertIn("其他 已有5/8项回执记录，合计0份", row)
+
+    def test_markdown_shows_site_conversion_and_ai_first_without_legacy_inference(self):
+        day = date(2026, 10, 29)
+        current = receipt_for(day, "iaa", ai=8)
+        current["telemetry"] = {
+            "conversion": {"succeeded_count": 3, "failed_count": 1},
+            "ai_first_candidate_count": 2,
+        }
+        legacy = receipt_for(day, "ifoa-uk", ai=0)
+        report = flow.make_report(day, history(current, legacy))
+        lines = flow.render_markdown(report).splitlines()
+        current_row = next(line for line in lines if line.startswith("| 国际精算协会 |"))
+        legacy_row = next(line for line in lines if line.startswith("| 英国精算师协会 IFoA |"))
+        self.assertIn("正文转换成功 3份；失败 1份", current_row)
+        self.assertIn("AI首类 2篇", current_row)
+        self.assertIn("正文转换成功 未记录；失败 未记录", legacy_row)
+        self.assertIn("AI首类未记录（旧口径 AI 候选 0）", legacy_row)
+        self.assertNotIn("无需同步", legacy_row)
+
+    def test_markdown_reports_monitor_results_errors_and_planned_missing_separately(self):
+        day = date(2026, 10, 25)
+        monitor = normalized(monitor_receipt(day, "iaba", "succeeded"))
+        raw_runtime = {
+            "schema_version": 1,
+            "date_local": day.isoformat(),
+            "preview": False,
+            "elapsed_seconds": 1,
+            "runs": [
+                {
+                    "site_id": "iaba",
+                    "receipt_id": monitor["receipt_id"],
+                    "attempt_count": monitor["attempt_count"],
+                    "run_status": monitor["run_status"],
+                },
+                {"site_id": "eaa", "error": "RuntimeError: monitor navigation timed out"},
+            ],
+        }
+        runtime = flow._normalize_runtime_output(raw_runtime, day, Path("runtime-output.json"))
+        report = flow.make_report(day, {(day.isoformat(), "iaba"): monitor}, runtime_output=runtime)
+        markdown = flow.render_markdown(report)
+        self.assertEqual(report["coverage"]["actual_collection_receipt_sites"], [])
+        self.assertIn("监控项（单独报告，不计入来源收集）", markdown)
+        self.assertIn("国际黑人精算师协会：本次回执：检查成功", markdown)
+        self.assertIn(
+            "欧洲精算学院：本次检查回执缺失：RuntimeError: monitor navigation timed out", markdown
+        )
+
+        missing_day = date(2026, 10, 26)
+        self.assertIn("eaa", flow.make_plan(missing_day)["baseline_sites"])
+        no_runs = flow._normalize_runtime_output(
+            {
+                "schema_version": 1,
+                "date_local": missing_day.isoformat(),
+                "preview": False,
+                "elapsed_seconds": 0,
+                "runs": [],
+            },
+            missing_day,
+            Path("runtime-output.json"),
+        )
+        missing_report = flow.make_report(missing_day, {}, runtime_output=no_runs)
+        self.assertIn(
+            "欧洲精算学院：计划检查，未见本次运行证据", flow.render_markdown(missing_report)
+        )
+
+    def test_runtime_attempt_must_match_receipt_attempt_not_only_date_and_site(self):
+        day = date(2026, 10, 29)
+        old = receipt_for(day, "caa")
+        old["stages"]["downloaded"]["count"] = 3
+        old_receipts = history(old)
+        runtime_raw = {
+            "schema_version": 1,
+            "date_local": day.isoformat(),
+            "preview": False,
+            "elapsed_seconds": 2,
+            "runs": [
+                {
+                    "site_id": "caa",
+                    "error": "RuntimeError: retry failed before receipt write",
+                    "elapsed_seconds": 2,
+                }
+            ],
+        }
+        runtime_output = flow._normalize_runtime_output(
+            runtime_raw, day, Path("runtime-output.json")
+        )
+        report = flow.make_report(day, old_receipts, runtime_output=runtime_output)
+        markdown = flow.render_markdown(report)
+        row = next(line for line in markdown.splitlines() if line.startswith("| 中国精算师协会 |"))
+        self.assertEqual(report["receipts"][0]["stages"]["downloaded"]["count"], 3)
+        self.assertEqual(report["receipts"][0]["attempt_count"], 1)
+        self.assertEqual(report["coverage"]["runtime_attempts_without_receipts"], ["caa"])
+        self.assertIn("历史", row)
+        self.assertIn("本次运行回执缺失", row)
+        self.assertIn("retry failed before receipt write", row)
+        self.assertEqual(report["failure_cases"], [])
+
+        matched_raw = {
+            **runtime_raw,
+            "runs": [
+                {
+                    "site_id": "caa",
+                    "receipt_id": old["receipt_id"],
+                    "attempt_count": 1,
+                    "run_status": "succeeded",
+                    "elapsed_seconds": 2,
+                }
+            ],
+        }
+        matched_output = flow._normalize_runtime_output(
+            matched_raw, day, Path("runtime-output.json")
+        )
+        matched_report = flow.make_report(day, old_receipts, runtime_output=matched_output)
+        self.assertEqual(matched_report["coverage"]["runtime_attempts_without_receipts"], [])
+
+        stale_raw = {
+            **matched_raw,
+            "runs": [{**matched_raw["runs"][0], "attempt_count": 2}],
+        }
+        stale_output = flow._normalize_runtime_output(stale_raw, day, Path("runtime-output.json"))
+        stale_report = flow.make_report(day, old_receipts, runtime_output=stale_output)
+        self.assertEqual(stale_report["coverage"]["runtime_attempts_without_receipts"], ["caa"])
+
+    def test_download_failure_summary_keeps_source_error_and_budget_pause(self):
+        hong_kong = flow._short_failure_reason(
+            "PDF: document redirect left the approved source host; request budget reached",
+            "downloaded",
+        )
+        brazil = flow._short_failure_reason(
+            "download exceeded size limit or failed streamed digest check; HTTP Error 400; request budget reached",
+            "downloaded",
+        )
+        italy = flow._short_failure_reason(
+            "encrypted PDF is unsupported; 来源采集因请求预算暂停，剩余队列 16 项",
+            "conversion",
+        )
+        self.assertIn("文档重定向离开允许来源", hong_kong)
+        self.assertIn("请求预算暂停", hong_kong)
+        self.assertIn("下载超出大小限制或摘要校验失败", brazil)
+        self.assertIn("HTTP 400", brazil)
+        self.assertIn("请求预算暂停", brazil)
+        self.assertIn("加密 PDF 无法转换", italy)
+        self.assertIn("请求预算暂停", italy)
+        self.assertEqual(
+            flow._short_failure_reason(
+                "FlowError: stages.overseas_ack.ready_status must be one of ['failed', 'partial', 'pending', 'succeeded', 'unknown']",
+                "run",
+            ),
+            "回执可搜索状态值不兼容",
+        )
+
     def test_monitor_only_receipts_allow_structural_monitor_and_reject_collection_payload(self):
         day = date(2026, 10, 25)
         valid = normalized(monitor_receipt(day))
@@ -241,82 +569,169 @@ class LocalFlowTests(unittest.TestCase):
     def test_case_recovery_requires_success_for_same_stage_and_unknown_preserves_case(self):
         day0 = date(2026, 10, 20)
         site = "iaa"
-        failure = receipt_for(day0, site, run_status="partial", failed_stage="overseas_ack", error="write failed", overseas={
-            "status": "succeeded", "acknowledged": 1, "pending": 0, "failed": 0,
-            "ready_status": "failed", "ready_error": "not ready",
-        })
+        failure = receipt_for(
+            day0,
+            site,
+            run_status="partial",
+            failed_stage="overseas_ack",
+            error="write failed",
+            overseas={
+                "status": "succeeded",
+                "acknowledged": 1,
+                "pending": 0,
+                "failed": 0,
+                "ready_status": "failed",
+                "ready_error": "not ready",
+            },
+        )
         original = normalized(failure)
-        case = flow._active_failure_cases({(day0.isoformat(), site): original}, day0 + timedelta(days=1))
+        case = flow._active_failure_cases(
+            {(day0.isoformat(), site): original}, day0 + timedelta(days=1)
+        )
         target_case = next(value for value in case.values() if value["stage"] == "overseas_ready")
-        ledger = {target_case["case_id"]: {**target_case, "state": "active", "last_observed_date": day0.isoformat(), "evidence_fingerprint": target_case["evidence_fingerprint"]}}
+        ledger = {
+            target_case["case_id"]: {
+                **target_case,
+                "state": "active",
+                "last_observed_date": day0.isoformat(),
+                "evidence_fingerprint": target_case["evidence_fingerprint"],
+            }
+        }
         day1 = day0 + timedelta(days=1)
         incomplete = receipt_for(day1, site, ai=0)
         receipts = history(failure, incomplete)
         active_day1 = flow._active_failure_cases(receipts, day1)
         self.assertIn(target_case["case_id"], active_day1)
         updates = flow._failure_case_updates(active_day1, ledger, receipts, day1)
-        self.assertEqual(next(item["action"] for item in updates if item["case_id"] == target_case["case_id"]), "observe")
+        self.assertEqual(
+            next(item["action"] for item in updates if item["case_id"] == target_case["case_id"]),
+            "observe",
+        )
         day2 = day1 + timedelta(days=1)
-        recovered = receipt_for(day2, site, ai=1, overseas={
-            "status": "succeeded", "acknowledged": 1, "pending": 0, "failed": 0,
-            "ready_status": "succeeded",
-        })
-        updates = flow._failure_case_updates({}, ledger, history(failure, incomplete, recovered), day2)
+        recovered = receipt_for(
+            day2,
+            site,
+            ai=1,
+            overseas={
+                "status": "succeeded",
+                "acknowledged": 1,
+                "pending": 0,
+                "failed": 0,
+                "ready_status": "succeeded",
+            },
+        )
+        updates = flow._failure_case_updates(
+            {}, ledger, history(failure, incomplete, recovered), day2
+        )
         closed = next(item for item in updates if item["case_id"] == target_case["case_id"])
         self.assertEqual(closed["action"], "close")
 
     def test_ready_failure_survives_later_download_success_and_unknown_ready(self):
         day0 = date(2026, 10, 20)
         site = "iaa"
-        failed = receipt_for(day0, site, ai=1, overseas={
-            "status": "succeeded", "acknowledged": 1, "pending": 0, "failed": 0,
-            "ready_status": "failed", "ready_error": "index unavailable", "ready_evidence": ["kb://version/old"],
-        })
+        failed = receipt_for(
+            day0,
+            site,
+            ai=1,
+            overseas={
+                "status": "succeeded",
+                "acknowledged": 1,
+                "pending": 0,
+                "failed": 0,
+                "ready_status": "failed",
+                "ready_error": "index unavailable",
+                "ready_evidence": ["kb://version/old"],
+            },
+        )
         day1 = day0 + timedelta(days=1)
-        later_download = receipt_for(day1, site, ai=1, overseas={
-            "status": "succeeded", "acknowledged": 1, "pending": 0, "failed": 0,
-            "ready_status": "unknown",
-        })
+        later_download = receipt_for(
+            day1,
+            site,
+            ai=1,
+            overseas={
+                "status": "succeeded",
+                "acknowledged": 1,
+                "pending": 0,
+                "failed": 0,
+                "ready_status": "unknown",
+            },
+        )
         receipts = history(failed, later_download)
         active = flow._active_failure_cases(receipts, day1)
         ready_case = next(case for case in active.values() if case["stage"] == "overseas_ready")
         self.assertEqual(ready_case["last_observed_date"], day0.isoformat())
         self.assertIn(site, flow.make_plan(day0 + timedelta(days=2), receipts)["extra_retry_sites"])
-        self.assertIn(ready_case["case_id"], {case["case_id"] for case in flow.make_report(day1, receipts)["research_queue"]})
+        self.assertIn(
+            ready_case["case_id"],
+            {case["case_id"] for case in flow.make_report(day1, receipts)["research_queue"]},
+        )
 
     def test_changed_evidence_remains_unresearched_across_daily_ledger_updates(self):
         day0 = date(2026, 10, 20)
         site = "iaa"
-        first = receipt_for(day0, site, run_status="failed", failed_stage="downloaded", error="HTTP request failed", evidence=["https://example.test/old"])
+        first = receipt_for(
+            day0,
+            site,
+            run_status="failed",
+            failed_stage="downloaded",
+            error="HTTP request failed",
+            evidence=["https://example.test/old"],
+        )
         first_case = next(iter(flow._active_failure_cases(history(first), day0).values()))
-        ledger = {first_case["case_id"]: {
-            **first_case,
-            "last_researched_date": day0.isoformat(),
-            "last_researched_fingerprint": first_case["evidence_fingerprint"],
-        }}
+        ledger = {
+            first_case["case_id"]: {
+                **first_case,
+                "last_researched_date": day0.isoformat(),
+                "last_researched_fingerprint": first_case["evidence_fingerprint"],
+            }
+        }
         day1 = day0 + timedelta(days=1)
-        changed = receipt_for(day1, site, run_status="failed", failed_stage="downloaded", error="HTTP request failed", evidence=["https://example.test/new"])
+        changed = receipt_for(
+            day1,
+            site,
+            run_status="failed",
+            failed_stage="downloaded",
+            error="HTTP request failed",
+            evidence=["https://example.test/new"],
+        )
         receipts = history(first, changed)
         report1 = flow.make_report(day1, receipts, ledger)
-        update = next(item for item in report1["case_updates"] if item["case_id"] == first_case["case_id"])
+        update = next(
+            item for item in report1["case_updates"] if item["case_id"] == first_case["case_id"]
+        )
         self.assertEqual(update["action"], "update")
         self.assertEqual(update["last_researched_fingerprint"], first_case["evidence_fingerprint"])
-        self.assertIn(first_case["case_id"], {item["case_id"] for item in report1["research_queue"]})
+        self.assertIn(
+            first_case["case_id"], {item["case_id"] for item in report1["research_queue"]}
+        )
         next_ledger = {update["case_id"]: {**update, "state": "active"}}
         day2 = day1 + timedelta(days=1)
         report2 = flow.make_report(day2, receipts, next_ledger)
-        self.assertIn(first_case["case_id"], {item["case_id"] for item in report2["research_queue"]})
+        self.assertIn(
+            first_case["case_id"], {item["case_id"] for item in report2["research_queue"]}
+        )
 
     def test_research_queue_is_bounded_and_same_evidence_is_not_requeued(self):
         day = date(2026, 10, 25)
-        sites = [site for site in flow.SITES if site not in flow.MONITOR_ONLY_SITES and site not in flow.HELD_SITES][:5]
-        raws = [receipt_for(day, site, run_status="failed", failed_stage="downloaded", error=f"failed {site}") for site in sites]
+        sites = [
+            site
+            for site in flow.SITES
+            if site not in flow.MONITOR_ONLY_SITES and site not in flow.HELD_SITES
+        ][:5]
+        raws = [
+            receipt_for(
+                day, site, run_status="failed", failed_stage="downloaded", error=f"failed {site}"
+            )
+            for site in sites
+        ]
         receipts = history(*raws)
         report = flow.make_report(day, receipts)
         self.assertEqual(len(report["research_queue"]), 5)
         self.assertEqual(len(report["suggested_research"]), 2)
         first = report["suggested_research"][0]
-        ledger = {first["case_id"]: {**first, "state": "active", "last_researched_date": day.isoformat()}}
+        ledger = {
+            first["case_id"]: {**first, "state": "active", "last_researched_date": day.isoformat()}
+        }
         updated = flow.make_report(day, receipts, ledger)
         self.assertNotIn(first["case_id"], {item["case_id"] for item in updated["research_queue"]})
 
@@ -328,7 +743,11 @@ class LocalFlowTests(unittest.TestCase):
             for site in flow.baseline_sites(target):
                 if site in flow.HELD_SITES:
                     continue
-                raw = monitor_receipt(target, site) if site in flow.MONITOR_ONLY_SITES else receipt_for(target, site)
+                raw = (
+                    monitor_receipt(target, site)
+                    if site in flow.MONITOR_ONLY_SITES
+                    else receipt_for(target, site)
+                )
                 item = normalized(raw)
                 receipts[(target.isoformat(), site)] = item
         report = flow.make_report(day, receipts)
@@ -362,7 +781,9 @@ class LocalFlowTests(unittest.TestCase):
             root = Path(tmp) / "receipts"
             root.mkdir()
             day = date(2026, 10, 25)
-            (root / "one.json").write_text(json.dumps(receipt_for(day, flow.baseline_sites(day)[0])), encoding="utf-8")
+            (root / "one.json").write_text(
+                json.dumps(receipt_for(day, flow.baseline_sites(day)[0])), encoding="utf-8"
+            )
             ledger = root.parent / "ledger.json"
             ledger.write_text('{"schema_version":1,"cases":[]}', encoding="utf-8")
             for command in ("plan", "status", "report"):
@@ -376,6 +797,24 @@ class LocalFlowTests(unittest.TestCase):
                     self.assertEqual(flow.main(args), 0)
                 self.assertEqual(first.getvalue(), second.getvalue())
                 self.assertEqual(json.loads(first.getvalue())["writes_hub_or_servers"], False)
+            markdown_args = [
+                "report",
+                "--date",
+                day.isoformat(),
+                "--receipts",
+                str(root),
+                "--case-ledger",
+                str(ledger),
+                "--format",
+                "markdown",
+            ]
+            first, second = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(first):
+                self.assertEqual(flow.main(markdown_args), 0)
+            with contextlib.redirect_stdout(second):
+                self.assertEqual(flow.main(markdown_args), 0)
+            self.assertEqual(first.getvalue(), second.getvalue())
+            self.assertIn("## 各站进度与停点", first.getvalue())
             help_output = io.StringIO()
             with contextlib.redirect_stdout(help_output), self.assertRaises(SystemExit) as error:
                 flow.main(["--help"])

@@ -5,7 +5,7 @@ description: 规划和审查本机精算资料监控项的每日轮换、真实�
 
 # 本机精算资料采集流程
 
-先读 [本机运行指南](references/runtime.zh-CN.md) 和 [工作流与改造边界](references/workflow.zh-CN.md)；修复单项来源时读 [32 项目录](references/sites.zh-CN.md)，实现或读取回执时读 [每日回执、失败队列与日报合同](references/receipts.zh-CN.md)。
+先读 [本机运行指南](references/runtime.zh-CN.md) 和 [工作流与改造边界](references/workflow.zh-CN.md)；修复单项来源时读 [32 项目录](references/sites.zh-CN.md)，实现或读取回执时读 [每日回执、失败队列与日报合同](references/receipts.zh-CN.md)。独立调查公开来源页面或附件时，按 [web-listening 探索工具说明](references/web-listening-exploration.zh-CN.md) 使用隔离版本；其证据不等于每日采集成功。
 
 ## 离线 helper
 
@@ -15,9 +15,10 @@ description: 规划和审查本机精算资料监控项的每日轮换、真实�
 python .agents/skills/local-actuarial-flow/scripts/local_flow.py plan --date 2026-10-25 --receipts reports/local-automation-state/receipts --json
 python .agents/skills/local-actuarial-flow/scripts/local_flow.py status --date 2026-10-25 --receipts reports/local-automation-state/receipts --json
 python .agents/skills/local-actuarial-flow/scripts/local_flow.py report --date 2026-10-25 --receipts reports/local-automation-state/receipts --case-ledger reports/local-automation-state/cases/ledger.json --json
+python .agents/skills/local-actuarial-flow/scripts/local_flow.py report --date 2026-10-25 --receipts reports/local-automation-state/receipts --format markdown
 ```
 
-日报按美东 09:00 触发时由调用端提供前一自然日。缺回执是 `not_run` 或 `not_scheduled`，不是源站失败；缺字段是 `unknown`，不是成功或零。AI 发布 acknowledgement 与各自 Ready 状态分开记录。回执格式、Case ledger 的原子更新及状态定义见每日合同。
+`report` 默认输出 JSON；`--json` 保持兼容，`--format markdown` 输出精简中文日报。可传 `--runtime-output <同日run-daily.json>` 展示运行耗时、已启动但缺少回执的站点和计划内未见运行的站点；该证据只补充执行可见性，不写 case ledger，也不能关闭故障。日报按美东 09:00 触发时由调用端提供前一自然日。没有运行明细时，缺回执不能证明未运行；缺字段是未知，不是成功或零。AI 发布入库确认与两端可搜索状态分开记录。回执格式、Case ledger 的原子更新及状态定义见每日合同。
 
 单站 HTTP 请求默认上限为 30；只有瑞士监控项可通过 `run-site --request-limit 60` 显式提高到 60。达到请求上限会留下可恢复游标并报告 `partial`。只有纯预算暂停时不创建失败研究 case；同时出现的真实站点/文章错误仍保留并进入常规研究队列。来源复用/目标重试最多处理 24 篇，模型富信息工作仍最多 8 篇；超出部分会在后续运行轮转处理。
 
