@@ -254,6 +254,82 @@ class _FixtureCrawler:
         )
 
 
+def _generated_text_pdf(*, page_count: int = 1, password: str | None = None) -> bytes:
+    from io import BytesIO
+
+    from pypdf import PdfWriter
+    from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
+
+    writer = PdfWriter()
+    for _ in range(page_count):
+        page = writer.add_blank_page(width=612, height=792)
+        font = DictionaryObject(
+            {
+                NameObject("/Type"): NameObject("/Font"),
+                NameObject("/Subtype"): NameObject("/Type1"),
+                NameObject("/BaseFont"): NameObject("/Helvetica"),
+            }
+        )
+        page[NameObject("/Resources")] = DictionaryObject(
+            {NameObject("/Font"): DictionaryObject({NameObject("/F1"): font})}
+        )
+        content = DecodedStreamObject()
+        text = "Actuarial public PDF extraction text. " * 4
+        content.set_data(f"BT /F1 12 Tf 72 720 Td ({text}) Tj ET".encode())
+        page[NameObject("/Contents")] = writer._add_object(content)
+    if password is not None:
+        writer.encrypt(password)
+    output = BytesIO()
+    writer.write(output)
+    return output.getvalue()
+
+
+@pytest.mark.parametrize("password", [None, ""])
+def test_pdf_extraction_supports_unencrypted_and_empty_password_files(
+    password: str | None, tmp_path: Path
+) -> None:
+    raw = _generated_text_pdf(password=password)
+
+    markdown = runtime._extract_markdown(
+        raw, "application/pdf", "https://documents.example/report.pdf", tmp_path
+    )
+
+    assert "Page 1" in markdown
+    assert "Actuarial public PDF extraction text." in markdown
+
+
+def test_pdf_extraction_rejects_files_with_a_required_password(tmp_path: Path) -> None:
+    raw = _generated_text_pdf(password="user-password")
+
+    with pytest.raises(runtime.RuntimeErrorSafe, match="encrypted PDF requires a password"):
+        runtime._extract_markdown(
+            raw, "application/pdf", "https://documents.example/report.pdf", tmp_path
+        )
+
+
+def test_pdf_extraction_preserves_page_and_markdown_size_limits(
+    tmp_path: Path, monkeypatch
+) -> None:
+    too_many_pages = _generated_text_pdf(page_count=601)
+    with pytest.raises(runtime.RuntimeErrorSafe, match="600-page extraction limit"):
+        runtime._extract_markdown(
+            too_many_pages,
+            "application/pdf",
+            "https://documents.example/report.pdf",
+            tmp_path,
+        )
+
+    monkeypatch.setattr(runtime, "MAX_MARKDOWN_CHARS", 80)
+    too_much_text = _generated_text_pdf()
+    with pytest.raises(runtime.RuntimeErrorSafe, match="bounded Markdown extraction size"):
+        runtime._extract_markdown(
+            too_much_text,
+            "application/pdf",
+            "https://documents.example/report.pdf",
+            tmp_path,
+        )
+
+
 def test_iaa_administrative_pdfs_are_rejected_before_frontier_enqueue(
     tmp_path: Path, monkeypatch
 ) -> None:

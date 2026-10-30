@@ -33,6 +33,8 @@ python -m ai_actuarial.local_collection_runtime run-site --site soa-ai-bulletin-
 
 实现/回归测试也覆盖 IAA 当前论文和 CAS secondary-AI PDF，可按相同入口做低流量验收：
 
+PDF 转换允许 pypdf 可用空密码解锁的公开文件；确实需要用户密码的文件仍记录为转换失败。页数和提取 Markdown 大小继续受运行时上限约束。
+
 ```powershell
 python -m ai_actuarial.local_collection_runtime run-site --site iaa --date 2026-10-25 --exact-url https://actuaries.org/app/uploads/2026/10/AITF_Professional_Considerations_Paper_Final_Approved.pdf --source-page-url https://actuaries.org/paper/professional-considerations-for-actuaries-interacting-with-artificial-intelligence/ --article-limit 1 --preview --json
 python -m ai_actuarial.local_collection_runtime run-site --site cas --date 2026-10-25 --exact-url https://forum.casact.org/article/74931-nonlife-insurance-risk-classification-using-categorical-embedding.pdf --article-limit 1 --preview --json

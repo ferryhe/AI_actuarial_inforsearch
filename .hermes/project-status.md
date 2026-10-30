@@ -1,3 +1,11 @@
+# 当前候选 — 意大利公开空密码 PDF 提取 — 2026-10-30
+
+- 项目 `AI_actuarial_inforsearch`；工作树 `C:/Users/ferry/.codex/worktrees/public-pdf-extraction/AI_actuarial_inforsearch`，分支 `fix/public-pdf-extraction`。仅修改采集 runtime、聚焦测试和 runtime 参考说明；其他仓库未读写。
+- PDF 现尝试以空密码解锁；只有 pypdf 确认成功才继续提取，需用户密码的文件仍清晰报为转换失败。保留 600 页与 Markdown 大小上限。
+- 新增 4 项参数化/回归用例；针对新测试 4/4 通过。runtime 文件除一项需要 `POSTGRES_TEST_URL` 的数据库测试外 82/82 通过；完整文件尝试中该测试因环境变量缺失失败。Black、isort、Ruff、Pylint errors-only、py_compile 和 `git diff --check` 通过。
+- 只读核验 Italy CAS SHA-256 与指定 digest 相同（82,393 bytes）；通过 `_convert_article` 生成 12,119 字符 Markdown 并含 3 页。未运行 live config、Hub 或目标服务。
+- 未提交或推送。若需完整 runtime 文件结果，请设置指向隔离 PostgreSQL 的 `POSTGRES_TEST_URL` 后重跑 `python -m pytest tests/test_local_collection_runtime.py -q --no-cov`；父任务继续 fresh review。
+
 # 当前候选 — 日报中英文语言选项 — 2026-10-29
 
 - 项目 `AI_actuarial_inforsearch`；工作树 `C:/Users/ferry/.codex/worktrees/local-flow-report-language/AI_actuarial_inforsearch`，分支 `feat/local-flow-report-language`。仅离线日报 Markdown 支持 `--language zh|en`；默认中文；JSON 与汇总数据不受语言选项影响。
