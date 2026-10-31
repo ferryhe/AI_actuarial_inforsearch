@@ -743,6 +743,33 @@ def cmd_weekly_explanation(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_article_interpretation(args: argparse.Namespace) -> int:
+    if args.article_action == "get":
+        path = "/api/article-interpretations?" + urllib.parse.urlencode(
+            {"interpretation_id": args.interpretation_id or ""}
+        )
+        method, payload = "GET", None
+    else:
+        path, method = "/api/collections/run", "POST"
+        payload = {"type": "article_interpretation"}
+        if args.article_action == "retry":
+            payload["retry_id"] = args.interpretation_id
+    try:
+        result = _api_json_request(
+            args.api_url,
+            path,
+            method=method,
+            token=args.token,
+            timeout=args.timeout,
+            **({"payload": payload} if payload else {}),
+        )
+    except (RuntimeError, OSError, json.JSONDecodeError, TimeoutError) as exc:
+        _print_cli_payload({"success": False, "error": str(exc)}, as_json=args.json)
+        return 2
+    _print_cli_payload(result, as_json=args.json)
+    return 0
+
+
 def _wait_for_api_task(args: argparse.Namespace, job_id: str) -> dict:
     deadline = time.monotonic() + max(0.0, float(args.timeout))
     while True:
@@ -1368,6 +1395,22 @@ def build_parser() -> argparse.ArgumentParser:
             help="Emit the stable machine-readable JSON contract",
         )
         explanation_action.set_defaults(func=cmd_weekly_explanation)
+
+    p_article = sub.add_parser(
+        "article-interpretation", help="Generate and read saved Chinese article drafts"
+    )
+    p_article_sub = p_article.add_subparsers(dest="article_action", required=True)
+    for action in ("run", "retry", "get"):
+        command = p_article_sub.add_parser(action)
+        if action in {"retry", "get"}:
+            command.add_argument("interpretation_id", **({"nargs": "?"} if action == "get" else {}))
+        command.add_argument(
+            "--api-url", default=os.getenv("AI_ACTUARIAL_API_URL", "http://127.0.0.1:5000")
+        )
+        command.add_argument("--token", default=os.getenv("AI_ACTUARIAL_API_TOKEN"))
+        command.add_argument("--timeout", type=float, default=30)
+        command.add_argument("--json", action="store_true")
+        command.set_defaults(func=cmd_article_interpretation)
 
     p_pipeline = sub.add_parser("pipeline", help="Control the fixed five-step pipeline baton")
     p_pipeline_sub = p_pipeline.add_subparsers(dest="pipeline_cmd", required=True)

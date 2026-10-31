@@ -107,6 +107,7 @@ _VALID_SCHEDULED_TASK_TYPES = [
     "embedding_generation",
     "ready_data_build",
     "weekly_summary",
+    "article_interpretation",
     "rag_indexing",
     "recategory",
 ]
@@ -132,6 +133,7 @@ _VALID_COLLECTION_TYPES = {
     "ready_data_build",
     "weekly_summary",
     "weekly_explanation",
+    "article_interpretation",
     "rag_indexing",
     "recategory",
 }
@@ -2104,6 +2106,12 @@ def add_scheduled_task(
         }
     )
     config_data["scheduled_tasks"] = tasks
+    from ai_actuarial.article_interpretations import validate_schedules
+
+    try:
+        validate_schedules(config_data)
+    except ValueError as exc:
+        raise OpsWriteError(str(exc)) from exc
     _write_config_and_reconcile_scheduler(
         config_data,
         previous_config=previous_config,
@@ -2187,6 +2195,12 @@ def update_scheduled_task(
     tasks[found_index] = updated
 
     config_data["scheduled_tasks"] = tasks
+    from ai_actuarial.article_interpretations import validate_schedules
+
+    try:
+        validate_schedules(config_data)
+    except ValueError as exc:
+        raise OpsWriteError(str(exc)) from exc
     _write_config_and_reconcile_scheduler(
         config_data,
         previous_config=previous_config,
