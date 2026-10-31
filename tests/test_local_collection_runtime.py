@@ -2439,12 +2439,19 @@ def test_observed_source_links_skip_non_http_and_queue_only_public_documents(
                 "https://www.institutdesactuaires.com/se-documenter/supports-des-presentations-39",
             ),
         ),
+        (
+            "soa",
+            "https://www.soa.org/research/soa-research/",
+            (),
+        ),
     ],
 )
 def test_legacy_site_frontier_repair_is_idempotent_and_keeps_cursor_and_articles(
     site_id: str, obsolete_url: str, expected_urls: tuple[str, ...]
 ) -> None:
     site = runtime.SITES[site_id]
+    if site_id == "soa":
+        assert obsolete_url not in site.seeds
     consumed = "https://www.institutdesactuaires.com/" if site_id == "france" else site.seeds[0]
     pending = f"https://{site.hosts[0]}/research/other-valid-item"
     state = {
@@ -2460,12 +2467,15 @@ def test_legacy_site_frontier_repair_is_idempotent_and_keeps_cursor_and_articles
                 "visited": [runtime._queue_identity({"url": consumed, "kind": "page"})],
                 "retry_queue": [
                     {"url": obsolete_url, "kind": "page", "attempts": 2},
+                    {"url": pending, "kind": "page", "attempts": 1, "last_error": "kept"},
                     {"url": "javascript:void(0)", "kind": "page", "attempts": 1},
                 ],
             }
         },
     }
     site_state = state["sites"][site_id]
+    if site_id == "soa":
+        site_state["frontier_repair_soa_v1"] = True
 
     runtime._repair_saved_frontier(site, site_state)
     after_first = json.loads(json.dumps(site_state))
@@ -2475,9 +2485,18 @@ def test_legacy_site_frontier_repair_is_idempotent_and_keeps_cursor_and_articles
     assert site_state == after_first
     assert site_state["cursor"] == 1
     assert queue_urls[0] == consumed
-    assert queue_urls[1:3] == list(expected_urls)
+    assert queue_urls[1 : 1 + len(expected_urls)] == list(expected_urls)
     assert queue_urls[-1] == pending
     assert obsolete_url not in queue_urls
+    assert obsolete_url not in [row["url"] for row in site_state["retry_queue"]]
+    assert {row["url"] for row in site_state["retry_queue"]} == {pending}
+    assert site_state["retry_queue"] == [
+        {"url": pending, "kind": "page", "attempts": 1, "last_error": "kept"}
+    ]
+    marker_version = "v2" if site_id in {"france", "soa"} else "v1"
+    assert site_state[f"frontier_repair_{site_id}_{marker_version}"] is True
+    if site_id == "soa":
+        assert site_state["frontier_repair_soa_v1"] is True
     assert all(
         urlsplit_scheme in {"http", "https"}
         for urlsplit_scheme in (
