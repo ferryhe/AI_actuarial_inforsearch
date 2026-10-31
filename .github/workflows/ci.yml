@@ -185,7 +185,7 @@ jobs:
           npm run typecheck
           npm run build
           grep -R -q "$BUILD_RELEASE_ID" dist/public/assets
-          npm exec -- vitest run client/src/components/BuildInfo.test.tsx
+          npm exec -- vitest run client/src/components/BuildInfo.test.tsx client/src/lib/issue268-weekly-dashboard.test.tsx client/src/lib/issue434-weekly-reader.test.tsx
 
   python-smoke:
     needs: dead-code-symbols

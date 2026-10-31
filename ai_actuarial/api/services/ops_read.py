@@ -14,6 +14,7 @@ from ai_actuarial.ai_runtime import (
     PROVIDER_BASE_URL_ENV_VARS,
     PROVIDER_ENV_VARS,
     build_model_discovery_credentials,
+    get_ai_function_section,
     resolve_search_engine_credentials,
 )
 from ai_actuarial.config import settings
@@ -523,7 +524,7 @@ def get_ai_models(*, refresh: bool = False, storage: Storage | None = None) -> d
     ai_config = config_data.get("ai_config") or {}
     chatbot_cfg = ai_config.get("chatbot", {})
     chatbot_prompts = chatbot_cfg.get("prompts", {})
-    weekly_cfg = ai_config.get("weekly_explanation", {})
+    weekly_cfg = get_ai_function_section("weekly_explanation", yaml_config=config_data)
     weekly_defaults = DEFAULT_AI_FUNCTION_CONFIG["weekly_explanation"]
     current_config = {
         "catalog": {

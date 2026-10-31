@@ -3516,6 +3516,7 @@ class Storage:
         explanation: Mapping[str, Any],
         *,
         lease_ttl_seconds: float,
+        force: bool = False,
     ) -> dict[str, Any]:
         snapshot_id = str(explanation.get("snapshot_id") or "").strip()
         input_fingerprint = str(explanation.get("input_fingerprint") or "").strip()
@@ -3533,7 +3534,8 @@ class Storage:
         with self.transaction(immediate=True):
             existing = self.get_weekly_explanation(snapshot_id=snapshot_id)
             if (
-                existing is not None
+                not force
+                and existing is not None
                 and existing.get("status") == "complete"
                 and existing.get("input_fingerprint") == input_fingerprint
             ):
@@ -3572,7 +3574,7 @@ class Storage:
                     UPDATE weekly_explanations
                     SET claim_fingerprint = ?, claim_token = ?, claim_expires_at = ?
                     WHERE snapshot_id = ?
-                      AND NOT (status = 'complete' AND input_fingerprint = ?)
+                      AND (? OR NOT (status = 'complete' AND input_fingerprint = ?))
                       AND (
                           claim_token = '' OR claim_expires_at = ''
                           OR ai_julianday(claim_expires_at) <= ai_julianday(?)
@@ -3583,6 +3585,7 @@ class Storage:
                         claim_token,
                         claim_expires_at,
                         snapshot_id,
+                        force,
                         input_fingerprint,
                         now_text,
                     ),
@@ -3591,7 +3594,8 @@ class Storage:
                     state = "claimed"
         current = self.get_weekly_explanation(snapshot_id=snapshot_id)
         if (
-            state != "claimed"
+            not force
+            and state != "claimed"
             and current is not None
             and current.get("status") == "complete"
             and current.get("input_fingerprint") == input_fingerprint
@@ -3630,6 +3634,34 @@ class Storage:
         generated_at = str(explanation.get("generated_at") or self.now())
         coverage = dict(explanation.get("coverage") or {})
         with self.transaction(immediate=True):
+            existing = self.get_weekly_explanation(snapshot_id=snapshot_id)
+            if (
+                status == "failed"
+                and existing
+                and existing["status"] == "complete"
+                and existing.get("claim_token") == normalized_claim_token
+                and existing.get("claim_fingerprint") == input_fingerprint
+            ):
+                previous_coverage = dict(existing.get("coverage") or {})
+                previous_coverage["last_failed_attempt"] = {
+                    "input_fingerprint": input_fingerprint,
+                    "error": str(explanation.get("error") or ""),
+                    "generated_at": generated_at,
+                    "coverage": coverage,
+                }
+                retained = self._conn.execute(
+                    "UPDATE weekly_explanations SET coverage_json = ?, claim_fingerprint = '', "
+                    "claim_token = '', claim_expires_at = '' WHERE snapshot_id = ? AND claim_token = ?",
+                    (
+                        json.dumps(previous_coverage, ensure_ascii=False, sort_keys=True),
+                        snapshot_id,
+                        normalized_claim_token,
+                    ),
+                )
+                return {
+                    "finalized": retained.rowcount == 1,
+                    "explanation": self.get_weekly_explanation(snapshot_id=snapshot_id),
+                }
             updated = self._conn.execute(
                 """
                 UPDATE weekly_explanations
@@ -3662,48 +3694,6 @@ class Storage:
             "finalized": finalized,
             "explanation": self.get_weekly_explanation(snapshot_id=snapshot_id),
         }
-
-    def list_weekly_snapshot_explanation_material(
-        self,
-        *,
-        snapshot_id: str,
-        limit: int,
-    ) -> list[dict[str, Any]]:
-        safe_limit = max(1, min(int(limit or 1), 500))
-        cur = self._conn.execute(
-            """
-            SELECT
-                m.file_url,
-                COALESCE(NULLIF(TRIM(f.title), ''),
-                         NULLIF(TRIM(m.original_filename), ''), m.file_url) AS title,
-                COALESCE(ci.summary, '') AS summary,
-                COALESCE(ci.keywords, '[]') AS keywords
-            FROM weekly_snapshot_members m
-            LEFT JOIN files f ON f.url = m.file_url
-            LEFT JOIN catalog_items ci ON ci.file_url = m.file_url
-            WHERE m.snapshot_id = ?
-            ORDER BY m.ordinal
-            LIMIT ?
-            """,
-            (snapshot_id, safe_limit),
-        )
-        material: list[dict[str, Any]] = []
-        for row in cur.fetchall():
-            try:
-                keywords = json.loads(str(row[3] or "[]"))
-            except json.JSONDecodeError:
-                keywords = [str(row[3])]
-            if not isinstance(keywords, list):
-                keywords = [str(keywords)]
-            material.append(
-                {
-                    "url": str(row[0] or ""),
-                    "title": str(row[1] or ""),
-                    "summary": str(row[2] or ""),
-                    "keywords": [str(value) for value in keywords],
-                }
-            )
-        return material
 
     def _decode_weekly_update_summary_row(
         self, row: sqlite3.Row | tuple[Any, ...] | None

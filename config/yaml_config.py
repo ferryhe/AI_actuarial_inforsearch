@@ -236,7 +236,7 @@ def _extract_ai_config_from_env() -> Dict[str, Any]:
                 os.getenv("OPENAI_TIMEOUT_SECONDS", "60"), "OPENAI_TIMEOUT_SECONDS"
             ),
             "temperature": 0,
-            "max_tokens": 1200,
+            "max_tokens": 2048,
         },
         "ocr": {
             "provider": ocr_provider,

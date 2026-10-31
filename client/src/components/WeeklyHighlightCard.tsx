@@ -1,4 +1,6 @@
 import { useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkBreaks from "remark-breaks";
 import { getCanonicalDisplayName } from "@/pages/chat/displayName";
 import { formatUtcIso } from "@/lib/date-format";
 import {
@@ -109,12 +111,15 @@ export function WeeklyHighlightCard({
         >
           {t("dashboard.new_materials_count").replace("{count}", String(view.fileCount))}
         </span>
-        <p
-          className="text-sm text-muted-foreground whitespace-pre-wrap break-words [overflow-wrap:anywhere]"
+        {view.explanationState === "failed" ? (
+          <p className="text-xs text-muted-foreground">{t("dashboard.explanation_failed")}</p>
+        ) : null}
+        <div
+          className="text-sm leading-relaxed text-muted-foreground break-words [overflow-wrap:anywhere] [&_a]:text-primary [&_a]:underline [&_p]:my-2 [&_ul]:space-y-3 [&_ul]:list-disc [&_ul]:pl-5"
           data-testid={`weekly-explanation-${view.explanationState}`}
         >
-          {view.explanationText}
-        </p>
+          <ReactMarkdown remarkPlugins={[remarkBreaks]}>{view.explanationText}</ReactMarkdown>
+        </div>
       </div>
 
       {view.filesUnavailable ? (

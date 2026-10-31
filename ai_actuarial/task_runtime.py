@@ -1611,6 +1611,7 @@ class NativeTaskRuntime:
             metadata={
                 "snapshot_id": explanation.get("snapshot_id") or snapshot_id,
                 "explanation_status": explanation.get("status"),
+                "generation_mode": explanation.get("generation_mode"),
                 "result": explanation,
             },
         )

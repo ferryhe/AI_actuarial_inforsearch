@@ -21,6 +21,7 @@ from ai_actuarial.ai_runtime import (
     DEFAULT_AI_FUNCTION_CONFIG,
     FUNCTION_BINDING_TO_SECTION,
     KNOWN_LLM_PROVIDERS,
+    LEGACY_WEEKLY_EXPLANATION_PROMPT,
     OPTIONAL_API_KEY_SENTINEL,
     PROVIDER_STARTUP_ENV_MAP,
     SECTION_TO_FUNCTION_BINDING,
@@ -1432,8 +1433,10 @@ def update_ai_models_config(
                     raise OpsWriteError(
                         "weekly_explanation.timeout_seconds must be positive"
                     ) from exc
-                if timeout_seconds <= 0:
-                    raise OpsWriteError("weekly_explanation.timeout_seconds must be positive")
+                if not 0 < timeout_seconds <= 60:
+                    raise OpsWriteError(
+                        "weekly_explanation.timeout_seconds must be between 0 and 60"
+                    )
                 config_data["ai_config"][function]["timeout_seconds"] = timeout_seconds
             if "temperature" in func_cfg:
                 try:
@@ -1450,10 +1453,16 @@ def update_ai_models_config(
                     max_tokens = int(func_cfg["max_tokens"])
                 except (TypeError, ValueError) as exc:
                     raise OpsWriteError("weekly_explanation.max_tokens must be positive") from exc
-                if max_tokens <= 0:
-                    raise OpsWriteError("weekly_explanation.max_tokens must be positive")
+                if not 0 < max_tokens <= 4096:
+                    raise OpsWriteError("weekly_explanation.max_tokens must be between 1 and 4096")
                 config_data["ai_config"][function]["max_tokens"] = max_tokens
 
+    saved_weekly = config_data["ai_config"].get("weekly_explanation") or {}
+    if saved_weekly.get("prompt") == LEGACY_WEEKLY_EXPLANATION_PROMPT:
+        saved_weekly["prompt"] = DEFAULT_AI_FUNCTION_CONFIG["weekly_explanation"]["prompt"]
+        saved_weekly["prompt_version"] = DEFAULT_AI_FUNCTION_CONFIG["weekly_explanation"][
+            "prompt_version"
+        ]
     _write_config_data(config_data)
     _notify_site_config_updated(bridge, config_data)
     _reload_runtime_caches()

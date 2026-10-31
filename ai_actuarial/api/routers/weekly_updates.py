@@ -11,6 +11,8 @@ from ..services.weekly_explanations import (
     generate_weekly_explanation,
     get_latest_weekly_explanation,
     get_weekly_explanation,
+    preview_weekly_explanation,
+    regenerate_weekly_explanation,
     retry_weekly_explanation,
 )
 from ..services.weekly_updates import (
@@ -82,6 +84,7 @@ class WeeklyExplanationModel(BaseModel):
     explanation_zh: str
     explanation_en: str
     generated_at: str | None
+    generation_mode: Literal["ai", "empty", "fallback"] | None = None
 
 
 class WeeklyExplanationEnvelopeModel(BaseModel):
@@ -162,6 +165,56 @@ def api_weekly_explanation_retry(
     except WeeklySnapshotNotFoundError:
         return _not_found_response()
     return {"explanation": explanation}
+
+
+class WeeklyExplanationMaintenancePreviewModel(BaseModel):
+    snapshot_id: str
+    file_count: int
+    membership_sha256: str
+    candidate_count: int
+    selection: list[dict[str, Any]]
+    budgets: dict[str, Any]
+    budget_error: str | None
+    prompt_version: str | None
+    model_calls: int
+
+
+class WeeklyExplanationMaintenanceModel(WeeklyExplanationEnvelopeModel):
+    receipt: dict[str, Any]
+
+
+@router.get(
+    "/weekly-updates/{snapshot_id}/explanation/preview",
+    response_model=WeeklyExplanationMaintenancePreviewModel,
+)
+def api_weekly_explanation_preview(
+    snapshot_id: str,
+    request: Request,
+    _auth: AuthContext = Depends(require_permissions("tasks.run")),
+):
+    try:
+        return preview_weekly_explanation(db_path=_get_db_path(request), snapshot_id=snapshot_id)
+    except WeeklySnapshotNotFoundError:
+        return _not_found_response()
+
+
+@router.post(
+    "/weekly-updates/{snapshot_id}/explanation/regenerate",
+    response_model=WeeklyExplanationMaintenanceModel,
+)
+def api_weekly_explanation_regenerate(
+    snapshot_id: str,
+    request: Request,
+    _auth: AuthContext = Depends(require_permissions("tasks.run")),
+):
+    try:
+        return regenerate_weekly_explanation(
+            db_path=_get_db_path(request),
+            snapshot_id=snapshot_id,
+            generator=_explanation_generator(request),
+        )
+    except WeeklySnapshotNotFoundError:
+        return _not_found_response()
 
 
 @router.get(
