@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from types import SimpleNamespace
+from typing import Any, ClassVar
 
 import pytest
 
@@ -61,7 +62,7 @@ class Generator:
 
 class MemoryStorage:
     rows = []
-    saved = None
+    saved: ClassVar[dict[str, Any] | None] = None
     snapshot_id = "weekly-current"
 
     def __init__(self, _db):
@@ -85,13 +86,14 @@ class MemoryStorage:
         return self.saved
 
     def claim_weekly_explanation(self, attempt, **_kwargs):
+        saved = self.saved or {}
         if (
             not _kwargs.get("force")
-            and self.saved
-            and (self.saved["status"] == "complete" or self.saved.get("error"))
-            and self.saved["input_fingerprint"] == attempt["input_fingerprint"]
+            and saved
+            and (saved["status"] == "complete" or saved.get("error"))
+            and saved["input_fingerprint"] == attempt["input_fingerprint"]
         ):
-            return {"state": "complete", "explanation": self.saved}
+            return {"state": "complete", "explanation": saved}
         return {"state": "claimed", "claim_token": "claim"}
 
     def finalize_weekly_explanation(self, attempt, **_kwargs):
@@ -876,7 +878,8 @@ def test_real_resolver_service_enforces_cross_context_minimum(monkeypatch, chat_
     assert len(generator.calls) == 1
     encoding = tiktoken.encoding_for_model("gpt-4o-mini")
     actual = sum(len(encoding.encode(message["content"])) for message in generator.calls[0])
-    audit = MemoryStorage.saved["coverage"]
+    saved = MemoryStorage.saved or {}
+    audit = saved["coverage"]
     assert actual + audit["max_output_tokens"] <= 4096
     assert audit["context_tokens"] == 4096
     assert audit["token_upper_bound"] + audit["max_output_tokens"] <= 4096
@@ -906,4 +909,5 @@ def test_real_resolver_too_small_context_falls_back_before_generator(monkeypatch
     )
     assert generator.calls == []
     assert result["generation_mode"] == "fallback"
-    assert MemoryStorage.saved["coverage"]["error_category"] == "configuration"
+    saved = MemoryStorage.saved or {}
+    assert saved["coverage"]["error_category"] == "configuration"
