@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
 import { test } from "vitest";
 import { MarkdownContent, renderMarkdownHtml } from "./MarkdownContent";
-import { buildInterpretationHtml, buildInterpretationMarkdown } from "../pages/FileDetail";
+import { buildInterpretationHtml, buildInterpretationMarkdown } from "../lib/article-interpretation-format";
 
 function render(content: string): string {
   return renderToStaticMarkup(<MarkdownContent content={content} />);

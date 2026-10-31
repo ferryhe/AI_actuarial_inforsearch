@@ -797,7 +797,7 @@ def test_reader_api_returns_only_current_public_latest_fields(tmp_path, monkeypa
     monkeypatch.setattr(
         reader_api,
         "read_interpretations",
-        lambda *a, **kw: [
+        lambda *a, **_kw: [
             {**public, "interpretation_id": "failed", "reader_eligible": False},
             public,
             {**public, "interpretation_id": "older"},
