@@ -16,6 +16,7 @@ import re
 import sys
 import tempfile
 import time
+from contextlib import nullcontext
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -485,6 +486,18 @@ def _normalize_item(
         "source_signature": item.get("source_signature"),
         "result_sha256": item.get("result_sha256"),
     }
+    if item.get("registry_version") is not None:
+        fingerprint_input.update(
+            {
+                key: item.get(key)
+                for key in (
+                    "source_key",
+                    "source_override_key",
+                    "registry_version",
+                    "registry_sha256",
+                )
+            }
+        )
     if published_time is not None:
         fingerprint_input["published_time"] = published_time
     return {
@@ -518,6 +531,12 @@ def _existing_is_current(storage: Any, item: dict[str, Any], kb_ids: list[str]) 
     ):
         return False
     if item.get("source_site") is not None and row.get("source_site") != item["source_site"]:
+        return False
+    if item.get("registry_version") is not None and row.get("source_key") != item.get("source_key"):
+        return False
+    if item.get("registry_version") is not None and row.get("source_override_key") != item.get(
+        "source_override_key"
+    ):
         return False
     if row.get("category") != "AI" or row.get("catalog_status") != "ok":
         return False
@@ -593,6 +612,72 @@ def _existing_content_and_memberships_current(
 def _write_item(
     storage: Any, manager: Any, item: dict[str, Any], data_root: Path, kb_ids: list[str]
 ) -> tuple[dict[str, Any], bool]:
+    if item.get("registry_version") is None:
+        return _write_item_locked(storage, manager, item, data_root, kb_ids)
+    with storage.transaction(immediate=True):
+        storage._conn.execute(
+            "SELECT pg_advisory_xact_lock_shared(hashtextextended(current_schema() || ':source_registry', 0))"
+        )
+        storage._lock_postgres_key("file", item["url"])
+        _check_source_identity(storage, item)
+        from ai_actuarial.source_registry import resolve_source, source_override_key
+
+        existing_override = source_override_key(
+            storage._conn, url=item["url"], raw_sha256=item["raw_sha256"]
+        )
+        if existing_override != item["source_override_key"]:
+            raise ValueError("source projection conflict; use exact correction before replay")
+        if (
+            item["source_override_key"] is None
+            and resolve_source(
+                storage._conn,
+                url=item["url"],
+                raw_source=item.get("source_site"),
+                raw_sha256=item["raw_sha256"],
+            )
+            != item["source_key"]
+        ):
+            raise ValueError("automatic source key does not match current target aliases")
+        receipt_id = None
+        if existing_override is not None:
+            evidence = storage._conn.execute(
+                "SELECT p.correction_receipt_id,r.receipt_json FROM source_projection p "
+                "LEFT JOIN source_correction_receipts r ON r.receipt_id=p.correction_receipt_id "
+                "WHERE p.url=? AND p.raw_sha256=?",
+                (item["url"], item["raw_sha256"]),
+            ).fetchone()
+            receipt_id, receipt = evidence if evidence else (None, None)
+            if (
+                not receipt_id
+                or not receipt
+                or receipt.get("overlay_state_version") != 2
+                or receipt.get("receipt_id") != receipt_id
+                or receipt.get("hub") is not False
+                or receipt.get("apply") is not True
+                or not any(
+                    row.get("url") == item["url"]
+                    and row.get("raw_sha256") == item["raw_sha256"]
+                    and row.get("status") == "applied"
+                    and row.get("new_override")
+                    == {
+                        "exists": True,
+                        "source_key": existing_override,
+                        "correction_receipt_id": receipt_id,
+                    }
+                    for row in receipt.get("records", [])
+                )
+            ):
+                raise ValueError("target exact source requires its confirmed correction receipt")
+        acknowledgement, needs_chunks = _write_item_locked(
+            storage, manager, item, data_root, kb_ids
+        )
+        acknowledgement["source_correction_receipt_id"] = receipt_id
+        return acknowledgement, needs_chunks
+
+
+def _write_item_locked(
+    storage: Any, manager: Any, item: dict[str, Any], data_root: Path, kb_ids: list[str]
+) -> tuple[dict[str, Any], bool]:
     if _existing_is_current(storage, item, kb_ids):
         existing = storage.get_file_with_catalog(item["url"])
         return (
@@ -607,6 +692,7 @@ def _write_item(
                 "metadata_fingerprint": item["metadata_fingerprint"],
                 "status": "already_current",
                 "source_site": existing.get("source_site"),
+                **_source_ack(item, existing),
                 "first_seen": existing.get("first_seen"),
                 "published_time_status": (
                     "verified_source_date"
@@ -688,6 +774,7 @@ def _write_item(
                 "metadata_fingerprint": item["metadata_fingerprint"],
                 "status": "written",
                 "source_site": row.get("source_site"),
+                **_source_ack(item, row),
                 "first_seen": row.get("first_seen"),
                 "metadata_only": True,
                 "published_time_status": (
@@ -783,6 +870,7 @@ def _write_item(
             "metadata_fingerprint": item["metadata_fingerprint"],
             "status": "written",
             "source_site": row.get("source_site"),
+            **_source_ack(item, row),
             "published_time_status": (
                 "verified_source_date"
                 if item.get("published_time") is not None
@@ -1814,6 +1902,73 @@ def apply_cleanup(
         storage.close()
 
 
+def _source_ack(item: dict[str, Any], row: dict[str, Any]) -> dict[str, Any]:
+    return (
+        {
+            "source_key": row.get("source_key"),
+            "source_override_key": row.get("source_override_key"),
+            "registry_version": item["registry_version"],
+            "registry_sha256": item["registry_sha256"],
+        }
+        if item.get("registry_version") is not None
+        else {}
+    )
+
+
+def _check_source_identity(storage: Any, item: dict[str, Any]) -> None:
+    if item.get("registry_version") is None:
+        return
+    from ai_actuarial.source_registry import registry_identity
+
+    if "source_override_key" not in item:
+        raise ValueError("fresh Hub source override state is required")
+    override = item["source_override_key"]
+    if override is not None and (
+        not isinstance(override, str) or override != item.get("source_key")
+    ):
+        raise ValueError("target source override must be null or its effective canonical key")
+    current = registry_identity(storage._conn)
+    if any(item.get(key) != current.get(key) for key in ("registry_version", "registry_sha256")):
+        raise ValueError("target source registry revision/hash does not match the Hub")
+    if not storage._conn.execute(
+        "SELECT 1 FROM canonical_sources WHERE source_key = ?", (item.get("source_key"),)
+    ).fetchone():
+        raise ValueError("unknown target canonical source key")
+
+
+def apply_source_registry(
+    payload: dict[str, Any], *, storage_factory: Callable[..., Any] | None = None
+) -> dict[str, Any]:
+    from ai_actuarial.source_registry import install_registry
+    from ai_actuarial.storage import Storage
+
+    target = payload.get("target")
+    if target not in {"china", "overseas"}:
+        raise ValueError("target must be china or overseas")
+    apply = payload.get("apply") is True
+    profiles = None
+    if storage_factory is None:
+        from ai_actuarial.task_runtime import NativeTaskRuntime
+
+        profiles = _read_target_profiles(NativeTaskRuntime(), target)
+    storage = (
+        storage_factory() if storage_factory else (Storage() if apply else Storage.open_read_only())
+    )
+    try:
+        if apply:
+            with storage.transaction(immediate=True):
+                receipt = install_registry(
+                    storage._conn, payload["registry"], target=target, apply=True
+                )
+        else:
+            receipt = install_registry(
+                storage._conn, payload["registry"], target=target, apply=False
+            )
+        return {**receipt, "knowledge_bases": profiles}
+    finally:
+        storage.close()
+
+
 def apply_batch(
     payload: dict[str, Any],
     *,
@@ -1867,6 +2022,8 @@ def apply_batch(
     db_path = runtime._resolve_db_path(config)
     storage = storage_factory(db_path, data_root=runtime.data_root)
     try:
+        for item in items:
+            _check_source_identity(storage, item)
         manager = manager_factory(storage)
         knowledge_bases = _target_knowledge_bases(manager, target)
         from ai_actuarial.capacity import capacity_status
@@ -1892,9 +2049,19 @@ def apply_batch(
                         data_root, target, list(knowledge_bases), [item["url"]]
                     )
             try:
-                ack, needs_chunks = _write_item(
-                    storage, manager, item, data_root, list(knowledge_bases)
-                )
+                with (
+                    storage.transaction(immediate=True)
+                    if item.get("registry_version") is not None
+                    else nullcontext()
+                ):
+                    if item.get("registry_version") is not None:
+                        storage._conn.execute(
+                            "SELECT pg_advisory_xact_lock_shared(hashtextextended(current_schema() || ':source_registry', 0))"
+                        )
+                        _check_source_identity(storage, item)
+                    ack, needs_chunks = _write_item(
+                        storage, manager, item, data_root, list(knowledge_bases)
+                    )
                 acknowledgements.append(ack)
                 metadata_ready_pending = metadata_ready_pending or (
                     not needs_chunks and ack.get("status") == "written"
@@ -1953,7 +2120,9 @@ def main() -> int:
     payload: Any = None
     try:
         payload = json.load(sys.stdin)
-        if isinstance(payload, dict) and payload.get("operation") == "retire_non_ai_primary":
+        if isinstance(payload, dict) and payload.get("operation") == "sync_source_registry":
+            result = apply_source_registry(payload)
+        elif isinstance(payload, dict) and payload.get("operation") == "retire_non_ai_primary":
             result = apply_cleanup(payload)
         elif (
             isinstance(payload, dict) and payload.get("operation") == "backfill_ai_primary_metadata"

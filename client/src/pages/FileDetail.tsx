@@ -42,6 +42,9 @@ interface FileData {
   title: string;
   original_filename: string;
   source_site: string;
+  source_key?: string;
+  source_name_zh?: string;
+  source_name_en?: string;
   source_page_url?: string;
   content_type: string;
   bytes: number;
@@ -879,7 +882,7 @@ export default function FileDetail() {
           <table className="w-full text-sm">
             <tbody className="divide-y divide-border">
               <MetaRow label={t("fv.source_site")} testId="text-source">
-                {file.source_site || "-"}
+                {(lang === "zh" ? file.source_name_zh : file.source_name_en) || (lang === "zh" ? "来源待确认" : "Source pending confirmation")}
               </MetaRow>
               <MetaRow label={t("fv.orig_url")} testId="text-url">
                 {file.source_site === "Local Import" || file.source_site === "File Import" ? (

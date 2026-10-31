@@ -303,6 +303,8 @@ api_get_kb_bindings  # reason: FastAPI registers this decorated route.
 api_create_index_task  # reason: FastAPI registers this decorated route.
 
 from ai_actuarial.api.routers.read import (
+    SourceOption,
+    SourcesResponse,
     api_categories,
     api_file_detail,
     api_file_markdown,
@@ -496,3 +498,10 @@ from ai_actuarial.api.services.auth import CreateAuthTokenRequest
 CreateAuthTokenRequest.model_config  # reason: Pydantic reads this request-schema configuration.
 CreateAuthTokenRequest.nonempty_subject  # reason: Pydantic invokes this decorated field validator.
 CreateAuthTokenRequest.validate_expiry  # reason: Pydantic invokes this decorated model validator.
+
+# FastAPI/Pydantic serialize these declared source-response fields by name.
+
+SourceOption.source_name_en  # reason: Pydantic source-option response/OpenAPI field.
+SourceOption.source_name_zh  # reason: Pydantic source-option response/OpenAPI field.
+SourceOption.aliases  # reason: Pydantic verified bookmark-alias response field.
+SourcesResponse.source_options  # reason: Pydantic source-list response/OpenAPI field.

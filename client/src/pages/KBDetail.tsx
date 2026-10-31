@@ -154,6 +154,9 @@ interface SelectableFile {
   title?: string;
   category?: string;
   source_site?: string;
+  source_key?: string;
+  source_name_zh?: string;
+  source_name_en?: string;
   chunk_set_id?: string;
   chunk_count?: number;
   chunk_profile_id?: string;
@@ -320,7 +323,7 @@ function displayTime(value?: string | null) {
 }
 
 export default function KBDetail() {
-  const { t } = useTranslation();
+  const { t, lang } = useTranslation();
   const { permissions } = useAuth();
   const canManageCatalog = permissions.includes("catalog.write");
   const canRunKnowledgeTasks = permissions.includes("tasks.run");
@@ -1162,6 +1165,9 @@ export default function KBDetail() {
           title: file.title,
           category: file.category,
           source_site: file.source_site,
+          source_key: file.source_key,
+          source_name_zh: file.source_name_zh,
+          source_name_en: file.source_name_en,
           chunk_set_id: file.chunk_set_id,
           chunk_count: file.chunk_count,
           chunk_profile_id: file.chunk_profile_id,
@@ -2133,7 +2139,7 @@ export default function KBDetail() {
                               {file.category}
                             </span>
                           )}
-                          {file.source_site && <span>{file.source_site}</span>}
+                          {<span>{(lang === "zh" ? file.source_name_zh : file.source_name_en) || (lang === "zh" ? "来源待确认" : "Source pending confirmation")}</span>}
                           {file.chunk_profile_name && <span className="font-mono">{file.chunk_profile_name}</span>}
                           {file.chunk_count != null && <span>{file.chunk_count} chunks</span>}
                         </div>

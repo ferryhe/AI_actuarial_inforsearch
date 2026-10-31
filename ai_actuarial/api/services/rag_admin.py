@@ -3694,6 +3694,9 @@ def _kb_file_customer_projection(file_payload: Mapping[str, Any]) -> dict[str, A
         "title": file_payload.get("title", ""),
         "category": file_payload.get("category", ""),
         "source_site": file_payload.get("source_site", ""),
+        **{
+            key: file_payload.get(key) for key in ("source_key", "source_name_zh", "source_name_en")
+        },
     }
 
 
@@ -5329,6 +5332,13 @@ def list_knowledge_base_files(
             [*params, limit, offset],
         )
         rows = [dict(zip([col[0] for col in cursor.description], row)) for row in cursor.fetchall()]
+        for row in rows:
+            projected = storage._project_source(
+                {"url": row["file_url"], "source_site": row["source_site"]}
+            )
+            row.update(
+                {key: projected[key] for key in ("source_key", "source_name_zh", "source_name_en")}
+            )
         if diagnostics and rows:
             urls = [row["file_url"] for row in rows]
             placeholders = ",".join("?" for _ in urls)
@@ -5651,7 +5661,7 @@ def list_selectable_files(*, db_path: str, query: Mapping[str, Any]) -> dict[str
                         "chunk_count": row[11] or 0,
                     }
                 )
-            files.append(item)
+            files.append(storage._project_source(item))
         return {
             "files": files,
             "total": total,

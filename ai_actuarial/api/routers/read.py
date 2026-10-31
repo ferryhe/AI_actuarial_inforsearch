@@ -4,6 +4,7 @@ from urllib.parse import unquote
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
 from ..deps import AuthContext, require_permissions
 from ..services.read import (
@@ -16,6 +17,20 @@ from ..services.read import (
     list_sources,
     parse_file_list_query,
 )
+
+
+class SourceOption(BaseModel):
+    source_key: str
+    source_name_zh: str
+    source_name_en: str
+    count: int
+    aliases: list[str]
+
+
+class SourcesResponse(BaseModel):
+    sources: list[str]
+    source_options: list[SourceOption]
+
 
 router = APIRouter()
 
@@ -89,11 +104,11 @@ def api_stats(
     )
 
 
-@router.get("/sources")
+@router.get("/sources", response_model=SourcesResponse)
 def api_sources(
     request: Request,
     _auth: AuthContext = Depends(require_permissions("files.read")),
-) -> dict[str, list[str]]:
+) -> dict[str, object]:
     return list_sources(db_path=_get_db_path(request))
 
 

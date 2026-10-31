@@ -33,6 +33,7 @@ from ai_actuarial.content_hub import (
     save_live_enrichment,
 )
 from ai_actuarial.postgres_import import _source_snapshot
+from ai_actuarial.source_registry import correct_sources, install_registry, resolve_source
 from ai_actuarial.source_stage import (
     SOURCE_STAGE_FORMAT,
     SourceStageError,
@@ -525,10 +526,172 @@ def test_source_stage_preserves_nul_blob_rowid_and_rejects_conflicts(
         connection.close()
 
 
+@pytest.mark.parametrize(
+    ("catalog_source", "expected_key"),
+    [
+        (None, "cas"),
+        ("Casualty Actuarial Society (CAS)", "cas"),
+        ("SOA", "pending"),
+        ("local_docling", "cas"),
+    ],
+)
+def test_legacy_local_publisher_is_consistent_across_hub_readers_and_overlay(
+    tmp_path: Path, monkeypatch, catalog_source: str | None, expected_key: str
+) -> None:
+    hub_url, schema = _isolated_database_schema(tmp_path, "legacy-publisher-hub")
+    apply_content_hub_schema(hub_url, schema=schema)
+    seed = json.loads(
+        (Path(__file__).parents[1] / "config/source_registry_seed.json").read_text(encoding="utf-8")
+    )
+    with psycopg2.connect(hub_url) as connection:
+        install_registry(connection, seed, target="hub", apply=True)
+
+    url = "file:///review435-publisher.pdf"
+    raw = b"synthetic legacy publisher original bytes"
+    digest = hashlib.sha256(raw).hexdigest()
+    markdown = "# AI publisher fixture"
+    legacy_snapshots = []
+    for snapshot_name, file_source, observation_source in (
+        ("overseas", "SOA", "SOA"),
+        ("china", "CAS", catalog_source),
+    ):
+        source_path = tmp_path / f"legacy-{snapshot_name}.db"
+        legacy = Storage._legacy_sqlite_schema_for_validation(source_path)
+        try:
+            legacy.insert_file(
+                url,
+                digest,
+                "AI publisher fixture",
+                file_source,
+                None,
+                "fixture.pdf",
+                "fixture.pdf",
+                len(raw),
+                "application/pdf",
+            )
+            file_id = legacy._conn.execute("SELECT id FROM files WHERE url=?", (url,)).fetchone()[0]
+            legacy._conn.execute("ALTER TABLE catalog_items ADD COLUMN source_site TEXT")
+            legacy._conn.execute(
+                "INSERT INTO catalog_items(file_url,sha256,pipeline_version,status,markdown_content,source_site) "
+                "VALUES(?,?,?,'ok',?,?)",
+                (url, digest, "fixture", markdown, observation_source),
+            )
+            legacy._conn.commit()
+        finally:
+            legacy.close()
+        snapshot, _metadata, counts, _snapshot_sha = _source_snapshot(source_path)
+        snapshot.close()
+        artifact_root = tmp_path / "artifacts"
+        manifest_path, _ = _write_manifest(source_path, snapshot_name, artifact_root, raw, counts)
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["files"] = [
+            {**manifest["files"][0], "legacy_id": file_id, "url": url, "deleted_at": None}
+        ]
+        manifest["indexes"] = []
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        imported = import_content_snapshot(
+            source_path,
+            manifest_path,
+            artifact_root,
+            tmp_path / "data",
+            hub_url,
+            schema=schema,
+            expected_source_name=snapshot_name,
+        )
+        assert imported["already_imported"] is False
+        legacy_snapshots.append((source_path, source_path.read_bytes()))
+    exact = content_hub_read_version(url, digest, hub_url, schema=schema)
+    package = {
+        "title": "AI publisher fixture",
+        "summary": "AI publisher fixture",
+        "category": "AI",
+        "keywords": ["AI"],
+    }
+    save_live_enrichment(
+        content_version_id=exact["content_version_id"],
+        markdown_text_variant_id=exact["markdown_text_variant_id"],
+        markdown_sha256=exact["markdown_sha256"],
+        primary_category="AI",
+        bilingual_metadata={"zh": package, "en": package},
+        categories=[{"key": "AI", "evidence": ["AI publisher fixture"]}],
+        date_facts={"publication_date": None, "revision_date": None, "document_version_date": None},
+        date_review_status="complete",
+        date_review_reason=None,
+        date_review_unresolved=[],
+        recipe="publisher-fixture",
+        run_id="publisher-fixture",
+        database_url=hub_url,
+        schema=schema,
+    )
+    immutable = _content_hub_state(hub_url, schema)
+
+    def reader_projection():
+        exact_row = content_hub_read_version(url, digest, hub_url, schema=schema)
+        listed = content_hub_list_ai_versions(database_url=hub_url, schema=schema)["versions"][0]
+        for field in ("source_key", "source_name_zh", "source_name_en", "url", "raw_sha256"):
+            assert exact_row[field] == listed[field]
+        assert exact_row["annotation"]["source_signature"] == listed["source_signature"]
+        assert exact_row["markdown"] == markdown
+        return exact_row
+
+    with psycopg2.connect(hub_url) as connection:
+        assert resolve_source(connection, url=url, raw_source="CAS", raw_sha256=digest) == "cas"
+    current = reader_projection()
+    assert current["source_key"] == expected_key
+    if expected_key == "cas":
+        assert current["source_name_en"] == "Casualty Actuarial Society (CAS)"
+
+    import ai_actuarial.local_collection_runtime as runtime
+
+    monkeypatch.setattr(
+        runtime,
+        "content_hub_read_version",
+        lambda source_url, source_sha, database: content_hub_read_version(
+            source_url, source_sha, database, schema=schema
+        ),
+    )
+    refreshed, error = runtime._refresh_pending_target_item(
+        {"url": url, "raw_sha256": digest, "content_version_id": current["content_version_id"]},
+        hub_url,
+    )
+    assert error is None
+    assert refreshed["source_key"] == expected_key
+    with psycopg2.connect(hub_url) as connection:
+        preview = correct_sources(
+            connection,
+            [
+                {
+                    "url": url,
+                    "raw_sha256": digest,
+                    "raw_source_site": "CAS",
+                    "old_source_key": None,
+                    "new_source_key": "soa",
+                    "reason": "synthetic reviewed article evidence",
+                    "evidence": ["synthetic original cover publisher"],
+                }
+            ],
+            hub=True,
+            apply=False,
+        )
+        applied = correct_sources(
+            connection,
+            preview["request_body"]["records"],
+            hub=True,
+            apply=True,
+            request_id=preview["request_id"],
+            reconfirm_same_key=preview["request_body"]["reconfirm_same_key"],
+        )
+        assert applied["records"][0]["status"] == "applied"
+        assert resolve_source(connection, url=url, raw_source="CAS", raw_sha256=digest) == "soa"
+    assert reader_projection()["source_key"] == "soa"
+    assert _content_hub_state(hub_url, schema) == immutable
+    assert all(path.read_bytes() == payload for path, payload in legacy_snapshots)
+
+
 def test_content_hub_import_keeps_alias_versions_text_and_source_namespaces(tmp_path: Path) -> None:
     hub_url, schema = _isolated_database_schema(tmp_path, "hub")
     assert content_hub_schema_plan(hub_url, schema=schema)["current_version"] == 0
-    assert apply_content_hub_schema(hub_url, schema=schema)["version"] == 3
+    assert apply_content_hub_schema(hub_url, schema=schema)["version"] == 4
     artifact_root = tmp_path / "shared-hub-root"
     first_path = tmp_path / "overseas-v16.db"
     second_path = tmp_path / "china-v16.db"
@@ -757,7 +920,7 @@ def test_live_capture_migration_preserves_immutable_v16_and_existing_operational
         connection.close()
 
     monkeypatch.setattr(content_hub, "_MIGRATION_DIR", repository_migrations)
-    assert apply_content_hub_schema(hub_url, schema=schema)["version"] == 3
+    assert apply_content_hub_schema(hub_url, schema=schema)["version"] == 4
     connection = psycopg2.connect(hub_url)
     try:
         with connection.cursor() as cursor:
@@ -1696,7 +1859,7 @@ def test_import_rejects_corrupt_present_cas_without_mutating_hub_or_source_stage
     hub_before = _content_hub_state(hub_url, hub_schema)
     stage_before = _source_stage_state(stage_url, stage_schema)
     assert all(
-        state["count"] == (3 if table == "schema_migrations" else 0)
+        state["count"] == (content_hub.HUB_SCHEMA_VERSION if table == "schema_migrations" else 0)
         for table, state in hub_before.items()
     )
     assert stage_before["actual_counts"] == stage_before["stored_counts"]
@@ -1752,7 +1915,7 @@ def test_import_rolls_back_when_sqlite_source_changes_after_canonical_rows_are_w
     hub_before = _content_hub_state(hub_url, hub_schema)
     stage_before = _source_stage_state(stage_url, stage_schema)
     assert all(
-        state["count"] == (3 if table == "schema_migrations" else 0)
+        state["count"] == (content_hub.HUB_SCHEMA_VERSION if table == "schema_migrations" else 0)
         for table, state in hub_before.items()
     )
     assert stage_before["actual_counts"] == stage_before["stored_counts"]

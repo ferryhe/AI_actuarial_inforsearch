@@ -153,7 +153,23 @@ def test_customer_page_preserves_safe_projection_without_chunk_diagnostics(paged
     assert page["total"] == 1101
     assert [row["file_url"] for row in page["items"]] == urls[50:100]
     assert all(
-        set(row) == {"file_url", "title", "category", "source_site"} for row in page["items"]
+        set(row)
+        == {
+            "file_url",
+            "title",
+            "category",
+            "source_site",
+            "source_key",
+            "source_name_en",
+            "source_name_zh",
+        }
+        for row in page["items"]
+    )
+    assert all(
+        row["source_key"] == "pending"
+        and row["source_name_en"] == "Source pending confirmation"
+        and row["source_name_zh"] == "来源待确认"
+        for row in page["items"]
     )
     assert "profile_summary" not in page
 

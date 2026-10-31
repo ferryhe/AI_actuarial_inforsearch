@@ -14,6 +14,7 @@ Tests the following issues fixed:
 10. Filename exclusion logic
 """
 
+import json
 import os
 import tempfile
 import time
@@ -30,6 +31,7 @@ from ai_actuarial.catalog_incremental import (
     _upsert_catalog_row,
 )
 from ai_actuarial.crawler import Crawler
+from ai_actuarial.source_registry import install_registry
 from ai_actuarial.storage import Storage
 from tests.postgres_helpers import postgres_url_for_path
 
@@ -260,25 +262,36 @@ class TestStorageAbstraction(unittest.TestCase):
         count = self.storage.get_cataloged_count()
         self.assertEqual(count, 1)
 
+    def _seed_source_registry(self):
+        seed_path = Path(__file__).parents[1] / "config" / "source_registry_seed.json"
+        with self.storage.transaction():
+            install_registry(
+                self.storage._conn,
+                json.loads(seed_path.read_text(encoding="utf-8")),
+                target="test",
+                apply=True,
+            )
+
     def test_get_sources_count(self):
-        """Test get_sources_count method."""
+        """Count canonical publishers of visible articles, not raw collector labels."""
+        self._seed_source_registry()
         self.storage.insert_file(
-            url="http://test.com/file1.pdf",
+            url="https://www.casact.org/file1.pdf",
             sha256="hash1",
             title="File 1",
-            source_site="test.com",
-            source_page_url="http://test.com",
+            source_site="Quick Check",
+            source_page_url="https://www.casact.org",
             original_filename="file1.pdf",
             local_path="/tmp/file1.pdf",
             bytes=1024,
             content_type="application/pdf",
         )
         self.storage.insert_file(
-            url="http://example.com/file2.pdf",
+            url="https://www.soa.org/file2.pdf",
             sha256="hash2",
             title="File 2",
-            source_site="example.com",
-            source_page_url="http://example.com",
+            source_site="URL Collection",
+            source_page_url="https://www.soa.org",
             original_filename="file2.pdf",
             local_path="/tmp/file2.pdf",
             bytes=2048,
@@ -289,13 +302,14 @@ class TestStorageAbstraction(unittest.TestCase):
         self.assertEqual(count, 2)
 
     def test_get_unique_sources(self):
-        """Test get_unique_sources method."""
+        """Return stable publisher keys resolved from the verified original host."""
+        self._seed_source_registry()
         self.storage.insert_file(
-            url="http://test.com/file1.pdf",
+            url="https://www.casact.org/file1.pdf",
             sha256="hash1",
             title="File 1",
-            source_site="test.com",
-            source_page_url="http://test.com",
+            source_site="Quick Check",
+            source_page_url="https://www.casact.org",
             original_filename="file1.pdf",
             local_path="/tmp/file1.pdf",
             bytes=1024,
@@ -303,7 +317,7 @@ class TestStorageAbstraction(unittest.TestCase):
         )
 
         sources = self.storage.get_unique_sources()
-        self.assertIn("test.com", sources)
+        self.assertEqual(sources, ["cas"])
 
     def test_get_unique_categories(self):
         """Test get_unique_categories method."""

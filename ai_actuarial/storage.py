@@ -21,6 +21,13 @@ from ai_actuarial.postgres import (
     resolve_database_config,
 )
 from ai_actuarial.shared_auth import AuthTokenRecord, canonical_token_group
+from ai_actuarial.source_registry import (
+    resolve_bookmark,
+    resolve_source,
+    source_fields,
+    source_override_key,
+    source_sql,
+)
 
 AGENTIC_READY_PUBLICATION_PROFILES = frozenset({"general", "regulation", "formula"})
 
@@ -1865,6 +1872,32 @@ class Storage:
             self.mark_agentic_ready_source_event_for_kb(kb_id=kb_id, reason=reason)
         return kb_ids
 
+    def _source_key_for_write(self, url: str, sha256: str, raw_source: str) -> str | None:
+        if self._schema_only:
+            return None
+        key = resolve_source(self._conn, url=url, raw_source=raw_source, raw_sha256=sha256)
+        row = self._conn.execute(
+            "SELECT 1 FROM canonical_sources WHERE source_key = ?", (key,)
+        ).fetchone()
+        return key if row else None
+
+    def _project_source(self, row: dict) -> dict:
+        if self._schema_only:
+            return row
+        identity = self._conn.execute(
+            "SELECT sha256, source_site FROM files WHERE url = ?", (row["url"],)
+        ).fetchone()
+        digest = identity[0] if identity else row.get("sha256")
+        raw_source = identity[1] if identity else row.get("source_site")
+        key = resolve_source(self._conn, url=row["url"], raw_source=raw_source, raw_sha256=digest)
+        return {
+            **row,
+            **source_fields(self._conn, key),
+            "source_override_key": source_override_key(
+                self._conn, url=row["url"], raw_sha256=digest
+            ),
+        }
+
     def insert_file(
         self,
         url: str,
@@ -1929,6 +1962,11 @@ class Storage:
                     ts,
                 ),
             )
+            if not self._schema_only:
+                self._conn.execute(
+                    "UPDATE files SET source_key = ? WHERE url = ?",
+                    (self._source_key_for_write(url, sha256, source_site), url),
+                )
             self._mark_ready_data_builder_metadata_change(file_url=url, before=before)
 
     def upsert_file(
@@ -1950,6 +1988,13 @@ class Storage:
         with self.transaction(immediate=True):
             self._lock_postgres_key("file", url)
             before = self._ready_data_builder_metadata_snapshot(url)
+            old = (
+                self._conn.execute(
+                    "SELECT sha256, source_key FROM files WHERE url = ?", (url,)
+                ).fetchone()
+                if not self._schema_only
+                else None
+            )
             ts = self.now()
             self._conn.execute(
                 """
@@ -1994,6 +2039,13 @@ class Storage:
                     content_kind,
                 ),
             )
+            if not self._schema_only:
+                key = (
+                    old[1]
+                    if old and old[0] == sha256 and old[1] is not None
+                    else self._source_key_for_write(url, sha256, source_site)
+                )
+                self._conn.execute("UPDATE files SET source_key = ? WHERE url = ?", (key, url))
             self._mark_ready_data_builder_metadata_change(file_url=url, before=before)
 
     def save_manifest_raw(
@@ -2692,27 +2744,35 @@ class Storage:
         return cur.fetchone()[0]
 
     def get_sources_count(self) -> int:
-        """Get count of unique source sites.
+        return len(self.get_source_options())
 
-        Returns:
-            Number of unique sources
-        """
-        cur = self._conn.execute("SELECT COUNT(DISTINCT source_site) FROM files")
-        return cur.fetchone()[0]
+    def get_source_options(self) -> list[dict]:
+        if self._schema_only:
+            return []
+        rows = self._conn.execute(f"""
+            SELECT {source_sql()} AS canonical_key, COUNT(*) FROM files f
+            WHERE f.local_path IS NOT NULL AND f.local_path != '' AND f.deleted_at IS NULL
+            GROUP BY canonical_key ORDER BY canonical_key
+        """).fetchall()
+        options = []
+        for row in rows:
+            aliases = self._conn.execute(
+                "SELECT alias_norm FROM source_aliases WHERE source_key = ? AND alias_kind='name' AND resolution_status='verified' ORDER BY alias_norm",
+                (row[0],),
+            ).fetchall()
+            fields = source_fields(self._conn, row[0])
+            tokens = [alias[0] for alias in aliases] + [
+                fields["source_name_zh"].lower(),
+                fields["source_name_en"].lower(),
+            ]
+            unambiguous = sorted(
+                {token for token in tokens if resolve_bookmark(self._conn, token)[0] == row[0]}
+            )
+            options.append({**fields, "count": row[1], "aliases": unambiguous})
+        return options
 
     def get_unique_sources(self) -> list[str]:
-        """Get list of unique source sites.
-
-        Returns:
-            List of source site names
-        """
-        cur = self._conn.execute("""
-            SELECT DISTINCT source_site 
-            FROM files 
-            WHERE source_site IS NOT NULL 
-            ORDER BY source_site
-        """)
-        return [row[0] for row in cur.fetchall()]
+        return [row["source_key"] for row in self.get_source_options()]
 
     def get_unique_categories(self) -> list[str]:
         """Get list of unique categories from catalog.
@@ -2927,6 +2987,10 @@ class Storage:
         if order_by not in self._QUERY_ORDER_COLUMN_MAP:
             order_by = "last_seen"  # default
         order_column = self._QUERY_ORDER_COLUMN_MAP[order_by]
+        if order_by == "source_site" and not self._schema_only:
+            order_column = (
+                f"(SELECT s.name_en FROM canonical_sources s WHERE s.source_key = {source_sql()})"
+            )
 
         # Validate order_dir to prevent SQL injection
         if order_dir.lower() not in ["asc", "desc"]:
@@ -2999,8 +3063,13 @@ class Storage:
             params.extend([search_term] * 13)
 
         if source:
-            filters.append("LOWER(f.source_site) LIKE ?")
-            params.append(f"%{source.lower()}%")
+            if self._schema_only:
+                filters.append("lower(trim(f.source_site)) = ?")
+                params.append(source.strip().lower())
+            else:
+                key, _ = resolve_bookmark(self._conn, source)
+                filters.append(f"{source_sql()} = ?")
+                params.append(key or "__unresolved_bookmark__")
 
         if category:
             join_clause = catalog_join_clause
@@ -3103,7 +3172,7 @@ class Storage:
                 "rag_indexed_at": row[23],
                 "bilingual_metadata": self._decode_bilingual_metadata(row[24]),
             }
-            files.append(file_dict)
+            files.append(self._project_source(file_dict))
 
         return files, total
 
@@ -3867,37 +3936,39 @@ class Storage:
         if not row:
             return None
 
-        return {
-            "url": row[0],
-            "sha256": row[1],
-            "title": row[2],
-            "source_site": row[3],
-            "source_page_url": row[4],
-            "original_filename": row[5],
-            "local_path": row[6],
-            "bytes": row[7],
-            "content_type": row[8],
-            "last_modified": row[9],
-            "etag": row[10],
-            "published_time": row[11],
-            "first_seen": row[12],
-            "last_seen": row[13],
-            "crawl_time": row[14],
-            "deleted_at": row[15],
-            "category": row[16],
-            "summary": row[17],
-            "keywords": json.loads(row[18]) if row[18] else [],
-            "catalog_status": row[19],
-            "markdown_content": row[20],
-            "markdown_updated_at": row[21],
-            "markdown_source": row[22],
-            "catalog_version": row[23],
-            "catalog_processed_at": row[24],
-            "catalog_updated_at": row[25],
-            "rag_chunk_count": row[26] or 0,
-            "rag_indexed_at": row[27],
-            "bilingual_metadata": self._decode_bilingual_metadata(row[28]),
-        }
+        return self._project_source(
+            {
+                "url": row[0],
+                "sha256": row[1],
+                "title": row[2],
+                "source_site": row[3],
+                "source_page_url": row[4],
+                "original_filename": row[5],
+                "local_path": row[6],
+                "bytes": row[7],
+                "content_type": row[8],
+                "last_modified": row[9],
+                "etag": row[10],
+                "published_time": row[11],
+                "first_seen": row[12],
+                "last_seen": row[13],
+                "crawl_time": row[14],
+                "deleted_at": row[15],
+                "category": row[16],
+                "summary": row[17],
+                "keywords": json.loads(row[18]) if row[18] else [],
+                "catalog_status": row[19],
+                "markdown_content": row[20],
+                "markdown_updated_at": row[21],
+                "markdown_source": row[22],
+                "catalog_version": row[23],
+                "catalog_processed_at": row[24],
+                "catalog_updated_at": row[25],
+                "rag_chunk_count": row[26] or 0,
+                "rag_indexed_at": row[27],
+                "bilingual_metadata": self._decode_bilingual_metadata(row[28]),
+            }
+        )
 
     def update_file_metadata(
         self,

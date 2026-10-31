@@ -325,6 +325,7 @@ python -m ai_actuarial.agentic_rag.eval --mode agentic --cases eval/agentic_case
 - [AI Provider Credentials](docs/guides/AI_PROVIDER_CREDENTIALS.md)
 - [AI Model Catalog](docs/guides/AI_MODEL_CATALOG.md)
 - [Agentic RAG Guide](docs/guides/AGENTIC_RAG.md)
+- [Publisher source registry and exact correction](docs/SOURCE_REGISTRY.md)
 - [Local Content Hub and Source Staging](docs/guides/CONTENT_HUB.md)
 - [Rate Limiting](docs/rate-limit-config.md)
 - [Production Security Config](docs/guides/PRODUCTION_SECURITY_CONFIG.md)

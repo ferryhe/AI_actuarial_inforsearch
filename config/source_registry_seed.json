@@ -1,0 +1,1344 @@
+{
+  "registry_version": 1,
+  "sources": [
+    {
+      "source_key": "pending",
+      "name_zh": "来源待确认",
+      "name_en": "Source pending confirmation",
+      "status": "active",
+      "official_url": null,
+      "evidence": [
+        "No verified original publisher; raw provenance is retained."
+      ]
+    },
+    {
+      "source_key": "cas",
+      "name_zh": "北美产险精算协会",
+      "name_en": "Casualty Actuarial Society (CAS)",
+      "status": "active",
+      "official_url": "https://www.casact.org/",
+      "evidence": [
+        "https://www.casact.org/about"
+      ]
+    },
+    {
+      "source_key": "actuarial_society_kenya",
+      "name_zh": "肯尼亚精算协会",
+      "name_en": "The Actuarial Society of Kenya (TASK)",
+      "status": "active",
+      "official_url": "https://www.actuarieskenya.or.ke/",
+      "evidence": [
+        "https://www.actuarieskenya.or.ke/about/contact"
+      ]
+    },
+    {
+      "source_key": "aae",
+      "name_zh": "欧洲精算协会",
+      "name_en": "Actuarial Association of Europe",
+      "status": "active",
+      "official_url": "https://actuary.eu/",
+      "evidence": [
+        "https://actuary.eu/about-the-aae/about-the-aae/"
+      ]
+    },
+    {
+      "source_key": "aict",
+      "name_zh": "中华民国精算学会",
+      "name_en": "Actuarial Institute of Chinese Taipei",
+      "status": "active",
+      "official_url": "https://airc.org.tw/",
+      "evidence": [
+        "https://en.airc.org.tw/"
+      ]
+    },
+    {
+      "source_key": "ashk",
+      "name_zh": "香港精算学会",
+      "name_en": "Actuarial Society of Hong Kong",
+      "status": "active",
+      "official_url": "https://actuaries.org.hk/",
+      "evidence": [
+        "https://actuaries.org.hk/pages/1/About%20the%20ASHK"
+      ]
+    },
+    {
+      "source_key": "assa",
+      "name_zh": "南非精算学会",
+      "name_en": "Actuarial Society of South Africa",
+      "status": "active",
+      "official_url": "https://actuarialsociety.org.za/",
+      "evidence": [
+        "https://www.actuarialsociety.org.za/about-us/"
+      ]
+    },
+    {
+      "source_key": "actuaries_institute_australia",
+      "name_zh": "澳大利亚精算师协会",
+      "name_en": "Actuaries Institute",
+      "status": "active",
+      "official_url": "https://actuaries.asn.au/",
+      "evidence": [
+        "https://www.actuaries.asn.au/about/"
+      ]
+    },
+    {
+      "source_key": "iaj",
+      "name_zh": "日本精算师会",
+      "name_en": "The Institute of Actuaries of Japan",
+      "status": "active",
+      "official_url": "https://actuaries.jp/",
+      "evidence": [
+        "https://www.actuaries.jp/english/intro/"
+      ]
+    },
+    {
+      "source_key": "caa",
+      "name_zh": "中国精算师协会",
+      "name_en": "China Association of Actuaries",
+      "status": "active",
+      "official_url": "https://e-caa.org.cn/",
+      "evidence": [
+        "https://www.e-caa.org.cn/associationIntroduction/1"
+      ]
+    },
+    {
+      "source_key": "iaa",
+      "name_zh": "国际精算协会",
+      "name_en": "International Actuarial Association",
+      "status": "active",
+      "official_url": "https://actuaries.org/",
+      "evidence": [
+        "https://actuaries.org/mission-and-vision/"
+      ]
+    },
+    {
+      "source_key": "cia",
+      "name_zh": "加拿大精算师协会",
+      "name_en": "Canadian Institute of Actuaries",
+      "status": "active",
+      "official_url": "https://cia-ica.ca/",
+      "evidence": [
+        "https://www.cia-ica.ca/"
+      ]
+    },
+    {
+      "source_key": "soa",
+      "name_zh": "美国精算师协会",
+      "name_en": "Society of Actuaries",
+      "status": "active",
+      "official_url": "https://soa.org/",
+      "evidence": [
+        "https://www.soa.org/about/purpose/"
+      ]
+    },
+    {
+      "source_key": "conference_consulting_actuaries",
+      "name_zh": "咨询精算师协会",
+      "name_en": "Conference of Consulting Actuaries",
+      "status": "active",
+      "official_url": "https://ccactuaries.org/",
+      "evidence": [
+        "https://www.ccactuaries.org/about-cca/"
+      ]
+    },
+    {
+      "source_key": "iai",
+      "name_zh": "印度精算师协会",
+      "name_en": "Institute of Actuaries of India",
+      "status": "active",
+      "official_url": "https://actuariesindia.org/",
+      "evidence": [
+        "https://actuariesindia.org/about-iai"
+      ]
+    },
+    {
+      "source_key": "dav",
+      "name_zh": "德国精算师协会",
+      "name_en": "Deutsche Aktuarvereinigung",
+      "status": "active",
+      "official_url": "https://aktuar.de/",
+      "evidence": [
+        "https://aktuar.de/en/about-us/profession/associations/dav/"
+      ]
+    },
+    {
+      "source_key": "spain_actuaries",
+      "name_zh": "西班牙精算师协会",
+      "name_en": "Instituto de Actuarios Españoles",
+      "status": "active",
+      "official_url": "https://actuarios.org/",
+      "evidence": [
+        "https://actuarios.org/"
+      ]
+    },
+    {
+      "source_key": "korea_actuaries",
+      "name_zh": "韩国精算师协会",
+      "name_en": "Institute of Actuaries of Korea",
+      "status": "active",
+      "official_url": "https://actuary.or.kr/",
+      "evidence": [
+        "https://www.actuary.or.kr/about/introSummaryAss.do"
+      ]
+    },
+    {
+      "source_key": "brazil_actuaries",
+      "name_zh": "巴西精算师协会",
+      "name_en": "Instituto Brasileiro de Atuária",
+      "status": "active",
+      "official_url": "https://atuarios.org.br/",
+      "evidence": [
+        "https://atuarios.org.br/"
+      ]
+    },
+    {
+      "source_key": "conac",
+      "name_zh": "墨西哥精算师协会",
+      "name_en": "Colegio Nacional de Actuarios",
+      "status": "active",
+      "official_url": "https://conacmexico.org.mx/",
+      "evidence": [
+        "https://conacmexico.org.mx/quienessomos"
+      ]
+    },
+    {
+      "source_key": "france_actuaries",
+      "name_zh": "法国精算师协会",
+      "name_en": "Institut des actuaires",
+      "status": "active",
+      "official_url": "https://institutdesactuaires.com/",
+      "evidence": [
+        "https://www.institutdesactuaires.com/"
+      ]
+    },
+    {
+      "source_key": "eaa",
+      "name_zh": "欧洲精算学院",
+      "name_en": "European Actuarial Academy",
+      "status": "active",
+      "official_url": "https://actuarial-academy.com/",
+      "evidence": [
+        "https://actuarial-academy.com/en/"
+      ]
+    },
+    {
+      "source_key": "swiss_actuaries",
+      "name_zh": "瑞士精算师协会",
+      "name_en": "Swiss Association of Actuaries",
+      "status": "active",
+      "official_url": "https://actuaries.ch/",
+      "evidence": [
+        "https://www.actuaries.ch/en"
+      ]
+    },
+    {
+      "source_key": "iaba",
+      "name_zh": "国际黑人精算师协会",
+      "name_en": "International Association of Black Actuaries",
+      "status": "active",
+      "official_url": "https://blackactuaries.org/",
+      "evidence": [
+        "https://www.blackactuaries.org/resource/resmgr/docs/programs%26events/outreach_resources/iaba_presentations_%26_info/iaba_indsponsorpkg_091720a.pdf"
+      ]
+    },
+    {
+      "source_key": "italy_actuaries",
+      "name_zh": "意大利精算师协会",
+      "name_en": "Ordine Nazionale degli Attuari",
+      "status": "active",
+      "official_url": "https://ordineattuari.it/",
+      "evidence": [
+        "https://ordineattuari.it/"
+      ]
+    },
+    {
+      "source_key": "jmlr",
+      "name_zh": "机器学习研究期刊",
+      "name_en": "Journal of Machine Learning Research",
+      "status": "active",
+      "official_url": "https://jmlr.org/",
+      "evidence": [
+        "https://jmlr.org/author-info.html"
+      ]
+    },
+    {
+      "source_key": "neurips_proceedings",
+      "name_zh": "NeurIPS论文集",
+      "name_en": "NeurIPS Proceedings",
+      "status": "active",
+      "official_url": "https://proceedings.neurips.cc/",
+      "evidence": [
+        "https://proceedings.neurips.cc/"
+      ]
+    },
+    {
+      "source_key": "aaa",
+      "name_zh": "美国精算学会",
+      "name_en": "American Academy of Actuaries",
+      "status": "active",
+      "official_url": "https://actuary.org/",
+      "evidence": [
+        "https://actuary.org/"
+      ]
+    },
+    {
+      "source_key": "ifoa",
+      "name_zh": "英国精算师协会",
+      "name_en": "Institute and Faculty of Actuaries",
+      "status": "active",
+      "official_url": "https://actuaries.org.uk/",
+      "evidence": [
+        "https://actuaries.org.uk/media/hc5d2jke/ifoa-strategy-2026-2029.pdf"
+      ]
+    }
+  ],
+  "aliases": [
+    {
+      "alias_norm": "cas",
+      "alias_kind": "name",
+      "source_key": "cas",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://www.casact.org/about"
+      ]
+    },
+    {
+      "alias_norm": "casualty actuarial society",
+      "alias_kind": "name",
+      "source_key": "cas",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://www.casact.org/about"
+      ]
+    },
+    {
+      "alias_norm": "casualty actuarial society (cas)",
+      "alias_kind": "name",
+      "source_key": "cas",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://www.casact.org/about"
+      ]
+    },
+    {
+      "alias_norm": "casact.org",
+      "alias_kind": "hostname",
+      "source_key": "cas",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://www.casact.org/about"
+      ]
+    },
+    {
+      "alias_norm": "www.casact.org",
+      "alias_kind": "hostname",
+      "source_key": "cas",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://www.casact.org/about"
+      ]
+    },
+    {
+      "alias_norm": "the actuarial society of kenya",
+      "alias_kind": "name",
+      "source_key": "actuarial_society_kenya",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://www.actuarieskenya.or.ke/about/contact"
+      ]
+    },
+    {
+      "alias_norm": "the actuarial society of kenya (task)",
+      "alias_kind": "name",
+      "source_key": "actuarial_society_kenya",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://www.actuarieskenya.or.ke/about/contact"
+      ]
+    },
+    {
+      "alias_norm": "actuarieskenya.or.ke",
+      "alias_kind": "hostname",
+      "source_key": "actuarial_society_kenya",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://www.actuarieskenya.or.ke/about/contact"
+      ]
+    },
+    {
+      "alias_norm": "www.actuarieskenya.or.ke",
+      "alias_kind": "hostname",
+      "source_key": "actuarial_society_kenya",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://www.actuarieskenya.or.ke/about/contact"
+      ]
+    },
+    {
+      "alias_norm": "task",
+      "alias_kind": "name",
+      "source_key": null,
+      "resolution_status": "ambiguous",
+      "evidence": [
+        "The historical task value needs exact article evidence; it is not a global alias."
+      ]
+    },
+    {
+      "alias_norm": "actuarial association of europe",
+      "alias_kind": "name",
+      "source_key": "aae",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://actuary.eu/about-the-aae/about-the-aae/"
+      ]
+    },
+    {
+      "alias_norm": "aae",
+      "alias_kind": "name",
+      "source_key": "aae",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://actuary.eu/about-the-aae/about-the-aae/"
+      ]
+    },
+    {
+      "alias_norm": "actuary.eu",
+      "alias_kind": "hostname",
+      "source_key": "aae",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://actuary.eu/about-the-aae/about-the-aae/"
+      ]
+    },
+    {
+      "alias_norm": "www.actuary.eu",
+      "alias_kind": "hostname",
+      "source_key": "aae",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://actuary.eu/about-the-aae/about-the-aae/"
+      ]
+    },
+    {
+      "alias_norm": "actuarial institute of chinese taipei",
+      "alias_kind": "name",
+      "source_key": "aict",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://en.airc.org.tw/"
+      ]
+    },
+    {
+      "alias_norm": "aict",
+      "alias_kind": "name",
+      "source_key": "aict",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://en.airc.org.tw/"
+      ]
+    },
+    {
+      "alias_norm": "airc.org.tw",
+      "alias_kind": "hostname",
+      "source_key": "aict",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://en.airc.org.tw/"
+      ]
+    },
+    {
+      "alias_norm": "www.airc.org.tw",
+      "alias_kind": "hostname",
+      "source_key": "aict",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://en.airc.org.tw/"
+      ]
+    },
+    {
+      "alias_norm": "en.airc.org.tw",
+      "alias_kind": "hostname",
+      "source_key": "aict",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://en.airc.org.tw/"
+      ]
+    },
+    {
+      "alias_norm": "actuarial society of hong kong",
+      "alias_kind": "name",
+      "source_key": "ashk",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://actuaries.org.hk/pages/1/About%20the%20ASHK"
+      ]
+    },
+    {
+      "alias_norm": "ashk",
+      "alias_kind": "name",
+      "source_key": "ashk",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://actuaries.org.hk/pages/1/About%20the%20ASHK"
+      ]
+    },
+    {
+      "alias_norm": "actuaries.org.hk",
+      "alias_kind": "hostname",
+      "source_key": "ashk",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://actuaries.org.hk/pages/1/About%20the%20ASHK"
+      ]
+    },
+    {
+      "alias_norm": "www.actuaries.org.hk",
+      "alias_kind": "hostname",
+      "source_key": "ashk",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://actuaries.org.hk/pages/1/About%20the%20ASHK"
+      ]
+    },
+    {
+      "alias_norm": "actuarial society of south africa",
+      "alias_kind": "name",
+      "source_key": "assa",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://www.actuarialsociety.org.za/about-us/"
+      ]
+    },
+    {
+      "alias_norm": "assa",
+      "alias_kind": "name",
+      "source_key": "assa",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://www.actuarialsociety.org.za/about-us/"
+      ]
+    },
+    {
+      "alias_norm": "actuarialsociety.org.za",
+      "alias_kind": "hostname",
+      "source_key": "assa",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://www.actuarialsociety.org.za/about-us/"
+      ]
+    },
+    {
+      "alias_norm": "www.actuarialsociety.org.za",
+      "alias_kind": "hostname",
+      "source_key": "assa",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://www.actuarialsociety.org.za/about-us/"
+      ]
+    },
+    {
+      "alias_norm": "actuaries institute",
+      "alias_kind": "name",
+      "source_key": "actuaries_institute_australia",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://www.actuaries.asn.au/about/"
+      ]
+    },
+    {
+      "alias_norm": "actuaries.asn.au",
+      "alias_kind": "hostname",
+      "source_key": "actuaries_institute_australia",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://www.actuaries.asn.au/about/"
+      ]
+    },
+    {
+      "alias_norm": "www.actuaries.asn.au",
+      "alias_kind": "hostname",
+      "source_key": "actuaries_institute_australia",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://www.actuaries.asn.au/about/"
+      ]
+    },
+    {
+      "alias_norm": "the institute of actuaries of japan",
+      "alias_kind": "name",
+      "source_key": "iaj",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://www.actuaries.jp/english/intro/"
+      ]
+    },
+    {
+      "alias_norm": "iaj",
+      "alias_kind": "name",
+      "source_key": "iaj",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://www.actuaries.jp/english/intro/"
+      ]
+    },
+    {
+      "alias_norm": "actuaries.jp",
+      "alias_kind": "hostname",
+      "source_key": "iaj",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://www.actuaries.jp/english/intro/"
+      ]
+    },
+    {
+      "alias_norm": "www.actuaries.jp",
+      "alias_kind": "hostname",
+      "source_key": "iaj",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://www.actuaries.jp/english/intro/"
+      ]
+    },
+    {
+      "alias_norm": "china association of actuaries",
+      "alias_kind": "name",
+      "source_key": "caa",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://www.e-caa.org.cn/associationIntroduction/1"
+      ]
+    },
+    {
+      "alias_norm": "caa",
+      "alias_kind": "name",
+      "source_key": "caa",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://www.e-caa.org.cn/associationIntroduction/1"
+      ]
+    },
+    {
+      "alias_norm": "e-caa.org.cn",
+      "alias_kind": "hostname",
+      "source_key": "caa",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://www.e-caa.org.cn/associationIntroduction/1"
+      ]
+    },
+    {
+      "alias_norm": "www.e-caa.org.cn",
+      "alias_kind": "hostname",
+      "source_key": "caa",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://www.e-caa.org.cn/associationIntroduction/1"
+      ]
+    },
+    {
+      "alias_norm": "international actuarial association",
+      "alias_kind": "name",
+      "source_key": "iaa",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://actuaries.org/mission-and-vision/"
+      ]
+    },
+    {
+      "alias_norm": "iaa",
+      "alias_kind": "name",
+      "source_key": "iaa",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://actuaries.org/mission-and-vision/"
+      ]
+    },
+    {
+      "alias_norm": "actuaries.org",
+      "alias_kind": "hostname",
+      "source_key": "iaa",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://actuaries.org/mission-and-vision/"
+      ]
+    },
+    {
+      "alias_norm": "www.actuaries.org",
+      "alias_kind": "hostname",
+      "source_key": "iaa",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://actuaries.org/mission-and-vision/"
+      ]
+    },
+    {
+      "alias_norm": "canadian institute of actuaries",
+      "alias_kind": "name",
+      "source_key": "cia",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://www.cia-ica.ca/"
+      ]
+    },
+    {
+      "alias_norm": "cia-ica.ca",
+      "alias_kind": "hostname",
+      "source_key": "cia",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://www.cia-ica.ca/"
+      ]
+    },
+    {
+      "alias_norm": "www.cia-ica.ca",
+      "alias_kind": "hostname",
+      "source_key": "cia",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://www.cia-ica.ca/"
+      ]
+    },
+    {
+      "alias_norm": "society of actuaries",
+      "alias_kind": "name",
+      "source_key": "soa",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://www.soa.org/about/purpose/"
+      ]
+    },
+    {
+      "alias_norm": "soa",
+      "alias_kind": "name",
+      "source_key": "soa",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://www.soa.org/about/purpose/"
+      ]
+    },
+    {
+      "alias_norm": "soa.org",
+      "alias_kind": "hostname",
+      "source_key": "soa",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://www.soa.org/about/purpose/"
+      ]
+    },
+    {
+      "alias_norm": "www.soa.org",
+      "alias_kind": "hostname",
+      "source_key": "soa",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://www.soa.org/about/purpose/"
+      ]
+    },
+    {
+      "alias_norm": "conference of consulting actuaries",
+      "alias_kind": "name",
+      "source_key": "conference_consulting_actuaries",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://www.ccactuaries.org/about-cca/"
+      ]
+    },
+    {
+      "alias_norm": "ccactuaries.org",
+      "alias_kind": "hostname",
+      "source_key": "conference_consulting_actuaries",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://www.ccactuaries.org/about-cca/"
+      ]
+    },
+    {
+      "alias_norm": "www.ccactuaries.org",
+      "alias_kind": "hostname",
+      "source_key": "conference_consulting_actuaries",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://www.ccactuaries.org/about-cca/"
+      ]
+    },
+    {
+      "alias_norm": "cca",
+      "alias_kind": "name",
+      "source_key": null,
+      "resolution_status": "ambiguous",
+      "evidence": [
+        "Use exact official host or full name; the historical abbreviation is not globally adjudicated."
+      ]
+    },
+    {
+      "alias_norm": "cia",
+      "alias_kind": "name",
+      "source_key": null,
+      "resolution_status": "ambiguous",
+      "evidence": [
+        "Historical abbreviation has conflicting local meanings; require official URL or full name."
+      ]
+    },
+    {
+      "alias_norm": "institute of actuaries of india",
+      "alias_kind": "name",
+      "source_key": "iai",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://actuariesindia.org/about-iai"
+      ]
+    },
+    {
+      "alias_norm": "actuariesindia.org",
+      "alias_kind": "hostname",
+      "source_key": "iai",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://actuariesindia.org/about-iai"
+      ]
+    },
+    {
+      "alias_norm": "www.actuariesindia.org",
+      "alias_kind": "hostname",
+      "source_key": "iai",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://actuariesindia.org/about-iai"
+      ]
+    },
+    {
+      "alias_norm": "deutsche aktuarvereinigung",
+      "alias_kind": "name",
+      "source_key": "dav",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://aktuar.de/en/about-us/profession/associations/dav/"
+      ]
+    },
+    {
+      "alias_norm": "aktuar.de",
+      "alias_kind": "hostname",
+      "source_key": "dav",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://aktuar.de/en/about-us/profession/associations/dav/"
+      ]
+    },
+    {
+      "alias_norm": "www.aktuar.de",
+      "alias_kind": "hostname",
+      "source_key": "dav",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://aktuar.de/en/about-us/profession/associations/dav/"
+      ]
+    },
+    {
+      "alias_norm": "instituto de actuarios españoles",
+      "alias_kind": "name",
+      "source_key": "spain_actuaries",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://actuarios.org/"
+      ]
+    },
+    {
+      "alias_norm": "actuarios.org",
+      "alias_kind": "hostname",
+      "source_key": "spain_actuaries",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://actuarios.org/"
+      ]
+    },
+    {
+      "alias_norm": "www.actuarios.org",
+      "alias_kind": "hostname",
+      "source_key": "spain_actuaries",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://actuarios.org/"
+      ]
+    },
+    {
+      "alias_norm": "institute of actuaries of korea",
+      "alias_kind": "name",
+      "source_key": "korea_actuaries",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://www.actuary.or.kr/about/introSummaryAss.do"
+      ]
+    },
+    {
+      "alias_norm": "actuary.or.kr",
+      "alias_kind": "hostname",
+      "source_key": "korea_actuaries",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://www.actuary.or.kr/about/introSummaryAss.do"
+      ]
+    },
+    {
+      "alias_norm": "www.actuary.or.kr",
+      "alias_kind": "hostname",
+      "source_key": "korea_actuaries",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://www.actuary.or.kr/about/introSummaryAss.do"
+      ]
+    },
+    {
+      "alias_norm": "instituto brasileiro de atuária",
+      "alias_kind": "name",
+      "source_key": "brazil_actuaries",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://atuarios.org.br/"
+      ]
+    },
+    {
+      "alias_norm": "atuarios.org.br",
+      "alias_kind": "hostname",
+      "source_key": "brazil_actuaries",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://atuarios.org.br/"
+      ]
+    },
+    {
+      "alias_norm": "www.atuarios.org.br",
+      "alias_kind": "hostname",
+      "source_key": "brazil_actuaries",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://atuarios.org.br/"
+      ]
+    },
+    {
+      "alias_norm": "colegio nacional de actuarios",
+      "alias_kind": "name",
+      "source_key": "conac",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://conacmexico.org.mx/quienessomos"
+      ]
+    },
+    {
+      "alias_norm": "conacmexico.org.mx",
+      "alias_kind": "hostname",
+      "source_key": "conac",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://conacmexico.org.mx/quienessomos"
+      ]
+    },
+    {
+      "alias_norm": "www.conacmexico.org.mx",
+      "alias_kind": "hostname",
+      "source_key": "conac",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://conacmexico.org.mx/quienessomos"
+      ]
+    },
+    {
+      "alias_norm": "institut des actuaires",
+      "alias_kind": "name",
+      "source_key": "france_actuaries",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://www.institutdesactuaires.com/"
+      ]
+    },
+    {
+      "alias_norm": "institutdesactuaires.com",
+      "alias_kind": "hostname",
+      "source_key": "france_actuaries",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://www.institutdesactuaires.com/"
+      ]
+    },
+    {
+      "alias_norm": "www.institutdesactuaires.com",
+      "alias_kind": "hostname",
+      "source_key": "france_actuaries",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://www.institutdesactuaires.com/"
+      ]
+    },
+    {
+      "alias_norm": "european actuarial academy",
+      "alias_kind": "name",
+      "source_key": "eaa",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://actuarial-academy.com/en/"
+      ]
+    },
+    {
+      "alias_norm": "actuarial-academy.com",
+      "alias_kind": "hostname",
+      "source_key": "eaa",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://actuarial-academy.com/en/"
+      ]
+    },
+    {
+      "alias_norm": "www.actuarial-academy.com",
+      "alias_kind": "hostname",
+      "source_key": "eaa",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://actuarial-academy.com/en/"
+      ]
+    },
+    {
+      "alias_norm": "swiss association of actuaries",
+      "alias_kind": "name",
+      "source_key": "swiss_actuaries",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://www.actuaries.ch/en"
+      ]
+    },
+    {
+      "alias_norm": "actuaries.ch",
+      "alias_kind": "hostname",
+      "source_key": "swiss_actuaries",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://www.actuaries.ch/en"
+      ]
+    },
+    {
+      "alias_norm": "www.actuaries.ch",
+      "alias_kind": "hostname",
+      "source_key": "swiss_actuaries",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://www.actuaries.ch/en"
+      ]
+    },
+    {
+      "alias_norm": "international association of black actuaries",
+      "alias_kind": "name",
+      "source_key": "iaba",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://www.blackactuaries.org/resource/resmgr/docs/programs%26events/outreach_resources/iaba_presentations_%26_info/iaba_indsponsorpkg_091720a.pdf"
+      ]
+    },
+    {
+      "alias_norm": "blackactuaries.org",
+      "alias_kind": "hostname",
+      "source_key": "iaba",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://www.blackactuaries.org/resource/resmgr/docs/programs%26events/outreach_resources/iaba_presentations_%26_info/iaba_indsponsorpkg_091720a.pdf"
+      ]
+    },
+    {
+      "alias_norm": "www.blackactuaries.org",
+      "alias_kind": "hostname",
+      "source_key": "iaba",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://www.blackactuaries.org/resource/resmgr/docs/programs%26events/outreach_resources/iaba_presentations_%26_info/iaba_indsponsorpkg_091720a.pdf"
+      ]
+    },
+    {
+      "alias_norm": "ordine nazionale degli attuari",
+      "alias_kind": "name",
+      "source_key": "italy_actuaries",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://ordineattuari.it/"
+      ]
+    },
+    {
+      "alias_norm": "ordineattuari.it",
+      "alias_kind": "hostname",
+      "source_key": "italy_actuaries",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://ordineattuari.it/"
+      ]
+    },
+    {
+      "alias_norm": "www.ordineattuari.it",
+      "alias_kind": "hostname",
+      "source_key": "italy_actuaries",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://ordineattuari.it/"
+      ]
+    },
+    {
+      "alias_norm": "journal of machine learning research",
+      "alias_kind": "name",
+      "source_key": "jmlr",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://jmlr.org/author-info.html"
+      ]
+    },
+    {
+      "alias_norm": "jmlr.org",
+      "alias_kind": "hostname",
+      "source_key": "jmlr",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://jmlr.org/author-info.html"
+      ]
+    },
+    {
+      "alias_norm": "www.jmlr.org",
+      "alias_kind": "hostname",
+      "source_key": "jmlr",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://jmlr.org/author-info.html"
+      ]
+    },
+    {
+      "alias_norm": "neurips proceedings",
+      "alias_kind": "name",
+      "source_key": "neurips_proceedings",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://proceedings.neurips.cc/"
+      ]
+    },
+    {
+      "alias_norm": "proceedings.neurips.cc",
+      "alias_kind": "hostname",
+      "source_key": "neurips_proceedings",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://proceedings.neurips.cc/"
+      ]
+    },
+    {
+      "alias_norm": "actuarial association of europe (aae)",
+      "alias_kind": "name",
+      "source_key": "aae",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://actuary.eu/about-the-aae/about-the-aae/",
+        "Exact historical institution label observed in the 2026-10-31 inventory; article attribution remains URL-bound."
+      ]
+    },
+    {
+      "alias_norm": "actuarial institute of chinese taipei (aict)",
+      "alias_kind": "name",
+      "source_key": "aict",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://en.airc.org.tw/",
+        "Exact historical institution label observed in the 2026-10-31 inventory; article attribution remains URL-bound."
+      ]
+    },
+    {
+      "alias_norm": "actuarial society of hong kong (ashk)",
+      "alias_kind": "name",
+      "source_key": "ashk",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://actuaries.org.hk/pages/1/About%20the%20ASHK",
+        "Exact historical institution label observed in the 2026-10-31 inventory; article attribution remains URL-bound."
+      ]
+    },
+    {
+      "alias_norm": "actuarial society of south africa (assa)",
+      "alias_kind": "name",
+      "source_key": "assa",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://www.actuarialsociety.org.za/about-us/",
+        "Exact historical institution label observed in the 2026-10-31 inventory; article attribution remains URL-bound."
+      ]
+    },
+    {
+      "alias_norm": "actuaries institute (australia)",
+      "alias_kind": "name",
+      "source_key": "actuaries_institute_australia",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://www.actuaries.asn.au/about/",
+        "Exact historical institution label observed in the 2026-10-31 inventory; article attribution remains URL-bound."
+      ]
+    },
+    {
+      "alias_norm": "institute of actuaries of japan (iaj)",
+      "alias_kind": "name",
+      "source_key": "iaj",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://www.actuaries.jp/english/intro/",
+        "Exact historical institution label observed in the 2026-10-31 inventory; article attribution remains URL-bound."
+      ]
+    },
+    {
+      "alias_norm": "institut des actuaires (france)",
+      "alias_kind": "name",
+      "source_key": "france_actuaries",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://www.institutdesactuaires.com/",
+        "Exact historical institution label observed in the 2026-10-31 inventory; article attribution remains URL-bound."
+      ]
+    },
+    {
+      "alias_norm": "international association of black actuaries (iaba)",
+      "alias_kind": "name",
+      "source_key": "iaba",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://www.blackactuaries.org/resource/resmgr/docs/programs%26events/outreach_resources/iaba_presentations_%26_info/iaba_indsponsorpkg_091720a.pdf",
+        "Exact historical institution label observed in the 2026-10-31 inventory; article attribution remains URL-bound."
+      ]
+    },
+    {
+      "alias_norm": "ordine nazionale degli attuari (italy)",
+      "alias_kind": "name",
+      "source_key": "italy_actuaries",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://ordineattuari.it/",
+        "Exact historical institution label observed in the 2026-10-31 inventory; article attribution remains URL-bound."
+      ]
+    },
+    {
+      "alias_norm": "society of actuaries (soa)",
+      "alias_kind": "name",
+      "source_key": "soa",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://www.soa.org/about/purpose/",
+        "Exact historical institution label observed in the 2026-10-31 inventory; article attribution remains URL-bound."
+      ]
+    },
+    {
+      "alias_norm": "conference of consulting actuaries (cca)",
+      "alias_kind": "name",
+      "source_key": "conference_consulting_actuaries",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://www.ccactuaries.org/about-cca/",
+        "Exact historical institution label observed in the 2026-10-31 inventory; article attribution remains URL-bound."
+      ]
+    },
+    {
+      "alias_norm": "american academy of actuaries",
+      "alias_kind": "name",
+      "source_key": "aaa",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://actuary.org/"
+      ]
+    },
+    {
+      "alias_norm": "american academy of actuaries (aaa)",
+      "alias_kind": "name",
+      "source_key": "aaa",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://actuary.org/"
+      ]
+    },
+    {
+      "alias_norm": "actuary.org",
+      "alias_kind": "hostname",
+      "source_key": "aaa",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://actuary.org/"
+      ]
+    },
+    {
+      "alias_norm": "www.actuary.org",
+      "alias_kind": "hostname",
+      "source_key": "aaa",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://actuary.org/"
+      ]
+    },
+    {
+      "alias_norm": "institute and faculty of actuaries",
+      "alias_kind": "name",
+      "source_key": "ifoa",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://actuaries.org.uk/media/hc5d2jke/ifoa-strategy-2026-2029.pdf"
+      ]
+    },
+    {
+      "alias_norm": "institute and faculty of actuaries (ifoa, uk)",
+      "alias_kind": "name",
+      "source_key": "ifoa",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://actuaries.org.uk/media/hc5d2jke/ifoa-strategy-2026-2029.pdf"
+      ]
+    },
+    {
+      "alias_norm": "actuaries.org.uk",
+      "alias_kind": "hostname",
+      "source_key": "ifoa",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://actuaries.org.uk/media/hc5d2jke/ifoa-strategy-2026-2029.pdf"
+      ]
+    },
+    {
+      "alias_norm": "www.actuaries.org.uk",
+      "alias_kind": "hostname",
+      "source_key": "ifoa",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://actuaries.org.uk/media/hc5d2jke/ifoa-strategy-2026-2029.pdf"
+      ]
+    },
+    {
+      "alias_norm": "content.actuaries.asn.au",
+      "alias_kind": "hostname",
+      "source_key": "actuaries_institute_australia",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://content.actuaries.asn.au/resources/resource-ce6yyqn64sx3-2093352434-53835"
+      ]
+    },
+    {
+      "alias_norm": "variancejournal.org",
+      "alias_kind": "hostname",
+      "source_key": "cas",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://www.casact.org/sites/default/files/2023-03/CAS_Annual_Report_2021.pdf"
+      ]
+    },
+    {
+      "alias_norm": "www.variancejournal.org",
+      "alias_kind": "hostname",
+      "source_key": "cas",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://www.casact.org/variance"
+      ]
+    },
+    {
+      "alias_norm": "actuaries institute japan (aij)",
+      "alias_kind": "name",
+      "source_key": "iaj",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://www.actuaries.jp/english/intro/",
+        "2026-10-31 read-only visible-host inventory: all 10 historical full-label records per app use www.actuaries.jp; bare aij is not a verified name alias."
+      ]
+    }
+  ]
+}

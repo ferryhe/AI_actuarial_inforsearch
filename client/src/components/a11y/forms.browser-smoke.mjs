@@ -132,7 +132,7 @@ try {
   console.log(JSON.stringify({ chromium: "pass", surface: "file-import", described: true, tab: true, text200: true }));
 
   const database = await browser.newPage({ viewport: { width: 390, height: 844 } });
-  await database.route("**/api/**", (route) => { const url = route.request().url(); const smokeFile = { url: "file-smoke", title: "Smoke", original_filename: "smoke.pdf", markdown_status: "ready", source_site: "Smoke", first_seen: "2026-01-01T00:00:00Z" }; return route.fulfill({ contentType: "application/json", body: JSON.stringify(url.includes("/api/sources") ? { sources: ["Smoke"] } : url.includes("/api/categories") ? { categories: ["General"] } : url.includes("/api/files") ? { files: [smokeFile], total: 40 } : fixture(url)) }); });
+  await database.route("**/api/**", (route) => { const url = route.request().url(); const smokeFile = { url: "file-smoke", title: "Smoke", original_filename: "smoke.pdf", markdown_status: "ready", source_site: "Smoke", first_seen: "2026-01-01T00:00:00Z" }; return route.fulfill({ contentType: "application/json", body: JSON.stringify(url.includes("/api/sources") ? { sources: ["smoke"], source_options: [{ source_key: "smoke", source_name_zh: "Smoke", source_name_en: "Smoke", count: 1 }] } : url.includes("/api/categories") ? { categories: ["General"] } : url.includes("/api/files") ? { files: [smokeFile], total: 40 } : fixture(url)) }); });
   await database.goto(`${process.env.SMOKE_URL || "http://127.0.0.1:5173"}/database`, { waitUntil: "domcontentloaded" });
   const dbSearch = database.getByTestId("input-search"); await dbSearch.waitFor();
   await database.getByTestId("button-toggle-filters").click();

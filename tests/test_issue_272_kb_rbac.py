@@ -16,7 +16,6 @@ from ai_actuarial.api.services.rag_admin import (
     _require_tasks_run,
 )
 from ai_actuarial.storage import Storage
-from tests.postgres_helpers import postgres_url_for_path
 from tests.test_fastapi_rag_admin_endpoints import (
     _build_test_client,
     _make_session_cookie,
@@ -315,7 +314,19 @@ def test_kb_rbac_detail_and_files_project_for_customers(tmp_path: Path, monkeypa
         files = customer.get("/api/rag/knowledge-bases/kb-rbac-detail/files").json()
         assert files["total_files"] >= 1
         row = files["files"][0]
-        assert set(row.keys()) == {"file_url", "title", "category", "source_site"}
+        assert set(row.keys()) == {
+            "file_url",
+            "title",
+            "category",
+            "source_site",
+            "source_key",
+            "source_name_en",
+            "source_name_zh",
+        }
+        assert row["source_site"] == "alpha.example"
+        assert row["source_key"] == "pending"
+        assert row["source_name_en"] == "Source pending confirmation"
+        assert row["source_name_zh"] == "来源待确认"
 
     op = _operator_client(app, seed)
     op_detail = op.get("/api/rag/knowledge-bases/kb-rbac-detail").json()["knowledge_base"]

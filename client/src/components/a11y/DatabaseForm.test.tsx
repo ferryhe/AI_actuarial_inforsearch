@@ -10,7 +10,7 @@ const { apiGet, apiPost } = vi.hoisted(() => ({ apiGet: vi.fn(), apiPost: vi.fn(
 vi.mock("@/lib/api", () => ({ apiGet, apiPost }));
 vi.mock("@/context/AuthContext", () => ({ useAuth: () => ({ permissions: ["catalog.read", "files.delete", "files.download"] }) }));
 vi.mock("@/hooks/use-theme", () => ({ useTheme: () => ({ theme: "light", toggleTheme: vi.fn() }) }));
-beforeEach(() => { window.scrollTo = vi.fn(); apiGet.mockImplementation((url: string) => Promise.resolve(url.includes("/sources") ? { sources: ["Smoke"] } : url.includes("/categories") ? { categories: ["General"] } : { files: [], total: 40 })); });
+beforeEach(() => { window.scrollTo = vi.fn(); apiGet.mockImplementation((url: string) => Promise.resolve(url.includes("/sources") ? { sources: ["smoke"], source_options: [{ source_key: "smoke", source_name_zh: "示例出版来源", source_name_en: "Smoke Publisher", count: 1 }] } : url.includes("/categories") ? { categories: ["General"] } : { files: [], total: 40 })); });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 it("labels the real Database search and filter controls with no axe violations", async () => {
@@ -31,9 +31,26 @@ it("keeps clear search and page-jump controls at the mobile target class", async
 });
 
 it("gives populated mobile selection, row, and pagination actions 48px targets", async () => {
-  apiGet.mockImplementation((url: string) => Promise.resolve(url.includes("/sources") ? { sources: ["Smoke"] } : url.includes("/categories") ? { categories: ["General"] } : { files: [{ url: "file-smoke", title: "Smoke", original_filename: "smoke.pdf", markdown_status: "ready", source_site: "Smoke", first_seen: "2026-01-01T00:00:00Z" }], total: 40 }));
+  apiGet.mockImplementation((url: string) => Promise.resolve(url.includes("/sources") ? { sources: ["smoke"], source_options: [{ source_key: "smoke", source_name_zh: "示例出版来源", source_name_en: "Smoke Publisher", count: 1 }] } : url.includes("/categories") ? { categories: ["General"] } : { files: [{ url: "file-smoke", title: "Smoke", original_filename: "smoke.pdf", markdown_status: "ready", source_site: "Smoke", first_seen: "2026-01-01T00:00:00Z" }], total: 40 }));
   render(<Layout><DatabasePage /></Layout>);
   await screen.findByTestId("button-select-all-visible");
   for (const id of ["button-select-all-visible", "button-bulk-delete", "checkbox-select-mobile-0", "button-ai-explain-mobile-0", "button-preview-mobile-0", "button-download-mobile-0", "button-prev-page", "button-next-page"]) expect(screen.getByTestId(id)).toHaveClass("min-h-[48px]");
   expect(screen.getByTestId("checkbox-select-mobile-0")).toHaveClass("min-w-[48px]");
+});
+
+
+it("renders bilingual publisher identity and filters with its exact stable key", async () => {
+  localStorage.setItem("lang", "en");
+  window.history.pushState({}, "", "/database?query=source-publisher");
+  apiGet.mockImplementation((url: string) => Promise.resolve(url.includes("/sources") ? { sources: ["smoke"], source_options: [{ source_key: "smoke", source_name_zh: "示例出版来源", source_name_en: "Smoke Publisher", count: 1 }] } : url.includes("/categories") ? { categories: [] } : { files: [{ url: "https://publisher.example/identity.pdf", title: "Publisher fixture", source_site: "Quick Check", source_key: "smoke", source_name_zh: "示例出版来源", source_name_en: "Smoke Publisher" }], total: 1 }));
+  const user = userEvent.setup();
+  render(<Layout><DatabasePage /></Layout>);
+  expect((await screen.findAllByText("Smoke Publisher")).length).toBeGreaterThan(0);
+  expect(screen.queryByText("Quick Check")).toBeNull();
+  await user.click(screen.getByTestId("button-toggle-filters"));
+  await user.selectOptions(screen.getByTestId("select-source"), "smoke");
+  expect((screen.getByTestId("select-source") as HTMLSelectElement).value).toBe("smoke");
+  await user.click(screen.getByTestId("toggle-lang"));
+  expect((await screen.findAllByText("示例出版来源")).length).toBeGreaterThan(0);
+  localStorage.setItem("lang", "en");
 });

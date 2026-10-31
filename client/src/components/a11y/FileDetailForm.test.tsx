@@ -162,3 +162,16 @@ it("clears a rejected Catalog error when the modal is cancelled and reopened", a
   await user.click(screen.getByTestId("button-catalog"));
   expect(screen.getByTestId("button-submit-catalog")).not.toHaveAttribute("aria-describedby");
 });
+
+
+it("renders the canonical publisher in both languages while retaining raw provenance only in data", async () => {
+  localStorage.setItem("lang", "en");
+  apiGet.mockImplementation((url) => Promise.resolve(url.includes("/detail") ? { file: { url: "file-smoke", title: "Publisher fixture", source_site: "local_docling", source_key: "cas", source_name_zh: "北美产险精算协会", source_name_en: "Casualty Actuarial Society (CAS)" } } : { tasks: [], profiles: [], chunk_sets: [], markdown: null }));
+  const user = userEvent.setup();
+  render(<Layout><FileDetail /></Layout>);
+  expect(await screen.findByTestId("text-source")).toHaveTextContent("Casualty Actuarial Society (CAS)");
+  expect(screen.queryByText("local_docling")).toBeNull();
+  await user.click(screen.getByTestId("toggle-lang"));
+  expect(screen.getByTestId("text-source")).toHaveTextContent("北美产险精算协会");
+  localStorage.setItem("lang", "en");
+});

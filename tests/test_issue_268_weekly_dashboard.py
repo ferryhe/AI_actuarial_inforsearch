@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 
 import pytest
@@ -9,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from ai_actuarial.api.app import create_app
 from ai_actuarial.api.services.weekly_updates import generate_weekly_update_summary
+from ai_actuarial.source_registry import install_registry
 from ai_actuarial.storage import Storage
 from tests.postgres_helpers import postgres_url_for_path
 
@@ -36,21 +38,21 @@ def _build_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Test
     )
 
     rows = [
-        ("lower.pdf", "Weekly lower", "alpha.example", PERIOD_START, "Risk", False),
+        ("lower.pdf", "Weekly lower", "www.casact.org", PERIOD_START, "Risk", False),
         (
             "middle.pdf",
             "Weekly middle",
-            "alpha.example",
+            "www.casact.org",
             "2026-03-12T12:00:00+00:00",
             "Risk",
             False,
         ),
-        ("upper.pdf", "Weekly upper", "alpha.example", PERIOD_END, "Risk", False),
-        ("prior.pdf", "Weekly prior", "alpha.example", "2026-03-08T23:59:59+00:00", "Risk", False),
+        ("upper.pdf", "Weekly upper", "www.casact.org", PERIOD_END, "Risk", False),
+        ("prior.pdf", "Weekly prior", "www.casact.org", "2026-03-08T23:59:59+00:00", "Risk", False),
         (
             "other.pdf",
             "Weekly other",
-            "other.example",
+            "www.soa.org",
             "2026-03-11T00:00:00+00:00",
             "Pricing",
             False,
@@ -58,7 +60,7 @@ def _build_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Test
         (
             "deleted.pdf",
             "Weekly deleted",
-            "alpha.example",
+            "www.casact.org",
             "2026-03-13T00:00:00+00:00",
             "Risk",
             True,
@@ -66,6 +68,17 @@ def _build_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Test
     ]
     storage = Storage(postgres_url_for_path(str(db_path)))
     try:
+        with storage.transaction():
+            install_registry(
+                storage._conn,
+                json.loads(
+                    (Path(__file__).parents[1] / "config" / "source_registry_seed.json").read_text(
+                        encoding="utf-8"
+                    )
+                ),
+                target="test",
+                apply=True,
+            )
         for filename, title, source, first_seen, category, deleted in rows:
             url = f"https://{source}/{filename}"
             storage.insert_file(
@@ -124,7 +137,7 @@ def test_files_api_period_is_half_open_sorted_paginated_and_composes_filters(
     base = (
         "/api/files?first_seen_from=2026-03-09T00%3A00%3A00%2B00%3A00"
         "&first_seen_before=2026-03-16T00%3A00%3A00%2B00%3A00"
-        "&query=weekly&source=alpha&category=Risk"
+        "&query=weekly&source=cas&category=Risk"
         "&order_by=first_seen&order_dir=desc&limit=1"
     )
 
@@ -210,7 +223,7 @@ def test_weekly_files_api_projects_a_title_edit_without_rebuilding_snapshot(
         period_start=PERIOD_START,
         period_end=PERIOD_END,
     )
-    target_url = "https://alpha.example/lower.pdf"
+    target_url = "https://www.casact.org/lower.pdf"
     first = client.get(f"/api/weekly-updates/{snapshot['id']}/files?limit=8")
     assert first.status_code == 200
     assert (

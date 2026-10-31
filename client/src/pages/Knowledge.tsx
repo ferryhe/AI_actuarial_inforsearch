@@ -102,6 +102,9 @@ interface SelectableFile {
   title?: string;
   original_filename?: string;
   source_site?: string;
+  source_key?: string;
+  source_name_zh?: string;
+  source_name_en?: string;
   category?: string;
   markdown_updated_at?: string;
   chunk_set_id?: string;
@@ -325,7 +328,7 @@ function normalizeCategoryNames(items: unknown): string[] {
 }
 
 export default function Knowledge() {
-  const { t } = useTranslation();
+  const { t, lang } = useTranslation();
   const { permissions, user } = useAuth();
   const canInspectRaw = canInspectEnumRaw(user?.role);
   const canManageCatalog = permissions.includes("catalog.write");
@@ -1186,7 +1189,7 @@ export default function Knowledge() {
                               <span className="block truncate text-sm font-medium text-foreground">{title}</span>
                               <span className="mt-0.5 flex flex-wrap gap-2 text-[11px] text-muted-foreground">
                                 {file.category && <span>{file.category}</span>}
-                                {file.source_site && <span>{file.source_site}</span>}
+                                {<span>{(lang === "zh" ? file.source_name_zh : file.source_name_en) || (lang === "zh" ? "来源待确认" : "Source pending confirmation")}</span>}
                                 {typeof file.chunk_count === "number" && <span>{file.chunk_count} {t("knowledge.chunks")}</span>}
                               </span>
                             </span>

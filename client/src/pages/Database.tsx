@@ -53,6 +53,9 @@ interface FileItem {
   title: string;
   original_filename: string;
   source_site: string;
+  source_key?: string;
+  source_name_zh?: string;
+  source_name_en?: string;
   content_type: string;
   first_seen: string;
   last_seen: string;
@@ -107,8 +110,10 @@ interface CachedFilesEntry {
   timestamp: number;
 }
 
+interface SourceOption { source_key: string; source_name_zh: string; source_name_en: string; count: number; aliases?: string[]; }
+
 interface CachedMetaEntry {
-  sources: string[];
+  sources: SourceOption[];
   categories: CategoryOption[];
   timestamp: number;
 }
@@ -209,7 +214,7 @@ function getCachedMeta(): CachedMetaEntry | null {
   return databaseMetaCache;
 }
 
-function setCachedMeta(sources: string[], categories: CategoryOption[]): void {
+function setCachedMeta(sources: SourceOption[], categories: CategoryOption[]): void {
   databaseMetaCache = {
     sources,
     categories,
@@ -275,7 +280,7 @@ export default function DatabasePage() {
   const fetchSeqRef = useRef(0);
   const scrollRestoreAttemptedRef = useRef(false);
 
-  const [sources, setSources] = useState<string[]>(initialCachedMeta?.sources || []);
+  const [sources, setSources] = useState<SourceOption[]>(initialCachedMeta?.sources || []);
   const [categories, setCategories] = useState<CategoryOption[]>(initialCachedMeta?.categories || []);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [selectedUrls, setSelectedUrls] = useState<string[]>([]);
@@ -330,13 +335,13 @@ export default function DatabasePage() {
 
     let cancelled = false;
     Promise.allSettled([
-      apiGet<{ sources: string[] }>("/api/sources"),
+      apiGet<{ source_options: SourceOption[] }>("/api/sources"),
       apiGet<{ categories: Array<string | CategoryOption> }>("/api/categories?mode=used"),
     ])
       .then(([sourcesResult, categoriesResult]) => {
         if (cancelled) return;
         const nextSources =
-          sourcesResult.status === "fulfilled" ? sourcesResult.value.sources || [] : [];
+          sourcesResult.status === "fulfilled" ? sourcesResult.value.source_options || [] : [];
         const nextCategories =
           categoriesResult.status === "fulfilled"
             ? normalizeCategories(categoriesResult.value.categories)
@@ -351,6 +356,13 @@ export default function DatabasePage() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (!source || !sources.length) return;
+    const token = source.trim().toLowerCase();
+    const option = sources.find((item) => item.source_key === token) || sources.find((item) => item.aliases?.includes(token));
+    if (option && option.source_key !== source) setSource(option.source_key);
+  }, [source, sources]);
 
   const fetchFiles = useCallback(
     async ({ targetOffset = offset, forceNetwork = false }: { targetOffset?: number; forceNetwork?: boolean } = {}) => {
@@ -759,8 +771,9 @@ export default function DatabasePage() {
               data-testid="select-source"
             >
               <option value="">{t("db.all_sources")}</option>
+              {source && !sources.some((item) => item.source_key === source) && <option value={source}>{lang === "zh" ? "来源筛选待确认" : "Unrecognized source filter"}</option>}
               {sources.map((s) => (
-                <option key={s} value={s}>{s}</option>
+                <option key={s.source_key} value={s.source_key}>{lang === "zh" ? s.source_name_zh : s.source_name_en}</option>
               ))}
             </select>
           </div>
@@ -970,7 +983,7 @@ export default function DatabasePage() {
                 </div>
 
                 <span className="text-xs text-muted-foreground truncate hidden lg:flex items-center" data-testid={`text-source-${i}`}>
-                  {file.source_site || "-"}
+                  {(lang === "zh" ? file.source_name_zh : file.source_name_en) || (lang === "zh" ? "来源待确认" : "Source pending confirmation")}
                 </span>
 
                 <time className="text-xs text-muted-foreground hidden lg:flex items-center" dateTime={file.first_seen} title={file.first_seen} data-testid={`text-date-${i}`}>
@@ -1042,7 +1055,7 @@ export default function DatabasePage() {
                     </button>
                   )}
                   <span className="min-w-0 truncate text-xs text-muted-foreground" data-testid={`text-source-mobile-${i}`}>
-                    {file.source_site || "-"}
+                    {(lang === "zh" ? file.source_name_zh : file.source_name_en) || (lang === "zh" ? "来源待确认" : "Source pending confirmation")}
                   </span>
                   <time className="shrink-0 text-xs text-muted-foreground" dateTime={file.first_seen} title={file.first_seen}>
                     {formatDate(displayDate, lang)}
