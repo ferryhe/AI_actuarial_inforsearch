@@ -715,13 +715,15 @@ def _print_cli_payload(payload: dict, *, as_json: bool) -> None:
 
 def cmd_weekly_explanation(args: argparse.Namespace) -> int:
     action = str(args.explanation_cmd)
+    if action == "regenerate" and getattr(args, "dry_run", False):
+        action = "preview"
     if action == "latest":
         method = "GET"
         path = "/api/weekly-updates/explanations/latest"
     else:
         snapshot_id = urllib.parse.quote(str(args.snapshot_id), safe="")
-        method = "POST" if action in {"generate", "retry"} else "GET"
-        suffix = f"/{action}" if action in {"generate", "retry"} else ""
+        method = "POST" if action in {"generate", "retry", "regenerate"} else "GET"
+        suffix = f"/{action}" if action in {"generate", "retry", "preview", "regenerate"} else ""
         path = f"/api/weekly-updates/{snapshot_id}/explanation{suffix}"
     try:
         result = _api_json_request(
@@ -1326,14 +1328,22 @@ def build_parser() -> argparse.ArgumentParser:
         "retry": "Retry a failed weekly explanation",
         "get": "Get a weekly explanation by snapshot ID",
         "latest": "Get the explanation state for the latest ended snapshot",
+        "preview": "Preview candidates, budgets and membership hash without model calls",
+        "regenerate": "Regenerate only the explanation, preserving snapshot membership",
     }
-    for action in ("generate", "retry", "get", "latest"):
+    for action in ("generate", "retry", "get", "latest", "preview", "regenerate"):
         explanation_action = p_weekly_explanation_sub.add_parser(
             action,
             help=action_help[action],
         )
         if action != "latest":
             explanation_action.add_argument("snapshot_id", help="Weekly snapshot ID")
+        if action == "regenerate":
+            explanation_action.add_argument(
+                "--dry-run",
+                action="store_true",
+                help="Preview only; never call the model or write an explanation",
+            )
         explanation_actions.append(explanation_action)
     for explanation_action in explanation_actions:
         explanation_action.add_argument(
@@ -1349,7 +1359,7 @@ def build_parser() -> argparse.ArgumentParser:
         explanation_action.add_argument(
             "--timeout",
             type=float,
-            default=30,
+            default=130,
             help="HTTP request timeout in seconds",
         )
         explanation_action.add_argument(

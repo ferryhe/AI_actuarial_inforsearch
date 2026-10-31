@@ -1,0 +1,7 @@
+[
+  {"profile":"overseas","snapshot_id":"weekly-9144d5e429064131aaa1e00f6ff94305","file_count":0,"old_status":"complete"},
+  {"profile":"overseas","snapshot_id":"weekly-c493815300694d9dac4417590256b973","file_count":216,"old_status":"complete"},
+  {"profile":"domestic","snapshot_id":"weekly-93686d5e7907465fb3d801bf6fac8948","file_count":0,"old_status":"complete"},
+  {"profile":"domestic","snapshot_id":"weekly-7b9584a8b1084c54aad977ed437d362a","file_count":99,"old_status":"failed"},
+  {"profile":"domestic","snapshot_id":"weekly-4b2f4e0b63b9441faf2b5fe42d4119cb","file_count":5,"old_status":"failed"}
+]

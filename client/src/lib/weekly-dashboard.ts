@@ -31,6 +31,7 @@ export interface WeeklySnapshotFile {
 interface WeeklyExplanation {
   snapshot_id: string;
   status: "missing" | "complete" | "failed";
+  generation_mode?: "ai" | "empty" | "fallback" | null;
   explanation_zh: string;
   explanation_en: string;
   generated_at: string | null;
@@ -332,12 +333,15 @@ export function buildWeeklyDashboardView(
   lang: "en" | "zh" | string,
   t: (key: string) => string,
 ): WeeklyDashboardView {
-  const explanation = data.explanation;
+  const explanation = data.explanation?.snapshot_id === data.snapshot?.id ? data.explanation : null;
   const selected = lang === "zh" ? explanation?.explanation_zh : explanation?.explanation_en;
   let explanationState: WeeklyExplanationState;
   let explanationText: string;
 
-  if (data.explanationUnavailable) {
+  if (data.status === "ready" && data.snapshot?.file_count === 0) {
+    explanationState = "empty";
+    explanationText = lang === "zh" ? "本周暂无新资料。" : "No new material this week.";
+  } else if (data.explanationUnavailable) {
     explanationState = "unavailable";
     explanationText = t("dashboard.explanation_unavailable");
   } else if (!explanation || explanation.status === "missing") {
@@ -345,7 +349,22 @@ export function buildWeeklyDashboardView(
     explanationText = t("dashboard.explanation_missing");
   } else if (explanation.status === "failed") {
     explanationState = "failed";
-    explanationText = t("dashboard.explanation_failed");
+    if (explanation.generation_mode === "fallback" && String(selected || "").trim()) {
+      explanationText = String(selected).trim();
+    } else if (data.filesUnavailable) {
+      explanationText = t("dashboard.files_unavailable");
+    } else {
+      const intro = lang === "zh" ? "本周可先关注以下资料。" : "You can start with these materials this week.";
+      const escape = (value: string) => value.replace(/([\\`*{}\[\]<>])/g, "\\$1").replace(/\n/g, " ");
+      const items = data.files.slice(0, 5).map((file) => {
+        const title = escape(String(file.title || file.original_filename || file.url));
+        const url = file.url.replace(/\(/g, "%28").replace(/\)/g, "%29").replace(/ /g, "%20");
+        const sourceSummary = normalizePublicMetadataText(file.summary);
+        const summary = escape(sourceSummary);
+        return `- [${title}](${url})${summary ? `\n  ${summary}` : ""}`;
+      });
+      explanationText = items.length ? [intro, ...items].join("\n\n") : t("dashboard.files_unavailable");
+    }
   } else if (!String(selected || "").trim()) {
     explanationState = "empty";
     explanationText = t("dashboard.explanation_empty");

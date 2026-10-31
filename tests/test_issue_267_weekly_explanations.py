@@ -34,6 +34,33 @@ PERIOD_START = "2026-03-09T00:00:00+00:00"
 PERIOD_END = "2026-03-16T00:00:00+00:00"
 
 
+def _reader_response(messages: list[dict[str, str]]) -> str:
+    import re
+
+    rows = [
+        json.loads(block)
+        for block in re.findall(
+            r"BEGIN_UNTRUSTED_FILE_MATERIAL \d+\n(.*?)\nEND_UNTRUSTED_FILE_MATERIAL",
+            messages[-1]["content"],
+            re.S,
+        )
+    ]
+    articles = [
+        {
+            "url": row["url"],
+            "excerpt": row["summary"][:100],
+            "focus": (
+                next(iter(row.get("keywords") or []), row.get("category") or "")
+                if row["summary"]
+                else ""
+            ),
+        }
+        for row in rows[:5]
+    ]
+    themes = next((row["keywords"][:1] for row in rows if row.get("keywords")), [])
+    return json.dumps({lang: {"themes": themes, "articles": articles} for lang in ("zh", "en")})
+
+
 class FakeWeeklyExplanationGenerator:
     def __init__(self, responses: list[str | BaseException] | None = None) -> None:
         self.responses = list(responses or ['{"zh":"中文说明","en":"English explanation"}'])
@@ -58,6 +85,17 @@ class FakeWeeklyExplanationGenerator:
         )
         if isinstance(response, BaseException):
             raise response
+        # Existing success markers now emit the grounded reader contract.
+        try:
+            payload = json.loads(response)
+        except (TypeError, ValueError):
+            return response
+        if (
+            isinstance(payload, dict)
+            and set(payload) == {"zh", "en"}
+            and all(isinstance(v, str) and v.strip() for v in payload.values())
+        ):
+            return _reader_response(messages)
         return response
 
 
@@ -281,8 +319,9 @@ def test_strict_bilingual_generation_is_bounded_auditable_and_idempotent(
     assert first == {
         "snapshot_id": snapshot["id"],
         "status": "complete",
-        "explanation_zh": "中文说明",
-        "explanation_en": "English explanation",
+        "explanation_zh": first["explanation_zh"],
+        "explanation_en": first["explanation_en"],
+        "generation_mode": "ai",
         "generated_at": first["generated_at"],
     }
     assert len(generator.calls) == 1
@@ -439,7 +478,6 @@ def test_concurrent_same_fingerprint_calls_single_flight_and_preserve_complete_r
             *,
             timeout_seconds: float,
         ) -> str:
-            del messages
             with self._lock:
                 self.calls += 1
                 call_number = self.calls
@@ -457,7 +495,7 @@ def test_concurrent_same_fingerprint_calls_single_flight_and_preserve_complete_r
                     timeout=timeout_seconds + weekly_explanations.CLAIM_LEASE_GRACE_SECONDS
                 ):
                     raise TimeoutError("the concurrent claim did not return during the live lease")
-                return '{"zh":"并发成功","en":"Concurrent success"}'
+                return _reader_response(messages)
 
             deadline = time.monotonic() + 2
             while time.monotonic() < deadline:
@@ -502,7 +540,7 @@ def test_concurrent_same_fingerprint_calls_single_flight_and_preserve_complete_r
     assert {result["status"] for result in results} == {"complete"}
     assert persisted is not None
     assert persisted["status"] == "complete"
-    assert persisted["explanation_en"] == "Concurrent success"
+    assert "Report 000" in persisted["explanation_en"]
 
 
 def test_weekly_explanation_finalize_requires_the_active_claim(tmp_path: Path) -> None:
@@ -681,44 +719,42 @@ def test_abandoned_weekly_explanation_lease_is_reclaimed_and_retry_recovers(
     )
 
     assert recovered["status"] == "complete"
-    assert recovered["explanation_en"] == "Lease recovered"
+    assert "Report 000" in recovered["explanation_en"]
     assert len(generator.calls) == 1
     assert "claim_expires_at" not in recovered
 
 
 @pytest.mark.parametrize(
-    ("response", "error_fragment"),
+    "response",
     [
-        (TimeoutError("provider timed out"), "provider timed out"),
-        ("", "empty"),
-        ("not-json", "JSON"),
-        ('{"zh":"中文"}', "en"),
-        ('{"zh":"","en":"English"}', "zh"),
-        ('{"zh":"中文","en":""}', "en"),
-        ('{"zh":"中文","en":"English","extra":"not allowed"}', "exactly"),
+        TimeoutError("provider timed out"),
+        "",
+        "not-json",
+        '{"zh":"中文"}',
+        '{"zh":"","en":"English"}',
+        '{"zh":"中文","en":""}',
+        '{"zh":"中文","en":"English","extra":"not allowed"}',
     ],
 )
 def test_generation_failures_persist_without_mutating_snapshot_and_retry_independently(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     response: str | BaseException,
-    error_fragment: str,
 ) -> None:
     weekly_explanations = _weekly_explanations_module()
     db_path, config_path, _config = _write_config(tmp_path)
     monkeypatch.setenv("CONFIG_PATH", str(config_path))
     _seed_files(db_path, count=1)
     snapshot = _snapshot(db_path)
-    generator = FakeWeeklyExplanationGenerator(
-        [response, '{"zh":"重试成功","en":"Retry succeeded"}']
-    )
+    generator = FakeWeeklyExplanationGenerator([response, response])
 
     failed = weekly_explanations.generate_weekly_explanation(
         db_path=postgres_url_for_path(str(db_path)), snapshot_id=snapshot["id"], generator=generator
     )
     assert failed["status"] == "failed"
-    assert failed["explanation_zh"] == ""
-    assert failed["explanation_en"] == ""
+    assert "Report 000" in failed["explanation_zh"]
+    assert failed["generation_mode"] == "fallback"
+    assert "Report 000" in failed["explanation_en"]
     assert "error" not in failed
 
     storage = Storage(postgres_url_for_path(str(db_path)))
@@ -728,17 +764,24 @@ def test_generation_failures_persist_without_mutating_snapshot_and_retry_indepen
     finally:
         storage.close()
     assert persisted_failure is not None
-    assert error_fragment.lower() in persisted_failure["error"].lower()
+    assert persisted_failure["coverage"]["error_category"] in {
+        "timeout",
+        "invalid_json",
+        "validation",
+    }
+    assert persisted_failure["error"]
     assert unchanged_snapshot is not None
     assert unchanged_snapshot["status"] == "published"
 
+    generator = FakeWeeklyExplanationGenerator()
     retried = weekly_explanations.retry_weekly_explanation(
         db_path=postgres_url_for_path(str(db_path)), snapshot_id=snapshot["id"], generator=generator
     )
     assert retried["status"] == "complete"
-    assert retried["explanation_zh"] == "重试成功"
-    assert retried["explanation_en"] == "Retry succeeded"
-    assert len(generator.calls) == 2
+    assert "Report 000" in retried["explanation_zh"]
+    assert "Report 000" in retried["explanation_en"]
+    assert retried["generation_mode"] == "ai"
+    assert len(generator.calls) == 1
     storage = Storage(postgres_url_for_path(str(db_path)))
     try:
         assert storage.get_weekly_snapshot(snapshot_id=snapshot["id"])["status"] == "published"
@@ -776,6 +819,7 @@ def test_latest_never_falls_back_after_force_rebuild(
         "explanation_zh": "",
         "explanation_en": "",
         "generated_at": None,
+        "generation_mode": None,
     }
     assert (
         weekly_explanations.get_weekly_explanation(
@@ -784,7 +828,7 @@ def test_latest_never_falls_back_after_force_rebuild(
         == "complete"
     )
 
-    failed_generator = FakeWeeklyExplanationGenerator(["invalid-json"])
+    failed_generator = FakeWeeklyExplanationGenerator(["invalid-json", "invalid-json"])
     failed = weekly_explanations.generate_weekly_explanation(
         db_path=postgres_url_for_path(str(db_path)),
         snapshot_id=rebuilt["id"],
@@ -841,8 +885,8 @@ def test_effective_prompt_change_invalidates_the_complete_fingerprint(
     finally:
         storage.close()
 
-    assert first["explanation_en"] == "First version"
-    assert second["explanation_en"] == "Second version"
+    assert "Report 000" in first["explanation_en"]
+    assert "Report 000" in second["explanation_en"]
     assert len(generator.calls) == 2
     assert first_audit["input_fingerprint"] != second_audit["input_fingerprint"]
 
@@ -1020,6 +1064,7 @@ def test_typed_explanation_routes_redact_audit_and_gets_never_call_model(
         "explanation_zh",
         "explanation_en",
         "generated_at",
+        "generation_mode",
     }
     calls_after_generate = len(generator.calls)
 
@@ -1227,7 +1272,9 @@ def test_failed_explanation_followup_never_fails_or_hides_the_snapshot_task(
     _seed_files(db_path, count=1)
     runtime = NativeTaskRuntime(
         pipeline_baton_state_path=str(tmp_path / "pipeline.json"),
-        weekly_explanation_generator=FakeWeeklyExplanationGenerator([TimeoutError("timeout")]),
+        weekly_explanation_generator=FakeWeeklyExplanationGenerator(
+            [TimeoutError("timeout"), TimeoutError("timeout")]
+        ),
     )
     runtime.set_site_config(config)
     parent_id = runtime.start_background_task(
@@ -1341,7 +1388,7 @@ def test_default_config_runtime_and_settings_expose_one_bilingual_prompt() -> No
     defaults = DEFAULT_AI_FUNCTION_CONFIG["weekly_explanation"]
     assert "provider" not in defaults
     assert "model" not in defaults
-    assert defaults["prompt_version"] == "weekly-explanation-v1"
+    assert defaults["prompt_version"] == "weekly-reader-v2"
     assert "zh" in defaults["prompt"]
     assert "en" in defaults["prompt"]
     section = get_ai_function_section("weekly_explanation", yaml_config={"ai_config": {}})
@@ -1352,7 +1399,7 @@ def test_default_config_runtime_and_settings_expose_one_bilingual_prompt() -> No
     assert "provider" not in weekly
     assert "model" not in weekly
     assert "credential_id" not in weekly
-    assert weekly["prompt_version"] == "weekly-explanation-v1"
+    assert weekly["prompt_version"] == "weekly-reader-v2"
     assert isinstance(weekly["prompt"], str) and weekly["prompt"].strip()
     assert "prompt_zh" not in weekly and "prompt_en" not in weekly
 
@@ -1394,8 +1441,8 @@ def test_generate_weekly_explanation_for_period_resolves_existing_snapshot(
 
     assert result["snapshot_id"] == snapshot["id"]
     assert result["status"] == "complete"
-    assert result["explanation_zh"] == "中文说明"
-    assert result["explanation_en"] == "English explanation"
+    assert "Report 000" in result["explanation_zh"]
+    assert "Report 000" in result["explanation_en"]
     assert len(generator.calls) == 1
 
 
@@ -1427,7 +1474,7 @@ def test_generate_weekly_explanation_for_period_waits_for_late_snapshot(
     thread.join(timeout=5)
 
     assert result["status"] == "complete"
-    assert result["explanation_zh"] == "中文说明"
+    assert "Report 000" in result["explanation_zh"]
     assert len(generator.calls) == 1
 
 
