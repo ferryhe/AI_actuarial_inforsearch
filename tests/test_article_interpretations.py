@@ -721,6 +721,7 @@ def test_native_schema_dump_restore_contains_drafts_and_cursor(storage, tmp_path
     dump = tmp_path / "article-backup.dump"
     run_postgres_dump(storage.database, dump, schema=schema)
     storage._conn.execute("DROP SCHEMA " + schema + " CASCADE")
+    storage._conn.execute("CREATE SCHEMA " + schema)
     run_postgres_restore(storage.database, dump, schema=schema)
     assert (
         storage._conn.execute("SELECT receipt_json FROM article_interpretation_rounds").fetchone()[
