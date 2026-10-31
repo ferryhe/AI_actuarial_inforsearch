@@ -1622,8 +1622,8 @@ def _extract_markdown(raw: bytes, content_type: str, url: str, data_root: Path) 
         except ImportError as exc:
             raise RuntimeErrorSafe("pypdf is required to extract verified PDF text") from exc
         reader = PdfReader(BytesIO(raw), strict=False)
-        if reader.is_encrypted:
-            raise RuntimeErrorSafe("encrypted PDF is unsupported by the configured local extractor")
+        if reader.is_encrypted and not reader.decrypt(""):
+            raise RuntimeErrorSafe("encrypted PDF requires a password")
         if len(reader.pages) > 600:
             raise RuntimeErrorSafe("PDF exceeds the bounded 600-page extraction limit")
         sections = []
