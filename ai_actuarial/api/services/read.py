@@ -13,6 +13,9 @@ PUBLIC_FILE_LIST_FIELDS: tuple[str, ...] = (
     "url",
     "title",
     "source_site",
+    "source_key",
+    "source_name_zh",
+    "source_name_en",
     "source_page_url",
     "original_filename",
     "bytes",
@@ -198,13 +201,14 @@ def list_categories(*, db_path: str, mode: str = "") -> dict[str, list[str]]:
     return {"categories": categories}
 
 
-def list_sources(*, db_path: str) -> dict[str, list[str]]:
+def list_sources(*, db_path: str) -> dict[str, Any]:
     storage = Storage(db_path)
     try:
-        sources = storage.get_unique_sources()
+        options = storage.get_source_options()
+        sources = [row["source_key"] for row in options]
     finally:
         storage.close()
-    return {"sources": sources}
+    return {"sources": sources, "source_options": options}
 
 
 def get_file_detail(

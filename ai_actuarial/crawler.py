@@ -1004,6 +1004,11 @@ class Crawler:
                         ts,
                     ),
                 )
+                if not self.storage._schema_only:
+                    self.storage._conn.execute(
+                        "UPDATE files SET source_key = ? WHERE url = ? AND sha256 = ? AND source_key IS NULL",
+                        (self.storage._source_key_for_write(url, sha256, cfg.name), url, sha256),
+                    )
         except Exception:
             self._remove_temp_file(created_path)
             raise

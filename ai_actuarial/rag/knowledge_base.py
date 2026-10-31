@@ -807,6 +807,17 @@ class KnowledgeBaseManager:
                 }
             )
 
+        for file in files:
+            projected = self.storage._project_source(
+                {"url": file["file_url"], "source_site": file["source_site"]}
+            )
+            file.update(
+                {
+                    key: projected[key]
+                    for key in ("source_key", "source_name_zh", "source_name_en")
+                    if key in projected
+                }
+            )
         return files
 
     def get_files_needing_index(self, kb_id: str) -> List[str]:

@@ -21,6 +21,14 @@ from psycopg2 import sql
 from psycopg2.extras import Json
 
 from .postgres import DatabaseConfig
+from .source_registry import (
+    PENDING_KEY,
+    registry_deployed_targets,
+    registry_identity,
+    resolve_source,
+    source_fields,
+    source_override_key,
+)
 from .sqlite_schema import (
     _OPTIONAL_TABLE_ALLOWED_COLUMNS,
     CURRENT_SQLITE_SCHEMA_VERSION,
@@ -30,7 +38,7 @@ from .sqlite_schema import (
 
 MANIFEST_FORMAT = "ai_actuarial.content_hub.artifact_manifest"
 HUB_SCHEMA = "content_hub"
-HUB_SCHEMA_VERSION = 3
+HUB_SCHEMA_VERSION = 4
 _MIGRATION_DIR = Path(__file__).with_name("content_hub_migrations")
 _HASH_RE = re.compile(r"^[0-9a-f]{64}$")
 _SOURCE_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
@@ -1467,6 +1475,41 @@ def save_live_enrichment(
         connection.close()
 
 
+def _version_source_projection(
+    connection: Any, version_id: int, url: str, raw_sha256: str
+) -> tuple[dict[str, Any], str, str | None]:
+    """Resolve the latest immutable observations without arbitrating conflicting publishers."""
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT r.source_metadata_json FROM source_record_map r "
+            "WHERE r.content_version_id = %s AND r.source_snapshot_id = ("
+            "SELECT latest.source_snapshot_id FROM source_record_map latest "
+            "JOIN source_snapshots ss USING (source_snapshot_id) "
+            "WHERE latest.content_version_id = %s "
+            "ORDER BY ss.imported_at DESC, ss.source_snapshot_id DESC LIMIT 1) "
+            "ORDER BY r.source_table, r.legacy_pk_json",
+            (version_id, version_id),
+        )
+        observations = [_load_json(row[0]) for row in cursor.fetchall()]
+    nonempty = [
+        row
+        for row in observations
+        if isinstance(row.get("source_site"), str) and row["source_site"].strip()
+    ]
+    candidates = nonempty or observations or [{}]
+    keys = {
+        resolve_source(
+            connection, url=url, raw_source=row.get("source_site"), raw_sha256=raw_sha256
+        )
+        for row in candidates
+    } - {PENDING_KEY}
+    return (
+        candidates[0],
+        next(iter(keys)) if len(keys) == 1 else PENDING_KEY,
+        source_override_key(connection, url=url, raw_sha256=raw_sha256),
+    )
+
+
 def content_hub_list_ai_versions(
     *,
     after_version_id: int = 0,
@@ -1494,9 +1537,7 @@ def content_hub_list_ai_versions(
                 "a.date_review_unresolved_json, a.source_signature, a.result_sha256, "
                 "tv.payload_value_json, bmzh.title, bmzh.summary, bmzh.category, bmzh.keywords_json, "
                 "bmen.title, bmen.summary, bmen.category, bmen.keywords_json, "
-                "COALESCE((SELECT r.source_metadata_json FROM source_record_map r "
-                " JOIN source_snapshots ss USING (source_snapshot_id) WHERE r.content_version_id = v.content_version_id "
-                " ORDER BY ss.imported_at DESC, ss.source_snapshot_id DESC LIMIT 1), '{}'), b.availability, "
+                "b.availability, "
                 "tv.payload_sha256, bmzh.markdown_text_variant_id, bmzh.markdown_sha256, "
                 "bmen.markdown_text_variant_id, bmen.markdown_sha256 "
                 "FROM article_enrichment_annotations a "
@@ -1526,22 +1567,24 @@ def content_hub_list_ai_versions(
                     continue
                 try:
                     markdown_sha, markdown_sha_kind = _verify_hub_markdown_binding(
-                        markdown, row[15], row[26], row[6]
+                        markdown, row[15], row[25], row[6]
                     )
                 except ContentHubError:
                     continue
                 if (
-                    int(row[27]) != int(row[5])
-                    or int(row[29]) != int(row[5])
-                    or str(row[28]).strip() != str(row[6]).strip()
-                    or str(row[30]).strip() != str(row[6]).strip()
+                    int(row[26]) != int(row[5])
+                    or int(row[28]) != int(row[5])
+                    or str(row[27]).strip() != str(row[6]).strip()
+                    or str(row[29]).strip() != str(row[6]).strip()
                 ):
                     continue
                 categories = row[8] if isinstance(row[8], list) else json.loads(row[8])
                 keys = [str(item.get("key") or "") for item in categories if isinstance(item, dict)]
                 if not keys or keys[0] != "AI" or keys[0] != str(row[7] or ""):
                     continue
-                source_metadata = _load_json(row[24])
+                source_metadata, source_key, override = _version_source_projection(
+                    connection, int(row[0]), url, str(row[2]).strip()
+                )
                 metadata = {
                     language: {
                         "title": row[offset],
@@ -1579,11 +1622,15 @@ def content_hub_list_ai_versions(
                         "markdown": markdown,
                         "bilingual_metadata": metadata,
                         "source_site": source_metadata.get("source_site"),
+                        **source_fields(connection, source_key),
+                        "source_override_key": override,
+                        **registry_identity(connection),
+                        "source_registry_targets": registry_deployed_targets(connection),
                         "source_page_url": str(source_metadata.get("source_page_url") or ""),
                         "content_type": str(
                             source_metadata.get("content_type") or "application/octet-stream"
                         ),
-                        "blob_availability": str(row[25] or "missing"),
+                        "blob_availability": str(row[24] or "missing"),
                     }
                 )
             cursor.execute(
@@ -2895,7 +2942,14 @@ def content_hub_read_version(
                 if annotation and isinstance(annotation[4], dict)
                 else (_load_json(annotation[4]) if annotation else {})
             )
+            _source_metadata, source_key, override = _version_source_projection(
+                connection, int(version_id), url, raw_sha256
+            )
             return {
+                **source_fields(connection, source_key),
+                "source_override_key": override,
+                **registry_identity(connection),
+                "source_registry_targets": registry_deployed_targets(connection),
                 "content_version_id": int(version_id),
                 "url": url,
                 "raw_sha256": raw_sha256,

@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from itsdangerous import URLSafeSerializer
 
 from ai_actuarial.api.app import create_app
+from ai_actuarial.source_registry import install_registry
 from ai_actuarial.storage import Storage
 from tests.postgres_helpers import postgres_url_for_path
 
@@ -50,6 +51,35 @@ def _write_config_files(base_dir: Path) -> tuple[Path, Path, Path]:
 def _seed_storage(db_path: Path) -> dict[str, object]:
     storage = Storage(postgres_url_for_path(str(db_path)))
     try:
+        sources = [
+            {
+                "source_key": key,
+                "name_zh": key,
+                "name_en": key,
+                "status": "active",
+                "official_url": None,
+                "evidence": ["synthetic fixture"],
+            }
+            for key in ("alpha", "beta", "gamma", "pending")
+        ]
+        aliases = [
+            {
+                "alias_norm": key + ".example",
+                "alias_kind": kind,
+                "source_key": key,
+                "resolution_status": "verified",
+                "evidence": ["synthetic fixture"],
+            }
+            for key in ("alpha", "beta", "gamma")
+            for kind in ("name", "hostname")
+        ]
+        with storage.transaction():
+            install_registry(
+                storage._conn,
+                {"registry_version": 1, "sources": sources, "aliases": aliases},
+                target="test",
+                apply=True,
+            )
         storage.insert_file(
             url="https://alpha.example/doc-a.pdf",
             sha256="hash-alpha",
@@ -216,7 +246,7 @@ def test_fastapi_stats_and_categories_are_native(tmp_path: Path, monkeypatch) ->
     assert stats.json() == {
         "total_files": 2,
         "cataloged_files": 2,
-        "total_sources": 3,
+        "total_sources": 2,
         "active_tasks": 0,
     }
 
@@ -347,8 +377,15 @@ def test_fastapi_sources_file_detail_and_markdown_match_legacy_contract(
 
     sources = client.get("/api/sources")
     assert sources.status_code == 200
-    assert sources.json() == {
-        "sources": ["alpha.example", "beta.example", "gamma.example"],
+    schema = client.get("/openapi.json").json()
+    assert (
+        schema["components"]["schemas"]["SourceOption"]["properties"]["source_key"]["type"]
+        == "string"
+    )
+    assert sources.json()["sources"] == ["alpha", "beta"]
+    assert {row["source_key"]: row["count"] for row in sources.json()["source_options"]} == {
+        "alpha": 1,
+        "beta": 1,
     }
 
     detail = client.get("/api/files/detail?url=https%3A%2F%2Falpha.example%2Fdoc-a.pdf")
@@ -456,7 +493,7 @@ def test_fastapi_native_read_routes_accept_fastapi_session_cookie(
 
     sources = client.get("/api/sources")
     assert sources.status_code == 200
-    assert sources.json()["sources"] == ["alpha.example", "beta.example", "gamma.example"]
+    assert sources.json()["sources"] == ["alpha", "beta"]
 
     detail = client.get("/api/files/detail?url=https%3A%2F%2Falpha.example%2Fdoc-a.pdf")
     assert detail.status_code == 200

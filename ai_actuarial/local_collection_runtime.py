@@ -3023,6 +3023,20 @@ def _prepare_hub_article(
     return (
         {
             **article,
+            **(
+                {
+                    key: existing[key]
+                    for key in (
+                        "source_key",
+                        "source_override_key",
+                        "registry_version",
+                        "registry_sha256",
+                    )
+                }
+                if existing.get("registry_version") is not None
+                else {}
+            ),
+            "source_registry_targets": existing.get("source_registry_targets"),
             "markdown": existing["markdown"],
             "content_version_id": existing["content_version_id"],
             "markdown_text_variant_id": existing["markdown_text_variant_id"],
@@ -3084,6 +3098,18 @@ def _target_metadata_fingerprint(item: dict[str, Any]) -> str:
             "result_sha256",
         )
     }
+    if item.get("registry_version") is not None:
+        value.update(
+            {
+                key: item.get(key)
+                for key in (
+                    "source_key",
+                    "source_override_key",
+                    "registry_version",
+                    "registry_sha256",
+                )
+            }
+        )
     publication_date = (item.get("date_facts") or {}).get("publication_date")
     projected_date = publication_date.get("value") if isinstance(publication_date, dict) else None
     # Keep the historical fingerprint for unknown dates; a verified date must
@@ -3190,6 +3216,19 @@ def _stream_target(
     *,
     preview: bool = False,
 ) -> dict[str, Any]:
+    if any(
+        item.get("registry_version") is not None
+        and target not in (item.get("source_registry_targets") or [])
+        for item in items
+    ):
+        raise RuntimeErrorSafe(
+            f"{target} has not acknowledged the current Hub source dictionary; retry this target after registry sync"
+        )
+    if any(
+        item.get("registry_version") is not None and "source_override_key" not in item
+        for item in items
+    ):
+        raise RuntimeErrorSafe("fresh Hub source override state is required before dispatch")
     payload_items = []
     for item in items:
         raw = Path(item["artifact_path"]).read_bytes()
@@ -3225,6 +3264,19 @@ def _stream_target(
                     "legacy_hub_annotation",
                 )
             }
+            | (
+                {
+                    key: item[key]
+                    for key in (
+                        "source_key",
+                        "source_override_key",
+                        "registry_version",
+                        "registry_sha256",
+                    )
+                }
+                if item.get("registry_version") is not None
+                else {}
+            )
             | {"raw_bytes_b64": base64.b64encode(raw).decode("ascii")}
         )
     return _invoke_target_worker(
@@ -3623,6 +3675,25 @@ def _process_articles(
                     ack
                     and ack.get("status") in {"written", "already_current"}
                     and ack.get("metadata_fingerprint") == _target_metadata_fingerprint(item)
+                    and (
+                        item.get("registry_version") is None
+                        or (
+                            "source_override_key" in ack
+                            and (
+                                item.get("source_override_key") is None
+                                or bool(ack.get("source_correction_receipt_id"))
+                            )
+                            and all(
+                                ack.get(field) == item.get(field)
+                                for field in (
+                                    "source_key",
+                                    "source_override_key",
+                                    "registry_version",
+                                    "registry_sha256",
+                                )
+                            )
+                        )
+                    )
                 ):
                     state["target_acks"][state_key] = {
                         "status": "acknowledged",
@@ -4368,6 +4439,20 @@ def _refresh_pending_target_item(
         return None, f"current Hub primary category is {primary!r}"
     refreshed = {
         **item,
+        **(
+            {
+                key: current[key]
+                for key in (
+                    "source_key",
+                    "source_override_key",
+                    "registry_version",
+                    "registry_sha256",
+                )
+            }
+            if current.get("registry_version") is not None
+            else {}
+        ),
+        "source_registry_targets": current.get("source_registry_targets"),
         "url": current["url"],
         "raw_sha256": current["raw_sha256"],
         "content_version_id": current["content_version_id"],
@@ -4601,6 +4686,25 @@ def reconcile_backlog(
                     ack
                     and ack.get("status") in {"written", "already_current"}
                     and ack.get("metadata_fingerprint") == _target_metadata_fingerprint(item)
+                    and (
+                        item.get("registry_version") is None
+                        or (
+                            "source_override_key" in ack
+                            and (
+                                item.get("source_override_key") is None
+                                or bool(ack.get("source_correction_receipt_id"))
+                            )
+                            and all(
+                                ack.get(field) == item.get(field)
+                                for field in (
+                                    "source_key",
+                                    "source_override_key",
+                                    "registry_version",
+                                    "registry_sha256",
+                                )
+                            )
+                        )
+                    )
                 ):
                     state["target_acks"][key] = {
                         "status": "acknowledged",
