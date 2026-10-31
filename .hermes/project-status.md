@@ -1,3 +1,10 @@
+# 当前候选 — 中文文章解读阅读与导出 — 2026-10-31
+
+- Issue #437，分支 `codex/issue-437-interpretation-reader`。只读接口只投影当前 `reader_eligible` 最新稿件的公开字段；FileDetail 仅在中文界面读取和渲染，沿用最新请求守卫，提供折叠、复制、Markdown 和内联样式 HTML 导出。成功保存 Markdown 或转换完成后清除并重读解读，保存失败保留当前稿。老稿缺少原文标题时使用当前文件标题。生成输入从有限前页结构/显式署名行携带原文作者证据，现有一次生成提示要求逐字返回且验证；link validation 将已核验姓名写入 payload references，再由读取接口/页面/导出透传。没有明确署名时为空；不读原文之外的作者、不改原文/摘要。
+- 新增法国真实标题页片段隔离PG集成测试：generation 输入/输出验证、link失败后重试复用、payload references、`read_interpretations` 和 reader API 端到端；SOA前页六位署名及Acknowledgments中的R. Dale Hall/Achilles Natsis作为负例，确认不扫正文/致谢。原有测试覆盖 FileDetail 语言/键盘、读取失败、保存/转换后重读、标题回退、作者导出及 API allowlist。三篇人工审校样稿继续使用共享 formatter 语义 HTML 预览。三个国内链接由 Issue 管理端实开核对；微信编辑器访问被安全门拒绝，尚待人工粘贴核验。
+- 验证：`tests/test_article_interpretations.py` 186 passed / 1 skipped；MarkdownContent 与 FileDetail focused Vitest 18 passed；`npm run typecheck`、`npm run build`、Black、Ruff、`git diff --check` 和本地浏览器 smoke 通过。完整证据在 Issue 外部 evidence 目录。测试只使用注入的离线 Generator，无真实模型调用；无迁移、发布或生产写入。worker 未提交或推送，等待 manager fresh review。
+- 本地 Chromium smoke 使用隔离 API fixture：中文读取 10 次、英文 0 次，生成 POST/model call 0；复制、Markdown、HTML 的标题/正文/原文 URL/国内 URL 一致。桌面与 375px 截图及 HTML 预览截图保存在外部 `issue-437/screenshots/`；API fixture 不替代部署环境验收。微信粘贴仍待人工检查。
+
 # 当前候选 — 意大利公开空密码 PDF 提取 — 2026-10-30
 
 - 项目 `AI_actuarial_inforsearch`；工作树 `C:/Users/ferry/.codex/worktrees/public-pdf-extraction/AI_actuarial_inforsearch`，分支 `fix/public-pdf-extraction`。仅修改采集 runtime、聚焦测试和 runtime 参考说明；其他仓库未读写。

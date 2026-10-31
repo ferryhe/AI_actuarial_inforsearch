@@ -8,6 +8,10 @@
 | 案例 | [从退保概率到客户联系：一项互助保险会员留存实践](human-reviewed-drafts.md#样稿二) | [Machine Learning for Health Insurance Member Retention: A Case Study](https://www.institutdesactuaires.com/global/gene/link.php?doc_id=17510&fg=1) · [国内阅读](https://aiactuary.cn/file-detail?file_id=2823) |
 | 研究 | [健康险反欺诈模型如何解释：从变量贡献到交互关系](human-reviewed-drafts.md#样稿三) | [Interpretable Machine Learning for Health Insurance Fraud Detection](https://www.soa.org/globalassets/assets/files/resources/research-report/2024/interpretable-ml-methods.pdf) · [国内阅读](https://aiactuary.cn/file-detail?file_id=1374) |
 
+## 本地排版预览
+
+`method.md`、`case.md`、`research.md` 分别对应三篇人工审校样稿；同名 `.html` 文件用于本地浏览器预览。排版约定见 [layout.md](layout.md)。这些 HTML 仅用于本地查看，微信编辑器粘贴效果尚未验证。
+
 ## 关键编辑说明
 
 - 方法稿：按原文重写研究背景与GLM相关表述；将预测表现与复杂度的权衡明确列为编辑归纳，不冒充原文通用标准。

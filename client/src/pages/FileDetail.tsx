@@ -33,7 +33,7 @@ import { useTaskOptions } from "@/hooks/use-task-options";
 import { useLatestRequestGuard } from "@/hooks/use-latest-request";
 import { useAuth } from "@/context/AuthContext";
 import ConfirmDeleteModal from "@/components/ConfirmDeleteModal";
-import { MarkdownContent } from "@/components/MarkdownContent";
+import { MarkdownContent, renderMarkdownHtml } from "@/components/MarkdownContent";
 import { categoryDisplayName } from "@/lib/category-labels";
 import { hasCompleteLocalizedCatalogMetadata, localizedCatalogMetadata } from "@/lib/bilingual-metadata";
 
@@ -72,6 +72,18 @@ interface MarkdownData {
   markdown_content?: string;
   markdown_source?: string;
   markdown_updated_at?: string;
+}
+
+interface ArticleInterpretation {
+  interpretation_id: string;
+  title_zh: string;
+  body_markdown_zh: string;
+  generated_at: string;
+  file_url: string;
+  raw_sha256: string;
+  markdown_sha256: string;
+  china_article_url: string;
+  references?: { published_time?: string; original_title?: string; author?: string | string[]; authors?: string | string[]; source?: { name_zh?: string; name_en?: string } };
 }
 
 interface ChunkSet {
@@ -146,6 +158,57 @@ function formatBytes(bytes: number): string {
   let size = bytes;
   while (size >= 1024 && i < units.length - 1) { size /= 1024; i++; }
   return `${size.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
+}
+
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]!);
+}
+
+function interpretationAuthors(item: ArticleInterpretation): string[] {
+  const values = [item.references?.author, item.references?.authors].flatMap((value) => Array.isArray(value) ? value : [value]);
+  return [...new Set(values.filter((value): value is string => typeof value === "string" && !!value.trim()).map((value) => value.trim()))];
+}
+
+export function interpretationBody(item: ArticleInterpretation): string {
+  const matches = [...item.body_markdown_zh.matchAll(/(?:^|\r?\n)## 原文出处与阅读[ \t]*\r?\n/g)];
+  const marker = matches.at(-1);
+  if (!marker || marker.index === undefined) return item.body_markdown_zh;
+  const start = marker.index + (marker[0].startsWith("\r\n") ? 2 : marker[0].startsWith("\n") ? 1 : 0);
+  const footer = item.body_markdown_zh.slice(start);
+  const normalizedFooter = footer.replace(/\r\n/g, "\n").trimEnd();
+  const lines = normalizedFooter.split("\n");
+  const exactCitationLine = `[原文](${item.file_url}) · [国内阅读](${item.china_article_url})`;
+  let cursor = 5;
+  if (lines[cursor] === "" && /^规范来源：[^\r\n]+。$/.test(lines[cursor + 1] || "")) cursor += 2;
+  if (lines[cursor] === "" && /^未覆盖章节：[^\r\n]+$/.test(lines[cursor + 1] || "")) cursor += 2;
+  if (
+    lines[0] !== "## 原文出处与阅读"
+    || lines[1] !== ""
+    || !/^原文日期：.+。$/.test(lines[2] || "")
+    || lines[3] !== ""
+    || lines[4] !== exactCitationLine
+    || cursor !== lines.length
+  ) return item.body_markdown_zh;
+  return item.body_markdown_zh.slice(0, start).trimEnd();
+}
+
+export function buildInterpretationMarkdown(item: ArticleInterpretation, fileTitle: string): string {
+  const authors = interpretationAuthors(item);
+  const title = item.references?.original_title ?? fileTitle;
+  const body = interpretationBody(item);
+  const published = item.references?.published_time && item.references.published_time !== "日期不明" ? ` · 发表日期：${item.references.published_time}` : "";
+  const source = item.references?.source?.name_zh ? ` · ${item.references.source.name_zh}` : "";
+  const author = authors.length ? `\n\n作者：${authors.join("、")}` : "";
+  return `# ${item.title_zh}\n\n${body}\n\n---\n\n原文：${title}${source}${published}${author}\n\n[原文](${item.file_url})\n\n[在国内站阅读原文](${item.china_article_url})`;
+}
+
+export function buildInterpretationHtml(item: ArticleInterpretation, fileTitle: string): string {
+  const title = item.references?.original_title ?? fileTitle;
+  const body = interpretationBody(item);
+  const authors = interpretationAuthors(item);
+  const published = item.references?.published_time && item.references.published_time !== "日期不明" ? item.references.published_time : "";
+  const attribution = `<p>原文：${escapeHtml(title)}</p>${item.references?.source?.name_zh ? `<p>机构：${escapeHtml(item.references.source.name_zh)}</p>` : ""}${authors.length ? `<p>作者：${escapeHtml(authors.join("、"))}</p>` : ""}${published ? `<p>发表日期：${escapeHtml(published)}</p>` : ""}`;
+  return `<!doctype html><html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(item.title_zh)}</title></head><body style="margin:0;padding:20px;font:16px/1.8 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#222;overflow-wrap:anywhere"><article style="box-sizing:border-box;width:100%;max-width:720px;margin:0 auto"><h1 style="font-size:1.8em;line-height:1.35;overflow-wrap:anywhere">${escapeHtml(item.title_zh)}</h1>${renderMarkdownHtml(body)}<hr style="margin:1.5em 0;border:0;border-top:1px solid #ddd">${attribution}<p><a href="${escapeHtml(item.file_url)}" style="color:#1457a6;overflow-wrap:anywhere">原文</a></p><p><a href="${escapeHtml(item.china_article_url)}" style="color:#1457a6;overflow-wrap:anywhere">在国内站阅读原文</a></p></article></body></html>`;
 }
 
 function formatDate(dateStr?: string): string {
@@ -375,6 +438,9 @@ export default function FileDetail() {
   const [showCategoryPicker, setShowCategoryPicker] = useState(false);
 
   const [markdown, setMarkdown] = useState<MarkdownData | null>(null);
+  const [interpretation, setInterpretation] = useState<{ identity: string; item: ArticleInterpretation } | null>(null);
+  const [interpretationExpanded, setInterpretationExpanded] = useState(false);
+  const [interpretationRevision, setInterpretationRevision] = useState(0);
   const [mdLoading, setMdLoading] = useState(false);
   const [mdTab, setMdTab] = useState<"view" | "edit">("view");
   const [mdEditContent, setMdEditContent] = useState("");
@@ -414,6 +480,8 @@ export default function FileDetail() {
     : fileUrl;
   const beginFileRequest = useLatestRequestGuard(fileRequestIdentity);
   const beginMarkdownRequest = useLatestRequestGuard(resolvedFileUrl);
+  const interpretationIdentity = `${lang}:${resolvedFileUrl}:${interpretationRevision}`;
+  const beginInterpretationRequest = useLatestRequestGuard(interpretationIdentity);
   const beginChunksRequest = useLatestRequestGuard(resolvedFileUrl);
   const beginChunkSubmission = useLatestRequestGuard(resolvedFileUrl);
 
@@ -491,7 +559,34 @@ export default function FileDetail() {
     }
   }, [beginChunksRequest, canRunTasks, resolvedFileUrl]);
 
-  const conversionPoller = useTaskPoller(refreshMarkdown);
+  const refreshInterpretation = useCallback(async () => {
+    const identity = interpretationIdentity;
+    const isLatest = beginInterpretationRequest(identity);
+    setInterpretation(null);
+    if (lang !== "zh" || !resolvedFileUrl || !isLatest()) return;
+    try {
+      const response = await apiGet<{ interpretations?: ArticleInterpretation[] }>(
+        `/api/article-interpretations?file_url=${encodeURIComponent(resolvedFileUrl)}`
+      );
+      if (isLatest()) {
+        const item = response.interpretations?.[0];
+        setInterpretation(item ? { identity, item } : null);
+      }
+    } catch {
+      if (isLatest()) setInterpretation(null);
+    }
+  }, [beginInterpretationRequest, interpretationIdentity, lang, resolvedFileUrl]);
+
+  const invalidateInterpretation = useCallback(() => {
+    setInterpretation(null);
+    setInterpretationRevision((revision) => revision + 1);
+  }, []);
+
+  const refreshAfterConversion = useCallback(() => {
+    void refreshMarkdown();
+    invalidateInterpretation();
+  }, [invalidateInterpretation, refreshMarkdown]);
+  const conversionPoller = useTaskPoller(refreshAfterConversion);
   const catalogPoller = useTaskPoller(fetchFile);
 
   const anyTaskRunning = converting || catalogSubmitting || chunkSubmitting ||
@@ -517,6 +612,11 @@ export default function FileDetail() {
     if (!resolvedFileUrl) return;
     void refreshMarkdown();
   }, [resolvedFileUrl, refreshMarkdown]);
+
+  useEffect(() => {
+    setInterpretationExpanded(false);
+    void refreshInterpretation();
+  }, [interpretationIdentity, refreshInterpretation]);
 
   useEffect(() => {
     if (!resolvedFileUrl) return;
@@ -594,6 +694,7 @@ export default function FileDetail() {
         markdown_source: "manual",
       });
       if (res.markdown) setMarkdown(res.markdown);
+      invalidateInterpretation();
       setMdTab("view");
       setMdDirty(false);
     } catch (caught) { setMutationError({ action: "markdown", message: caught instanceof Error ? caught.message : "Failed to save markdown" }); } finally { setMdSaving(false); }
@@ -757,6 +858,21 @@ export default function FileDetail() {
   const effectiveMarkdownSource = markdown?.markdown_source || file.markdown_source || "";
   const effectiveMarkdownUpdatedAt = markdown?.markdown_updated_at || file.markdown_updated_at || "";
   const markdownContent = markdown?.markdown_content || "";
+  const currentInterpretation = lang === "zh" && !isDeleted && interpretation?.identity === interpretationIdentity
+    ? interpretation.item : null;
+
+  function downloadInterpretation(extension: "md" | "html") {
+    if (!currentInterpretation || !file) return;
+    const item = currentInterpretation;
+    const markdownText = buildInterpretationMarkdown(item, file.title);
+    const html = buildInterpretationHtml(item, file.title);
+    const blob = new Blob([extension === "md" ? markdownText : html], { type: extension === "md" ? "text/markdown;charset=utf-8" : "text/html;charset=utf-8" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = `${item.interpretation_id}.${extension}`;
+    link.click();
+    URL.revokeObjectURL(link.href);
+  }
 
   const disabledBtn = "opacity-40 pointer-events-none cursor-not-allowed";
 
@@ -1011,6 +1127,39 @@ export default function FileDetail() {
           )}
         </div>
       </motion.div>
+
+      {currentInterpretation && (
+        <section className="rounded-xl border border-border bg-card overflow-hidden" data-testid="article-interpretation" data-interpretation-id={currentInterpretation.interpretation_id}>
+          <div className="px-4 py-3 bg-muted/30 flex flex-wrap items-center justify-between gap-2">
+            <button type="button" aria-expanded={interpretationExpanded} aria-controls="article-interpretation-body"
+              onClick={() => setInterpretationExpanded((value) => !value)}
+              className="min-h-[48px] flex items-center gap-2 text-sm font-semibold" data-testid="button-interpretation-toggle">
+              <BookOpen className="w-4 h-4 text-primary" />{t("fv.interpretation")}
+              {interpretationExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+            </button>
+            {interpretationExpanded && <div className="flex flex-wrap gap-2">
+              <button className="min-h-[44px] rounded border px-3 text-xs" onClick={() => void navigator.clipboard.writeText(buildInterpretationMarkdown(currentInterpretation, file.title))}>{t("fv.interpretation_copy")}</button>
+              <button className="min-h-[44px] rounded border px-3 text-xs" onClick={() => downloadInterpretation("md")}>{t("fv.interpretation_markdown")}</button>
+              <button className="min-h-[44px] rounded border px-3 text-xs" onClick={() => downloadInterpretation("html")}>{t("fv.interpretation_html")}</button>
+            </div>}
+          </div>
+          {interpretationExpanded && <div id="article-interpretation-body" className="p-4 space-y-3" data-testid="article-interpretation-body">
+            <h3 className="text-lg font-semibold break-words">{currentInterpretation.title_zh}</h3>
+            <MarkdownContent content={interpretationBody(currentInterpretation)} />
+            <div className="border-t pt-3 text-xs text-muted-foreground space-y-1 break-words">
+              <p>{t("fv.interpretation_generated")}: {formatDate(currentInterpretation.generated_at)}</p>
+              <p>{t("fv.interpretation_version")}: {currentInterpretation.raw_sha256.slice(0, 12)} · Markdown {currentInterpretation.markdown_sha256.slice(0, 12)}</p>
+              <p>{t("fv.interpretation_original_title")}: {currentInterpretation.references?.original_title ?? file.title}</p>
+              {interpretationAuthors(currentInterpretation).length > 0 && <p>{t("fv.interpretation_author")}: {interpretationAuthors(currentInterpretation).join("、")}</p>}
+              {currentInterpretation.references?.source?.name_zh && <p>{t("fv.interpretation_source")}: {currentInterpretation.references.source.name_zh}{currentInterpretation.references.source.name_en ? ` (${currentInterpretation.references.source.name_en})` : ""}{currentInterpretation.references.published_time && currentInterpretation.references.published_time !== "日期不明" ? ` · ${t("fv.interpretation_published")}: ${currentInterpretation.references.published_time}` : ""}</p>}
+              <p className="flex flex-wrap gap-x-3">
+                <a className="underline break-all" href={currentInterpretation.file_url} target="_blank" rel="noopener noreferrer">{t("fv.interpretation_original_link")}</a>
+                <a className="underline break-all" href={currentInterpretation.china_article_url} target="_blank" rel="noopener noreferrer">{t("fv.interpretation_domestic_link")}</a>
+              </p>
+            </div>
+          </div>}
+        </section>
+      )}
 
       {/* Section 4: Markdown Content */}
       <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}
