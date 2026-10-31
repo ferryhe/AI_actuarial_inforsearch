@@ -1,4 +1,5 @@
 import { memo, type CSSProperties, type ReactNode } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
@@ -118,6 +119,31 @@ const MARKDOWN_COMPONENTS: Components = {
     ? <input type="checkbox" checked={Boolean(checked)} disabled className="mr-1.5 align-middle" />
     : null,
 };
+
+const EXPORT_COMPONENTS: Components = {
+  a: ({ href, children }) => transformMarkdownUrl(href || "", "href") === href
+    ? <a href={href} style={{ color: "#1457a6", overflowWrap: "anywhere" }}>{children}</a>
+    : <>{children}</>,
+  h1: ({ children }) => <h1 style={{ fontSize: "1.8em", lineHeight: 1.35, margin: "1em 0 0.5em" }}>{children}</h1>,
+  h2: ({ children }) => <h2 style={{ fontSize: "1.45em", lineHeight: 1.4, margin: "1em 0 0.5em" }}>{children}</h2>,
+  h3: ({ children }) => <h3 style={{ fontSize: "1.2em", lineHeight: 1.45, margin: "1em 0 0.5em" }}>{children}</h3>,
+  p: ({ children }) => <p style={{ margin: "0.8em 0", lineHeight: 1.8 }}>{children}</p>,
+  ul: ({ children }) => <ul style={{ paddingLeft: "1.5em", margin: "0.8em 0" }}>{children}</ul>,
+  ol: ({ children }) => <ol style={{ paddingLeft: "1.5em", margin: "0.8em 0" }}>{children}</ol>,
+  li: ({ children }) => <li style={{ margin: "0.35em 0", lineHeight: 1.7 }}>{children}</li>,
+  blockquote: ({ children }) => <blockquote style={{ borderLeft: "3px solid #bbb", margin: "1em 0", paddingLeft: "1em", color: "#555" }}>{children}</blockquote>,
+  code: ({ children }) => <code style={{ fontFamily: "ui-monospace,monospace", overflowWrap: "anywhere" }}>{children}</code>,
+  pre: ({ children }) => <pre style={{ maxWidth: "100%", overflowX: "auto", whiteSpace: "pre-wrap", overflowWrap: "anywhere", background: "#f3f4f6", padding: "12px", fontSize: "0.9em" }}>{children}</pre>,
+  hr: () => <hr style={{ margin: "1.5em 0", border: 0, borderTop: "1px solid #ddd" }} />,
+};
+
+export function renderMarkdownHtml(content: string): string {
+  return renderToStaticMarkup(
+    <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={EXPORT_COMPONENTS} disallowedElements={DISALLOWED_ELEMENTS} skipHtml urlTransform={transformMarkdownUrl}>
+      {content}
+    </ReactMarkdown>
+  );
+}
 
 function MarkdownImagePlaceholder({ alt }: { alt?: string }) {
   return <span role="img" aria-label={alt || "Image unavailable"} className="inline-block rounded bg-muted px-1 text-muted-foreground">[image: {alt || "unavailable"}]</span>;

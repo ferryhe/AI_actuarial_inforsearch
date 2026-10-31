@@ -34,6 +34,13 @@ import { useLatestRequestGuard } from "@/hooks/use-latest-request";
 import { useAuth } from "@/context/AuthContext";
 import ConfirmDeleteModal from "@/components/ConfirmDeleteModal";
 import { MarkdownContent } from "@/components/MarkdownContent";
+import {
+  buildInterpretationHtml,
+  buildInterpretationMarkdown,
+  interpretationAuthors,
+  interpretationBody,
+  type ArticleInterpretation,
+} from "@/lib/article-interpretation-format";
 import { categoryDisplayName } from "@/lib/category-labels";
 import { hasCompleteLocalizedCatalogMetadata, localizedCatalogMetadata } from "@/lib/bilingual-metadata";
 
@@ -375,6 +382,9 @@ export default function FileDetail() {
   const [showCategoryPicker, setShowCategoryPicker] = useState(false);
 
   const [markdown, setMarkdown] = useState<MarkdownData | null>(null);
+  const [interpretation, setInterpretation] = useState<{ identity: string; item: ArticleInterpretation } | null>(null);
+  const [interpretationExpanded, setInterpretationExpanded] = useState(false);
+  const [interpretationRevision, setInterpretationRevision] = useState(0);
   const [mdLoading, setMdLoading] = useState(false);
   const [mdTab, setMdTab] = useState<"view" | "edit">("view");
   const [mdEditContent, setMdEditContent] = useState("");
@@ -414,6 +424,8 @@ export default function FileDetail() {
     : fileUrl;
   const beginFileRequest = useLatestRequestGuard(fileRequestIdentity);
   const beginMarkdownRequest = useLatestRequestGuard(resolvedFileUrl);
+  const interpretationIdentity = `${lang}:${resolvedFileUrl}:${interpretationRevision}`;
+  const beginInterpretationRequest = useLatestRequestGuard(interpretationIdentity);
   const beginChunksRequest = useLatestRequestGuard(resolvedFileUrl);
   const beginChunkSubmission = useLatestRequestGuard(resolvedFileUrl);
 
@@ -491,7 +503,34 @@ export default function FileDetail() {
     }
   }, [beginChunksRequest, canRunTasks, resolvedFileUrl]);
 
-  const conversionPoller = useTaskPoller(refreshMarkdown);
+  const refreshInterpretation = useCallback(async () => {
+    const identity = interpretationIdentity;
+    const isLatest = beginInterpretationRequest(identity);
+    setInterpretation(null);
+    if (lang !== "zh" || !resolvedFileUrl || !isLatest()) return;
+    try {
+      const response = await apiGet<{ interpretations?: ArticleInterpretation[] }>(
+        `/api/article-interpretations?file_url=${encodeURIComponent(resolvedFileUrl)}`
+      );
+      if (isLatest()) {
+        const item = response.interpretations?.[0];
+        setInterpretation(item ? { identity, item } : null);
+      }
+    } catch {
+      if (isLatest()) setInterpretation(null);
+    }
+  }, [beginInterpretationRequest, interpretationIdentity, lang, resolvedFileUrl]);
+
+  const invalidateInterpretation = useCallback(() => {
+    setInterpretation(null);
+    setInterpretationRevision((revision) => revision + 1);
+  }, []);
+
+  const refreshAfterConversion = useCallback(() => {
+    void refreshMarkdown();
+    invalidateInterpretation();
+  }, [invalidateInterpretation, refreshMarkdown]);
+  const conversionPoller = useTaskPoller(refreshAfterConversion);
   const catalogPoller = useTaskPoller(fetchFile);
 
   const anyTaskRunning = converting || catalogSubmitting || chunkSubmitting ||
@@ -517,6 +556,11 @@ export default function FileDetail() {
     if (!resolvedFileUrl) return;
     void refreshMarkdown();
   }, [resolvedFileUrl, refreshMarkdown]);
+
+  useEffect(() => {
+    setInterpretationExpanded(false);
+    void refreshInterpretation();
+  }, [interpretationIdentity, refreshInterpretation]);
 
   useEffect(() => {
     if (!resolvedFileUrl) return;
@@ -594,6 +638,7 @@ export default function FileDetail() {
         markdown_source: "manual",
       });
       if (res.markdown) setMarkdown(res.markdown);
+      invalidateInterpretation();
       setMdTab("view");
       setMdDirty(false);
     } catch (caught) { setMutationError({ action: "markdown", message: caught instanceof Error ? caught.message : "Failed to save markdown" }); } finally { setMdSaving(false); }
@@ -757,6 +802,21 @@ export default function FileDetail() {
   const effectiveMarkdownSource = markdown?.markdown_source || file.markdown_source || "";
   const effectiveMarkdownUpdatedAt = markdown?.markdown_updated_at || file.markdown_updated_at || "";
   const markdownContent = markdown?.markdown_content || "";
+  const currentInterpretation = lang === "zh" && !isDeleted && interpretation?.identity === interpretationIdentity
+    ? interpretation.item : null;
+
+  function downloadInterpretation(extension: "md" | "html") {
+    if (!currentInterpretation || !file) return;
+    const item = currentInterpretation;
+    const markdownText = buildInterpretationMarkdown(item, file.title);
+    const html = buildInterpretationHtml(item, file.title);
+    const blob = new Blob([extension === "md" ? markdownText : html], { type: extension === "md" ? "text/markdown;charset=utf-8" : "text/html;charset=utf-8" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = `${item.interpretation_id}.${extension}`;
+    link.click();
+    URL.revokeObjectURL(link.href);
+  }
 
   const disabledBtn = "opacity-40 pointer-events-none cursor-not-allowed";
 
@@ -1011,6 +1071,39 @@ export default function FileDetail() {
           )}
         </div>
       </motion.div>
+
+      {currentInterpretation && (
+        <section className="rounded-xl border border-border bg-card overflow-hidden" data-testid="article-interpretation" data-interpretation-id={currentInterpretation.interpretation_id}>
+          <div className="px-4 py-3 bg-muted/30 flex flex-wrap items-center justify-between gap-2">
+            <button type="button" aria-expanded={interpretationExpanded} aria-controls="article-interpretation-body"
+              onClick={() => setInterpretationExpanded((value) => !value)}
+              className="min-h-[48px] flex items-center gap-2 text-sm font-semibold" data-testid="button-interpretation-toggle">
+              <BookOpen className="w-4 h-4 text-primary" />{t("fv.interpretation")}
+              {interpretationExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+            </button>
+            {interpretationExpanded && <div className="flex flex-wrap gap-2">
+              <button className="min-h-[44px] rounded border px-3 text-xs" onClick={() => void navigator.clipboard.writeText(buildInterpretationMarkdown(currentInterpretation, file.title))}>{t("fv.interpretation_copy")}</button>
+              <button className="min-h-[44px] rounded border px-3 text-xs" onClick={() => downloadInterpretation("md")}>{t("fv.interpretation_markdown")}</button>
+              <button className="min-h-[44px] rounded border px-3 text-xs" onClick={() => downloadInterpretation("html")}>{t("fv.interpretation_html")}</button>
+            </div>}
+          </div>
+          {interpretationExpanded && <div id="article-interpretation-body" className="p-4 space-y-3" data-testid="article-interpretation-body">
+            <h3 className="text-lg font-semibold break-words">{currentInterpretation.title_zh}</h3>
+            <MarkdownContent content={interpretationBody(currentInterpretation)} />
+            <div className="border-t pt-3 text-xs text-muted-foreground space-y-1 break-words">
+              <p>{t("fv.interpretation_generated")}: {formatDate(currentInterpretation.generated_at)}</p>
+              <p>{t("fv.interpretation_version")}: {currentInterpretation.raw_sha256.slice(0, 12)} · Markdown {currentInterpretation.markdown_sha256.slice(0, 12)}</p>
+              <p>{t("fv.interpretation_original_title")}: {currentInterpretation.references?.original_title ?? file.title}</p>
+              {interpretationAuthors(currentInterpretation).length > 0 && <p>{t("fv.interpretation_author")}: {interpretationAuthors(currentInterpretation).join("、")}</p>}
+              {currentInterpretation.references?.source?.name_zh && <p>{t("fv.interpretation_source")}: {currentInterpretation.references.source.name_zh}{currentInterpretation.references.source.name_en ? ` (${currentInterpretation.references.source.name_en})` : ""}{currentInterpretation.references.published_time && currentInterpretation.references.published_time !== "日期不明" ? ` · ${t("fv.interpretation_published")}: ${currentInterpretation.references.published_time}` : ""}</p>}
+              <p className="flex flex-wrap gap-x-3">
+                <a className="underline break-all" href={currentInterpretation.file_url} target="_blank" rel="noopener noreferrer">{t("fv.interpretation_original_link")}</a>
+                <a className="underline break-all" href={currentInterpretation.china_article_url} target="_blank" rel="noopener noreferrer">{t("fv.interpretation_domestic_link")}</a>
+              </p>
+            </div>
+          </div>}
+        </section>
+      )}
 
       {/* Section 4: Markdown Content */}
       <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}

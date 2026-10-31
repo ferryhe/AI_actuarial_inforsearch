@@ -34,7 +34,8 @@ def source_body(label="research"):
 
 
 def response(messages):
-    evidence = json.loads(messages[-1]["content"])["evidence"]
+    material = json.loads(messages[-1]["content"])
+    evidence = material["evidence"]
     text = (
         "研究围绕保险风险估计中的资料和方法展开。原文把观察资料作为模型估计的基础，"
         "并将估计结果与观察结果进行比较。对于精算工作，理解这种方法需要先确认资料口径，"
@@ -46,6 +47,7 @@ def response(messages):
         {
             "title_zh": "保险风险估计：从资料到方法的边界",
             "short_reason": "",
+            "authors": [entry["name"] for entry in material.get("author_metadata", [])],
             "sections": [
                 {
                     "role": role,
@@ -210,12 +212,15 @@ def test_link_failure_retry_reuses_body_and_read_marks_changed_version(storage):
     draft = runner._get(identity)
     assert draft["status"] == "failed" and draft["error"] == "link_unavailable"
     assert draft["body_markdown_zh"]
+    draft["references"] = {"authors": ["Verified Author"]}
+    runner._save(draft)
     cursor = storage._conn.execute(
         "SELECT last_source_key FROM article_interpretation_state"
     ).fetchone()[0]
     resolver.fail = False
     result = runner.run(retry_id=identity)["interpretation"]
     assert result["status"] == "ready" and len(generator.calls) == 1
+    assert result["references"]["authors"] == ["Verified Author"]
     assert (
         storage._conn.execute(
             "SELECT last_source_key FROM article_interpretation_state"
@@ -557,6 +562,88 @@ def test_output_rejects_unsupported_numbers_quotes_and_unlabelled_inference():
         with pytest.raises(ValueError, match=error):
             articles.validate_output(json.dumps(value), coverage)
 
+    value = json.loads(json.dumps(original))
+    value["authors"] = ["Unverified Person"]
+    with pytest.raises(ValueError, match="author_metadata_mismatch"):
+        articles.validate_output(json.dumps(value), coverage)
+
+
+def test_title_page_author_extraction_is_explicit_and_bounded():
+    france = (
+        "Fidélisation des assurés\n\n###### Virginie Normand\n\n"
+        "Responsable Domaine Décisionnel VIASANTE Mutuelle\n\n"
+        "###### Léonard Fontaine\n\nAssocié Galea &amp; Associés\n\n"
+        "# Main Article\n\n###### Incidental Person\n\nProfessor of Something\n\n" + source_body()
+    )
+    assert articles.extract_title_page_author_metadata(france) == [
+        {
+            "name": "Virginie Normand",
+            "quote": "###### Virginie Normand\nResponsable Domaine Décisionnel VIASANTE Mutuelle",
+        },
+        {
+            "name": "Léonard Fontaine",
+            "quote": "###### Léonard Fontaine\nAssocié Galea &amp; Associés",
+        },
+    ]
+
+    # These nonauthor names are in an acknowledgment section of the same saved
+    # SOA source, after its contents boundary.
+    soa = (Path(__file__).parent / "fixtures/article_interpretation_soa_title_page.md").read_text(
+        encoding="utf-8"
+    )
+    soa_authors = articles.extract_title_page_author_metadata(soa)
+    assert [entry["name"] for entry in soa_authors] == [
+        "Satya Sai Mudigonda",
+        "Pallav Kumar Baruah",
+        "Phani Krishna Kandala",
+        "Rohan Yashraj Gupta",
+        "Srinand N Hegde",
+        "Sumanth Chebrolu",
+    ]
+    assert "R. Dale Hall" not in {entry["name"] for entry in soa_authors}
+    assert "Achilles Natsis" not in {entry["name"] for entry in soa_authors}
+
+    assert articles.extract_title_page_author_metadata(
+        "By the CAS Machine Learning Working Party\n\n# Main Article\n\n" + source_body()
+    ) == [
+        {
+            "name": "CAS Machine Learning Working Party",
+            "quote": "By the CAS Machine Learning Working Party",
+        }
+    ]
+    assert (
+        articles.extract_title_page_author_metadata(
+            "Casualty Actuarial Society\n\n# Main Article\n\n" + source_body()
+        )
+        == []
+    )
+    assert (
+        articles.extract_title_page_author_metadata(
+            "By working with the research team\n\n# Main Article\n\n" + source_body()
+        )
+        == []
+    )
+    assert articles.extract_title_page_author_metadata(
+        "R. Dale Hall, FSA, MAAA, Managing Director, Research\n"
+        "Advisor Jane Smith, PhD, Senior Researcher\n"
+        "Contact: Alex Example, Actuary\n\n"
+        "Author: Verified Author, PhD, Professor of Statistics\n\n"
+        "### Contents\n\n" + source_body()
+    ) == [
+        {
+            "name": "Verified Author",
+            "quote": "Author: Verified Author, PhD, Professor of Statistics",
+        }
+    ]
+
+    assert (
+        articles.extract_title_page_author_metadata(
+            "# Main article\n\n###### Incidental Person\n\nProfessor of Mathematics\n\n"
+            + source_body()
+        )
+        == []
+    )
+
 
 def test_article_adapter_closes_owned_client_and_preserves_length_metadata(monkeypatch):
     from unittest.mock import AsyncMock, Mock
@@ -680,6 +767,146 @@ def test_api_read_empty_and_cli_entry_contract(storage, tmp_path, monkeypatch):
         timeout=15,
     )
     assert help_result.returncode == 0 and "retry" in help_result.stdout
+
+
+def test_reader_api_returns_only_current_public_latest_fields(tmp_path, monkeypatch):
+    from ai_actuarial.api.routers import article_interpretations as reader_api
+    from tests.test_fastapi_ops_read_endpoints import _build_test_client
+
+    client, _, _ = _build_test_client(tmp_path, monkeypatch, require_auth=False)
+    public = {
+        "interpretation_id": "current",
+        "file_url": "https://example.test/article",
+        "title_zh": "文章标题",
+        "body_markdown_zh": "正文",
+        "generated_at": "2026-10-30T00:00:00Z",
+        "raw_sha256": "raw",
+        "markdown_sha256": "markdown",
+        "china_article_url": "https://aiactuary.cn/file-detail?file_id=1386",
+        "references": {
+            "published_time": "2026-10-01",
+            "source": {"name_zh": "来源"},
+            "authors": ["Verified Author"],
+        },
+        "provider": "private-provider",
+        "error": "internal-error",
+        "attempts": [{"credential": "private"}],
+        "reader_eligible": True,
+        "status": "ready",
+    }
+    monkeypatch.setattr(
+        reader_api,
+        "read_interpretations",
+        lambda *a, **_kw: [
+            {**public, "interpretation_id": "failed", "reader_eligible": False},
+            public,
+            {**public, "interpretation_id": "older"},
+        ],
+    )
+    response = client.get(
+        "/api/article-interpretations?file_url=https%3A%2F%2Fexample.test%2Farticle"
+    )
+    assert response.status_code == 200
+    assert response.json() == {
+        "interpretations": [
+            {
+                key: public[key]
+                for key in (
+                    "interpretation_id",
+                    "title_zh",
+                    "body_markdown_zh",
+                    "generated_at",
+                    "file_url",
+                    "raw_sha256",
+                    "markdown_sha256",
+                    "china_article_url",
+                    "references",
+                )
+            }
+        ]
+    }
+
+
+def test_france_title_page_authors_reach_reader_api_from_saved_markdown(tmp_path, monkeypatch):
+    from tests.test_fastapi_ops_read_endpoints import _build_test_client
+
+    client, _, _ = _build_test_client(tmp_path, monkeypatch, require_auth=False)
+    database = postgres_url_for_path(tmp_path / "index.db")
+    # This is the verbatim saved title-page excerpt; append only generic test prose
+    # so the normal eligibility and generation path can run offline.
+    saved_title_page = (
+        Path(__file__).parent / "fixtures/article_interpretation_france_title_page.md"
+    ).read_text(encoding="utf-8")
+    saved_markdown = saved_title_page + "\n\n" + source_body("mutuelle")
+    authors = [
+        "Virginie Normand",
+        "Léonard Fontaine",
+        "Vincent Dalon",
+        "Alexandre Eby",
+    ]
+    url = "https://www.institutdesactuaires.com/global/gene/link.php?doc_id=17510&fg=1"
+    storage = Storage(database)
+    try:
+        storage._conn.execute(
+            "INSERT INTO canonical_sources VALUES ('france','Institut des actuaires',"
+            "'Institut des actuaires','active',NULL,'{}'::jsonb)"
+        )
+        storage._conn.execute(
+            "INSERT INTO source_aliases VALUES "
+            "('www.institutdesactuaires.com','hostname','france','verified','{}'::jsonb)"
+        )
+        seed(
+            storage,
+            "france",
+            body=saved_markdown,
+            title="Machine Learning for Health Insurance Member Retention: A Case Study",
+            date="2022-09",
+            url=url,
+        )
+        generator = Generator()
+        resolver = Resolver(fail=True)
+        runner = service(storage, generator=generator, resolver=resolver)
+        receipt = runner.run(round_key="france-authors")
+        assert receipt["status"] == "complete"
+        assert len(generator.calls) == 1
+        interpretation_id = receipt["slots"][0]["interpretation_id"]
+        failed = runner._get(interpretation_id)
+        assert failed["status"] == "failed" and failed["authors"] == authors
+        resolver.fail = False
+        retried = runner.run(retry_id=interpretation_id)["interpretation"]
+        assert retried["status"] == "ready"
+        assert retried["references"]["authors"] == authors
+        assert len(generator.calls) == 1
+        material = json.loads(generator.calls[0]["messages"][-1]["content"])
+        assert [entry["name"] for entry in material["author_metadata"]] == authors
+        assert all(
+            name in "\n".join(entry["quote"] for entry in material["author_metadata"])
+            for name in authors
+        )
+        assert "summary" not in material
+
+        readback = articles.read_interpretations(database, file_url=url)
+        assert len(readback) == 1 and readback[0]["reader_eligible"]
+        assert [entry["name"] for entry in readback[0]["coverage"]["author_metadata"]] == authors
+        assert readback[0]["authors"] == authors
+        assert readback[0]["references"]["authors"] == authors
+        assert readback[0]["coverage"]["all_input_chars"] == sum(
+            len(message["content"]) for message in generator.calls[0]["messages"]
+        )
+        assert readback[0]["coverage"]["input_token_upper_bound"] == sum(
+            len(message["content"].encode("utf-8")) + 16
+            for message in generator.calls[0]["messages"]
+        )
+        public = client.get("/api/article-interpretations", params={"file_url": url})
+        assert public.status_code == 200
+        assert public.json()["interpretations"][0]["references"]["authors"] == authors
+        assert public.json()["interpretations"][0]["references"]["published_time"] == "2022-09"
+        current = storage._conn.execute(
+            "SELECT markdown_content FROM catalog_items WHERE file_url=?", (url,)
+        ).fetchone()[0]
+        assert current == saved_markdown
+    finally:
+        storage.close()
 
 
 def test_native_domestic_schedule_metadata_and_local_rejection(storage, tmp_path):
@@ -1561,34 +1788,35 @@ def test_citation_label_does_not_promote_other_evidence_four_digit_counts_to_yea
         articles.validate_output(json.dumps(value, ensure_ascii=False), coverage)
 
 
-def test_prompt_v6_allows_source_supported_numerals_without_precision_increase(monkeypatch):
-    assert articles.PROMPT_VERSION == "article-interpretation-v6"
+def test_prompt_v7_allows_source_supported_numerals_and_explicit_authors(monkeypatch):
+    assert articles.PROMPT_VERSION == "article-interpretation-v7-authors"
     assert "精确数字优先使用Arabic digits" in articles.PROMPT
     assert "不得编成精确金额" in articles.PROMPT
+    assert "author_metadata" in articles.PROMPT and "不能补充、删减或从正文推测" in articles.PROMPT
     row = {"url": "https://a.example/x", "sha256": "a" * 64, "markdown_content": source_body()}
     current_messages, current_coverage = articles.build_input(row, {}, {})
     with monkeypatch.context() as prior:
         prior.setattr(articles, "PROMPT_VERSION", "article-interpretation-v5")
         prior.setattr(articles, "PROMPT", "所有数值都用Arabic digits。")
         old_messages, old_coverage = articles.build_input(row, {}, {})
-    assert current_coverage["prompt_version"] == "article-interpretation-v6"
+    assert current_coverage["prompt_version"] == "article-interpretation-v7-authors"
     assert old_coverage["prompt_version"] == "article-interpretation-v5"
     assert articles._hash(
         articles._json({"messages": current_messages, "coverage": current_coverage})
     ) != articles._hash(articles._json({"messages": old_messages, "coverage": old_coverage}))
 
 
-def test_v6_prompt_version_is_persisted_in_draft_and_slot_receipt(storage):
+def test_v7_prompt_version_is_persisted_in_draft_and_slot_receipt(storage):
     seed(storage, "a")
     runner = service(storage)
-    receipt = runner.run(round_key="v6-recipe-fixture")
+    receipt = runner.run(round_key="v7-recipe-fixture")
     slot = receipt["slots"][0]
     draft = runner._get(slot["interpretation_id"])
     assert (
         slot["prompt_version"]
         == draft["prompt_version"]
         == draft["coverage"]["prompt_version"]
-        == "article-interpretation-v6"
+        == "article-interpretation-v7-authors"
     )
     assert slot["input_fingerprint"] == draft["input_fingerprint"]
     assert receipt["provider_calls"] == 1

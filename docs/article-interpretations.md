@@ -6,6 +6,10 @@
 
 CLI：`ai-actuarial article-interpretation run --json`、`retry <id> --json`、`get [id] --json`。CLI 使用既有 HTTP gateway 和身份，不另建凭据。只读 `GET /api/article-interpretations?file_url=<encoded canonical URL>` 或 `interpretation_id=<id>` 返回稿件、证据及 `is_current` / `reader_eligible`。正文更新、隐藏或删除使旧稿失去当前展示资格，历史正文保留。没有产物时返回空数组。展示端应只把 `reader_eligible=true` 的稿件作为当前解读，并原样消费 `china_article_url`。
 
+文章详情页读取接口只返回当前可展示稿件的读者字段（标题、正文、生成时间、原文版本、出处和已核验国内链接）；失败记录、内部尝试与路由信息不进入该响应。中文界面按文章 URL 读取，英文界面不请求。复制与 Markdown/HTML 下载使用这条读者响应中的同一稿件版本。
+
+作者只从当前原文 Markdown 的明确标题页署名结构中提取，并把原文片段与姓名一起放入同一次生成输入；模型返回值必须与这些姓名和顺序完全一致，之后才写入当前解读的 `references.authors`。无法识别的格式保持空，不从机构、正文、致谢或 URL 推测。读接口、详情页及两种导出只传递已保存作者。
+
 每个环境默认没有自动计划。部署时由操作者在既有配置中确认环境，再通过现有计划入口配置。以下只是未启用的建议，仓库不创建或启用实际计划：
 
 ```yaml
