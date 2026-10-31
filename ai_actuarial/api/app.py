@@ -31,6 +31,7 @@ from .route_inventory import (
     collect_fastapi_route_signatures,
 )
 from .routers.agentic_rag import router as agentic_rag_router
+from .routers.article_interpretations import router as article_interpretations_router
 from .routers.auth import router as auth_router
 from .routers.chat import router as chat_router
 from .routers.files_write import router as files_write_router
@@ -251,6 +252,9 @@ def create_app() -> FastAPI:
     app.include_router(migration_router, prefix="/api", tags=["migration"])
     app.include_router(read_router, prefix="/api", tags=["read"])
     app.include_router(weekly_updates_router, prefix="/api", tags=["weekly-updates"])
+    app.include_router(
+        article_interpretations_router, prefix="/api", tags=["article-interpretations"]
+    )
     app.include_router(auth_router, prefix="/api", tags=["auth"])
     app.include_router(ops_read_router, prefix="/api", tags=["ops-read"])
     app.include_router(ops_write_router, prefix="/api", tags=["ops-write"])

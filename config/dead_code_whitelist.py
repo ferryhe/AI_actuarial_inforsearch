@@ -10,7 +10,9 @@ from ai_actuarial.api.routers.agentic_rag import (
     api_search_agentic_titles,
     api_trace_agentic_relations,
 )
+from ai_actuarial.api.routers.article_interpretations import api_article_interpretations
 
+api_article_interpretations  # reason: FastAPI registers this decorated route.
 api_search_agentic_summaries  # reason: FastAPI registers this decorated route.
 api_search_agentic_titles  # reason: FastAPI registers this decorated route.
 api_search_agentic_sections  # reason: FastAPI registers this decorated route.
@@ -451,6 +453,12 @@ _TextExtractor.handle_data  # reason: HTMLParser invokes this protocol callback 
 from tests.test_deployment_config_source import _CaddyStaticUpstream
 
 _CaddyStaticUpstream.do_GET  # reason: BaseHTTPRequestHandler dispatches this test upstream callback dynamically.
+
+from tests.test_article_interpretation_async_transport import _ChunkedHandler
+
+_ChunkedHandler.do_POST  # reason: BaseHTTPRequestHandler dispatches this loopback fixture callback.
+_ChunkedHandler.log_message  # reason: BaseHTTPRequestHandler dispatches its logging callback.
+_ChunkedHandler.protocol_version  # reason: BaseHTTPRequestHandler reads its HTTP response version.
 
 from tests.agentic_rag.test_ready_data_builder import test_db_path
 from tests.conftest import (

@@ -320,6 +320,8 @@ class NativeTaskRuntime:
         ready_data_runner: Callable[..., dict[str, Any]] | None = None,
         pipeline_baton_state_path: str = "data/pipeline_baton.json",
         weekly_explanation_generator: Any | None = None,
+        article_interpretation_generator: Any | None = None,
+        article_interpretation_resolver: Any | None = None,
     ) -> None:
         self.data_root = (
             Path(data_root).expanduser().resolve() if data_root else resolve_data_root()
@@ -339,6 +341,8 @@ class NativeTaskRuntime:
         )
         self._ready_data_runner = ready_data_runner
         self._weekly_explanation_generator = weekly_explanation_generator
+        self._article_interpretation_generator = article_interpretation_generator
+        self._article_interpretation_resolver = article_interpretation_resolver
         self._ready_data_worker_lock = threading.Lock()
         self._pipeline_baton = PipelineBaton(
             state_path=str(
@@ -915,7 +919,10 @@ class NativeTaskRuntime:
         return task_id
 
     def init_scheduler(self, *, configured_only: bool = False) -> None:
+        from ai_actuarial.article_interpretations import validate_schedules
+
         site_config = self._load_site_config()
+        validate_schedules(site_config)
         global_schedule = str(
             (site_config.get("defaults") or {}).get("schedule_interval") or ""
         ).strip()
@@ -961,6 +968,12 @@ class NativeTaskRuntime:
                     params.pop("period_start", None)
                     params.pop("period_end", None)
                     params["relative_period"] = "previous_week"
+                elif task_type == "article_interpretation":
+                    params.pop("retry_id", None)
+                    params.pop("round_key", None)
+                    params["scheduled"] = True
+                    params["timezone"] = task_cfg.get("timezone")
+                    params["schedule_name"] = task_name
                 is_pipeline_source = (
                     task_name == "Scheduled Collection" and task_type == "scheduled"
                 )
@@ -1465,6 +1478,48 @@ class NativeTaskRuntime:
 
             if collection_type == "weekly_explanation":
                 return self._run_weekly_explanation(db_path, data)
+
+            if collection_type == "article_interpretation":
+                from ai_actuarial.article_interpretations import ArticleInterpretationService
+
+                settings = dict(config.get("article_interpretation") or {})
+                if data.get("scheduled") and settings.get("environment", "local") != "china":
+                    raise ValueError("Article interpretation schedules require china environment")
+                settings["timezone"] = "Asia/Shanghai"
+                if data.get("scheduled"):
+                    from ai_actuarial.api.services.ops_read import get_schedule_status
+
+                    with self._scheduler_lock:
+                        settings["next_run"] = next(
+                            (
+                                job["next_run"]
+                                for job in get_schedule_status(self.scheduler)["jobs"]
+                                if job["source"] == data.get("schedule_name")
+                            ),
+                            None,
+                        )
+                receipt = ArticleInterpretationService(
+                    storage,
+                    generator=self._article_interpretation_generator,
+                    resolver=self._article_interpretation_resolver,
+                    config=settings,
+                    stop_check=lambda: self._stop_requested(task_id),
+                ).run(retry_id=data.get("retry_id"))
+                slots = receipt.get("slots", [])
+                failed = sum(slot["status"] == "failed" for slot in slots)
+                failed += int(receipt.get("interpretation", {}).get("status") == "failed")
+                return CollectionResult(
+                    success=receipt["status"] == "complete" and not failed,
+                    items_found=1 if receipt.get("interpretation") else len(slots),
+                    items_downloaded=0,
+                    items_skipped=sum(slot["status"] == "skipped" for slot in slots),
+                    errors=(
+                        ["Article interpretation incomplete"]
+                        if failed or receipt["status"] != "complete"
+                        else []
+                    ),
+                    metadata=receipt,
+                )
 
             if collection_type == "manifest_ingestion":
                 from ai_actuarial.manifest_ingest import ingest_manifest
