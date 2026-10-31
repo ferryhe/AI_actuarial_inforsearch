@@ -770,8 +770,8 @@ def test_api_read_empty_and_cli_entry_contract(storage, tmp_path, monkeypatch):
 
 
 def test_reader_api_returns_only_current_public_latest_fields(tmp_path, monkeypatch):
-    from tests.test_fastapi_ops_read_endpoints import _build_test_client
     from ai_actuarial.api.routers import article_interpretations as reader_api
+    from tests.test_fastapi_ops_read_endpoints import _build_test_client
 
     client, _, _ = _build_test_client(tmp_path, monkeypatch, require_auth=False)
     public = {

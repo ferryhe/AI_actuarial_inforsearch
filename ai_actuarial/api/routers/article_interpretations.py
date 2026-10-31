@@ -38,7 +38,6 @@ def api_article_interpretations(
         latest.setdefault(draft["file_url"], draft)
     return {
         "interpretations": [
-            {key: draft[key] for key in _READER_FIELDS if key in draft}
-            for draft in latest.values()
+            {key: draft[key] for key in _READER_FIELDS if key in draft} for draft in latest.values()
         ]
     }
