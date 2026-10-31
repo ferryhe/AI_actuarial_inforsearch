@@ -1,3 +1,9 @@
+# 当前候选 — SOA 失效 seed 修复 — 2026-10-31
+
+- 项目 `AI_actuarial_inforsearch`；工作树 `C:/Users/ferry/.codex/worktrees/soa-seed-repair/AI_actuarial_inforsearch`，分支 `fix/soa-obsolete-seed`。仅本仓库：删除已确认 404 的 SOA `/research/soa-research/` registry seed；保存 frontier 修补升级至 `frontier_repair_soa_v2`，从 queue/retry_queue 移除该 URL，并保留 cursor、其他有效 frontier、文章记录及有效重试。
+- 参数化 frontier 修补测试 3/3 PASS（CCA、France、SOA；SOA 用例覆盖既有 v1 marker）；Black、isort、Ruff、py_compile 与 `git diff --check` PASS。
+- 仅运行离线测试和代码检查；未运行 SOA 真实采集，未写生产状态、回执、Hub 或目标。Case 仍待修复部署后的普通来源重跑，不能据此声称恢复。未提交或推送；交由 controller fresh review。
+
 # 当前候选 — 意大利公开空密码 PDF 提取 — 2026-10-30
 
 - 项目 `AI_actuarial_inforsearch`；工作树 `C:/Users/ferry/.codex/worktrees/public-pdf-extraction/AI_actuarial_inforsearch`，分支 `fix/public-pdf-extraction`。仅修改采集 runtime、聚焦测试和 runtime 参考说明；其他仓库未读写。

@@ -159,7 +159,6 @@ SITES: dict[str, Site] = {
         (
             "https://www.soa.org/research/topics/artificial-intelligence-topic-landing/",
             "https://www.soa.org/research/research-topic-list/",
-            "https://www.soa.org/research/soa-research/",
             "https://www.soa.org/resources/research-reports/2025/research-ai-bulletin/",
         ),
         ("soa.org",),
@@ -1041,6 +1040,8 @@ def _frontier_repair_items(site: Site) -> tuple[set[str], list[dict[str, Any]]]:
         return old, [
             {"url": url, "kind": "page", "depth": 0, "referrer": url} for url in replacements
         ]
+    if site.site_id == "soa":
+        return {"https://www.soa.org/research/soa-research/"}, []
     if site.site_id == "france":
         obsolete = {
             "https://www.institutdesactuaires.com/global/gene/link.php?doc_id=1&fg=1",
@@ -1068,7 +1069,7 @@ def _frontier_repair_items(site: Site) -> tuple[set[str], list[dict[str, Any]]]:
 
 def _repair_saved_frontier(site: Site, site_state: dict[str, Any]) -> None:
     """Patch only the observed obsolete seeds in persisted source frontiers."""
-    marker_version = "v2" if site.site_id == "france" else "v1"
+    marker_version = "v2" if site.site_id in {"france", "soa"} else "v1"
     marker = f"frontier_repair_{site.site_id}_{marker_version}"
     if site_state.get(marker):
         return
