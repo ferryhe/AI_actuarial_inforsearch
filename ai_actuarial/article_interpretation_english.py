@@ -178,14 +178,40 @@ def _date_events(text: str):
     return matches
 
 
-def _quantity_events(text: str):
+def _quantity_events(text: str, *, english: bool = False):
     occurrences = []
     articles._quantities(text, strict=True, occurrences=occurrences)
     dates = _date_events(text)
-    events = [
-        (start, end, (dimension, value, exponent))
+    one_hot_spans = {
+        (match.start(), match.start() + len(match.group("one")))
+        for match in re.finditer(
+            r"(?P<one>one)(?:[-‐‑‒–—]|\s+)hot\s+(?:encodings?|encoded|vectors?)\b",
+            text,
+            flags=re.IGNORECASE,
+        )
+    }
+    ordinal_occurrences = [
+        (start, end, value, exponent)
         for start, end, dimension, value, exponent in occurrences
+        if dimension.startswith("ordinal:")
     ]
+    events = []
+    for start, end, dimension, value, exponent in occurrences:
+        if dimension == "number" and (start, end) in one_hot_spans:
+            continue
+        if (
+            english
+            and dimension == "number"
+            and any(
+                ordinal_start == start
+                and end <= ordinal_end
+                and value == ordinal_value
+                and exponent == ordinal_exponent
+                for ordinal_start, ordinal_end, ordinal_value, ordinal_exponent in ordinal_occurrences
+            )
+        ):
+            continue
+        events.append((start, end, (dimension, value, exponent)))
     for start, end, year, month, day in dates:
         events = [event for event in events if not (start <= event[0] and event[1] <= end)]
         year_value, month_value = Decimal(year), Decimal(month)
@@ -201,7 +227,7 @@ def _quantity_events(text: str):
 
 def _check_quantities(label: str, original: str, translated: str, evidence_ids=()) -> None:
     expected = _quantity_events(original)
-    actual = _quantity_events(translated)
+    actual = _quantity_events(translated, english=True)
     if Counter(actual) != Counter(expected) or actual != expected:
         raise ValueError(
             f"{label}_number_mismatch expected={list(map(str, expected))} "
@@ -276,9 +302,9 @@ def validate_english_output(raw: str, source: dict) -> dict:
                 raise ValueError(f"{label}_formula_mismatch")
             source_quotes = Counter(_quote_values(claim["text"]))
             translated_quotes = Counter(_quote_values(text))
-            if source_quotes - translated_quotes or any(
-                quote not in support for quote in translated_quotes.elements()
-            ):
+            if any(
+                translated_quotes[quote] != count for quote, count in source_quotes.items()
+            ) or any(quote not in support for quote in translated_quotes.elements()):
                 raise ValueError(f"{label}_quote_mismatch")
             translated_paragraphs.append(text.strip())
         translated_sections.append(
@@ -432,7 +458,6 @@ class EnglishTranslationService:
             ChatArticleGenerator(
                 runtime,
                 MAX_OUTPUT_TOKENS,
-                request_options={"response_format": {"type": "json_object"}},
             ),
             {"provider": runtime.provider, "model": runtime.model},
         )
@@ -503,6 +528,17 @@ class EnglishTranslationService:
             state["attempts"].append(attempt)
 
         while self._content_totals(draft["content_key"])["calls"] < MAX_CALLS:
+            current = self._get(draft["interpretation_id"])
+            if (
+                not current
+                or current.get("status") != "ready"
+                or not _current(self.connection, current)
+            ):
+                state.update(status="failed", error="source_version_no_longer_current")
+                attempt["status"] = "failed"
+                self._save_translation(draft, state)
+                slot.update(status="skipped", reason="source_version_no_longer_current")
+                return
             if self.stop_check():
                 state["status"] = "queued"
                 self._save_translation(draft, state)

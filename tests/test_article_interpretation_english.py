@@ -168,6 +168,20 @@ class Generator:
         return _valid_response(messages)
 
 
+def test_english_generator_uses_provider_specific_defaults(monkeypatch):
+    runtime = SimpleNamespace(configured=True, provider="deepseek", model="deepseek-flash")
+    monkeypatch.setattr(english, "resolve_ai_function_runtime", lambda *_args, **_kwargs: runtime)
+    service = object.__new__(EnglishTranslationService)
+    service.storage = object()
+    service.generator = None
+
+    generator, route = service._generator()
+
+    assert route == {"provider": "deepseek", "model": "deepseek-flash"}
+    assert generator.request_options == articles._request_options("deepseek")
+    assert generator.request_options["extra_body"] == {"thinking": {"type": "disabled"}}
+
+
 def test_saved_chinese_claims_translate_without_mutating_chinese_and_reader_hides_internals(
     storage,
 ):
@@ -353,6 +367,19 @@ def test_translation_keeps_source_quotes_and_rejects_new_unsupported_quotes():
     }
     assert validate_english_output(json.dumps(result), source)
 
+    repeated_saved_quote = json.loads(json.dumps(result))
+    repeated_saved_quote["sections"][0]["paragraphs"][
+        0
+    ] = "The authors describe it as a “low-cost feature engineering” method, a “low-cost feature engineering” method."
+    with pytest.raises(ValueError, match="quote_mismatch"):
+        validate_english_output(json.dumps(repeated_saved_quote), source)
+
+    added_supported_quote = json.loads(json.dumps(result))
+    added_supported_quote["sections"][0]["paragraphs"][
+        0
+    ] = "The authors describe it as a “low-cost feature engineering” method and a “novel pipeline”."
+    assert validate_english_output(json.dumps(added_supported_quote), source)
+
     dropped_quote = json.loads(json.dumps(result))
     dropped_quote["sections"][0]["paragraphs"][
         0
@@ -415,6 +442,49 @@ def test_quantity_validation_preserves_order_multiplicity_and_explicit_date_alia
         "The number of policies increased from 2006 to 2010.",
     )
     check("scale", "数十亿美元", "billions of dollars")
+    check("one_hot_encoding", "研究采用独热编码。", "The study uses one-hot encoding.")
+    check(
+        "one_hot_count",
+        "研究使用1种独热编码。",
+        "The study uses one feature and one-hot encoding.",
+    )
+    check(
+        "selected_source_one_hot_vectors",
+        "将类别变量编码为独热向量。",
+        "They encoded the categorical variables using one-hot vectors.",
+    )
+    check(
+        "one_hot_encoded",
+        "类别变量采用独热编码。",
+        "The categorical variables were one-hot encoded.",
+    )
+    check(
+        "one_hot_term_and_count",
+        "1个类别变量使用独热向量。",
+        "One categorical variable is encoded using a one-hot vector.",
+    )
+    check("ordinary_hot_day_count", "发生了1个热天。", "There was one hot day.")
+    with pytest.raises(ValueError, match="number_mismatch"):
+        check("ordinary_hot_day_wrong_count", "发生了1个热天。", "There were two hot days.")
+    with pytest.raises(ValueError, match="number_mismatch"):
+        check("one_hot_fabricated", "研究采用2种独热编码。", "The study uses one-hot encoding.")
+
+    check("ordinal", "第二阶段评估模型。", "The 2nd stage evaluates the model.")
+    check(
+        "ordinal_with_count",
+        "第二阶段包含2个样本。",
+        "The 2nd stage contains 2 samples.",
+    )
+    check(
+        "ordinal_order_and_multiplicity",
+        "第二阶段和第三阶段",
+        "The 2nd stage and 3rd stage",
+    )
+    with pytest.raises(ValueError, match="number_mismatch"):
+        check("ordinal_wrong_value", "第二阶段有3个样本", "The 3rd stage has 2 samples.")
+    chinese_quantities = articles._quantities("第二阶段", strict=True)
+    check("ordinal_default", "第二阶段", "2nd stage")
+    assert articles._quantities("第二阶段", strict=True) == chinese_quantities
 
     for text in ("从2增加到5", "2018年9月", "数十亿美元"):
         collected = []
@@ -661,6 +731,49 @@ def test_source_change_during_translation_does_not_make_a_second_call_or_ready_e
     assert saved["status"] == "ready"
     assert saved["english_translation"]["status"] == "failed"
     assert saved["english_translation"]["error"] == "source_version_no_longer_current"
+
+
+@pytest.mark.parametrize("mutation", ["hidden", "markdown_changed"])
+def test_invalid_translation_rechecks_source_before_reserving_second_call(storage, mutation):
+    draft = _draft(storage)
+    call_count = 0
+
+    def change_source_on_first_call():
+        nonlocal call_count
+        call_count += 1
+        if call_count != 1:
+            return
+        if mutation == "hidden":
+            storage._conn.execute("UPDATE files SET local_path='' WHERE url=?", (URL,))
+        else:
+            markdown = storage._conn.execute(
+                "SELECT markdown_content FROM catalog_items WHERE file_url=?", (URL,)
+            ).fetchone()[0]
+            storage._conn.execute(
+                "UPDATE catalog_items SET markdown_content=? WHERE file_url=?",
+                (markdown + "\nChanged source version.", URL),
+            )
+
+    generator = Generator(
+        outputs=["{}", lambda messages: _valid_response(messages)],
+        on_call=change_source_on_first_call,
+    )
+    receipt = EnglishTranslationService(storage, generator=generator).run(file_urls=[URL])
+
+    assert len(generator.calls) == 1
+    assert receipt["provider_calls"] == 1
+    assert receipt["slots"][0]["status"] == "skipped"
+    assert receipt["slots"][0]["reason"] == "source_version_no_longer_current"
+    saved = dict(
+        storage._conn.execute(
+            "SELECT payload_json FROM article_interpretations WHERE interpretation_id=?",
+            (draft["interpretation_id"],),
+        ).fetchone()[0]
+    )
+    translation = saved["english_translation"]
+    assert translation["status"] == "failed"
+    assert translation["error"] == "source_version_no_longer_current"
+    assert len(translation["attempts"][0]["calls"]) == 1
 
 
 def _request(*, database, config, file_url, locale="en"):

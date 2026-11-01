@@ -1,3 +1,9 @@
+## 2026-11-01 PR446 remote feedback final tested fixes
+
+Copilot was requested once at initial publication and completed on 12e23f8. All five in-scope findings were reproduced without provider calls and accepted by actual TypeSafe Jev 1.14.0. The same persistent worker fixed scoped one-hot terminology (including the selected paper's one-hot vectors), overlapping ordinal events, saved quotation multiplicity, native DeepSeek budget options and source currentness before each new call. Final combined current-byte suite: 223 passed, 1 skipped in 60.81s, no provider calls; English module 20 passed, focused Chinese gates and Ruff/Black/compile/diff passed.
+
+Three cumulative independent local review rounds remain exhausted. These are tested final fixes under the explicit final-review-limit exception, not a new reviewer PASS. No fourth local review or repeated Copilot request. No merge authorization inferred. Required current-HEAD CI and real two-site article/browser/export/stability acceptance remain gates. Live China is still4a37ed4 and overseas7402626; unused12e candidates are retained and will be superseded without touching production data.
+
 ## 2026-11-01 final English release validation
 
 Final accepted fixes: 220 passed, 1 skipped across English, Chinese interpretation and async transport suites (67.53s); no provider calls. Frontend/API/task bytes match review-3 snapshot; earlier frontend/type/lint/build checks remain applicable, release packaging rebuilds final SHA. Three independent local reviews required changes; accepted fixes were TypeSafe adjudicated and tested under the final-review-limit exception. No final reviewer PASS. Current-HEAD CI and actual C/O deployment, qualified bilingual article, browser and HTML exports remain pending.
