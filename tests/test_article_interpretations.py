@@ -1139,10 +1139,19 @@ def test_native_task_stop_history_and_restart(storage, tmp_path):
         article_interpretation_resolver=Resolver(),
     )
     runtime._site_config_override = {"paths": {"download_dir": str(tmp_path)}}
+    history_written = threading.Event()
+    append_history_to_disk = runtime._append_history_to_disk
+
+    def append_history_and_signal(task_data):
+        append_history_to_disk(task_data)
+        history_written.set()
+
+    runtime._append_history_to_disk = append_history_and_signal
     generator = Generator(on_call=lambda: runtime._update_task("stop-native", stop_requested=True))
     runtime._article_interpretation_generator = generator
     runtime.start_background_task("article_interpretation", {}, task_id="stop-native")
     deadline = time.monotonic() + 10
+    assert history_written.wait(max(0, deadline - time.monotonic()))
     while runtime.active_tasks and time.monotonic() < deadline:
         time.sleep(0.01)
     assert not runtime.active_tasks and len(generator.calls) == 1

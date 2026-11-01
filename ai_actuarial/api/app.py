@@ -281,6 +281,7 @@ def create_app() -> FastAPI:
     app.state.fastapi_session_cookie_domain = None
     app.state.fastapi_env = fastapi_env
     app.state.fastapi_env_source = fastapi_env_source
+    app.state.site_config = config_data
     app.state.fastapi_session_cookie_secure = _env_bool(
         "FASTAPI_SESSION_COOKIE_SECURE",
         settings.FASTAPI_SESSION_COOKIE_SECURE

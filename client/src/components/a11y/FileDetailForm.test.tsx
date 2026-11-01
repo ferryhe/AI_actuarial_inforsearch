@@ -33,13 +33,13 @@ it("uses a visible Markdown editor label", async () => {
   expect(markdown.labels?.[0]).not.toHaveClass("sr-only");
 });
 
-it("shows the current Chinese interpretation above Markdown and hides it in English", async () => {
+it("shows only the current locale's interpretation above Markdown", async () => {
   localStorage.setItem("lang", "zh");
   const originalUrl = "https://www.institutdesactuaires.com/global/gene/link.php?doc_id=17510&fg=1";
   const savedUrl = "https://aiactuary.cn/file-detail?file_id=2823";
   const readyBody = `解读正文\n\n## 原文出处与阅读\n\n原文日期：2022-09。\n\n[原文](${originalUrl}) · [国内阅读](${savedUrl})\n\n规范来源：法国精算师协会（Institut des actuaires）。\n\n未覆盖章节：结论`;
   apiGet.mockImplementation((url) => Promise.resolve(url.includes("article-interpretations")
-    ? { interpretations: [{ interpretation_id: "v1", title_zh: "解读标题", body_markdown_zh: readyBody, generated_at: "2026-10-30T00:00:00Z", file_url: originalUrl, raw_sha256: "rawhash", markdown_sha256: "mdhash", china_article_url: savedUrl, references: { original_title: "Machine Learning for Health Insurance Member Retention: A Case Study", published_time: "2022-09", source: { name_zh: "法国精算师协会" }, authors: reviewedFranceAuthors } }] }
+    ? { interpretations: [{ interpretation_id: "v1", title_zh: "解读标题", body_markdown_zh: readyBody, title_en: "Interpreting Health Insurance Member Retention", body_markdown_en: "English interpretation body", generated_at: "2026-10-30T00:00:00Z", file_url: originalUrl, raw_sha256: "rawhash", markdown_sha256: "mdhash", china_article_url: savedUrl, references: { original_title: "Machine Learning for Health Insurance Member Retention: A Case Study", published_time: "2022-09", source: { name_zh: "法国精算师协会", name_en: "Institut des actuaires" }, authors: reviewedFranceAuthors } }] }
     : url.includes("/detail") ? { file: { url: "file-smoke", title: "Smoke file", original_filename: "smoke.pdf", source_site: "smoke", content_type: "text/plain", bytes: 12, local_path: "/tmp/smoke.txt" } }
       : url.includes("/markdown") ? { markdown: { markdown_content: "原文内容", markdown_source: "manual" } }
         : url.includes("chunk-sets") ? { chunk_sets: [] } : { tasks: [] }));
@@ -61,11 +61,19 @@ it("shows the current Chinese interpretation above Markdown and hides it in Engl
   expect(screen.getByTestId("article-interpretation").querySelectorAll(`a[href="${savedUrl}"]`)).toHaveLength(1);
   expect(toggle).toHaveAttribute("aria-expanded", "true");
   await user.click(screen.getByTitle("Switch language"));
-  await waitFor(() => expect(screen.queryByTestId("article-interpretation")).not.toBeInTheDocument());
-  expect(apiGet.mock.calls.filter(([url]) => String(url).includes("article-interpretations"))).toHaveLength(1);
+  expect(await screen.findByTestId("article-interpretation")).toBeInTheDocument();
+  expect(apiGet.mock.calls.filter(([url]) => String(url).includes("article-interpretations") && String(url).includes("locale=en")).length).toBeGreaterThan(0);
+  expect(apiGet.mock.calls.some(([url]) => String(url).includes("locale=en"))).toBe(true);
+  await user.click(await screen.findByTestId("button-interpretation-toggle"));
+  expect(await screen.findByText("Interpreting Health Insurance Member Retention")).toBeInTheDocument();
+  expect(await screen.findByText("English interpretation body")).toBeInTheDocument();
+  expect(screen.queryByText("解读正文")).not.toBeInTheDocument();
   await user.click(screen.getByTitle("Switch language"));
   expect(await screen.findByTestId("article-interpretation")).toBeInTheDocument();
-  expect(apiGet.mock.calls.filter(([url]) => String(url).includes("article-interpretations"))).toHaveLength(2);
+  await user.click(await screen.findByTestId("button-interpretation-toggle"));
+  expect(await screen.findByText("解读正文")).toBeInTheDocument();
+  expect(screen.queryByText("English interpretation body")).not.toBeInTheDocument();
+  expect(apiGet.mock.calls.some(([url]) => String(url).includes("locale=zh"))).toBe(true);
 });
 
 it("keeps Markdown available when the interpretation read fails", async () => {
@@ -78,6 +86,76 @@ it("keeps Markdown available when the interpretation read fails", async () => {
   render(<Layout><FileDetail /></Layout>);
   expect(await screen.findByText("原文仍可阅读")).toBeInTheDocument();
   expect(screen.queryByTestId("article-interpretation")).not.toBeInTheDocument();
+});
+
+it("does not fall back to a Chinese-only interpretation on the English site", async () => {
+  localStorage.setItem("lang", "en");
+  apiGet.mockImplementation((url) => Promise.resolve(url.includes("article-interpretations")
+    ? { interpretations: [{ interpretation_id: "zh-only", title_zh: "Chinese title", body_markdown_zh: "Chinese interpretation body", generated_at: "2026-10-30T00:00:00Z", file_url: "https://example.test/paper", raw_sha256: "rawhash", markdown_sha256: "mdhash", china_article_url: "https://aiactuary.cn/file-detail?file_id=1386" }] }
+    : url.includes("/detail") ? { file: { url: "file-smoke", title: "Smoke file", original_filename: "smoke.pdf", source_site: "smoke", content_type: "text/plain", bytes: 12, local_path: "/tmp/smoke.txt" } }
+      : url.includes("/markdown") ? { markdown: { markdown_content: "Original Markdown remains available", markdown_source: "manual" } }
+        : url.includes("chunk-sets") ? { chunk_sets: [] } : { tasks: [] }));
+  render(<Layout><FileDetail /></Layout>);
+  expect(await screen.findByText("Original Markdown remains available")).toBeInTheDocument();
+  expect(screen.queryByTestId("article-interpretation")).not.toBeInTheDocument();
+  expect(screen.queryByText("Chinese title")).not.toBeInTheDocument();
+  expect(screen.queryByText("Chinese interpretation body")).not.toBeInTheDocument();
+  expect(apiGet.mock.calls.some(([url]) => String(url).includes("locale=en"))).toBe(true);
+});
+
+it("ignores a late Chinese interpretation response after switching to English", async () => {
+  localStorage.setItem("lang", "zh");
+  const articleUrl = "https://example.test/locale-race";
+  window.history.pushState({}, "", `/file-detail?url=${encodeURIComponent(articleUrl)}`);
+  let resolveChinese!: (value: { interpretations: Array<Record<string, unknown>> }) => void;
+  let chineseStarted = false;
+  let englishStarted = false;
+  apiGet.mockImplementation((url) => {
+    if (String(url).includes("article-interpretations")) {
+      const locale = new URLSearchParams(String(url).split("?")[1] || "").get("locale");
+      if (locale === "zh") {
+        chineseStarted = true;
+        return new Promise((resolve) => { resolveChinese = resolve; });
+      }
+      englishStarted = locale === "en";
+      return Promise.resolve({ interpretations: [{
+        interpretation_id: "en-current",
+        title_en: "Current English interpretation",
+        body_markdown_en: "Current English body",
+        generated_at: "2026-11-01T00:00:00Z",
+        file_url: articleUrl,
+        raw_sha256: "raw-current",
+        markdown_sha256: "markdown-current",
+        china_article_url: "https://aiactuary.cn/file-detail?file_id=3678",
+      }] });
+    }
+    return Promise.resolve(String(url).includes("/detail")
+      ? { file: { url: articleUrl, title: "Locale race", original_filename: "race.pdf", source_site: "test", content_type: "text/plain", bytes: 1, local_path: "/tmp/race.txt" } }
+      : String(url).includes("/markdown") ? { markdown: { markdown_content: "Race markdown", markdown_source: "manual" } }
+        : String(url).includes("chunk-sets") ? { chunk_sets: [] } : { tasks: [] });
+  });
+  const user = userEvent.setup();
+  render(<Layout><FileDetail /></Layout>);
+  await waitFor(() => expect(chineseStarted).toBe(true));
+  await user.click(screen.getByTitle("Switch language"));
+  await waitFor(() => expect(englishStarted).toBe(true));
+  await user.click(await screen.findByTestId("button-interpretation-toggle"));
+  expect(await screen.findByText("Current English body")).toBeInTheDocument();
+  await act(async () => {
+    resolveChinese({ interpretations: [{
+      interpretation_id: "zh-stale",
+      title_zh: "Stale Chinese interpretation",
+      body_markdown_zh: "Stale Chinese body",
+      generated_at: "2026-11-01T00:00:00Z",
+      file_url: articleUrl,
+      raw_sha256: "raw-current",
+      markdown_sha256: "markdown-current",
+      china_article_url: "https://aiactuary.cn/file-detail?file_id=3678",
+    }] });
+  });
+  expect(screen.queryByText("Stale Chinese interpretation")).not.toBeInTheDocument();
+  expect(screen.queryByText("Stale Chinese body")).not.toBeInTheDocument();
+  expect(screen.getByText("Current English body")).toBeInTheDocument();
 });
 
 it("ignores a late interpretation response after the route changes to another article", async () => {

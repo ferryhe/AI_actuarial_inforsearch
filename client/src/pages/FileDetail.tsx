@@ -507,10 +507,10 @@ export default function FileDetail() {
     const identity = interpretationIdentity;
     const isLatest = beginInterpretationRequest(identity);
     setInterpretation(null);
-    if (lang !== "zh" || !resolvedFileUrl || !isLatest()) return;
+    if (!resolvedFileUrl || !isLatest()) return;
     try {
       const response = await apiGet<{ interpretations?: ArticleInterpretation[] }>(
-        `/api/article-interpretations?file_url=${encodeURIComponent(resolvedFileUrl)}`
+        `/api/article-interpretations?file_url=${encodeURIComponent(resolvedFileUrl)}&locale=${lang}`
       );
       if (isLatest()) {
         const item = response.interpretations?.[0];
@@ -802,14 +802,24 @@ export default function FileDetail() {
   const effectiveMarkdownSource = markdown?.markdown_source || file.markdown_source || "";
   const effectiveMarkdownUpdatedAt = markdown?.markdown_updated_at || file.markdown_updated_at || "";
   const markdownContent = markdown?.markdown_content || "";
-  const currentInterpretation = lang === "zh" && !isDeleted && interpretation?.identity === interpretationIdentity
+  const candidateInterpretation = !isDeleted && interpretation?.identity === interpretationIdentity
     ? interpretation.item : null;
+  const currentInterpretation = candidateInterpretation && (
+    lang === "zh"
+      ? !!candidateInterpretation.title_zh && !!candidateInterpretation.body_markdown_zh
+      : !!candidateInterpretation.title_en && !!candidateInterpretation.body_markdown_en
+  ) ? candidateInterpretation : null;
+  const interpretationSourceName = lang === "en"
+    ? currentInterpretation?.references?.source?.name_en
+    : currentInterpretation?.references?.source?.name_zh;
+  const interpretationSourceEnglishName = currentInterpretation?.references?.source?.name_en;
+  const interpretationPublishedTime = currentInterpretation?.references?.published_time;
 
   function downloadInterpretation(extension: "md" | "html") {
     if (!currentInterpretation || !file) return;
     const item = currentInterpretation;
-    const markdownText = buildInterpretationMarkdown(item, file.title);
-    const html = buildInterpretationHtml(item, file.title);
+    const markdownText = buildInterpretationMarkdown(item, file.title, lang);
+    const html = buildInterpretationHtml(item, file.title, lang);
     const blob = new Blob([extension === "md" ? markdownText : html], { type: extension === "md" ? "text/markdown;charset=utf-8" : "text/html;charset=utf-8" });
     const link = document.createElement("a");
     link.href = URL.createObjectURL(blob);
@@ -1082,20 +1092,20 @@ export default function FileDetail() {
               {interpretationExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
             </button>
             {interpretationExpanded && <div className="flex flex-wrap gap-2">
-              <button className="min-h-[44px] rounded border px-3 text-xs" onClick={() => void navigator.clipboard.writeText(buildInterpretationMarkdown(currentInterpretation, file.title))}>{t("fv.interpretation_copy")}</button>
+              <button className="min-h-[44px] rounded border px-3 text-xs" onClick={() => void navigator.clipboard.writeText(buildInterpretationMarkdown(currentInterpretation, file.title, lang))}>{t("fv.interpretation_copy")}</button>
               <button className="min-h-[44px] rounded border px-3 text-xs" onClick={() => downloadInterpretation("md")}>{t("fv.interpretation_markdown")}</button>
               <button className="min-h-[44px] rounded border px-3 text-xs" onClick={() => downloadInterpretation("html")}>{t("fv.interpretation_html")}</button>
             </div>}
           </div>
           {interpretationExpanded && <div id="article-interpretation-body" className="p-4 space-y-3" data-testid="article-interpretation-body">
-            <h3 className="text-lg font-semibold break-words">{currentInterpretation.title_zh}</h3>
-            <MarkdownContent content={interpretationBody(currentInterpretation)} />
+            <h3 className="text-lg font-semibold break-words">{lang === "en" ? currentInterpretation.title_en : currentInterpretation.title_zh}</h3>
+            <MarkdownContent content={interpretationBody(currentInterpretation, lang)} />
             <div className="border-t pt-3 text-xs text-muted-foreground space-y-1 break-words">
               <p>{t("fv.interpretation_generated")}: {formatDate(currentInterpretation.generated_at)}</p>
               <p>{t("fv.interpretation_version")}: {currentInterpretation.raw_sha256.slice(0, 12)} · Markdown {currentInterpretation.markdown_sha256.slice(0, 12)}</p>
               <p>{t("fv.interpretation_original_title")}: {currentInterpretation.references?.original_title ?? file.title}</p>
-              {interpretationAuthors(currentInterpretation).length > 0 && <p>{t("fv.interpretation_author")}: {interpretationAuthors(currentInterpretation).join("、")}</p>}
-              {currentInterpretation.references?.source?.name_zh && <p>{t("fv.interpretation_source")}: {currentInterpretation.references.source.name_zh}{currentInterpretation.references.source.name_en ? ` (${currentInterpretation.references.source.name_en})` : ""}{currentInterpretation.references.published_time && currentInterpretation.references.published_time !== "日期不明" ? ` · ${t("fv.interpretation_published")}: ${currentInterpretation.references.published_time}` : ""}</p>}
+              {interpretationAuthors(currentInterpretation).length > 0 && <p>{t("fv.interpretation_author")}: {interpretationAuthors(currentInterpretation).join(lang === "en" ? ", " : "、")}</p>}
+              {interpretationSourceName && <p>{t("fv.interpretation_source")}: {interpretationSourceName}{lang === "zh" && interpretationSourceEnglishName ? ` (${interpretationSourceEnglishName})` : ""}{interpretationPublishedTime && interpretationPublishedTime !== "日期不明" && interpretationPublishedTime !== "Unknown date" ? ` · ${t("fv.interpretation_published")}: ${interpretationPublishedTime}` : ""}</p>}
               <p className="flex flex-wrap gap-x-3">
                 <a className="underline break-all" href={currentInterpretation.file_url} target="_blank" rel="noopener noreferrer">{t("fv.interpretation_original_link")}</a>
                 <a className="underline break-all" href={currentInterpretation.china_article_url} target="_blank" rel="noopener noreferrer">{t("fv.interpretation_domestic_link")}</a>

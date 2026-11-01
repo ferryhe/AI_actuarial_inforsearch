@@ -1,3 +1,7 @@
+## 2026-11-01 final English release validation
+
+Final accepted fixes: 220 passed, 1 skipped across English, Chinese interpretation and async transport suites (67.53s); no provider calls. Frontend/API/task bytes match review-3 snapshot; earlier frontend/type/lint/build checks remain applicable, release packaging rebuilds final SHA. Three independent local reviews required changes; accepted fixes were TypeSafe adjudicated and tested under the final-review-limit exception. No final reviewer PASS. Current-HEAD CI and actual C/O deployment, qualified bilingual article, browser and HTML exports remain pending.
+
 # 当前候选 — PR444 远程审查反馈 — 2026-11-01
 
 - 分支 `fix/interpretation-number-evidence`。Copilot 对 PR444 的4项反馈均先在隔离 PostgreSQL schema 与注入式 generator/resolver 中复现；TypeSafe Jev 1.14.0 接受全部4项，并要求同一 worker 修复与测试。证据：`reports/interpretation-number-repair-20261101/remote-feedback-assessment.json`、`typesafe-remote-input.json`、`typesafe-remote-result.json`。
@@ -6012,3 +6016,14 @@ Current branch head 4f030be has uncommitted small catalog/Storage variable defau
 - 共享解析器只增加限定技术词上下文、训练/测试样本量标记、数据集期间年份上下文和“一种”泛指处理。回归保留 2 元货币、明确“只有一种”/“两种”计数、无上下文逗号字面值与小数、一般四位数字计数及普通 from/to 数值范围的严格校验。新增真实诊断两段的 validator 用例及负例。
 - 验证：`tests/test_article_interpretations.py` 与 `tests/test_article_interpretation_async_transport.py` 合计 203 passed / 1 skipped；使用仓库专用隔离 PostgreSQL，并对本机 loopback 测试连接启用授权访问。Ruff、逐文件 Black 检查、`py_compile`、`git diff --check` 通过。完整日志 `reports/interpretation-number-repair-20261101/numeric-followup-focused-tests-elevated.log`。
 - 这是累计本地审查第 3 轮限额后的已测试最终修复；没有新的独立审查 PASS，也不安排第 4 轮。主控负责提交、推送、当前 HEAD CI 和后续实际生成验收；此 worker 未提交、未推送、未调用模型/provider，且未访问生产数据库。
+
+# 当前候选 — 英文文章解读集成 — 2026-11-01
+
+- English feature worktree `C:/Users/ferry/.codex/worktrees/english-article-interpretations/AI_actuarial_inforsearch` 已合入 PR444 的数字解析修复。仅澄清翻译提示：日期作为 claims 中的事实必须保留；publication date、source、URL、references、citation marker 与 kind label 等额外元数据由应用代码提供。未改预算、UI 或其他提示内容。
+- 使用隔离 PostgreSQL 与本机 loopback 授权验证 English/Chinese/async 三个后端测试文件：218 passed / 1 skipped / 1 failed。唯一失败 `test_native_task_stop_history_and_restart` 在合并套件时复现；单独在当前代码及只读加载的 clean numeric baseline efb98c 上均通过。两者相同的旧 finalize 路径先移除 active task、后追加 job_history.jsonl，测试会在 active 列表清空后立即重读文件；English stage 在该测试的 local/stopped 路径不执行。记录为基线任务历史落盘竞态，不改 unrelated runtime code。日志位于外部 `reports/interpretation-number-repair-20261101/english/`。
+- English prompt regression、Ruff、逐文件 Black、`py_compile` 与 `git diff --check` 通过。UI 文件未改；此前21项 UI/type/lint/build 检查的输入字节保持不变。后续 fresh review3 应包含冻结的 English 源码与 English 两站 OPS 资产。未调用 provider 或生产系统；主控负责最终 CI 与部署验收。
+- 最终检查补充：为避免测试在 `active_tasks` 清空、但历史文件尚未追加完成时立刻重读，停止/重启回归现在通过 `threading.Event` 等待原始 `append_history_to_disk` 返回；此改动仅在测试中，运行时代码未改。最新完整组合运行中，该历史测试已通过，但本机 async transport 测试的第二个 slot 偶发失败（218 passed、1 skipped、1 failed）；相同测试在 17 项定向运行中通过。保留两份日志并记录为尚未解释的组合运行失败，不宣称组合套件全绿。移除了仅逐字镜像提示词的回归；15 项 English 行为测试、停止/重启测试和 async transport 测试合计 17 passed。Ruff、逐文件 Black、`py_compile` 与 `git diff --check` 通过。此后不再改 English 源码；fresh review3 应以当前源码和 OPS 资产为准。
+- 两站 OPS 资产位于外部报告目录 `reports/interpretation-number-repair-20261101/english/ops/`：固定中国 4a / 海外 740 基线及候选 GAN 论文 C3677/O1107 与双站原文、Markdown SHA；海外预检禁止英语生成和启用的解读计划，运行时仅启用只读代理。新增离线故障注入自检覆盖不活动计时器、设置失败恢复原计时器、watchdog 保留/安全取消，共 7 项通过。Ruff、逐文件 Black、`py_compile` 通过；npm 可执行路径解析检查成功。没有 Docker、SSH、生产或 provider 操作；fresh review3 尚待主控执行。
+- 主控诊断发现 async transport 组合失败来自真实 AsyncOpenAI 首次懒加载占用两秒合成调用期限。回归现在在计时前创建、访问并关闭真实 SDK 的 `.chat.completions` 资源，且断言预热没有发出 loopback 请求；生产运行时代码和既有两秒期限、取消、串行及服务端请求断言均未改。Ruff、逐文件 Black、`py_compile` 和 `git diff --check` 通过；定向测试待主控对当前完整测试集重跑。
+- Final review 3 的四项已接受问题已完成最后限额内修复：英文数字比较保留次序、重复次数及精度，仅把完整匹配的中文年月日、英文月份日期和 ISO 日期归一为一个日期事件；源引号内容及重复次数必须保留，且新增引号仍须有源证据。公式检查继续优先报告原有专用错误。OPS 现核对中国 supervisor 实际 Exec 命令和活动 API 指针，并把中国/海外备份与工作路径固定到各自独立挂载；恢复校验记录路径，但不因备份挂载不可用而阻挡服务回滚。
+- 当前最终修复验证：English 测试模块 17 passed；共享中文数量解析相关测试 29 passed；OPS 离线故障注入 selfcheck 9 项 PASS。Ruff、五个 Python 文件逐文件 Black、`py_compile`、`git diff --check` 通过。测试 PostgreSQL 是隔离实例；provider 调用、生产数据库和远程主机访问均为 0。此前 218 passed / 1 skipped 的组合运行是这些最终修复之前的字节，主控需对当前源码运行最终组合测试与 CI。累计第 3 轮已结束；本修复是按本地审查限额记录的已测试未审查修复，不声明独立 reviewer PASS、不安排第 4 轮；主控继续最终 CI、OPS 审核和发布流程。

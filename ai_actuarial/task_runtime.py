@@ -1509,6 +1509,43 @@ class NativeTaskRuntime:
                     retry_id=data.get("retry_id"),
                     file_url=None if data.get("scheduled") else data.get("file_url"),
                 )
+                english_settings = dict(settings.get("english_translation") or {})
+                if (
+                    english_settings.get("enabled") is True
+                    and settings.get("environment", "local") == "china"
+                    and receipt.get("status")
+                    not in {
+                        "authentication",
+                        "busy",
+                        "provider_cleanup",
+                        "stopped",
+                    }
+                    and not self._stop_requested(task_id)
+                ):
+                    from ai_actuarial.article_interpretation_english import (
+                        EnglishTranslationService,
+                    )
+
+                    interpretation_ids = [
+                        slot["interpretation_id"]
+                        for slot in receipt.get("slots", [])
+                        if slot.get("status") == "ready" and slot.get("interpretation_id")
+                    ]
+                    if receipt.get("interpretation", {}).get("status") == "ready":
+                        interpretation_ids.append(receipt["interpretation"]["interpretation_id"])
+                    english_receipt = EnglishTranslationService(
+                        storage,
+                        generator=self._article_interpretation_generator,
+                        stop_check=lambda: self._stop_requested(task_id),
+                    ).run(
+                        interpretation_ids=interpretation_ids,
+                        file_urls=(
+                            [data["file_url"]]
+                            if not data.get("scheduled") and data.get("file_url")
+                            else []
+                        ),
+                    )
+                    receipt["english_translation"] = english_receipt
                 slots = receipt.get("slots", [])
                 failed = sum(slot["status"] == "failed" for slot in slots)
                 failed += int(receipt.get("interpretation", {}).get("status") == "failed")

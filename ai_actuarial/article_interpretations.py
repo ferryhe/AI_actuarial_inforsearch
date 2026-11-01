@@ -201,7 +201,11 @@ def _chinese_number(text: str) -> str:
 
 
 def _quantities(
-    text: str, *, strict: bool = False, source_section: str = ""
+    text: str,
+    *,
+    strict: bool = False,
+    source_section: str = "",
+    occurrences: list[tuple[int, int, str, Decimal | str, int | None]] | None = None,
 ) -> set[tuple[str, Decimal | str]]:
     """Compare exact values in explicit units; ambiguous commas retain their spelling."""
     scales = {"thousand": 3, "million": 6, "billion": 9, "千": 3, "万": 4, "亿": 8}
@@ -303,6 +307,47 @@ def _quantities(
         "年": "year",
     }
     values = set()
+    index_map = list(range(len(text))) if occurrences is not None else None
+    recorded = set()
+
+    def add_value(signature, start=None, end=None):
+        values.add(signature)
+        if occurrences is None or start is None or end is None or index_map is None:
+            return
+        original = index_map[start:end]
+        if not original:
+            return
+        original_start, original_end = min(original), max(original) + 1
+        value = signature[1]
+        exponent = value.as_tuple().exponent if isinstance(value, Decimal) else None
+        record = (original_start, original_end, signature[0], value, exponent)
+        if record not in recorded:
+            recorded.add(record)
+            occurrences.append(record)
+
+    def substitute(pattern, replacement, flags=0):
+        nonlocal text, index_map
+        if occurrences is None:
+            text = re.sub(pattern, replacement, text, flags=flags)
+            return
+        old_text, old_map = text, index_map
+        pieces, mapped = [], []
+        cursor = 0
+        for match in re.finditer(pattern, old_text, flags):
+            pieces.append(old_text[cursor : match.start()])
+            mapped.extend(old_map[cursor : match.start()])
+            value = replacement(match) if callable(replacement) else match.expand(replacement)
+            pieces.append(value)
+            source = old_map[match.start() : match.end()]
+            if len(value) == len(source):
+                mapped.extend(source)
+            elif source:
+                mapped.extend(source[min(i, len(source) - 1)] for i in range(len(value)))
+            cursor = match.end()
+        pieces.append(old_text[cursor:])
+        mapped.extend(old_map[cursor:])
+        text, index_map = "".join(pieces), mapped
+
     vague_scales = {
         "千": "thousand",
         "万": "ten_thousand",
@@ -321,13 +366,16 @@ def _quantities(
                 raise _UnsupportedNumberFormat(match[0])
         else:
             dimension = units[match["unit"].lower()]
-            values.add((("number" if dimension == "count" else dimension) + ":scale", scale))
+            add_value(
+                (("number" if dimension == "count" else dimension) + ":scale", scale),
+                match.start(),
+                match.end(),
+            )
         return " " * len(match[0])
 
-    text = re.sub(
+    substitute(
         rf"(?:数|几)(?P<scale>[十百千万亿]+)(?P<unit>{unit_pattern})",
         vague_chinese,
-        text,
         flags=re.I,
     )
 
@@ -346,13 +394,16 @@ def _quantities(
             "pounds": "GBP",
             "gbp": "GBP",
         }[match["unit"].lower()]
-        values.add((dimension + ":scale", match["scale"].lower().removesuffix("s")))
+        add_value(
+            (dimension + ":scale", match["scale"].lower().removesuffix("s")),
+            match.start(),
+            match.end(),
+        )
         return " " * len(match[0])
 
-    text = re.sub(
+    substitute(
         r"\b(?P<scale>thousands|millions|billions) of (?P<unit>US dollars|dollars|USD|euros|EUR|pounds|GBP)\b",
         vague_english,
-        text,
         flags=re.I,
     )
 
@@ -376,16 +427,14 @@ def _quantities(
                 raise _UnsupportedNumberFormat(match[0]) from None
             return " " * len(match[0])
 
-    text = re.sub(
+    substitute(
         rf"(?<![0-9零〇一二两三四五六七八九十百千万亿点数几])(?P<prefix>第|百分之)?(?P<number>负?[零〇一二两三四五六七八九十百千]+(?:点[零〇一二三四五六七八九]+)?)(?P<scale>万|亿)?(?P<unit>{unit_pattern})(?!性)",
         chinese,
-        text,
         flags=re.I,
     )
-    text = re.sub(
+    substitute(
         r"(?P<prefix>百分之)(?P<number>[零〇一二两三四五六七八九十百千万亿]+(?:点[零〇一二三四五六七八九]+)?)(?P<unit>)",
         chinese,
-        text,
         flags=re.I,
     )
     unsupported_chinese = re.search(
@@ -465,8 +514,10 @@ def _quantities(
                 elif re.fullmatch(r"[+-]?\d+,\d{1,2}", raw) or re.fullmatch(r"[+-]?0,\d+", raw):
                     raw = raw.replace(",", ".")
                 elif grouped:
-                    values.add(
-                        (("number" if dimension == "count" else dimension) + ":literal", raw)
+                    add_value(
+                        (("number" if dimension == "count" else dimension) + ":literal", raw),
+                        match.start("number"),
+                        match.end("number"),
                     )
                     continue
                 else:
@@ -483,16 +534,33 @@ def _quantities(
             if strict:
                 raise _UnsupportedNumberFormat(match["number"]) from None
             continue
-        values.add(("number" if dimension == "count" else dimension, value))
+        occurrence_start = match.start("prefix") if match["prefix"] else match.start("number")
+        occurrence_end = (
+            match.end("unit")
+            if match["unit"]
+            else match.end("scale") if match["scale"] else match.end("number")
+        )
+        add_value(
+            ("number" if dimension == "count" else dimension, value),
+            occurrence_start,
+            occurrence_end,
+        )
     months = "January February March April May June July August September October November December".split()
-    for index, month in enumerate(months, 1):
-        for match in re.finditer(
-            r"\b" + month + r"\s+(?:\d{1,2},?\s+)?(\d{4})\b|\b\d{1,2}\s+" + month + r"\s+(\d{4})\b",
-            text,
-            re.I,
-        ):
-            values.add(("month", Decimal(index)))
-            values.add(("year", Decimal(match[1] or match[2])))
+    month_pattern = "|".join(months)
+    for match in re.finditer(
+        rf"\b(?P<month>{month_pattern})\s+(?:(?P<day>\d{{1,2}}),?\s+)?(?P<year>\d{{4}})\b"
+        rf"|\b(?P<day_before>\d{{1,2}})\s+(?P<month_before>{month_pattern})\s+(?P<year_before>\d{{4}})\b",
+        text,
+        re.I,
+    ):
+        month = match["month"] or match["month_before"]
+        year_group = "year" if match["year"] else "year_before"
+        month_group = "month" if match["month"] else "month_before"
+        month_value = Decimal(months.index(month.title()) + 1)
+        add_value(("month", month_value), match.start(month_group), match.end(month_group))
+        add_value(
+            ("year", Decimal(match[year_group])), match.start(year_group), match.end(year_group)
+        )
     unsupported_english = re.search(
         r"\b(?:thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundreds?|thousands|millions|billions|trillions?)\b",
         text,
@@ -516,27 +584,30 @@ def _quantities(
                     raise _UnsupportedNumberFormat(match[0] + (tail[0] if tail else ""))
                 continue
             dimension = units.get(re.sub(r"\s+", " ", match["unit"] or "").lower(), "number")
-            values.add(("number" if dimension == "count" else dimension, Decimal(index)))
+            add_value(
+                ("number" if dimension == "count" else dimension, Decimal(index)),
+                match.start(),
+                match.end(),
+            )
     for index, word in enumerate(
         "first second third fourth fifth sixth seventh eighth ninth tenth eleventh twelfth".split(),
         1,
     ):
         for match in re.finditer(r"\b" + word + r"\s+(step|stage|level|part)s?\b", text, re.I):
-            values.add(("ordinal:" + match[1].lower(), Decimal(index)))
+            add_value(("ordinal:" + match[1].lower(), Decimal(index)), match.start(), match.end())
     for match in re.finditer(r"\b(\d+)(?:st|nd|rd|th)\s+(step|stage|level|part)s?\b", text, re.I):
-        values.add(("ordinal:" + match[2].lower(), Decimal(match[1])))
+        add_value(("ordinal:" + match[2].lower(), Decimal(match[1])), match.start(), match.end())
     if re.search(r"citation|reference|参考", text, re.I):
-        values.update(("year", Decimal(year)) for year in re.findall(r"\((\d{4})\)", text))
+        for match in re.finditer(r"\((\d{4})\)", text):
+            add_value(("year", Decimal(match[1])), match.start(1), match.end(1))
     if re.fullmatch(
         r"(?:recommended\s+)?citations?|references?|参考文献|推荐引用",
         source_section.strip().rstrip(":："),
         re.I,
     ):
         # Bibliographic Author. Year. Title dates are not generic four-digit counts.
-        values.update(
-            ("year", Decimal(year))
-            for year in re.findall(r"(?m)^[^\n\d]+\.\s+([12]\d{3})\.\s+(?=\S)", text)
-        )
+        for match in re.finditer(r"(?m)^[^\n\d]+\.\s+([12]\d{3})\.\s+(?=\S)", text):
+            add_value(("year", Decimal(match[1])), match.start(1), match.end(1))
     return values
 
 

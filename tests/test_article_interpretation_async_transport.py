@@ -111,6 +111,20 @@ def test_real_chunked_transport_is_cancelled_closed_and_serial_before_next_sourc
     seed(storage, "b")
     monkeypatch.setattr(articles, "MAX_CALL_SECONDS", 2.0)
     real_sdk = openai.AsyncOpenAI
+
+    async def warm_chat_completions_resource():
+        warm_client = real_sdk(
+            api_key="local-fixture-only",
+            base_url=base_url,
+            http_client=httpx.AsyncClient(trust_env=False),
+        )
+        try:
+            assert warm_client.chat.completions is not None
+        finally:
+            await warm_client.close()
+
+    asyncio.run(warm_chat_completions_resource())
+    assert observed["requests"] == []
     owned = {"active": 0, "max_active": 0, "events": [], "clients": []}
 
     class TrackedClient(real_sdk):
