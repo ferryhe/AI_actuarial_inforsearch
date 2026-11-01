@@ -345,11 +345,19 @@ def test_long_evidence_covers_end_and_model_limits():
     )
     row = {"url": "https://a.example/x", "sha256": "a" * 64, "markdown_content": body}
     messages, coverage = articles.build_input(
-        row, {"model_context_tokens": 16000, "model_max_output_tokens": 2000}, {}
+        row, {"model_context_tokens": 48000, "model_max_output_tokens": 2000}, {}
     )
     assert coverage["source_chars"] <= 24000
-    assert coverage["all_input_chars"] <= 32000
-    assert coverage["input_token_upper_bound"] + coverage["max_output_tokens"] <= 16000
+    assert coverage["all_input_chars"] <= (
+        articles.MAX_INPUT_CHARS - articles.NUMERIC_CORRECTION_RESERVE_CHARS
+    )
+    assert (
+        coverage["input_token_upper_bound"]
+        + coverage["max_output_tokens"]
+        + articles.NUMERIC_CORRECTION_RESERVE_BYTES
+        + 16
+        <= 48000
+    )
     assert coverage["max_output_tokens"] == 2000
     assert coverage["uncovered_sections"]
     assert any(e["section"] == "Final limitations" for e in coverage["evidence"])
@@ -584,6 +592,7 @@ def test_numeric_validation_diagnostic_is_actionable_without_relaxing_evidence_c
         "evidence_ids": [coverage["evidence"][0]["id"]],
         "evidence_ids_truncated": False,
         "token": "",
+        "token_truncated": False,
         "missing_quantities": [{"dimension": "percent", "value": "999"}],
         "missing_quantities_truncated": False,
     }
@@ -613,6 +622,29 @@ def test_numeric_correction_feedback_omits_incomplete_diagnostic_when_too_large(
         assert len(message.encode("utf-8")) <= max_bytes
         if message:
             assert "999" in message and "E1" in message
+
+
+def test_numeric_correction_reserve_fits_saved_cas_diagnostic():
+    diagnostic = {
+        "code": "unsupported_number",
+        "paragraph": "基于单一年度观察的412,748份保单，构建包括八个解释变量的模型。",
+        "paragraph_truncated": False,
+        "evidence_ids": ["E2", "E19", "E44"],
+        "evidence_ids_truncated": False,
+        "token": "单一年度",
+        "missing_quantities": [{"dimension": "year", "value": "1"}],
+        "missing_quantities_truncated": False,
+    }
+    message = articles._numeric_correction_message(
+        diagnostic,
+        max_chars=articles.NUMERIC_CORRECTION_RESERVE_CHARS,
+        max_bytes=articles.NUMERIC_CORRECTION_RESERVE_BYTES,
+    )
+    assert message
+    assert all(value in message for value in ("unsupported_number", "year", "E2", "E19", "E44"))
+    assert "单一年度观察" in message
+    assert len(message) <= articles.NUMERIC_CORRECTION_RESERVE_CHARS
+    assert len(message.encode("utf-8")) <= articles.NUMERIC_CORRECTION_RESERVE_BYTES
 
 
 def test_manual_numeric_correction_uses_second_call_and_does_not_renew_budget(storage):
@@ -653,6 +685,15 @@ def test_manual_numeric_correction_uses_second_call_and_does_not_renew_budget(st
         (draft["interpretation_id"],),
     ).fetchone()[0]
     assert generator.calls[1][:-1] == stored_messages
+    assert articles.MAX_INPUT_CHARS - draft["coverage"]["all_input_chars"] >= (
+        articles.NUMERIC_CORRECTION_RESERVE_CHARS
+    )
+    assert (
+        draft["coverage"]["context_tokens"]
+        - draft["coverage"]["input_token_upper_bound"]
+        - draft["coverage"]["max_output_tokens"]
+        >= articles.NUMERIC_CORRECTION_RESERVE_BYTES + 16
+    )
     calls = draft["attempts"][-1]["calls"]
     assert calls[0]["validation_error"] == "unsupported_number"
     assert calls[0]["validation_diagnostic"]["evidence_ids"]
@@ -1139,10 +1180,19 @@ def test_native_task_stop_history_and_restart(storage, tmp_path):
         article_interpretation_resolver=Resolver(),
     )
     runtime._site_config_override = {"paths": {"download_dir": str(tmp_path)}}
+    history_written = threading.Event()
+    append_history_to_disk = runtime._append_history_to_disk
+
+    def append_history_and_signal(task_data):
+        append_history_to_disk(task_data)
+        history_written.set()
+
+    runtime._append_history_to_disk = append_history_and_signal
     generator = Generator(on_call=lambda: runtime._update_task("stop-native", stop_requested=True))
     runtime._article_interpretation_generator = generator
     runtime.start_background_task("article_interpretation", {}, task_id="stop-native")
     deadline = time.monotonic() + 10
+    assert history_written.wait(max(0, deadline - time.monotonic()))
     while runtime.active_tasks and time.monotonic() < deadline:
         time.sleep(0.01)
     assert not runtime.active_tasks and len(generator.calls) == 1
@@ -1524,7 +1574,7 @@ def test_declared_chat_model_limits_cannot_be_raised_by_article_settings(storage
         configured=True,
         stable_credential_id="fixture-credential",
         raw_config={
-            "model_context_tokens": 8000,
+            "model_context_tokens": 16000,
             "model_max_output_tokens": 2000,
             "max_tokens": 32,
         },
@@ -1541,7 +1591,7 @@ def test_declared_chat_model_limits_cannot_be_raised_by_article_settings(storage
     )
     row, decisions = runner._select("a")
     draft, actual_runtime = runner._prepare(row, "a", decisions[-1]["reason"])
-    assert draft["coverage"]["context_tokens"] == 8000
+    assert draft["coverage"]["context_tokens"] == 16000
     assert draft["coverage"]["max_output_tokens"] == 2000
     assert draft["coverage"]["generation_options"]["extra_body"] == {
         "thinking": {"type": "disabled"}
@@ -1887,6 +1937,13 @@ def test_cas_quantity_context_fixes_keep_currency_counts_and_ambiguous_commas_st
     assert articles._quantities("There were 2010 claims", strict=True) == {
         ("number", articles.Decimal(2010)),
     }
+    assert articles._quantities("in a single year", strict=True) == {
+        ("year", articles.Decimal(1)),
+    }
+    single_year = articles._quantities("in a single year", strict=True)
+    assert not articles._quantities("in two years", strict=True).issubset(single_year)
+    assert articles._quantities("in a single month", strict=True) == set()
+    assert not articles._quantities("1 month", strict=True).issubset(single_year)
 
     assert articles._quantities("4,991", strict=True) == {("number:literal", "4,991")}
     assert not articles._quantities("4991", strict=True).issubset(
@@ -1896,6 +1953,77 @@ def test_cas_quantity_context_fixes_keep_currency_counts_and_ambiguous_commas_st
     assert not articles._quantities("1234", strict=True).issubset(
         articles._quantities("12,34", strict=True)
     )
+
+
+def test_saved_som_numeric_diagnostics_have_narrow_decade_and_percent_range_equivalence():
+    decade_paragraph = (
+        "作者提出三条正在交汇的趋势：一是保险与金融领域三十年来积累的私有机器学习系统，"
+        "包括遗传算法用于组合优化，以及较少为人所知的自组织映射；二是大型科技厂商提供的大语言模型；"
+        "三是再保险业务向发展中市场扩张。作者以最古老的再保险合约——巨灾损失成数分保——作为案例。"
+    )
+    growth_paragraph = (
+        "作者以马来西亚和印度尼西亚为例，指出该地区毛承保保费年增长5%至8%，"
+        "市场扩张快、数据稀疏、历史经验有限，因此结构简单、定价透明的成数分保更具优势。"
+    )
+    source_decades = articles._quantities(
+        "For three decades, specialists in insurance and finance have built machine learning systems.",
+        strict=True,
+    )
+    source_growth = articles._quantities(
+        "Two prescient cases in point are Malaysia and Indonesia with 5-to-8 percent annual growth in Gross Underwritten Premium.",
+        strict=True,
+    )
+    assert articles._quantities(decade_paragraph, strict=True) == {("year", articles.Decimal(30))}
+    assert articles._quantities(growth_paragraph, strict=True) == {
+        ("percent", articles.Decimal(5)),
+        ("percent", articles.Decimal(8)),
+    }
+    assert articles._quantities(decade_paragraph, strict=True).issubset(source_decades)
+    assert articles._quantities(growth_paragraph, strict=True).issubset(source_growth)
+
+    assert articles._quantities("For three decades", strict=True) == {
+        ("year", articles.Decimal(30))
+    }
+    assert articles._quantities("3 decades", strict=True) == {("year", articles.Decimal(30))}
+    assert articles._quantities("-3 decades", strict=True) == {("year", articles.Decimal(-30))}
+    assert articles._quantities("2.0 decades", strict=True) == {("year", articles.Decimal("20.0"))}
+    assert articles._quantities("三十年来", strict=True) == {("year", articles.Decimal(30))}
+    assert articles._quantities("For three years", strict=True) == {("year", articles.Decimal(3))}
+    assert not articles._quantities("三十年来", strict=True).issubset(
+        articles._quantities("For three years", strict=True)
+    )
+    assert articles._quantities("In the 1980s", strict=True) == {("number", articles.Decimal(1980))}
+
+    assert articles._quantities("5-to-8 percent annual growth", strict=True) == {
+        ("percent", articles.Decimal(5)),
+        ("percent", articles.Decimal(8)),
+    }
+    assert articles._quantities("5.0-to-8.0 percent", strict=True) == {
+        ("percent", articles.Decimal("5.0")),
+        ("percent", articles.Decimal("8.0")),
+    }
+    assert articles._quantities("5%至8%", strict=True) == articles._quantities(
+        "5-to-8 percent", strict=True
+    )
+    assert articles._quantities("5.0%至8.0%", strict=True) == articles._quantities(
+        "5.0-to-8.0 percent", strict=True
+    )
+    assert articles._quantities("5-to--8 percent", strict=True) == {
+        ("number", articles.Decimal(5)),
+        ("percent", articles.Decimal(-8)),
+    }
+    assert articles._quantities("5 to -8 percent", strict=True) == {
+        ("number", articles.Decimal(5)),
+        ("percent", articles.Decimal(-8)),
+    }
+    assert articles._quantities("-5% to 8%", strict=True) == {
+        ("percent", articles.Decimal(-5)),
+        ("percent", articles.Decimal(8)),
+    }
+    for changed_target in ("6%至8%", "5%至9%", "5至8", "5美元至8美元"):
+        assert not articles._quantities(changed_target, strict=True).issubset(
+            articles._quantities("5-to-8 percent", strict=True)
+        )
 
 
 @pytest.mark.parametrize("kind,label", [("example", "说明性例子"), ("inference", "解读推断")])
@@ -2418,9 +2546,10 @@ def test_citation_label_does_not_promote_other_evidence_four_digit_counts_to_yea
         articles.validate_output(json.dumps(value, ensure_ascii=False), coverage)
 
 
-def test_prompt_v7_allows_source_supported_numerals_and_explicit_authors(monkeypatch):
-    assert articles.PROMPT_VERSION == "article-interpretation-v7-authors"
+def test_prompt_v8_allows_source_supported_numerals_and_explicit_authors(monkeypatch):
+    assert articles.PROMPT_VERSION == "article-interpretation-v8-numeric-feedback-reserve"
     assert "精确数字优先使用Arabic digits" in articles.PROMPT
+    assert "不要仅靠自己数列举项推导精确总数" in articles.PROMPT
     assert "不得编成精确金额" in articles.PROMPT
     assert "author_metadata" in articles.PROMPT and "不能补充、删减或从正文推测" in articles.PROMPT
     row = {"url": "https://a.example/x", "sha256": "a" * 64, "markdown_content": source_body()}
@@ -2429,24 +2558,26 @@ def test_prompt_v7_allows_source_supported_numerals_and_explicit_authors(monkeyp
         prior.setattr(articles, "PROMPT_VERSION", "article-interpretation-v5")
         prior.setattr(articles, "PROMPT", "所有数值都用Arabic digits。")
         old_messages, old_coverage = articles.build_input(row, {}, {})
-    assert current_coverage["prompt_version"] == "article-interpretation-v7-authors"
+    assert (
+        current_coverage["prompt_version"] == "article-interpretation-v8-numeric-feedback-reserve"
+    )
     assert old_coverage["prompt_version"] == "article-interpretation-v5"
     assert articles._hash(
         articles._json({"messages": current_messages, "coverage": current_coverage})
     ) != articles._hash(articles._json({"messages": old_messages, "coverage": old_coverage}))
 
 
-def test_v7_prompt_version_is_persisted_in_draft_and_slot_receipt(storage):
+def test_v8_prompt_version_is_persisted_in_draft_and_slot_receipt(storage):
     seed(storage, "a")
     runner = service(storage)
-    receipt = runner.run(round_key="v7-recipe-fixture")
+    receipt = runner.run(round_key="v8-recipe-fixture")
     slot = receipt["slots"][0]
     draft = runner._get(slot["interpretation_id"])
     assert (
         slot["prompt_version"]
         == draft["prompt_version"]
         == draft["coverage"]["prompt_version"]
-        == "article-interpretation-v7-authors"
+        == "article-interpretation-v8-numeric-feedback-reserve"
     )
     assert slot["input_fingerprint"] == draft["input_fingerprint"]
     assert receipt["provider_calls"] == 1
@@ -2530,6 +2661,55 @@ def test_indefinite_one_does_not_invent_numeric_claim_but_explicit_one_does():
     assert articles._quantities("原文的一个核心立场是部分依赖机器学习。", strict=True) == set()
     assert articles._quantities("只有一个模型", strict=True) == {("number", articles.Decimal(1))}
     assert articles._quantities("唯一一个模型", strict=True) == {("number", articles.Decimal(1))}
+
+
+def test_saved_primer_agent_paragraphs_ignore_lexical_next_step_only():
+    e16 = (
+        "A large language model (LLM) on its own is a sophisticated text processor. "
+        "An AI agent is something more: It is an LLM equipped with a goal, a set of tools, "
+        "relevant context, and a feedback loop that allows it to observe results and decide "
+        "what to do next."
+    )
+    e17 = (
+        "Traditional automation handles the deterministic parts of actuarial work well: "
+        "data transformation, triangle calculation, and exhibit formatting. What it handles "
+        "less gracefully is the investigative layer: interpreting inconsistent inputs, "
+        "flagging anomalies that warrant a different method, deciding which of several "
+        "approved approaches applies under current conditions, or drafting a narrative "
+        "that reflects what was found."
+    )
+    saved_call_1 = (
+        "原文区分了语言模型与代理：单独的大语言模型只是复杂的文本处理器，而AI代理在此基础上拥有目标、"
+        "工具、相关上下文与反馈回路，能观察结果并决定下一步。传统自动化擅长确定性环节，如数据转换、"
+        "三角形计算与表格排版；较难处理的是调查层，例如解释不一致的输入、标记需要换方法的异常、"
+        "在若干已批准方法中选择适用者，或撰写反映发现过程的叙述。"
+    )
+    saved_call_2 = (
+        "指南区分了语言模型与代理：单独的大语言模型只是复杂的文本处理器，而AI代理在此基础上拥有目标、"
+        "一组工具、相关上下文以及反馈回路，能够观察结果并决定下一步。"
+    )
+    evidence_quantities = articles._quantities(e16 + "\n" + e17, strict=True)
+    assert evidence_quantities == set()
+    assert articles._quantities(saved_call_1, strict=True).issubset(evidence_quantities)
+    assert articles._quantities(saved_call_2, strict=True).issubset(evidence_quantities)
+    assert articles._quantities("下一步", strict=True) == set()
+    assert articles._quantities("一组工具", strict=True) == set()
+    assert articles._quantities("不一致的输入", strict=True) == set()
+    assert articles._quantities("一个工具", strict=True) == set()
+    assert articles._quantities("仅有一个工具", strict=True) == {("number", articles.Decimal(1))}
+    assert articles._quantities("一步", strict=True) == {("number", articles.Decimal(1))}
+    assert articles._quantities("只有一步", strict=True) == {("number", articles.Decimal(1))}
+    assert articles._quantities("下两步", strict=True) == {("number", articles.Decimal(2))}
+    assert articles._quantities("第一步", strict=True) == {("ordinal:step", articles.Decimal(1))}
+    assert articles._quantities("第1步", strict=True) == {("ordinal:step", articles.Decimal(1))}
+
+    text = "决定下一步，随后观察3个样本。"
+    occurrences = []
+    assert articles._quantities(text, strict=True, occurrences=occurrences) == {
+        ("number", articles.Decimal(3))
+    }
+    start, end, *_ = occurrences[0]
+    assert text[start:end] == "3个"
 
 
 @pytest.mark.parametrize("text", ["二三种", "一百二种", "数万亿美元"])

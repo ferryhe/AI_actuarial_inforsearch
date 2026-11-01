@@ -1,3 +1,9 @@
+# PR #446 合入 main 准备 — 2026-11-01
+
+- 用户已授权核对评论修复、安全性及冲突后合并 #446。合并目标已由 #444 开发分支调整到 main；隔离工作树位于本仓库 .codex-worktrees/pr-446-main-integration，分支 codex/pr-446-main-integration，从最新 main c9ce6ac 建立，未修改外部英文开发工作树或原始脏工作树。
+- #444 压缩合并后造成四个产品文件的历史冲突。已逐文件确认 main 与批准的 #444 基线 efb98c0 完全相同，且相对该基线的 13 个英文功能文件与 22 个 main 新增功能文件无重叠，因此保留 #446 已测试的精确产品版本；状态文档保留双方记录。没有新增业务逻辑、强推或删除分支。
+- 五条首次 Copilot 反馈均已解决，针对修复代码与回归逐项复核。精确产品字节核对及英文/中文/异步组合回归通过（228 passed / 1 skipped，84.12 秒）；只使用隔离测试 PostgreSQL、注入 generator 与 loopback，无真实 provider 或生产调用。推送原 PR 后等待当前 HEAD 六项 CI，再按用户授权合并。既有三轮审查限额后的 TESTED / UNREVIEWED 记录保持，不声称新的 reviewer PASS，不重复请求 Copilot。此次授权仅用于合并，未执行部署或生产数据操作。
+
 # 合并准备 — PR #444 与 #445 — 2026-11-01
 
 - 用户已明确授权先合并 #444，再将 #445 合入 main，并核验处理 Copilot 意见。#444 已 squash 合并为 bbad8a76317c96c02e6a03bb7070e334a97633b1，原 HEAD 六项 CI 全部通过，四个 Copilot 讨论已解决。
@@ -16,6 +22,19 @@
 - 初始 PR 后仅发起过一次 Copilot review，五项可复现反馈经 TypeSafe Judge 接受并已修复：同日相同页面的后续真实采集按 captured_at 留存并排序；SOA AI 入口使用固定抽取来源及新比较范围；动态示例限长但 Hub 保留完整标题；忽略正文内导航/页脚且空目录不完整；CIA 带尾斜杠目录 URL 纳入精确别名。没有重开 Copilot review。
 - 验证：Content Hub、采集 runtime、target worker、API、迁移和来源入口测试合计 255/255 通过（来源入口 suite 21/21）。Black、isort、Ruff、Pylint errors-only、py_compile、git diff --check 通过。测试只写隔离 PostgreSQL schema；无生产迁移、采集或 serving 写入。
 - 累计完成 6 轮独立 review：此前 4 轮要求修改、review 5 PASS、PR 反馈 review 6 要求修改。TypeSafe Judge 接受最后两项有界修复；按 review 限额例外，最终改动已测试但未再 review，明确不记为 PASS。父任务负责提交推送修复、GitHub 线程处置和 CI；没有合并或部署。完整记录在忽略文件 reports/source-portals-worker.md。
+## 2026-11-01 required CI import-order repair
+
+The prior12e quality gate failed only three newly introduced isort violations. The same worker changed import ordering in the API router, English module and English tests (5 inserted/5 deleted lines, no behavior changes). Isort, Ruff, per-file Black, diff checks and the full English module20 tests passed after formatting. Functional patch validation before this formatting-only commit was223 passed/1 skipped. A new current-HEAD CI and rebuilt/reprepared candidates remain required before live cutover. No production cutover or article generation has run.
+
+## 2026-11-01 PR446 remote feedback final tested fixes
+
+Copilot was requested once at initial publication and completed on 12e23f8. All five in-scope findings were reproduced without provider calls and accepted by actual TypeSafe Jev 1.14.0. The same persistent worker fixed scoped one-hot terminology (including the selected paper's one-hot vectors), overlapping ordinal events, saved quotation multiplicity, native DeepSeek budget options and source currentness before each new call. Final combined current-byte suite: 223 passed, 1 skipped in 60.81s, no provider calls; English module 20 passed, focused Chinese gates and Ruff/Black/compile/diff passed.
+
+Three cumulative independent local review rounds remain exhausted. These are tested final fixes under the explicit final-review-limit exception, not a new reviewer PASS. No fourth local review or repeated Copilot request. No merge authorization inferred. Required current-HEAD CI and real two-site article/browser/export/stability acceptance remain gates. Live China is still4a37ed4 and overseas7402626; unused12e candidates are retained and will be superseded without touching production data.
+
+## 2026-11-01 final English release validation
+
+Final accepted fixes: 220 passed, 1 skipped across English, Chinese interpretation and async transport suites (67.53s); no provider calls. Frontend/API/task bytes match review-3 snapshot; earlier frontend/type/lint/build checks remain applicable, release packaging rebuilds final SHA. Three independent local reviews required changes; accepted fixes were TypeSafe adjudicated and tested under the final-review-limit exception. No final reviewer PASS. Current-HEAD CI and actual C/O deployment, qualified bilingual article, browser and HTML exports remain pending.
 
 # 当前候选 — PR444 远程审查反馈 — 2026-11-01
 
@@ -6031,3 +6050,21 @@ Current branch head 4f030be has uncommitted small catalog/Storage variable defau
 - 共享解析器只增加限定技术词上下文、训练/测试样本量标记、数据集期间年份上下文和“一种”泛指处理。回归保留 2 元货币、明确“只有一种”/“两种”计数、无上下文逗号字面值与小数、一般四位数字计数及普通 from/to 数值范围的严格校验。新增真实诊断两段的 validator 用例及负例。
 - 验证：`tests/test_article_interpretations.py` 与 `tests/test_article_interpretation_async_transport.py` 合计 203 passed / 1 skipped；使用仓库专用隔离 PostgreSQL，并对本机 loopback 测试连接启用授权访问。Ruff、逐文件 Black 检查、`py_compile`、`git diff --check` 通过。完整日志 `reports/interpretation-number-repair-20261101/numeric-followup-focused-tests-elevated.log`。
 - 这是累计本地审查第 3 轮限额后的已测试最终修复；没有新的独立审查 PASS，也不安排第 4 轮。主控负责提交、推送、当前 HEAD CI 和后续实际生成验收；此 worker 未提交、未推送、未调用模型/provider，且未访问生产数据库。
+
+# 当前候选 — 英文文章解读集成 — 2026-11-01
+
+- English feature worktree `C:/Users/ferry/.codex/worktrees/english-article-interpretations/AI_actuarial_inforsearch` 已合入 PR444 的数字解析修复。仅澄清翻译提示：日期作为 claims 中的事实必须保留；publication date、source、URL、references、citation marker 与 kind label 等额外元数据由应用代码提供。未改预算、UI 或其他提示内容。
+- 使用隔离 PostgreSQL 与本机 loopback 授权验证 English/Chinese/async 三个后端测试文件：218 passed / 1 skipped / 1 failed。唯一失败 `test_native_task_stop_history_and_restart` 在合并套件时复现；单独在当前代码及只读加载的 clean numeric baseline efb98c 上均通过。两者相同的旧 finalize 路径先移除 active task、后追加 job_history.jsonl，测试会在 active 列表清空后立即重读文件；English stage 在该测试的 local/stopped 路径不执行。记录为基线任务历史落盘竞态，不改 unrelated runtime code。日志位于外部 `reports/interpretation-number-repair-20261101/english/`。
+- English prompt regression、Ruff、逐文件 Black、`py_compile` 与 `git diff --check` 通过。UI 文件未改；此前21项 UI/type/lint/build 检查的输入字节保持不变。后续 fresh review3 应包含冻结的 English 源码与 English 两站 OPS 资产。未调用 provider 或生产系统；主控负责最终 CI 与部署验收。
+- 最终检查补充：为避免测试在 `active_tasks` 清空、但历史文件尚未追加完成时立刻重读，停止/重启回归现在通过 `threading.Event` 等待原始 `append_history_to_disk` 返回；此改动仅在测试中，运行时代码未改。最新完整组合运行中，该历史测试已通过，但本机 async transport 测试的第二个 slot 偶发失败（218 passed、1 skipped、1 failed）；相同测试在 17 项定向运行中通过。保留两份日志并记录为尚未解释的组合运行失败，不宣称组合套件全绿。移除了仅逐字镜像提示词的回归；15 项 English 行为测试、停止/重启测试和 async transport 测试合计 17 passed。Ruff、逐文件 Black、`py_compile` 与 `git diff --check` 通过。此后不再改 English 源码；fresh review3 应以当前源码和 OPS 资产为准。
+- 两站 OPS 资产位于外部报告目录 `reports/interpretation-number-repair-20261101/english/ops/`：固定中国 4a / 海外 740 基线及候选 GAN 论文 C3677/O1107 与双站原文、Markdown SHA；海外预检禁止英语生成和启用的解读计划，运行时仅启用只读代理。新增离线故障注入自检覆盖不活动计时器、设置失败恢复原计时器、watchdog 保留/安全取消，共 7 项通过。Ruff、逐文件 Black、`py_compile` 通过；npm 可执行路径解析检查成功。没有 Docker、SSH、生产或 provider 操作；fresh review3 尚待主控执行。
+- 主控诊断发现 async transport 组合失败来自真实 AsyncOpenAI 首次懒加载占用两秒合成调用期限。回归现在在计时前创建、访问并关闭真实 SDK 的 `.chat.completions` 资源，且断言预热没有发出 loopback 请求；生产运行时代码和既有两秒期限、取消、串行及服务端请求断言均未改。Ruff、逐文件 Black、`py_compile` 和 `git diff --check` 通过；定向测试待主控对当前完整测试集重跑。
+- Final review 3 的四项已接受问题已完成最后限额内修复：英文数字比较保留次序、重复次数及精度，仅把完整匹配的中文年月日、英文月份日期和 ISO 日期归一为一个日期事件；源引号内容及重复次数必须保留，且新增引号仍须有源证据。公式检查继续优先报告原有专用错误。OPS 现核对中国 supervisor 实际 Exec 命令和活动 API 指针，并把中国/海外备份与工作路径固定到各自独立挂载；恢复校验记录路径，但不因备份挂载不可用而阻挡服务回滚。
+- 当前最终修复验证：English 测试模块 17 passed；共享中文数量解析相关测试 29 passed；OPS 离线故障注入 selfcheck 9 项 PASS。Ruff、五个 Python 文件逐文件 Black、`py_compile`、`git diff --check` 通过。测试 PostgreSQL 是隔离实例；provider 调用、生产数据库和远程主机访问均为 0。此前 218 passed / 1 skipped 的组合运行是这些最终修复之前的字节，主控需对当前源码运行最终组合测试与 CI。累计第 3 轮已结束；本修复是按本地审查限额记录的已测试未审查修复，不声明独立 reviewer PASS、不安排第 4 轮；主控继续最终 CI、OPS 审核和发布流程。
+
+## 2026-11-01 Primer lexical “下一步” validation repair
+
+- The actual CAS AI Primer attempt failed after its two permitted calls; the failed draft and receipts remain unchanged. Offline reproduction isolated the unsupported `1` to the fixed phrase `下一步`, which had been read as the explicit count `一` + `步`. The cited E16/E17 material contains no corresponding quantity. `一组工具` and `不一致的输入` are not parsed as counts and were left unchanged.
+- The Chinese quantity scan now blanks only `下一步` in its private scan text via the existing position-preserving substitution helper. Stored/display text, occurrences elsewhere, explicit `一步`/`只有一步`, `下两步`, and `第一步`/`第1步` remain unchanged and strictly validated. No prompt, budget, provider, receipt, or article state changed.
+- The 229-test Chinese/English/async suite passed 228 passed / 1 skipped on identical product source before final formatting and test-function placement cleanup. After that cleanup, the saved Primer regression, existing SOM range test, and English saved-Primer regression passed (3 passed). A full rerun on the final test bytes stalled at 46% for over two minutes without test errors; it was stopped and preserved, not counted as a pass. Final Ruff, isort, per-file Black, `py_compile`, and `git diff --check` passed. Logs are in `reports/interpretation-number-repair-20261101/english/primer-next-step-focused-tests.log` and `primer-next-step-focused-final.log`.
+- This is a tested final fix under the exhausted local-review limit, not an independent reviewer PASS. The exhausted Primer attempt remains failed and immutable; the root owner will commit, run current-HEAD CI, and use a separately verified untouched candidate for any later generation.

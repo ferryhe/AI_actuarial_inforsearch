@@ -144,7 +144,7 @@ for (const sample of reviewedSamples) {
   };
   const formattedHtml = buildInterpretationHtml(item, sample.title);
   const formattedMarkdown = buildInterpretationMarkdown(item, sample.title);
-  assert.equal(preview, formattedHtml);
+  assert.equal(preview.replace(/\r\n/g, "\n"), formattedHtml.replace(/\r\n/g, "\n"));
   assert.doesNotMatch(formattedHtml, /原文出处与阅读|未覆盖章节/);
   assert.ok(formattedMarkdown.includes(domestic));
   assert.equal((formattedHtml.match(new RegExp(`<a[^>]+href="${sample.fileUrl.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/&/g, "&amp;")}"`, "g")) || []).length, 1);
@@ -166,4 +166,45 @@ for (const sample of reviewedSamples) {
   assert.match(preview, new RegExp(`<a[^>]+href="${domestic.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"`));
   assert.doesNotMatch(preview, /<script|file:\/\/|<pre[^>]*>.*<\/pre>/s);
 }
+
+const english = buildInterpretationHtml({
+  interpretation_id: "english-review",
+  title_zh: "中文标题不得展示",
+  body_markdown_zh: "中文正文不得展示",
+  title_en: "English interpretation <reviewed>",
+  body_markdown_en: "An English claim with [e1].",
+  generated_at: "2026-11-01T00:00:00Z",
+  file_url: "https://source.example/research?x=1&y=2",
+  raw_sha256: "raw",
+  markdown_sha256: "markdown",
+  china_article_url: "https://aiactuary.cn/file-detail?file_id=3678",
+  references: {
+    original_title: "Original research <title>",
+    published_time: "2025-04",
+    source: { name_zh: "中文机构", name_en: "English Society" },
+    authors: ["Researcher One", "Researcher Two"],
+  },
+}, "Fallback title", "en");
+assert.match(english, /<html lang="en">/);
+assert.match(english, /English interpretation &lt;reviewed&gt;/);
+assert.match(english, /Original research &lt;title&gt;/);
+assert.match(english, /English Society/);
+assert.match(english, /Researcher One, Researcher Two/);
+assert.match(english, /Read the original on the China site/);
+assert.match(english, /https:\/\/aiactuary\.cn\/file-detail\?file_id=3678/);
+assert.doesNotMatch(english, /中文标题不得展示|中文正文不得展示|中文机构/);
+assert.match(buildInterpretationMarkdown({
+  interpretation_id: "english-review",
+  title_zh: "中文标题不得展示",
+  body_markdown_zh: "中文正文不得展示",
+  title_en: "English interpretation",
+  body_markdown_en: "English body only",
+  generated_at: "2026-11-01T00:00:00Z",
+  file_url: "https://source.example/paper",
+  raw_sha256: "raw",
+  markdown_sha256: "markdown",
+  china_article_url: "https://aiactuary.cn/file-detail?file_id=3678",
+  references: { original_title: "Original research", source: { name_en: "English Society" } },
+}, "Fallback title", "en"), /English body only/);
+console.log("English interpretation formatter assertions passed");
 });
