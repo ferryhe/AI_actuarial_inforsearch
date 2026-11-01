@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
+import json
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -12,6 +13,7 @@ import ai_actuarial.local_collection_runtime as runtime
 from ai_actuarial.content_hub import (
     ContentHubError,
     apply_content_hub_schema,
+    content_hub_read_source_portal_capture,
     content_hub_record_source_portal_capture,
 )
 from ai_actuarial.source_portals import (
@@ -38,11 +40,18 @@ def test_catalog_urls_are_exact_runtime_site_seeds_and_aliases() -> None:
     assert SOURCE_PORTAL_URLS
     for portal in SOURCE_PORTALS:
         assert set(portal.site_ids) <= set(runtime.SITES)
+        assert portal.extraction_source_id in runtime.SITES
         for url in (portal.url, *portal.capture_urls):
             assert SOURCE_PORTALS_BY_URL[url] == portal
         assert SOURCE_PORTALS_BY_KEY[portal.portal_key] == portal
     assert SOURCE_PORTALS_BY_URL["https://www.casact.org/publications-research"].portal_key == (
         "cas-publications-research"
+    )
+    assert SOURCE_PORTALS_BY_URL["https://www.cia-ica.ca/publications/"].portal_key == (
+        "cia-publications"
+    )
+    assert SOURCE_PORTALS_BY_KEY["soa-artificial-intelligence"].extraction_source_id == (
+        "soa-ai-topic-landing"
     )
     assert "https://www.actuaries.org.uk/insight/" in SOURCE_PORTAL_URLS
 
@@ -56,9 +65,7 @@ def test_portal_parser_uses_only_main_entries_and_marks_partial_sections() -> No
         '<footer><a href="/research/footer-report">Footer research</a></footer>'
     ).encode()
     captured_at = dt.datetime(2026, 10, 31, 12, tzinfo=ZoneInfo("America/New_York"))
-    observation = runtime._source_portal_observation(
-        portal, runtime.SITES["soa"], portal.url, page, captured_at
-    )
+    observation = runtime._source_portal_observation(portal, portal.url, page, captured_at)
     assert observation["complete"] is True
     assert observation["entries"] == [
         {"url": "https://www.soa.org/research/ai-pricing-paper", "title": "AI pricing paper"}
@@ -68,14 +75,11 @@ def test_portal_parser_uses_only_main_entries_and_marks_partial_sections() -> No
         b"</main>",
         b'<a class="next page-numbers" href="?page=2">\xe2\x80\xba</a></main>',
     )
-    incomplete = runtime._source_portal_observation(
-        portal, runtime.SITES["soa"], portal.url, paginated, captured_at
-    )
+    incomplete = runtime._source_portal_observation(portal, portal.url, paginated, captured_at)
     assert incomplete["complete"] is False
     assert all("page=2" not in entry["url"] for entry in incomplete["entries"])
     truncated = runtime._source_portal_observation(
         portal,
-        runtime.SITES["soa"],
         portal.url,
         b'<main><a href="/research/ai-pricing-paper">AI pricing paper</a>',
         captured_at,
@@ -84,12 +88,99 @@ def test_portal_parser_uses_only_main_entries_and_marks_partial_sections() -> No
     assert truncated["complete"] is False
     no_semantic_section = runtime._source_portal_observation(
         portal,
-        runtime.SITES["soa"],
         portal.url,
         b'<div><a href="/research/ai-paper">AI research paper</a></div>',
         captured_at,
     )
     assert no_semantic_section["complete"] is False
+
+
+def test_portal_parser_excludes_nested_navigation_and_uses_fixed_portal_policy() -> None:
+    captured_at = dt.datetime(2026, 10, 31, 12, tzinfo=ZoneInfo("America/New_York"))
+    topics = SOURCE_PORTALS_BY_KEY["soa-research-topics"]
+    nested_navigation = (
+        "<main><nav><a href='/research/breadcrumb'>Research home</a></nav>"
+        "<section></section></main>"
+    ).encode()
+    empty = runtime._source_portal_observation(topics, topics.url, nested_navigation, captured_at)
+    assert empty["entries"] == []
+    assert empty["complete"] is False
+
+    page = (
+        "<main><nav><a href='/research/breadcrumb'>Research home</a></nav>"
+        "<section><a href='/research/ai-pricing-paper'>AI pricing paper</a></section>"
+        "<footer><a href='/research/footer-paper'>Footer paper</a></footer></main>"
+    ).encode()
+    observed = runtime._source_portal_observation(topics, topics.url, page, captured_at)
+    assert observed["complete"] is True
+    assert observed["entries"] == [
+        {"url": "https://www.soa.org/research/ai-pricing-paper", "title": "AI pricing paper"}
+    ]
+
+    ai_portal = SOURCE_PORTALS_BY_KEY["soa-artificial-intelligence"]
+    ai_body = (
+        "<main>"
+        "<a href='/research/topics/ai-newsletter'>AI newsletter</a>"
+        "<a href='/research/topics/ai-governance-paper'>AI governance paper</a>"
+        "<a href='/research/topics/ai-study'>AI study</a>"
+        "</main>"
+    ).encode()
+    ai_observation = runtime._source_portal_observation(
+        ai_portal, ai_portal.url, ai_body, captured_at
+    )
+    assert ai_observation["complete"] is True
+    assert [entry["title"] for entry in ai_observation["entries"]] == [
+        "AI governance paper",
+        "AI newsletter",
+        "AI study",
+    ]
+
+
+def test_portal_parser_preserves_long_title_through_hub_member_evidence(tmp_path: Path) -> None:
+    hub_url, schema = _database_schema(tmp_path, "source-portal-long-parser-title")
+    apply_content_hub_schema(hub_url, schema=schema)
+    portal = SOURCE_PORTALS_BY_KEY["soa-research-topics"]
+    title = ("Long actuarial research title " + ("Evidence " * 30)).strip()
+    captured_at = dt.datetime(2026, 10, 31, 12, tzinfo=ZoneInfo("America/New_York"))
+    body = ("<main><a href='/research/long-title-paper'>" + title + "</a></main>").encode()
+    observation = runtime._source_portal_observation(portal, portal.url, body, captured_at)
+    assert observation["entries"] == [
+        {"url": "https://www.soa.org/research/long-title-paper", "title": title}
+    ]
+
+    record = content_hub_record_source_portal_capture(
+        portal_key=portal.portal_key,
+        page_url=observation["page_url"],
+        scope_key=observation["scope_key"],
+        captured_at=observation["captured_at"],
+        acquired_on=observation["acquired_on"],
+        page_sha256=observation["page_sha256"],
+        entries=observation["entries"],
+        complete=observation["complete"],
+        intro_zh=portal.overview_zh,
+        intro_en=portal.overview_en,
+        database_url=hub_url,
+        schema=schema,
+    )
+    persisted = content_hub_read_source_portal_capture(
+        portal_key=portal.portal_key,
+        capture_id=record["capture_id"],
+        database_url=hub_url,
+        schema=schema,
+    )
+    assert persisted["complete"] is True
+    connection = psycopg2.connect(hub_url)
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(f'SET search_path TO "{schema}"')
+            cursor.execute(
+                "SELECT title FROM source_portal_entries WHERE capture_id = %s",
+                (record["capture_id"],),
+            )
+            stored_title = cursor.fetchone()[0]
+    finally:
+        connection.close()
+    assert stored_title == title
 
 
 @pytest.mark.parametrize(
@@ -114,7 +205,6 @@ def test_portal_pagination_signals_exclude_controls_but_keep_ordinary_entries(
 
     observation = runtime._source_portal_observation(
         portal,
-        runtime.SITES["soa"],
         portal.url,
         body,
         dt.datetime(2026, 10, 31, 12, tzinfo=ZoneInfo("America/New_York")),
@@ -252,7 +342,7 @@ def test_hub_portal_captures_are_append_only_idempotent_and_compare_only_complet
         return content_hub_record_source_portal_capture(
             portal_key=portal.portal_key,
             page_url=portal.url,
-            scope_key="main-or-article-v1",
+            scope_key=portal.scope_key,
             captured_at=acquired_at,
             acquired_on=acquired_at.date(),
             page_sha256=hashlib.sha256(page).hexdigest(),
@@ -267,12 +357,12 @@ def test_hub_portal_captures_are_append_only_idempotent_and_compare_only_complet
     first = record(first_time, b"first page", first_entries)
     assert first["acquired_on"] == "2026-10-31"
     assert "这里可以找到" in first["description_zh"]
-    same_day_retry = record(first_time + dt.timedelta(minutes=20), b"first page", first_entries)
+    same_day_retry = record(first_time, b"first page", first_entries)
     assert same_day_retry["duplicate"] is True
     assert same_day_retry["capture_id"] == first["capture_id"]
     with pytest.raises(ContentHubError, match="immutable acquisition evidence"):
         record(
-            first_time + dt.timedelta(minutes=25),
+            first_time,
             b"first page",
             [{"url": "https://www.soa.org/research/other-paper", "title": "Other paper"}],
         )
@@ -291,19 +381,30 @@ def test_hub_portal_captures_are_append_only_idempotent_and_compare_only_complet
         + [{"url": "https://www.soa.org/research/new-paper-two", "title": "New paper two"}],
     )
     assert "New paper" in changed_same_day["description_en"]
-    assert "New paper two" in changed_same_day["description_en"]
+    assert len(changed_same_day["description_en"]) <= 2000
+    final_a = record(next_time + dt.timedelta(hours=6), b"first page", first_entries)
+    assert final_a["duplicate"] is False
+    assert final_a["capture_id"] > changed_same_day["capture_id"]
+
+    next_day = record(
+        next_time + dt.timedelta(days=1),
+        b"third page",
+        first_entries + [{"url": "https://www.soa.org/research/c-next", "title": "C next"}],
+    )
+    assert "C next" in next_day["description_en"]
+    assert "New paper" not in next_day["description_en"]
+    assert "New paper two" not in next_day["description_en"]
     truncated_body = b'<main><a href="/research/ai-paper">AI paper</a>'
     truncated_observation = runtime._source_portal_observation(
         portal,
-        runtime.SITES["soa"],
         portal.url,
         truncated_body,
-        next_time + dt.timedelta(days=1),
+        next_time + dt.timedelta(days=2),
     )
     assert truncated_observation["complete"] is False
     assert truncated_observation["entries"] == first_entries
     partial = record(
-        next_time + dt.timedelta(days=1),
+        next_time + dt.timedelta(days=2),
         truncated_body,
         truncated_observation["entries"],
         complete=truncated_observation["complete"],
@@ -316,31 +417,44 @@ def test_hub_portal_captures_are_append_only_idempotent_and_compare_only_complet
     )
     load_more_observation = runtime._source_portal_observation(
         portal,
-        runtime.SITES["soa"],
         portal.url,
         load_more_body,
-        next_time + dt.timedelta(days=1, hours=1),
+        next_time + dt.timedelta(days=2, hours=1),
     )
     assert load_more_observation["complete"] is False
     assert load_more_observation["entries"] == first_entries
     load_more_partial = record(
-        next_time + dt.timedelta(days=1, hours=1),
+        next_time + dt.timedelta(days=2, hours=1),
         load_more_body,
         load_more_observation["entries"],
         complete=load_more_observation["complete"],
     )
     assert load_more_partial["description_zh"] is None
     assert load_more_partial["description_en"] is None
-    complete_after_partial = record(next_time + dt.timedelta(days=2), b"fourth page", first_entries)
+    complete_after_partial = record(next_time + dt.timedelta(days=3), b"fourth page", first_entries)
     assert "这次没有列在入口中" in complete_after_partial["description_zh"]
-    assert "New paper" in complete_after_partial["description_en"]
+    assert "C next" in complete_after_partial["description_en"]
+    nav_only_body = b"<main><nav><a href='/research/'>Research</a></nav><section></section></main>"
+    nav_only = runtime._source_portal_observation(
+        portal, portal.url, nav_only_body, next_time + dt.timedelta(days=4)
+    )
+    assert nav_only["entries"] == []
+    assert nav_only["complete"] is False
+    nav_only_record = record(
+        next_time + dt.timedelta(days=4),
+        nav_only_body,
+        nav_only["entries"],
+        complete=nav_only["complete"],
+    )
+    assert nav_only_record["description_zh"] is None
+    assert nav_only_record["description_en"] is None
 
     connection = psycopg2.connect(hub_url)
     try:
         with connection.cursor() as cursor:
             cursor.execute(f'SET search_path TO "{schema}"')
             cursor.execute("SELECT count(*) FROM source_portal_captures")
-            assert cursor.fetchone()[0] == 6
+            assert cursor.fetchone()[0] == 9
             cursor.execute(
                 "SELECT count(*) FROM source_portal_entries WHERE capture_id = %s",
                 (partial["capture_id"],),
@@ -348,6 +462,274 @@ def test_hub_portal_captures_are_append_only_idempotent_and_compare_only_complet
             assert cursor.fetchone()[0] == 1
     finally:
         connection.close()
+
+
+def test_hub_baseline_uses_actual_capture_time_when_persistence_is_out_of_order(
+    tmp_path: Path,
+) -> None:
+    hub_url, schema = _database_schema(tmp_path, "source-portal-out-of-order-hub")
+    apply_content_hub_schema(hub_url, schema=schema)
+    portal = SOURCE_PORTALS_BY_KEY["soa-research-topics"]
+    earlier_time = dt.datetime(2026, 10, 31, 13, tzinfo=ZoneInfo("America/New_York"))
+    later_time = earlier_time + dt.timedelta(hours=1)
+    earlier_entries = [{"url": "https://www.soa.org/research/earlier", "title": "Earlier"}]
+    later_entries = [{"url": "https://www.soa.org/research/later", "title": "Later"}]
+
+    def record(at: dt.datetime, page: bytes, entries: list[dict[str, str]]) -> dict:
+        return content_hub_record_source_portal_capture(
+            portal_key=portal.portal_key,
+            page_url=portal.url,
+            scope_key=portal.scope_key,
+            captured_at=at,
+            acquired_on=at.date(),
+            page_sha256=hashlib.sha256(page).hexdigest(),
+            entries=entries,
+            complete=True,
+            intro_zh=portal.overview_zh,
+            intro_en=portal.overview_en,
+            database_url=hub_url,
+            schema=schema,
+        )
+
+    later_persisted_first = record(later_time, b"later acquisition", later_entries)
+    earlier_persisted_second = record(earlier_time, b"earlier acquisition", earlier_entries)
+    assert later_persisted_first["capture_id"] < earlier_persisted_second["capture_id"]
+
+    next_date = record(
+        later_time + dt.timedelta(days=1),
+        b"next date",
+        later_entries + [{"url": "https://www.soa.org/research/new", "title": "New"}],
+    )
+    assert "New" in next_date["description_en"]
+    assert "Earlier" not in next_date["description_en"]
+    assert "no longer lists" not in next_date["description_en"]
+
+
+def test_portal_descriptions_fit_transport_limit_and_keep_full_member_evidence(
+    tmp_path: Path,
+) -> None:
+    hub_url, schema = _database_schema(tmp_path, "source-portal-long-titles")
+    apply_content_hub_schema(hub_url, schema=schema)
+    portal = SOURCE_PORTALS_BY_KEY["soa-research-topics"]
+    previous_entries = [
+        {"url": "https://www.soa.org/research/unchanged", "title": "Unchanged"},
+        *[
+            {
+                "url": f"https://www.soa.org/research/rename-{index}",
+                "title": f"Old renamed title {index} " + ("A" * 210),
+            }
+            for index in range(3)
+        ],
+        *[
+            {
+                "url": f"https://www.soa.org/research/removed-{index}",
+                "title": f"Removed title {index} " + ("B" * 210),
+            }
+            for index in range(3)
+        ],
+    ]
+    current_entries = [
+        {"url": "https://www.soa.org/research/unchanged", "title": "Unchanged"},
+        *[
+            {
+                "url": f"https://www.soa.org/research/rename-{index}",
+                "title": f"New renamed title {index} " + ("C" * 210),
+            }
+            for index in range(3)
+        ],
+        *[
+            {
+                "url": f"https://www.soa.org/research/added-{index}",
+                "title": f"Added title {index} " + ("D" * 210),
+            }
+            for index in range(3)
+        ],
+    ]
+
+    def record(at: dt.datetime, page: bytes, entries: list[dict[str, str]]) -> dict:
+        return content_hub_record_source_portal_capture(
+            portal_key=portal.portal_key,
+            page_url=portal.url,
+            scope_key=portal.scope_key,
+            captured_at=at,
+            acquired_on=at.date(),
+            page_sha256=hashlib.sha256(page).hexdigest(),
+            entries=entries,
+            complete=True,
+            intro_zh=portal.overview_zh,
+            intro_en=portal.overview_en,
+            database_url=hub_url,
+            schema=schema,
+        )
+
+    first_time = dt.datetime(2026, 10, 30, 12, tzinfo=ZoneInfo("America/New_York"))
+    current_time = first_time + dt.timedelta(days=1)
+    record(first_time, b"previous page", previous_entries)
+    current = record(current_time, b"current page", current_entries)
+
+    assert "这次多了" in current["description_zh"]
+    assert "现在以" in current["description_zh"]
+    assert "没有列在入口中" in current["description_zh"]
+    assert "includes" in current["description_en"]
+    assert "is now listed as" in current["description_en"]
+    assert "no longer lists" in current["description_en"]
+    assert len(current["description_zh"]) <= 2000
+    assert len(current["description_en"]) <= 2000
+
+    connection = psycopg2.connect(hub_url)
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(f'SET search_path TO "{schema}"')
+            cursor.execute(
+                "SELECT title FROM source_portal_entries WHERE capture_id = %s "
+                "AND entry_url = %s",
+                (current["capture_id"], "https://www.soa.org/research/added-0"),
+            )
+            full_title = cursor.fetchone()[0]
+    finally:
+        connection.close()
+    assert len(full_title) == len(current_entries[-3]["title"])
+
+
+def test_pending_portal_projection_uses_capture_time_when_persistence_is_out_of_order(
+    tmp_path: Path, monkeypatch
+) -> None:
+    portal = SOURCE_PORTALS_BY_KEY["soa-research-topics"]
+    captures = []
+    for label, captured_at in (
+        ("newer", "2026-10-31T14:00:00-04:00"),
+        ("older", "2026-10-31T13:00:00-04:00"),
+    ):
+        raw = f"<main>{label}</main>".encode()
+        path = tmp_path / f"{label}.html"
+        path.write_bytes(raw)
+        captures.append(
+            {
+                "portal_key": portal.portal_key,
+                "page_url": portal.url,
+                "scope_key": portal.scope_key,
+                "captured_at": captured_at,
+                "acquired_on": "2026-10-31",
+                "page_sha256": hashlib.sha256(raw).hexdigest(),
+                "entries": [{"url": f"https://www.soa.org/research/{label}", "title": label}],
+                "complete": True,
+                "artifact_path": str(path),
+            }
+        )
+
+    def record_capture(**values):
+        newer = values["captured_at"].endswith("14:00:00-04:00")
+        return {
+            "capture_id": 10 if newer else 20,
+            "captured_at": values["captured_at"],
+            "acquired_on": "2026-10-31",
+            "description_zh": "较新的观察。" if newer else "较早的观察。",
+            "description_en": "Newer observation." if newer else "Older observation.",
+        }
+
+    monkeypatch.setattr(runtime, "_ACTIVE_STATE_PATH", None)
+    monkeypatch.setattr(runtime, "content_hub_record_source_portal_capture", record_capture)
+    streamed: list[dict] = []
+
+    def stream(config, target, updates):
+        streamed.append({"target": target, "updates": updates})
+        return {"failures": []}
+
+    monkeypatch.setattr(runtime, "_stream_source_portals", stream)
+    state = {"pending_source_portal_captures": captures}
+    config = {"targets": {"china": {"host": "china"}, "overseas": {"host": "overseas"}}}
+
+    result = runtime._sync_source_portals(state, config, object())
+
+    assert result["status"] == "succeeded"
+    assert result["captures_persisted"] == 2
+    assert len(streamed) == 2
+    for target_batch in streamed:
+        [update] = target_batch["updates"]
+        assert update["capture_id"] == 10
+        assert update["captured_at"] == "2026-10-31T14:00:00-04:00"
+        assert update["description_en"] == "Newer observation."
+
+
+def test_legacy_pending_portal_updates_backfill_only_from_matching_hub_evidence(
+    tmp_path: Path, monkeypatch
+) -> None:
+    hub_url, schema = _database_schema(tmp_path, "source-portal-legacy-pending")
+    apply_content_hub_schema(hub_url, schema=schema)
+    portal = SOURCE_PORTALS_BY_KEY["soa-research-topics"]
+    captured_at = dt.datetime(2026, 10, 31, 12, tzinfo=ZoneInfo("America/New_York"))
+    capture = content_hub_record_source_portal_capture(
+        portal_key=portal.portal_key,
+        page_url=portal.url,
+        scope_key=portal.scope_key,
+        captured_at=captured_at,
+        acquired_on=captured_at.date(),
+        page_sha256=hashlib.sha256(b"saved legacy capture").hexdigest(),
+        entries=[{"url": "https://www.soa.org/research/saved", "title": "Saved research"}],
+        complete=True,
+        intro_zh=portal.overview_zh,
+        intro_en=portal.overview_en,
+        database_url=hub_url,
+        schema=schema,
+    )
+    missing_portal = SOURCE_PORTALS_BY_KEY["cia-publications"]
+    acquired_on = "2026-10-31"
+    valid_key = f"{portal.portal_key}|{acquired_on}"
+    missing_key = f"{missing_portal.portal_key}|{acquired_on}"
+    pending_updates = {
+        valid_key: {
+            "portal_key": portal.portal_key,
+            "capture_id": capture["capture_id"],
+            "acquired_on": acquired_on,
+            "description_zh": capture["description_zh"],
+            "description_en": capture["description_en"],
+        },
+        missing_key: {
+            "portal_key": missing_portal.portal_key,
+            "capture_id": capture["capture_id"] + 1000,
+            "acquired_on": acquired_on,
+            "description_zh": "已保存但缺少来源证据。",
+            "description_en": "Saved without matching source evidence.",
+        },
+    }
+    state_path = tmp_path / "runtime-state.json"
+    monkeypatch.setattr(runtime, "_ACTIVE_STATE_PATH", state_path)
+
+    def read_capture(*, portal_key, capture_id, database_url):
+        return content_hub_read_source_portal_capture(
+            portal_key=portal_key,
+            capture_id=capture_id,
+            database_url=hub_url,
+            schema=schema,
+        )
+
+    monkeypatch.setattr(runtime, "content_hub_read_source_portal_capture", read_capture)
+    streamed: list[dict] = []
+
+    def stream(_config, target, updates):
+        saved_state = json.loads(state_path.read_text(encoding="utf-8"))
+        saved_updates = saved_state["pending_source_portal_publications"]
+        assert saved_updates[valid_key]["captured_at"] == capture["captured_at"]
+        assert "captured_at" not in saved_updates[missing_key]
+        streamed.append({"target": target, "updates": updates})
+        return {"failures": []}
+
+    monkeypatch.setattr(runtime, "_stream_source_portals", stream)
+    config = {"targets": {"china": {"host": "china"}, "overseas": {"host": "overseas"}}}
+    state = {"pending_source_portal_publications": pending_updates}
+
+    result = runtime._sync_source_portals(state, config, hub_url)
+
+    assert result["status"] == "partial"
+    assert result["updates_pending"] == 1
+    assert valid_key not in state["pending_source_portal_publications"]
+    assert "captured_at" not in state["pending_source_portal_publications"][missing_key]
+    assert "matching Content Hub capture was not found" in result["errors"][0]
+    assert len(streamed) == 2
+    for target_batch in streamed:
+        assert len(target_batch["updates"]) == 1
+        assert target_batch["updates"][0]["capture_id"] == capture["capture_id"]
+        assert target_batch["updates"][0]["captured_at"] == capture["captured_at"]
 
 
 def test_source_portal_app_sync_and_database_role_filter(tmp_path: Path) -> None:
@@ -369,6 +751,7 @@ def test_source_portal_app_sync_and_database_role_filter(tmp_path: Path) -> None
         {
             "portal_key": portal.portal_key,
             "capture_id": 12,
+            "captured_at": "2026-10-31T16:00:00+00:00",
             "acquired_on": "2026-10-31",
             "description_zh": "本次记录了入口当前列出的内容。",
             "description_en": "This record covers the current directory entries.",
@@ -376,6 +759,7 @@ def test_source_portal_app_sync_and_database_role_filter(tmp_path: Path) -> None
         {
             "portal_key": portal.portal_key,
             "capture_id": 13,
+            "captured_at": "2026-11-01T17:00:00+00:00",
             "acquired_on": "2026-11-01",
             "description_zh": "上次介绍的内容这次都还在，也没有看到新的资料。",
             "description_en": "Everything listed last time is still here, and no new materials were listed.",
@@ -392,6 +776,7 @@ def test_source_portal_app_sync_and_database_role_filter(tmp_path: Path) -> None
     latest_same_day = {
         **update_rows[1],
         "capture_id": 14,
+        "captured_at": "2026-11-01T18:00:00+00:00",
         "description_zh": "这次多了「研究新进展」，可以从入口继续阅读。",
         "description_en": "This time, “New research” was added and can be opened from the directory.",
     }
@@ -399,9 +784,25 @@ def test_source_portal_app_sync_and_database_role_filter(tmp_path: Path) -> None
         {**payload, "updates": [latest_same_day]},
         storage_factory=lambda: Storage(app_url),
     )
+    older_arrival = {
+        **latest_same_day,
+        "capture_id": 15,
+        "captured_at": "2026-11-01T17:30:00+00:00",
+        "description_zh": "这次多了较早到达的更新。",
+        "description_en": "This older acquisition arrived later.",
+    }
+    apply_source_portals(
+        {**payload, "updates": [older_arrival]},
+        storage_factory=lambda: Storage(app_url),
+    )
 
     storage = Storage(app_url)
     try:
+        latest_row = storage._conn.execute(
+            "SELECT capture_id, captured_at FROM source_portal_updates "
+            "WHERE portal_key = ? AND acquired_on = ?",
+            (portal.portal_key, "2026-11-01"),
+        ).fetchone()
         rows = (
             (
                 portal.url,
@@ -445,6 +846,8 @@ def test_source_portal_app_sync_and_database_role_filter(tmp_path: Path) -> None
             )
     finally:
         storage.close()
+    assert latest_row[0] == 14
+    assert latest_row[1] == dt.datetime(2026, 11, 1, 18, tzinfo=dt.timezone.utc)
 
     visible = list_files(db_path=app_url, query=parse_file_list_query({}))
     assert visible["total"] == 1

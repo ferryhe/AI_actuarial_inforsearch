@@ -9,10 +9,10 @@ CREATE TABLE source_portal_captures (
     complete BOOLEAN NOT NULL,
     description_zh TEXT,
     description_en TEXT,
-    UNIQUE (portal_key, scope_key, acquired_on, page_sha256)
+    UNIQUE (portal_key, scope_key, acquired_on, captured_at)
 );
 CREATE INDEX source_portal_captures_latest
-    ON source_portal_captures (portal_key, scope_key, complete, acquired_on DESC, capture_id DESC);
+    ON source_portal_captures (portal_key, scope_key, complete, acquired_on DESC, captured_at DESC, capture_id DESC);
 
 CREATE TABLE source_portal_entries (
     capture_id BIGINT NOT NULL REFERENCES source_portal_captures(capture_id) ON DELETE RESTRICT,

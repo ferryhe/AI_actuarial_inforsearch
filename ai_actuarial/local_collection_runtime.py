@@ -35,6 +35,7 @@ from ai_actuarial.content_hub import (
     apply_content_hub_schema,
     content_hub_ai_url_versions,
     content_hub_list_ai_versions,
+    content_hub_read_source_portal_capture,
     content_hub_read_version,
     content_hub_record_source_portal_capture,
     content_hub_schema_plan,
@@ -628,6 +629,7 @@ class _PortalLinkParser(HTMLParser):
         self.section_found = False
         self.section_depth = 0
         self._section_stack: list[str] = []
+        self._excluded_container_stack: list[str] = []
         self._pagination_container_stack: list[str] = []
         self.pagination = False
         self._href: str | None = None
@@ -683,6 +685,8 @@ class _PortalLinkParser(HTMLParser):
             self.section_found = True
             self._section_stack.append(tag_name)
             self.section_depth += 1
+        if tag_name in {"nav", "footer"} and self.section_depth:
+            self._excluded_container_stack.append(tag_name)
         if tag_name == "button":
             if self._button_depth == 0:
                 self._button_text = []
@@ -707,7 +711,7 @@ class _PortalLinkParser(HTMLParser):
                     self.pagination = True
                 self._button_text = []
         if tag_name == "a" and self._href:
-            label = " ".join(" ".join(self._text).split())[:240]
+            label = " ".join(" ".join(self._text).split())[:500]
             is_pagination_control = (
                 self._next
                 or bool(self._pagination_container_stack)
@@ -715,7 +719,7 @@ class _PortalLinkParser(HTMLParser):
             )
             self.pagination = self.pagination or is_pagination_control
             if self.section_depth:
-                if not is_pagination_control:
+                if not is_pagination_control and not self._excluded_container_stack:
                     self.links.append((self._href, label))
             self._href, self._text, self._next = None, [], False
         if tag_name in self._section_stack:
@@ -723,6 +727,12 @@ class _PortalLinkParser(HTMLParser):
                 len(self._section_stack) - 1 - self._section_stack[::-1].index(tag_name) :
             ]
             self.section_depth = len(self._section_stack)
+        if tag_name in self._excluded_container_stack:
+            del self._excluded_container_stack[
+                len(self._excluded_container_stack)
+                - 1
+                - self._excluded_container_stack[::-1].index(tag_name) :
+            ]
         if tag_name in self._pagination_container_stack:
             del self._pagination_container_stack[
                 len(self._pagination_container_stack)
@@ -733,11 +743,11 @@ class _PortalLinkParser(HTMLParser):
 
 def _source_portal_observation(
     portal: Any,
-    site: Site,
     page_url: str,
     body: bytes,
     captured_at: dt.datetime,
 ) -> dict[str, Any]:
+    site = SITES[portal.extraction_source_id]
     parser = _PortalLinkParser()
     parser.feed(body.decode("utf-8", errors="replace"))
     entries: dict[str, str] = {}
@@ -769,7 +779,7 @@ def _source_portal_observation(
     return {
         "portal_key": portal.portal_key,
         "page_url": page_url,
-        "scope_key": "main-or-article-v1",
+        "scope_key": portal.scope_key,
         "captured_at": captured_at.isoformat(),
         "acquired_on": captured_at.date().isoformat(),
         "page_sha256": hashlib.sha256(body).hexdigest(),
@@ -2766,7 +2776,7 @@ def _capture(
                 if item.get("kind") == "page" and portal is not None:
                     captured_at = dt.datetime.now(TIME_ZONE)
                     observation = _source_portal_observation(
-                        portal, site, _canonical_url(final_url), body, captured_at
+                        portal, _canonical_url(final_url), body, captured_at
                     )
                     observation["artifact_path"] = str(
                         _persist_cas(data_root, body, observation["page_sha256"])
@@ -3561,6 +3571,57 @@ def _stream_source_portals(
     )
 
 
+def _upgrade_legacy_source_portal_updates(
+    pending_updates: dict[str, Any], hub: DatabaseConfig
+) -> tuple[set[str], bool, dict[str, str]]:
+    """Recover actual timestamps for branch-head pending updates from Hub evidence."""
+    blocked: set[str] = set()
+    upgraded = False
+    errors: dict[str, str] = {}
+    for identity, update in list(pending_updates.items()):
+        if not isinstance(update, dict) or update.get("captured_at"):
+            continue
+        portal_key = str(update.get("portal_key") or "")
+        capture_id = update.get("capture_id")
+        portal = SOURCE_PORTALS_BY_KEY.get(portal_key)
+        try:
+            if portal is None or type(capture_id) is not int or capture_id < 1:
+                raise RuntimeErrorSafe("pending update identity is incomplete")
+            capture = content_hub_read_source_portal_capture(
+                portal_key=portal_key,
+                capture_id=capture_id,
+                database_url=hub,
+            )
+            if capture is None:
+                raise RuntimeErrorSafe("matching Content Hub capture was not found")
+            acquired_on = str(update.get("acquired_on") or "")
+            if (
+                capture.get("complete") is not True
+                or capture.get("acquired_on") != acquired_on
+                or identity != f"{portal_key}|{acquired_on}"
+                or capture.get("description_zh") != update.get("description_zh")
+                or capture.get("description_en") != update.get("description_en")
+            ):
+                raise RuntimeErrorSafe("Content Hub evidence does not match the pending update")
+            captured_at = dt.datetime.fromisoformat(
+                str(capture["captured_at"]).replace("Z", "+00:00")
+            )
+            if (
+                captured_at.tzinfo is None
+                or captured_at.astimezone(TIME_ZONE).date().isoformat() != acquired_on
+            ):
+                raise RuntimeErrorSafe("Content Hub capture date does not match the update")
+            update["captured_at"] = str(capture["captured_at"])
+            upgraded = True
+        except Exception as exc:
+            blocked.add(identity)
+            errors[identity] = (
+                f"{portal_key or 'unknown portal'}: pending update cannot be retried: "
+                f"{type(exc).__name__}: {exc}"
+            )
+    return blocked, upgraded, errors
+
+
 def _sync_source_portals(
     state: dict[str, Any], config: dict[str, Any], hub: DatabaseConfig
 ) -> dict[str, Any]:
@@ -3568,6 +3629,11 @@ def _sync_source_portals(
     pending_updates = state.setdefault("pending_source_portal_publications", {})
     errors: list[str] = []
     persisted = 0
+    blocked_update_keys, state_upgraded, legacy_errors = _upgrade_legacy_source_portal_updates(
+        pending_updates, hub
+    )
+    if state_upgraded and _ACTIVE_STATE_PATH is not None:
+        _atomic_json(_state_path_for_data(state), state)
     for observation in list(pending_captures):
         portal = SOURCE_PORTALS_BY_KEY.get(str(observation.get("portal_key") or ""))
         if portal is None:
@@ -3593,12 +3659,30 @@ def _sync_source_portals(
             if record.get("description_zh") and record.get("description_en"):
                 identity = f"{portal.portal_key}|{record['acquired_on']}"
                 existing = pending_updates.get(identity)
-                if not isinstance(existing, dict) or int(existing.get("capture_id") or 0) < int(
-                    record["capture_id"]
+                record_captured_at = dt.datetime.fromisoformat(
+                    str(record["captured_at"]).replace("Z", "+00:00")
+                ).astimezone(dt.timezone.utc)
+                existing_captured_at = (
+                    dt.datetime.fromisoformat(
+                        str(existing["captured_at"]).replace("Z", "+00:00")
+                    ).astimezone(dt.timezone.utc)
+                    if isinstance(existing, dict) and existing.get("captured_at")
+                    else None
+                )
+                if (
+                    existing_captured_at is None
+                    or record_captured_at > existing_captured_at
+                    or (
+                        record_captured_at == existing_captured_at
+                        and int(existing.get("capture_id") or 0) < int(record["capture_id"])
+                    )
                 ):
+                    blocked_update_keys.discard(identity)
+                    legacy_errors.pop(identity, None)
                     pending_updates[identity] = {
                         "portal_key": portal.portal_key,
                         "capture_id": int(record["capture_id"]),
+                        "captured_at": str(record["captured_at"]),
                         "acquired_on": str(record["acquired_on"]),
                         "description_zh": str(record["description_zh"]),
                         "description_en": str(record["description_en"]),
@@ -3610,13 +3694,27 @@ def _sync_source_portals(
         except Exception as exc:
             errors.append(f"{portal.portal_key}: {type(exc).__name__}: {exc}")
 
+    for identity in list(blocked_update_keys):
+        update = pending_updates.get(identity)
+        if isinstance(update, dict) and update.get("captured_at"):
+            blocked_update_keys.discard(identity)
+            legacy_errors.pop(identity, None)
+    errors.extend(legacy_errors.values())
+
     cards = source_portal_cards()
     catalog_hash = hashlib.sha256(
         json.dumps(cards, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
     target_hashes = state.setdefault("source_portal_target_catalog_hashes", {})
     target_results: dict[str, Any] = {}
-    updates = list(pending_updates.values())
+    update_keys = [
+        identity
+        for identity, update in pending_updates.items()
+        if identity not in blocked_update_keys
+        and isinstance(update, dict)
+        and update.get("captured_at")
+    ]
+    updates = [pending_updates[identity] for identity in update_keys]
     target_config = config.get("targets")
     missing_targets = [
         target
@@ -3657,7 +3755,8 @@ def _sync_source_portals(
             errors.append(f"{target}: {type(exc).__name__}: {exc}")
             target_results[target] = {"status": "pending", "error": str(exc)}
     if all_targets_current:
-        pending_updates.clear()
+        for identity in update_keys:
+            pending_updates.pop(identity, None)
     if _ACTIVE_STATE_PATH is not None:
         _atomic_json(_state_path_for_data(state), state)
     return {

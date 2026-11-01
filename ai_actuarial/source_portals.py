@@ -17,6 +17,12 @@ class SourcePortal:
     institution_en: str
     overview_zh: str
     overview_en: str
+    extraction_site_id: str | None = None
+    scope_key: str = "main-or-article-v2"
+
+    @property
+    def extraction_source_id(self) -> str:
+        return self.extraction_site_id or self.site_ids[0]
 
 
 SOURCE_PORTALS = (
@@ -43,6 +49,7 @@ SOURCE_PORTALS = (
         "Society of Actuaries (SOA)",
         "汇集 SOA 人工智能专题的研究与相关资料。",
         "SOA's research and related materials on artificial intelligence.",
+        extraction_site_id="soa-ai-topic-landing",
     ),
     SourcePortal(
         "cas-publications-research",
@@ -63,7 +70,10 @@ SOURCE_PORTALS = (
         "cia-publications",
         "https://www.cia-ica.ca/publications",
         ("cia-ica", "cia-research-publications"),
-        ("https://www.cia-ica.ca/publications",),
+        (
+            "https://www.cia-ica.ca/publications",
+            "https://www.cia-ica.ca/publications/",
+        ),
         "出版物",
         "Publications",
         "加拿大精算师协会（CIA）",

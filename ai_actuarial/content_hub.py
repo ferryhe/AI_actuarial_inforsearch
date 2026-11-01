@@ -260,8 +260,12 @@ def _portal_description(
     intro_zh: str,
     intro_en: str,
 ) -> tuple[str, str]:
+    def title_example(title: str) -> str:
+        title = " ".join(title.split())
+        return title if len(title) <= 120 else title[:119].rstrip() + "…"
+
     if previous is None:
-        initial_titles = list(current.values())[:3]
+        initial_titles = [title_example(title) for _url, title in sorted(current.items())[:1]]
         zh_titles = "、".join(f"「{title}」" for title in initial_titles)
         en_titles = ", ".join(f"“{title}”" for title in initial_titles)
         extra_zh = "等资料" if len(current) > len(initial_titles) else "资料"
@@ -285,7 +289,7 @@ def _portal_description(
         )
 
     def titles(values: list[tuple[str, str]]) -> tuple[str, str]:
-        selected = sorted(title for _url, title in values)[:3]
+        selected = [title_example(title) for title in sorted(title for _url, title in values)[:1]]
         more = len(values) > len(selected)
         return (
             "、".join(f"「{title}」" for title in selected) + ("等" if more else ""),
@@ -299,7 +303,10 @@ def _portal_description(
         zh.append(f"这次多了{zh_text}，可以从入口继续阅读")
         en.append(f"The directory now includes {en_text}")
     if renamed:
-        selected = sorted((old, new) for _url, old, new in renamed)[:3]
+        selected = [
+            (title_example(old), title_example(new))
+            for old, new in sorted((old, new) for _url, old, new in renamed)[:1]
+        ]
         more = len(renamed) > len(selected)
         zh.append("、".join(f"「{old}」现在以「{new}」的名称列出" for old, new in selected))
         en.append(" ".join(f"“{old}” is now listed as “{new}”" for old, new in selected))
@@ -350,8 +357,10 @@ def content_hub_record_source_portal_capture(
         or not isinstance(complete, bool)
         or not isinstance(intro_zh, str)
         or not intro_zh.strip()
+        or len(intro_zh) > 1000
         or not isinstance(intro_en, str)
         or not intro_en.strip()
+        or len(intro_en) > 1000
     ):
         raise ContentHubError("Source portal acquisition metadata is malformed")
     if isinstance(captured_at, str):
@@ -406,10 +415,11 @@ def content_hub_record_source_portal_capture(
                 (f"content_hub:source_portal:{portal_key}:{scope_key}",),
             )
             cursor.execute(
-                "SELECT capture_id, captured_at, complete, description_zh, description_en, page_url "
+                "SELECT capture_id, captured_at, complete, description_zh, description_en, "
+                "page_url, page_sha256 "
                 "FROM source_portal_captures WHERE portal_key = %s AND scope_key = %s "
-                "AND acquired_on = %s AND page_sha256 = %s",
-                (portal_key, scope_key, acquired_on, page_sha256),
+                "AND acquired_on = %s AND captured_at = %s",
+                (portal_key, scope_key, acquired_on, captured_at),
             )
             existing = cursor.fetchone()
             if existing:
@@ -420,6 +430,7 @@ def content_hub_record_source_portal_capture(
                 existing_entries = {str(row[0]): str(row[1]) for row in cursor.fetchall()}
                 if (
                     str(existing[5]) != page_url
+                    or str(existing[6]).strip() != page_sha256
                     or bool(existing[2]) != complete
                     or existing_entries != normalized
                 ):
@@ -498,6 +509,49 @@ def content_hub_record_source_portal_capture(
     except Exception:
         connection.rollback()
         raise
+    finally:
+        connection.close()
+
+
+def content_hub_read_source_portal_capture(
+    *,
+    portal_key: str,
+    capture_id: int,
+    database_url: DatabaseConfig | str | None = None,
+    schema: str = HUB_SCHEMA,
+) -> dict[str, Any] | None:
+    """Read the actual acquisition identity for one persisted portal capture."""
+    schema = _validate_schema(schema)
+    if (
+        not isinstance(portal_key, str)
+        or not _SOURCE_RE.fullmatch(portal_key)
+        or type(capture_id) is not int
+        or capture_id < 1
+    ):
+        raise ContentHubError("Source portal capture identity is malformed")
+    connection = _connect(database_url)
+    try:
+        with connection.cursor() as cursor:
+            _require_current_schema(cursor, schema)
+            _set_search_path(cursor, schema)
+            cursor.execute(
+                "SELECT captured_at, acquired_on, complete, description_zh, description_en "
+                "FROM source_portal_captures "
+                "WHERE portal_key = %s AND capture_id = %s",
+                (portal_key, capture_id),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                return None
+            return {
+                "captured_at": row[0].isoformat(),
+                "acquired_on": row[1].isoformat(),
+                "complete": bool(row[2]),
+                "description_zh": row[3],
+                "description_en": row[4],
+            }
+    except psycopg2.Error as exc:
+        raise ContentHubError("Content hub source portal capture read failed") from exc
     finally:
         connection.close()
 

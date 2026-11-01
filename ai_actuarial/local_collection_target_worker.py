@@ -21,6 +21,7 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlsplit
+from zoneinfo import ZoneInfo
 
 MAX_BATCH_ITEMS = 100
 MAX_ARTICLE_BYTES = 40 * 1024 * 1024
@@ -2038,6 +2039,7 @@ def apply_source_portals(
         key = update.get("portal_key")
         acquired_on = update.get("acquired_on")
         capture_id = update.get("capture_id")
+        captured_at = update.get("captured_at")
         if (
             not isinstance(key, str)
             or key not in card_keys
@@ -2045,12 +2047,21 @@ def apply_source_portals(
             or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", acquired_on)
             or type(capture_id) is not int
             or capture_id < 1
+            or not isinstance(captured_at, str)
+            or not captured_at.strip()
+            or len(captured_at) > 64
         ):
             raise ValueError("source portal update identity is malformed")
         try:
-            date.fromisoformat(acquired_on)
+            acquired_date = date.fromisoformat(acquired_on)
+            captured_datetime = datetime.fromisoformat(captured_at.replace("Z", "+00:00"))
+            if captured_datetime.tzinfo is None:
+                raise ValueError("timezone required")
+            captured_datetime = captured_datetime.astimezone(timezone.utc)
         except ValueError as exc:
             raise ValueError("source portal acquisition date is invalid") from exc
+        if captured_datetime.astimezone(ZoneInfo("America/New_York")).date() != acquired_date:
+            raise ValueError("source portal acquisition date does not match captured_at")
         identity = (key, acquired_on)
         if identity in seen_updates:
             raise ValueError("source portal sync contains duplicate dated updates")
@@ -2066,6 +2077,7 @@ def apply_source_portals(
                 "portal_key": key,
                 "acquired_on": acquired_on,
                 "capture_id": capture_id,
+                "captured_at": captured_datetime.isoformat(),
                 "description_zh": description_zh.strip(),
                 "description_en": description_en.strip(),
             }
@@ -2126,15 +2138,19 @@ def apply_source_portals(
             for update in normalized_updates:
                 storage._conn.execute(
                     "INSERT INTO source_portal_updates "
-                    "(portal_key, acquired_on, capture_id, description_zh, description_en) "
-                    "VALUES (?, ?, ?, ?, ?) ON CONFLICT(portal_key, acquired_on) DO UPDATE SET "
+                    "(portal_key, acquired_on, capture_id, captured_at, description_zh, description_en) "
+                    "VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(portal_key, acquired_on) DO UPDATE SET "
                     "capture_id = excluded.capture_id, description_zh = excluded.description_zh, "
-                    "description_en = excluded.description_en, created_at = CURRENT_TIMESTAMP "
-                    "WHERE excluded.capture_id > source_portal_updates.capture_id",
+                    "description_en = excluded.description_en, captured_at = excluded.captured_at, "
+                    "created_at = CURRENT_TIMESTAMP "
+                    "WHERE excluded.captured_at > source_portal_updates.captured_at "
+                    "OR (excluded.captured_at = source_portal_updates.captured_at "
+                    "AND excluded.capture_id > source_portal_updates.capture_id)",
                     (
                         update["portal_key"],
                         update["acquired_on"],
                         update["capture_id"],
+                        update["captured_at"],
                         update["description_zh"],
                         update["description_en"],
                     ),
