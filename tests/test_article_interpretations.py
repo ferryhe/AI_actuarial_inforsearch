@@ -1765,6 +1765,139 @@ def test_explicit_french_year_is_supported_without_guessing_counts():
     )
 
 
+def test_saved_cas_numeric_diagnostics_validate_with_narrow_parser_contexts():
+    call_one = (
+        "研究采用威斯康星地方政府财产保险基金的数据。该基金为州政府所有之外的市政建筑、学校、图书馆、车辆等地方政府财产提供保险。"
+        "数据集包含2006至2010年的理赔作为训练集，样本量为4991；2011年的理赔作为测试集，样本量为1039。"
+        "变量包括九个二元灾害类型变量、一个文本变量Description和一个连续变量Loss。"
+    )
+    call_two = "解读推断：这一问题的实质是把提示工程当作一种低成本的特征工程手段，用模型输出的语义标签替代人工编码，从而绕开标注瓶颈。"
+    evidence = [
+        {
+            "id": f"E{index}",
+            "quote": "The source describes the study without a numeric claim.",
+            "section": "Introduction",
+        }
+        for index in range(1, 6)
+    ] + [
+        {
+            "id": "E6",
+            "quote": (
+                "The dataset includes claims collected from 2006 to 2010 as a training set "
+                "( = 4,991) and claims from 2011 as a test set ( = 1,039). 1 The dataset "
+                "includes nine binary variables (Vandalism, Fire, Lightning, Wind, Hail, "
+                "Vehicle, WaterNW, WaterW, and Misc), one text variable (Description), "
+                "and a continuous variable (Loss)."
+            ),
+            "section": "3. DESCRIPTION OF THE DATA",
+        },
+        {
+            "id": "E7",
+            "quote": (
+                "This section introduces prompt engineering, which plays an essential role when using pretrained LLMs to create features from text data. "
+                "A prompt is an input provided to an LLM to produce the desired output. In other words, a prompt is a set of instructions an LLM uses to predict the desired results."
+            ),
+            "section": "4. PROMPT ENGINEERING",
+        },
+        {
+            "id": "E8",
+            "quote": (
+                "In traditional supervised learning systems for text data, we develop a model to predict an output. "
+                "The model parameters are learned by using a dataset that contains pairs of inputs and outputs. "
+                "For many tasks, however, it is difficult to find large quantities of labeled data."
+            ),
+            "section": "4.1. PROMPT-BASED LEARNING",
+        },
+    ]
+    value = {
+        "title_zh": "保险研究资料与方法解读",
+        "short_reason": "诊断用短文",
+        "authors": [],
+        "sections": [],
+    }
+    for index, role in enumerate(articles.SECTION_ROLES):
+        paragraphs = [
+            {
+                "text": "研究材料说明其适用边界，实际应用仍需结合业务背景判断。",
+                "kind": "source",
+                "evidence_ids": [f"E{index + 1}"],
+            }
+        ]
+        if index == 0:
+            paragraphs.insert(0, {"text": call_one, "kind": "source", "evidence_ids": ["E6"]})
+        if index == len(articles.SECTION_ROLES) - 1:
+            paragraphs.append({"text": call_two, "kind": "inference", "evidence_ids": ["E7", "E8"]})
+        value["sections"].append({"role": role, "heading": "研究解读", "paragraphs": paragraphs})
+    coverage = {"evidence": evidence, "author_metadata": []}
+
+    accepted = articles.validate_output(json.dumps(value, ensure_ascii=False), coverage)
+    assert any(claim["text"] == call_one for claim in accepted["claims"])
+    assert any(claim["text"] == call_two for claim in accepted["claims"])
+
+    invalid_variants = (
+        (call_one.replace("样本量为4991", "样本量为4992"), call_two),
+        (call_one.replace("2011年", "2012年"), call_two),
+        (call_one + "另有2元费用。", call_two),
+        (call_one, call_two.replace("一种低成本", "只有一种低成本")),
+        (call_one, call_two.replace("一种低成本", "两种低成本")),
+    )
+    for invalid_call_one, invalid_call_two in invalid_variants:
+        changed = json.loads(json.dumps(value, ensure_ascii=False))
+        changed["sections"][0]["paragraphs"][0]["text"] = invalid_call_one
+        changed["sections"][-1]["paragraphs"][-1]["text"] = invalid_call_two
+        with pytest.raises(ValueError, match="unsupported_number"):
+            articles.validate_output(json.dumps(changed, ensure_ascii=False), coverage)
+
+
+def test_cas_quantity_context_fixes_keep_currency_counts_and_ambiguous_commas_strict():
+    for binary_term in ("二元灾害类型变量", "二元分类变量", "二元特征", "二元模型"):
+        assert articles._quantities("九个" + binary_term, strict=True) == {
+            ("number", articles.Decimal(9))
+        }
+    for currency_term in ("二元", "二元货币", "2元"):
+        assert articles._quantities(currency_term, strict=True) == {
+            ("currency_unspecified", articles.Decimal(2))
+        }
+    assert articles._quantities("一种低成本手段", strict=True) == set()
+    assert articles._quantities("只有一种手段", strict=True) == {("number", articles.Decimal(1))}
+    assert articles._quantities("两种手段", strict=True) == {("number", articles.Decimal(2))}
+
+    source_counts = articles._quantities(
+        "training set ( = 4,991) and claims from 2011 as a test set ( = 1,039)", strict=True
+    )
+    assert source_counts == {
+        ("number", articles.Decimal(4991)),
+        ("year", articles.Decimal(2011)),
+        ("number", articles.Decimal(1039)),
+    }
+    assert articles._quantities("2006至2010年", strict=True) == {
+        ("year", articles.Decimal(2006)),
+        ("year", articles.Decimal(2010)),
+    }
+    assert articles._quantities("from 2006 to 2010 as a training set", strict=True) == {
+        ("year", articles.Decimal(2006)),
+        ("year", articles.Decimal(2010)),
+    }
+    assert articles._quantities("from 2011 as a test set", strict=True) == {
+        ("year", articles.Decimal(2011)),
+    }
+    assert articles._quantities(
+        "The number of policies increased from 2006 to 2010", strict=True
+    ) == {("number", articles.Decimal(2006)), ("number", articles.Decimal(2010))}
+    assert articles._quantities("There were 2010 claims", strict=True) == {
+        ("number", articles.Decimal(2010)),
+    }
+
+    assert articles._quantities("4,991", strict=True) == {("number:literal", "4,991")}
+    assert not articles._quantities("4991", strict=True).issubset(
+        articles._quantities("4,991", strict=True)
+    )
+    assert articles._quantities("12,34", strict=True) == {("number", articles.Decimal("12.34"))}
+    assert not articles._quantities("1234", strict=True).issubset(
+        articles._quantities("12,34", strict=True)
+    )
+
+
 @pytest.mark.parametrize("kind,label", [("example", "说明性例子"), ("inference", "解读推断")])
 def test_supported_numeric_example_and_inference_are_allowed(kind, label):
     body = source_body().replace(

@@ -357,12 +357,13 @@ def _quantities(
     )
 
     text = text.replace("唯一一个", "只有一个")
+    text = re.sub(r"二元(?=(?:灾害类型)?(?:变量|分类|特征|模型))", "  ", text)
 
     def chinese(match):
-        if match["number"] == "一" and match["unit"] in {"个", "起"} and not match["prefix"]:
+        if match["number"] == "一" and match["unit"] in {"个", "起", "种"} and not match["prefix"]:
             before = text[max(0, match.start() - 12) : match.start()].rstrip()
             if not re.search(r"(?:只有|仅有|仅|唯一|恰好|正好|总共|一共|共)$", before):
-                return " " * len(match[0])  # Indefinite 一个 is not an exact-count assertion.
+                return " " * len(match[0])  # Indefinite 一个/一种 is not an exact-count assertion.
         try:
             return (
                 (match["prefix"] or "")
@@ -428,10 +429,33 @@ def _quantities(
             )
         ):
             dimension = "year"
+        if dimension == "number" and re.fullmatch(r"[12]\d{3}", raw):
+            after = text[match.end("number") : match.end("number") + 32]
+            before_from = re.search(r"\bfrom\s*$", before, re.I)
+            dataset_year_context = re.match(
+                r"\s+(?:to\s+[12]\d{3}\s+)?as\s+(?:a|the)\s+(?:training|test)\s+set\b",
+                after,
+                re.I,
+            )
+            calendar_context = (
+                (before_from and dataset_year_context)
+                or (
+                    re.search(r"\bfrom\s+[12]\d{3}\s+to\s*$", before, re.I)
+                    and re.match(r"\s+as\s+(?:a|the)\s+(?:training|test)\s+set\b", after, re.I)
+                )
+                or re.match(r"\s*(?:至|到)\s*[12]\d{3}\s*年", after)
+            )
+            if calendar_context:
+                dimension = "year"
         try:
             if "," in raw:
                 grouped = re.fullmatch(r"[+-]?[1-9]\d{0,2}(?:,\d{3})+(?:\.\d+)?", raw)
-                explicit_count = dimension == "count" and not re.search(
+                sample_count_context = dimension == "number" and re.search(
+                    r"\b(?:training|test)\s+set\s*\(\s*=\s*$",
+                    text[max(0, match.start("number") - 48) : match.start("number")],
+                    re.I,
+                )
+                explicit_count = (dimension == "count" or sample_count_context) and not re.search(
                     r"expected|average|moyen|预期|平均",
                     text[max(0, match.start() - 30) : match.end()],
                     re.I,
