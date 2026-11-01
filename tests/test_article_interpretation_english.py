@@ -6,8 +6,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from ai_actuarial import article_interpretations as articles
 from ai_actuarial import article_interpretation_english as english
+from ai_actuarial import article_interpretations as articles
+from ai_actuarial.api.routers import article_interpretations as api
 from ai_actuarial.article_interpretation_english import (
     EnglishTranslationService,
     read_english_interpretations,
@@ -15,7 +16,6 @@ from ai_actuarial.article_interpretation_english import (
 )
 from ai_actuarial.article_interpretations import ArticleRequestCleanupError
 from ai_actuarial.chatbot.exceptions import LLMAuthenticationError
-from ai_actuarial.api.routers import article_interpretations as api
 from ai_actuarial.storage import Storage
 from tests.postgres_helpers import postgres_url_for_path
 
@@ -917,8 +917,8 @@ def test_overseas_proxy_fails_closed_for_hidden_article_or_untrusted_origin(monk
 def test_task_runtime_runs_enabled_translation_after_chinese_and_strips_scheduled_url(
     storage, tmp_path, monkeypatch
 ):
-    from ai_actuarial import article_interpretations as cn_articles
     from ai_actuarial import article_interpretation_english as en_articles
+    from ai_actuarial import article_interpretations as cn_articles
     from ai_actuarial import task_runtime
 
     calls = []

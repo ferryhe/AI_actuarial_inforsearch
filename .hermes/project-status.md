@@ -1,3 +1,7 @@
+## 2026-11-01 required CI import-order repair
+
+The prior12e quality gate failed only three newly introduced isort violations. The same worker changed import ordering in the API router, English module and English tests (5 inserted/5 deleted lines, no behavior changes). Isort, Ruff, per-file Black, diff checks and the full English module20 tests passed after formatting. Functional patch validation before this formatting-only commit was223 passed/1 skipped. A new current-HEAD CI and rebuilt/reprepared candidates remain required before live cutover. No production cutover or article generation has run.
+
 ## 2026-11-01 PR446 remote feedback final tested fixes
 
 Copilot was requested once at initial publication and completed on 12e23f8. All five in-scope findings were reproduced without provider calls and accepted by actual TypeSafe Jev 1.14.0. The same persistent worker fixed scoped one-hot terminology (including the selected paper's one-hot vectors), overlapping ordinal events, saved quotation multiplicity, native DeepSeek budget options and source currentness before each new call. Final combined current-byte suite: 223 passed, 1 skipped in 60.81s, no provider calls; English module 20 passed, focused Chinese gates and Ruff/Black/compile/diff passed.

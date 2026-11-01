@@ -13,6 +13,7 @@ from decimal import Decimal
 from zoneinfo import ZoneInfo
 
 from ai_actuarial import article_interpretations as articles
+from ai_actuarial.ai_runtime import resolve_ai_function_runtime
 from ai_actuarial.article_interpretations import (
     ArticleRequestCleanupError,
     ChatArticleGenerator,
@@ -22,7 +23,6 @@ from ai_actuarial.article_interpretations import (
     _load_file,
     _now,
 )
-from ai_actuarial.ai_runtime import resolve_ai_function_runtime
 from ai_actuarial.chatbot.exceptions import LLMAuthenticationError, LLMTimeoutError
 from ai_actuarial.postgres import PostgresConnection
 

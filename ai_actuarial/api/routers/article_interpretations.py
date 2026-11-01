@@ -5,11 +5,11 @@ from urllib.parse import urlsplit
 import requests
 from fastapi import APIRouter, Depends, Request
 
-from ai_actuarial.article_interpretations import read_interpretations
 from ai_actuarial.article_interpretation_english import (
     read_current_article_identity,
     read_english_interpretations,
 )
+from ai_actuarial.article_interpretations import read_interpretations
 
 from ..deps import AuthContext, require_permissions
 from .read import _get_db_path
