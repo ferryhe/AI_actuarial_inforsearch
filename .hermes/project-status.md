@@ -1,3 +1,10 @@
+# 当前候选 — 来源入口列表与单入口详情 — 2026-11-01
+
+- 项目 AI_actuarial_inforsearch，分支 codex/source-portals，继续 PR #445。本轮仅调整来源入口前端：`/source-portals` 为数据库风格四列表格，支持名称/机构/介绍搜索与每页 20 项；独立详情路径保留原动态全文、原站链接及返回时的筛选/页码。更新中英文、路由、组件测试和 Playwright smoke；未改 Database、API、采集或 schema。
+- 搜索输入保留空格；标题可键盘进入详情。移动端合并机构列，简介换行，日期仍清晰显示。直接刷新详情和未知入口返回列表也已纳入验证用例。
+- 最终验证：组件 Vitest 5/5、lint（仅四条已有 Hook warning）、typecheck、build、真实 Chrome 中英文桌面/手机 browser smoke 全部通过。浏览器流程覆盖搜索、分页、键盘打开详情、直接详情、返回时保留筛选/页码、空动态与未知入口。另以真实十个入口配置在 1440/768/640/390 宽度完成截图，无横向溢出或 pageerror，详情刷新正常；动态只在浏览器 mock 中演示，不是生产采集结果。前期本机进程与自动权限审核超时已恢复，未留下验证阻塞。
+- 本轮 UI 首轮及最终独立 Sol/high reviewer 均 PASS，最终五个前端文件的 blob hash 已记录在忽略文件 `reports/source-portals-list-review-final.md`；原 PR 后端结论仍保持原有“最终修复已测试但未 review，不能称 PASS”的状态。完整本轮记录见忽略文件 `reports/source-portals-list-worker.md`。沿用旧的 255 项后端回归证据，本次未改后端，不重复生产验收。没有第二次 Copilot 请求、生产数据写入、合并或部署。原工作树无关改动保留；本轮提交后检查 GitHub 当前 HEAD 的 CI。
+
 # 当前候选 — 来源入口动态 — 2026-11-01
 
 - 项目 AI_actuarial_inforsearch，分支 codex/source-portals，PR #445。独立来源入口阅读页由固定目录卡片和真实完整采集组成；Content Hub v5 保存不可变采集与成员，服务 schema 6 展示每日最新实际采集。普通 HTML 材料和版本保留，精确目录页仅从 Database 列表、计数、分类及导出排除。
