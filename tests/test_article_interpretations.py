@@ -2663,6 +2663,55 @@ def test_indefinite_one_does_not_invent_numeric_claim_but_explicit_one_does():
     assert articles._quantities("唯一一个模型", strict=True) == {("number", articles.Decimal(1))}
 
 
+def test_saved_primer_agent_paragraphs_ignore_lexical_next_step_only():
+    e16 = (
+        "A large language model (LLM) on its own is a sophisticated text processor. "
+        "An AI agent is something more: It is an LLM equipped with a goal, a set of tools, "
+        "relevant context, and a feedback loop that allows it to observe results and decide "
+        "what to do next."
+    )
+    e17 = (
+        "Traditional automation handles the deterministic parts of actuarial work well: "
+        "data transformation, triangle calculation, and exhibit formatting. What it handles "
+        "less gracefully is the investigative layer: interpreting inconsistent inputs, "
+        "flagging anomalies that warrant a different method, deciding which of several "
+        "approved approaches applies under current conditions, or drafting a narrative "
+        "that reflects what was found."
+    )
+    saved_call_1 = (
+        "原文区分了语言模型与代理：单独的大语言模型只是复杂的文本处理器，而AI代理在此基础上拥有目标、"
+        "工具、相关上下文与反馈回路，能观察结果并决定下一步。传统自动化擅长确定性环节，如数据转换、"
+        "三角形计算与表格排版；较难处理的是调查层，例如解释不一致的输入、标记需要换方法的异常、"
+        "在若干已批准方法中选择适用者，或撰写反映发现过程的叙述。"
+    )
+    saved_call_2 = (
+        "指南区分了语言模型与代理：单独的大语言模型只是复杂的文本处理器，而AI代理在此基础上拥有目标、"
+        "一组工具、相关上下文以及反馈回路，能够观察结果并决定下一步。"
+    )
+    evidence_quantities = articles._quantities(e16 + "\n" + e17, strict=True)
+    assert evidence_quantities == set()
+    assert articles._quantities(saved_call_1, strict=True).issubset(evidence_quantities)
+    assert articles._quantities(saved_call_2, strict=True).issubset(evidence_quantities)
+    assert articles._quantities("下一步", strict=True) == set()
+    assert articles._quantities("一组工具", strict=True) == set()
+    assert articles._quantities("不一致的输入", strict=True) == set()
+    assert articles._quantities("一个工具", strict=True) == set()
+    assert articles._quantities("仅有一个工具", strict=True) == {("number", articles.Decimal(1))}
+    assert articles._quantities("一步", strict=True) == {("number", articles.Decimal(1))}
+    assert articles._quantities("只有一步", strict=True) == {("number", articles.Decimal(1))}
+    assert articles._quantities("下两步", strict=True) == {("number", articles.Decimal(2))}
+    assert articles._quantities("第一步", strict=True) == {("ordinal:step", articles.Decimal(1))}
+    assert articles._quantities("第1步", strict=True) == {("ordinal:step", articles.Decimal(1))}
+
+    text = "决定下一步，随后观察3个样本。"
+    occurrences = []
+    assert articles._quantities(text, strict=True, occurrences=occurrences) == {
+        ("number", articles.Decimal(3))
+    }
+    start, end, *_ = occurrences[0]
+    assert text[start:end] == "3个"
+
+
 @pytest.mark.parametrize("text", ["二三种", "一百二种", "数万亿美元"])
 def test_unrecognized_or_ambiguous_chinese_quantity_shapes_fail_closed(text):
     with pytest.raises(ValueError, match="unsupported_number_format"):

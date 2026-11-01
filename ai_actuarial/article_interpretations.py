@@ -433,6 +433,7 @@ def _quantities(
     )
 
     text = text.replace("唯一一个", "只有一个")
+    substitute("下一步", "   ")
     substitute(r"\bsingle\s+year\b", "1 year", flags=re.I)
     text = re.sub(r"二元(?=(?:灾害类型)?(?:变量|分类|特征|模型))", "  ", text)
 

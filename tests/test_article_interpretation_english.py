@@ -530,6 +530,42 @@ def test_english_quantity_validation_handles_saved_som_decade_and_percent_range(
         check("percent_precision_changed", "年增长5%至8%", "5.0-to-8.0 percent")
 
 
+def test_english_quantity_validation_handles_saved_primer_next_step_phrase():
+    check = english._check_quantities
+    saved_call_1 = (
+        "原文区分了语言模型与代理：单独的大语言模型只是复杂的文本处理器，而AI代理在此基础上拥有目标、"
+        "工具、相关上下文与反馈回路，能观察结果并决定下一步。传统自动化擅长确定性环节，如数据转换、"
+        "三角形计算与表格排版；较难处理的是调查层，例如解释不一致的输入、标记需要换方法的异常、"
+        "在若干已批准方法中选择适用者，或撰写反映发现过程的叙述。"
+    )
+    saved_call_2 = (
+        "指南区分了语言模型与代理：单独的大语言模型只是复杂的文本处理器，而AI代理在此基础上拥有目标、"
+        "一组工具、相关上下文以及反馈回路，能够观察结果并决定下一步。"
+    )
+    check(
+        "saved_primer_call_1",
+        saved_call_1,
+        "The source distinguishes a language model from an agent, which observes results and "
+        "decides what to do next. Traditional automation handles deterministic actuarial work "
+        "well, while investigation includes interpreting inconsistent inputs and deciding which "
+        "of several approved approaches applies.",
+    )
+    check(
+        "saved_primer_call_2",
+        saved_call_2,
+        "A language model is a text processor; an agent has a goal, a set of tools, relevant "
+        "context, and a feedback loop to observe results and decide what to do next.",
+    )
+    check("explicit_one_step", "只有一步", "There is only one step.")
+    check("two_next_steps", "下两步", "the next two steps")
+    check("first_step_ordinal", "第一步", "the first step")
+    check("arabic_step_ordinal", "第1步", "the 1st step")
+    with pytest.raises(ValueError, match="number_mismatch"):
+        check("missing_explicit_one", "只有一步", "There is a next step.")
+    with pytest.raises(ValueError, match="number_mismatch"):
+        check("fabricated_one", "下一步", "take one step next")
+
+
 def test_second_call_receives_bounded_correction_and_does_not_refresh_chinese_budget(storage):
     draft = _draft(storage)
     generator = Generator(outputs=[lambda messages: _valid_response(messages, first_number="999")])
