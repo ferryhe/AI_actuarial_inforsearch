@@ -121,6 +121,14 @@ python -m ai_actuarial content-hub metadata sync-catalog --json
 
 The JSON result reports updated, unchanged, unmatched, changed-version, and conflicting records, plus the number of individual fields filled. Repeating the command is idempotent. Existing nonempty target titles, summaries, keywords, and canonical categories are retained; an existing canonical category is applied to both language packages. No application schema is created against the content-hub connection.
 
+## Reader-facing source portals
+
+The separate 来源入口 view uses an exact reviewed directory catalog. The local collector saves the original directory-page bytes and an append-only Hub record of its observed main/article links. Only a nonempty semantic section with no pagination signal is treated as a complete comparable listing. Partial or unrecognized pages remain Hub evidence and do not produce public change prose. Acquisition dates use the actual successful page read in `America/New_York`; the scheduled `--date` is not used as a capture date. Same-day retries with identical page evidence are idempotent.
+
+Before enabling collection, apply the additive Content Hub schema (now version 5) with `content-hub schema apply`. Apply the application schema (now version 6) separately on each serving target using the existing verified-backup and migration procedure in `docs/deployment-runbook.md`. The one-shot `sync_source_portals` worker fails clearly if its reader tables are absent and never applies schema migrations itself. It stores only fixed portal-card metadata and dated reader prose; it does not write article rows or run RAG work.
+
+The exact configured portal URLs, including confirmed redirect aliases, are shown in 来源入口 and filtered from public material lists and their source/category totals. Their existing file rows, captured originals, and Content Hub version history are retained.
+
 ## Failure and rerun behavior
 
 Use `--json` for scripts. A successful exact rerun returns `already_imported: true` for a hub import or `state: "unchanged"` for a source stage after checking stored counts and hashes. A changed source, manifest, conflicting source name, nonempty stage database, invalid declared-present CAS payload, or corrupted stored stage aborts before a successful response. Files explicitly marked missing remain recorded as missing. CLI failures return exit code 2 and a JSON error when `--json` is set. Never resolve a conflict by deleting source rows or replacing the manifest in place; preserve the archive and start a new, explicitly named snapshot workflow.

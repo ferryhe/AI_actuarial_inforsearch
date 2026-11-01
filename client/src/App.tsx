@@ -15,6 +15,7 @@ import LogsPage from "@/pages/Logs";
 import Profile from "@/pages/Profile";
 import Register from "@/pages/Register";
 import SettingsPage from "@/pages/Settings";
+import SourcePortals from "@/pages/SourcePortals";
 import Tasks from "@/pages/Tasks";
 import Users from "@/pages/Users";
 import Weekly from "@/pages/Weekly";
@@ -74,6 +75,7 @@ function Router() {
               </RequirePermission>
             </Route>
             <Route path="/database" component={Database} />
+            <Route path="/source-portals" component={SourcePortals} />
             <Route path="/weekly">
               <RequirePermission permission="files.read">
                 <Weekly />

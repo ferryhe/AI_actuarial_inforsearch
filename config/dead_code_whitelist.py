@@ -311,6 +311,7 @@ from ai_actuarial.api.routers.read import (
     api_file_detail,
     api_file_markdown,
     api_files,
+    api_source_portals,
     api_sources,
     api_stats,
 )
@@ -321,6 +322,7 @@ api_categories  # reason: FastAPI registers this decorated route.
 api_files  # reason: FastAPI registers this decorated route.
 api_file_detail  # reason: FastAPI registers this decorated route.
 api_file_markdown  # reason: FastAPI registers this decorated route.
+api_source_portals  # reason: FastAPI registers this decorated route.
 
 from ai_actuarial.api.routers.ready_data_automation import (
     api_set_ready_data_automation,

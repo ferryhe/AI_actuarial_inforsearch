@@ -11,10 +11,11 @@ import sqlite3
 import stat
 import tempfile
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any, Iterable
 from urllib.parse import urlsplit
+from zoneinfo import ZoneInfo
 
 import psycopg2
 from psycopg2 import sql
@@ -38,7 +39,7 @@ from .sqlite_schema import (
 
 MANIFEST_FORMAT = "ai_actuarial.content_hub.artifact_manifest"
 HUB_SCHEMA = "content_hub"
-HUB_SCHEMA_VERSION = 4
+HUB_SCHEMA_VERSION = 5
 _MIGRATION_DIR = Path(__file__).with_name("content_hub_migrations")
 _HASH_RE = re.compile(r"^[0-9a-f]{64}$")
 _SOURCE_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
@@ -245,6 +246,255 @@ def apply_content_hub_schema(
             current = max(len(migrations), 0)
         connection.commit()
         return {"schema": schema, "version": current, "applied": True}
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+
+def _portal_description(
+    previous: dict[str, str] | None,
+    current: dict[str, str],
+    *,
+    intro_zh: str,
+    intro_en: str,
+) -> tuple[str, str]:
+    if previous is None:
+        initial_titles = list(current.values())[:3]
+        zh_titles = "、".join(f"「{title}」" for title in initial_titles)
+        en_titles = ", ".join(f"“{title}”" for title in initial_titles)
+        extra_zh = "等资料" if len(current) > len(initial_titles) else "资料"
+        extra_en = " and other materials" if len(current) > len(initial_titles) else ""
+        return (
+            f"{intro_zh.rstrip('。！？')}。这里可以找到{zh_titles}{extra_zh}。",
+            f"{intro_en.rstrip('.!?')}. You can find {en_titles}{extra_en} here.",
+        )
+
+    added = [(url, current[url]) for url in current.keys() - previous.keys()]
+    removed = [(url, previous[url]) for url in previous.keys() - current.keys()]
+    renamed = [
+        (url, previous[url], current[url])
+        for url in current.keys() & previous.keys()
+        if current[url] != previous[url]
+    ]
+    if not added and not removed and not renamed:
+        return (
+            "上次介绍的内容这次都还在，也没有看到新的资料。",
+            "Everything listed last time is still here, and no new materials were listed.",
+        )
+
+    def titles(values: list[tuple[str, str]]) -> tuple[str, str]:
+        selected = sorted(title for _url, title in values)[:3]
+        more = len(values) > len(selected)
+        return (
+            "、".join(f"「{title}」" for title in selected) + ("等" if more else ""),
+            ", ".join(f"“{title}”" for title in selected) + (" and other entries" if more else ""),
+        )
+
+    zh: list[str] = []
+    en: list[str] = []
+    if added:
+        zh_text, en_text = titles(added)
+        zh.append(f"这次多了{zh_text}，可以从入口继续阅读")
+        en.append(f"The directory now includes {en_text}")
+    if renamed:
+        selected = sorted((old, new) for _url, old, new in renamed)[:3]
+        more = len(renamed) > len(selected)
+        zh.append("、".join(f"「{old}」现在以「{new}」的名称列出" for old, new in selected))
+        en.append(" ".join(f"“{old}” is now listed as “{new}”" for old, new in selected))
+        if more:
+            zh[-1] += "等标题"
+            en[-1] += " and other titles"
+    if removed:
+        zh_text, en_text = titles(removed)
+        zh.append(f"{zh_text}这次没有列在入口中")
+        en.append(f"The directory no longer lists {en_text}")
+    return "。".join(zh) + "。", ". ".join(en) + "."
+
+
+def content_hub_record_source_portal_capture(
+    *,
+    portal_key: str,
+    page_url: str,
+    scope_key: str,
+    captured_at: datetime | str,
+    acquired_on: date | str,
+    page_sha256: str,
+    entries: list[dict[str, str]],
+    complete: bool,
+    intro_zh: str,
+    intro_en: str,
+    database_url: DatabaseConfig | str | None = None,
+    schema: str = HUB_SCHEMA,
+) -> dict[str, Any]:
+    """Append one real directory-page acquisition and describe its comparable changes."""
+    schema = _validate_schema(schema)
+    if not isinstance(portal_key, str) or not _SOURCE_RE.fullmatch(portal_key):
+        raise ContentHubError("Source portal key is malformed")
+    parsed_page_url = urlsplit(page_url) if isinstance(page_url, str) else None
+    if (
+        not isinstance(page_url, str)
+        or page_url != page_url.strip()
+        or len(page_url) > 2048
+        or parsed_page_url is None
+        or parsed_page_url.scheme not in {"https", "http"}
+        or not parsed_page_url.hostname
+        or parsed_page_url.username
+        or parsed_page_url.password
+        or not isinstance(scope_key, str)
+        or not scope_key.strip()
+        or len(scope_key) > 256
+        or not isinstance(page_sha256, str)
+        or not _HASH_RE.fullmatch(page_sha256)
+        or not isinstance(complete, bool)
+        or not isinstance(intro_zh, str)
+        or not intro_zh.strip()
+        or not isinstance(intro_en, str)
+        or not intro_en.strip()
+    ):
+        raise ContentHubError("Source portal acquisition metadata is malformed")
+    if isinstance(captured_at, str):
+        try:
+            captured_at = datetime.fromisoformat(captured_at.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ContentHubError("Source portal acquisition timestamp is malformed") from exc
+    if not isinstance(captured_at, datetime) or captured_at.tzinfo is None:
+        raise ContentHubError("Source portal acquisition timestamp must include a timezone")
+    if isinstance(acquired_on, str):
+        try:
+            acquired_on = date.fromisoformat(acquired_on)
+        except ValueError as exc:
+            raise ContentHubError("Source portal acquisition date is malformed") from exc
+    if not isinstance(acquired_on, date) or isinstance(acquired_on, datetime):
+        raise ContentHubError("Source portal acquisition date is malformed")
+    captured_at = captured_at.astimezone(timezone.utc)
+    if acquired_on != captured_at.astimezone(ZoneInfo("America/New_York")).date():
+        raise ContentHubError("Source portal acquisition date must match America/New_York time")
+    if not isinstance(entries, list) or len(entries) > 2000:
+        raise ContentHubError("Source portal entry set is outside its bounded contract")
+    normalized: dict[str, str] = {}
+    for item in entries:
+        if not isinstance(item, dict):
+            raise ContentHubError("Source portal entries must be objects")
+        url, title = item.get("url"), item.get("title")
+        if (
+            not isinstance(url, str)
+            or url != url.strip()
+            or len(url) > 2048
+            or urlsplit(url).scheme not in {"https", "http"}
+            or not urlsplit(url).hostname
+            or urlsplit(url).username
+            or urlsplit(url).password
+            or not isinstance(title, str)
+            or not title.strip()
+            or len(title) > 500
+            or url in normalized
+        ):
+            raise ContentHubError("Source portal entry is malformed or duplicated")
+        normalized[url] = title.strip()
+    if complete and not normalized:
+        raise ContentHubError("A complete source portal capture must include observed entries")
+
+    connection = _connect(database_url)
+    try:
+        with connection.cursor() as cursor:
+            _require_current_schema(cursor, schema)
+            _set_search_path(cursor, schema)
+            cursor.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                (f"content_hub:source_portal:{portal_key}:{scope_key}",),
+            )
+            cursor.execute(
+                "SELECT capture_id, captured_at, complete, description_zh, description_en, page_url "
+                "FROM source_portal_captures WHERE portal_key = %s AND scope_key = %s "
+                "AND acquired_on = %s AND page_sha256 = %s",
+                (portal_key, scope_key, acquired_on, page_sha256),
+            )
+            existing = cursor.fetchone()
+            if existing:
+                cursor.execute(
+                    "SELECT entry_url, title FROM source_portal_entries WHERE capture_id = %s",
+                    (existing[0],),
+                )
+                existing_entries = {str(row[0]): str(row[1]) for row in cursor.fetchall()}
+                if (
+                    str(existing[5]) != page_url
+                    or bool(existing[2]) != complete
+                    or existing_entries != normalized
+                ):
+                    raise ContentHubError(
+                        "Source portal retry conflicts with its immutable acquisition evidence"
+                    )
+                result = {
+                    "capture_id": int(existing[0]),
+                    "captured_at": existing[1].isoformat(),
+                    "acquired_on": acquired_on.isoformat(),
+                    "complete": bool(existing[2]),
+                    "description_zh": existing[3],
+                    "description_en": existing[4],
+                    "duplicate": True,
+                }
+                connection.commit()
+                return result
+
+            previous: dict[str, str] | None = None
+            cursor.execute(
+                "SELECT c.capture_id FROM source_portal_captures c "
+                "WHERE c.portal_key = %s AND c.scope_key = %s AND c.complete = TRUE "
+                "AND c.acquired_on < %s "
+                "ORDER BY c.acquired_on DESC, c.captured_at DESC, c.capture_id DESC LIMIT 1",
+                (portal_key, scope_key, acquired_on),
+            )
+            prior_row = cursor.fetchone()
+            if complete and prior_row:
+                cursor.execute(
+                    "SELECT entry_url, title FROM source_portal_entries WHERE capture_id = %s",
+                    (prior_row[0],),
+                )
+                previous = {str(row[0]): str(row[1]) for row in cursor.fetchall()}
+            description_zh = description_en = None
+            if complete and normalized:
+                description_zh, description_en = _portal_description(
+                    previous,
+                    normalized,
+                    intro_zh=intro_zh.strip(),
+                    intro_en=intro_en.strip(),
+                )
+            cursor.execute(
+                "INSERT INTO source_portal_captures "
+                "(portal_key, page_url, scope_key, captured_at, acquired_on, page_sha256, complete, description_zh, description_en) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING capture_id",
+                (
+                    portal_key,
+                    page_url,
+                    scope_key,
+                    captured_at,
+                    acquired_on,
+                    page_sha256,
+                    complete,
+                    description_zh,
+                    description_en,
+                ),
+            )
+            capture_id = int(cursor.fetchone()[0])
+            cursor.executemany(
+                "INSERT INTO source_portal_entries (capture_id, entry_url, title) VALUES (%s, %s, %s)",
+                [(capture_id, url, title) for url, title in sorted(normalized.items())],
+            )
+        connection.commit()
+        return {
+            "capture_id": capture_id,
+            "captured_at": captured_at.isoformat(),
+            "acquired_on": acquired_on.isoformat(),
+            "complete": complete,
+            "description_zh": description_zh,
+            "description_en": description_en,
+            "duplicate": False,
+        }
+    except psycopg2.Error as exc:
+        connection.rollback()
+        raise ContentHubError("Content hub source portal capture failed") from exc
     except Exception:
         connection.rollback()
         raise

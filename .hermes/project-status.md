@@ -1,3 +1,10 @@
+# 当前候选 — 来源入口动态 — 2026-11-01
+
+- 项目 `AI_actuarial_inforsearch`，分支 `codex/source-portals`。新增独立来源入口阅读页；固定目录卡片与按来源运行周期实际获取到的完整目录变化经 Content Hub v5 保存、再投影到服务数据库 schema 6。仅比较同目录范围内较早日期的完整记录；当日重试保留每次原始捕获并更新当天展示。分页/空页面等证据不完整时不生成删除叙述。普通 HTML 资料与历史版本保留；仅精确目录页从 Database 列表、计数、分类及导出中排除。
+- 采集使用已审阅的精确目录清单；目标 worker 仅同步目录卡片与动态，不进入 AI/RAG。API 增加 `/api/source-portals`，前端增加 `/source-portals`。已修正常见 `next page-numbers` 分页控件识别，避免把下一页误认为目录成员。
+- 验证：Hub/runtime/target worker/read API 聚焦后端集成在四项 review 修复后退出码 0，190/190 通过；SourcePortals suite 15/15、迁移清单与 PostgreSQL connection tests 8/8 通过。分页按钮、分页容器、ARIA/rel 控件和未闭合 `<main>` 的 parser/Hub 回归通过，截断/分页观察不产生公开删除叙述。新增单目标配置回归确认来源入口投影延后时会写入回执证据，同时普通文章阶段仍可成功。`npm run lint` 通过（4 个现存 Hook 警告），`npm run typecheck`、`npm run build`、SourcePortals Vitest 2/2、Black、isort 通过；Pylint 对 `content_hub.py` 错误检查和变更模块 Ruff 检查通过；dead-code gate 通过。父任务的中英文桌面及窄屏浏览器 smoke 通过。PG 测试仅写入隔离 schema；未执行生产迁移、采集或目标写入。
+- 独立 review 累计 4 轮：分页误报、未闭合正文误判、Load more/分页控件误判和目标配置缺失时静默延后均已修复。TypeSafe Judge 对 review 4 的裁决接受有界回执证据修复并要求原 worker 验证、fresh review；review 5 已 PASS。工作树未提交或推送；父任务负责提交、创建 PR 与后续检查。完整实施记录在忽略文件 `reports/source-portals-worker.md`。
+
 # 当前候选 — 中文文章解读阅读与导出 — 2026-10-31
 
 - Issue #437，分支 `codex/issue-437-interpretation-reader`。只读接口只投影当前 `reader_eligible` 最新稿件的公开字段；FileDetail 仅在中文界面读取和渲染，沿用最新请求守卫，提供折叠、复制、Markdown 和内联样式 HTML 导出。成功保存 Markdown 或转换完成后清除并重读解读，保存失败保留当前稿。老稿缺少原文标题时使用当前文件标题。生成输入从有限前页结构/显式署名行携带原文作者证据，现有一次生成提示要求逐字返回且验证；link validation 将已核验姓名写入 payload references，再由读取接口/页面/导出透传。没有明确署名时为空；不读原文之外的作者、不改原文/摘要。
