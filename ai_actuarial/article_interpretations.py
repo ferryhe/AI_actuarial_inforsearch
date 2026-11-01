@@ -39,9 +39,11 @@ from ai_actuarial.chatbot.llm import (
 from ai_actuarial.postgres import PostgresConnection
 from ai_actuarial.source_registry import source_sql
 
-PROMPT_VERSION = "article-interpretation-v7-authors"
+PROMPT_VERSION = "article-interpretation-v8-numeric-feedback-reserve"
 MAX_SOURCE_CHARS = 24_000
 MAX_INPUT_CHARS = 32_000
+NUMERIC_CORRECTION_RESERVE_CHARS = 2_048
+NUMERIC_CORRECTION_RESERVE_BYTES = 8_192
 MAX_OUTPUT_TOKENS = 6_000
 MAX_CALL_SECONDS = 90.0
 MAX_PROVIDER_SECONDS = 180.0
@@ -62,6 +64,7 @@ author_metadata是从原文前页/显式署名行抽取的逐字来源信息。a
 所有事实、数字、公式、引号内容都须由段落引用原文支持。段落不要含引用标记，系统添加。
 引文/公式原样对应证据。翻译标题、概念、模型标签、说明性例子均不得加引号；只有原文逐字引文可加引号。
 精确数字优先使用Arabic digits；自然中文数量也可使用，但数字、单位、序数和精度都须由所引原文支持。
+不要仅靠自己数列举项推导精确总数；原文未明确给出总数时，应直接描述这些项目，不写精确数量。
 原文仅给模糊量级时保持该量级，例如billions of dollars可写数十亿美元，不得编成精确金额；不自行提高精度。
 source字段来自规范来源Registry。只有原文证据确有对应机构身份时才可用其中文名，使用时原样照写name_zh/name_en，
 禁止自行翻译机构名；身份未在证据出现时仅称原文/研究，不把来源归属当作者身份，pending不是机构。
@@ -91,6 +94,7 @@ def _numeric_diagnostic(code: str, text: str, ids: list[str], *, token="", missi
         "evidence_ids": ids[:32],
         "evidence_ids_truncated": len(ids) > 32,
         "token": token[:120],
+        "token_truncated": len(token) > 120,
         "missing_quantities": [
             {"dimension": dimension, "value": str(value)} for dimension, value in quantities[:16]
         ],
@@ -105,9 +109,18 @@ def _numeric_correction_message(diagnostic: dict, *, max_chars: int, max_bytes: 
     )
     if len(instruction) > max_chars or len(instruction.encode("utf-8")) > max_bytes:
         return ""
+    quantities = _json(diagnostic["missing_quantities"])
+    evidence_ids = _json(diagnostic["evidence_ids"])
+    token = diagnostic["token"]
+    if diagnostic.get("missing_quantities_truncated"):
+        quantities += "（列表已截断）"
+    if diagnostic.get("evidence_ids_truncated"):
+        evidence_ids += "（列表已截断）"
+    if diagnostic.get("token_truncated"):
+        token += "（已截断）"
     details = (
-        f" 错误={diagnostic['code']}；缺失数量={_json(diagnostic['missing_quantities'])}；"
-        f"证据={_json(diagnostic['evidence_ids'])}；token={diagnostic['token']}；段落片段="
+        f" 错误={diagnostic['code']}；缺失数量={quantities}；"
+        f"证据={evidence_ids}；token={token}；段落片段="
     )
     prefix = instruction + details
     suffix = "。"
@@ -127,6 +140,18 @@ def _numeric_correction_message(diagnostic: dict, *, max_chars: int, max_bytes: 
             break
         excerpt.append(character)
         used_bytes += encoded_size
+    if len(excerpt) < len(paragraph) or diagnostic.get("paragraph_truncated"):
+        suffix = "…[段落片段已截断]。"
+        while excerpt and (
+            len(prefix) + len(excerpt) + len(suffix) > max_chars
+            or len((prefix + "".join(excerpt) + suffix).encode("utf-8")) > max_bytes
+        ):
+            excerpt.pop()
+        if (
+            len(prefix) + len(suffix) > max_chars
+            or len((prefix + suffix).encode("utf-8")) > max_bytes
+        ):
+            return ""
     return prefix + "".join(excerpt) + suffix
 
 
@@ -201,7 +226,11 @@ def _chinese_number(text: str) -> str:
 
 
 def _quantities(
-    text: str, *, strict: bool = False, source_section: str = ""
+    text: str,
+    *,
+    strict: bool = False,
+    source_section: str = "",
+    occurrences: list[tuple[int, int, str, Decimal | str, int | None]] | None = None,
 ) -> set[tuple[str, Decimal | str]]:
     """Compare exact values in explicit units; ambiguous commas retain their spelling."""
     scales = {"thousand": 3, "million": 6, "billion": 9, "千": 3, "万": 4, "亿": 8}
@@ -303,6 +332,47 @@ def _quantities(
         "年": "year",
     }
     values = set()
+    index_map = list(range(len(text))) if occurrences is not None else None
+    recorded = set()
+
+    def add_value(signature, start=None, end=None):
+        values.add(signature)
+        if occurrences is None or start is None or end is None or index_map is None:
+            return
+        original = index_map[start:end]
+        if not original:
+            return
+        original_start, original_end = min(original), max(original) + 1
+        value = signature[1]
+        exponent = value.as_tuple().exponent if isinstance(value, Decimal) else None
+        record = (original_start, original_end, signature[0], value, exponent)
+        if record not in recorded:
+            recorded.add(record)
+            occurrences.append(record)
+
+    def substitute(pattern, replacement, flags=0):
+        nonlocal text, index_map
+        if occurrences is None:
+            text = re.sub(pattern, replacement, text, flags=flags)
+            return
+        old_text, old_map = text, index_map
+        pieces, mapped = [], []
+        cursor = 0
+        for match in re.finditer(pattern, old_text, flags):
+            pieces.append(old_text[cursor : match.start()])
+            mapped.extend(old_map[cursor : match.start()])
+            value = replacement(match) if callable(replacement) else match.expand(replacement)
+            pieces.append(value)
+            source = old_map[match.start() : match.end()]
+            if len(value) == len(source):
+                mapped.extend(source)
+            elif source:
+                mapped.extend(source[min(i, len(source) - 1)] for i in range(len(value)))
+            cursor = match.end()
+        pieces.append(old_text[cursor:])
+        mapped.extend(old_map[cursor:])
+        text, index_map = "".join(pieces), mapped
+
     vague_scales = {
         "千": "thousand",
         "万": "ten_thousand",
@@ -321,13 +391,16 @@ def _quantities(
                 raise _UnsupportedNumberFormat(match[0])
         else:
             dimension = units[match["unit"].lower()]
-            values.add((("number" if dimension == "count" else dimension) + ":scale", scale))
+            add_value(
+                (("number" if dimension == "count" else dimension) + ":scale", scale),
+                match.start(),
+                match.end(),
+            )
         return " " * len(match[0])
 
-    text = re.sub(
+    substitute(
         rf"(?:数|几)(?P<scale>[十百千万亿]+)(?P<unit>{unit_pattern})",
         vague_chinese,
-        text,
         flags=re.I,
     )
 
@@ -346,18 +419,57 @@ def _quantities(
             "pounds": "GBP",
             "gbp": "GBP",
         }[match["unit"].lower()]
-        values.add((dimension + ":scale", match["scale"].lower().removesuffix("s")))
+        add_value(
+            (dimension + ":scale", match["scale"].lower().removesuffix("s")),
+            match.start(),
+            match.end(),
+        )
         return " " * len(match[0])
 
-    text = re.sub(
+    substitute(
         r"\b(?P<scale>thousands|millions|billions) of (?P<unit>US dollars|dollars|USD|euros|EUR|pounds|GBP)\b",
         vague_english,
-        text,
         flags=re.I,
     )
 
     text = text.replace("唯一一个", "只有一个")
+    substitute("下一步", "   ")
+    substitute(r"\bsingle\s+year\b", "1 year", flags=re.I)
     text = re.sub(r"二元(?=(?:灾害类型)?(?:变量|分类|特征|模型))", "  ", text)
+
+    decade_words = {
+        word: number
+        for number, word in enumerate(
+            "one two three four five six seven eight nine ten eleven twelve".split(), 1
+        )
+    }
+
+    def decades_as_years(match):
+        value = match["value"].lower()
+        count = Decimal(decade_words[value]) if value in decade_words else Decimal(value)
+        sign = match["sign"].replace("−", "-")
+        return f"{sign}{count * 10} years"
+
+    decade_value = (
+        r"(?:\d+(?:\.\d+)?|\.\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)"
+    )
+    substitute(
+        rf"(?<![\w.,])(?P<sign>[+\-−]?)(?P<value>{decade_value})\s+decades?\b",
+        decades_as_years,
+        flags=re.I,
+    )
+
+    def expand_hyphenated_percent_range(match):
+        unit = match["unit"]
+        return f"{match['lower']} {unit} to {match['upper']} {unit}"
+
+    range_value = r"(?:\d+(?:\.\d+)?|\.\d+)"
+    substitute(
+        rf"(?<![\w.,+\-−])(?P<lower>{range_value})\s*-\s*to\s*-\s*"
+        rf"(?P<upper>{range_value})\s*(?P<unit>percent|per\s+cent|%|％)(?![A-Za-z])",
+        expand_hyphenated_percent_range,
+        flags=re.I,
+    )
 
     def chinese(match):
         if match["number"] == "一" and match["unit"] in {"个", "起", "种"} and not match["prefix"]:
@@ -376,16 +488,14 @@ def _quantities(
                 raise _UnsupportedNumberFormat(match[0]) from None
             return " " * len(match[0])
 
-    text = re.sub(
+    substitute(
         rf"(?<![0-9零〇一二两三四五六七八九十百千万亿点数几])(?P<prefix>第|百分之)?(?P<number>负?[零〇一二两三四五六七八九十百千]+(?:点[零〇一二三四五六七八九]+)?)(?P<scale>万|亿)?(?P<unit>{unit_pattern})(?!性)",
         chinese,
-        text,
         flags=re.I,
     )
-    text = re.sub(
+    substitute(
         r"(?P<prefix>百分之)(?P<number>[零〇一二两三四五六七八九十百千万亿]+(?:点[零〇一二三四五六七八九]+)?)(?P<unit>)",
         chinese,
-        text,
         flags=re.I,
     )
     unsupported_chinese = re.search(
@@ -465,8 +575,10 @@ def _quantities(
                 elif re.fullmatch(r"[+-]?\d+,\d{1,2}", raw) or re.fullmatch(r"[+-]?0,\d+", raw):
                     raw = raw.replace(",", ".")
                 elif grouped:
-                    values.add(
-                        (("number" if dimension == "count" else dimension) + ":literal", raw)
+                    add_value(
+                        (("number" if dimension == "count" else dimension) + ":literal", raw),
+                        match.start("number"),
+                        match.end("number"),
                     )
                     continue
                 else:
@@ -483,16 +595,33 @@ def _quantities(
             if strict:
                 raise _UnsupportedNumberFormat(match["number"]) from None
             continue
-        values.add(("number" if dimension == "count" else dimension, value))
+        occurrence_start = match.start("prefix") if match["prefix"] else match.start("number")
+        occurrence_end = (
+            match.end("unit")
+            if match["unit"]
+            else match.end("scale") if match["scale"] else match.end("number")
+        )
+        add_value(
+            ("number" if dimension == "count" else dimension, value),
+            occurrence_start,
+            occurrence_end,
+        )
     months = "January February March April May June July August September October November December".split()
-    for index, month in enumerate(months, 1):
-        for match in re.finditer(
-            r"\b" + month + r"\s+(?:\d{1,2},?\s+)?(\d{4})\b|\b\d{1,2}\s+" + month + r"\s+(\d{4})\b",
-            text,
-            re.I,
-        ):
-            values.add(("month", Decimal(index)))
-            values.add(("year", Decimal(match[1] or match[2])))
+    month_pattern = "|".join(months)
+    for match in re.finditer(
+        rf"\b(?P<month>{month_pattern})\s+(?:(?P<day>\d{{1,2}}),?\s+)?(?P<year>\d{{4}})\b"
+        rf"|\b(?P<day_before>\d{{1,2}})\s+(?P<month_before>{month_pattern})\s+(?P<year_before>\d{{4}})\b",
+        text,
+        re.I,
+    ):
+        month = match["month"] or match["month_before"]
+        year_group = "year" if match["year"] else "year_before"
+        month_group = "month" if match["month"] else "month_before"
+        month_value = Decimal(months.index(month.title()) + 1)
+        add_value(("month", month_value), match.start(month_group), match.end(month_group))
+        add_value(
+            ("year", Decimal(match[year_group])), match.start(year_group), match.end(year_group)
+        )
     unsupported_english = re.search(
         r"\b(?:thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundreds?|thousands|millions|billions|trillions?)\b",
         text,
@@ -516,27 +645,30 @@ def _quantities(
                     raise _UnsupportedNumberFormat(match[0] + (tail[0] if tail else ""))
                 continue
             dimension = units.get(re.sub(r"\s+", " ", match["unit"] or "").lower(), "number")
-            values.add(("number" if dimension == "count" else dimension, Decimal(index)))
+            add_value(
+                ("number" if dimension == "count" else dimension, Decimal(index)),
+                match.start(),
+                match.end(),
+            )
     for index, word in enumerate(
         "first second third fourth fifth sixth seventh eighth ninth tenth eleventh twelfth".split(),
         1,
     ):
         for match in re.finditer(r"\b" + word + r"\s+(step|stage|level|part)s?\b", text, re.I):
-            values.add(("ordinal:" + match[1].lower(), Decimal(index)))
+            add_value(("ordinal:" + match[1].lower(), Decimal(index)), match.start(), match.end())
     for match in re.finditer(r"\b(\d+)(?:st|nd|rd|th)\s+(step|stage|level|part)s?\b", text, re.I):
-        values.add(("ordinal:" + match[2].lower(), Decimal(match[1])))
+        add_value(("ordinal:" + match[2].lower(), Decimal(match[1])), match.start(), match.end())
     if re.search(r"citation|reference|参考", text, re.I):
-        values.update(("year", Decimal(year)) for year in re.findall(r"\((\d{4})\)", text))
+        for match in re.finditer(r"\((\d{4})\)", text):
+            add_value(("year", Decimal(match[1])), match.start(1), match.end(1))
     if re.fullmatch(
         r"(?:recommended\s+)?citations?|references?|参考文献|推荐引用",
         source_section.strip().rstrip(":："),
         re.I,
     ):
         # Bibliographic Author. Year. Title dates are not generic four-digit counts.
-        values.update(
-            ("year", Decimal(year))
-            for year in re.findall(r"(?m)^[^\n\d]+\.\s+([12]\d{3})\.\s+(?=\S)", text)
-        )
+        for match in re.finditer(r"(?m)^[^\n\d]+\.\s+([12]\d{3})\.\s+(?=\S)", text):
+            add_value(("year", Decimal(match[1])), match.start(1), match.end(1))
     return values
 
 
@@ -794,6 +926,11 @@ def build_input(row: dict, config: dict, route: dict) -> tuple[list[dict], dict]
         int(config.get("max_context_tokens", 128000)),
     )
     limit = MAX_SOURCE_CHARS
+    max_initial_chars = MAX_INPUT_CHARS - NUMERIC_CORRECTION_RESERVE_CHARS
+    max_initial_tokens = context - output_tokens - NUMERIC_CORRECTION_RESERVE_BYTES - 16
+    if max_initial_tokens <= 0:
+        raise ValueError("insufficient_evidence_within_model_budget")
+    previous_selection = None
     while limit >= 1000:
         evidence, omitted = extract_evidence(row["markdown_content"], limit=limit)
         material = {
@@ -814,7 +951,8 @@ def build_input(row: dict, config: dict, route: dict) -> tuple[list[dict], dict]
         chars = sum(len(m["content"]) for m in messages)
         # UTF-8 bytes are a conservative token bound for unknown Chat tokenizers.
         tokens = sum(len(m["content"].encode("utf-8")) + 16 for m in messages)
-        if chars <= MAX_INPUT_CHARS and tokens + output_tokens <= context and len(evidence) >= 5:
+        selection = tuple((item["start"], item["end"]) for item in evidence)
+        if chars <= max_initial_chars and tokens <= max_initial_tokens and len(evidence) >= 5:
             return messages, {
                 **material,
                 "source_chars": sum(len(e["quote"]) for e in evidence),
@@ -826,7 +964,16 @@ def build_input(row: dict, config: dict, route: dict) -> tuple[list[dict], dict]
                 "prompt_version": PROMPT_VERSION,
                 "generation_options": _request_options(route.get("provider", "")),
             }
-        limit = limit * 3 // 4
+        if len(evidence) < 5:
+            break
+        char_deficit = max(0, chars - max_initial_chars)
+        token_deficit = max(0, tokens - max_initial_tokens)
+        reduction = max(char_deficit, (token_deficit + 2) // 3, 1)
+        if selection == previous_selection:
+            used_source_chars = sum(len(item["quote"]) for item in evidence)
+            reduction = max(reduction, limit - used_source_chars + 1)
+        previous_selection = selection
+        limit -= reduction
     raise ValueError("insufficient_evidence_within_model_budget")
 
 
