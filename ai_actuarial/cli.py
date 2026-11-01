@@ -752,6 +752,8 @@ def cmd_article_interpretation(args: argparse.Namespace) -> int:
     else:
         path, method = "/api/collections/run", "POST"
         payload = {"type": "article_interpretation"}
+        if args.article_action == "run" and args.file_url is not None:
+            payload["file_url"] = args.file_url
         if args.article_action == "retry":
             payload["retry_id"] = args.interpretation_id
     try:
@@ -1402,6 +1404,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_article_sub = p_article.add_subparsers(dest="article_action", required=True)
     for action in ("run", "retry", "get"):
         command = p_article_sub.add_parser(action)
+        if action == "run":
+            command.add_argument(
+                "--file-url",
+                help="Generate one selected current article instead of the daily batch",
+            )
         if action in {"retry", "get"}:
             command.add_argument("interpretation_id", **({"nargs": "?"} if action == "get" else {}))
         command.add_argument(

@@ -528,8 +528,9 @@ def api_collections_run(
             (e.g. ``url``, ``file``, ``catalog``). Type-specific fields are
             also required: for ``url`` type, include ``urls`` (list of URLs);
             for ``markdown_conversion`` or ``chunk_generation`` types, include
-            ``file_urls`` and/or ``scan_count``. Optional: ``force`` (bool),
-            ``depth`` (int).
+            ``file_urls`` and/or ``scan_count``; ``article_interpretation`` may
+            include ``file_url`` to generate one selected article. Optional:
+            ``force`` (bool), ``depth`` (int).
 
     Returns:
         A dict with ``success`` flag, a ``message``, and a ``job_id``

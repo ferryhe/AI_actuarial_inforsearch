@@ -1,3 +1,17 @@
+# 当前候选 — PR444 远程审查反馈 — 2026-11-01
+
+- 分支 `fix/interpretation-number-evidence`。Copilot 对 PR444 的4项反馈均先在隔离 PostgreSQL schema 与注入式 generator/resolver 中复现；TypeSafe Jev 1.14.0 接受全部4项，并要求同一 worker 修复与测试。证据：`reports/interpretation-number-repair-20261101/remote-feedback-assessment.json`、`typesafe-remote-input.json`、`typesafe-remote-result.json`。
+- 修复 provider cleanup 后的手动重试拦截；有已保存正文时先读取草稿，仅对新生成应用 provider-call 预算，允许在原截止时间内继续链接校验；手动选择时间戳取自持久 receipt；恢复每日稿件时同时保留来源 round 调用上限，并在 reservation 时给 manual receipt 记录本次调用数。
+- 新增6项回归覆盖4个反馈主题，包括手动和每日 receipt 的中断恢复。隔离数据库验证：`tests/test_article_interpretations.py` 与 `tests/test_article_interpretation_async_transport.py` 合计201 passed / 1 skipped；补丁后六项新回归再次6 passed。Ruff、Black、`py_compile`、`git diff --check` 通过。模型/provider调用0，生产数据库访问0。
+- 当前补丁按第3轮最终审查限额完成的已测试修复处理；没有新增独立审查 PASS。主控负责提交、推送和 CI；本 worker 未提交或推送。
+
+# 当前候选 — 微信解读数字证据诊断与单篇生成 — 2026-11-01
+
+- 项目 `AI_actuarial_inforsearch`；工作树 `C:/Users/ferry/.codex/worktrees/fix-interpretation-number-evidence/AI_actuarial_inforsearch`，分支 `fix/interpretation-number-evidence`。数字证据仍严格校验；私有诊断只含限长段落片段、证据 ID、解析 token 与缺失数量，不进入 reader DTO。第二次调用的纠正提示受原输入字符和模型上下文余量限制，不改变已保存输入。
+- 现有 POST `/api/collections/run` 与 CLI 支持明确 `file_url` 单篇生成。服务复用来源、当前内容、取消、advisory lock、链接验证及内容预算；单篇 receipt 使用服务端键和 `manual` 类型，不推进每日游标；重复、旧耗尽内容、日程注入均有回归覆盖。
+- 验证：`tests/test_article_interpretations.py` 192 passed / 1 skipped，`tests/test_article_interpretation_async_transport.py` 2 passed；Ruff、Black、`py_compile` 与 `git diff --check` 通过。仅使用隔离测试 PostgreSQL、注入式离线 generator 和本地 loopback fixture；没有调用生产模型或写生产数据库。独立审查及部署、真实 CAS 单篇发布和 HTML 导出由主控继续完成；本 worker 未提交或推送。
+- 第3轮最终审查接受的 P2 已由同一 worker 做最终限额修复：当完整数字诊断前缀无法装入第二次调用余量时，改为不附加空洞的通用纠正提示；新增1000字符/300字节边界回归。最终聚焦反馈/预算测试 2 passed，Ruff、Black、源码 compile 通过。此改动是最终限额下的已测试未复审修复，未取得独立审查 PASS，也不再安排第4轮。`git diff --check` 在此链接工作树仍报“must be run in a work tree”；已对改动文件做尾随空白检查。OPS 最终自检7个注入场景通过，包括拒绝旧构建环境标记并保留非构建环境变量；无生产操作。本 worker 未提交或推送。
+
 # 当前候选 — 中文文章解读阅读与导出 — 2026-10-31
 
 - Issue #437，分支 `codex/issue-437-interpretation-reader`。只读接口只投影当前 `reader_eligible` 最新稿件的公开字段；FileDetail 仅在中文界面读取和渲染，沿用最新请求守卫，提供折叠、复制、Markdown 和内联样式 HTML 导出。成功保存 Markdown 或转换完成后清除并重读解读，保存失败保留当前稿。老稿缺少原文标题时使用当前文件标题。生成输入从有限前页结构/显式署名行携带原文作者证据，现有一次生成提示要求逐字返回且验证；link validation 将已核验姓名写入 payload references，再由读取接口/页面/导出透传。没有明确署名时为空；不读原文之外的作者、不改原文/摘要。
@@ -5991,3 +6005,10 @@ Current branch head 4f030be has uncommitted small catalog/Storage variable defau
 - Updated the `local-actuarial-flow` skill and references for the isolated web-listening 3.3.0 executable and manual local-only exploration boundaries. No scheduler, production fetch policy, source state, historical receipt, Hub, target, ledger, or automation configuration was changed.
 - Validation: `test_local_flow.py` passed 26/26. `tests/test_local_collection_runtime.py` last passed 79/79 on the isolated PostgreSQL test DB at port 55436; it was not rerun in this helper-only pass. New helper regressions cover partial file-type totals, per-site conversion and AI-first counts with legacy unknowns, monitor results/errors, and planned monitor checks without runtime evidence. CLI Markdown reruns were deterministic: Oct 28 showed 131 requests / 88 downloads across 5/8 matched receipts; Oct 29 showed 224 requests / 119 downloads across 8/8, with 41 new versions, 25 reused and 40 classified. The Oct 25 receipt-only render showed a planned monitor check without execution evidence. CLI JSON and `--help`, Black, isort, Ruff, Pylint errors-only, `py_compile`, and `git diff --check` passed.
 - No commit, push, historical receipt rewrite, Hub/target write, production fetch, or automation change was made. The Oct 28/29 JSON inputs were read only; their saved outputs were not modified.
+
+# 当前候选 — CAS 数字证据误报修复 — 2026-11-01
+
+- 基于实际 CAS 单篇失败 receipt 中保存的两段限长诊断和 E6/E7/E8 原文，复现四类解析误报：二元技术术语被识别为元、训练/测试集括号内逗号样本数与无逗号数量类型不一致、数据集训练/测试期间缺少年份上下文，以及“一种”泛指短语被识别为精确计数。原始失败 receipt 的两次模型调用未重置或改写；未保留完整模型回复。
+- 共享解析器只增加限定技术词上下文、训练/测试样本量标记、数据集期间年份上下文和“一种”泛指处理。回归保留 2 元货币、明确“只有一种”/“两种”计数、无上下文逗号字面值与小数、一般四位数字计数及普通 from/to 数值范围的严格校验。新增真实诊断两段的 validator 用例及负例。
+- 验证：`tests/test_article_interpretations.py` 与 `tests/test_article_interpretation_async_transport.py` 合计 203 passed / 1 skipped；使用仓库专用隔离 PostgreSQL，并对本机 loopback 测试连接启用授权访问。Ruff、逐文件 Black 检查、`py_compile`、`git diff --check` 通过。完整日志 `reports/interpretation-number-repair-20261101/numeric-followup-focused-tests-elevated.log`。
+- 这是累计本地审查第 3 轮限额后的已测试最终修复；没有新的独立审查 PASS，也不安排第 4 轮。主控负责提交、推送、当前 HEAD CI 和后续实际生成验收；此 worker 未提交、未推送、未调用模型/provider，且未访问生产数据库。
