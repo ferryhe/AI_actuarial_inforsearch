@@ -568,6 +568,202 @@ def test_output_rejects_unsupported_numbers_quotes_and_unlabelled_inference():
         articles.validate_output(json.dumps(value), coverage)
 
 
+def test_numeric_validation_diagnostic_is_actionable_without_relaxing_evidence_checks():
+    row = {"url": "https://a.example/x", "sha256": "a" * 64, "markdown_content": source_body()}
+    messages, coverage = articles.build_input(row, {}, {})
+    value = json.loads(response(messages))
+    paragraph = "研究证明收益提高999%。"
+    value["sections"][0]["paragraphs"][0]["text"] = paragraph
+    with pytest.raises(ValueError) as raised:
+        articles.validate_output(json.dumps(value, ensure_ascii=False), coverage)
+    assert str(raised.value) == "unsupported_number"
+    assert raised.value.diagnostic == {
+        "code": "unsupported_number",
+        "paragraph": paragraph,
+        "paragraph_truncated": False,
+        "evidence_ids": [coverage["evidence"][0]["id"]],
+        "evidence_ids_truncated": False,
+        "token": "",
+        "missing_quantities": [{"dimension": "percent", "value": "999"}],
+        "missing_quantities_truncated": False,
+    }
+
+
+def test_numeric_correction_feedback_omits_incomplete_diagnostic_when_too_large():
+    diagnostic = {
+        "code": "unsupported_number",
+        "paragraph": "研究证明收益提高999%。",
+        "evidence_ids": ["E1"],
+        "token": "999",
+        "missing_quantities": [{"dimension": "percent", "value": "999"}],
+    }
+
+    assert articles._numeric_correction_message(diagnostic, max_chars=1000, max_bytes=300) == ""
+
+    complete = articles._numeric_correction_message(diagnostic, max_chars=2000, max_bytes=2000)
+    assert "999" in complete and "E1" in complete
+    for max_chars, max_bytes in (
+        (len(complete) - 1, 2000),
+        (2000, len(complete.encode("utf-8")) - 1),
+    ):
+        message = articles._numeric_correction_message(
+            diagnostic, max_chars=max_chars, max_bytes=max_bytes
+        )
+        assert len(message) <= max_chars
+        assert len(message.encode("utf-8")) <= max_bytes
+        if message:
+            assert "999" in message and "E1" in message
+
+
+def test_manual_numeric_correction_uses_second_call_and_does_not_renew_budget(storage):
+    url = seed(storage, "a")
+
+    class CorrectingGenerator:
+        def __init__(self):
+            self.calls = []
+
+        async def generate(self, messages, *, deadline):
+            self.calls.append(messages)
+            source_messages = messages[:-1] if len(messages) > 2 else messages
+            value = json.loads(response(source_messages))
+            if len(self.calls) == 1:
+                value["sections"][0]["paragraphs"][0]["text"] = "研究证明收益提高999%。"
+            return json.dumps(value, ensure_ascii=False)
+
+    generator = CorrectingGenerator()
+    receipt = service(storage, generator=generator).run(file_url=url, round_key="client-round")
+    assert receipt["receipt_type"] == "manual"
+    assert receipt["round_key"].startswith("manual:")
+    assert len(receipt["slots"]) == 1 and receipt["slots"][0]["status"] == "ready"
+    assert receipt["provider_calls"] == len(generator.calls) == 2
+    assert "999%" in generator.calls[1][-1]["content"]
+    assert "缺失数量" in generator.calls[1][-1]["content"]
+    draft = articles.read_interpretations(storage.database, file_url=url)[0]
+    second_call_chars = sum(len(message["content"]) for message in generator.calls[1])
+    second_call_tokens = sum(
+        len(message["content"].encode("utf-8")) + 16 for message in generator.calls[1]
+    )
+    assert second_call_chars <= articles.MAX_INPUT_CHARS
+    assert (
+        second_call_tokens + draft["coverage"]["max_output_tokens"]
+        <= draft["coverage"]["context_tokens"]
+    )
+    stored_messages = storage._conn.execute(
+        "SELECT payload_json->'messages' FROM article_interpretations WHERE interpretation_id=?",
+        (draft["interpretation_id"],),
+    ).fetchone()[0]
+    assert generator.calls[1][:-1] == stored_messages
+    calls = draft["attempts"][-1]["calls"]
+    assert calls[0]["validation_error"] == "unsupported_number"
+    assert calls[0]["validation_diagnostic"]["evidence_ids"]
+    assert draft["reader_eligible"] and draft["china_article_url"]
+    assert (
+        storage._conn.execute(
+            "SELECT last_source_key FROM article_interpretation_state WHERE singleton"
+        ).fetchone()[0]
+        == ""
+    )
+    before = service(storage)._content_budget(draft["content_key"])
+    repeated = service(storage).run(file_url=url)
+    assert repeated == receipt
+    assert service(storage)._content_budget(draft["content_key"]) == before
+    assert (
+        storage._conn.execute(
+            "SELECT count(*) FROM article_interpretation_rounds WHERE receipt_json->>'receipt_type'='manual'"
+        ).fetchone()[0]
+        == 1
+    )
+    assert (
+        storage._conn.execute(
+            "SELECT count(*) FROM article_interpretations WHERE content_key=? AND status='ready'",
+            (draft["content_key"],),
+        ).fetchone()[0]
+        == 1
+    )
+
+
+def test_manual_single_blocks_failed_daily_content_without_touching_daily_receipt(storage):
+    url = seed(storage, "a")
+    daily = service(storage, generator=Generator(output="invalid-json")).run(round_key="old-daily")
+    assert daily["status"] == "complete" and daily["provider_calls"] == 2
+    identity = articles._identity(articles._load_file(storage._conn, url))
+    content_key = articles._hash(identity["raw_sha256"] + identity["markdown_sha256"])
+    before_budget = service(storage)._content_budget(content_key)
+    cursor = storage._conn.execute(
+        "SELECT last_source_key FROM article_interpretation_state WHERE singleton"
+    ).fetchone()[0]
+    retry_generator = Generator()
+    manual = service(storage, generator=retry_generator).run(file_url=url)
+    assert manual["status"] == "budget_exhausted"
+    assert manual["slots"][0]["status"] == "skipped"
+    assert manual["slots"][0]["reason"] == "content_provider_calls_exhausted"
+    assert not retry_generator.calls
+    assert service(storage)._content_budget(content_key) == before_budget
+    assert (
+        storage._conn.execute(
+            "SELECT receipt_json FROM article_interpretation_rounds WHERE round_key='old-daily'"
+        ).fetchone()[0]
+        == daily
+    )
+    assert (
+        storage._conn.execute(
+            "SELECT last_source_key FROM article_interpretation_state WHERE singleton"
+        ).fetchone()[0]
+        == cursor
+    )
+
+
+def test_manual_stop_resumes_same_receipt_and_rejects_retry_id_combination(storage):
+    url = seed(storage, "a")
+    stopped = service(storage, stop_check=lambda: True).run(file_url=url)
+    assert stopped["status"] == "stopped" and stopped["provider_calls"] == 0
+    generator = Generator()
+    resumed = service(storage, generator=generator).run(file_url=url)
+    assert resumed["status"] == "complete" and resumed["round_key"] == stopped["round_key"]
+    assert resumed["slots"][0]["status"] == "ready" and len(generator.calls) == 1
+    assert (
+        storage._conn.execute(
+            "SELECT count(*) FROM article_interpretation_rounds WHERE receipt_json->>'receipt_type'='manual'"
+        ).fetchone()[0]
+        == 1
+    )
+    with pytest.raises(ValueError, match="mutually_exclusive"):
+        service(storage).run(file_url=url, retry_id="prior-draft")
+
+
+def test_manual_article_collection_start_contract(monkeypatch):
+    from ai_actuarial.api.services import ops_write
+
+    started = []
+    bridge = ops_write.BridgeState(
+        SimpleNamespace(
+            start_background_task=lambda *args, **kwargs: started.append((args, kwargs)) or "job-1"
+        )
+    )
+    payload = {
+        "type": "article_interpretation",
+        "file_url": "  https://a.example/selected.pdf  ",
+    }
+    assert ops_write.start_collection(payload, bridge=bridge) == {
+        "success": True,
+        "message": "Task started in background",
+        "job_id": "job-1",
+    }
+    assert payload["file_url"] == "https://a.example/selected.pdf"
+    assert started[0][0][0:2] == ("article_interpretation", payload)
+
+    def reject(reason, **_kwargs):
+        raise ops_write.OpsWriteError(reason)
+
+    monkeypatch.setattr(ops_write, "_reject_request", reject)
+    for extra in ({"retry_id": "old"}, {"scheduled": True}):
+        with pytest.raises(ops_write.OpsWriteError):
+            ops_write.start_collection(
+                {"type": "article_interpretation", "file_url": "https://a.example/x", **extra},
+                bridge=bridge,
+            )
+
+
 def test_title_page_author_extraction_is_explicit_and_bounded():
     france = (
         "Fidélisation des assurés\n\n###### Virginie Normand\n\n"
@@ -735,6 +931,42 @@ def test_native_task_stop_history_and_restart(storage, tmp_path):
     assert service(storage).run()["status"] == "complete"
 
 
+def test_native_task_runtime_forwards_only_manual_file_selection(storage, tmp_path):
+    from ai_actuarial.task_runtime import NativeTaskRuntime
+
+    url = seed(storage, "a")
+    seed(storage, "b")
+    runtime = NativeTaskRuntime(
+        ready_data_database=storage.database,
+        data_root=tmp_path,
+        article_interpretation_resolver=Resolver(),
+    )
+    runtime._site_config_override = {"paths": {"download_dir": str(tmp_path)}}
+    generator = Generator()
+    runtime._article_interpretation_generator = generator
+    runtime.start_background_task(
+        "article_interpretation",
+        {"file_url": url, "round_key": "client-round", "timezone": "Etc/GMT+12"},
+        task_id="manual-selection",
+    )
+    deadline = time.monotonic() + 10
+    while runtime.active_tasks and time.monotonic() < deadline:
+        time.sleep(0.01)
+    manual = storage._conn.execute(
+        "SELECT receipt_json FROM article_interpretation_rounds "
+        "WHERE receipt_json->>'receipt_type'='manual'"
+    ).fetchone()[0]
+    assert manual["round_key"].startswith("manual:") and manual["file_url"] == url
+    assert len(manual["slots"]) == 1 and manual["slots"][0]["status"] == "ready"
+    assert len(generator.calls) == 1
+    assert (
+        storage._conn.execute(
+            "SELECT last_source_key FROM article_interpretation_state WHERE singleton"
+        ).fetchone()[0]
+        == ""
+    )
+
+
 def test_api_read_empty_and_cli_entry_contract(storage, tmp_path, monkeypatch):
     from ai_actuarial import cli
     from tests.test_fastapi_ops_read_endpoints import _build_test_client
@@ -751,14 +983,25 @@ def test_api_read_empty_and_cli_entry_contract(storage, tmp_path, monkeypatch):
     parser = cli.build_parser()
     for command in (
         ["article-interpretation", "run", "--json"],
+        [
+            "article-interpretation",
+            "run",
+            "--file-url",
+            "https://a.example/selected.pdf",
+            "--json",
+        ],
         ["article-interpretation", "retry", "saved-id", "--json"],
         ["article-interpretation", "get", "saved-id", "--json"],
     ):
         args = parser.parse_args(command)
         assert args.func(args) == 0
     assert requests[0][0][1] == "/api/collections/run"
-    assert requests[1][1]["payload"] == {"type": "article_interpretation", "retry_id": "saved-id"}
-    assert requests[2][1]["method"] == "GET"
+    assert requests[1][1]["payload"] == {
+        "type": "article_interpretation",
+        "file_url": "https://a.example/selected.pdf",
+    }
+    assert requests[2][1]["payload"] == {"type": "article_interpretation", "retry_id": "saved-id"}
+    assert requests[3][1]["method"] == "GET"
     help_result = subprocess.run(
         [sys.executable, "-m", "ai_actuarial.cli", "article-interpretation", "--help"],
         cwd=Path(__file__).resolve().parents[1],
@@ -767,6 +1010,14 @@ def test_api_read_empty_and_cli_entry_contract(storage, tmp_path, monkeypatch):
         timeout=15,
     )
     assert help_result.returncode == 0 and "retry" in help_result.stdout
+    run_help = subprocess.run(
+        [sys.executable, "-m", "ai_actuarial.cli", "article-interpretation", "run", "--help"],
+        cwd=Path(__file__).resolve().parents[1],
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert run_help.returncode == 0 and "--file-url" in run_help.stdout
 
 
 def test_reader_api_returns_only_current_public_latest_fields(tmp_path, monkeypatch):
@@ -790,7 +1041,16 @@ def test_reader_api_returns_only_current_public_latest_fields(tmp_path, monkeypa
         },
         "provider": "private-provider",
         "error": "internal-error",
-        "attempts": [{"credential": "private"}],
+        "attempts": [
+            {
+                "credential": "private",
+                "validation_diagnostic": {
+                    "paragraph": "private numeric output",
+                    "evidence_ids": ["E1"],
+                    "missing_quantities": [{"dimension": "percent", "value": "999"}],
+                },
+            }
+        ],
         "reader_eligible": True,
         "status": "ready",
     }
@@ -909,7 +1169,7 @@ def test_france_title_page_authors_reach_reader_api_from_saved_markdown(tmp_path
         storage.close()
 
 
-def test_native_domestic_schedule_metadata_and_local_rejection(storage, tmp_path):
+def test_native_domestic_schedule_metadata_and_local_rejection(storage, tmp_path, monkeypatch):
     from ai_actuarial.api.services.ops_read import get_schedule_status
     from ai_actuarial.task_runtime import NativeTaskRuntime
 
@@ -921,6 +1181,11 @@ def test_native_domestic_schedule_metadata_and_local_rejection(storage, tmp_path
         "enabled": True,
         "interval": "daily at 10:00",
         "timezone": "Asia/Shanghai",
+        "params": {
+            "file_url": "https://a.example/selected.pdf",
+            "retry_id": "client-retry",
+            "round_key": "client-round",
+        },
     }
     runtime._site_config_override = {
         "article_interpretation": {"environment": "china"},
@@ -929,6 +1194,17 @@ def test_native_domestic_schedule_metadata_and_local_rejection(storage, tmp_path
     runtime.init_scheduler(configured_only=True)
     job = get_schedule_status(runtime.scheduler)["jobs"][0]
     assert job["timezone"] == "Asia/Shanghai" and job["next_run"]
+    started = []
+    monkeypatch.setattr(
+        runtime,
+        "start_background_task",
+        lambda *args, **kwargs: started.append((args, kwargs)) or "scheduled-id",
+    )
+    scheduled_job = runtime.scheduler.jobs[0]
+    (getattr(scheduled_job, "func", None) or scheduled_job.job_func)()
+    scheduled_payload = started[0][0][1]
+    assert scheduled_payload["scheduled"] is True
+    assert not {"file_url", "retry_id", "round_key"}.intersection(scheduled_payload)
     runtime._site_config_override["article_interpretation"]["environment"] = "local"
     with pytest.raises(ValueError, match="china"):
         runtime.init_scheduler(configured_only=True)

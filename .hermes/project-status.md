@@ -1,3 +1,10 @@
+# 当前候选 — 微信解读数字证据诊断与单篇生成 — 2026-11-01
+
+- 项目 `AI_actuarial_inforsearch`；工作树 `C:/Users/ferry/.codex/worktrees/fix-interpretation-number-evidence/AI_actuarial_inforsearch`，分支 `fix/interpretation-number-evidence`。数字证据仍严格校验；私有诊断只含限长段落片段、证据 ID、解析 token 与缺失数量，不进入 reader DTO。第二次调用的纠正提示受原输入字符和模型上下文余量限制，不改变已保存输入。
+- 现有 POST `/api/collections/run` 与 CLI 支持明确 `file_url` 单篇生成。服务复用来源、当前内容、取消、advisory lock、链接验证及内容预算；单篇 receipt 使用服务端键和 `manual` 类型，不推进每日游标；重复、旧耗尽内容、日程注入均有回归覆盖。
+- 验证：`tests/test_article_interpretations.py` 192 passed / 1 skipped，`tests/test_article_interpretation_async_transport.py` 2 passed；Ruff、Black、`py_compile` 与 `git diff --check` 通过。仅使用隔离测试 PostgreSQL、注入式离线 generator 和本地 loopback fixture；没有调用生产模型或写生产数据库。独立审查及部署、真实 CAS 单篇发布和 HTML 导出由主控继续完成；本 worker 未提交或推送。
+- 第3轮最终审查接受的 P2 已由同一 worker 做最终限额修复：当完整数字诊断前缀无法装入第二次调用余量时，改为不附加空洞的通用纠正提示；新增1000字符/300字节边界回归。最终聚焦反馈/预算测试 2 passed，Ruff、Black、源码 compile 通过。此改动是最终限额下的已测试未复审修复，未取得独立审查 PASS，也不再安排第4轮。`git diff --check` 在此链接工作树仍报“must be run in a work tree”；已对改动文件做尾随空白检查。OPS 最终自检7个注入场景通过，包括拒绝旧构建环境标记并保留非构建环境变量；无生产操作。本 worker 未提交或推送。
+
 # 当前候选 — 中文文章解读阅读与导出 — 2026-10-31
 
 - Issue #437，分支 `codex/issue-437-interpretation-reader`。只读接口只投影当前 `reader_eligible` 最新稿件的公开字段；FileDetail 仅在中文界面读取和渲染，沿用最新请求守卫，提供折叠、复制、Markdown 和内联样式 HTML 导出。成功保存 Markdown 或转换完成后清除并重读解读，保存失败保留当前稿。老稿缺少原文标题时使用当前文件标题。生成输入从有限前页结构/显式署名行携带原文作者证据，现有一次生成提示要求逐字返回且验证；link validation 将已核验姓名写入 payload references，再由读取接口/页面/导出透传。没有明确署名时为空；不读原文之外的作者、不改原文/摘要。

@@ -971,6 +971,7 @@ class NativeTaskRuntime:
                 elif task_type == "article_interpretation":
                     params.pop("retry_id", None)
                     params.pop("round_key", None)
+                    params.pop("file_url", None)
                     params["scheduled"] = True
                     params["timezone"] = task_cfg.get("timezone")
                     params["schedule_name"] = task_name
@@ -1504,7 +1505,10 @@ class NativeTaskRuntime:
                     resolver=self._article_interpretation_resolver,
                     config=settings,
                     stop_check=lambda: self._stop_requested(task_id),
-                ).run(retry_id=data.get("retry_id"))
+                ).run(
+                    retry_id=data.get("retry_id"),
+                    file_url=None if data.get("scheduled") else data.get("file_url"),
+                )
                 slots = receipt.get("slots", [])
                 failed = sum(slot["status"] == "failed" for slot in slots)
                 failed += int(receipt.get("interpretation", {}).get("status") == "failed")

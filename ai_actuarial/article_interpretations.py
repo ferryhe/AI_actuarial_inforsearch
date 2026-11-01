@@ -69,6 +69,67 @@ source字段来自规范来源Registry。只有原文证据确有对应机构身
 """
 
 
+class _UnsupportedNumberFormat(ValueError):
+    def __init__(self, token: str):
+        super().__init__("unsupported_number_format")
+        self.token = token
+
+
+class _NumericEvidenceError(ValueError):
+    def __init__(self, code: str, diagnostic: dict):
+        super().__init__(code)
+        self.diagnostic = diagnostic
+
+
+def _numeric_diagnostic(code: str, text: str, ids: list[str], *, token="", missing=()) -> dict:
+    paragraph_limit = 2048
+    quantities = sorted(missing, key=lambda item: (item[0], str(item[1])))
+    return {
+        "code": code,
+        "paragraph": text[:paragraph_limit],
+        "paragraph_truncated": len(text) > paragraph_limit,
+        "evidence_ids": ids[:32],
+        "evidence_ids_truncated": len(ids) > 32,
+        "token": token[:120],
+        "missing_quantities": [
+            {"dimension": dimension, "value": str(value)} for dimension, value in quantities[:16]
+        ],
+        "missing_quantities_truncated": len(quantities) > 16,
+    }
+
+
+def _numeric_correction_message(diagnostic: dict, *, max_chars: int, max_bytes: int) -> str:
+    instruction = (
+        "数字证据校验失败。请根据原证据重新返回完整 JSON，并修正诊断列出的段落：删除无证据数字或改为证据支持的数量、单位和精度；"
+        "不要把数字改写成中文绕过校验。"
+    )
+    if len(instruction) > max_chars or len(instruction.encode("utf-8")) > max_bytes:
+        return ""
+    details = (
+        f" 错误={diagnostic['code']}；缺失数量={_json(diagnostic['missing_quantities'])}；"
+        f"证据={_json(diagnostic['evidence_ids'])}；token={diagnostic['token']}；段落片段="
+    )
+    prefix = instruction + details
+    suffix = "。"
+    if (
+        len(prefix) + len(suffix) > max_chars
+        or len(prefix.encode("utf-8")) + len(suffix.encode("utf-8")) > max_bytes
+    ):
+        return ""
+    char_room = max_chars - len(prefix) - len(suffix)
+    byte_room = max_bytes - len(prefix.encode("utf-8")) - len(suffix.encode("utf-8"))
+    paragraph = diagnostic["paragraph"]
+    excerpt = []
+    used_bytes = 0
+    for character in paragraph:
+        encoded_size = len(character.encode("utf-8"))
+        if len(excerpt) >= char_room or used_bytes + encoded_size > byte_room:
+            break
+        excerpt.append(character)
+        used_bytes += encoded_size
+    return prefix + "".join(excerpt) + suffix
+
+
 def _hash(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
@@ -257,7 +318,7 @@ def _quantities(
         scale = vague_scales.get(match["scale"])
         if scale is None:
             if strict:
-                raise ValueError("unsupported_number_format")
+                raise _UnsupportedNumberFormat(match[0])
         else:
             dimension = units[match["unit"].lower()]
             values.add((("number" if dimension == "count" else dimension) + ":scale", scale))
@@ -274,7 +335,7 @@ def _quantities(
         before = text[max(0, match.start() - 30) : match.start()]
         if re.search(r"\b(?:tens|hundreds|thousands|millions)\s+of\s*$", before, re.I):
             if strict:
-                raise ValueError("unsupported_number_format")
+                raise _UnsupportedNumberFormat(match[0])
             return " " * len(match[0])
         dimension = {
             "dollars": "USD",
@@ -311,7 +372,7 @@ def _quantities(
             )
         except ValueError:
             if strict:
-                raise
+                raise _UnsupportedNumberFormat(match[0]) from None
             return " " * len(match[0])
 
     text = re.sub(
@@ -326,10 +387,13 @@ def _quantities(
         text,
         flags=re.I,
     )
-    if strict and re.search(
-        rf"(?<![0-9.])[零〇一二两三四五六七八九十百千万亿点]+(?:{unit_pattern})(?!性)", text, re.I
-    ):
-        raise ValueError("unsupported_number_format")
+    unsupported_chinese = re.search(
+        rf"(?<![0-9.])[零〇一二两三四五六七八九十百千万亿点]+(?:{unit_pattern})(?!性)",
+        text,
+        re.I,
+    )
+    if strict and unsupported_chinese:
+        raise _UnsupportedNumberFormat(unsupported_chinese[0])
     number_pattern = (
         r"[+−-]?(?:\d{1,3}(?: \d{3})+(?:[.,]\d+)?|\d+(?:[,.]\d+)*|\.\d+)(?:[eE][+−-]?\d+)?"
     )
@@ -393,7 +457,7 @@ def _quantities(
             )
         except InvalidOperation:
             if strict:
-                raise ValueError("unsupported_number_format") from None
+                raise _UnsupportedNumberFormat(match["number"]) from None
             continue
         values.add(("number" if dimension == "count" else dimension, value))
     months = "January February March April May June July August September October November December".split()
@@ -405,12 +469,13 @@ def _quantities(
         ):
             values.add(("month", Decimal(index)))
             values.add(("year", Decimal(match[1] or match[2])))
-    if strict and re.search(
+    unsupported_english = re.search(
         r"\b(?:thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundreds?|thousands|millions|billions|trillions?)\b",
         text,
         re.I,
-    ):
-        raise ValueError("unsupported_number_format")
+    )
+    if strict and unsupported_english:
+        raise _UnsupportedNumberFormat(unsupported_english[0])
     for index, word in enumerate(
         "one two three four five six seven eight nine ten eleven twelve".split(), 1
     ):
@@ -419,7 +484,12 @@ def _quantities(
                 r"\s*(?:hundred|thousand|million|billion|trillion)s?\b", text[match.end() :], re.I
             ):
                 if strict:
-                    raise ValueError("unsupported_number_format")
+                    tail = re.match(
+                        r"\s*(?:hundred|thousand|million|billion|trillion)s?\b",
+                        text[match.end() :],
+                        re.I,
+                    )
+                    raise _UnsupportedNumberFormat(match[0] + (tail[0] if tail else ""))
                 continue
             dimension = units.get(re.sub(r"\s+", " ", match["unit"] or "").lower(), "number")
             values.add(("number" if dimension == "count" else dimension, Decimal(index)))
@@ -782,7 +852,13 @@ def validate_output(raw: str, coverage: dict) -> dict:
             }:
                 raise ValueError("invalid_evidence_reference")
             support = "\n".join(_prose(evidence[i]["quote"]) for i in ids)
-            numbers = _quantities(text, strict=True)
+            try:
+                numbers = _quantities(text, strict=True)
+            except _UnsupportedNumberFormat as exc:
+                raise _NumericEvidenceError(
+                    str(exc),
+                    _numeric_diagnostic(str(exc), text, ids, token=exc.token),
+                ) from None
             support += "\n" + "\n".join(evidence[i]["section"] for i in ids)
             supported_numbers = set()
             for identity in ids:
@@ -793,8 +869,17 @@ def validate_output(raw: str, coverage: dict) -> dict:
                         source_section=item["section"],
                     )
                 )
-            if not numbers.issubset(supported_numbers):
-                raise ValueError("unsupported_number")
+            missing_numbers = numbers - supported_numbers
+            if missing_numbers:
+                raise _NumericEvidenceError(
+                    "unsupported_number",
+                    _numeric_diagnostic(
+                        "unsupported_number",
+                        text,
+                        ids,
+                        missing=missing_numbers,
+                    ),
+                )
             if any(
                 token in text for token in ("=", "\\", "∑", "∫", "≈", "≤", "≥")
             ) and not re.search(r"\$[^$]+\$", text):
@@ -1494,6 +1579,37 @@ class ArticleInterpretationService:
                     ),
                 )
                 last_error = ValueError("provider_attempt_limit")
+
+                def correction_message(diagnostic):
+                    input_chars = sum(len(message["content"]) for message in draft["messages"])
+                    input_tokens = sum(
+                        len(message["content"].encode("utf-8")) + 16
+                        for message in draft["messages"]
+                    )
+                    output_tokens = int(
+                        draft["coverage"].get("max_output_tokens", MAX_OUTPUT_TOKENS)
+                    )
+                    context_tokens = int(
+                        draft["coverage"].get("context_tokens", input_tokens + output_tokens)
+                    )
+                    return _numeric_correction_message(
+                        diagnostic,
+                        max_chars=MAX_INPUT_CHARS - input_chars,
+                        max_bytes=context_tokens - input_tokens - output_tokens - 16,
+                    )
+
+                prior_diagnostic = next(
+                    (
+                        call.get("validation_diagnostic")
+                        for attempt_row in reversed(draft["attempts"])
+                        for call in reversed(attempt_row.get("calls", []))
+                        if call.get("validation_diagnostic")
+                    ),
+                    None,
+                )
+                correction_feedback = (
+                    correction_message(prior_diagnostic) if prior_diagnostic else ""
+                )
                 while self._content_budget(draft["content_key"])["calls"] < 2:
                     if self.stop_check():
                         draft["status"] = "queued"
@@ -1529,7 +1645,16 @@ class ArticleInterpretationService:
                     try:
                         try:
                             raw = _call_article_with_deadline(
-                                generator, draft["messages"], call_deadline
+                                generator,
+                                (
+                                    [
+                                        *draft["messages"],
+                                        {"role": "user", "content": correction_feedback},
+                                    ]
+                                    if correction_feedback
+                                    else draft["messages"]
+                                ),
+                                call_deadline,
                             )
                         finally:
                             provider_elapsed = max(0, self.clock() - call_start)
@@ -1554,6 +1679,9 @@ class ArticleInterpretationService:
                         call["error_type"] = type(exc).__name__
                         if isinstance(exc, ValueError):
                             call["validation_error"] = str(exc)[:240]
+                            if isinstance(exc, _NumericEvidenceError):
+                                call["validation_diagnostic"] = exc.diagnostic
+                                correction_feedback = correction_message(exc.diagnostic)
                         last_error = exc
                     finally:
                         elapsed = provider_elapsed
@@ -1616,13 +1744,180 @@ class ArticleInterpretationService:
             self._save(draft)
         return draft
 
-    def run(self, *, round_key=None, retry_id=None):
+    def _run_manual(self, file_url):
+        if not isinstance(file_url, str) or not file_url.strip() or len(file_url) > 2048:
+            raise ValueError("manual_file_url_required")
+        file_url = file_url.strip()
+        row = _load_file(self.connection, file_url)
+        if row:
+            content_key = _hash(
+                str(row.get("sha256") or "") + _hash(row.get("markdown_content") or "")
+            )
+        else:
+            content_key = ""
+        round_key = "manual:" + _hash(file_url + "\0" + content_key)
+        saved = self.connection.execute(
+            "SELECT receipt_json FROM article_interpretation_rounds WHERE round_key=?",
+            (round_key,),
+        ).fetchone()
+        if saved:
+            receipt = dict(saved[0])
+            if receipt["status"] in {"complete", "budget_exhausted", "provider_cleanup"}:
+                return receipt
+        else:
+            receipt = {
+                "round_key": round_key,
+                "receipt_type": "manual",
+                "status": "running",
+                "file_url": file_url,
+                "content_key": content_key,
+                "started_at": self.now().isoformat(),
+                "provider_calls": 0,
+                "elapsed_seconds": 0,
+                "slots": [
+                    {
+                        "file_url": file_url,
+                        "source_key": "",
+                        "status": "queued",
+                        "decisions": [],
+                    }
+                ],
+            }
+            self.connection.execute(
+                "INSERT INTO article_interpretation_rounds(round_key,receipt_json) VALUES (?,?::jsonb)",
+                (round_key, _json(receipt)),
+            )
+        slot = receipt["slots"][0]
+        started = self.clock()
+        try:
+            if self.stop_check():
+                receipt["status"] = "stopped"
+                return receipt
+            row = _load_file(self.connection, file_url)
+            if row is None:
+                slot.update(status="skipped", reason="not_current_visible")
+                receipt["status"] = "complete"
+                return receipt
+            source = self.connection.execute(
+                f"SELECT c.source_key FROM files f JOIN canonical_sources c "
+                f"ON c.source_key={source_sql()} WHERE f.url=? "
+                "AND c.status='active' AND c.source_key!='pending'",
+                (file_url,),
+            ).fetchone()
+            if not source:
+                slot.update(status="skipped", reason="canonical_source_unavailable")
+                receipt["status"] = "complete"
+                return receipt
+            source_key = source[0]
+            slot["source_key"] = source_key
+            eligible, reason = assess_article(row)
+            slot["decisions"] = [
+                {
+                    "file_url": file_url,
+                    "selected": eligible,
+                    "reason": reason,
+                    "published_time": row.get("published_time") or None,
+                }
+            ]
+            if not eligible:
+                slot.update(status="skipped", reason=reason)
+                receipt["status"] = "complete"
+                return receipt
+            identity = _identity(row)
+            content_key = _hash(identity["raw_sha256"] + identity["markdown_sha256"])
+            if content_key != receipt.get("content_key"):
+                slot.update(status="skipped", reason="source_version_no_longer_current")
+                receipt["status"] = "complete"
+                return receipt
+            ready = self.connection.execute(
+                "SELECT 1 FROM article_interpretations WHERE content_key=? AND status='ready' LIMIT 1",
+                (content_key,),
+            ).fetchone()
+            if ready:
+                slot.update(status="skipped", reason="content_version_already_interpreted")
+                receipt["status"] = "complete"
+                return receipt
+            budget = self._content_budget(content_key)
+            exhaustion_reason = self._content_budget_reason(budget)
+            if exhaustion_reason:
+                slot.update(status="skipped", reason=exhaustion_reason)
+                receipt["status"] = "budget_exhausted"
+                return receipt
+            if slot.get("interpretation_id"):
+                draft = self._get(slot["interpretation_id"])
+                runtime = None
+                if draft is None:
+                    slot.update(status="skipped", reason="draft_missing")
+                    receipt["status"] = "complete"
+                    return receipt
+            else:
+                try:
+                    draft, runtime = self._prepare(row, source_key, reason)
+                except LLMAuthenticationError:
+                    receipt["status"] = "authentication"
+                    return receipt
+                except ValueError as exc:
+                    slot.update(status="skipped", reason=str(exc))
+                    receipt["status"] = "complete"
+                    return receipt
+                slot.update(
+                    interpretation_id=draft["interpretation_id"],
+                    prompt_version=draft["prompt_version"],
+                    input_fingerprint=draft["input_fingerprint"],
+                    source=draft["coverage"]["source"],
+                )
+                if not draft.get("origin_round_key"):
+                    draft["origin_round_key"] = round_key
+                    self._save(draft)
+                self._receipt(receipt)
+            if draft.get("status") == "ready" and _current(self.connection, draft):
+                slot.update(status="ready", reason="draft_and_evidence_valid")
+                receipt["status"] = "complete"
+                return receipt
+            elapsed = max(
+                float(receipt.get("elapsed_seconds", 0)),
+                (self.now() - datetime.fromisoformat(receipt["started_at"])).total_seconds(),
+            )
+            deadline = self.clock() + max(0.0, MAX_ARTICLE_SECONDS - elapsed)
+            origin = (
+                receipt
+                if draft.get("origin_round_key") == round_key
+                else self._origin_receipt(self._content_budget(content_key))
+            )
+            result = self._generate(
+                draft,
+                round_deadline=deadline,
+                runtime=runtime,
+                origin_receipt=origin,
+            )
+            slot.update(
+                status=result["status"],
+                reason=result.get("error") or "draft_and_evidence_valid",
+            )
+            if result.get("error") in {"authentication", "provider_cleanup"}:
+                receipt["status"] = result["error"]
+            elif result.get("error") == "budget_exhausted":
+                receipt["status"] = "budget_exhausted"
+            elif result["status"] == "queued":
+                receipt["status"] = "stopped"
+            else:
+                receipt["status"] = "complete"
+            return receipt
+        finally:
+            receipt["elapsed_seconds"] += max(0, self.clock() - started)
+            self._receipt(receipt)
+
+    def run(self, *, round_key=None, retry_id=None, file_url=None):
+        if file_url is not None and retry_id:
+            raise ValueError("file_url_and_retry_id_are_mutually_exclusive")
         lock = self.connection.execute(
             "SELECT pg_try_advisory_lock(hashtextextended(current_schema() || ':article_interpretation',0))"
         ).fetchone()[0]
         if not lock:
             return {"status": "busy", "slots": []}
         try:
+            if file_url is not None:
+                return self._run_manual(file_url)
             if retry_id:
                 draft = self._get(retry_id)
                 if draft is None:
