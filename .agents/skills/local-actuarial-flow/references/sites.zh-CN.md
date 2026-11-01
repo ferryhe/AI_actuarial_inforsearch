@@ -6,6 +6,8 @@
 
 表格按固定的站点序列列出监控项，序号是日计划的轮换顺序，不是旧两小时分组。计划以 America/New_York 自然日为锚，每天取连续六项；任意七天计划 baseline 覆盖 32 项。最多两个额外槽给真实历史失败重试，日期游标保证失败队列轮转且不挤占 baseline。`collect` 是待实现执行端的全流程候选动作；`monitor_only` 仅做结构检查、不下载、不入库、不进 AI 发布；`hold` 只保留计划位置，不执行，也不算成功。IABA 和 EAA 为 monitor-only，Istituto hold。低频具体配置与实际执行回执尚待 adapter 实现。
 
+2026-10-28 至 11-01 的故障补充所依据的公开探测与脱敏回执摘录见 [定点证据](site-error-evidence-20261101.json)。定点探测不证明整站恢复或生产入库成功。
+
 | 轮换序号 | site ID / 监控项 | 计划动作 | 对既有脚本与 playbook 的处理建议 |
 |---|---|---|---|
 | 01 | `iaa` / International Actuarial Association | collect | `collect.py` 目前把外部搜索/URL 转成候选；不可永久限制为 search-only，先用本机 Crawler 完整验证 sitemap 和真实枚举。 |
@@ -17,28 +19,28 @@
 | 07 | `aaa` / American Academy of Actuaries | collect | 保留 REST 全量核对并按 URL/SHA 幂等去重；`--since` 当前未约束 REST AI-resource 列表，增量上线前补更新时间过滤。 |
 | 08 | `cia-ica` / Canadian Institute of Actuaries | collect | 同时从 `/publications/` 与原 WordPress REST frontier 发现；只接收公开 `/app/themes/wicket/custom/dl_file.php` 且带 `p`、`fid` 参数的附件，始终拒绝 `/private-files/`。已保存 REST frontier 会在保留游标时补入公开页面。 |
 | 09 | `cia-research-publications` / CIA Research & Publications | collect | 与父项候选 URL 有重叠；保留独立监控 ID 和现有 REST 队列，并把 `/publications/` 作为有界 HTML 发现入口；不从私有 media API 合成附件地址。 |
-| 10 | `cca` / Conference of Consulting Actuaries | collect | 入口使用 `/professional-resources/papers` 和 `/professional-resources/technical-resource-library-main`；旧错误路径从待处理队列中幂等替换，跳过 my 子域的 Security/Sign-In 导航，不追登录页。 |
+| 10 | `cca` / Conference of Consulting Actuaries | collect | 入口使用 `/professional-resources/papers` 和 `/professional-resources/technical-resource-library-main`；旧错误路径从待处理队列中幂等替换，跳过 my 子域的 Security/Sign-In 导航。2026-10-31 三条无扩展名的 Intersector Meeting Notes 链接实为 HTML 详情页，页内另有 `/docs/default-source/...pdf`；应按页面解析真实 PDF，并修正已保存的误标为文件的队列项，不追登录页。 |
 | 11 | `aae` / Actuarial Association of Europe | collect | 保留 sitemap `lastmod` 作为变化线索；`/paper/` 只能召回，最终分类后才决定 AI 发布。 |
 | 12 | `eaa` / European Actuarial Academy | monitor_only | 保留低频 sitemap 结构检查，核对跨域 URL；旧 research-only 规则要按已批准 Education/Events 范围校准，不能直接排除培训、教育类资料。 |
 | 13 | `ifoa-uk` / Institute and Faculty of Actuaries | collect | 配置入口换成无 `www` canonical；保留旧 `www` PDF URL 作别名；每批上限 30 页并合并分页结果。 |
-| 14 | `france` / Institut des Actuaires | collect | 使用当前 `/se-documenter/memoires/memoires-d-actuariat-4651` 和 `/se-documenter/supports-des-presentations-39`，继续发现真实文章页；仅识别公开 `global/gene/link.php` 且 `doc_id > 1`、`fg=1` 的文件链接。保存的旧前沿会只移除已观察到的失效 memoir 路径，并一次性优先检查当前 memoir 列表。 |
+| 14 | `france` / Institut des Actuaires | collect | 使用当前 `/se-documenter/memoires/memoires-d-actuariat-4651` 和 `/se-documenter/supports-des-presentations-39`，继续发现真实文章页；`global/gene/link.php` 的 `doc_id > 1`、`fg=1` 只作文件候选，仍须核对实际响应。2026-11-01 的 17073、17104、17109 三个 ID 均返回会员登录 HTML，应标为受限并停止文件重试，不尝试登录；保存的旧前沿只移除已观察到的失效 memoir 路径。 |
 | 15 | `dav` / German Association of Actuaries | collect | 用 sitemap `lastmod` 驱动 `--since`；AI 路径正则只是召回预筛，最终按摘要/正文分类。 |
 | 16 | `swiss-association-of-actuaries` / Swiss Association of Actuaries | collect | 保持来源过滤和 0.6 秒请求间隔；默认 HTTP cap 30，单站 CLI 可明确使用 `--request-limit 60`。小批次最多复用/重试 24 篇并独立富信息处理最多 8 篇；预算暂停保留 frontier。 |
 | 17 | `italy` / Ordine Nazionale degli Attuari | collect | 接通或移除当前未生效的 `--depth`；补 `/documenti/sezioni-statiche` 种子，低频轮询。 |
 | 18 | `istituto-italiano-degli-attuari` / Istituto Italiano degli Attuari | hold | 探测返回 placeholder/demo；不进日常下载或发布，低频确认是否恢复或改用权威来源。仍保留日轮换序号和 coverage。 |
-| 19 | `spain` / Instituto de Actuarios Españoles | collect | 修 canonical host；保存时间和分页游标后再增量过滤，继续复用 REST/sitemap 枚举。 |
+| 19 | `spain` / Instituto de Actuarios Españoles | collect | 修 canonical host；`/document-category/` 于 2026-10-28 再次返回 404，应只清理这个已核实的旧入口，继续复用当前 REST/sitemap 枚举并保存时间和分页游标。 |
 | 20 | `australia` / Actuaries Institute | collect | 保留 `practiceAreas` / `tags` 作为候选召回字段；当前 `AI_RE` 未用于 candidates，最终 AI 标记需下游正文分类，再按 URL/SHA 去重。 |
-| 21 | `iai` / Institute of Actuaries of India | collect | 核心 hub 每轮轻量检查；杂志按年份轮换，记录 URL/version，下载、抽取后由内容分类决定 AI 发布。 |
+| 21 | `iai` / Institute of Actuaries of India | collect | 核心 hub 每轮轻量检查；杂志按年份轮换，记录 URL/version，下载、抽取后由内容分类决定 AI 发布。2026-11-01 三条旧 GN/APS PDF 返回 404；两份名为员工政策的 PDF 可下载但无可用正文，先核对来源栏目和正文再决定是否排除，当前保留提取缺口。2026 年 1 月杂志约 43 MB，超过当前 40 MiB 单件限制，另行评估杂志处理，不因单件提额。 |
 | 22 | `iaj` / Institute of Actuaries of Japan | collect | 低频轮询研究栏目，按 URL 增量；脚本发现的 page 要另接本机正文采集。 |
 | 23 | `institute-of-actuaries-of` / Institute of Actuaries of Korea | collect | 配好本机项目 Python/PYTHONPATH；覆盖 `intlTrend` 最多 15 页或加 start-page 游标，正文页和附件需另接收集。 |
 | 24 | `aict` / Actuarial Institute of Chinese Taipei | collect | 保持少量固定 hub 检查；`/re/` 被 playbook 标为 robots 禁止，未建立允许策略前不得抓对应候选；无 lastmod 游标。 |
-| 25 | `caa` / China Association of Actuaries | collect | API 枚举与附件扫描分开计数；把确认附件接入 URL/标题候选管线。`filters.json` 当前不作用于 collector，历史 2 个候选不是脚本当轮产物。 |
-| 26 | `ashk` / Actuarial Society of Hong Kong | collect | `collect.py` 外壳实际使用 `sudo docker`、固定容器及 `/tmp` 路径；需迁移为本机可配置调用/产物路径，再保持 `max-pages` 预算和统一 schema。 |
+| 25 | `caa` / China Association of Actuaries | collect | API 枚举与附件扫描分开计数；把确认附件接入 URL/标题候选管线。2026-10-31 的 14 次访问/0 文件不等于网站不可用：公开 API 仍有条目，`/systemNews/show/...` 详情正文位于 `/systemNews/showNewsContent/...` iframe；需有界读取该正文并验证候选，不能把 API 行数当文件数。`filters.json` 当前不作用于 collector，历史 2 个候选不是脚本当轮产物。 |
+| 26 | `ashk` / Actuarial Society of Hong Kong | collect | `collect.py` 外壳实际使用 `sudo docker`、固定容器及 `/tmp` 路径；需迁移为本机可配置调用/产物路径，再保持 `max-pages` 预算和统一 schema。`MemResignationForm`、`PersonalDataUpdateForm` 两条 PDF 可访问，文件名指向会员表单；先核对来源栏目和正文，再决定是否排除，不把合并错误信息直接解释为站点故障。 |
 | 27 | `assa` / Actuarial Society of South Africa | collect | 建好本机 Python 项目路径；默认请求间隔 0.3 秒小于 playbook 的 0.5 秒，先修为不少于 0.5 秒，并有界分页。 |
 | 28 | `task` / The Actuarial Society of Kenya | collect | 配置本机 Python/PYTHONPATH；单页低频扫描按 URL 去重。文件名/URL AI 规则只能召回候选，不能定最终发布。 |
 | 29 | `ama` / Moroccan Association of Actuaries | collect | `--apply-filters` 只标记 take/skip，候选输出仍混有 skip；消费前按 take 建清单或修成过滤后产物，无日期游标。 |
-| 30 | `iba-brazil` / Instituto Brasileiro de Atuária | collect | 配好本机 Python/PYTHONPATH 并验证完整枚举后，使用 REST 分页/时间增量；监控最多 15 页的上限，需确认无截断。 |
+| 30 | `iba-brazil` / Instituto Brasileiro de Atuária | collect | 配好本机 Python/PYTHONPATH 并验证完整枚举后，使用 REST 分页/时间增量；监控最多 15 页的上限，需确认无截断。2026-10-29 两本杂志约 81–85 MB，超过 40 MiB 单件限制；另有一条把 WordPress 页面短代码拼进 URL 的畸形候选，须在入队前拒绝。保留原件限制，另行评估杂志处理。 |
 | 31 | `aca-colombia` / Asociación Colombiana de Actuarios | collect | 修复未接入的 `filters.json` include 白名单，再按 offset 分页；无 lastmod，执行轻量复扫并 URL/SHA 去重。 |
-| 32 | `conac-mexico` / Colegio Nacional de Actuarios | collect | playbook 的 `--apply-filters` 不受支持，实际脚本也未写出 `--write-candidates` 文件；先修 CLI/产物合同，并让固定入口发现的正文页继续进入队列。 |
+| 32 | `conac-mexico` / Colegio Nacional de Actuarios | collect | playbook 的 `--apply-filters` 不受支持，实际脚本也未写出 `--write-candidates` 文件；先修 CLI/产物合同，并让固定入口发现的正文页继续进入队列。2026-10-30 官方 `/s/...pdf` 链接实际跳到 `static1.squarespace.com` PDF；先核对来源页与最终对象的绑定，再评估限定路径的 CDN 许可，不放开任意跨域跳转。 |
 
 所有 32 项的 `collect.py` 只能发现/预分桶或转换候选，没有统一完成下载、Markdown、Hub 增量写入、双语摘要/分类、AI 双端同步和日报。IABA/EAA 等零候选仍可能是有效结果；不要因零候选触发无限重试。跨项同文必须用规范 URL 与原件 SHA 核验，不能以一条候选数等同新增版本数。
