@@ -345,11 +345,19 @@ def test_long_evidence_covers_end_and_model_limits():
     )
     row = {"url": "https://a.example/x", "sha256": "a" * 64, "markdown_content": body}
     messages, coverage = articles.build_input(
-        row, {"model_context_tokens": 16000, "model_max_output_tokens": 2000}, {}
+        row, {"model_context_tokens": 48000, "model_max_output_tokens": 2000}, {}
     )
     assert coverage["source_chars"] <= 24000
-    assert coverage["all_input_chars"] <= 32000
-    assert coverage["input_token_upper_bound"] + coverage["max_output_tokens"] <= 16000
+    assert coverage["all_input_chars"] <= (
+        articles.MAX_INPUT_CHARS - articles.NUMERIC_CORRECTION_RESERVE_CHARS
+    )
+    assert (
+        coverage["input_token_upper_bound"]
+        + coverage["max_output_tokens"]
+        + articles.NUMERIC_CORRECTION_RESERVE_BYTES
+        + 16
+        <= 48000
+    )
     assert coverage["max_output_tokens"] == 2000
     assert coverage["uncovered_sections"]
     assert any(e["section"] == "Final limitations" for e in coverage["evidence"])
@@ -584,6 +592,7 @@ def test_numeric_validation_diagnostic_is_actionable_without_relaxing_evidence_c
         "evidence_ids": [coverage["evidence"][0]["id"]],
         "evidence_ids_truncated": False,
         "token": "",
+        "token_truncated": False,
         "missing_quantities": [{"dimension": "percent", "value": "999"}],
         "missing_quantities_truncated": False,
     }
@@ -613,6 +622,29 @@ def test_numeric_correction_feedback_omits_incomplete_diagnostic_when_too_large(
         assert len(message.encode("utf-8")) <= max_bytes
         if message:
             assert "999" in message and "E1" in message
+
+
+def test_numeric_correction_reserve_fits_saved_cas_diagnostic():
+    diagnostic = {
+        "code": "unsupported_number",
+        "paragraph": "基于单一年度观察的412,748份保单，构建包括八个解释变量的模型。",
+        "paragraph_truncated": False,
+        "evidence_ids": ["E2", "E19", "E44"],
+        "evidence_ids_truncated": False,
+        "token": "单一年度",
+        "missing_quantities": [{"dimension": "year", "value": "1"}],
+        "missing_quantities_truncated": False,
+    }
+    message = articles._numeric_correction_message(
+        diagnostic,
+        max_chars=articles.NUMERIC_CORRECTION_RESERVE_CHARS,
+        max_bytes=articles.NUMERIC_CORRECTION_RESERVE_BYTES,
+    )
+    assert message
+    assert all(value in message for value in ("unsupported_number", "year", "E2", "E19", "E44"))
+    assert "单一年度观察" in message
+    assert len(message) <= articles.NUMERIC_CORRECTION_RESERVE_CHARS
+    assert len(message.encode("utf-8")) <= articles.NUMERIC_CORRECTION_RESERVE_BYTES
 
 
 def test_manual_numeric_correction_uses_second_call_and_does_not_renew_budget(storage):
@@ -653,6 +685,15 @@ def test_manual_numeric_correction_uses_second_call_and_does_not_renew_budget(st
         (draft["interpretation_id"],),
     ).fetchone()[0]
     assert generator.calls[1][:-1] == stored_messages
+    assert articles.MAX_INPUT_CHARS - draft["coverage"]["all_input_chars"] >= (
+        articles.NUMERIC_CORRECTION_RESERVE_CHARS
+    )
+    assert (
+        draft["coverage"]["context_tokens"]
+        - draft["coverage"]["input_token_upper_bound"]
+        - draft["coverage"]["max_output_tokens"]
+        >= articles.NUMERIC_CORRECTION_RESERVE_BYTES + 16
+    )
     calls = draft["attempts"][-1]["calls"]
     assert calls[0]["validation_error"] == "unsupported_number"
     assert calls[0]["validation_diagnostic"]["evidence_ids"]
@@ -1533,7 +1574,7 @@ def test_declared_chat_model_limits_cannot_be_raised_by_article_settings(storage
         configured=True,
         stable_credential_id="fixture-credential",
         raw_config={
-            "model_context_tokens": 8000,
+            "model_context_tokens": 16000,
             "model_max_output_tokens": 2000,
             "max_tokens": 32,
         },
@@ -1550,7 +1591,7 @@ def test_declared_chat_model_limits_cannot_be_raised_by_article_settings(storage
     )
     row, decisions = runner._select("a")
     draft, actual_runtime = runner._prepare(row, "a", decisions[-1]["reason"])
-    assert draft["coverage"]["context_tokens"] == 8000
+    assert draft["coverage"]["context_tokens"] == 16000
     assert draft["coverage"]["max_output_tokens"] == 2000
     assert draft["coverage"]["generation_options"]["extra_body"] == {
         "thinking": {"type": "disabled"}
@@ -1896,6 +1937,13 @@ def test_cas_quantity_context_fixes_keep_currency_counts_and_ambiguous_commas_st
     assert articles._quantities("There were 2010 claims", strict=True) == {
         ("number", articles.Decimal(2010)),
     }
+    assert articles._quantities("in a single year", strict=True) == {
+        ("year", articles.Decimal(1)),
+    }
+    single_year = articles._quantities("in a single year", strict=True)
+    assert not articles._quantities("in two years", strict=True).issubset(single_year)
+    assert articles._quantities("in a single month", strict=True) == set()
+    assert not articles._quantities("1 month", strict=True).issubset(single_year)
 
     assert articles._quantities("4,991", strict=True) == {("number:literal", "4,991")}
     assert not articles._quantities("4991", strict=True).issubset(
@@ -2427,9 +2475,10 @@ def test_citation_label_does_not_promote_other_evidence_four_digit_counts_to_yea
         articles.validate_output(json.dumps(value, ensure_ascii=False), coverage)
 
 
-def test_prompt_v7_allows_source_supported_numerals_and_explicit_authors(monkeypatch):
-    assert articles.PROMPT_VERSION == "article-interpretation-v7-authors"
+def test_prompt_v8_allows_source_supported_numerals_and_explicit_authors(monkeypatch):
+    assert articles.PROMPT_VERSION == "article-interpretation-v8-numeric-feedback-reserve"
     assert "精确数字优先使用Arabic digits" in articles.PROMPT
+    assert "不要仅靠自己数列举项推导精确总数" in articles.PROMPT
     assert "不得编成精确金额" in articles.PROMPT
     assert "author_metadata" in articles.PROMPT and "不能补充、删减或从正文推测" in articles.PROMPT
     row = {"url": "https://a.example/x", "sha256": "a" * 64, "markdown_content": source_body()}
@@ -2438,24 +2487,26 @@ def test_prompt_v7_allows_source_supported_numerals_and_explicit_authors(monkeyp
         prior.setattr(articles, "PROMPT_VERSION", "article-interpretation-v5")
         prior.setattr(articles, "PROMPT", "所有数值都用Arabic digits。")
         old_messages, old_coverage = articles.build_input(row, {}, {})
-    assert current_coverage["prompt_version"] == "article-interpretation-v7-authors"
+    assert (
+        current_coverage["prompt_version"] == "article-interpretation-v8-numeric-feedback-reserve"
+    )
     assert old_coverage["prompt_version"] == "article-interpretation-v5"
     assert articles._hash(
         articles._json({"messages": current_messages, "coverage": current_coverage})
     ) != articles._hash(articles._json({"messages": old_messages, "coverage": old_coverage}))
 
 
-def test_v7_prompt_version_is_persisted_in_draft_and_slot_receipt(storage):
+def test_v8_prompt_version_is_persisted_in_draft_and_slot_receipt(storage):
     seed(storage, "a")
     runner = service(storage)
-    receipt = runner.run(round_key="v7-recipe-fixture")
+    receipt = runner.run(round_key="v8-recipe-fixture")
     slot = receipt["slots"][0]
     draft = runner._get(slot["interpretation_id"])
     assert (
         slot["prompt_version"]
         == draft["prompt_version"]
         == draft["coverage"]["prompt_version"]
-        == "article-interpretation-v7-authors"
+        == "article-interpretation-v8-numeric-feedback-reserve"
     )
     assert slot["input_fingerprint"] == draft["input_fingerprint"]
     assert receipt["provider_calls"] == 1

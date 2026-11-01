@@ -39,9 +39,11 @@ from ai_actuarial.chatbot.llm import (
 from ai_actuarial.postgres import PostgresConnection
 from ai_actuarial.source_registry import source_sql
 
-PROMPT_VERSION = "article-interpretation-v7-authors"
+PROMPT_VERSION = "article-interpretation-v8-numeric-feedback-reserve"
 MAX_SOURCE_CHARS = 24_000
 MAX_INPUT_CHARS = 32_000
+NUMERIC_CORRECTION_RESERVE_CHARS = 2_048
+NUMERIC_CORRECTION_RESERVE_BYTES = 8_192
 MAX_OUTPUT_TOKENS = 6_000
 MAX_CALL_SECONDS = 90.0
 MAX_PROVIDER_SECONDS = 180.0
@@ -62,6 +64,7 @@ author_metadata是从原文前页/显式署名行抽取的逐字来源信息。a
 所有事实、数字、公式、引号内容都须由段落引用原文支持。段落不要含引用标记，系统添加。
 引文/公式原样对应证据。翻译标题、概念、模型标签、说明性例子均不得加引号；只有原文逐字引文可加引号。
 精确数字优先使用Arabic digits；自然中文数量也可使用，但数字、单位、序数和精度都须由所引原文支持。
+不要仅靠自己数列举项推导精确总数；原文未明确给出总数时，应直接描述这些项目，不写精确数量。
 原文仅给模糊量级时保持该量级，例如billions of dollars可写数十亿美元，不得编成精确金额；不自行提高精度。
 source字段来自规范来源Registry。只有原文证据确有对应机构身份时才可用其中文名，使用时原样照写name_zh/name_en，
 禁止自行翻译机构名；身份未在证据出现时仅称原文/研究，不把来源归属当作者身份，pending不是机构。
@@ -91,6 +94,7 @@ def _numeric_diagnostic(code: str, text: str, ids: list[str], *, token="", missi
         "evidence_ids": ids[:32],
         "evidence_ids_truncated": len(ids) > 32,
         "token": token[:120],
+        "token_truncated": len(token) > 120,
         "missing_quantities": [
             {"dimension": dimension, "value": str(value)} for dimension, value in quantities[:16]
         ],
@@ -105,9 +109,18 @@ def _numeric_correction_message(diagnostic: dict, *, max_chars: int, max_bytes: 
     )
     if len(instruction) > max_chars or len(instruction.encode("utf-8")) > max_bytes:
         return ""
+    quantities = _json(diagnostic["missing_quantities"])
+    evidence_ids = _json(diagnostic["evidence_ids"])
+    token = diagnostic["token"]
+    if diagnostic.get("missing_quantities_truncated"):
+        quantities += "（列表已截断）"
+    if diagnostic.get("evidence_ids_truncated"):
+        evidence_ids += "（列表已截断）"
+    if diagnostic.get("token_truncated"):
+        token += "（已截断）"
     details = (
-        f" 错误={diagnostic['code']}；缺失数量={_json(diagnostic['missing_quantities'])}；"
-        f"证据={_json(diagnostic['evidence_ids'])}；token={diagnostic['token']}；段落片段="
+        f" 错误={diagnostic['code']}；缺失数量={quantities}；"
+        f"证据={evidence_ids}；token={token}；段落片段="
     )
     prefix = instruction + details
     suffix = "。"
@@ -127,6 +140,18 @@ def _numeric_correction_message(diagnostic: dict, *, max_chars: int, max_bytes: 
             break
         excerpt.append(character)
         used_bytes += encoded_size
+    if len(excerpt) < len(paragraph) or diagnostic.get("paragraph_truncated"):
+        suffix = "…[段落片段已截断]。"
+        while excerpt and (
+            len(prefix) + len(excerpt) + len(suffix) > max_chars
+            or len((prefix + "".join(excerpt) + suffix).encode("utf-8")) > max_bytes
+        ):
+            excerpt.pop()
+        if (
+            len(prefix) + len(suffix) > max_chars
+            or len((prefix + suffix).encode("utf-8")) > max_bytes
+        ):
+            return ""
     return prefix + "".join(excerpt) + suffix
 
 
@@ -408,6 +433,7 @@ def _quantities(
     )
 
     text = text.replace("唯一一个", "只有一个")
+    substitute(r"\bsingle\s+year\b", "1 year", flags=re.I)
     text = re.sub(r"二元(?=(?:灾害类型)?(?:变量|分类|特征|模型))", "  ", text)
 
     def chinese(match):
@@ -865,6 +891,11 @@ def build_input(row: dict, config: dict, route: dict) -> tuple[list[dict], dict]
         int(config.get("max_context_tokens", 128000)),
     )
     limit = MAX_SOURCE_CHARS
+    max_initial_chars = MAX_INPUT_CHARS - NUMERIC_CORRECTION_RESERVE_CHARS
+    max_initial_tokens = context - output_tokens - NUMERIC_CORRECTION_RESERVE_BYTES - 16
+    if max_initial_tokens <= 0:
+        raise ValueError("insufficient_evidence_within_model_budget")
+    previous_selection = None
     while limit >= 1000:
         evidence, omitted = extract_evidence(row["markdown_content"], limit=limit)
         material = {
@@ -885,7 +916,8 @@ def build_input(row: dict, config: dict, route: dict) -> tuple[list[dict], dict]
         chars = sum(len(m["content"]) for m in messages)
         # UTF-8 bytes are a conservative token bound for unknown Chat tokenizers.
         tokens = sum(len(m["content"].encode("utf-8")) + 16 for m in messages)
-        if chars <= MAX_INPUT_CHARS and tokens + output_tokens <= context and len(evidence) >= 5:
+        selection = tuple((item["start"], item["end"]) for item in evidence)
+        if chars <= max_initial_chars and tokens <= max_initial_tokens and len(evidence) >= 5:
             return messages, {
                 **material,
                 "source_chars": sum(len(e["quote"]) for e in evidence),
@@ -897,7 +929,16 @@ def build_input(row: dict, config: dict, route: dict) -> tuple[list[dict], dict]
                 "prompt_version": PROMPT_VERSION,
                 "generation_options": _request_options(route.get("provider", "")),
             }
-        limit = limit * 3 // 4
+        if len(evidence) < 5:
+            break
+        char_deficit = max(0, chars - max_initial_chars)
+        token_deficit = max(0, tokens - max_initial_tokens)
+        reduction = max(char_deficit, (token_deficit + 2) // 3, 1)
+        if selection == previous_selection:
+            used_source_chars = sum(len(item["quote"]) for item in evidence)
+            reduction = max(reduction, limit - used_source_chars + 1)
+        previous_selection = selection
+        limit -= reduction
     raise ValueError("insufficient_evidence_within_model_budget")
 
 
