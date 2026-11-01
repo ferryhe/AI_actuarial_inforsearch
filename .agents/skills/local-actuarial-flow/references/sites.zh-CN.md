@@ -6,6 +6,8 @@
 
 表格按固定的站点序列列出监控项，序号是日计划的轮换顺序，不是旧两小时分组。计划以 America/New_York 自然日为锚，每天取连续六项；任意七天计划 baseline 覆盖 32 项。最多两个额外槽给真实历史失败重试，日期游标保证失败队列轮转且不挤占 baseline。`collect` 是待实现执行端的全流程候选动作；`monitor_only` 仅做结构检查、不下载、不入库、不进 AI 发布；`hold` 只保留计划位置，不执行，也不算成功。IABA 和 EAA 为 monitor-only，Istituto hold。低频具体配置与实际执行回执尚待 adapter 实现。
 
+2026-10-28 至 11-01 的故障补充所依据的公开探测与脱敏回执摘录见 [定点证据](site-error-evidence-20261101.json)。定点探测不证明整站恢复或生产入库成功。
+
 | 轮换序号 | site ID / 监控项 | 计划动作 | 对既有脚本与 playbook 的处理建议 |
 |---|---|---|---|
 | 01 | `iaa` / International Actuarial Association | collect | `collect.py` 目前把外部搜索/URL 转成候选；不可永久限制为 search-only，先用本机 Crawler 完整验证 sitemap 和真实枚举。 |

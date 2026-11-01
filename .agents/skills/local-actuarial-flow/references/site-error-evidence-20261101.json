@@ -1,0 +1,258 @@
+{
+  "schema_version": 1,
+  "scope": "Public source observations and selected local receipt excerpts; this is not a collection success or case closure record.",
+  "daily_receipts": [
+    {
+      "date": "2026-10-31",
+      "site_id": "cca",
+      "run_status": "partial",
+      "downloaded_status": "partial",
+      "downloaded_count": 15,
+      "downloaded_error": "https://www.ccactuaries.org/about-cca/policies-reports-minutes/intersector-meeting-notes/docs/default-source/about-cca-documents/notes-from-intersector-meetings/intersector-irs-2019-03-07: RuntimeErrorSafe: document link returned a non-document response; https://www.ccactuaries.org/about-cca/policies-reports-minutes/intersector-meeting-notes/docs/default-source/about-cca-documents/notes-from-intersector-meetings/intersector-pbgc-2019-03-07: RuntimeErrorSafe: document link returned a non-document response; https://www.ccactuaries.org/about-cca/policies-reports-minutes/intersector-meeting-notes/docs/default-source/about-cca-documents/notes-from-intersector-meetings/intersector-irs-2018-04-04: RuntimeErrorSafe: document link returned a non-document response; request budget reached with discovery cursor retained",
+      "http_requests": 30,
+      "enriched_status": "succeeded",
+      "enriched_error": null
+    },
+    {
+      "date": "2026-10-31",
+      "site_id": "caa",
+      "run_status": "failed",
+      "downloaded_status": "failed",
+      "downloaded_count": 0,
+      "downloaded_error": "bounded source discovery produced no verified article or document candidates",
+      "http_requests": 14,
+      "enriched_status": "succeeded",
+      "enriched_error": null
+    },
+    {
+      "date": "2026-11-01",
+      "site_id": "france",
+      "run_status": "partial",
+      "downloaded_status": "partial",
+      "downloaded_count": 21,
+      "downloaded_error": "https://www.institutdesactuaires.com/global/gene/link.php?doc_id=17073&fg=1: RuntimeErrorSafe: document link returned a non-document response; https://www.institutdesactuaires.com/global/gene/link.php?doc_id=17104&fg=1: RuntimeErrorSafe: document link returned a non-document response; https://www.institutdesactuaires.com/global/gene/link.php?doc_id=17109&fg=1: RuntimeErrorSafe: document link returned a non-document response; request budget reached with discovery cursor retained",
+      "http_requests": 30,
+      "enriched_status": "succeeded",
+      "enriched_error": null
+    },
+    {
+      "date": "2026-11-01",
+      "site_id": "iai",
+      "run_status": "partial",
+      "downloaded_status": "partial",
+      "downloaded_count": 22,
+      "downloaded_error": "https://actuariesindia.org/sites/default/files/inline-files/GN%204%20_Ver%201_100703_0.pdf: RuntimeError: HTTP Error 404 for https://actuariesindia.org/sites/default/files/inline-files/GN%204%20_Ver%201_100703_0.pdf; https://actuariesindia.org/sites/default/files/inline-files/GN%207_Ver%201_050305.pdf: RuntimeError: HTTP Error 404 for https://actuariesindia.org/sites/default/files/inline-files/GN%207_Ver%201_050305.pdf; https://actuariesindia.org/sites/default/files/inline-files/APS-10-final-23012013_1.pdf: RuntimeError: HTTP Error 404 for https://actuariesindia.org/sites/default/files/inline-files/APS-10-final-23012013_1.pdf; request budget reached with discovery cursor retained",
+      "http_requests": 30,
+      "enriched_status": "partial",
+      "enriched_error": "https://actuariesindia.org/sites/default/files/inline-files/Whistle%20Blower%20Policy%20V2%2003%20May%202025.pdf: RuntimeErrorSafe: extraction gap (pdf): RuntimeErrorSafe: source produced no usable text; recorded as an extraction gap; https://actuariesindia.org/sites/default/files/inline-files/Grievance%20Redressal%20Mechanism%20for%20IAI%20Employees%20V2%2003%20May%202025_0.pdf: RuntimeErrorSafe: extraction gap (pdf): RuntimeErrorSafe: source produced no usable text; recorded as an extraction gap"
+    }
+  ],
+  "older_case_excerpts": [
+    {
+      "site_id": "ashk",
+      "case_id": "case-07cd2f94b66f4154",
+      "last_observed_date": "2026-10-29",
+      "error_excerpt": "https://www.actuaries.org.hk/storage/download/MemResignationForm (Ver.2025).pdf: RuntimeErrorSafe: document redirect left the approved source host or matched an exclusion; https://www.actuaries.org.hk/storage/download/PersonalDataUpdateForm"
+    },
+    {
+      "site_id": "iba-brazil",
+      "case_id": "case-b7afe9324ac6f180",
+      "last_observed_date": "2026-10-29",
+      "error_excerpt": "https://atuarios.org.br/wp-content/uploads/2026/08/RBA_AGO2026_Online.pdf: RuntimeErrorSafe: download exceeded size limit or failed streamed digest check; https://atuarios.org.br/revista-brasileira-de-atuaria-edicao-no-11/<p>[vc_row full_wi"
+    },
+    {
+      "site_id": "conac-mexico",
+      "case_id": "case-70580d2c30bc3571",
+      "last_observed_date": "2026-10-30",
+      "error_excerpt": "https://www.conacmexico.org.mx/s/DEFINICION-DE-LA-PROFESION-DE-ACTUARIO-Y-DELIMITACION-DE-SUS-DUNCIONES-VERSION-FINAL-APROBADA-11-nov.pdf: RuntimeErrorSafe: document redirect left the approved source host or matched an exclusion; https://ww"
+    },
+    {
+      "site_id": "spain",
+      "case_id": "case-89f03cba7416d952",
+      "last_observed_date": "2026-10-28",
+      "error_excerpt": "https://actuarios.org/document-category/: RuntimeError: HTTP Error 404 for https://actuarios.org/document-category/; request budget reached with discovery cursor retained"
+    }
+  ],
+  "exact_link_probes": {
+    "captured_at": "2026-11-01T19:55:00.758434+00:00",
+    "scope": "six exact URLs only; no Hub or target writes",
+    "rows": [
+      {
+        "site": "cca",
+        "url": "https://www.ccactuaries.org/about-cca/policies-reports-minutes/intersector-meeting-notes/docs/default-source/about-cca-documents/notes-from-intersector-meetings/intersector-irs-2019-03-07",
+        "status": 200,
+        "content_type": "text/html; charset=utf-8",
+        "final_url": "https://www.ccactuaries.org/about-cca/policies-reports-minutes/intersector-meeting-notes/docs/default-source/about-cca-documents/notes-from-intersector-meetings/intersector-irs-2019-03-07",
+        "member_only_phrase": false,
+        "pdf_links": [
+          "https://www.ccactuaries.org/docs/default-source/about-cca-documents/notes-from-intersector-meetings/intersector-irs-2019-03-07.pdf?sfvrsn=78f0d46a_4"
+        ]
+      },
+      {
+        "site": "cca",
+        "url": "https://www.ccactuaries.org/about-cca/policies-reports-minutes/intersector-meeting-notes/docs/default-source/about-cca-documents/notes-from-intersector-meetings/intersector-pbgc-2019-03-07",
+        "status": 200,
+        "content_type": "text/html; charset=utf-8",
+        "final_url": "https://www.ccactuaries.org/about-cca/policies-reports-minutes/intersector-meeting-notes/docs/default-source/about-cca-documents/notes-from-intersector-meetings/intersector-pbgc-2019-03-07",
+        "member_only_phrase": false,
+        "pdf_links": [
+          "https://www.ccactuaries.org/docs/default-source/about-cca-documents/notes-from-intersector-meetings/intersector-pbgc-2019-03-07.pdf?sfvrsn=729eeb19_4"
+        ]
+      },
+      {
+        "site": "cca",
+        "url": "https://www.ccactuaries.org/about-cca/policies-reports-minutes/intersector-meeting-notes/docs/default-source/about-cca-documents/notes-from-intersector-meetings/intersector-irs-2018-04-04",
+        "status": 200,
+        "content_type": "text/html; charset=utf-8",
+        "final_url": "https://www.ccactuaries.org/about-cca/policies-reports-minutes/intersector-meeting-notes/docs/default-source/about-cca-documents/notes-from-intersector-meetings/intersector-irs-2018-04-04",
+        "member_only_phrase": false,
+        "pdf_links": [
+          "https://www.ccactuaries.org/docs/default-source/about-cca-documents/notes-from-intersector-meetings/intersector-irs-2018-04-04.pdf?sfvrsn=14ac04fe_4"
+        ]
+      },
+      {
+        "site": "france",
+        "url": "https://www.institutdesactuaires.com/global/gene/link.php?doc_id=17073&fg=1",
+        "status": 200,
+        "content_type": "text/html; charset=UTF-8",
+        "final_url": "https://www.institutdesactuaires.com/global/gene/link.php?doc_id=17073&fg=1",
+        "member_only_phrase": true,
+        "pdf_links": []
+      },
+      {
+        "site": "france",
+        "url": "https://www.institutdesactuaires.com/global/gene/link.php?doc_id=17104&fg=1",
+        "status": 200,
+        "content_type": "text/html; charset=UTF-8",
+        "final_url": "https://www.institutdesactuaires.com/global/gene/link.php?doc_id=17104&fg=1",
+        "member_only_phrase": true,
+        "pdf_links": []
+      },
+      {
+        "site": "france",
+        "url": "https://www.institutdesactuaires.com/global/gene/link.php?doc_id=17109&fg=1",
+        "status": 200,
+        "content_type": "text/html; charset=UTF-8",
+        "final_url": "https://www.institutdesactuaires.com/global/gene/link.php?doc_id=17109&fg=1",
+        "member_only_phrase": true,
+        "pdf_links": []
+      }
+    ]
+  },
+  "other_source_probes": {
+    "captured_at": "2026-11-01T19:56:24.922305+00:00",
+    "scope": "bounded public-source probes; no Hub/target/receipt writes",
+    "observations": [
+      {
+        "name": "india_mag",
+        "url": "https://actuariesindia.org/sites/default/files/2026-04/The%20Actuary%20India%20-%20January%202026.pdf",
+        "status": 200,
+        "content_type": "application/pdf",
+        "content_length": "43198305",
+        "final_url": "https://actuariesindia.org/sites/default/files/2026-04/The%20Actuary%20India%20-%20January%202026.pdf"
+      },
+      {
+        "name": "brazil_aug",
+        "url": "https://atuarios.org.br/wp-content/uploads/2026/08/RBA_AGO2026_Online.pdf",
+        "status": 200,
+        "content_type": "application/pdf",
+        "content_length": "81509737",
+        "final_url": "https://atuarios.org.br/wp-content/uploads/2026/08/RBA_AGO2026_Online.pdf"
+      },
+      {
+        "name": "brazil_apr",
+        "url": "https://atuarios.org.br/wp-content/uploads/2026/04/RBA-ANO-X-ED-10.pdf",
+        "status": 200,
+        "content_type": "application/pdf",
+        "content_length": "85446730",
+        "final_url": "https://atuarios.org.br/wp-content/uploads/2026/04/RBA-ANO-X-ED-10.pdf"
+      },
+      {
+        "name": "mexico_pdf",
+        "url": "https://www.conacmexico.org.mx/s/DEFINICION-DE-LA-PROFESION-DE-ACTUARIO-Y-DELIMITACION-DE-SUS-DUNCIONES-VERSION-FINAL-APROBADA-11-nov.pdf",
+        "status": 200,
+        "content_type": "application/pdf",
+        "content_length": "2190101",
+        "final_url": "https://static1.squarespace.com/static/694987771d60827a9dbf41de/t/69b417524b4199499ba49d72/1773410130733/DEFINICI%C3%93N+DE+LA+PROFESI%C3%93N+DE+ACTUARIO+Y+DELIMITACI%C3%93N+DE+SUS+DUNCIONES+%28VERSI%C3%93N+FINAL+APROBADA%29+11-noviembre-2024.pdf"
+      },
+      {
+        "name": "ashk_form",
+        "url": "https://www.actuaries.org.hk/storage/download/MemResignationForm%20(Ver.2025).pdf",
+        "status": 200,
+        "content_type": "application/pdf",
+        "content_length": "187009",
+        "final_url": "https://www.actuaries.org.hk/storage/download/MemResignationForm%20(Ver.2025).pdf"
+      },
+      {
+        "name": "spain_old",
+        "url": "https://actuarios.org/document-category/",
+        "status": 404,
+        "error": "HTTPError"
+      },
+      {
+        "name": "soa_old",
+        "url": "https://www.soa.org/research/soa-research/",
+        "status": 404,
+        "error": "HTTPError"
+      },
+      {
+        "name": "india_old",
+        "url": "https://actuariesindia.org/sites/default/files/inline-files/GN%204%20_Ver%201_100703_0.pdf",
+        "status": 404,
+        "error": "HTTPError"
+      },
+      {
+        "name": "caa_detail",
+        "url": "https://www.e-caa.org.cn/systemNews/show/8a7dccc1987b486a019918f12950007c?str=%E4%B8%93%E4%B8%9A%E6%A0%87%E5%87%86",
+        "status": 200,
+        "content_type": "text/html; charset=UTF-8",
+        "content_length": null,
+        "final_url": "https://www.e-caa.org.cn/systemNews/show/8a7dccc1987b486a019918f12950007c?str=%E4%B8%93%E4%B8%9A%E6%A0%87%E5%87%86",
+        "iframe_src": [
+          "/systemNews/showNewsContent/8a7dccc1987b486a019918f12950007c",
+          "/pages/common/common_right.jsp"
+        ]
+      },
+      {
+        "name": "ashk_personal_data_form",
+        "url": "https://www.actuaries.org.hk/storage/download/PersonalDataUpdateForm%20(Ver.%202025).pdf",
+        "method": "HEAD",
+        "status": 200,
+        "content_type": "application/pdf",
+        "content_length": "297526",
+        "final_url": "https://www.actuaries.org.hk/storage/download/PersonalDataUpdateForm%20(Ver.%202025).pdf"
+      }
+    ]
+  },
+  "caa_api_detail_probe": {
+    "captured_at": "2026-11-01T19:57:55.611041+00:00",
+    "home": {
+      "status": 200,
+      "content_type": "text/html; charset=UTF-8"
+    },
+    "api": {
+      "status": 200,
+      "rows": 1,
+      "first_title": "首台（套）重大技术装备首批次新材料保险业务费率厘定标准",
+      "first_url": "/systemNews/show/8a7dccc1987b486a019918f12950007c?str=%E4%B8%93%E4%B8%9A%E6%A0%87%E5%87%86"
+    },
+    "detail": {
+      "status": 200,
+      "content_type": "text/html; charset=UTF-8",
+      "url": "https://www.e-caa.org.cn/systemNews/show/8a7dccc1987b486a019918f12950007c?str=%E4%B8%93%E4%B8%9A%E6%A0%87%E5%87%86",
+      "iframe_src": [
+        "/systemNews/showNewsContent/8a7dccc1987b486a019918f12950007c",
+        "/pages/common/common_right.jsp"
+      ],
+      "pdf_href_count": 0
+    },
+    "inner": {
+      "status": 200,
+      "content_type": "text/html; charset=UTF-8",
+      "url": "https://www.e-caa.org.cn/systemNews/showNewsContent/8a7dccc1987b486a019918f12950007c",
+      "body_contains_title": false,
+      "html_bytes": 7565,
+      "visible_text_length": 1052
+    }
+  }
+}
