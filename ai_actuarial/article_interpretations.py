@@ -436,6 +436,40 @@ def _quantities(
     substitute(r"\bsingle\s+year\b", "1 year", flags=re.I)
     text = re.sub(r"二元(?=(?:灾害类型)?(?:变量|分类|特征|模型))", "  ", text)
 
+    decade_words = {
+        word: number
+        for number, word in enumerate(
+            "one two three four five six seven eight nine ten eleven twelve".split(), 1
+        )
+    }
+
+    def decades_as_years(match):
+        value = match["value"].lower()
+        count = Decimal(decade_words[value]) if value in decade_words else Decimal(value)
+        sign = match["sign"].replace("−", "-")
+        return f"{sign}{count * 10} years"
+
+    decade_value = (
+        r"(?:\d+(?:\.\d+)?|\.\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)"
+    )
+    substitute(
+        rf"(?<![\w.,])(?P<sign>[+\-−]?)(?P<value>{decade_value})\s+decades?\b",
+        decades_as_years,
+        flags=re.I,
+    )
+
+    def expand_hyphenated_percent_range(match):
+        unit = match["unit"]
+        return f"{match['lower']} {unit} to {match['upper']} {unit}"
+
+    range_value = r"(?:\d+(?:\.\d+)?|\.\d+)"
+    substitute(
+        rf"(?<![\w.,+\-−])(?P<lower>{range_value})\s*-\s*to\s*-\s*"
+        rf"(?P<upper>{range_value})\s*(?P<unit>percent|per\s+cent|%|％)(?![A-Za-z])",
+        expand_hyphenated_percent_range,
+        flags=re.I,
+    )
+
     def chinese(match):
         if match["number"] == "一" and match["unit"] in {"个", "起", "种"} and not match["prefix"]:
             before = text[max(0, match.start() - 12) : match.start()].rstrip()

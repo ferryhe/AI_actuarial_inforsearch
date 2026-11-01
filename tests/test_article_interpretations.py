@@ -1955,6 +1955,77 @@ def test_cas_quantity_context_fixes_keep_currency_counts_and_ambiguous_commas_st
     )
 
 
+def test_saved_som_numeric_diagnostics_have_narrow_decade_and_percent_range_equivalence():
+    decade_paragraph = (
+        "作者提出三条正在交汇的趋势：一是保险与金融领域三十年来积累的私有机器学习系统，"
+        "包括遗传算法用于组合优化，以及较少为人所知的自组织映射；二是大型科技厂商提供的大语言模型；"
+        "三是再保险业务向发展中市场扩张。作者以最古老的再保险合约——巨灾损失成数分保——作为案例。"
+    )
+    growth_paragraph = (
+        "作者以马来西亚和印度尼西亚为例，指出该地区毛承保保费年增长5%至8%，"
+        "市场扩张快、数据稀疏、历史经验有限，因此结构简单、定价透明的成数分保更具优势。"
+    )
+    source_decades = articles._quantities(
+        "For three decades, specialists in insurance and finance have built machine learning systems.",
+        strict=True,
+    )
+    source_growth = articles._quantities(
+        "Two prescient cases in point are Malaysia and Indonesia with 5-to-8 percent annual growth in Gross Underwritten Premium.",
+        strict=True,
+    )
+    assert articles._quantities(decade_paragraph, strict=True) == {("year", articles.Decimal(30))}
+    assert articles._quantities(growth_paragraph, strict=True) == {
+        ("percent", articles.Decimal(5)),
+        ("percent", articles.Decimal(8)),
+    }
+    assert articles._quantities(decade_paragraph, strict=True).issubset(source_decades)
+    assert articles._quantities(growth_paragraph, strict=True).issubset(source_growth)
+
+    assert articles._quantities("For three decades", strict=True) == {
+        ("year", articles.Decimal(30))
+    }
+    assert articles._quantities("3 decades", strict=True) == {("year", articles.Decimal(30))}
+    assert articles._quantities("-3 decades", strict=True) == {("year", articles.Decimal(-30))}
+    assert articles._quantities("2.0 decades", strict=True) == {("year", articles.Decimal("20.0"))}
+    assert articles._quantities("三十年来", strict=True) == {("year", articles.Decimal(30))}
+    assert articles._quantities("For three years", strict=True) == {("year", articles.Decimal(3))}
+    assert not articles._quantities("三十年来", strict=True).issubset(
+        articles._quantities("For three years", strict=True)
+    )
+    assert articles._quantities("In the 1980s", strict=True) == {("number", articles.Decimal(1980))}
+
+    assert articles._quantities("5-to-8 percent annual growth", strict=True) == {
+        ("percent", articles.Decimal(5)),
+        ("percent", articles.Decimal(8)),
+    }
+    assert articles._quantities("5.0-to-8.0 percent", strict=True) == {
+        ("percent", articles.Decimal("5.0")),
+        ("percent", articles.Decimal("8.0")),
+    }
+    assert articles._quantities("5%至8%", strict=True) == articles._quantities(
+        "5-to-8 percent", strict=True
+    )
+    assert articles._quantities("5.0%至8.0%", strict=True) == articles._quantities(
+        "5.0-to-8.0 percent", strict=True
+    )
+    assert articles._quantities("5-to--8 percent", strict=True) == {
+        ("number", articles.Decimal(5)),
+        ("percent", articles.Decimal(-8)),
+    }
+    assert articles._quantities("5 to -8 percent", strict=True) == {
+        ("number", articles.Decimal(5)),
+        ("percent", articles.Decimal(-8)),
+    }
+    assert articles._quantities("-5% to 8%", strict=True) == {
+        ("percent", articles.Decimal(-5)),
+        ("percent", articles.Decimal(8)),
+    }
+    for changed_target in ("6%至8%", "5%至9%", "5至8", "5美元至8美元"):
+        assert not articles._quantities(changed_target, strict=True).issubset(
+            articles._quantities("5-to-8 percent", strict=True)
+        )
+
+
 @pytest.mark.parametrize("kind,label", [("example", "说明性例子"), ("inference", "解读推断")])
 def test_supported_numeric_example_and_inference_are_allowed(kind, label):
     body = source_body().replace(

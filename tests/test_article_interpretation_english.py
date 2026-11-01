@@ -494,6 +494,42 @@ def test_quantity_validation_preserves_order_multiplicity_and_explicit_date_alia
         assert collected
 
 
+def test_english_quantity_validation_handles_saved_som_decade_and_percent_range():
+    check = english._check_quantities
+    saved_decade_claim = "保险与金融领域三十年来积累的私有机器学习系统"
+    saved_growth_paragraph = (
+        "作者以马来西亚和印度尼西亚为例，指出该地区毛承保保费年增长5%至8%，"
+        "市场扩张快、数据稀疏、历史经验有限，因此结构简单、定价透明的成数分保更具优势。"
+    )
+
+    check(
+        "saved_som_decade",
+        saved_decade_claim,
+        "Private machine learning systems built over three decades.",
+    )
+    check(
+        "saved_som_growth",
+        saved_growth_paragraph,
+        "Gross Underwritten Premium grew 5-to-8 percent annually in Malaysia and Indonesia.",
+    )
+    check("signed_percent_range", "从-5%到8%", "from -5% to 8%")
+
+    with pytest.raises(ValueError, match="number_mismatch"):
+        check("wrong_decade_value", "三十年来", "For two decades")
+    with pytest.raises(ValueError, match="number_mismatch"):
+        check("years_are_not_decades", "三十年来", "For three years")
+    with pytest.raises(ValueError, match="number_mismatch"):
+        check("wrong_percent_lower_bound", "年增长5%至8%", "5-to-6 percent")
+    with pytest.raises(ValueError, match="number_mismatch"):
+        check("wrong_percent_upper_bound", "年增长5%至8%", "5-to-9 percent")
+    with pytest.raises(ValueError, match="number_mismatch"):
+        check("percent_unit_missing", "年增长5%至8%", "5-to-8")
+    with pytest.raises(ValueError, match="number_mismatch"):
+        check("percent_unit_changed", "年增长5%至8%", "5-to-8 USD")
+    with pytest.raises(ValueError, match="number_mismatch"):
+        check("percent_precision_changed", "年增长5%至8%", "5.0-to-8.0 percent")
+
+
 def test_second_call_receives_bounded_correction_and_does_not_refresh_chinese_budget(storage):
     draft = _draft(storage)
     generator = Generator(outputs=[lambda messages: _valid_response(messages, first_number="999")])
