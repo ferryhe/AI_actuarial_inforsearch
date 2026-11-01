@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from typing import Any, Mapping
 
 from ai_actuarial.shared_runtime import get_categories_config_path, load_yaml, parse_int_clamped
+from ai_actuarial.source_portals import SOURCE_PORTAL_URLS, source_portal_cards
 from ai_actuarial.storage import Storage
 
 PUBLIC_FILE_LIST_FIELDS: tuple[str, ...] = (
@@ -167,9 +168,11 @@ def get_dashboard_stats(*, db_path: str, active_tasks: int) -> dict[str, int]:
     storage = Storage(db_path)
     try:
         return {
-            "total_files": storage.get_file_count(require_local=True),
-            "cataloged_files": storage.get_cataloged_count(),
-            "total_sources": storage.get_sources_count(),
+            "total_files": storage.get_file_count(
+                require_local=True, exclude_urls=SOURCE_PORTAL_URLS
+            ),
+            "cataloged_files": storage.get_cataloged_count(exclude_urls=SOURCE_PORTAL_URLS),
+            "total_sources": storage.get_sources_count(exclude_urls=SOURCE_PORTAL_URLS),
             "active_tasks": active_tasks,
         }
     finally:
@@ -180,7 +183,7 @@ def list_categories(*, db_path: str, mode: str = "") -> dict[str, list[str]]:
     if mode.strip().lower() == "used":
         storage = Storage(db_path)
         try:
-            categories = storage.get_unique_categories()
+            categories = storage.get_unique_categories(exclude_urls=SOURCE_PORTAL_URLS)
         finally:
             storage.close()
         return {"categories": categories}
@@ -195,7 +198,7 @@ def list_categories(*, db_path: str, mode: str = "") -> dict[str, list[str]]:
 
     storage = Storage(db_path)
     try:
-        categories = storage.get_unique_categories()
+        categories = storage.get_unique_categories(exclude_urls=SOURCE_PORTAL_URLS)
     finally:
         storage.close()
     return {"categories": categories}
@@ -204,11 +207,57 @@ def list_categories(*, db_path: str, mode: str = "") -> dict[str, list[str]]:
 def list_sources(*, db_path: str) -> dict[str, Any]:
     storage = Storage(db_path)
     try:
-        options = storage.get_source_options()
+        options = storage.get_source_options(exclude_urls=SOURCE_PORTAL_URLS)
         sources = [row["source_key"] for row in options]
     finally:
         storage.close()
     return {"sources": sources, "source_options": options}
+
+
+def list_source_portals(*, db_path: str) -> dict[str, list[dict[str, Any]]]:
+    storage = Storage(db_path)
+    try:
+        card_rows = storage._conn.execute(
+            "SELECT portal_key, official_url, title_zh, title_en, institution_zh, institution_en, "
+            "overview_zh, overview_en, sort_order FROM source_portal_cards ORDER BY sort_order, portal_key"
+        ).fetchall()
+        update_rows = storage._conn.execute(
+            "SELECT portal_key, acquired_on, description_zh, description_en "
+            "FROM source_portal_updates ORDER BY portal_key, acquired_on DESC"
+        ).fetchall()
+    finally:
+        storage.close()
+    cards = [
+        {
+            "portal_key": str(row[0]),
+            "url": str(row[1]),
+            "title_zh": str(row[2]),
+            "title_en": str(row[3]),
+            "institution_zh": str(row[4]),
+            "institution_en": str(row[5]),
+            "overview_zh": str(row[6]),
+            "overview_en": str(row[7]),
+            "sort_order": int(row[8]),
+            "updates": [],
+        }
+        for row in card_rows
+    ]
+    if not cards:
+        cards = [{**card, "updates": []} for card in source_portal_cards()]
+    by_key = {card["portal_key"]: card for card in cards}
+    for row in update_rows:
+        card = by_key.get(str(row[0]))
+        if card is None:
+            continue
+        acquired_on = row[1].isoformat() if hasattr(row[1], "isoformat") else str(row[1])
+        card["updates"].append(
+            {
+                "acquired_on": acquired_on,
+                "description_zh": str(row[2]),
+                "description_en": str(row[3]),
+            }
+        )
+    return {"portals": cards}
 
 
 def get_file_detail(
@@ -272,6 +321,7 @@ def list_files(
             first_seen_from=query.first_seen_from,
             first_seen_before=query.first_seen_before,
             snapshot_id=query.snapshot_id,
+            exclude_urls=SOURCE_PORTAL_URLS,
         )
     finally:
         storage.close()

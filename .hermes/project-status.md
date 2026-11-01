@@ -1,3 +1,22 @@
+# 合并准备 — PR #444 与 #445 — 2026-11-01
+
+- 用户已明确授权先合并 #444，再将 #445 合入 main，并核验处理 Copilot 意见。#444 已 squash 合并为 bbad8a76317c96c02e6a03bb7070e334a97633b1，原 HEAD 六项 CI 全部通过，四个 Copilot 讨论已解决。
+- #445 合入更新后的 main 时唯一冲突是本状态文件顶部的两组独立记录；保留双方记录，应用源码没有冲突，也不改写任一 PR 的实现。正常 merge main 到原分支后重新跑当前 HEAD 的 CI，再合并；不强推、不删分支、不部署或访问生产数据。
+
+# 当前候选 — 来源入口列表与单入口详情 — 2026-11-01
+
+- 项目 AI_actuarial_inforsearch，分支 codex/source-portals，继续 PR #445。本轮仅调整来源入口前端：`/source-portals` 为数据库风格四列表格，支持名称/机构/介绍搜索与每页 20 项；独立详情路径保留原动态全文、原站链接及返回时的筛选/页码。更新中英文、路由、组件测试和 Playwright smoke；未改 Database、API、采集或 schema。
+- 搜索输入保留空格；标题可键盘进入详情。移动端合并机构列，简介换行，日期仍清晰显示。直接刷新详情和未知入口返回列表也已纳入验证用例。
+- 最终验证：组件 Vitest 5/5、lint（仅四条已有 Hook warning）、typecheck、build、真实 Chrome 中英文桌面/手机 browser smoke 全部通过。浏览器流程覆盖搜索、分页、键盘打开详情、直接详情、返回时保留筛选/页码、空动态与未知入口。另以真实十个入口配置在 1440/768/640/390 宽度完成截图，无横向溢出或 pageerror，详情刷新正常；动态只在浏览器 mock 中演示，不是生产采集结果。前期本机进程与自动权限审核超时已恢复，未留下验证阻塞。
+- 本轮 UI 首轮及最终独立 Sol/high reviewer 均 PASS，最终五个前端文件的 blob hash 已记录在忽略文件 `reports/source-portals-list-review-final.md`；原 PR 后端结论仍保持原有“最终修复已测试但未 review，不能称 PASS”的状态。完整本轮记录见忽略文件 `reports/source-portals-list-worker.md`。沿用旧的 255 项后端回归证据，本次未改后端，不重复生产验收。没有第二次 Copilot 请求、生产数据写入、合并或部署。原工作树无关改动保留；本轮提交后检查 GitHub 当前 HEAD 的 CI。
+
+# 当前候选 — 来源入口动态 — 2026-11-01
+
+- 项目 AI_actuarial_inforsearch，分支 codex/source-portals，PR #445。独立来源入口阅读页由固定目录卡片和真实完整采集组成；Content Hub v5 保存不可变采集与成员，服务 schema 6 展示每日最新实际采集。普通 HTML 材料和版本保留，精确目录页仅从 Database 列表、计数、分类及导出排除。
+- 初始 PR 后仅发起过一次 Copilot review，五项可复现反馈经 TypeSafe Judge 接受并已修复：同日相同页面的后续真实采集按 captured_at 留存并排序；SOA AI 入口使用固定抽取来源及新比较范围；动态示例限长但 Hub 保留完整标题；忽略正文内导航/页脚且空目录不完整；CIA 带尾斜杠目录 URL 纳入精确别名。没有重开 Copilot review。
+- 验证：Content Hub、采集 runtime、target worker、API、迁移和来源入口测试合计 255/255 通过（来源入口 suite 21/21）。Black、isort、Ruff、Pylint errors-only、py_compile、git diff --check 通过。测试只写隔离 PostgreSQL schema；无生产迁移、采集或 serving 写入。
+- 累计完成 6 轮独立 review：此前 4 轮要求修改、review 5 PASS、PR 反馈 review 6 要求修改。TypeSafe Judge 接受最后两项有界修复；按 review 限额例外，最终改动已测试但未再 review，明确不记为 PASS。父任务负责提交推送修复、GitHub 线程处置和 CI；没有合并或部署。完整记录在忽略文件 reports/source-portals-worker.md。
+
 # 当前候选 — PR444 远程审查反馈 — 2026-11-01
 
 - 分支 `fix/interpretation-number-evidence`。Copilot 对 PR444 的4项反馈均先在隔离 PostgreSQL schema 与注入式 generator/resolver 中复现；TypeSafe Jev 1.14.0 接受全部4项，并要求同一 worker 修复与测试。证据：`reports/interpretation-number-repair-20261101/remote-feedback-assessment.json`、`typesafe-remote-input.json`、`typesafe-remote-result.json`。

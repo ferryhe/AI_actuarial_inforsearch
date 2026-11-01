@@ -20,6 +20,8 @@ from contextlib import nullcontext
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
+from urllib.parse import urlsplit
+from zoneinfo import ZoneInfo
 
 MAX_BATCH_ITEMS = 100
 MAX_ARTICLE_BYTES = 40 * 1024 * 1024
@@ -1969,6 +1971,201 @@ def apply_source_registry(
         storage.close()
 
 
+def apply_source_portals(
+    payload: dict[str, Any], *, storage_factory: Callable[..., Any] | None = None
+) -> dict[str, Any]:
+    """Persist reader-only portal cards and dated observations without touching article KBs."""
+    target = payload.get("target")
+    if target not in {"china", "overseas"}:
+        raise ValueError("target must be china or overseas")
+    cards = payload.get("cards")
+    updates = payload.get("updates")
+    if not isinstance(cards, list) or not 1 <= len(cards) <= 100:
+        raise ValueError("source portal sync requires one to 100 cards")
+    if not isinstance(updates, list) or len(updates) > 1000:
+        raise ValueError("source portal sync exceeds its update limit")
+    normalized_cards = []
+    card_keys: set[str] = set()
+    for index, card in enumerate(cards):
+        if not isinstance(card, dict):
+            raise ValueError("source portal card must be an object")
+        key = card.get("portal_key")
+        if (
+            not isinstance(key, str)
+            or not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", key)
+            or key in card_keys
+        ):
+            raise ValueError("source portal card key is malformed or duplicated")
+        card_keys.add(key)
+        fields = (
+            "url",
+            "title_zh",
+            "title_en",
+            "institution_zh",
+            "institution_en",
+            "overview_zh",
+            "overview_en",
+        )
+        parsed_url = urlsplit(card["url"]) if isinstance(card.get("url"), str) else None
+        if any(
+            not isinstance(card.get(field), str)
+            or not card[field].strip()
+            or len(card[field]) > (2048 if field == "url" else 1000)
+            for field in fields
+        ) or (
+            parsed_url is None
+            or parsed_url.scheme not in {"https", "http"}
+            or not parsed_url.hostname
+            or parsed_url.username
+            or parsed_url.password
+        ):
+            raise ValueError("source portal card text or URL is malformed")
+        order = card.get("sort_order", index)
+        if type(order) is not int or not 0 <= order <= 1000:
+            raise ValueError("source portal card ordering is malformed")
+        normalized_cards.append(
+            {
+                **{field: card[field].strip() for field in fields},
+                "portal_key": key,
+                "sort_order": order,
+            }
+        )
+
+    normalized_updates = []
+    seen_updates: set[tuple[str, str]] = set()
+    for update in updates:
+        if not isinstance(update, dict):
+            raise ValueError("source portal update must be an object")
+        key = update.get("portal_key")
+        acquired_on = update.get("acquired_on")
+        capture_id = update.get("capture_id")
+        captured_at = update.get("captured_at")
+        if (
+            not isinstance(key, str)
+            or key not in card_keys
+            or not isinstance(acquired_on, str)
+            or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", acquired_on)
+            or type(capture_id) is not int
+            or capture_id < 1
+            or not isinstance(captured_at, str)
+            or not captured_at.strip()
+            or len(captured_at) > 64
+        ):
+            raise ValueError("source portal update identity is malformed")
+        try:
+            acquired_date = date.fromisoformat(acquired_on)
+            captured_datetime = datetime.fromisoformat(captured_at.replace("Z", "+00:00"))
+            if captured_datetime.tzinfo is None:
+                raise ValueError("timezone required")
+            captured_datetime = captured_datetime.astimezone(timezone.utc)
+        except ValueError as exc:
+            raise ValueError("source portal acquisition date is invalid") from exc
+        if captured_datetime.astimezone(ZoneInfo("America/New_York")).date() != acquired_date:
+            raise ValueError("source portal acquisition date does not match captured_at")
+        identity = (key, acquired_on)
+        if identity in seen_updates:
+            raise ValueError("source portal sync contains duplicate dated updates")
+        seen_updates.add(identity)
+        description_zh, description_en = update.get("description_zh"), update.get("description_en")
+        if any(
+            not isinstance(value, str) or not value.strip() or len(value) > 2000
+            for value in (description_zh, description_en)
+        ):
+            raise ValueError("source portal update prose is malformed")
+        normalized_updates.append(
+            {
+                "portal_key": key,
+                "acquired_on": acquired_on,
+                "capture_id": capture_id,
+                "captured_at": captured_datetime.isoformat(),
+                "description_zh": description_zh.strip(),
+                "description_en": description_en.strip(),
+            }
+        )
+
+    from ai_actuarial.storage import Storage
+
+    if storage_factory is None:
+        probe = Storage.open_read_only()
+        try:
+            missing = [
+                table
+                for table in ("source_portal_cards", "source_portal_updates")
+                if not probe._conn.table_exists(table)
+            ]
+        finally:
+            probe.close()
+        if missing:
+            raise RuntimeError(
+                "Source portal application migration is missing; apply schema migration 6 before syncing"
+            )
+        storage = Storage()
+    else:
+        storage = storage_factory()
+    try:
+        missing = [
+            table
+            for table in ("source_portal_cards", "source_portal_updates")
+            if not storage._conn.table_exists(table)
+        ]
+        if missing:
+            raise RuntimeError(
+                "Source portal application migration is missing; apply schema migration 6 before syncing"
+            )
+        with storage.transaction(immediate=True):
+            for card in normalized_cards:
+                storage._conn.execute(
+                    "INSERT INTO source_portal_cards "
+                    "(portal_key, official_url, title_zh, title_en, institution_zh, institution_en, "
+                    "overview_zh, overview_en, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                    "ON CONFLICT(portal_key) DO UPDATE SET official_url = excluded.official_url, "
+                    "title_zh = excluded.title_zh, title_en = excluded.title_en, "
+                    "institution_zh = excluded.institution_zh, institution_en = excluded.institution_en, "
+                    "overview_zh = excluded.overview_zh, overview_en = excluded.overview_en, "
+                    "sort_order = excluded.sort_order, updated_at = CURRENT_TIMESTAMP",
+                    (
+                        card["portal_key"],
+                        card["url"],
+                        card["title_zh"],
+                        card["title_en"],
+                        card["institution_zh"],
+                        card["institution_en"],
+                        card["overview_zh"],
+                        card["overview_en"],
+                        card["sort_order"],
+                    ),
+                )
+            for update in normalized_updates:
+                storage._conn.execute(
+                    "INSERT INTO source_portal_updates "
+                    "(portal_key, acquired_on, capture_id, captured_at, description_zh, description_en) "
+                    "VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(portal_key, acquired_on) DO UPDATE SET "
+                    "capture_id = excluded.capture_id, description_zh = excluded.description_zh, "
+                    "description_en = excluded.description_en, captured_at = excluded.captured_at, "
+                    "created_at = CURRENT_TIMESTAMP "
+                    "WHERE excluded.captured_at > source_portal_updates.captured_at "
+                    "OR (excluded.captured_at = source_portal_updates.captured_at "
+                    "AND excluded.capture_id > source_portal_updates.capture_id)",
+                    (
+                        update["portal_key"],
+                        update["acquired_on"],
+                        update["capture_id"],
+                        update["captured_at"],
+                        update["description_zh"],
+                        update["description_en"],
+                    ),
+                )
+        return {
+            "schema_version": 1,
+            "target": target,
+            "cards_synced": len(normalized_cards),
+            "updates_synced": len(normalized_updates),
+            "failures": [],
+        }
+    finally:
+        storage.close()
+
+
 def apply_batch(
     payload: dict[str, Any],
     *,
@@ -2120,7 +2317,9 @@ def main() -> int:
     payload: Any = None
     try:
         payload = json.load(sys.stdin)
-        if isinstance(payload, dict) and payload.get("operation") == "sync_source_registry":
+        if isinstance(payload, dict) and payload.get("operation") == "sync_source_portals":
+            result = apply_source_portals(payload)
+        elif isinstance(payload, dict) and payload.get("operation") == "sync_source_registry":
             result = apply_source_registry(payload)
         elif isinstance(payload, dict) and payload.get("operation") == "retire_non_ai_primary":
             result = apply_cleanup(payload)
