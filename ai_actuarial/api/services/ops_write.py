@@ -2398,6 +2398,22 @@ def start_collection(
             data=data,
             bridge=bridge,
         )
+    if collection_type == "article_interpretation" and "file_url" in data:
+        file_url = data.get("file_url")
+        if (
+            not isinstance(file_url, str)
+            or not file_url.strip()
+            or len(file_url) > 2048
+            or data.get("retry_id")
+            or data.get("scheduled")
+        ):
+            _reject_request(
+                "Manual article interpretation requires one file_url and cannot be scheduled or retried",
+                collection_type=collection_type,
+                data=data,
+                bridge=bridge,
+            )
+        data["file_url"] = file_url.strip()
     if collection_type == "markdown_conversion":
         scope_mode = str(data.get("scope_mode") or "index").strip().lower()
         if scope_mode == "category" and not str(data.get("category") or "").strip():

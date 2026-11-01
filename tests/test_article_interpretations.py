@@ -568,6 +568,423 @@ def test_output_rejects_unsupported_numbers_quotes_and_unlabelled_inference():
         articles.validate_output(json.dumps(value), coverage)
 
 
+def test_numeric_validation_diagnostic_is_actionable_without_relaxing_evidence_checks():
+    row = {"url": "https://a.example/x", "sha256": "a" * 64, "markdown_content": source_body()}
+    messages, coverage = articles.build_input(row, {}, {})
+    value = json.loads(response(messages))
+    paragraph = "研究证明收益提高999%。"
+    value["sections"][0]["paragraphs"][0]["text"] = paragraph
+    with pytest.raises(ValueError) as raised:
+        articles.validate_output(json.dumps(value, ensure_ascii=False), coverage)
+    assert str(raised.value) == "unsupported_number"
+    assert raised.value.diagnostic == {
+        "code": "unsupported_number",
+        "paragraph": paragraph,
+        "paragraph_truncated": False,
+        "evidence_ids": [coverage["evidence"][0]["id"]],
+        "evidence_ids_truncated": False,
+        "token": "",
+        "missing_quantities": [{"dimension": "percent", "value": "999"}],
+        "missing_quantities_truncated": False,
+    }
+
+
+def test_numeric_correction_feedback_omits_incomplete_diagnostic_when_too_large():
+    diagnostic = {
+        "code": "unsupported_number",
+        "paragraph": "研究证明收益提高999%。",
+        "evidence_ids": ["E1"],
+        "token": "999",
+        "missing_quantities": [{"dimension": "percent", "value": "999"}],
+    }
+
+    assert articles._numeric_correction_message(diagnostic, max_chars=1000, max_bytes=300) == ""
+
+    complete = articles._numeric_correction_message(diagnostic, max_chars=2000, max_bytes=2000)
+    assert "999" in complete and "E1" in complete
+    for max_chars, max_bytes in (
+        (len(complete) - 1, 2000),
+        (2000, len(complete.encode("utf-8")) - 1),
+    ):
+        message = articles._numeric_correction_message(
+            diagnostic, max_chars=max_chars, max_bytes=max_bytes
+        )
+        assert len(message) <= max_chars
+        assert len(message.encode("utf-8")) <= max_bytes
+        if message:
+            assert "999" in message and "E1" in message
+
+
+def test_manual_numeric_correction_uses_second_call_and_does_not_renew_budget(storage):
+    url = seed(storage, "a")
+
+    class CorrectingGenerator:
+        def __init__(self):
+            self.calls = []
+
+        async def generate(self, messages, *, deadline):
+            self.calls.append(messages)
+            source_messages = messages[:-1] if len(messages) > 2 else messages
+            value = json.loads(response(source_messages))
+            if len(self.calls) == 1:
+                value["sections"][0]["paragraphs"][0]["text"] = "研究证明收益提高999%。"
+            return json.dumps(value, ensure_ascii=False)
+
+    generator = CorrectingGenerator()
+    receipt = service(storage, generator=generator).run(file_url=url, round_key="client-round")
+    assert receipt["receipt_type"] == "manual"
+    assert receipt["round_key"].startswith("manual:")
+    assert len(receipt["slots"]) == 1 and receipt["slots"][0]["status"] == "ready"
+    assert receipt["provider_calls"] == len(generator.calls) == 2
+    assert "999%" in generator.calls[1][-1]["content"]
+    assert "缺失数量" in generator.calls[1][-1]["content"]
+    draft = articles.read_interpretations(storage.database, file_url=url)[0]
+    second_call_chars = sum(len(message["content"]) for message in generator.calls[1])
+    second_call_tokens = sum(
+        len(message["content"].encode("utf-8")) + 16 for message in generator.calls[1]
+    )
+    assert second_call_chars <= articles.MAX_INPUT_CHARS
+    assert (
+        second_call_tokens + draft["coverage"]["max_output_tokens"]
+        <= draft["coverage"]["context_tokens"]
+    )
+    stored_messages = storage._conn.execute(
+        "SELECT payload_json->'messages' FROM article_interpretations WHERE interpretation_id=?",
+        (draft["interpretation_id"],),
+    ).fetchone()[0]
+    assert generator.calls[1][:-1] == stored_messages
+    calls = draft["attempts"][-1]["calls"]
+    assert calls[0]["validation_error"] == "unsupported_number"
+    assert calls[0]["validation_diagnostic"]["evidence_ids"]
+    assert draft["reader_eligible"] and draft["china_article_url"]
+    assert (
+        storage._conn.execute(
+            "SELECT last_source_key FROM article_interpretation_state WHERE singleton"
+        ).fetchone()[0]
+        == ""
+    )
+    before = service(storage)._content_budget(draft["content_key"])
+    repeated = service(storage).run(file_url=url)
+    assert repeated == receipt
+    assert service(storage)._content_budget(draft["content_key"]) == before
+    assert (
+        storage._conn.execute(
+            "SELECT count(*) FROM article_interpretation_rounds WHERE receipt_json->>'receipt_type'='manual'"
+        ).fetchone()[0]
+        == 1
+    )
+    assert (
+        storage._conn.execute(
+            "SELECT count(*) FROM article_interpretations WHERE content_key=? AND status='ready'",
+            (draft["content_key"],),
+        ).fetchone()[0]
+        == 1
+    )
+
+
+def test_manual_single_blocks_failed_daily_content_without_touching_daily_receipt(storage):
+    url = seed(storage, "a")
+    daily = service(storage, generator=Generator(output="invalid-json")).run(round_key="old-daily")
+    assert daily["status"] == "complete" and daily["provider_calls"] == 2
+    identity = articles._identity(articles._load_file(storage._conn, url))
+    content_key = articles._hash(identity["raw_sha256"] + identity["markdown_sha256"])
+    before_budget = service(storage)._content_budget(content_key)
+    cursor = storage._conn.execute(
+        "SELECT last_source_key FROM article_interpretation_state WHERE singleton"
+    ).fetchone()[0]
+    retry_generator = Generator()
+    manual = service(storage, generator=retry_generator).run(file_url=url)
+    assert manual["status"] == "budget_exhausted"
+    assert manual["slots"][0]["status"] == "skipped"
+    assert manual["slots"][0]["reason"] == "content_provider_calls_exhausted"
+    assert not retry_generator.calls
+    assert service(storage)._content_budget(content_key) == before_budget
+    assert (
+        storage._conn.execute(
+            "SELECT receipt_json FROM article_interpretation_rounds WHERE round_key='old-daily'"
+        ).fetchone()[0]
+        == daily
+    )
+    assert (
+        storage._conn.execute(
+            "SELECT last_source_key FROM article_interpretation_state WHERE singleton"
+        ).fetchone()[0]
+        == cursor
+    )
+
+
+def test_manual_cleanup_failure_cannot_start_another_provider_call(storage):
+    url = seed(storage, "a")
+
+    class CleanupGenerator:
+        def __init__(self):
+            self.calls = 0
+
+        async def generate(self, _messages, *, deadline):
+            del deadline
+            self.calls += 1
+            raise articles.ArticleRequestCleanupError("fixture cleanup unconfirmed")
+
+    generator = CleanupGenerator()
+    daily = service(storage, generator=generator).run(round_key="cleanup-origin")
+    draft_id = daily["slots"][0]["interpretation_id"]
+    manual = service(storage, generator=generator).run(file_url=url)
+    assert daily["status"] == "provider_cleanup" and daily["provider_calls"] == 1
+    assert generator.calls == 1
+    assert manual["status"] == "provider_cleanup"
+    assert manual["slots"][0]["reason"] == "provider_cleanup"
+    assert manual["provider_calls"] == 0
+    assert service(storage)._get(draft_id)["error"] == "provider_cleanup"
+
+
+def test_manual_resume_validates_saved_body_after_generation_budget_is_spent(storage):
+    url = seed(storage, "a")
+
+    class SecondCallThenInterrupt(Generator):
+        async def generate(self, messages, *, deadline):
+            if len(self.calls) == 0:
+                self.calls.append(
+                    {"messages": messages, "timeout_seconds": deadline - time.monotonic()}
+                )
+                return "invalid-json"
+            if len(self.calls) == 1:
+                self.calls.append(
+                    {"messages": messages, "timeout_seconds": deadline - time.monotonic()}
+                )
+                return response(messages)
+            raise AssertionError("link validation resume must not regenerate")
+
+    class InterruptResolver(Resolver):
+        def resolve(self, identity, *, timeout_seconds):
+            self.calls.append((identity, timeout_seconds))
+            raise SystemExit("fixture interruption after body save")
+
+    generator, resolver = SecondCallThenInterrupt(), InterruptResolver()
+    runner = service(storage, generator=generator, resolver=resolver)
+    with pytest.raises(SystemExit, match="after body save"):
+        runner.run(file_url=url)
+    before = storage._conn.execute(
+        "SELECT receipt_json FROM article_interpretation_rounds WHERE receipt_json->>'receipt_type'='manual'"
+    ).fetchone()[0]
+    draft = runner._get(before["slots"][0]["interpretation_id"])
+    assert before["status"] == "running" and before["provider_calls"] == 2
+    assert draft["body_markdown_zh"] and draft["failure_stage"] == "link_validation"
+    assert len(generator.calls) == 2 and len(resolver.calls) == 1
+
+    retry_resolver = Resolver()
+    resumed = service(storage, generator=generator, resolver=retry_resolver).run(file_url=url)
+    assert resumed["status"] == "complete" and resumed["provider_calls"] == 2
+    assert resumed["slots"][0]["status"] == "ready"
+    assert len(generator.calls) == 2 and len(retry_resolver.calls) == 1
+    assert service(storage)._get(draft["interpretation_id"])["status"] == "ready"
+
+
+def test_daily_round_resume_validates_saved_body_after_six_calls(storage):
+    for key in "abc":
+        seed(storage, key)
+
+    class AlternatingGenerator:
+        def __init__(self):
+            self.calls = 0
+
+        async def generate(self, messages, *, deadline):
+            del deadline
+            self.calls += 1
+            return "invalid-json" if self.calls % 2 else response(messages)
+
+    class InterruptThirdLink(Resolver):
+        def __init__(self):
+            super().__init__()
+            self.resolve_count = 0
+
+        def resolve(self, identity, *, timeout_seconds):
+            self.resolve_count += 1
+            if self.resolve_count == 3:
+                raise SystemExit("fixture interruption after final saved body")
+            return super().resolve(identity, timeout_seconds=timeout_seconds)
+
+    generator = AlternatingGenerator()
+    initial_resolver = InterruptThirdLink()
+    runner = service(storage, generator=generator, resolver=initial_resolver)
+    with pytest.raises(SystemExit, match="final saved body"):
+        runner.run(round_key="daily-six-call-interruption")
+    receipt = storage._conn.execute(
+        "SELECT receipt_json FROM article_interpretation_rounds WHERE round_key=?",
+        ("daily-six-call-interruption",),
+    ).fetchone()[0]
+    draft_id = receipt["slots"][2]["interpretation_id"]
+    draft = runner._get(draft_id)
+    assert receipt["provider_calls"] == 6 and len(draft["attempts"][0]["calls"]) == 2
+    assert draft["body_markdown_zh"] and draft["failure_stage"] == "link_validation"
+    assert receipt["status"] == "running"
+
+    retry_resolver = Resolver()
+    resumed = service(storage, generator=generator, resolver=retry_resolver).run(
+        round_key="unused-after-interruption"
+    )
+    assert resumed["round_key"] == "daily-six-call-interruption"
+    assert resumed["status"] == "complete" and resumed["provider_calls"] == 6
+    assert generator.calls == 6 and len(retry_resolver.calls) == 1
+    assert service(storage)._get(draft_id)["status"] == "ready"
+
+
+def test_manual_retry_deadline_includes_preparation_time(storage):
+    url = seed(storage, "a")
+    real_mono = time.monotonic()
+    start_time = datetime.now(timezone.utc)
+    elapsed = [0.0]
+    stopped = [False]
+
+    def clock():
+        return real_mono + elapsed[0]
+
+    def now():
+        return start_time + timedelta(seconds=elapsed[0])
+
+    generator = Generator(output="invalid-json", on_call=lambda: stopped.__setitem__(0, True))
+    runner = service(
+        storage,
+        generator=generator,
+        clock=clock,
+        now=now,
+        stop_check=lambda: stopped[0],
+    )
+    prepare = runner._prepare
+
+    def slow_prepare(*args):
+        elapsed[0] += 60
+        return prepare(*args)
+
+    runner._prepare = slow_prepare
+    manual = runner.run(file_url=url)
+    draft_id = manual["slots"][0]["interpretation_id"]
+    draft = runner._get(draft_id)
+    assert manual["status"] == "stopped" and len(generator.calls) == 1
+    assert draft["selection_started_at"] == manual["started_at"]
+
+    elapsed[0] = 240
+    stopped[0] = False
+    retry_generator = Generator()
+    retried = service(
+        storage,
+        generator=retry_generator,
+        clock=clock,
+        now=now,
+        stop_check=lambda: stopped[0],
+    ).run(retry_id=draft_id)["interpretation"]
+    assert retried["error"] == "budget_exhausted"
+    assert retried["retry_blocked_reason"] == "content_selection_deadline_exhausted"
+    assert not retry_generator.calls
+
+
+def test_manual_receipt_counts_calls_when_resuming_daily_draft(storage):
+    url = seed(storage, "a")
+    stopped = [False]
+    generator = Generator(output="invalid-json", on_call=lambda: stopped.__setitem__(0, True))
+    daily = service(storage, generator=generator, stop_check=lambda: stopped[0]).run(
+        round_key="manual-call-origin"
+    )
+    assert daily["status"] == "stopped" and daily["provider_calls"] == 1
+    stopped[0] = False
+    generator.output, generator.on_call = None, None
+    manual = service(storage, generator=generator, stop_check=lambda: stopped[0]).run(file_url=url)
+    assert manual["status"] == "complete" and manual["slots"][0]["status"] == "ready"
+    assert manual["provider_calls"] == 1 and len(generator.calls) == 2
+    origin = storage._conn.execute(
+        "SELECT receipt_json FROM article_interpretation_rounds WHERE round_key='manual-call-origin'"
+    ).fetchone()[0]
+    assert origin["provider_calls"] == 2
+
+
+def test_manual_receipt_reservation_survives_interruption_and_replay(storage, monkeypatch):
+    url = seed(storage, "a")
+    stopped = [False]
+    daily_generator = Generator(output="invalid-json", on_call=lambda: stopped.__setitem__(0, True))
+    daily = service(storage, generator=daily_generator, stop_check=lambda: stopped[0]).run(
+        round_key="manual-reservation-origin"
+    )
+    assert daily["status"] == "stopped" and daily["provider_calls"] == 1
+    stopped[0] = False
+    crashing = Generator()
+    call = articles._call_article_with_deadline
+
+    def crash_after_reserved_call(generator, messages, deadline):
+        call(generator, messages, deadline)
+        raise SystemExit("fixture process crash after reservation")
+
+    monkeypatch.setattr(articles, "_call_article_with_deadline", crash_after_reserved_call)
+    with pytest.raises(SystemExit, match="process crash"):
+        service(storage, generator=crashing).run(file_url=url)
+    saved = storage._conn.execute(
+        "SELECT receipt_json FROM article_interpretation_rounds WHERE receipt_json->>'receipt_type'='manual'"
+    ).fetchone()[0]
+    assert saved["provider_calls"] == 1
+    assert saved["status"] == "running"
+    assert len(crashing.calls) == 1
+    origin = storage._conn.execute(
+        "SELECT receipt_json FROM article_interpretation_rounds WHERE round_key=?",
+        ("manual-reservation-origin",),
+    ).fetchone()[0]
+    assert origin["provider_calls"] == 2
+
+    monkeypatch.setattr(articles, "_call_article_with_deadline", call)
+    retry_generator = Generator()
+    resumed = service(storage, generator=retry_generator).run(file_url=url)
+    assert resumed["status"] == "budget_exhausted" and resumed["provider_calls"] == 1
+    assert not retry_generator.calls
+
+
+def test_manual_stop_resumes_same_receipt_and_rejects_retry_id_combination(storage):
+    url = seed(storage, "a")
+    stopped = service(storage, stop_check=lambda: True).run(file_url=url)
+    assert stopped["status"] == "stopped" and stopped["provider_calls"] == 0
+    generator = Generator()
+    resumed = service(storage, generator=generator).run(file_url=url)
+    assert resumed["status"] == "complete" and resumed["round_key"] == stopped["round_key"]
+    assert resumed["slots"][0]["status"] == "ready" and len(generator.calls) == 1
+    assert (
+        storage._conn.execute(
+            "SELECT count(*) FROM article_interpretation_rounds WHERE receipt_json->>'receipt_type'='manual'"
+        ).fetchone()[0]
+        == 1
+    )
+    with pytest.raises(ValueError, match="mutually_exclusive"):
+        service(storage).run(file_url=url, retry_id="prior-draft")
+
+
+def test_manual_article_collection_start_contract(monkeypatch):
+    from ai_actuarial.api.services import ops_write
+
+    started = []
+    bridge = ops_write.BridgeState(
+        SimpleNamespace(
+            start_background_task=lambda *args, **kwargs: started.append((args, kwargs)) or "job-1"
+        )
+    )
+    payload = {
+        "type": "article_interpretation",
+        "file_url": "  https://a.example/selected.pdf  ",
+    }
+    assert ops_write.start_collection(payload, bridge=bridge) == {
+        "success": True,
+        "message": "Task started in background",
+        "job_id": "job-1",
+    }
+    assert payload["file_url"] == "https://a.example/selected.pdf"
+    assert started[0][0][0:2] == ("article_interpretation", payload)
+
+    def reject(reason, **_kwargs):
+        raise ops_write.OpsWriteError(reason)
+
+    monkeypatch.setattr(ops_write, "_reject_request", reject)
+    for extra in ({"retry_id": "old"}, {"scheduled": True}):
+        with pytest.raises(ops_write.OpsWriteError):
+            ops_write.start_collection(
+                {"type": "article_interpretation", "file_url": "https://a.example/x", **extra},
+                bridge=bridge,
+            )
+
+
 def test_title_page_author_extraction_is_explicit_and_bounded():
     france = (
         "Fidélisation des assurés\n\n###### Virginie Normand\n\n"
@@ -735,6 +1152,42 @@ def test_native_task_stop_history_and_restart(storage, tmp_path):
     assert service(storage).run()["status"] == "complete"
 
 
+def test_native_task_runtime_forwards_only_manual_file_selection(storage, tmp_path):
+    from ai_actuarial.task_runtime import NativeTaskRuntime
+
+    url = seed(storage, "a")
+    seed(storage, "b")
+    runtime = NativeTaskRuntime(
+        ready_data_database=storage.database,
+        data_root=tmp_path,
+        article_interpretation_resolver=Resolver(),
+    )
+    runtime._site_config_override = {"paths": {"download_dir": str(tmp_path)}}
+    generator = Generator()
+    runtime._article_interpretation_generator = generator
+    runtime.start_background_task(
+        "article_interpretation",
+        {"file_url": url, "round_key": "client-round", "timezone": "Etc/GMT+12"},
+        task_id="manual-selection",
+    )
+    deadline = time.monotonic() + 10
+    while runtime.active_tasks and time.monotonic() < deadline:
+        time.sleep(0.01)
+    manual = storage._conn.execute(
+        "SELECT receipt_json FROM article_interpretation_rounds "
+        "WHERE receipt_json->>'receipt_type'='manual'"
+    ).fetchone()[0]
+    assert manual["round_key"].startswith("manual:") and manual["file_url"] == url
+    assert len(manual["slots"]) == 1 and manual["slots"][0]["status"] == "ready"
+    assert len(generator.calls) == 1
+    assert (
+        storage._conn.execute(
+            "SELECT last_source_key FROM article_interpretation_state WHERE singleton"
+        ).fetchone()[0]
+        == ""
+    )
+
+
 def test_api_read_empty_and_cli_entry_contract(storage, tmp_path, monkeypatch):
     from ai_actuarial import cli
     from tests.test_fastapi_ops_read_endpoints import _build_test_client
@@ -751,14 +1204,25 @@ def test_api_read_empty_and_cli_entry_contract(storage, tmp_path, monkeypatch):
     parser = cli.build_parser()
     for command in (
         ["article-interpretation", "run", "--json"],
+        [
+            "article-interpretation",
+            "run",
+            "--file-url",
+            "https://a.example/selected.pdf",
+            "--json",
+        ],
         ["article-interpretation", "retry", "saved-id", "--json"],
         ["article-interpretation", "get", "saved-id", "--json"],
     ):
         args = parser.parse_args(command)
         assert args.func(args) == 0
     assert requests[0][0][1] == "/api/collections/run"
-    assert requests[1][1]["payload"] == {"type": "article_interpretation", "retry_id": "saved-id"}
-    assert requests[2][1]["method"] == "GET"
+    assert requests[1][1]["payload"] == {
+        "type": "article_interpretation",
+        "file_url": "https://a.example/selected.pdf",
+    }
+    assert requests[2][1]["payload"] == {"type": "article_interpretation", "retry_id": "saved-id"}
+    assert requests[3][1]["method"] == "GET"
     help_result = subprocess.run(
         [sys.executable, "-m", "ai_actuarial.cli", "article-interpretation", "--help"],
         cwd=Path(__file__).resolve().parents[1],
@@ -767,6 +1231,14 @@ def test_api_read_empty_and_cli_entry_contract(storage, tmp_path, monkeypatch):
         timeout=15,
     )
     assert help_result.returncode == 0 and "retry" in help_result.stdout
+    run_help = subprocess.run(
+        [sys.executable, "-m", "ai_actuarial.cli", "article-interpretation", "run", "--help"],
+        cwd=Path(__file__).resolve().parents[1],
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert run_help.returncode == 0 and "--file-url" in run_help.stdout
 
 
 def test_reader_api_returns_only_current_public_latest_fields(tmp_path, monkeypatch):
@@ -790,7 +1262,16 @@ def test_reader_api_returns_only_current_public_latest_fields(tmp_path, monkeypa
         },
         "provider": "private-provider",
         "error": "internal-error",
-        "attempts": [{"credential": "private"}],
+        "attempts": [
+            {
+                "credential": "private",
+                "validation_diagnostic": {
+                    "paragraph": "private numeric output",
+                    "evidence_ids": ["E1"],
+                    "missing_quantities": [{"dimension": "percent", "value": "999"}],
+                },
+            }
+        ],
         "reader_eligible": True,
         "status": "ready",
     }
@@ -909,7 +1390,7 @@ def test_france_title_page_authors_reach_reader_api_from_saved_markdown(tmp_path
         storage.close()
 
 
-def test_native_domestic_schedule_metadata_and_local_rejection(storage, tmp_path):
+def test_native_domestic_schedule_metadata_and_local_rejection(storage, tmp_path, monkeypatch):
     from ai_actuarial.api.services.ops_read import get_schedule_status
     from ai_actuarial.task_runtime import NativeTaskRuntime
 
@@ -921,6 +1402,11 @@ def test_native_domestic_schedule_metadata_and_local_rejection(storage, tmp_path
         "enabled": True,
         "interval": "daily at 10:00",
         "timezone": "Asia/Shanghai",
+        "params": {
+            "file_url": "https://a.example/selected.pdf",
+            "retry_id": "client-retry",
+            "round_key": "client-round",
+        },
     }
     runtime._site_config_override = {
         "article_interpretation": {"environment": "china"},
@@ -929,6 +1415,17 @@ def test_native_domestic_schedule_metadata_and_local_rejection(storage, tmp_path
     runtime.init_scheduler(configured_only=True)
     job = get_schedule_status(runtime.scheduler)["jobs"][0]
     assert job["timezone"] == "Asia/Shanghai" and job["next_run"]
+    started = []
+    monkeypatch.setattr(
+        runtime,
+        "start_background_task",
+        lambda *args, **kwargs: started.append((args, kwargs)) or "scheduled-id",
+    )
+    scheduled_job = runtime.scheduler.jobs[0]
+    (getattr(scheduled_job, "func", None) or scheduled_job.job_func)()
+    scheduled_payload = started[0][0][1]
+    assert scheduled_payload["scheduled"] is True
+    assert not {"file_url", "retry_id", "round_key"}.intersection(scheduled_payload)
     runtime._site_config_override["article_interpretation"]["environment"] = "local"
     with pytest.raises(ValueError, match="china"):
         runtime.init_scheduler(configured_only=True)
@@ -1265,6 +1762,139 @@ def test_explicit_french_year_is_supported_without_guessing_counts():
     )
     assert not articles._quantities("12年", strict=True).issubset(
         articles._quantities("12 mois d’ancienneté")
+    )
+
+
+def test_saved_cas_numeric_diagnostics_validate_with_narrow_parser_contexts():
+    call_one = (
+        "研究采用威斯康星地方政府财产保险基金的数据。该基金为州政府所有之外的市政建筑、学校、图书馆、车辆等地方政府财产提供保险。"
+        "数据集包含2006至2010年的理赔作为训练集，样本量为4991；2011年的理赔作为测试集，样本量为1039。"
+        "变量包括九个二元灾害类型变量、一个文本变量Description和一个连续变量Loss。"
+    )
+    call_two = "解读推断：这一问题的实质是把提示工程当作一种低成本的特征工程手段，用模型输出的语义标签替代人工编码，从而绕开标注瓶颈。"
+    evidence = [
+        {
+            "id": f"E{index}",
+            "quote": "The source describes the study without a numeric claim.",
+            "section": "Introduction",
+        }
+        for index in range(1, 6)
+    ] + [
+        {
+            "id": "E6",
+            "quote": (
+                "The dataset includes claims collected from 2006 to 2010 as a training set "
+                "( = 4,991) and claims from 2011 as a test set ( = 1,039). 1 The dataset "
+                "includes nine binary variables (Vandalism, Fire, Lightning, Wind, Hail, "
+                "Vehicle, WaterNW, WaterW, and Misc), one text variable (Description), "
+                "and a continuous variable (Loss)."
+            ),
+            "section": "3. DESCRIPTION OF THE DATA",
+        },
+        {
+            "id": "E7",
+            "quote": (
+                "This section introduces prompt engineering, which plays an essential role when using pretrained LLMs to create features from text data. "
+                "A prompt is an input provided to an LLM to produce the desired output. In other words, a prompt is a set of instructions an LLM uses to predict the desired results."
+            ),
+            "section": "4. PROMPT ENGINEERING",
+        },
+        {
+            "id": "E8",
+            "quote": (
+                "In traditional supervised learning systems for text data, we develop a model to predict an output. "
+                "The model parameters are learned by using a dataset that contains pairs of inputs and outputs. "
+                "For many tasks, however, it is difficult to find large quantities of labeled data."
+            ),
+            "section": "4.1. PROMPT-BASED LEARNING",
+        },
+    ]
+    value = {
+        "title_zh": "保险研究资料与方法解读",
+        "short_reason": "诊断用短文",
+        "authors": [],
+        "sections": [],
+    }
+    for index, role in enumerate(articles.SECTION_ROLES):
+        paragraphs = [
+            {
+                "text": "研究材料说明其适用边界，实际应用仍需结合业务背景判断。",
+                "kind": "source",
+                "evidence_ids": [f"E{index + 1}"],
+            }
+        ]
+        if index == 0:
+            paragraphs.insert(0, {"text": call_one, "kind": "source", "evidence_ids": ["E6"]})
+        if index == len(articles.SECTION_ROLES) - 1:
+            paragraphs.append({"text": call_two, "kind": "inference", "evidence_ids": ["E7", "E8"]})
+        value["sections"].append({"role": role, "heading": "研究解读", "paragraphs": paragraphs})
+    coverage = {"evidence": evidence, "author_metadata": []}
+
+    accepted = articles.validate_output(json.dumps(value, ensure_ascii=False), coverage)
+    assert any(claim["text"] == call_one for claim in accepted["claims"])
+    assert any(claim["text"] == call_two for claim in accepted["claims"])
+
+    invalid_variants = (
+        (call_one.replace("样本量为4991", "样本量为4992"), call_two),
+        (call_one.replace("2011年", "2012年"), call_two),
+        (call_one + "另有2元费用。", call_two),
+        (call_one, call_two.replace("一种低成本", "只有一种低成本")),
+        (call_one, call_two.replace("一种低成本", "两种低成本")),
+    )
+    for invalid_call_one, invalid_call_two in invalid_variants:
+        changed = json.loads(json.dumps(value, ensure_ascii=False))
+        changed["sections"][0]["paragraphs"][0]["text"] = invalid_call_one
+        changed["sections"][-1]["paragraphs"][-1]["text"] = invalid_call_two
+        with pytest.raises(ValueError, match="unsupported_number"):
+            articles.validate_output(json.dumps(changed, ensure_ascii=False), coverage)
+
+
+def test_cas_quantity_context_fixes_keep_currency_counts_and_ambiguous_commas_strict():
+    for binary_term in ("二元灾害类型变量", "二元分类变量", "二元特征", "二元模型"):
+        assert articles._quantities("九个" + binary_term, strict=True) == {
+            ("number", articles.Decimal(9))
+        }
+    for currency_term in ("二元", "二元货币", "2元"):
+        assert articles._quantities(currency_term, strict=True) == {
+            ("currency_unspecified", articles.Decimal(2))
+        }
+    assert articles._quantities("一种低成本手段", strict=True) == set()
+    assert articles._quantities("只有一种手段", strict=True) == {("number", articles.Decimal(1))}
+    assert articles._quantities("两种手段", strict=True) == {("number", articles.Decimal(2))}
+
+    source_counts = articles._quantities(
+        "training set ( = 4,991) and claims from 2011 as a test set ( = 1,039)", strict=True
+    )
+    assert source_counts == {
+        ("number", articles.Decimal(4991)),
+        ("year", articles.Decimal(2011)),
+        ("number", articles.Decimal(1039)),
+    }
+    assert articles._quantities("2006至2010年", strict=True) == {
+        ("year", articles.Decimal(2006)),
+        ("year", articles.Decimal(2010)),
+    }
+    assert articles._quantities("from 2006 to 2010 as a training set", strict=True) == {
+        ("year", articles.Decimal(2006)),
+        ("year", articles.Decimal(2010)),
+    }
+    assert articles._quantities("from 2011 as a test set", strict=True) == {
+        ("year", articles.Decimal(2011)),
+    }
+    assert articles._quantities(
+        "The number of policies increased from 2006 to 2010", strict=True
+    ) == {("number", articles.Decimal(2006)), ("number", articles.Decimal(2010))}
+    assert articles._quantities("There were 2010 claims", strict=True) == {
+        ("number", articles.Decimal(2010)),
+    }
+
+    assert articles._quantities("4,991", strict=True) == {("number:literal", "4,991")}
+    assert not articles._quantities("4991", strict=True).issubset(
+        articles._quantities("4,991", strict=True)
+    )
+    assert articles._quantities("12,34", strict=True) == {("number", articles.Decimal("12.34"))}
+    assert not articles._quantities("1234", strict=True).issubset(
+        articles._quantities("12,34", strict=True)
     )
 
 
