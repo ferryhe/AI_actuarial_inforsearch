@@ -713,6 +713,227 @@ def test_manual_single_blocks_failed_daily_content_without_touching_daily_receip
     )
 
 
+def test_manual_cleanup_failure_cannot_start_another_provider_call(storage):
+    url = seed(storage, "a")
+
+    class CleanupGenerator:
+        def __init__(self):
+            self.calls = 0
+
+        async def generate(self, _messages, *, deadline):
+            del deadline
+            self.calls += 1
+            raise articles.ArticleRequestCleanupError("fixture cleanup unconfirmed")
+
+    generator = CleanupGenerator()
+    daily = service(storage, generator=generator).run(round_key="cleanup-origin")
+    draft_id = daily["slots"][0]["interpretation_id"]
+    manual = service(storage, generator=generator).run(file_url=url)
+    assert daily["status"] == "provider_cleanup" and daily["provider_calls"] == 1
+    assert generator.calls == 1
+    assert manual["status"] == "provider_cleanup"
+    assert manual["slots"][0]["reason"] == "provider_cleanup"
+    assert manual["provider_calls"] == 0
+    assert service(storage)._get(draft_id)["error"] == "provider_cleanup"
+
+
+def test_manual_resume_validates_saved_body_after_generation_budget_is_spent(storage):
+    url = seed(storage, "a")
+
+    class SecondCallThenInterrupt(Generator):
+        async def generate(self, messages, *, deadline):
+            if len(self.calls) == 0:
+                self.calls.append(
+                    {"messages": messages, "timeout_seconds": deadline - time.monotonic()}
+                )
+                return "invalid-json"
+            if len(self.calls) == 1:
+                self.calls.append(
+                    {"messages": messages, "timeout_seconds": deadline - time.monotonic()}
+                )
+                return response(messages)
+            raise AssertionError("link validation resume must not regenerate")
+
+    class InterruptResolver(Resolver):
+        def resolve(self, identity, *, timeout_seconds):
+            self.calls.append((identity, timeout_seconds))
+            raise SystemExit("fixture interruption after body save")
+
+    generator, resolver = SecondCallThenInterrupt(), InterruptResolver()
+    runner = service(storage, generator=generator, resolver=resolver)
+    with pytest.raises(SystemExit, match="after body save"):
+        runner.run(file_url=url)
+    before = storage._conn.execute(
+        "SELECT receipt_json FROM article_interpretation_rounds WHERE receipt_json->>'receipt_type'='manual'"
+    ).fetchone()[0]
+    draft = runner._get(before["slots"][0]["interpretation_id"])
+    assert before["status"] == "running" and before["provider_calls"] == 2
+    assert draft["body_markdown_zh"] and draft["failure_stage"] == "link_validation"
+    assert len(generator.calls) == 2 and len(resolver.calls) == 1
+
+    retry_resolver = Resolver()
+    resumed = service(storage, generator=generator, resolver=retry_resolver).run(file_url=url)
+    assert resumed["status"] == "complete" and resumed["provider_calls"] == 2
+    assert resumed["slots"][0]["status"] == "ready"
+    assert len(generator.calls) == 2 and len(retry_resolver.calls) == 1
+    assert service(storage)._get(draft["interpretation_id"])["status"] == "ready"
+
+
+def test_daily_round_resume_validates_saved_body_after_six_calls(storage):
+    for key in "abc":
+        seed(storage, key)
+
+    class AlternatingGenerator:
+        def __init__(self):
+            self.calls = 0
+
+        async def generate(self, messages, *, deadline):
+            del deadline
+            self.calls += 1
+            return "invalid-json" if self.calls % 2 else response(messages)
+
+    class InterruptThirdLink(Resolver):
+        def __init__(self):
+            super().__init__()
+            self.resolve_count = 0
+
+        def resolve(self, identity, *, timeout_seconds):
+            self.resolve_count += 1
+            if self.resolve_count == 3:
+                raise SystemExit("fixture interruption after final saved body")
+            return super().resolve(identity, timeout_seconds=timeout_seconds)
+
+    generator = AlternatingGenerator()
+    initial_resolver = InterruptThirdLink()
+    runner = service(storage, generator=generator, resolver=initial_resolver)
+    with pytest.raises(SystemExit, match="final saved body"):
+        runner.run(round_key="daily-six-call-interruption")
+    receipt = storage._conn.execute(
+        "SELECT receipt_json FROM article_interpretation_rounds WHERE round_key=?",
+        ("daily-six-call-interruption",),
+    ).fetchone()[0]
+    draft_id = receipt["slots"][2]["interpretation_id"]
+    draft = runner._get(draft_id)
+    assert receipt["provider_calls"] == 6 and len(draft["attempts"][0]["calls"]) == 2
+    assert draft["body_markdown_zh"] and draft["failure_stage"] == "link_validation"
+    assert receipt["status"] == "running"
+
+    retry_resolver = Resolver()
+    resumed = service(storage, generator=generator, resolver=retry_resolver).run(
+        round_key="unused-after-interruption"
+    )
+    assert resumed["round_key"] == "daily-six-call-interruption"
+    assert resumed["status"] == "complete" and resumed["provider_calls"] == 6
+    assert generator.calls == 6 and len(retry_resolver.calls) == 1
+    assert service(storage)._get(draft_id)["status"] == "ready"
+
+
+def test_manual_retry_deadline_includes_preparation_time(storage):
+    url = seed(storage, "a")
+    real_mono = time.monotonic()
+    start_time = datetime.now(timezone.utc)
+    elapsed = [0.0]
+    stopped = [False]
+
+    def clock():
+        return real_mono + elapsed[0]
+
+    def now():
+        return start_time + timedelta(seconds=elapsed[0])
+
+    generator = Generator(output="invalid-json", on_call=lambda: stopped.__setitem__(0, True))
+    runner = service(
+        storage,
+        generator=generator,
+        clock=clock,
+        now=now,
+        stop_check=lambda: stopped[0],
+    )
+    prepare = runner._prepare
+
+    def slow_prepare(*args):
+        elapsed[0] += 60
+        return prepare(*args)
+
+    runner._prepare = slow_prepare
+    manual = runner.run(file_url=url)
+    draft_id = manual["slots"][0]["interpretation_id"]
+    draft = runner._get(draft_id)
+    assert manual["status"] == "stopped" and len(generator.calls) == 1
+    assert draft["selection_started_at"] == manual["started_at"]
+
+    elapsed[0] = 240
+    stopped[0] = False
+    retry_generator = Generator()
+    retried = service(
+        storage,
+        generator=retry_generator,
+        clock=clock,
+        now=now,
+        stop_check=lambda: stopped[0],
+    ).run(retry_id=draft_id)["interpretation"]
+    assert retried["error"] == "budget_exhausted"
+    assert retried["retry_blocked_reason"] == "content_selection_deadline_exhausted"
+    assert not retry_generator.calls
+
+
+def test_manual_receipt_counts_calls_when_resuming_daily_draft(storage):
+    url = seed(storage, "a")
+    stopped = [False]
+    generator = Generator(output="invalid-json", on_call=lambda: stopped.__setitem__(0, True))
+    daily = service(storage, generator=generator, stop_check=lambda: stopped[0]).run(
+        round_key="manual-call-origin"
+    )
+    assert daily["status"] == "stopped" and daily["provider_calls"] == 1
+    stopped[0] = False
+    generator.output, generator.on_call = None, None
+    manual = service(storage, generator=generator, stop_check=lambda: stopped[0]).run(file_url=url)
+    assert manual["status"] == "complete" and manual["slots"][0]["status"] == "ready"
+    assert manual["provider_calls"] == 1 and len(generator.calls) == 2
+    origin = storage._conn.execute(
+        "SELECT receipt_json FROM article_interpretation_rounds WHERE round_key='manual-call-origin'"
+    ).fetchone()[0]
+    assert origin["provider_calls"] == 2
+
+
+def test_manual_receipt_reservation_survives_interruption_and_replay(storage, monkeypatch):
+    url = seed(storage, "a")
+    stopped = [False]
+    daily_generator = Generator(output="invalid-json", on_call=lambda: stopped.__setitem__(0, True))
+    daily = service(storage, generator=daily_generator, stop_check=lambda: stopped[0]).run(
+        round_key="manual-reservation-origin"
+    )
+    assert daily["status"] == "stopped" and daily["provider_calls"] == 1
+    stopped[0] = False
+    crashing = Generator()
+    call = articles._call_article_with_deadline
+
+    def crash_after_reserved_call(generator, messages, deadline):
+        call(generator, messages, deadline)
+        raise SystemExit("fixture process crash after reservation")
+
+    monkeypatch.setattr(articles, "_call_article_with_deadline", crash_after_reserved_call)
+    with pytest.raises(SystemExit, match="process crash"):
+        service(storage, generator=crashing).run(file_url=url)
+    saved = storage._conn.execute(
+        "SELECT receipt_json FROM article_interpretation_rounds WHERE receipt_json->>'receipt_type'='manual'"
+    ).fetchone()[0]
+    assert saved["provider_calls"] == 1
+    assert saved["status"] == "running"
+    assert len(crashing.calls) == 1
+    origin = storage._conn.execute(
+        "SELECT receipt_json FROM article_interpretation_rounds WHERE round_key=?",
+        ("manual-reservation-origin",),
+    ).fetchone()[0]
+    assert origin["provider_calls"] == 2
+
+    monkeypatch.setattr(articles, "_call_article_with_deadline", call)
+    retry_generator = Generator()
+    resumed = service(storage, generator=retry_generator).run(file_url=url)
+    assert resumed["status"] == "budget_exhausted" and resumed["provider_calls"] == 1
+    assert not retry_generator.calls
+
+
 def test_manual_stop_resumes_same_receipt_and_rejects_retry_id_combination(storage):
     url = seed(storage, "a")
     stopped = service(storage, stop_check=lambda: True).run(file_url=url)
