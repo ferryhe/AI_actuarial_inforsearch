@@ -1,3 +1,10 @@
+# 当前候选 — PR444 远程审查反馈 — 2026-11-01
+
+- 分支 `fix/interpretation-number-evidence`。Copilot 对 PR444 的4项反馈均先在隔离 PostgreSQL schema 与注入式 generator/resolver 中复现；TypeSafe Jev 1.14.0 接受全部4项，并要求同一 worker 修复与测试。证据：`reports/interpretation-number-repair-20261101/remote-feedback-assessment.json`、`typesafe-remote-input.json`、`typesafe-remote-result.json`。
+- 修复 provider cleanup 后的手动重试拦截；有已保存正文时先读取草稿，仅对新生成应用 provider-call 预算，允许在原截止时间内继续链接校验；手动选择时间戳取自持久 receipt；恢复每日稿件时同时保留来源 round 调用上限，并在 reservation 时给 manual receipt 记录本次调用数。
+- 新增6项回归覆盖4个反馈主题，包括手动和每日 receipt 的中断恢复。隔离数据库验证：`tests/test_article_interpretations.py` 与 `tests/test_article_interpretation_async_transport.py` 合计201 passed / 1 skipped；补丁后六项新回归再次6 passed。Ruff、Black、`py_compile`、`git diff --check` 通过。模型/provider调用0，生产数据库访问0。
+- 当前补丁按第3轮最终审查限额完成的已测试修复处理；没有新增独立审查 PASS。主控负责提交、推送和 CI；本 worker 未提交或推送。
+
 # 当前候选 — 微信解读数字证据诊断与单篇生成 — 2026-11-01
 
 - 项目 `AI_actuarial_inforsearch`；工作树 `C:/Users/ferry/.codex/worktrees/fix-interpretation-number-evidence/AI_actuarial_inforsearch`，分支 `fix/interpretation-number-evidence`。数字证据仍严格校验；私有诊断只含限长段落片段、证据 ID、解析 token 与缺失数量，不进入 reader DTO。第二次调用的纠正提示受原输入字符和模型上下文余量限制，不改变已保存输入。

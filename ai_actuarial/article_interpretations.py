@@ -1481,6 +1481,7 @@ class ArticleInterpretationService:
         runtime=None,
         retry=False,
         origin_receipt=None,
+        execution_receipt=None,
     ):
         started = self.clock()
         budget = self._content_budget(draft["content_key"])
@@ -1614,6 +1615,8 @@ class ArticleInterpretationService:
                     if self.stop_check():
                         draft["status"] = "queued"
                         return draft
+                    if execution_receipt and execution_receipt.get("provider_calls", 0) >= 2:
+                        raise TimeoutError("manual_provider_call_budget")
                     timeout = min(
                         MAX_CALL_SECONDS,
                         MAX_PROVIDER_SECONDS
@@ -1640,6 +1643,16 @@ class ArticleInterpretationService:
                                 origin_receipt.get("provider_calls", 0) + 1
                             )
                             self._receipt(origin_receipt)
+                        if execution_receipt and (
+                            not origin_receipt
+                            or execution_receipt["round_key"] != origin_receipt["round_key"]
+                        ):
+                            if execution_receipt.get("provider_calls", 0) >= 2:
+                                raise TimeoutError("manual_provider_call_budget")
+                            execution_receipt["provider_calls"] = (
+                                execution_receipt.get("provider_calls", 0) + 1
+                            )
+                            self._receipt(execution_receipt)
                     call_start = self.clock()
                     provider_elapsed = 0.0
                     try:
@@ -1838,19 +1851,31 @@ class ArticleInterpretationService:
                 receipt["status"] = "complete"
                 return receipt
             budget = self._content_budget(content_key)
+            draft = self._get(slot["interpretation_id"]) if slot.get("interpretation_id") else None
+            runtime = None
+            if slot.get("interpretation_id") and draft is None:
+                slot.update(status="skipped", reason="draft_missing")
+                receipt["status"] = "complete"
+                return receipt
+            if draft is None:
+                saved_body = self.connection.execute(
+                    "SELECT payload_json FROM article_interpretations WHERE content_key=? AND file_url=? "
+                    "AND COALESCE(payload_json->>'body_markdown_zh','')!='' ORDER BY created_at DESC LIMIT 1",
+                    (content_key, file_url),
+                ).fetchone()
+                if saved_body:
+                    draft = dict(saved_body[0])
             exhaustion_reason = self._content_budget_reason(budget)
-            if exhaustion_reason:
+            if not draft and exhaustion_reason:
                 slot.update(status="skipped", reason=exhaustion_reason)
                 receipt["status"] = "budget_exhausted"
                 return receipt
-            if slot.get("interpretation_id"):
-                draft = self._get(slot["interpretation_id"])
-                runtime = None
-                if draft is None:
-                    slot.update(status="skipped", reason="draft_missing")
-                    receipt["status"] = "complete"
-                    return receipt
-            else:
+            if draft and not draft.get("body_markdown_zh") and exhaustion_reason:
+                slot.update(status="skipped", reason=exhaustion_reason)
+                receipt["status"] = "budget_exhausted"
+                return receipt
+            if draft is None:
+                row["_selected_at"] = receipt["started_at"]
                 try:
                     draft, runtime = self._prepare(row, source_key, reason)
                 except LLMAuthenticationError:
@@ -1870,6 +1895,24 @@ class ArticleInterpretationService:
                     draft["origin_round_key"] = round_key
                     self._save(draft)
                 self._receipt(receipt)
+            else:
+                slot.update(
+                    interpretation_id=draft["interpretation_id"],
+                    prompt_version=draft.get("prompt_version"),
+                    input_fingerprint=draft.get("input_fingerprint"),
+                )
+            origin = (
+                receipt
+                if draft.get("origin_round_key") == round_key
+                else self._origin_receipt(self._content_budget(content_key))
+            )
+            if not draft.get("body_markdown_zh") and (
+                draft.get("error") == "provider_cleanup"
+                or (origin and origin.get("status") == "provider_cleanup")
+            ):
+                slot.update(status="failed", reason="provider_cleanup")
+                receipt["status"] = "provider_cleanup"
+                return receipt
             if draft.get("status") == "ready" and _current(self.connection, draft):
                 slot.update(status="ready", reason="draft_and_evidence_valid")
                 receipt["status"] = "complete"
@@ -1879,16 +1922,12 @@ class ArticleInterpretationService:
                 (self.now() - datetime.fromisoformat(receipt["started_at"])).total_seconds(),
             )
             deadline = self.clock() + max(0.0, MAX_ARTICLE_SECONDS - elapsed)
-            origin = (
-                receipt
-                if draft.get("origin_round_key") == round_key
-                else self._origin_receipt(self._content_budget(content_key))
-            )
             result = self._generate(
                 draft,
                 round_deadline=deadline,
                 runtime=runtime,
                 origin_receipt=origin,
+                execution_receipt=receipt,
             )
             slot.update(
                 status=result["status"],
@@ -2019,17 +2058,20 @@ class ArticleInterpretationService:
                     if not slot.get("advanced"):
                         self._advance(receipt, slot)
                     continue
-                if (
-                    self.stop_check()
-                    or self.clock() >= deadline
-                    or receipt.get("provider_calls", 0) >= 6
-                ):
+                if self.stop_check() or self.clock() >= deadline:
                     receipt["status"] = "stopped" if self.stop_check() else "budget_exhausted"
                     break
                 draft, runtime = None, None
                 if slot.get("interpretation_id"):
                     draft = self._get(slot["interpretation_id"])
-                else:
+                    if draft is None:
+                        slot.update(status="skipped", reason="draft_missing")
+                if receipt.get("provider_calls", 0) >= 6 and not (
+                    draft and draft.get("body_markdown_zh")
+                ):
+                    receipt["status"] = "budget_exhausted"
+                    break
+                if not slot.get("interpretation_id"):
                     row, decisions = self._select(slot["source_key"])
                     slot["decisions"] = decisions
                     if self.stop_check() or self.clock() >= deadline:
@@ -2065,6 +2107,7 @@ class ArticleInterpretationService:
                     if (
                         draft["status"] in {"queued", "running"}
                         or draft.get("error") == "authentication"
+                        or bool(draft.get("body_markdown_zh"))
                     ):
                         origin = (
                             receipt
