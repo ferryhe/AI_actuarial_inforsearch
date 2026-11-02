@@ -47,6 +47,21 @@ try {
       }
       assert.equal(await page.getByText(language === "zh" ? "动态全文 1，详情页才会显示。" : "Full update prose for source 1, shown only on its detail page.").count(), 0);
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
+      if (viewport.width === 375) {
+        const row = page.getByTestId("source-portal-row").nth(19);
+        const cells = row.locator(":scope > [role='cell']");
+        const [rowBox, titleBox, overviewBox, statusBox] = await Promise.all([
+          row.boundingBox(),
+          cells.nth(0).boundingBox(),
+          cells.nth(2).boundingBox(),
+          cells.nth(3).boundingBox(),
+        ]);
+        assert.ok(rowBox && titleBox && overviewBox && statusBox);
+        assert.ok(titleBox.width >= rowBox.width * 0.85);
+        assert.ok(statusBox.width >= rowBox.width * 0.85);
+        assert.ok(titleBox.y < overviewBox.y && overviewBox.y < statusBox.y);
+        assert.equal((await cells.nth(3).innerText()).trim(), language === "zh" ? "暂无动态" : "No updates yet");
+      }
 
       await page.getByTestId("source-portals-pagination-next").click();
       await page.waitForURL(/\/source-portals\?page=2$/);
