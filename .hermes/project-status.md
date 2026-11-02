@@ -1,9 +1,9 @@
 # Issue #450 本地文章解读 — 2026-11-02
 
-- 工作树 `C:/Users/ferry/.codex/worktrees/issue-450-local-interpretation/AI_actuarial_inforsearch`，分支 `codex/issue-450-local-interpretation`。本轮实现包含本机 Codex CLI 与中国 worker 的窄 prompt/result 流、本地配置路由验证、受限工具/环境调用、保留历史 outer budget 与中断恢复、英文 receipt 计数，以及中国/海外独立 ACK、精确幂等同步和分页扫描。
-- 本轮复核修正：启用英文翻译时，英文 receipt 或 slot 非 ready 会使总状态为 partial，保留 Chinese generation/sync 成功结果；目标写入后统一 SELECT 持久行并核对完整稿件/身份，再返回每 target 的安全 `reader_fields`（locale、title、body 长度/哈希及 ready English 字段，不含正文）。ACK 单独保存这些字段，缺失或不匹配时重新核验目标。Codex 内容与 round 调用耗尽原因改用 `outer_attempts` 文案，API/Chat/DeepSeek 名称和值不变。
-- 本地离线验证：此前 ArticleInterpretation、target worker、runtime、English 与 Storage selectors 共 39 passed，另有 14 个核心数字/日期、保存稿同步、幂等 selectors passed；本轮复核相关 union selectors 31 passed。Black、Ruff、AST 与 diff whitespace 检查通过。测试使用 fake generator/stream/process 与隔离 fixtures；无真实模型调用、生产数据库写入、目标写入、迁移或排程修改。
-- 真实运行仍待主控验收：共享本机配置的 `article_interpretation.backend/model/reasoning_effort` 当前为空，程序会显式失败且没有 fallback；主控负责补入授权路由后再运行真实本机 Codex 与双端精确 readback。英文稿在首次 ACK 后再补齐时如何更新两个 locale 而保留精确 ACK/身份，等待 Architect 只读结论；本轮未扩展该写入语义。本 worker 未提交/推送；分支相对 `origin/main` 落后 1 个提交，由主控用普通 merge 处理。
+- 项目 AI_actuarial_inforsearch，工作树 C:/Users/ferry/.codex/worktrees/issue-450-local-interpretation/AI_actuarial_inforsearch，分支 codex/issue-450-local-interpretation。PR #452 保持 Draft，当前远端 HEAD 2bed7e51278a7e9002da6841e61c8ae81f83a0f2。改动已覆盖本机生成路由、历史 round 预算恢复、双目标 ACK/幂等同步、投影漂移与候选扫描等验收项；fresh reviewer 第 5 轮对当前产品 diff PASS。
+- 当前 HEAD 的 GitHub run 41499192227 中，python-smoke 因四处旧测试夹具/断言与现行返回契约不一致失败；其余已完成检查通过，quality-gate 当时仍运行。相同实现 worker 已仅更新 tests/test_local_collection_runtime.py 与 tests/test_local_collection_target_worker.py，补齐完整扫描状态并对齐现行 readback/conflict 结果；定向验证 9 passed，Black、isort 与 git diff --check 通过。此测试修正不改产品行为，待完成旧 run 记账后提交并推送，再检查新 HEAD CI。
+- 本机共享配置及生成路由已就绪。Hub/SSH 流程不要求启动本地 API 服务。尚未执行真实文章生成、双端数据库/API 精确读回、部署或排程变更；不重置历史日期、游标、ACK、模型身份或已耗尽预算。旧 Copilot 评论只用一次已保存快照，不重复请求；9 条评论映射的问题已在当前产品代码修复，远程 disposition 与线程关闭待登记。
+- 后续顺序：完成旧 HEAD 所有 CI 记录，推送测试修正并等待新 HEAD CI；登记匿名远程反馈结论并关闭已修复的 9 条 review threads；仅在这些门槛通过后，选择未生成且符合资格的真实样本，完成两端原生读回与幂等/恢复验证，再按授权调整排程。若无合格新样本，不复活旧版本或重置预算。
 # PR #446 合入 main 准备 — 2026-11-01
 
 - 用户已授权核对评论修复、安全性及冲突后合并 #446。合并目标已由 #444 开发分支调整到 main；隔离工作树位于本仓库 .codex-worktrees/pr-446-main-integration，分支 codex/pr-446-main-integration，从最新 main c9ce6ac 建立，未修改外部英文开发工作树或原始脏工作树。

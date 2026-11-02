@@ -5256,6 +5256,7 @@ def test_remote_article_sync_retries_only_the_unacknowledged_target():
                 "schema_version": 1,
                 "operation": operation,
                 "target": "china",
+                "status": "complete",
                 "drafts": (
                     []
                     if all_acknowledged
@@ -5331,7 +5332,8 @@ def test_remote_article_sync_retries_only_the_unacknowledged_target():
     assert second["all_targets_acknowledged"] is True
     assert calls == [("china", "en"), ("overseas", "en"), ("overseas", "en")]
     third = runtime._sync_saved_remote_article_interpretations({}, invoke=invoke)
-    assert third["status"] == "no_candidates"
+    assert third["status"] == "complete"
+    assert third["all_targets_acknowledged"] is True
     assert calls == [("china", "en"), ("overseas", "en"), ("overseas", "en")]
     cli_result = runtime.run_local_article_interpretations(
         {}, sync_only=True, sync_function=lambda *_args, **_kwargs: second
@@ -5377,6 +5379,7 @@ def test_remote_article_sync_writes_chinese_before_english_when_json_keys_are_so
                 "schema_version": 1,
                 "operation": operation,
                 "target": "china",
+                "status": "complete",
                 "drafts": [
                     {
                         "identity": identity,

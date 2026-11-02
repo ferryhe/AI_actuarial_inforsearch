@@ -2749,7 +2749,7 @@ def test_interpretation_target_china_ack_requires_exact_saved_identity(monkeypat
 
     with pytest.raises(
         worker._InterpretationTargetFailure,
-        match="interpretation_chinese_locale_readback_mismatch",
+        match="interpretation_source_projection_readback_mismatch",
     ):
         worker.apply_article_interpretation(
             {"target": "china", "locale": "zh", "draft": draft},
@@ -3296,14 +3296,26 @@ def test_article_interpretation_candidate_preserves_ack_on_locale_projection_dri
         runtime_factory=lambda: object(),
     )
 
-    assert len(result["drafts"]) == 1
-    candidate = result["drafts"][0]
-    assert candidate["source_identity"] == source_identity
-    for target in ("china", "overseas"):
-        assert candidate["targets"][target][drift_locale] == {
-            "status": "conflict",
-            "error": "target_locale_ack_projection_conflict",
+    if drift_locale == "en":
+        assert result["drafts"] == []
+        assert {
+            (issue["target"], issue["locale"], issue["status"], issue["error"])
+            for issue in result["issues"]
+        } == {
+            (target, "en", "conflict", "target_locale_ack_projection_conflict")
+            for target in ("china", "overseas")
         }
+    else:
+        assert len(result["drafts"]) == 1
+        candidate = result["drafts"][0]
+        assert candidate["source_identity"] == source_identity
+        for target in ("china", "overseas"):
+            assert candidate["targets"][target]["zh"] == {
+                "status": "conflict",
+                "error": "target_locale_ack_projection_conflict",
+            }
+            assert candidate["targets"][target]["en"]["status"] == "pending"
+        assert result["issues"] == []
     assert receipts == receipts_before
     assert connection.closed is True
 
