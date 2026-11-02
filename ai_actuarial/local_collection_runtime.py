@@ -3802,8 +3802,21 @@ def _persist_daily_source_portals(
                     if key in grouped:
                         grouped[key]["hub_results"].append(item)
                 run["evidence"] = list(grouped.values())
-                if _ACTIVE_STATE_PATH is not None:
-                    _atomic_json(_state_path_for_data(state), state)
+            # Deduplicate within each attributed card, including invalid snapshots queued by older attempts.
+            for evidence in run["evidence"]:
+                for field in ("observations", "hub_results"):
+                    unique = {}
+                    for item in evidence[field]:
+                        identity = (
+                            item["url"],
+                            item["raw_sha256"],
+                            item.get("kind"),
+                            item.get("request_scope"),
+                        )
+                        unique.setdefault(identity, item)
+                    evidence[field] = list(unique.values())
+            if _ACTIVE_STATE_PATH is not None:
+                _atomic_json(_state_path_for_data(state), state)
             for evidence in run["evidence"]:
                 record = content_hub_record_source_portal_daily(evidence, database_url=hub)
                 _queue_source_portal_update(

@@ -664,6 +664,138 @@ def test_daily_checkpoint_replays_after_hub_commit_before_publication(tmp_path, 
             assert cursor.fetchone()[0] == 1
 
 
+@pytest.mark.parametrize("already_frozen", [False, True])
+def test_cia_two_referrers_deduplicate_before_hub_and_replay_after_commit(
+    tmp_path, monkeypatch, already_frozen
+):
+    url, schema = _database(tmp_path, "daily-cia-two-referrers")
+    _patch_hub(monkeypatch, url, schema)
+    monkeypatch.setattr(runtime, "_ACTIVE_STATE_PATH", tmp_path / "state.json")
+    portal = SOURCE_PORTALS_BY_KEY["cia-publications"]
+
+    class RedirectCrawler(_Crawler):
+        def _request(self, requested_url, **kwargs):
+            body, headers, _url = super()._request(requested_url, **kwargs)
+            return body, headers, portal.url + "/"
+
+    state = {"articles": {}}
+    site_state = {
+        "queue": [{"url": portal.url + "/", "kind": "page", "referrer": portal.url + "/"}],
+        "cursor": 0,
+    }
+    captured = runtime._capture(
+        runtime.SITES["cia-ica"],
+        state,
+        RedirectCrawler(page=b"<main><h1>Public materials</h1></main>"),
+        tmp_path,
+        site_state,
+        request_limit=2,
+        refresh_portal_roots=True,
+    )
+    assert captured["request_count"] == 2 and not captured["errors"]
+    [run] = state["source_portal_daily_runs"].values()
+    assert len(run["observations"]) == 2
+    assert {item["source_page_url"] for item in run["observations"]} == {
+        portal.url,
+        portal.url + "/",
+    }
+    assert (
+        len(
+            {
+                (item["url"], item["raw_sha256"], item["request_scope"])
+                for item in run["observations"]
+            }
+        )
+        == 1
+    )
+    if already_frozen:
+        run["evidence"] = [
+            {
+                "schema_version": 1,
+                "portal_key": portal.portal_key,
+                **{key: copy.deepcopy(value) for key, value in run.items()},
+            }
+        ]
+        for item in run["evidence"][0]["observations"]:
+            item.pop("artifact_path")
+        with pytest.raises(ValueError, match="duplicate items"):
+            validate_daily_evidence(run["evidence"][0])
+    record = runtime.content_hub_record_source_portal_daily
+
+    def crash_after_commit(*args, **kwargs):
+        record(*args, **kwargs)
+        raise OSError("fixture crash after Hub commit")
+
+    monkeypatch.setattr(runtime, "content_hub_record_source_portal_daily", crash_after_commit)
+    digests, errors = runtime._persist_daily_source_portals(state, url)
+    assert not digests and "fixture crash after Hub commit" in errors[0]
+    [evidence] = run["evidence"]
+    assert len(evidence["observations"]) == 1
+    frozen_sha = validate_daily_evidence(evidence)[2]
+    checkpoint = json.loads((tmp_path / "state.json").read_text(encoding="utf-8"))
+    monkeypatch.setattr(runtime, "content_hub_record_source_portal_daily", record)
+    digests, errors = runtime._persist_daily_source_portals(checkpoint, url)
+    assert len(digests) == 1 and not errors and not checkpoint["source_portal_daily_runs"]
+    assert len(checkpoint["pending_source_portal_publications"]) == 1
+    assert runtime._persist_daily_source_portals(checkpoint, url) == ([], [])
+    with psycopg2.connect(url) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT evidence_json, evidence_sha256 FROM source_portal_captures")
+            [row] = cursor.fetchall()
+            assert len(row[0]["observations"]) == 1 and row[1].strip() == frozen_sha
+
+
+def test_daily_deduplication_preserves_separate_portal_attribution(tmp_path, monkeypatch):
+    url, schema = _database(tmp_path, "daily-per-portal-deduplication")
+    _patch_hub(monkeypatch, url, schema)
+    monkeypatch.setattr(runtime, "_ACTIVE_STATE_PATH", None)
+    raw = b"one verified report observed through two topic cards"
+    artifact = tmp_path / "shared.html"
+    artifact.write_bytes(raw)
+    run = {
+        key: value
+        for key, value in _evidence().items()
+        if key not in {"schema_version", "portal_key"}
+    }
+    run.update(site_id="soa", observations=[], hub_results=[])
+    for portal_key in ("soa-research-topics", "soa-artificial-intelligence"):
+        portal = SOURCE_PORTALS_BY_KEY[portal_key]
+        for referrer in (portal.url, portal.url + "?page=2"):
+            item = {
+                "url": "https://www.soa.org/research/shared-report",
+                "raw_sha256": hashlib.sha256(raw).hexdigest(),
+                "source_page_url": referrer,
+            }
+            run["observations"].append(
+                {
+                    **item,
+                    "kind": "page",
+                    "title": "",
+                    "request_scope": "a" * 64,
+                    "artifact_path": str(artifact),
+                }
+            )
+            run["hub_results"].append({**item, "content_version_id": "7", "status": "new"})
+    state = {"source_portal_daily_runs": {run["run_id"]: run}}
+    digests, errors = runtime._persist_daily_source_portals(state, url)
+    assert not errors and {item["portal_key"] for item in digests} == {
+        "soa-research-topics",
+        "soa-artificial-intelligence",
+    }
+    assert len(state["pending_source_portal_publications"]) == 2
+    with psycopg2.connect(url) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT portal_key, evidence_json FROM source_portal_captures")
+            rows = cursor.fetchall()
+    assert len(rows) == 2
+    for portal_key, evidence in rows:
+        validate_daily_evidence(evidence)
+        assert len(evidence["observations"]) == len(evidence["hub_results"]) == 1
+        assert (
+            evidence["observations"][0]["source_page_url"] == SOURCE_PORTALS_BY_KEY[portal_key].url
+        )
+
+
 def test_migration_keeps_v5_directory_rows_and_enforces_daily_nullability(tmp_path, monkeypatch):
     url = uninitialized_postgres_url_for_path(tmp_path / "v5-upgrade")
     with psycopg2.connect(url) as connection:
