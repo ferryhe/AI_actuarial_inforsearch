@@ -32,6 +32,7 @@ from typing import Any, Callable, Iterator
 from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 from zoneinfo import ZoneInfo
 
+from ai_actuarial.codex_environment import codex_environment
 from ai_actuarial.collectors.web_page import WebPageCollector
 from ai_actuarial.content_hub import (
     apply_content_hub_schema,
@@ -48,7 +49,6 @@ from ai_actuarial.content_hub import (
     save_live_enrichment,
 )
 from ai_actuarial.crawler import Crawler
-from ai_actuarial.codex_environment import codex_environment
 from ai_actuarial.postgres import DatabaseConfig
 from ai_actuarial.security import resolve_safe_http_url
 from ai_actuarial.source_portals import (
@@ -4213,9 +4213,11 @@ def run_local_article_interpretations(
         if generator is None:
             raise RuntimeErrorSafe("Codex article generator is not configured")
         route_value = getattr(generator, "runtime", None)
-        metadata = getattr(route_value, "receipt_metadata", None)
-        if callable(metadata):
-            route = metadata()
+        receipt_metadata: Callable[[], dict[str, Any]] | None = getattr(
+            route_value, "receipt_metadata", None
+        )
+        if callable(receipt_metadata):
+            route = receipt_metadata()  # pylint: disable=not-callable
         round_key = round_key or dt.datetime.now(ZoneInfo("America/New_York")).date().isoformat()
         generation = (stream_function or _run_article_interpretation_stream)(
             target_config,

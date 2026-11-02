@@ -519,7 +519,7 @@ def test_expired_article_resumes_without_starting_provider(storage):
     draft, _ = runner._prepare(row, "a", decisions[-1]["reason"])
     draft["selection_started_at"] = "2000-01-01T00:00:00+00:00"
     runner._save(draft)
-    result = runner._generate(draft, round_deadline=runner.clock() + 900)
+    result = runner._generate(draft, round_deadline=runner.clock() + 900, origin_receipt=None)
     assert result["error"] == "budget_exhausted" and not generator.calls
 
 
@@ -2231,7 +2231,7 @@ def test_same_content_new_prompt_and_route_fingerprint_cannot_renew_budget(stora
     assert old["content_key"] == new["content_key"]
     assert new["selection_started_at"] == old["selection_started_at"]
     assert new["origin_round_key"] == "original"
-    result = runner._generate(new, round_deadline=runner.clock() + 900)
+    result = runner._generate(new, round_deadline=runner.clock() + 900, origin_receipt=None)
     assert result["error"] == "budget_exhausted" and result["attempts"] == []
     assert len(generator.calls) == 2
     assert runner._content_budget(new["content_key"])["calls"] == 2
@@ -2525,7 +2525,7 @@ def test_genuine_new_content_version_gets_its_own_budget(storage):
     new, _ = runner._prepare(row, "a", audit[-1]["reason"])
     assert new["content_key"] != old["content_key"] and new["origin_round_key"] is None
     generator.output = None
-    result = runner._generate(new, round_deadline=runner.clock() + 900)
+    result = runner._generate(new, round_deadline=runner.clock() + 900, origin_receipt=None)
     assert result["status"] == "ready" and len(generator.calls) == 3
     assert runner._content_budget(old["content_key"])["calls"] == 2
     assert runner._content_budget(new["content_key"])["calls"] == 1
@@ -2547,7 +2547,7 @@ def test_new_fingerprint_cannot_reopen_completed_origin_round(storage, monkeypat
     new, _ = runner._prepare(
         articles._load_file(storage._conn, old["file_url"]), "a", "manual fixture"
     )
-    new = runner._generate(new, round_deadline=runner.clock() + 900)
+    new = runner._generate(new, round_deadline=runner.clock() + 900, origin_receipt=None)
     assert new["input_fingerprint"] != old["input_fingerprint"]
     assert new["selection_started_at"] == old["selection_started_at"]
     assert new["origin_round_key"] == "previous-recipe"
@@ -2872,7 +2872,7 @@ def test_exhausted_candidate_advances_to_next_article_without_new_budget(storage
     assert runner._content_budget(first["content_key"]) == before
     retried, _ = runner._prepare(articles._load_file(storage._conn, first_url), "a", "fixture")
     assert retried["input_fingerprint"] != first["input_fingerprint"]
-    result = runner._generate(retried, round_deadline=runner.clock() + 900)
+    result = runner._generate(retried, round_deadline=runner.clock() + 900, origin_receipt=None)
     assert result["error"] == "budget_exhausted" and not generator.calls
     after = runner._content_budget(first["content_key"])
     for field in ("calls", "provider_seconds", "selection_started_at", "origin_round_key"):
