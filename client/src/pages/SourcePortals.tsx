@@ -191,7 +191,7 @@ export default function SourcePortals() {
                 const title = localized(lang, portal.title_zh, portal.title_en);
                 const institution = localized(lang, portal.institution_zh, portal.institution_en);
                 return (
-                  <article key={portal.portal_key} className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-x-3 gap-y-1.5 border-b border-border px-4 py-3 last:border-b-0 sm:grid-cols-[minmax(0,1.1fr)_minmax(9rem,0.9fr)_minmax(12rem,2fr)_minmax(8.5rem,auto)] sm:gap-4 sm:px-5" data-testid="source-portal-row" role="row">
+                  <article key={portal.portal_key} className="grid min-w-0 grid-cols-1 items-start gap-y-1.5 border-b border-border px-4 py-3 last:border-b-0 sm:grid-cols-[minmax(0,1.1fr)_minmax(9rem,0.9fr)_minmax(12rem,2fr)_minmax(8.5rem,auto)] sm:gap-4 sm:px-5" data-testid="source-portal-row" role="row">
                     <div className="min-w-0" role="cell">
                       <h2 className="break-words text-sm font-semibold leading-snug">
                         <Link href={portalDetailHref(portal.portal_key, query, page)} className="rounded-sm text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">
@@ -201,10 +201,10 @@ export default function SourcePortals() {
                       <p className="mt-1 break-words text-xs text-muted-foreground sm:hidden">{institution}</p>
                     </div>
                     <div className="hidden min-w-0 break-words text-sm text-muted-foreground sm:block" role="cell">{institution}</div>
-                    <p className="col-span-2 line-clamp-2 min-w-0 break-words text-sm leading-relaxed text-muted-foreground sm:col-span-1" role="cell">
+                    <p className="line-clamp-2 min-w-0 break-words text-sm leading-relaxed text-muted-foreground" role="cell">
                       {localized(lang, portal.overview_zh, portal.overview_en)}
                     </p>
-                    <div className="row-start-1 max-w-32 break-words text-right text-xs text-muted-foreground sm:row-auto sm:max-w-none" role="cell">
+                    <div className="min-w-0 break-words text-xs text-muted-foreground sm:text-right" role="cell">
                       {latestDate ? (
                         <>
                           <span className="sm:hidden">{t("source_portals.latest_update")}: </span>
