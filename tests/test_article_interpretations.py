@@ -3051,7 +3051,7 @@ def test_codex_adapter_uses_supported_ephemeral_readonly_request(monkeypatch):
 def test_windows_codex_command_prefix_fallbacks(
     monkeypatch, available, expected, powershell_output
 ):
-    monkeypatch.setattr(articles.os, "name", "nt")
+    monkeypatch.setattr(articles, "os", SimpleNamespace(name="nt"))
     monkeypatch.setattr(articles.shutil, "which", lambda name: available.get(name))
     calls = []
 
