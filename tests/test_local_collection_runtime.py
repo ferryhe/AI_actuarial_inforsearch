@@ -4826,17 +4826,6 @@ def test_fresh_ai_backlog_rows_refresh_legacy_annotation_before_target_stream(
     assert state["reconciled_version_ids"] == [91]
 
 
-class _SyncCursor:
-    def __init__(self, rows=()):
-        self.rows = list(rows)
-
-    def fetchone(self):
-        return self.rows[0] if self.rows else None
-
-    def fetchall(self):
-        return self.rows
-
-
 def _sync_draft(identity="sync-draft-1"):
     from ai_actuarial import article_interpretations as articles
 

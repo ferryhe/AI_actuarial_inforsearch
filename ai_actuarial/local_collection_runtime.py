@@ -3528,32 +3528,6 @@ ARTICLE_INTERPRETATION_STREAM_EVENT_BYTES = 512 * 1024
 ARTICLE_INTERPRETATION_STREAM_TIMEOUT_SECONDS = 930.0
 ARTICLE_INTERPRETATION_STREAM_CALLS_PER_STAGE = 6
 ARTICLE_INTERPRETATION_STREAM_MAX_RESULT_BYTES = 256 * 1024
-ARTICLE_INTERPRETATION_CODE_FILES = {
-    "article_interpretations": "article_interpretations.py",
-    "article_interpretation_english": "article_interpretation_english.py",
-    "storage": "storage.py",
-}
-ARTICLE_INTERPRETATION_VERSIONED_OPERATIONS = frozenset(
-    {
-        "run_article_interpretation_stream",
-        "read_article_interpretation_locale_settings",
-        "list_article_interpretation_sync_candidates",
-        "record_article_interpretation_target_ack",
-        "sync_article_interpretation",
-    }
-)
-
-
-def _article_interpretation_code_versions() -> dict[str, str]:
-    versions = {}
-    for module, filename in ARTICLE_INTERPRETATION_CODE_FILES.items():
-        try:
-            source = (PROJECT_ROOT / "ai_actuarial" / filename).read_text(encoding="utf-8")
-        except OSError:
-            raise RuntimeErrorSafe("article interpretation code version is unavailable") from None
-        normalized = source.replace("\r\n", "\n").replace("\r", "\n")
-        versions[module] = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
-    return versions
 
 
 def _article_interpretation_target_command(
