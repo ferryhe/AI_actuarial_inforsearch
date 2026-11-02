@@ -232,7 +232,10 @@ SOURCE_PORTALS = (
         "japan-library",
         "https://www.actuaries.jp/english/lib/",
         ("iaj",),
-        ("https://www.actuaries.jp/english/lib/",),
+        (
+            "https://www.actuaries.jp/english/lib/",
+            "https://www.actuaries.jp/english/lib/index.html",
+        ),
         "专业资料库",
         "Library",
         "日本精算师协会（IAJ）",

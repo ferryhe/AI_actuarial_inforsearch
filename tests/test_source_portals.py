@@ -63,6 +63,10 @@ def test_catalog_urls_are_exact_runtime_site_seeds_and_aliases() -> None:
     assert SOURCE_PORTALS_BY_URL["https://www.cia-ica.ca/publications/"].portal_key == (
         "cia-publications"
     )
+    assert (
+        SOURCE_PORTALS_BY_URL["https://www.actuaries.jp/english/lib/index.html"].portal_key
+        == "japan-library"
+    )
     assert SOURCE_PORTALS_BY_KEY["soa-artificial-intelligence"].extraction_source_id == (
         "soa-ai-topic-landing"
     )
