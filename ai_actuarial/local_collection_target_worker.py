@@ -2389,7 +2389,8 @@ def _interpretation_identity(draft: dict[str, Any]) -> dict[str, str]:
         or len(coverage["evidence"]) < 5
     ):
         raise _InterpretationTargetFailure("interpretation_validation_evidence_missing")
-    from ai_actuarial.article_interpretations import _hash as article_hash, _json
+    from ai_actuarial.article_interpretations import _hash as article_hash
+    from ai_actuarial.article_interpretations import _json
 
     expected_input = article_hash(_json({"messages": draft.get("messages"), "coverage": coverage}))
     if (
@@ -2470,6 +2471,12 @@ def _interpretation_locale_digest(draft: dict[str, Any], locale: str) -> str:
     return _hash(_canonical_json(_interpretation_locale_projection(draft, locale)).encode("utf-8"))
 
 
+def _interpretation_source_projection_digest(draft: dict[str, Any]) -> str:
+    projection = dict(draft)
+    projection.pop("english_translation", None)
+    return _hash(_canonical_json(projection).encode("utf-8"))
+
+
 def _interpretation_reader_fields(draft: dict[str, Any], locale: str) -> dict[str, Any]:
     projection = _interpretation_locale_projection(draft, locale)
     body = projection["body"]
@@ -2504,6 +2511,7 @@ def apply_article_interpretation(
         raise _InterpretationTargetFailure("interpretation_not_ready")
     identity = _interpretation_identity(draft)
     source_identity = _interpretation_source_identity(identity, draft)
+    source_projection_digest = _interpretation_source_projection_digest(draft)
     locale_digest = _interpretation_locale_digest(draft, locale)
     reader_fields = _interpretation_reader_fields(draft, locale)
     if runtime_factory is None:
@@ -2582,6 +2590,11 @@ def apply_article_interpretation(
                     zh_digest_before = _interpretation_locale_digest(stored_before, "zh")
                 if zh_digest_before != _interpretation_locale_digest(draft, "zh"):
                     raise _InterpretationTargetFailure("interpretation_chinese_locale_conflict")
+                if (
+                    _interpretation_source_projection_digest(stored_before)
+                    != source_projection_digest
+                ):
+                    raise _InterpretationTargetFailure("interpretation_source_projection_conflict")
                 if locale == "zh":
                     status = "already_present" if existing else "inserted"
                 else:
@@ -2654,6 +2667,8 @@ def apply_article_interpretation(
         )
         if stored_identity != source_identity:
             raise _InterpretationTargetFailure("interpretation_identity_conflict")
+        if _interpretation_source_projection_digest(stored_draft) != source_projection_digest:
+            raise _InterpretationTargetFailure("interpretation_source_projection_readback_mismatch")
         zh_digest_after = _interpretation_locale_digest(stored_draft, "zh")
         if zh_digest_after != _interpretation_locale_digest(draft, "zh"):
             raise _InterpretationTargetFailure("interpretation_chinese_locale_readback_mismatch")
@@ -3157,6 +3172,34 @@ def list_article_interpretation_sync_candidates(
                             if isinstance(saved, dict)
                             else {"status": "pending"}
                         )
+                locale_states = [
+                    (target, locale, targets[target][locale])
+                    for target in ("china", "overseas")
+                    for locale in locales
+                ]
+                conflicts = [
+                    (target, locale, state)
+                    for target, locale, state in locale_states
+                    if state["status"] == "conflict"
+                ]
+                if conflicts and all(
+                    state["status"] in {"acknowledged", "conflict"}
+                    for _target, _locale, state in locale_states
+                ):
+                    for target, locale, state in conflicts:
+                        if len(issues) >= 100:
+                            break
+                        issues.append(
+                            {
+                                "interpretation_id": identity["interpretation_id"],
+                                "identity": identity,
+                                "status": "conflict",
+                                "target": target,
+                                "locale": locale,
+                                "error": state.get("error") or "target_receipt_identity_conflict",
+                            }
+                        )
+                    continue
                 if all(
                     targets[target][locale]["status"] == "acknowledged"
                     for target in ("china", "overseas")
@@ -3396,14 +3439,22 @@ def _run_article_interpretation_stream_operation(payload: dict[str, Any]) -> int
 def main() -> int:
     payload: Any = None
     try:
-        first_line = sys.stdin.readline(MAX_INTERPRETATION_EVENT_BYTES + 1)
-        if len(first_line) > MAX_INTERPRETATION_EVENT_BYTES:
-            raise ValueError("target operation request is too large")
+        first_line = sys.stdin.readline()
         payload = json.loads(first_line)
         if (
             isinstance(payload, dict)
             and payload.get("operation") == "run_article_interpretation_stream"
         ):
+            if len(first_line.encode("utf-8")) > MAX_INTERPRETATION_EVENT_BYTES:
+                _interpretation_stream_emit(
+                    sys.stdout,
+                    {
+                        "schema_version": 1,
+                        "event": "failure",
+                        "code": "stream_request_too_large",
+                    },
+                )
+                return 2
             return _run_article_interpretation_stream_operation(payload)
         if (
             isinstance(payload, dict)

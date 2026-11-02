@@ -4927,6 +4927,85 @@ def test_article_interpretations_cli_requires_explicit_codex_route(monkeypatch, 
     assert output["error"].endswith("article_interpretation_codex_route_missing")
 
 
+def test_interpretation_ack_reply_uses_payload_target_not_ssh_destination(monkeypatch, tmp_path):
+    worker_script = tmp_path / "worker.py"
+    worker_script.write_text("pass\n", encoding="utf-8")
+    monkeypatch.setattr(runtime, "TARGET_WORKER", worker_script)
+    monkeypatch.setattr(
+        runtime,
+        "_article_interpretation_target_command",
+        lambda *_args: (["ssh", "fixture"], {"timeout_seconds": 30}),
+    )
+    response = {"schema_version": 1, "target": "overseas", "status": "unknown"}
+    monkeypatch.setattr(
+        runtime.subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(returncode=0, stdout=json.dumps(response)),
+    )
+
+    result = runtime._invoke_article_interpretation_target_worker(
+        {},
+        "china",
+        {
+            "schema_version": 1,
+            "operation": "record_article_interpretation_target_ack",
+            "target": "overseas",
+        },
+    )
+
+    assert result == response
+
+
+def test_remote_article_sync_preserves_candidate_conflict_target_and_locale():
+    issue = {
+        "interpretation_id": "fixture-interpretation",
+        "status": "conflict",
+        "target": "overseas",
+        "locale": "zh",
+        "error": "target_locale_ack_projection_conflict",
+    }
+
+    def invoke(_config, target, payload):
+        assert target == "china"
+        assert payload["operation"] == "list_article_interpretation_sync_candidates"
+        return {
+            "schema_version": 1,
+            "operation": payload["operation"],
+            "target": "china",
+            "status": "partial",
+            "drafts": [],
+            "issues": [issue],
+            "more_pending": False,
+        }
+
+    result = runtime._sync_saved_remote_article_interpretations({}, invoke=invoke)
+
+    assert result["status"] == "partial"
+    assert result["issues"] == [issue]
+    assert result["all_targets_acknowledged"] is False
+
+
+def test_remote_article_sync_empty_complete_scan_is_acknowledged():
+    def invoke(_config, target, payload):
+        assert target == "china"
+        assert payload["operation"] == "list_article_interpretation_sync_candidates"
+        return {
+            "schema_version": 1,
+            "operation": payload["operation"],
+            "target": "china",
+            "status": "no_candidates",
+            "drafts": [],
+            "issues": [],
+            "more_pending": False,
+        }
+
+    result = runtime._sync_saved_remote_article_interpretations({}, invoke=invoke)
+
+    assert result["status"] == "complete"
+    assert result["all_targets_acknowledged"] is True
+    assert result["drafts"] == []
+
+
 def test_local_article_interpretations_no_candidate_and_sync_only_never_generate():
     result = runtime.run_local_article_interpretations(
         {},
@@ -4944,6 +5023,93 @@ def test_local_article_interpretations_no_candidate_and_sync_only_never_generate
     assert result["generation_calls"] == 0
     assert result["generation"]["outer_attempts"] == 0
     assert result["internal_provider_requests"] is None
+
+
+def test_local_article_interpretations_rerun_with_acked_draft_is_complete():
+    class Generator:
+        runtime = SimpleNamespace(
+            receipt_metadata=lambda: {
+                "backend": "codex-cli",
+                "requested_model": "gpt-6-luna",
+                "effective_model": "unreported",
+                "requested_reasoning_effort": "high",
+                "effective_reasoning_effort": "unreported",
+                "internal_provider_requests": "unknown/unmetered",
+            }
+        )
+
+    result = runtime.run_local_article_interpretations(
+        {},
+        generator=Generator(),
+        round_key="2026-11-02",
+        stream_function=lambda *_args, **_kwargs: {
+            "status": "complete",
+            "generation": {
+                "status": "complete",
+                "outer_attempts": 1,
+                "slots": [{"interpretation_id": "already-synced", "status": "ready"}],
+            },
+            "locale_settings": {
+                "english_translation_enabled": False,
+                "english_proxy_enabled": False,
+            },
+        },
+        sync_function=lambda *_args, **_kwargs: {
+            "schema_version": 1,
+            "status": "no_candidates",
+            "all_targets_acknowledged": True,
+            "more_pending": False,
+            "drafts": [],
+            "issues": [],
+            "generation_calls": 0,
+        },
+    )
+
+    assert result["status"] == "complete"
+    assert result["generation"]["status"] == "complete"
+    assert result["sync"]["status"] == "no_candidates"
+
+
+@pytest.mark.parametrize(
+    "sync_overrides",
+    [
+        {"all_targets_acknowledged": False, "issues": []},
+        {"issues": []},
+        {"all_targets_acknowledged": True, "issues": [{"status": "conflict"}]},
+    ],
+)
+def test_ready_rerun_with_no_candidates_requires_complete_ack_evidence(sync_overrides):
+    class Generator:
+        runtime = SimpleNamespace(receipt_metadata=lambda: {"backend": "codex-cli"})
+
+    sync = {
+        "schema_version": 1,
+        "status": "no_candidates",
+        "more_pending": False,
+        "drafts": [],
+        "generation_calls": 0,
+        **sync_overrides,
+    }
+    result = runtime.run_local_article_interpretations(
+        {},
+        generator=Generator(),
+        round_key="2026-11-02",
+        stream_function=lambda *_args, **_kwargs: {
+            "status": "complete",
+            "generation": {
+                "status": "complete",
+                "outer_attempts": 1,
+                "slots": [{"interpretation_id": "already-synced", "status": "ready"}],
+            },
+            "locale_settings": {
+                "english_translation_enabled": False,
+                "english_proxy_enabled": False,
+            },
+        },
+        sync_function=lambda *_args, **_kwargs: sync,
+    )
+
+    assert result["status"] == "partial"
 
 
 def test_local_article_interpretations_failure_is_not_reported_as_success():
@@ -5177,6 +5343,90 @@ def test_remote_article_sync_retries_only_the_unacknowledged_target():
     assert cli_fields["title"] == "Methods and application boundaries"
     assert "body" not in cli_fields
     assert cli_result["generation_calls"] == 0
+
+
+def test_remote_article_sync_writes_chinese_before_english_when_json_keys_are_sorted():
+    from ai_actuarial.local_collection_target_worker import (
+        _interpretation_identity,
+        _interpretation_locale_digest,
+        _interpretation_reader_fields,
+        _interpretation_source_identity,
+    )
+
+    draft = _sync_draft("remote-sync-locale-order")
+    draft["english_translation"] = {
+        "status": "ready",
+        "title_en": "Methods and application boundaries",
+        "body_markdown_en": "## Research interpretation\n\nA concise explanation.",
+    }
+    identity = _interpretation_identity(draft)
+    source_identity = _interpretation_source_identity(identity, draft)
+    locales = {
+        locale: {
+            "locale_digest": _interpretation_locale_digest(draft, locale),
+            "reader_fields": _interpretation_reader_fields(draft, locale),
+        }
+        for locale in ("en", "zh")
+    }
+    calls = []
+
+    def invoke(_config, target, payload):
+        operation = payload["operation"]
+        if operation == "list_article_interpretation_sync_candidates":
+            return {
+                "schema_version": 1,
+                "operation": operation,
+                "target": "china",
+                "drafts": [
+                    {
+                        "identity": identity,
+                        "source_identity": source_identity,
+                        "draft": draft,
+                        "locales": locales,
+                        "targets": {"china": {}, "overseas": {}},
+                    }
+                ],
+                "issues": [],
+                "more_pending": False,
+            }
+        locale = payload["locale"]
+        target_locale = payload["target"]
+        locale_data = locales[locale]
+        if operation == "record_article_interpretation_target_ack":
+            return {
+                "schema_version": 1,
+                "operation": operation,
+                "target": target_locale,
+                "locale": locale,
+                "status": payload["status"],
+                "source_identity": source_identity,
+                "locale_digest": locale_data["locale_digest"],
+                "draft_sha256": identity["draft_sha256"],
+                **(
+                    {"reader_fields": locale_data["reader_fields"]}
+                    if payload["status"] == "acknowledged"
+                    else {}
+                ),
+            }
+        assert operation == "sync_article_interpretation"
+        calls.append((target_locale, locale))
+        if target_locale == "overseas" and locale == "en":
+            assert ("overseas", "zh") in calls
+        return {
+            "target": target_locale,
+            "locale": locale,
+            "status": "verified" if target_locale == "china" else "inserted",
+            "source_identity": source_identity,
+            "locale_digest": locale_data["locale_digest"],
+            "draft_sha256": identity["draft_sha256"],
+            "reader_fields": locale_data["reader_fields"],
+        }
+
+    result = runtime._sync_saved_remote_article_interpretations({}, invoke=invoke)
+
+    assert calls == [("china", "zh"), ("china", "en"), ("overseas", "zh"), ("overseas", "en")]
+    assert result["status"] == "complete"
+    assert result["all_targets_acknowledged"] is True
 
 
 @pytest.mark.parametrize(
@@ -5453,6 +5703,104 @@ def test_article_interpretation_prompt_uses_earlier_deadline_and_cancels_generat
         "request_id": request_id,
         "kind": "timeout",
     }
+
+
+def test_article_interpretation_stream_missing_target_timeout_uses_round_default(
+    monkeypatch, tmp_path: Path
+):
+    import asyncio
+
+    worker_script = tmp_path / "worker.py"
+    worker_script.write_text("print('fixture')", encoding="utf-8")
+    monkeypatch.setattr(runtime, "TARGET_WORKER", worker_script)
+    monkeypatch.setattr(
+        runtime,
+        "_article_interpretation_target_command",
+        lambda *_args: (["ssh", "fixture"], {}),
+    )
+    monkeypatch.setattr(runtime, "time", SimpleNamespace(monotonic=lambda: 100.0))
+    prompt = {
+        "schema_version": 1,
+        "event": "prompt",
+        "stage": "generation",
+        "request_id": "b" * 32,
+        "timeout_seconds": 240.0,
+        "messages": [{"role": "user", "content": "fixture"}],
+    }
+    complete = {
+        "schema_version": 1,
+        "event": "complete",
+        "route": {"backend": "codex-cli"},
+        "locale_settings": {
+            "english_translation_enabled": False,
+            "english_proxy_enabled": False,
+        },
+        "generation": {"status": "complete"},
+    }
+
+    class Writer:
+        def __init__(self):
+            self.closed = False
+
+        def write(self, _value):
+            return None
+
+        async def drain(self):
+            return None
+
+        def is_closing(self):
+            return self.closed
+
+        def close(self):
+            self.closed = True
+
+        async def wait_closed(self):
+            return None
+
+    class Reader:
+        def __init__(self):
+            self.lines = [
+                json.dumps(prompt).encode("utf-8") + b"\n",
+                json.dumps(complete).encode("utf-8") + b"\n",
+            ]
+
+        async def readline(self):
+            return self.lines.pop(0)
+
+    class Process:
+        pid = 4004
+        returncode = 0
+
+        def __init__(self):
+            self.stdin = Writer()
+            self.stdout = Reader()
+
+        async def wait(self):
+            return self.returncode
+
+    async def create_process(*_args, **_kwargs):
+        return Process()
+
+    monkeypatch.setattr(runtime.asyncio, "create_subprocess_exec", create_process)
+    received_deadlines = []
+
+    class Generator:
+        runtime = SimpleNamespace(backend="codex-cli", model="gpt-6-luna", reasoning_effort="high")
+
+        async def generate(self, _messages, *, deadline):
+            received_deadlines.append(deadline)
+            return "fixture result"
+
+    result = asyncio.run(
+        runtime._run_article_interpretation_stream_async(
+            {"targets": {"china": {}}},
+            generator=Generator(),
+            round_key="timeout-default-fixture",
+        )
+    )
+
+    assert received_deadlines == [pytest.approx(340.0)]
+    assert result["status"] == "complete"
 
 
 def test_article_interpretation_ssh_stream_cancellation_reaps_worker_tree(

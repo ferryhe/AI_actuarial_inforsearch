@@ -576,7 +576,14 @@ class EnglishTranslationService:
             )
             if key in route
         }
-        if state.get("attempts") and saved_route != current_route:
+        # Legacy receipts predate full route persistence, so they only prove provider/model.
+        legacy_route_matches = state.get("provider") == current_route.get("provider") and state.get(
+            "model"
+        ) == current_route.get("model")
+        route_matches = (
+            saved_route == current_route if saved_route is not None else legacy_route_matches
+        )
+        if state.get("attempts") and not route_matches:
             state.update(status="failed", error="english_translation_route_changed")
             self._save_translation(draft, state)
             slot.update(status="failed", reason=state["error"])

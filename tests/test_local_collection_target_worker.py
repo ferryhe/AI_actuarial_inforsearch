@@ -779,6 +779,65 @@ def test_worker_startup_exception_json_retains_payload_target(monkeypatch) -> No
     assert reply["error"] == "database unavailable"
 
 
+def test_worker_main_accepts_valid_source_batch_above_interpretation_stream_cap(
+    monkeypatch,
+):
+    item = _item(
+        "https://example.test/large-source.pdf",
+        b"x" * 409_609,
+        "Pricing models use AI methods.",
+    )
+    payload = {
+        "schema_version": 1,
+        "target": "china",
+        "items": [item],
+        "approved_categories": ["AI", "Pricing", "Other"],
+    }
+    encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    assert len(item["raw_bytes_b64"]) > worker.MAX_INTERPRETATION_EVENT_BYTES
+    assert len(encoded.encode("utf-8")) > worker.MAX_INTERPRETATION_EVENT_BYTES
+    assert worker.MAX_ARTICLE_BYTES >= 409_609
+    worker._normalize_item(item, "china", payload["approved_categories"])
+
+    received = []
+    monkeypatch.setattr(worker.sys, "stdin", StringIO(encoded + "\n"))
+    monkeypatch.setattr(worker.sys, "stdout", StringIO())
+    monkeypatch.setattr(
+        worker,
+        "apply_batch",
+        lambda value: received.append(value)
+        or {"target": "china", "failures": [], "ready_status": "succeeded"},
+    )
+
+    assert worker.main() == 0
+    assert received == [payload]
+
+
+def test_worker_main_keeps_interpretation_stream_request_cap(monkeypatch):
+    payload = {
+        "schema_version": 1,
+        "operation": "run_article_interpretation_stream",
+        "target": "china",
+        "padding": "x" * worker.MAX_INTERPRETATION_EVENT_BYTES,
+    }
+    encoded = json.dumps(payload, separators=(",", ":"))
+    output = StringIO()
+    monkeypatch.setattr(worker.sys, "stdin", StringIO(encoded + "\n"))
+    monkeypatch.setattr(worker.sys, "stdout", output)
+    monkeypatch.setattr(
+        worker,
+        "_run_article_interpretation_stream_operation",
+        lambda _payload: pytest.fail("oversized stream request must be rejected first"),
+    )
+
+    assert worker.main() == 2
+    assert json.loads(output.getvalue()) == {
+        "schema_version": 1,
+        "event": "failure",
+        "code": "stream_request_too_large",
+    }
+
+
 @pytest.mark.parametrize(
     ("task_id", "status", "error", "log_file"),
     [
@@ -2565,6 +2624,7 @@ def test_different_ready_draft_for_same_content_still_conflicts(monkeypatch):
     [
         ("source", "interpretation_identity_conflict"),
         ("zh_digest", "interpretation_chinese_locale_conflict"),
+        ("references", "interpretation_source_projection_conflict"),
         ("ready_en", "interpretation_english_locale_conflict"),
     ],
 )
@@ -2582,6 +2642,11 @@ def test_interpretation_en_only_update_rejects_identity_or_ready_conflicts(
         stored["file_url"] = "https://example.test/other.pdf"
     elif mutation == "zh_digest":
         stored["title_zh"] = "Different Chinese title"
+    elif mutation == "references":
+        stored["references"] = {
+            **stored["references"],
+            "article_url": "https://example.test/other.pdf",
+        }
     else:
         stored["english_translation"] = {
             "status": "ready",
@@ -2917,9 +2982,7 @@ def test_article_interpretation_stream_rejects_bad_result_frames(response_kind):
     assert len(prompt["request_id"]) == 32
 
 
-def test_article_interpretation_sync_candidate_scan_reaches_new_pending_after_history(
-    monkeypatch,
-):
+def test_article_interpretation_sync_candidate_scan_skips_conflict_only_history(monkeypatch):
     from ai_actuarial import postgres
 
     drafts = [
@@ -2954,19 +3017,21 @@ def test_article_interpretation_sync_candidate_scan_reaches_new_pending_after_hi
         for index, draft in enumerate(drafts)
     }
     receipts = {}
-    for draft in drafts[:-1]:
+    for index, draft in enumerate(drafts[:-1]):
         identity = identities[draft["interpretation_id"]]
         source_identity = worker._interpretation_source_identity(identity, draft)
         reader_fields = worker._interpretation_reader_fields(draft, "zh")
         locale_digest = worker._interpretation_locale_digest(draft, "zh")
         for target in ("china", "overseas"):
+            if index == 0 and target == "overseas":
+                continue
             key = worker._interpretation_ack_key(target, source_identity, "zh")
             receipts[key] = {
                 "receipt_type": "target_sync_locale",
                 "target": target,
                 "locale": "zh",
                 "source_identity": source_identity,
-                "locale_digest": locale_digest,
+                "locale_digest": "0" * 64 if index < 3 else locale_digest,
                 "draft_sha256": identity["draft_sha256"],
                 "status": "acknowledged",
                 "reader_fields": reader_fields,
@@ -3026,11 +3091,22 @@ def test_article_interpretation_sync_candidate_scan_reaches_new_pending_after_hi
 
     assert connection.read_only if hasattr(connection, "read_only") else True
     assert connection.offsets == [0, 100]
-    assert [item["identity"]["interpretation_id"] for item in result["drafts"]] == ["new-pending"]
+    assert [item["identity"]["interpretation_id"] for item in result["drafts"]] == [
+        "old-000",
+        "new-pending",
+    ]
     assert list(result["drafts"][0]["locales"]) == ["zh"]
-    assert result["drafts"][0]["targets"]["china"]["zh"]["status"] == "pending"
+    assert result["drafts"][0]["targets"]["china"]["zh"]["status"] == "conflict"
+    assert result["drafts"][0]["targets"]["overseas"]["zh"]["status"] == "pending"
+    assert result["drafts"][1]["targets"]["china"]["zh"]["status"] == "pending"
     assert result["more_pending"] is False
-    assert result["status"] == "complete"
+    assert result["status"] == "partial"
+    assert {
+        (issue["interpretation_id"], issue["target"], issue["locale"]) for issue in result["issues"]
+    } == {(f"old-{index:03}", target, "zh") for index in (1, 2) for target in ("china", "overseas")}
+    assert all(
+        issue["error"] == "target_locale_ack_projection_conflict" for issue in result["issues"]
+    )
     assert connection.closed is True
 
 

@@ -3592,7 +3592,12 @@ def _invoke_article_interpretation_target_worker(
         reply = json.loads(result.stdout)
     except (json.JSONDecodeError, TypeError):
         return {"target": target, "_transport": "unknown", "error": "target_ack_unknown"}
-    if not isinstance(reply, dict) or reply.get("target") != target:
+    expected_target = (
+        payload.get("target")
+        if payload.get("operation") == "record_article_interpretation_target_ack"
+        else target
+    )
+    if not isinstance(reply, dict) or reply.get("target") != expected_target:
         return {"target": target, "_transport": "unknown", "error": "target_ack_unknown"}
     if result.returncode not in (0, 2):
         return {"target": target, "_transport": "unknown", "error": "target_ack_unknown"}
@@ -3651,9 +3656,15 @@ async def _run_article_interpretation_stream_async(
     else:
         options["start_new_session"] = True
     process = await asyncio.create_subprocess_exec(*command, **options)
+    configured_timeout = target_cfg.get("timeout_seconds")
+    target_timeout = (
+        ARTICLE_INTERPRETATION_STREAM_TIMEOUT_SECONDS
+        if configured_timeout is None
+        else float(configured_timeout)
+    )
     deadline = time.monotonic() + min(
         ARTICLE_INTERPRETATION_STREAM_TIMEOUT_SECONDS,
-        max(30.0, float(target_cfg.get("timeout_seconds") or 0)),
+        max(30.0, target_timeout),
     )
     prompt_counts = {"generation": 0, "english_translation": 0}
     complete = False
@@ -3877,18 +3888,18 @@ def _sync_saved_remote_article_interpretations(
     results = [
         {
             key: issue[key]
-            for key in ("interpretation_id", "identity", "status", "error")
+            for key in ("interpretation_id", "identity", "status", "target", "locale", "error")
             if key in issue
         }
         for issue in listed["issues"]
         if isinstance(issue, dict)
     ]
     from ai_actuarial.local_collection_target_worker import (
-        _InterpretationTargetFailure,
         _interpretation_identity,
         _interpretation_locale_digest,
         _interpretation_reader_fields,
         _interpretation_source_identity,
+        _InterpretationTargetFailure,
     )
 
     for item in listed["drafts"]:
@@ -3943,7 +3954,10 @@ def _sync_saved_remote_article_interpretations(
             if not isinstance(saved_locales, dict):
                 saved_locales = {}
             locale_results = {}
-            for locale, data in locale_data.items():
+            for locale in ("zh", "en"):
+                data = locale_data.get(locale)
+                if data is None:
+                    continue
                 expected_digest = data["locale_digest"]
                 expected_fields = data["reader_fields"]
                 state = saved_locales.get(locale)
@@ -4114,14 +4128,14 @@ def _sync_saved_remote_article_interpretations(
         )
     more_pending = listed.get("more_pending") is True
     no_issues = not results and not listed["issues"] and not more_pending
-    all_acknowledged = (
-        bool(results)
-        and not more_pending
+    scan_complete = (
+        listed.get("status") in {"complete", "no_candidates"}
+        and listed.get("more_pending") is False
         and not listed["issues"]
-        and all(
-            item.get("all_targets_acknowledged") or item.get("status") == "already_acknowledged"
-            for item in results
-        )
+    )
+    all_acknowledged = scan_complete and all(
+        item.get("all_targets_acknowledged") is True or item.get("status") == "already_acknowledged"
+        for item in results
     )
     return {
         "schema_version": 1,
@@ -4182,10 +4196,15 @@ def _article_interpretation_run_status(
     if sync.get("status") == "complete":
         return "complete" if status == "complete" else "partial"
     if sync.get("status") == "no_candidates" and status == "complete":
+        if (
+            has_ready_chinese
+            and sync.get("all_targets_acknowledged") is True
+            and sync.get("more_pending") is False
+            and not sync.get("issues")
+        ):
+            return "complete"
         if all(
-            slot.get("status") == "skipped"
-            for slot in ((generation or {}).get("slots") or [])
-            if isinstance(slot, dict)
+            slot.get("status") == "skipped" for slot in generation_slots if isinstance(slot, dict)
         ):
             return "no_candidates"
     return "partial"

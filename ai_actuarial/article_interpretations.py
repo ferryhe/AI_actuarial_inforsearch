@@ -1442,27 +1442,49 @@ def _codex_prompt(messages: list[dict[str, str]]) -> str:
 
 
 async def _terminate_codex_process_tree(process) -> None:
+    if os.name != "nt":
+        try:
+            os.killpg(process.pid, signal.SIGTERM)  # pylint: disable=no-member
+        except (OSError, ProcessLookupError):
+            if process.returncode is None:
+                try:
+                    process.terminate()
+                except ProcessLookupError:
+                    pass
+        try:
+            await asyncio.wait_for(process.wait(), timeout=5)
+        except asyncio.TimeoutError:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)  # pylint: disable=no-member
+            except (OSError, ProcessLookupError):
+                if process.returncode is None:
+                    process.kill()
+            await process.wait()
+            return
+        # The leader can exit while a child keeps the process group alive.
+        try:
+            os.killpg(process.pid, signal.SIGKILL)  # pylint: disable=no-member
+        except (OSError, ProcessLookupError):
+            pass
+        return
     if process.returncode is not None:
         await process.wait()
         return
     try:
-        if os.name == "nt":
-            killer = await asyncio.create_subprocess_exec(
-                "taskkill.exe",
-                "/F",
-                "/T",
-                "/PID",
-                str(process.pid),
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL,
-            )
-            try:
-                await asyncio.wait_for(killer.wait(), timeout=5)
-            except asyncio.TimeoutError:
-                killer.kill()
-                await killer.wait()
-        else:
-            os.killpg(process.pid, signal.SIGTERM)
+        killer = await asyncio.create_subprocess_exec(
+            "taskkill.exe",
+            "/F",
+            "/T",
+            "/PID",
+            str(process.pid),
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        try:
+            await asyncio.wait_for(killer.wait(), timeout=5)
+        except asyncio.TimeoutError:
+            killer.kill()
+            await killer.wait()
     except (OSError, ProcessLookupError):
         try:
             process.terminate()

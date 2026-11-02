@@ -3197,6 +3197,52 @@ def test_codex_process_tree_cleanup_uses_windows_tree_kill(monkeypatch):
     assert process.returncode == 0
 
 
+def test_codex_process_tree_cleanup_kills_posix_child_after_leader_exits():
+    if articles.os.name == "nt" or not Path("/proc").is_dir():
+        pytest.skip("Linux process-group cleanup contract")
+
+    import sys
+
+    child_code = (
+        "import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+        "print('ready', flush=True); time.sleep(60)"
+    )
+    parent_code = (
+        "import subprocess,sys,time; child=subprocess.Popen([sys.executable,'-c',sys.argv[1]], "
+        "stdout=subprocess.PIPE,text=True); child.stdout.readline(); "
+        "print(child.pid, flush=True); time.sleep(60)"
+    )
+
+    async def terminate_child():
+        process = await articles.asyncio.create_subprocess_exec(
+            sys.executable,
+            "-c",
+            parent_code,
+            child_code,
+            stdout=articles.asyncio.subprocess.PIPE,
+            stderr=articles.asyncio.subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        child_pid = int(await articles.asyncio.wait_for(process.stdout.readline(), timeout=5))
+        try:
+            await articles._terminate_codex_process_tree(process)
+            for _ in range(50):
+                try:
+                    state = Path(f"/proc/{child_pid}/stat").read_text().split()[2]
+                except FileNotFoundError:
+                    break
+                if state == "Z":
+                    break
+                await articles.asyncio.sleep(0.02)
+            else:
+                pytest.fail("POSIX child remained alive after process-tree cleanup")
+            assert process.returncode is not None
+        finally:
+            await articles._terminate_codex_process_tree(process)
+
+    articles.asyncio.run(terminate_child())
+
+
 def test_codex_runtime_route_is_retry_identity_including_reasoning_effort():
     codex_runtime = _codex_test_runtime()
     route = articles._runtime_route(codex_runtime)

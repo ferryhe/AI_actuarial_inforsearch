@@ -168,6 +168,37 @@ class Generator:
         return _valid_response(messages)
 
 
+def _legacy_english_translation(*, provider="deepseek", model="deepseek-flash", route=None):
+    state = {
+        "status": "failed",
+        "provider": provider,
+        "model": model,
+        "attempts": [
+            {
+                "attempt_id": "legacy-attempt",
+                "status": "failed",
+                "calls": [
+                    {"status": "failed", "provider_calls": 1, "reserved_provider_seconds": 10}
+                ],
+            }
+        ],
+    }
+    if route is not None:
+        state["route"] = route
+    return state
+
+
+def _fake_routed_generator():
+    generator = Generator()
+    generator.runtime = SimpleNamespace(
+        provider="deepseek",
+        model="deepseek-flash",
+        stable_credential_id="synthetic-credential",
+        base_url=None,
+    )
+    return generator
+
+
 def test_english_generator_uses_provider_specific_defaults(monkeypatch):
     runtime = SimpleNamespace(
         configured=True,
@@ -231,6 +262,95 @@ def test_english_codex_budget_error_names_outer_attempts():
     assert service._content_calls_exhausted_reason() == "content_outer_attempts_exhausted"
     service.generator = SimpleNamespace(runtime=SimpleNamespace(backend="deepseek"))
     assert service._content_calls_exhausted_reason() == "content_provider_calls_exhausted"
+
+
+def test_legacy_translation_without_route_resumes_and_preserves_old_ledger(storage):
+    legacy = _legacy_english_translation()
+    draft = _draft(storage, existing_translation=legacy)
+    generator = _fake_routed_generator()
+
+    receipt = EnglishTranslationService(storage, generator=generator).run(
+        interpretation_ids=[draft["interpretation_id"]]
+    )
+
+    saved = dict(
+        storage._conn.execute(
+            "SELECT payload_json FROM article_interpretations WHERE interpretation_id=?",
+            (draft["interpretation_id"],),
+        ).fetchone()[0]
+    )["english_translation"]
+    service = EnglishTranslationService(storage, generator=generator)
+    budget = service._content_totals(draft["content_key"])
+    assert receipt["slots"][0]["status"] == "ready"
+    assert receipt["slots"][0]["reason"] == "translation_and_evidence_valid"
+    assert len(generator.calls) == 1
+    assert saved["route"] == articles._runtime_route(generator.runtime)
+    assert saved["attempts"][0] == legacy["attempts"][0]
+    assert len(saved["attempts"]) == 2
+    assert sum(len(attempt["calls"]) for attempt in saved["attempts"]) == 2
+    assert budget["calls"] == 2
+
+
+@pytest.mark.parametrize(
+    "provider,model",
+    [("other-provider", "deepseek-flash"), ("deepseek", "other-model")],
+)
+def test_legacy_translation_without_route_rejects_provider_or_model_mismatch(
+    storage, provider, model
+):
+    legacy = _legacy_english_translation(provider=provider, model=model)
+    draft = _draft(storage, existing_translation=legacy)
+    generator = _fake_routed_generator()
+
+    receipt = EnglishTranslationService(storage, generator=generator).run(
+        interpretation_ids=[draft["interpretation_id"]]
+    )
+
+    saved = dict(
+        storage._conn.execute(
+            "SELECT payload_json FROM article_interpretations WHERE interpretation_id=?",
+            (draft["interpretation_id"],),
+        ).fetchone()[0]
+    )["english_translation"]
+    assert receipt["slots"][0]["reason"] == "english_translation_route_changed"
+    assert generator.calls == []
+    assert saved["attempts"] == legacy["attempts"]
+    assert "route" not in saved
+    assert (
+        EnglishTranslationService(storage, generator=generator)._content_totals(
+            draft["content_key"]
+        )["calls"]
+        == 1
+    )
+
+
+def test_legacy_translation_with_route_still_requires_full_route_match(storage):
+    generator = _fake_routed_generator()
+    old_route = articles._runtime_route(generator.runtime)
+    old_route["credential_id"] = "different-synthetic-credential"
+    legacy = _legacy_english_translation(route=old_route)
+    draft = _draft(storage, existing_translation=legacy)
+
+    receipt = EnglishTranslationService(storage, generator=generator).run(
+        interpretation_ids=[draft["interpretation_id"]]
+    )
+
+    saved = dict(
+        storage._conn.execute(
+            "SELECT payload_json FROM article_interpretations WHERE interpretation_id=?",
+            (draft["interpretation_id"],),
+        ).fetchone()[0]
+    )["english_translation"]
+    assert receipt["slots"][0]["reason"] == "english_translation_route_changed"
+    assert generator.calls == []
+    assert saved["route"] == old_route
+    assert saved["attempts"] == legacy["attempts"]
+    assert (
+        EnglishTranslationService(storage, generator=generator)._content_totals(
+            draft["content_key"]
+        )["calls"]
+        == 1
+    )
 
 
 def test_saved_chinese_claims_translate_without_mutating_chinese_and_reader_hides_internals(
