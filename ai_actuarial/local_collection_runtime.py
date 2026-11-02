@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import base64
 import contextlib
 import datetime as dt
@@ -11,6 +12,7 @@ import html
 import http.client
 import importlib.util
 import json
+import math
 import os
 import re
 import shlex
@@ -46,6 +48,7 @@ from ai_actuarial.content_hub import (
     save_live_enrichment,
 )
 from ai_actuarial.crawler import Crawler
+from ai_actuarial.codex_environment import codex_environment
 from ai_actuarial.postgres import DatabaseConfig
 from ai_actuarial.security import resolve_safe_http_url
 from ai_actuarial.source_portals import (
@@ -2356,25 +2359,7 @@ def _run_model(
         "model_reasoning_effort=high",
         "-",
     ]
-    allowed_env = {
-        key: value
-        for key, value in os.environ.items()
-        if key.upper()
-        in {
-            "PATH",
-            "PATHEXT",
-            "SYSTEMROOT",
-            "WINDIR",
-            "USERPROFILE",
-            "APPDATA",
-            "LOCALAPPDATA",
-            "CODEX_HOME",
-            "TEMP",
-            "TMP",
-            "LANG",
-            "LC_ALL",
-        }
-    }
+    allowed_env = codex_environment()
     try:
         completed = subprocess.run(
             command, input=prompt, text=True, capture_output=True, timeout=2400, env=allowed_env
@@ -3537,6 +3522,803 @@ def _invoke_target_worker(
     ):
         raise RuntimeErrorSafe(f"{target} target worker did not confirm its own target identity")
     return reply
+
+
+ARTICLE_INTERPRETATION_STREAM_EVENT_BYTES = 512 * 1024
+ARTICLE_INTERPRETATION_STREAM_TIMEOUT_SECONDS = 930.0
+ARTICLE_INTERPRETATION_STREAM_CALLS_PER_STAGE = 6
+ARTICLE_INTERPRETATION_STREAM_MAX_RESULT_BYTES = 256 * 1024
+ARTICLE_INTERPRETATION_CODE_FILES = {
+    "article_interpretations": "article_interpretations.py",
+    "article_interpretation_english": "article_interpretation_english.py",
+    "storage": "storage.py",
+}
+ARTICLE_INTERPRETATION_VERSIONED_OPERATIONS = frozenset(
+    {
+        "run_article_interpretation_stream",
+        "read_article_interpretation_locale_settings",
+        "list_article_interpretation_sync_candidates",
+        "record_article_interpretation_target_ack",
+        "sync_article_interpretation",
+    }
+)
+
+
+def _article_interpretation_code_versions() -> dict[str, str]:
+    versions = {}
+    for module, filename in ARTICLE_INTERPRETATION_CODE_FILES.items():
+        try:
+            source = (PROJECT_ROOT / "ai_actuarial" / filename).read_text(encoding="utf-8")
+        except OSError:
+            raise RuntimeErrorSafe("article interpretation code version is unavailable") from None
+        normalized = source.replace("\r\n", "\n").replace("\r", "\n")
+        versions[module] = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+    return versions
+
+
+def _article_interpretation_target_command(
+    config: dict[str, Any], target: str
+) -> tuple[list[str], dict[str, Any]]:
+    target_cfg = (config.get("targets") or {}).get(target)
+    if not isinstance(target_cfg, dict) or not target_cfg.get("host"):
+        raise RuntimeErrorSafe(f"target {target} has no configured SSH host")
+    container = str(target_cfg.get("container") or "ai-api")
+    remote_tokens = (["sudo", "-n"] if target_cfg.get("sudo") is True else []) + [
+        "docker",
+        "exec",
+        "-i",
+        container,
+        "python",
+        "-c",
+        'import sys,base64;exec(compile(base64.b64decode(sys.stdin.readline()),"<local-target-worker>","exec"))',
+    ]
+    remote = shlex.join(remote_tokens)
+    ssh = shutil.which("ssh")
+    if not ssh:
+        raise RuntimeErrorSafe("SSH client is unavailable")
+    return (
+        [
+            ssh,
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "ConnectTimeout=20",
+            "-o",
+            "ServerAliveInterval=30",
+            "-o",
+            "ServerAliveCountMax=3",
+            str(target_cfg["host"]),
+            remote,
+        ],
+        target_cfg,
+    )
+
+
+def _invoke_article_interpretation_target_worker(
+    config: dict[str, Any], target: str, payload: dict[str, Any]
+) -> dict[str, Any]:
+    command, target_cfg = _article_interpretation_target_command(config, target)
+    encoded_payload = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    if len(encoded_payload.encode("utf-8")) > ARTICLE_INTERPRETATION_STREAM_EVENT_BYTES:
+        return {"target": target, "_transport": "unknown", "error": "target_ack_unknown"}
+    worker_code = TARGET_WORKER.read_bytes()
+    one_shot = base64.b64encode(worker_code).decode("ascii") + "\n" + encoded_payload + "\n"
+    try:
+        result = subprocess.run(
+            command,
+            input=one_shot,
+            text=True,
+            capture_output=True,
+            timeout=min(int(target_cfg.get("timeout_seconds") or 120), 180),
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return {"target": target, "_transport": "unknown", "error": "target_ack_unknown"}
+    try:
+        reply = json.loads(result.stdout)
+    except (json.JSONDecodeError, TypeError):
+        return {"target": target, "_transport": "unknown", "error": "target_ack_unknown"}
+    if not isinstance(reply, dict) or reply.get("target") != target:
+        return {"target": target, "_transport": "unknown", "error": "target_ack_unknown"}
+    if result.returncode not in (0, 2):
+        return {"target": target, "_transport": "unknown", "error": "target_ack_unknown"}
+    if "error" in reply:
+        error = reply.get("error")
+        if not isinstance(error, str) or not re.fullmatch(r"[a-z0-9_]{1,80}", error):
+            error = "target_operation_failed"
+        return {"target": target, "error": error}
+    return reply
+
+
+async def _terminate_article_interpretation_stream(process) -> None:
+    from ai_actuarial.article_interpretations import _terminate_codex_process_tree
+
+    await _terminate_codex_process_tree(process)
+
+
+async def _run_article_interpretation_stream_async(
+    config: dict[str, Any],
+    *,
+    generator: Any,
+    round_key: str,
+    retry_id: str | None = None,
+) -> dict[str, Any]:
+    command, target_cfg = _article_interpretation_target_command(config, "china")
+    worker_code = base64.b64encode(TARGET_WORKER.read_bytes()).decode("ascii")
+    route = getattr(generator, "runtime", None)
+    if (
+        route is None
+        or getattr(route, "backend", None) != "codex-cli"
+        or not getattr(route, "model", None)
+        or not getattr(route, "reasoning_effort", None)
+    ):
+        raise RuntimeErrorSafe("article interpretation Codex route is not configured")
+    request = {
+        "schema_version": 1,
+        "operation": "run_article_interpretation_stream",
+        "target": "china",
+        "round_key": round_key,
+        "retry_id": retry_id,
+        "backend": route.backend,
+        "requested_model": route.model,
+        "reasoning_effort": route.reasoning_effort,
+    }
+    request_line = json.dumps(request, ensure_ascii=False, separators=(",", ":"))
+    if len(request_line.encode("utf-8")) > ARTICLE_INTERPRETATION_STREAM_EVENT_BYTES:
+        raise RuntimeErrorSafe("article interpretation stream request is too large")
+    options: dict[str, Any] = {
+        "stdin": asyncio.subprocess.PIPE,
+        "stdout": asyncio.subprocess.PIPE,
+        "stderr": asyncio.subprocess.DEVNULL,
+        "limit": ARTICLE_INTERPRETATION_STREAM_EVENT_BYTES,
+    }
+    if os.name == "nt":
+        options["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    else:
+        options["start_new_session"] = True
+    process = await asyncio.create_subprocess_exec(*command, **options)
+    deadline = time.monotonic() + min(
+        ARTICLE_INTERPRETATION_STREAM_TIMEOUT_SECONDS,
+        max(30.0, float(target_cfg.get("timeout_seconds") or 0)),
+    )
+    prompt_counts = {"generation": 0, "english_translation": 0}
+    complete = False
+    try:
+        process.stdin.write((worker_code + "\n" + request_line + "\n").encode("utf-8"))
+        await asyncio.wait_for(
+            process.stdin.drain(), timeout=min(20.0, deadline - time.monotonic())
+        )
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise RuntimeErrorSafe("article interpretation round deadline reached")
+            try:
+                raw = await asyncio.wait_for(process.stdout.readline(), timeout=remaining)
+            except (asyncio.TimeoutError, ValueError, OSError):
+                raise RuntimeErrorSafe("article interpretation stream was interrupted") from None
+            if not raw or len(raw) > ARTICLE_INTERPRETATION_STREAM_EVENT_BYTES:
+                raise RuntimeErrorSafe("article interpretation stream was interrupted")
+            try:
+                event = json.loads(raw)
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                raise RuntimeErrorSafe(
+                    "article interpretation stream returned an invalid event"
+                ) from None
+            if not isinstance(event, dict) or event.get("schema_version") != 1:
+                raise RuntimeErrorSafe("article interpretation stream returned an invalid event")
+            event_type = event.get("event")
+            if event_type == "failure":
+                code = event.get("code")
+                safe_code = (
+                    code
+                    if isinstance(code, str) and re.fullmatch(r"[a-z0-9_]{1,80}", code)
+                    else "article_interpretation_stream_failed"
+                )
+                return {"status": "failed", "error": safe_code}
+            if event_type == "complete":
+                generation = event.get("generation")
+                route = event.get("route")
+                locales = event.get("locale_settings")
+                if (
+                    not isinstance(generation, dict)
+                    or not isinstance(route, dict)
+                    or not isinstance(locales, dict)
+                    or any(
+                        type(locales.get(key)) is not bool
+                        for key in (
+                            "english_translation_enabled",
+                            "english_proxy_enabled",
+                        )
+                    )
+                ):
+                    raise RuntimeErrorSafe(
+                        "article interpretation stream returned an invalid receipt"
+                    )
+                exit_code = await asyncio.wait_for(process.wait(), timeout=5.0)
+                if exit_code != 0:
+                    raise RuntimeErrorSafe(
+                        "article interpretation stream did not confirm completion"
+                    )
+                complete = True
+                return {
+                    "status": str(generation.get("status") or "failed"),
+                    "generation": generation,
+                    "english_translation": event.get("english_translation"),
+                    "route": route,
+                    "locale_settings": {
+                        "english_translation_enabled": locales["english_translation_enabled"],
+                        "english_proxy_enabled": locales["english_proxy_enabled"],
+                    },
+                }
+            if event_type != "prompt":
+                raise RuntimeErrorSafe("article interpretation stream returned an invalid event")
+            stage = event.get("stage")
+            if stage not in prompt_counts:
+                raise RuntimeErrorSafe("article interpretation stream stage is invalid")
+            prompt_counts[stage] += 1
+            if prompt_counts[stage] > ARTICLE_INTERPRETATION_STREAM_CALLS_PER_STAGE:
+                raise RuntimeErrorSafe(
+                    "article interpretation stream exceeded its outer call limit"
+                )
+            request_id = event.get("request_id")
+            messages = event.get("messages")
+            timeout_seconds = event.get("timeout_seconds")
+            if (
+                not isinstance(request_id, str)
+                or not re.fullmatch(r"[0-9a-f]{32}", request_id)
+                or not isinstance(messages, list)
+                or not 1 <= len(messages) <= 4
+                or type(timeout_seconds) not in (int, float)
+                or not math.isfinite(float(timeout_seconds))
+                or not 0 < float(timeout_seconds) <= 240
+                or any(
+                    not isinstance(message, dict)
+                    or message.get("role") not in {"system", "user", "assistant"}
+                    or not isinstance(message.get("content"), str)
+                    for message in messages
+                )
+            ):
+                raise RuntimeErrorSafe("article interpretation prompt event is invalid")
+            if sum(len(message["content"].encode("utf-8")) for message in messages) > 128 * 1024:
+                raise RuntimeErrorSafe("article interpretation prompt event is too large")
+            response: dict[str, Any]
+            try:
+                request_deadline = min(deadline, time.monotonic() + float(timeout_seconds))
+                request_remaining = request_deadline - time.monotonic()
+                if request_remaining <= 0:
+                    raise TimeoutError("article interpretation request deadline reached")
+                result = await asyncio.wait_for(
+                    generator.generate(messages, deadline=request_deadline),
+                    timeout=request_remaining,
+                )
+                if (
+                    not isinstance(result, str)
+                    or len(result.encode("utf-8")) > ARTICLE_INTERPRETATION_STREAM_MAX_RESULT_BYTES
+                ):
+                    raise RuntimeErrorSafe("Codex result exceeds the stream size limit")
+                response = {
+                    "schema_version": 1,
+                    "event": "result",
+                    "request_id": request_id,
+                    "result": result,
+                }
+            except BaseException as exc:
+                if isinstance(exc, asyncio.CancelledError):
+                    raise
+                from ai_actuarial.chatbot.exceptions import (
+                    LLMAuthenticationError,
+                    LLMTimeoutError,
+                )
+
+                response = {
+                    "schema_version": 1,
+                    "event": "provider_error",
+                    "request_id": request_id,
+                    "kind": (
+                        "authentication"
+                        if isinstance(exc, LLMAuthenticationError)
+                        else (
+                            "timeout"
+                            if isinstance(exc, (TimeoutError, LLMTimeoutError))
+                            else "provider"
+                        )
+                    ),
+                }
+            encoded_response = json.dumps(
+                response, ensure_ascii=False, separators=(",", ":")
+            ).encode("utf-8")
+            if len(encoded_response) > ARTICLE_INTERPRETATION_STREAM_EVENT_BYTES:
+                raise RuntimeErrorSafe("article interpretation result event is too large")
+            process.stdin.write(encoded_response + b"\n")
+            await asyncio.wait_for(
+                process.stdin.drain(),
+                timeout=max(0.1, min(20.0, deadline - time.monotonic())),
+            )
+    except BaseException:
+        await _terminate_article_interpretation_stream(process)
+        raise
+    finally:
+        if not complete and process.returncode is None:
+            await _terminate_article_interpretation_stream(process)
+        if process.stdin and not process.stdin.is_closing():
+            process.stdin.close()
+            try:
+                await process.stdin.wait_closed()
+            except (BrokenPipeError, OSError):
+                pass
+
+
+def _run_article_interpretation_stream(
+    config: dict[str, Any],
+    *,
+    generator: Any,
+    round_key: str,
+    retry_id: str | None = None,
+) -> dict[str, Any]:
+    return asyncio.run(
+        _run_article_interpretation_stream_async(
+            config,
+            generator=generator,
+            round_key=round_key,
+            retry_id=retry_id,
+        )
+    )
+
+
+def _sync_saved_remote_article_interpretations(
+    config: dict[str, Any],
+    *,
+    limit: int = 3,
+    invoke: Callable[[dict[str, Any], str, dict[str, Any]], dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    if not 1 <= int(limit) <= 3:
+        raise RuntimeErrorSafe("interpretation sync limit must be between 1 and 3")
+    invoke = invoke or _invoke_article_interpretation_target_worker
+    listed = invoke(
+        config,
+        "china",
+        {
+            "schema_version": 1,
+            "operation": "list_article_interpretation_sync_candidates",
+            "target": "china",
+            "limit": int(limit),
+        },
+    )
+    if (
+        listed.get("_transport") == "unknown"
+        or listed.get("operation") != "list_article_interpretation_sync_candidates"
+        or listed.get("target") != "china"
+        or not isinstance(listed.get("drafts"), list)
+        or not isinstance(listed.get("issues"), list)
+    ):
+        return {
+            "schema_version": 1,
+            "status": "partial",
+            "all_targets_acknowledged": False,
+            "more_pending": False,
+            "drafts": [],
+            "issues": [{"status": "unknown", "error": "china_candidate_read_unknown"}],
+            "generation_calls": 0,
+        }
+    results = [
+        {
+            key: issue[key]
+            for key in ("interpretation_id", "identity", "status", "error")
+            if key in issue
+        }
+        for issue in listed["issues"]
+        if isinstance(issue, dict)
+    ]
+    from ai_actuarial.local_collection_target_worker import (
+        _InterpretationTargetFailure,
+        _interpretation_identity,
+        _interpretation_locale_digest,
+        _interpretation_reader_fields,
+        _interpretation_source_identity,
+    )
+
+    for item in listed["drafts"]:
+        if (
+            not isinstance(item, dict)
+            or not isinstance(item.get("identity"), dict)
+            or not isinstance(item.get("source_identity"), dict)
+            or not isinstance(item.get("draft"), dict)
+            or not isinstance(item.get("locales"), dict)
+        ):
+            results.append({"status": "failed", "error": "candidate_identity_invalid"})
+            continue
+        identity = item["identity"]
+        source_identity = item["source_identity"]
+        draft = item["draft"]
+        try:
+            current_identity = _interpretation_identity(draft)
+            current_source_identity = _interpretation_source_identity(current_identity, draft)
+            if identity != current_identity or source_identity != current_source_identity:
+                raise _InterpretationTargetFailure("interpretation_identity_conflict")
+            expected_locales = {"zh"}
+            translation = draft.get("english_translation")
+            if isinstance(translation, dict) and translation.get("status") == "ready":
+                expected_locales.add("en")
+            if set(item["locales"]) != expected_locales:
+                raise _InterpretationTargetFailure("candidate_locale_set_mismatch")
+            locale_data = {}
+            for locale, supplied in item["locales"].items():
+                digest = _interpretation_locale_digest(draft, locale)
+                fields = _interpretation_reader_fields(draft, locale)
+                if (
+                    not isinstance(supplied, dict)
+                    or supplied.get("locale_digest") != digest
+                    or supplied.get("reader_fields") != fields
+                ):
+                    raise _InterpretationTargetFailure("candidate_locale_identity_mismatch")
+                locale_data[locale] = {"locale_digest": digest, "reader_fields": fields}
+        except _InterpretationTargetFailure as exc:
+            results.append(
+                {
+                    "interpretation_id": identity.get("interpretation_id"),
+                    "status": "failed",
+                    "error": exc.code,
+                }
+            )
+            continue
+
+        target_states = item.get("targets") if isinstance(item.get("targets"), dict) else {}
+        target_results: dict[str, Any] = {}
+        for target in ("china", "overseas"):
+            saved_locales = target_states.get(target)
+            if not isinstance(saved_locales, dict):
+                saved_locales = {}
+            locale_results = {}
+            for locale, data in locale_data.items():
+                expected_digest = data["locale_digest"]
+                expected_fields = data["reader_fields"]
+                state = saved_locales.get(locale)
+                if not isinstance(state, dict):
+                    state = {"status": "pending"}
+                if state.get("status") == "conflict":
+                    locale_results[locale] = {
+                        "status": "failed",
+                        "error": state.get("error") or "target_receipt_identity_conflict",
+                    }
+                    continue
+                if (
+                    state.get("status") == "acknowledged"
+                    and state.get("source_identity") == source_identity
+                    and state.get("locale_digest") == expected_digest
+                    and state.get("reader_fields") == expected_fields
+                ):
+                    locale_results[locale] = {
+                        "status": "acknowledged",
+                        "target_status": state.get("target_status"),
+                        "locale_digest": expected_digest,
+                        "reader_fields": expected_fields,
+                    }
+                    continue
+
+                ack_request = {
+                    "schema_version": 1,
+                    "operation": "record_article_interpretation_target_ack",
+                    "target": target,
+                    "source_identity": source_identity,
+                    "locale": locale,
+                    "locale_digest": expected_digest,
+                    "draft_sha256": identity["draft_sha256"],
+                }
+                reserved = invoke(
+                    config,
+                    "china",
+                    {
+                        **ack_request,
+                        "status": "unknown",
+                        "error": "target_ack_unknown",
+                    },
+                )
+                if reserved.get("_transport") == "unknown":
+                    locale_results[locale] = {
+                        "status": "unknown",
+                        "error": "target_ack_unknown",
+                    }
+                    continue
+                if reserved.get("error"):
+                    locale_results[locale] = {
+                        "status": "failed",
+                        "error": str(reserved["error"]),
+                    }
+                    continue
+                if (
+                    reserved.get("status") == "acknowledged"
+                    and reserved.get("source_identity") == source_identity
+                    and reserved.get("locale") == locale
+                    and reserved.get("locale_digest") == expected_digest
+                    and reserved.get("reader_fields") == expected_fields
+                ):
+                    locale_results[locale] = {
+                        "status": "acknowledged",
+                        "target_status": reserved.get("target_status"),
+                        "locale_digest": expected_digest,
+                        "reader_fields": expected_fields,
+                    }
+                    continue
+
+                reply = invoke(
+                    config,
+                    target,
+                    {
+                        "schema_version": 1,
+                        "operation": "sync_article_interpretation",
+                        "target": target,
+                        "locale": locale,
+                        "draft": draft,
+                    },
+                )
+                result_state = "acknowledged"
+                result_error = ""
+                target_status = reply.get("status")
+                if reply.get("_transport") == "unknown":
+                    result_state, result_error = "unknown", "target_ack_unknown"
+                elif reply.get("error"):
+                    result_state, result_error = "failed", str(reply["error"])
+                elif (
+                    reply.get("target") != target
+                    or reply.get("locale") != locale
+                    or target_status not in {"verified", "inserted", "already_present", "updated"}
+                    or reply.get("source_identity") != source_identity
+                    or reply.get("locale_digest") != expected_digest
+                    or reply.get("draft_sha256") != identity["draft_sha256"]
+                    or reply.get("reader_fields") != expected_fields
+                ):
+                    result_state, result_error = "failed", "target_ack_locale_identity_mismatch"
+                saved = invoke(
+                    config,
+                    "china",
+                    {
+                        **ack_request,
+                        "status": result_state,
+                        "target_status": target_status if result_state == "acknowledged" else None,
+                        "error": result_error or None,
+                        **(
+                            {"reader_fields": expected_fields}
+                            if result_state == "acknowledged"
+                            else {}
+                        ),
+                    },
+                )
+                if saved.get("_transport") == "unknown":
+                    locale_results[locale] = {
+                        "status": "unknown",
+                        "error": "target_ack_unknown",
+                    }
+                elif saved.get("error"):
+                    locale_results[locale] = {
+                        "status": "failed",
+                        "error": str(saved["error"]),
+                    }
+                elif (
+                    saved.get("status") == "acknowledged"
+                    and saved.get("source_identity") == source_identity
+                    and saved.get("locale") == locale
+                    and saved.get("locale_digest") == expected_digest
+                    and saved.get("draft_sha256") == identity["draft_sha256"]
+                    and saved.get("reader_fields") == expected_fields
+                ):
+                    locale_results[locale] = {
+                        "status": "acknowledged",
+                        "target_status": saved.get("target_status") or target_status,
+                        "locale_digest": expected_digest,
+                        "reader_fields": expected_fields,
+                    }
+                elif result_state != "acknowledged":
+                    locale_results[locale] = {
+                        "status": result_state,
+                        "error": result_error or saved.get("error") or None,
+                    }
+                else:
+                    locale_results[locale] = {
+                        "status": "failed",
+                        "error": "target_ack_persist_unconfirmed",
+                    }
+            target_complete = all(
+                result.get("status") == "acknowledged" for result in locale_results.values()
+            )
+            target_results[target] = {
+                "status": "acknowledged" if target_complete else "partial",
+                "locales": locale_results,
+            }
+        complete = all(
+            target_results[target]["status"] == "acknowledged" for target in ("china", "overseas")
+        )
+        results.append(
+            {
+                "interpretation_id": identity.get("interpretation_id"),
+                "identity": identity,
+                "source_identity": source_identity,
+                "status": "complete" if complete else "partial",
+                "all_targets_acknowledged": complete,
+                "locales": locale_data,
+                "targets": target_results,
+            }
+        )
+    more_pending = listed.get("more_pending") is True
+    no_issues = not results and not listed["issues"] and not more_pending
+    all_acknowledged = (
+        bool(results)
+        and not more_pending
+        and not listed["issues"]
+        and all(
+            item.get("all_targets_acknowledged") or item.get("status") == "already_acknowledged"
+            for item in results
+        )
+    )
+    return {
+        "schema_version": 1,
+        "status": ("complete" if all_acknowledged else "no_candidates" if no_issues else "partial"),
+        "all_targets_acknowledged": all_acknowledged,
+        "more_pending": more_pending,
+        "drafts": results,
+        "issues": listed["issues"],
+        "generation_calls": 0,
+    }
+
+
+def _article_interpretation_run_status(
+    generation: dict[str, Any] | None,
+    sync: dict[str, Any],
+    *,
+    sync_only: bool,
+    english_translation: dict[str, Any] | None = None,
+    english_translation_enabled: bool = False,
+) -> str:
+    if sync_only:
+        return str(sync.get("status") or "partial")
+    status = str((generation or {}).get("status") or "failed")
+    if status == "interrupted":
+        return "interrupted"
+    if status in {"authentication", "provider_cleanup", "budget_exhausted", "failed"}:
+        return "failed"
+    if status in {"busy", "stopped"}:
+        return status
+    if any(
+        slot.get("status") == "failed"
+        for slot in ((generation or {}).get("slots") or [])
+        if isinstance(slot, dict)
+    ):
+        return "partial"
+    generation_slots = (generation or {}).get("slots") or []
+    generation_interpretation = (generation or {}).get("interpretation")
+    has_ready_chinese = any(
+        slot.get("status") == "ready" for slot in generation_slots if isinstance(slot, dict)
+    ) or (
+        isinstance(generation_interpretation, dict)
+        and generation_interpretation.get("status") == "ready"
+    )
+    english_slots = (english_translation or {}).get("slots") or []
+    if (
+        english_translation_enabled
+        and has_ready_chinese
+        and (
+            not isinstance(english_translation, dict)
+            or english_translation.get("status") != "complete"
+            or any(
+                slot.get("status") != "ready" for slot in english_slots if isinstance(slot, dict)
+            )
+            or not english_slots
+        )
+    ):
+        return "partial"
+    if sync.get("status") == "complete":
+        return "complete" if status == "complete" else "partial"
+    if sync.get("status") == "no_candidates" and status == "complete":
+        if all(
+            slot.get("status") == "skipped"
+            for slot in ((generation or {}).get("slots") or [])
+            if isinstance(slot, dict)
+        ):
+            return "no_candidates"
+    return "partial"
+
+
+def run_local_article_interpretations(
+    target_config: dict[str, Any],
+    *,
+    generator: Any | None = None,
+    sync_only: bool = False,
+    retry_id: str | None = None,
+    limit: int = 3,
+    round_key: str | None = None,
+    stream_function: Callable[..., dict[str, Any]] | None = None,
+    sync_function: Callable[..., dict[str, Any]] | None = None,
+    target_invoke: Callable[[dict[str, Any], str, dict[str, Any]], dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    if not 1 <= int(limit) <= 3:
+        raise RuntimeErrorSafe("interpretation sync limit must be between 1 and 3")
+    if sync_only and retry_id:
+        raise RuntimeErrorSafe("--sync-only and --retry-id are mutually exclusive")
+    generation = None
+    route = {}
+    if not sync_only:
+        if generator is None:
+            raise RuntimeErrorSafe("Codex article generator is not configured")
+        route_value = getattr(generator, "runtime", None)
+        metadata = getattr(route_value, "receipt_metadata", None)
+        if callable(metadata):
+            route = metadata()
+        round_key = round_key or dt.datetime.now(ZoneInfo("America/New_York")).date().isoformat()
+        generation = (stream_function or _run_article_interpretation_stream)(
+            target_config,
+            generator=generator,
+            round_key=round_key,
+            retry_id=retry_id,
+        )
+    sync = (sync_function or _sync_saved_remote_article_interpretations)(
+        target_config,
+        limit=limit,
+        invoke=target_invoke,
+    )
+    generation_receipt = (generation or {}).get("generation") or (
+        {"status": (generation or {}).get("status"), "error": (generation or {}).get("error")}
+        if generation is not None
+        else {}
+    )
+    outer_attempts = int(generation_receipt.get("outer_attempts") or 0)
+    return {
+        "schema_version": 1,
+        "status": _article_interpretation_run_status(
+            generation_receipt if generation is not None else None,
+            sync,
+            sync_only=sync_only,
+            english_translation=(generation or {}).get("english_translation"),
+            english_translation_enabled=((generation or {}).get("locale_settings") or {}).get(
+                "english_translation_enabled"
+            )
+            is True,
+        ),
+        "generation_calls": outer_attempts,
+        "outer_attempts": outer_attempts,
+        "internal_provider_requests": ("unknown/unmetered" if not sync_only else None),
+        "backend": route,
+        "generation": (
+            generation_receipt
+            if generation_receipt
+            else {"status": "sync_only", "outer_attempts": 0}
+        ),
+        "english_translation": (generation or {}).get("english_translation"),
+        "locale_settings": (generation or {}).get("locale_settings"),
+        "sync": sync,
+    }
+
+
+def _run_article_interpretations_command(args) -> dict[str, Any]:
+    target_config = _load_config(args.config.resolve())
+    generator = None
+    if not args.sync_only:
+        interpretation_config = target_config.get("article_interpretation")
+        if not isinstance(interpretation_config, dict):
+            interpretation_config = {}
+        route_config = {
+            key: interpretation_config.get(key) for key in ("backend", "model", "reasoning_effort")
+        }
+        if any(value is None for value in route_config.values()):
+            raise RuntimeErrorSafe("article_interpretation_codex_route_missing")
+        try:
+            from ai_actuarial.article_interpretations import create_codex_article_generator
+
+            generator = create_codex_article_generator(route_config)
+        except ValueError as error:
+            raise RuntimeErrorSafe(str(error)) from None
+        except Exception:
+            raise RuntimeErrorSafe("Codex CLI backend is unavailable or not logged in") from None
+    try:
+        return run_local_article_interpretations(
+            target_config,
+            generator=generator,
+            sync_only=args.sync_only,
+            retry_id=args.retry_id,
+            limit=args.limit,
+        )
+    except RuntimeErrorSafe:
+        raise
+    except Exception:
+        raise RuntimeErrorSafe("article interpretation run failed") from None
 
 
 def _stream_target(
@@ -5826,6 +6608,32 @@ def build_parser() -> argparse.ArgumentParser:
     backfill.add_argument(
         "--json", action="store_true", help="emit machine-readable JSON (the default output format)"
     )
+    interpretations = sub.add_parser(
+        "article-interpretations",
+        help="generate bounded local article drafts and sync saved ready drafts",
+    )
+    mode = interpretations.add_mutually_exclusive_group()
+    mode.add_argument(
+        "--sync-only",
+        action="store_true",
+        help="retry target sync from saved ready drafts without calling a generator",
+    )
+    mode.add_argument(
+        "--retry-id",
+        help="retry one saved interpretation without changing its source identity or budget",
+    )
+    interpretations.add_argument(
+        "--limit",
+        type=int,
+        default=3,
+        help="maximum current drafts to sync (1-3)",
+    )
+    interpretations.add_argument(
+        "--config", type=Path, default=Path("reports/local-automation-state/config.local.json")
+    )
+    interpretations.add_argument(
+        "--json", action="store_true", help="emit machine-readable JSON (the default output format)"
+    )
     return parser
 
 
@@ -5857,6 +6665,8 @@ def main(argv: list[str] | None = None) -> int:
             output = _daily_run(
                 args.date, config, preview=args.preview, limit_reconcile=args.reconcile_limit
             )
+        elif args.command == "article-interpretations":
+            output = _run_article_interpretations_command(args)
         elif args.command == "run-site":
             if not 1 <= args.article_limit <= MAX_ENRICHMENTS_PER_SITE_RUN:
                 raise RuntimeErrorSafe(
@@ -5944,6 +6754,16 @@ def main(argv: list[str] | None = None) -> int:
                 or key.startswith("all_32")
             ]
             return 0 if required and all(output["checks"][key] for key in required) else 2
+        if args.command == "article-interpretations":
+            return {
+                "complete": 0,
+                "no_candidates": 0,
+                "partial": 3,
+                "busy": 3,
+                "stopped": 3,
+                "interrupted": 3,
+                "failed": 2,
+            }.get(str(output.get("status") or "failed"), 2)
         if args.command == "run-site":
             if args.preview:
                 statuses = {

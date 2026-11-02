@@ -15,6 +15,7 @@ from types import SimpleNamespace
 import pytest
 
 from ai_actuarial import article_interpretations as articles
+from ai_actuarial.codex_environment import CODEX_ENVIRONMENT_KEYS
 from ai_actuarial.postgres import PostgresConnection
 from ai_actuarial.storage import Storage
 from tests.postgres_helpers import postgres_url_for_path
@@ -93,6 +94,12 @@ class Resolver:
             "china_file_id": 1,
             "link_verified_at": "2026-10-31T00:00:00+00:00",
         }
+
+
+def _codex_test_runtime(model="gpt-6-luna", reasoning_effort="high"):
+    return articles.CodexArticleRuntime(
+        backend="codex-cli", model=model, reasoning_effort=reasoning_effort
+    )
 
 
 @pytest.fixture
@@ -2116,6 +2123,69 @@ def test_round_receipt_counts_new_calls_not_prior_manual_retry_calls(storage):
     assert result["provider_calls"] == 0 and len(generator.calls) == 2
 
 
+def test_outer_attempt_count_keeps_metered_and_unmetered_receipts_distinct():
+    assert articles._outer_attempt_count({"provider_calls": 6, "outer_attempts": 1}) == 6
+    assert articles._outer_attempt_count({"provider_calls": 3}) == 3
+    assert articles._outer_attempt_count({"provider_calls": None, "outer_attempts": 2}) == 2
+
+
+def test_origin_round_budget_uses_metered_calls_and_codex_outer_attempts():
+    runner = object.__new__(articles.ArticleInterpretationService)
+    now = datetime.now(timezone.utc)
+    runner.now = lambda: now
+    budget = {
+        "interpretation_ids": ["fixture-id"],
+        "calls": 1,
+        "provider_seconds": 0,
+        "selection_started_at": None,
+    }
+
+    runner.generator = SimpleNamespace(runtime=SimpleNamespace(backend="chat-completions"))
+    metered_receipt = {
+        "status": "stopped",
+        "started_at": now.isoformat(),
+        "provider_calls": 6,
+        "outer_attempts": 1,
+    }
+    assert (
+        runner._content_budget_reason(budget, metered_receipt)
+        == "content_origin_round_provider_calls_exhausted"
+    )
+
+    runner.generator = SimpleNamespace(runtime=SimpleNamespace(backend="codex-cli"))
+    unmetered_receipt = {
+        "status": "stopped",
+        "started_at": now.isoformat(),
+        "provider_calls": None,
+        "outer_attempts": 6,
+    }
+    assert (
+        runner._content_budget_reason(budget, unmetered_receipt)
+        == "content_origin_round_outer_attempts_exhausted"
+    )
+
+
+def test_generation_attempt_resumes_queued_but_restarts_interrupted():
+    runner = object.__new__(articles.ArticleInterpretationService)
+    runner.now = lambda: datetime.now(timezone.utc)
+    queued = {
+        "attempt_id": "queued-attempt",
+        "status": "queued",
+        "started_at": datetime.now(timezone.utc).isoformat(),
+        "calls": [{"status": "failed"}],
+    }
+    draft = {"attempts": [queued], "selection_started_at": queued["started_at"]}
+
+    assert runner._start_generation_attempt(draft, retry=True) is queued
+    assert len(draft["attempts"]) == 1
+
+    queued["status"] = "interrupted"
+    resumed = runner._start_generation_attempt(draft, retry=True)
+    assert resumed is not queued
+    assert resumed["attempt_id"] != queued["attempt_id"]
+    assert len(draft["attempts"]) == 2
+
+
 def test_generation_retry_preserves_attempt_and_origin_round_accounting(storage):
     seed(storage, "a")
     stopped = [False]
@@ -2807,3 +2877,612 @@ def test_exhausted_candidate_advances_to_next_article_without_new_budget(storage
     after = runner._content_budget(first["content_key"])
     for field in ("calls", "provider_seconds", "selection_started_at", "origin_round_key"):
         assert after[field] == before[field]
+
+
+def test_slash_date_evidence_supports_chinese_date_claim_only_when_present():
+    evidence = [
+        {
+            "id": f"E{index}",
+            "quote": (
+                "Joint Regional Seminar date: 2018/7/25"
+                if index == 1
+                else "The paper describes its research method and limitations."
+            ),
+            "section": "Seminar" if index == 1 else "Method",
+        }
+        for index in range(1, 7)
+    ]
+    date_claim = {
+        "text": "研讨会日期为2018年7月25日。",
+        "kind": "source",
+        "evidence_ids": ["E1"],
+    }
+    value = {
+        "title_zh": "研究方法与应用边界",
+        "short_reason": "日期校验 fixture",
+        "authors": [],
+        "sections": [
+            {
+                "role": role,
+                "heading": "研究解读",
+                "paragraphs": [
+                    (
+                        date_claim
+                        if index == 0
+                        else {
+                            "text": "研究资料说明方法的适用边界。",
+                            "kind": "source",
+                            "evidence_ids": [f"E{index + 1}"],
+                        }
+                    )
+                ],
+            }
+            for index, role in enumerate(articles.SECTION_ROLES)
+        ],
+    }
+    value["sections"][-1]["paragraphs"].append(
+        {
+            "text": "实际应用需结合业务背景判断。",
+            "kind": "source",
+            "evidence_ids": ["E6"],
+        }
+    )
+
+    accepted = articles.validate_output(
+        json.dumps(value, ensure_ascii=False), {"evidence": evidence}
+    )
+    assert any(claim["text"] == date_claim["text"] for claim in accepted["claims"])
+
+    unsupported = [dict(item) for item in evidence]
+    unsupported[0] = {**unsupported[0], "quote": "Joint Regional Seminar"}
+    with pytest.raises(ValueError, match="unsupported_number"):
+        articles.validate_output(json.dumps(value, ensure_ascii=False), {"evidence": unsupported})
+
+
+def test_codex_adapter_uses_supported_ephemeral_readonly_request(monkeypatch):
+    monkeypatch.setenv("CODEX_HOME", "fixture-codex-home")
+    monkeypatch.setenv("OPENAI_API_KEY", "fixture-secret")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "fixture-secret")
+    monkeypatch.setenv("DATABASE_URL", "fixture-secret")
+    monkeypatch.setenv("SSH_AUTH_SOCK", "fixture-secret")
+    runtime = _codex_test_runtime()
+    calls = []
+    output = '{"title_zh":"fixture"}'
+
+    class FakeProcess:
+        pid = 123
+        returncode = 0
+
+        async def communicate(self, prompt):
+            calls[-1]["prompt"] = prompt.decode("utf-8")
+            output_index = calls[-1]["arguments"].index("--output-last-message") + 1
+            Path(calls[-1]["arguments"][output_index]).write_text(output, encoding="utf-8")
+
+        async def wait(self):
+            return self.returncode
+
+    async def process_factory(*arguments, **options):
+        calls.append({"arguments": list(arguments), "options": options})
+        return FakeProcess()
+
+    generator = articles.CodexArticleGenerator(runtime, ("codex",), process_factory=process_factory)
+    result = articles._call_article_with_deadline(
+        generator,
+        [
+            {"role": "system", "content": "system fixture"},
+            {"role": "user", "content": "body fixture"},
+        ],
+        time.monotonic() + 10,
+    )
+
+    arguments = calls[0]["arguments"]
+    assert result == output
+    assert arguments.index("--ask-for-approval") < arguments.index("exec")
+    assert arguments[arguments.index("--ask-for-approval") + 1] == "never"
+    assert "--ephemeral" in arguments
+    assert "--ignore-user-config" in arguments
+    assert "--ignore-rules" in arguments
+    assert arguments[arguments.index("--sandbox") + 1] == "read-only"
+    assert arguments[arguments.index("features.shell_tool=false") - 1] == "-c"
+    for feature in articles.CODEX_DISABLED_TOOL_FEATURES:
+        assert any(
+            arguments[index : index + 2] == ["--disable", feature]
+            for index in range(arguments.index("exec"), len(arguments) - 1)
+        )
+    assert "--enable" not in arguments
+    assert arguments[arguments.index("--cd") + 1] == calls[0]["options"]["cwd"]
+    assert arguments[arguments.index("--model") + 1] == "gpt-6-luna"
+    assert 'model_reasoning_effort="high"' in arguments
+    assert "--no-daemon" not in arguments
+    assert not any("max-turn" in arg or "max-request" in arg for arg in arguments)
+    assert calls[0]["options"]["stdout"] is articles.asyncio.subprocess.DEVNULL
+    assert calls[0]["options"]["stderr"] is articles.asyncio.subprocess.DEVNULL
+    process_env = calls[0]["options"]["env"]
+    assert process_env["CODEX_HOME"] == "fixture-codex-home"
+    assert set(process_env) <= CODEX_ENVIRONMENT_KEYS
+    assert not {
+        "OPENAI_API_KEY",
+        "DEEPSEEK_API_KEY",
+        "DATABASE_URL",
+        "SSH_AUTH_SOCK",
+    }.intersection(process_env)
+    assert b"body fixture" in calls[0]["prompt"].encode("utf-8")
+    assert generator.last_call_metadata["outer_attempts"] == 1
+    assert generator.last_call_metadata["internal_provider_requests"] == "unknown/unmetered"
+
+
+def test_codex_login_status_uses_the_same_secret_free_environment(monkeypatch):
+    monkeypatch.setenv("CODEX_HOME", "fixture-codex-home")
+    monkeypatch.setenv("OPENAI_API_KEY", "fixture-secret")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "fixture-secret")
+    monkeypatch.setenv("DATABASE_URL", "fixture-secret")
+    monkeypatch.setenv("SSH_AUTH_SOCK", "fixture-secret")
+    monkeypatch.setattr(articles, "_codex_command_prefix", lambda: ("codex",))
+    calls = []
+
+    def run(command, **options):
+        calls.append((command, options))
+        return SimpleNamespace(returncode=0, stdout="Logged in with ChatGPT", stderr="")
+
+    monkeypatch.setattr(articles.subprocess, "run", run)
+    generator = articles.create_codex_article_generator(
+        {"backend": "codex-cli", "model": "gpt-6-luna", "reasoning_effort": "high"}
+    )
+
+    assert generator.runtime.requested_model == "gpt-6-luna"
+    assert calls[0][0] == ["codex", "login", "status"]
+    login_env = calls[0][1]["env"]
+    assert login_env["CODEX_HOME"] == "fixture-codex-home"
+    assert set(login_env) <= CODEX_ENVIRONMENT_KEYS
+    assert not {
+        "OPENAI_API_KEY",
+        "DEEPSEEK_API_KEY",
+        "DATABASE_URL",
+        "SSH_AUTH_SOCK",
+    }.intersection(login_env)
+
+
+def test_codex_runtime_requires_explicit_configured_backend_model_and_reasoning():
+    runtime = articles.CodexArticleRuntime.from_config(
+        {"backend": "codex-cli", "model": "fixture-model", "reasoning_effort": "low"}
+    )
+    assert runtime.backend == "codex-cli"
+    assert runtime.requested_model == "fixture-model"
+    assert runtime.requested_reasoning_effort == "low"
+    assert runtime.effective_model == "unreported"
+    assert runtime.effective_reasoning_effort == "unreported"
+
+    for invalid in (
+        {},
+        {"backend": "codex-cli", "model": "fixture-model"},
+        {"backend": "deepseek", "model": "fixture-model", "reasoning_effort": "high"},
+        {"backend": "codex-cli", "model": "fixture model", "reasoning_effort": "high"},
+    ):
+        with pytest.raises(ValueError):
+            articles.CodexArticleRuntime.from_config(invalid)
+
+
+def test_codex_adapter_cancellation_terminates_and_reaps_process(monkeypatch):
+    started = asyncio.Event()
+    processes = []
+
+    class FakeProcess:
+        pid = 456
+        returncode = None
+        reaped = False
+
+        async def communicate(self, _prompt):
+            started.set()
+            await asyncio.Event().wait()
+
+        async def wait(self):
+            self.returncode = 0
+            self.reaped = True
+            return self.returncode
+
+    async def process_factory(*_arguments, **_options):
+        process = FakeProcess()
+        processes.append(process)
+        return process
+
+    async def cleanup(process):
+        process.returncode = 0
+        process.reaped = True
+
+    monkeypatch.setattr(articles, "_terminate_codex_process_tree", cleanup)
+    generator = articles.CodexArticleGenerator(
+        _codex_test_runtime(), ("codex",), process_factory=process_factory
+    )
+
+    async def cancel_generation():
+        task = asyncio.create_task(
+            generator.generate(
+                [{"role": "user", "content": "fixture"}], deadline=time.monotonic() + 10
+            )
+        )
+        await started.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(cancel_generation())
+    assert len(processes) == 1
+    assert processes[0].reaped is True
+
+
+def test_codex_adapter_deadline_terminates_and_reaps_hung_process(monkeypatch):
+    started = asyncio.Event()
+    processes = []
+    cleanup_calls = []
+
+    class FakeProcess:
+        pid = 457
+        returncode = None
+        communication_cancelled = False
+        reaped = False
+
+        async def communicate(self, _prompt):
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                self.communication_cancelled = True
+
+        async def wait(self):
+            self.returncode = -9
+            self.reaped = True
+            return self.returncode
+
+    async def process_factory(*_arguments, **_options):
+        process = FakeProcess()
+        processes.append(process)
+        return process
+
+    async def cleanup(process):
+        cleanup_calls.append(process.pid)
+        await process.wait()
+
+    monkeypatch.setattr(articles, "_terminate_codex_process_tree", cleanup)
+    generator = articles.CodexArticleGenerator(
+        _codex_test_runtime(), ("codex",), process_factory=process_factory
+    )
+    deadline = time.monotonic() + 0.05
+
+    async def run_hung_generation():
+        with pytest.raises(TimeoutError, match="article_call_deadline"):
+            await generator.generate([{"role": "user", "content": "fixture"}], deadline=deadline)
+
+    asyncio.run(run_hung_generation())
+    assert started.is_set()
+    assert cleanup_calls == [457]
+    assert len(processes) == 1
+    assert processes[0].communication_cancelled is True
+    assert processes[0].reaped is True
+
+
+def test_codex_process_tree_cleanup_uses_windows_tree_kill(monkeypatch):
+    if articles.os.name != "nt":
+        pytest.skip("Windows process tree cleanup contract")
+
+    calls = []
+
+    class FakeProcess:
+        pid = 789
+        returncode = None
+
+        async def wait(self):
+            self.returncode = 0
+            return self.returncode
+
+        def kill(self):
+            self.returncode = -9
+
+    class FakeKiller:
+        async def wait(self):
+            return 0
+
+        def kill(self):
+            raise AssertionError("taskkill must complete within the bounded wait")
+
+    async def create_process(*arguments, **options):
+        calls.append((arguments, options))
+        return FakeKiller()
+
+    process = FakeProcess()
+    monkeypatch.setattr(articles.asyncio, "create_subprocess_exec", create_process)
+    asyncio.run(articles._terminate_codex_process_tree(process))
+    assert calls[0][0] == ("taskkill.exe", "/F", "/T", "/PID", "789")
+    assert calls[0][1]["stdout"] is articles.asyncio.subprocess.DEVNULL
+    assert calls[0][1]["stderr"] is articles.asyncio.subprocess.DEVNULL
+    assert process.returncode == 0
+
+
+def test_codex_runtime_route_is_retry_identity_including_reasoning_effort():
+    codex_runtime = _codex_test_runtime()
+    route = articles._runtime_route(codex_runtime)
+    assert articles._route_matches_runtime(codex_runtime, route)
+
+    changed_reasoning = {
+        **route,
+        "requested_reasoning_effort": "medium",
+        "reasoning_effort": "medium",
+    }
+    assert not articles._route_matches_runtime(codex_runtime, changed_reasoning)
+
+
+def test_codex_receipts_separate_outer_attempts_from_unknown_internal_requests():
+    runtime = _codex_test_runtime()
+    draft = {
+        "backend": "codex-cli",
+        "coverage": {"route": articles._runtime_route(runtime)},
+    }
+    receipt = {"provider_calls": 0, "outer_attempts": 0}
+
+    articles._record_outer_attempt(receipt, draft)
+    articles._record_outer_attempt(receipt, draft)
+
+    assert receipt["outer_attempts"] == 2
+    assert receipt["provider_calls"] is None
+    assert receipt["internal_provider_requests"] == "unknown/unmetered"
+    assert receipt["requested_backend"] == "codex-cli"
+    assert receipt["effective_backend"] == "codex-cli"
+    assert receipt["requested_model"] == "gpt-6-luna"
+    assert receipt["effective_model"] == "unreported"
+    assert receipt["requested_reasoning_effort"] == "high"
+    assert receipt["effective_reasoning_effort"] == "unreported"
+
+    legacy_round = {"provider_calls": 5}
+    assert articles._outer_attempt_count(legacy_round) == 5
+
+
+def test_historical_content_budget_still_blocks_without_resetting_selection_or_origin():
+    history = [
+        {
+            "interpretation_id": "historical-draft",
+            "selection_started_at": "2026-11-01T08:00:00+00:00",
+            "origin_round_key": "historical-round",
+            "attempts": [
+                {
+                    "calls": [{"status": "failed"}, {"status": "failed"}],
+                    "provider_seconds": 20,
+                }
+            ],
+        }
+    ]
+
+    class Rows:
+        def fetchall(self):
+            return [(row,) for row in history]
+
+    class Connection:
+        def execute(self, *_args):
+            return Rows()
+
+    service = articles.ArticleInterpretationService.__new__(articles.ArticleInterpretationService)
+    service.connection = Connection()
+    budget = service._content_budget("same-content")
+    assert budget["calls"] == 2
+    assert budget["selection_started_at"] == "2026-11-01T08:00:00+00:00"
+    assert budget["origin_round_key"] == "historical-round"
+    assert budget["interpretation_ids"] == ["historical-draft"]
+    assert service._content_budget_reason(budget) == "content_provider_calls_exhausted"
+    service.generator = SimpleNamespace(runtime=_codex_test_runtime())
+    assert service._content_budget_reason(budget) == "content_outer_attempts_exhausted"
+    service._round_remaining = lambda _receipt: 10
+    assert (
+        service._content_budget_reason(
+            {**budget, "calls": 0, "selection_started_at": None},
+            {"status": "running", "outer_attempts": 6, "elapsed_seconds": 0},
+        )
+        == "content_origin_round_outer_attempts_exhausted"
+    )
+
+
+def test_interrupted_round_reservation_is_not_replayed_and_new_attempt_preserves_cursor():
+    from contextlib import nullcontext
+
+    draft = {
+        "interpretation_id": "interrupted-draft",
+        "selection_started_at": "2026-11-02T08:00:00+00:00",
+        "status": "running",
+        "attempts": [
+            {
+                "attempt_id": "old-attempt",
+                "status": "running",
+                "calls": [{"status": "reserved", "outer_attempts": 1}],
+                "provider_seconds": 90,
+            }
+        ],
+    }
+    saved = []
+    receipts = []
+
+    class Storage:
+        def transaction(self):
+            return nullcontext()
+
+    service = articles.ArticleInterpretationService.__new__(articles.ArticleInterpretationService)
+    service.storage = Storage()
+    service._get = lambda _identity: draft
+    service._save = lambda value: saved.append(json.loads(json.dumps(value)))
+    service._receipt = lambda value: receipts.append(json.loads(json.dumps(value)))
+    service.now = lambda: datetime(2026, 11, 2, 8, 5, tzinfo=timezone.utc)
+
+    round_receipt = {
+        "round_key": "2026-11-02",
+        "status": "running",
+        "slots": [
+            {
+                "interpretation_id": "interrupted-draft",
+                "source_key": "cas",
+                "status": "queued",
+            }
+        ],
+    }
+    assert service._recover_reserved_attempt(round_receipt) is True
+
+    assert round_receipt["status"] == "interrupted"
+    assert round_receipt["slots"][0]["reason"] == "interrupted"
+    assert "advanced" not in round_receipt["slots"][0]
+    assert draft["error"] == "interrupted"
+    assert draft["attempts"][0]["status"] == "interrupted"
+    assert draft["attempts"][0]["calls"][0]["status"] == "interrupted"
+    assert len(saved) == 1 and len(receipts) == 1
+
+    new_attempt = service._start_generation_attempt(draft, retry=True)
+    assert new_attempt["attempt_id"] != "old-attempt"
+    assert new_attempt["calls"] == []
+    assert len(draft["attempts"]) == 2
+    assert draft["attempts"][0]["calls"][0]["status"] == "interrupted"
+    assert draft["selection_started_at"] == "2026-11-02T08:00:00+00:00"
+
+
+def _interrupted_draft_fixture():
+    route = {
+        "backend": "codex-cli",
+        "requested_backend": "codex-cli",
+        "effective_backend": "codex-cli",
+        "requested_model": "gpt-6-luna",
+        "effective_model": "unreported",
+        "reasoning_effort": "high",
+        "requested_reasoning_effort": "high",
+        "effective_reasoning_effort": "unreported",
+    }
+    draft = {
+        "interpretation_id": "interrupted-draft",
+        "content_key": "same-content-version",
+        "origin_round_key": "recover-same-day",
+        "selection_started_at": "2026-11-02T08:00:00+00:00",
+        "status": "failed",
+        "error": "interrupted",
+        "body_markdown_zh": "",
+        "coverage": {"route": route},
+        "attempts": [
+            {
+                "attempt_id": "old-attempt",
+                "started_at": "2026-11-02T08:00:00+00:00",
+                "status": "interrupted",
+                "outer_attempts": 1,
+                "calls": [{"status": "interrupted", "outer_attempts": 1}],
+                "provider_seconds": 90,
+            }
+        ],
+    }
+    receipt = {
+        "round_key": "recover-same-day",
+        "receipt_type": "generation",
+        "status": "interrupted",
+        "started_at": "2026-11-02T08:00:00+00:00",
+        "elapsed_seconds": 90,
+        "outer_attempts": 1,
+        "provider_calls": None,
+        "internal_provider_requests": "unknown/unmetered",
+        "slots": [
+            {
+                "source_key": "cas",
+                "interpretation_id": "interrupted-draft",
+                "status": "failed",
+                "reason": "interrupted",
+            }
+        ],
+    }
+    return draft, receipt
+
+
+def _interrupted_resume_service(draft, receipt):
+    from contextlib import nullcontext
+
+    class Result:
+        def __init__(self, row=None):
+            self.row = row
+
+        def fetchone(self):
+            return self.row
+
+        def fetchall(self):
+            return []
+
+    class Connection:
+        cursor = "previous-source"
+
+        def execute(self, query, params=()):
+            if "pg_try_advisory_lock" in query:
+                return Result((True,))
+            if "receipt_json->>'receipt_type'" in query:
+                return Result(None)
+            if "FROM article_interpretation_rounds WHERE round_key=?" in query:
+                return Result((receipt,))
+            if "UPDATE article_interpretation_state SET last_source_key" in query:
+                self.cursor = params[0]
+            return Result(None)
+
+    class Storage:
+        def __init__(self):
+            self._conn = Connection()
+
+        def transaction(self):
+            return nullcontext()
+
+    storage = Storage()
+    runner = articles.ArticleInterpretationService.__new__(articles.ArticleInterpretationService)
+    runner.storage = storage
+    runner.connection = storage._conn
+    runner.now = lambda: datetime(2026, 11, 2, 8, 5, tzinfo=timezone.utc)
+    runner.clock = lambda: 100.0
+    runner.stop_check = lambda: False
+    runner.config = {}
+    runner._get = lambda _identity: draft
+    runner._save = lambda _draft: None
+
+    def generate(saved_draft, *, origin_receipt, **_kwargs):
+        assert storage._conn.cursor == "previous-source"
+        old_calls = sum(len(item["calls"]) for item in saved_draft["attempts"])
+        assert old_calls == 1
+        attempt = runner._start_generation_attempt(saved_draft, retry=True)
+        assert attempt["attempt_id"] != "old-attempt"
+        attempt["calls"].append({"status": "valid", "outer_attempts": 1})
+        attempt["outer_attempts"] = 1
+        articles._record_outer_attempt(origin_receipt, saved_draft)
+        saved_draft.update(
+            status="ready",
+            error="",
+            body_markdown_zh="ready fixture body",
+            outer_attempts=2,
+        )
+        return saved_draft
+
+    runner._generate = generate
+    return runner, storage
+
+
+def test_same_round_retry_after_interruption_uses_new_attempt_and_preserves_budget():
+    draft, receipt = _interrupted_draft_fixture()
+    runner, storage = _interrupted_resume_service(draft, receipt)
+
+    resumed = runner.run(round_key="recover-same-day")
+
+    assert resumed["status"] == "complete"
+    assert resumed["outer_attempts"] == 2
+    assert resumed["internal_provider_requests"] == "unknown/unmetered"
+    assert resumed["slots"][0]["status"] == "ready"
+    assert resumed["slots"][0]["advanced"] is True
+    assert len(draft["attempts"]) == 2
+    assert draft["attempts"][0]["attempt_id"] == "old-attempt"
+    assert draft["attempts"][0]["calls"] == [{"status": "interrupted", "outer_attempts": 1}]
+    assert draft["attempts"][1]["calls"] == [{"status": "valid", "outer_attempts": 1}]
+    assert sum(len(attempt["calls"]) for attempt in draft["attempts"]) == 2
+    assert storage._conn.cursor == "cas"
+
+
+def test_retry_id_reports_failure_and_outer_attempt_count_after_interruption():
+    draft, receipt = _interrupted_draft_fixture()
+    runner, _storage = _interrupted_resume_service(draft, receipt)
+    runner._content_budget = lambda _key: {"calls": 1}
+    runner._origin_receipt = lambda _budget: receipt
+
+    retried = runner.run(retry_id=draft["interpretation_id"])
+
+    assert retried["status"] == "complete"
+    assert retried["outer_attempts"] == 1
+    assert retried["internal_provider_requests"] == "unknown/unmetered"
+    assert retried["interpretation"]["status"] == "ready"

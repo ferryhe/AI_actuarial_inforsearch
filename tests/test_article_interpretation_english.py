@@ -169,7 +169,13 @@ class Generator:
 
 
 def test_english_generator_uses_provider_specific_defaults(monkeypatch):
-    runtime = SimpleNamespace(configured=True, provider="deepseek", model="deepseek-flash")
+    runtime = SimpleNamespace(
+        configured=True,
+        provider="deepseek",
+        model="deepseek-flash",
+        stable_credential_id="fixture-credential",
+        base_url=None,
+    )
     monkeypatch.setattr(english, "resolve_ai_function_runtime", lambda *_args, **_kwargs: runtime)
     service = object.__new__(EnglishTranslationService)
     service.storage = object()
@@ -177,9 +183,54 @@ def test_english_generator_uses_provider_specific_defaults(monkeypatch):
 
     generator, route = service._generator()
 
-    assert route == {"provider": "deepseek", "model": "deepseek-flash"}
+    assert route == {
+        "provider": "deepseek",
+        "model": "deepseek-flash",
+        "credential_id": "fixture-credential",
+        "base_url": None,
+    }
     assert generator.request_options == articles._request_options("deepseek")
     assert generator.request_options["extra_body"] == {"thinking": {"type": "disabled"}}
+
+
+def test_english_codex_receipt_counts_outer_attempt_not_provider_request():
+    codex = {
+        "provider_calls": 0,
+        "outer_attempts": 0,
+        "provider_seconds": 0,
+    }
+    english._reserve_english_receipt_attempt(
+        codex,
+        {
+            "backend": "codex-cli",
+            "requested_model": "gpt-6-luna",
+            "effective_model": "unreported",
+            "requested_reasoning_effort": "high",
+            "effective_reasoning_effort": "unreported",
+            "internal_provider_requests": "unknown/unmetered",
+        },
+        12,
+    )
+    assert codex["outer_attempts"] == 1
+    assert codex["provider_calls"] is None
+    assert codex["internal_provider_requests"] == "unknown/unmetered"
+    assert codex["provider_seconds"] == 12
+
+    chat = {"provider_calls": 0, "outer_attempts": 0, "provider_seconds": 0}
+    english._reserve_english_receipt_attempt(
+        chat, {"backend": "deepseek", "model": "deepseek-flash"}, 12
+    )
+    assert chat["outer_attempts"] == 1
+    assert chat["provider_calls"] == 1
+    assert "internal_provider_requests" not in chat
+
+
+def test_english_codex_budget_error_names_outer_attempts():
+    service = EnglishTranslationService.__new__(EnglishTranslationService)
+    service.generator = SimpleNamespace(runtime=SimpleNamespace(backend="codex-cli"))
+    assert service._content_calls_exhausted_reason() == "content_outer_attempts_exhausted"
+    service.generator = SimpleNamespace(runtime=SimpleNamespace(backend="deepseek"))
+    assert service._content_calls_exhausted_reason() == "content_provider_calls_exhausted"
 
 
 def test_saved_chinese_claims_translate_without_mutating_chinese_and_reader_hides_internals(

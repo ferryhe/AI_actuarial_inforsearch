@@ -8,6 +8,7 @@ contracts. Input and output are one JSON object per process on stdin/stdout.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import json
@@ -16,6 +17,7 @@ import re
 import sys
 import tempfile
 import time
+import uuid
 from contextlib import nullcontext
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -25,6 +27,9 @@ from zoneinfo import ZoneInfo
 
 MAX_BATCH_ITEMS = 100
 MAX_ARTICLE_BYTES = 40 * 1024 * 1024
+MAX_INTERPRETATION_EVENT_BYTES = 512 * 1024
+MAX_INTERPRETATION_STREAM_PROMPTS = 12
+MAX_INTERPRETATION_SYNC_LIMIT = 3
 _TERMINAL_TASK_STATES = {"completed", "error", "stopped"}
 _DATE_FACT_SEMANTICS = {
     "publication_date": "publication",
@@ -2313,11 +2318,1113 @@ def apply_batch(
         storage.close()
 
 
+class _InterpretationTargetFailure(RuntimeError):
+    def __init__(self, code: str) -> None:
+        self.code = code
+        super().__init__(code)
+
+
+def _article_interpretation_database(runtime: Any):
+    from ai_actuarial.postgres import (
+        POSTGRES_SCHEMA_VERSION,
+        PostgresConnection,
+        postgresql_schema_status,
+    )
+
+    database = runtime._resolve_db_path(runtime._load_site_config())
+    status = postgresql_schema_status(database)
+    if (
+        not status.get("success")
+        or status.get("state") != "current"
+        or int(status.get("database", {}).get("schema_version") or 0) != POSTGRES_SCHEMA_VERSION
+    ):
+        raise _InterpretationTargetFailure("app_schema_not_current")
+    probe = PostgresConnection(database, read_only=True)
+    try:
+        required = {
+            "article_interpretations",
+            "article_interpretation_rounds",
+            "article_interpretation_state",
+        }
+        if not all(probe.table_exists(name) for name in required):
+            raise _InterpretationTargetFailure("article_interpretation_schema_missing")
+    finally:
+        probe.close()
+    return database
+
+
+def _interpretation_identity(draft: dict[str, Any]) -> dict[str, str]:
+    fields = (
+        "interpretation_id",
+        "file_url",
+        "raw_sha256",
+        "markdown_sha256",
+        "prompt_version",
+        "input_fingerprint",
+    )
+    if not isinstance(draft.get("source_key"), str) or not draft["source_key"]:
+        raise _InterpretationTargetFailure("canonical_source_missing")
+    if not isinstance(draft.get("content_key"), str):
+        raise _InterpretationTargetFailure("interpretation_identity_invalid")
+    if any(not isinstance(draft.get(field), str) or not draft[field] for field in fields):
+        raise _InterpretationTargetFailure("interpretation_identity_invalid")
+    if any(
+        not re.fullmatch(r"[0-9a-f]{64}", draft[field])
+        for field in ("raw_sha256", "markdown_sha256", "input_fingerprint")
+    ):
+        raise _InterpretationTargetFailure("interpretation_identity_invalid")
+    parsed = urlsplit(draft["file_url"])
+    if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
+        raise _InterpretationTargetFailure("interpretation_identity_invalid")
+    if (
+        draft.get("status") != "ready"
+        or not str(draft.get("title_zh") or "").strip()
+        or not str(draft.get("body_markdown_zh") or "").strip()
+    ):
+        raise _InterpretationTargetFailure("interpretation_not_ready")
+    coverage = draft.get("coverage")
+    if (
+        not isinstance(coverage, dict)
+        or not isinstance(coverage.get("evidence"), list)
+        or len(coverage["evidence"]) < 5
+    ):
+        raise _InterpretationTargetFailure("interpretation_validation_evidence_missing")
+    from ai_actuarial.article_interpretations import _hash as article_hash, _json
+
+    expected_input = article_hash(_json({"messages": draft.get("messages"), "coverage": coverage}))
+    if (
+        expected_input != draft["input_fingerprint"]
+        or article_hash(draft["raw_sha256"] + draft["markdown_sha256"]) != draft["content_key"]
+    ):
+        raise _InterpretationTargetFailure("interpretation_identity_conflict")
+    return {
+        **{field: draft[field] for field in fields},
+        "draft_sha256": _hash(_canonical_json(draft).encode("utf-8")),
+    }
+
+
+def _interpretation_source_identity(
+    identity: dict[str, str], draft: dict[str, Any]
+) -> dict[str, str]:
+    return {
+        "interpretation_id": identity["interpretation_id"],
+        "file_url": identity["file_url"],
+        "raw_sha256": identity["raw_sha256"],
+        "markdown_sha256": identity["markdown_sha256"],
+        "content_key": draft["content_key"],
+        "input_fingerprint": identity["input_fingerprint"],
+    }
+
+
+def _interpretation_current_row(connection: Any, identity: dict[str, str], source_key: str) -> None:
+    from ai_actuarial.article_interpretations import _identity, _load_file, _visible
+
+    row = _load_file(connection, identity["file_url"])
+    if not row:
+        raise _InterpretationTargetFailure("source_missing")
+    if not _visible(row) or _identity(row) != {
+        "file_url": identity["file_url"],
+        "raw_sha256": identity["raw_sha256"],
+        "markdown_sha256": identity["markdown_sha256"],
+    }:
+        raise _InterpretationTargetFailure("source_version_stale")
+    source = connection.execute(
+        "SELECT status FROM canonical_sources WHERE source_key=?", (source_key,)
+    ).fetchone()
+    if not source or source[0] != "active":
+        raise _InterpretationTargetFailure("canonical_source_missing")
+
+
+def _interpretation_locale_projection(draft: dict[str, Any], locale: str) -> dict[str, str]:
+    if locale == "zh":
+        title = draft.get("title_zh")
+        body = draft.get("body_markdown_zh")
+        summary = draft.get("short_reason") or ""
+        if (
+            not isinstance(title, str)
+            or not title.strip()
+            or not isinstance(body, str)
+            or not body.strip()
+            or not isinstance(summary, str)
+        ):
+            raise _InterpretationTargetFailure("interpretation_reader_fields_missing")
+        return {"locale": "zh", "title": title, "summary": summary, "body": body}
+    if locale == "en":
+        translation = draft.get("english_translation")
+        if not isinstance(translation, dict) or translation.get("status") != "ready":
+            raise _InterpretationTargetFailure("interpretation_locale_not_ready")
+        title = translation.get("title_en")
+        body = translation.get("body_markdown_en")
+        if (
+            not isinstance(title, str)
+            or not title.strip()
+            or not isinstance(body, str)
+            or not body.strip()
+        ):
+            raise _InterpretationTargetFailure("interpretation_reader_fields_missing")
+        return {"locale": "en", "title": title, "body": body}
+    raise _InterpretationTargetFailure("interpretation_locale_invalid")
+
+
+def _interpretation_locale_digest(draft: dict[str, Any], locale: str) -> str:
+    return _hash(_canonical_json(_interpretation_locale_projection(draft, locale)).encode("utf-8"))
+
+
+def _interpretation_reader_fields(draft: dict[str, Any], locale: str) -> dict[str, Any]:
+    projection = _interpretation_locale_projection(draft, locale)
+    body = projection["body"]
+    result: dict[str, Any] = {
+        "locale": locale,
+        "title": projection["title"],
+        "body_chars": len(body),
+        "body_sha256": _hash(body.encode("utf-8")),
+    }
+    if locale == "zh":
+        summary = projection["summary"]
+        result.update(
+            summary_chars=len(summary),
+            summary_sha256=_hash(summary.encode("utf-8")),
+        )
+    else:
+        result["status"] = "ready"
+    return result
+
+
+def apply_article_interpretation(
+    payload: dict[str, Any], *, runtime_factory: Callable[[], Any] | None = None
+) -> dict:
+    target = str(payload.get("target") or "")
+    if target not in {"china", "overseas"}:
+        raise _InterpretationTargetFailure("target_invalid")
+    locale = payload.get("locale")
+    if locale not in {"zh", "en"}:
+        raise _InterpretationTargetFailure("interpretation_locale_invalid")
+    draft = payload.get("draft")
+    if not isinstance(draft, dict):
+        raise _InterpretationTargetFailure("interpretation_not_ready")
+    identity = _interpretation_identity(draft)
+    source_identity = _interpretation_source_identity(identity, draft)
+    locale_digest = _interpretation_locale_digest(draft, locale)
+    reader_fields = _interpretation_reader_fields(draft, locale)
+    if runtime_factory is None:
+        from ai_actuarial.task_runtime import NativeTaskRuntime
+
+        runtime_factory = NativeTaskRuntime
+    runtime = runtime_factory()
+    database = _article_interpretation_database(runtime)
+    from ai_actuarial.capacity import capacity_status
+    from ai_actuarial.postgres import PostgresConnection
+
+    if capacity_status(path="/", threshold_percent=80.0).get("blocked", True):
+        raise _InterpretationTargetFailure("target_capacity_blocked")
+    connection = PostgresConnection(database, read_only=target == "china")
+    try:
+        stored_before = None
+        zh_digest_before = None
+        if target == "china":
+            _interpretation_current_row(connection, identity, str(draft.get("source_key") or ""))
+            status = "verified"
+        else:
+            connection.execute("BEGIN")
+            try:
+                connection.execute(
+                    "SELECT pg_advisory_xact_lock(hashtextextended(?,0))",
+                    ("file:" + identity["file_url"],),
+                )
+                _interpretation_current_row(
+                    connection, identity, str(draft.get("source_key") or "")
+                )
+                existing = connection.execute(
+                    "SELECT interpretation_id,file_url,raw_sha256,markdown_sha256,content_key,"
+                    "input_fingerprint,status,payload_json FROM article_interpretations "
+                    "WHERE interpretation_id=? OR input_fingerprint=? "
+                    "OR (content_key=? AND status='ready')",
+                    (
+                        identity["interpretation_id"],
+                        identity["input_fingerprint"],
+                        draft.get("content_key", ""),
+                    ),
+                ).fetchall()
+                if existing:
+                    if len(existing) != 1 or tuple(existing[0][:7]) != (
+                        source_identity["interpretation_id"],
+                        source_identity["file_url"],
+                        source_identity["raw_sha256"],
+                        source_identity["markdown_sha256"],
+                        source_identity["content_key"],
+                        source_identity["input_fingerprint"],
+                        "ready",
+                    ):
+                        raise _InterpretationTargetFailure("interpretation_identity_conflict")
+                    stored_before = dict(existing[0][7])
+                    zh_digest_before = _interpretation_locale_digest(stored_before, "zh")
+                else:
+                    if locale == "en":
+                        raise _InterpretationTargetFailure("interpretation_chinese_locale_missing")
+                    chinese_draft = dict(draft)
+                    chinese_draft.pop("english_translation", None)
+                    connection.execute(
+                        "INSERT INTO article_interpretations(interpretation_id,file_url,raw_sha256,"
+                        "markdown_sha256,content_key,source_key,input_fingerprint,status,payload_json) "
+                        "VALUES (?,?,?,?,?,?,?,'ready',?::jsonb)",
+                        (
+                            identity["interpretation_id"],
+                            identity["file_url"],
+                            identity["raw_sha256"],
+                            identity["markdown_sha256"],
+                            draft["content_key"],
+                            draft["source_key"],
+                            identity["input_fingerprint"],
+                            _canonical_json(chinese_draft),
+                        ),
+                    )
+                    stored_before = chinese_draft
+                    zh_digest_before = _interpretation_locale_digest(stored_before, "zh")
+                if zh_digest_before != _interpretation_locale_digest(draft, "zh"):
+                    raise _InterpretationTargetFailure("interpretation_chinese_locale_conflict")
+                if locale == "zh":
+                    status = "already_present" if existing else "inserted"
+                else:
+                    existing_translation = stored_before.get("english_translation")
+                    if (
+                        isinstance(existing_translation, dict)
+                        and existing_translation.get("status") == "ready"
+                    ):
+                        existing_en_digest = _interpretation_locale_digest(stored_before, "en")
+                        if existing_en_digest != locale_digest:
+                            raise _InterpretationTargetFailure(
+                                "interpretation_english_locale_conflict"
+                            )
+                        status = "already_present"
+                    else:
+                        connection.execute(
+                            "UPDATE article_interpretations SET payload_json=jsonb_set("
+                            "payload_json,'{english_translation}',?::jsonb,true), "
+                            "updated_at=CURRENT_TIMESTAMP WHERE interpretation_id=? "
+                            "AND file_url=? AND raw_sha256=? AND markdown_sha256=? "
+                            "AND content_key=? AND input_fingerprint=? AND status='ready'",
+                            (
+                                _canonical_json(draft["english_translation"]),
+                                source_identity["interpretation_id"],
+                                source_identity["file_url"],
+                                source_identity["raw_sha256"],
+                                source_identity["markdown_sha256"],
+                                source_identity["content_key"],
+                                source_identity["input_fingerprint"],
+                            ),
+                        )
+                        status = "updated"
+                connection.commit()
+            except _InterpretationTargetFailure:
+                connection.rollback()
+                raise
+            except Exception:
+                connection.rollback()
+                raise _InterpretationTargetFailure("interpretation_target_write_failed") from None
+        stored = connection.execute(
+            "SELECT interpretation_id,file_url,raw_sha256,markdown_sha256,content_key,"
+            "input_fingerprint,status,payload_json FROM article_interpretations "
+            "WHERE interpretation_id=?",
+            (source_identity["interpretation_id"],),
+        ).fetchone()
+        expected_row = (
+            source_identity["interpretation_id"],
+            source_identity["file_url"],
+            source_identity["raw_sha256"],
+            source_identity["markdown_sha256"],
+            source_identity["content_key"],
+            source_identity["input_fingerprint"],
+            "ready",
+        )
+        if not stored:
+            raise _InterpretationTargetFailure(
+                "china_interpretation_missing"
+                if target == "china"
+                else "interpretation_target_readback_missing"
+            )
+        stored_draft = dict(stored[7])
+        if tuple(stored[:7]) != expected_row:
+            raise _InterpretationTargetFailure(
+                "china_interpretation_identity_mismatch"
+                if target == "china"
+                else "interpretation_identity_conflict"
+            )
+        stored_identity = _interpretation_source_identity(
+            _interpretation_identity(stored_draft), stored_draft
+        )
+        if stored_identity != source_identity:
+            raise _InterpretationTargetFailure("interpretation_identity_conflict")
+        zh_digest_after = _interpretation_locale_digest(stored_draft, "zh")
+        if zh_digest_after != _interpretation_locale_digest(draft, "zh"):
+            raise _InterpretationTargetFailure("interpretation_chinese_locale_readback_mismatch")
+        if locale == "en":
+            if zh_digest_before is not None and zh_digest_after != zh_digest_before:
+                raise _InterpretationTargetFailure("interpretation_chinese_locale_changed")
+            if _interpretation_locale_digest(stored_draft, "en") != locale_digest:
+                raise _InterpretationTargetFailure(
+                    "interpretation_english_locale_readback_mismatch"
+                )
+        elif _interpretation_locale_digest(stored_draft, "zh") != locale_digest:
+            raise _InterpretationTargetFailure("interpretation_chinese_locale_readback_mismatch")
+        reader_fields = _interpretation_reader_fields(stored_draft, locale)
+        return {
+            "schema_version": 1,
+            "target": target,
+            "status": status,
+            "identity": identity,
+            "source_identity": source_identity,
+            "locale": locale,
+            "locale_digest": locale_digest,
+            "draft_sha256": identity["draft_sha256"],
+            "reader_fields": reader_fields,
+        }
+    finally:
+        connection.close()
+
+
+class _ArticleInterpretationStreamFailure(RuntimeError):
+    def __init__(self, code: str) -> None:
+        self.code = code
+        super().__init__(code)
+
+
+def _interpretation_stream_emit(output_stream: Any, value: dict[str, Any]) -> None:
+    encoded = _canonical_json(value).encode("utf-8")
+    if len(encoded) > MAX_INTERPRETATION_EVENT_BYTES:
+        raise _ArticleInterpretationStreamFailure("stream_event_too_large")
+    try:
+        output_stream.write(encoded.decode("utf-8") + "\n")
+        output_stream.flush()
+    except (BrokenPipeError, OSError):
+        from ai_actuarial.article_interpretations import ArticleStreamInterrupted
+
+        raise ArticleStreamInterrupted() from None
+
+
+class _ArticleInterpretationPromptStream:
+    def __init__(self, runtime: Any, input_stream: Any, output_stream: Any) -> None:
+        self.runtime = runtime
+        self.input_stream = input_stream
+        self.output_stream = output_stream
+        self.stage = "generation"
+        self.prompts = 0
+        self.last_call_metadata = {}
+
+    async def generate(self, messages: list[dict[str, str]], *, deadline: float) -> str:
+        from ai_actuarial.article_interpretations import (
+            ArticleStreamInterrupted,
+            ArticleStreamProviderError,
+        )
+
+        self.prompts += 1
+        if self.prompts > MAX_INTERPRETATION_STREAM_PROMPTS:
+            raise ArticleStreamInterrupted()
+        request_id = uuid.uuid4().hex
+        timeout_seconds = max(0.0, deadline - time.monotonic())
+        if timeout_seconds <= 0:
+            raise TimeoutError("article_stream_deadline")
+        self.last_call_metadata = {
+            **self.runtime.receipt_metadata(),
+            "outer_attempts": 1,
+            "stream_stage": self.stage,
+        }
+        _interpretation_stream_emit(
+            self.output_stream,
+            {
+                "schema_version": 1,
+                "event": "prompt",
+                "stage": self.stage,
+                "request_id": request_id,
+                "timeout_seconds": timeout_seconds,
+                "messages": messages,
+            },
+        )
+        try:
+            raw_line = await asyncio.to_thread(
+                self.input_stream.readline, MAX_INTERPRETATION_EVENT_BYTES + 1
+            )
+        except (OSError, ValueError):
+            raise ArticleStreamInterrupted() from None
+        if not raw_line or len(raw_line) > MAX_INTERPRETATION_EVENT_BYTES:
+            raise ArticleStreamInterrupted()
+        try:
+            response = json.loads(raw_line)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            raise ArticleStreamInterrupted() from None
+        if (
+            not isinstance(response, dict)
+            or response.get("schema_version") != 1
+            or response.get("event") not in {"result", "provider_error"}
+            or response.get("request_id") != request_id
+        ):
+            raise ArticleStreamInterrupted()
+        if response["event"] == "provider_error":
+            kind = response.get("kind")
+            if kind == "authentication":
+                from ai_actuarial.chatbot.exceptions import LLMAuthenticationError
+
+                raise LLMAuthenticationError("local Codex login unavailable")
+            if kind == "timeout":
+                from ai_actuarial.chatbot.exceptions import LLMTimeoutError
+
+                raise LLMTimeoutError("local Codex request timed out")
+            raise ArticleStreamProviderError("local Codex request failed")
+        result = response.get("result")
+        if (
+            not isinstance(result, str)
+            or not result.strip()
+            or len(result.encode("utf-8")) > MAX_INTERPRETATION_EVENT_BYTES // 2
+        ):
+            raise ArticleStreamInterrupted()
+        return result
+
+
+def _article_interpretation_stream_request(payload: Any) -> dict[str, Any]:
+    if (
+        not isinstance(payload, dict)
+        or payload.get("schema_version") != 1
+        or payload.get("operation") != "run_article_interpretation_stream"
+        or payload.get("target") != "china"
+        or payload.get("backend") != "codex-cli"
+    ):
+        raise _ArticleInterpretationStreamFailure("stream_request_invalid")
+    try:
+        from ai_actuarial.article_interpretations import CodexArticleRuntime
+
+        route = CodexArticleRuntime(
+            backend=payload.get("backend"),
+            model=payload.get("requested_model"),
+            reasoning_effort=payload.get("reasoning_effort"),
+        )
+    except (ImportError, TypeError, ValueError):
+        raise _ArticleInterpretationStreamFailure("stream_route_invalid") from None
+    round_key = payload.get("round_key")
+    if not isinstance(round_key, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", round_key):
+        raise _ArticleInterpretationStreamFailure("round_key_invalid")
+    retry_id = payload.get("retry_id")
+    if retry_id is not None and (
+        not isinstance(retry_id, str) or not retry_id.strip() or len(retry_id) > 80
+    ):
+        raise _ArticleInterpretationStreamFailure("retry_id_invalid")
+    return {
+        "round_key": round_key,
+        "retry_id": retry_id,
+        "backend": route.backend,
+        "requested_model": route.model,
+        "reasoning_effort": route.reasoning_effort,
+    }
+
+
+def _interpretation_generation_summary(receipt: dict[str, Any]) -> dict[str, Any]:
+    allowed = (
+        "status",
+        "round_key",
+        "receipt_type",
+        "provider_calls",
+        "outer_attempts",
+        "internal_provider_requests",
+        "elapsed_seconds",
+        "backend",
+        "requested_backend",
+        "effective_backend",
+        "requested_model",
+        "effective_model",
+        "reasoning_effort",
+        "requested_reasoning_effort",
+        "effective_reasoning_effort",
+    )
+    summary = {key: receipt[key] for key in allowed if key in receipt}
+    slots = receipt.get("slots")
+    if isinstance(slots, list):
+        slot_fields = (
+            "source_key",
+            "interpretation_id",
+            "status",
+            "reason",
+            "prompt_version",
+            "input_fingerprint",
+            "outer_attempts_before",
+            "backend",
+            "requested_backend",
+            "effective_backend",
+            "requested_model",
+            "effective_model",
+            "reasoning_effort",
+            "requested_reasoning_effort",
+            "effective_reasoning_effort",
+            "internal_provider_requests",
+        )
+        summary["slots"] = [
+            {key: slot[key] for key in slot_fields if key in slot} for slot in slots
+        ]
+    interpretation = receipt.get("interpretation")
+    if isinstance(interpretation, dict):
+        summary["interpretation"] = {
+            key: interpretation[key]
+            for key in (
+                "interpretation_id",
+                "status",
+                "error",
+                "backend",
+                "requested_model",
+                "effective_model",
+                "requested_reasoning_effort",
+                "effective_reasoning_effort",
+                "outer_attempts",
+                "internal_provider_requests",
+            )
+            if key in interpretation
+        }
+    return summary
+
+
+def read_article_interpretation_locale_settings(
+    payload: dict[str, Any], *, runtime_factory: Callable[[], Any] | None = None
+) -> dict[str, Any]:
+    if (
+        not isinstance(payload, dict)
+        or payload.get("schema_version") != 1
+        or payload.get("operation") != "read_article_interpretation_locale_settings"
+        or payload.get("target") != "china"
+    ):
+        raise _InterpretationTargetFailure("locale_settings_request_invalid")
+    if runtime_factory is None:
+        from ai_actuarial.task_runtime import NativeTaskRuntime
+
+        runtime_factory = NativeTaskRuntime
+    runtime = runtime_factory()
+    site_config = runtime._load_site_config()
+    settings = dict(site_config.get("article_interpretation") or {})
+    return {
+        "schema_version": 1,
+        "operation": "read_article_interpretation_locale_settings",
+        "target": "china",
+        "english_translation_enabled": (
+            dict(settings.get("english_translation") or {}).get("enabled") is True
+        ),
+        "english_proxy_enabled": (dict(settings.get("english_proxy") or {}).get("enabled") is True),
+    }
+
+
+def run_article_interpretation_stream(
+    payload: dict[str, Any],
+    *,
+    input_stream=None,
+    output_stream=None,
+    runtime_factory: Callable[[], Any] | None = None,
+    service_factory: Callable[..., Any] | None = None,
+    english_service_factory: Callable[..., Any] | None = None,
+) -> dict[str, Any]:
+    request = _article_interpretation_stream_request(payload)
+    input_stream = input_stream or sys.stdin
+    output_stream = output_stream or sys.stdout
+    if runtime_factory is None:
+        from ai_actuarial.task_runtime import NativeTaskRuntime
+
+        runtime_factory = NativeTaskRuntime
+    runtime = runtime_factory()
+    site_config = runtime._load_site_config()
+    interpretation_settings = dict(site_config.get("article_interpretation") or {})
+    locale_settings = {
+        "english_translation_enabled": (
+            dict(interpretation_settings.get("english_translation") or {}).get("enabled") is True
+        ),
+        "english_proxy_enabled": (
+            dict(interpretation_settings.get("english_proxy") or {}).get("enabled") is True
+        ),
+    }
+
+    from ai_actuarial.article_interpretations import (
+        ArticleInterpretationService,
+        CodexArticleRuntime,
+    )
+
+    route = CodexArticleRuntime(
+        backend=request["backend"],
+        model=request["requested_model"],
+        reasoning_effort=request["reasoning_effort"],
+    )
+    generator = _ArticleInterpretationPromptStream(route, input_stream, output_stream)
+    database = _article_interpretation_database(runtime)
+    from ai_actuarial.storage import Storage
+
+    storage = Storage.open_existing(database, data_root=getattr(runtime, "data_root", None))
+    try:
+        service = (service_factory or ArticleInterpretationService)(
+            storage,
+            generator=generator,
+            config={
+                "environment": "china",
+                "timezone": "America/New_York",
+                "china_base_url": interpretation_settings.get(
+                    "china_base_url", "https://aiactuary.cn"
+                ),
+            },
+        )
+        generation = service.run(
+            round_key=request["round_key"],
+            retry_id=request["retry_id"],
+        )
+        english = None
+        if locale_settings["english_translation_enabled"] and generation.get("status") not in {
+            "authentication",
+            "busy",
+            "provider_cleanup",
+            "stopped",
+            "interrupted",
+        }:
+            interpretation_ids = [
+                slot["interpretation_id"]
+                for slot in generation.get("slots", [])
+                if slot.get("status") == "ready" and slot.get("interpretation_id")
+            ]
+            if generation.get("interpretation", {}).get("status") == "ready":
+                interpretation_ids.append(generation["interpretation"]["interpretation_id"])
+            if interpretation_ids:
+                from ai_actuarial.article_interpretation_english import EnglishTranslationService
+
+                generator.stage = "english_translation"
+                translator = (english_service_factory or EnglishTranslationService)(
+                    storage, generator=generator
+                )
+                english = translator.run(interpretation_ids=interpretation_ids)
+        result = {
+            "schema_version": 1,
+            "event": "complete",
+            "route": route.receipt_metadata(),
+            "locale_settings": locale_settings,
+            "generation": _interpretation_generation_summary(generation),
+            "english_translation": (
+                _interpretation_generation_summary(english) if english is not None else None
+            ),
+        }
+        _interpretation_stream_emit(output_stream, result)
+        return result
+    finally:
+        storage.close()
+
+
+def _interpretation_ack_key(target: str, source_identity: dict[str, str], locale: str) -> str:
+    return f"article-target-sync:v2:{target}:{source_identity['interpretation_id']}:{locale}"
+
+
+def _interpretation_ack_read(
+    connection: Any,
+    target: str,
+    source_identity: dict[str, str],
+    locale: str,
+    locale_digest: str,
+    reader_fields: dict[str, Any],
+):
+    row = connection.execute(
+        "SELECT receipt_json FROM article_interpretation_rounds WHERE round_key=?",
+        (_interpretation_ack_key(target, source_identity, locale),),
+    ).fetchone()
+    if not row:
+        return None
+    receipt = dict(row[0])
+    if (
+        receipt.get("receipt_type") != "target_sync_locale"
+        or receipt.get("target") != target
+        or receipt.get("locale") != locale
+        or receipt.get("source_identity") != source_identity
+    ):
+        return {"status": "conflict", "error": "target_receipt_identity_conflict"}
+    if receipt.get("status") == "acknowledged" and (
+        receipt.get("locale_digest") != locale_digest
+        or receipt.get("reader_fields") != reader_fields
+    ):
+        return {"status": "conflict", "error": "target_locale_ack_projection_conflict"}
+    return receipt
+
+
+def list_article_interpretation_sync_candidates(
+    payload: dict[str, Any], *, runtime_factory: Callable[[], Any] | None = None
+) -> dict[str, Any]:
+    if (
+        not isinstance(payload, dict)
+        or payload.get("schema_version") != 1
+        or payload.get("operation") != "list_article_interpretation_sync_candidates"
+        or payload.get("target") != "china"
+        or type(payload.get("limit")) is not int
+        or not 1 <= payload["limit"] <= MAX_INTERPRETATION_SYNC_LIMIT
+    ):
+        raise _InterpretationTargetFailure("sync_candidate_request_invalid")
+    if runtime_factory is None:
+        from ai_actuarial.task_runtime import NativeTaskRuntime
+
+        runtime_factory = NativeTaskRuntime
+    runtime = runtime_factory()
+    database = _article_interpretation_database(runtime)
+    from ai_actuarial.postgres import PostgresConnection
+
+    connection = PostgresConnection(database, read_only=True)
+    drafts: list[dict[str, Any]] = []
+    issues: list[dict[str, Any]] = []
+    more_pending = False
+    offset = 0
+    try:
+        while True:
+            page = connection.execute(
+                "SELECT payload_json FROM article_interpretations WHERE status='ready' "
+                "ORDER BY created_at ASC, interpretation_id ASC LIMIT 100 OFFSET ?",
+                (offset,),
+            ).fetchall()
+            if not page:
+                break
+            for row in page:
+                draft = dict(row[0])
+                try:
+                    identity = _interpretation_identity(draft)
+                except _InterpretationTargetFailure as exc:
+                    if len(issues) < 100:
+                        issues.append(
+                            {
+                                "interpretation_id": draft.get("interpretation_id"),
+                                "status": "failed",
+                                "error": exc.code,
+                            }
+                        )
+                    continue
+                try:
+                    _interpretation_current_row(
+                        connection, identity, str(draft.get("source_key") or "")
+                    )
+                except _InterpretationTargetFailure as exc:
+                    if len(issues) < 100:
+                        issues.append(
+                            {
+                                "interpretation_id": identity["interpretation_id"],
+                                "identity": identity,
+                                "status": "failed",
+                                "error": exc.code,
+                            }
+                        )
+                    continue
+                source_identity = _interpretation_source_identity(identity, draft)
+                locales = {}
+                for locale in ("zh", "en"):
+                    if locale == "en" and (
+                        not isinstance(draft.get("english_translation"), dict)
+                        or draft["english_translation"].get("status") != "ready"
+                    ):
+                        continue
+                    try:
+                        digest = _interpretation_locale_digest(draft, locale)
+                        reader_fields = _interpretation_reader_fields(draft, locale)
+                    except _InterpretationTargetFailure as exc:
+                        if len(issues) < 100:
+                            issues.append(
+                                {
+                                    "interpretation_id": identity["interpretation_id"],
+                                    "identity": identity,
+                                    "status": "failed",
+                                    "error": exc.code,
+                                }
+                            )
+                        continue
+                    locales[locale] = {
+                        "locale_digest": digest,
+                        "reader_fields": reader_fields,
+                    }
+                if not locales:
+                    continue
+                targets = {target: {} for target in ("china", "overseas")}
+                for target in ("china", "overseas"):
+                    for locale, locale_data in locales.items():
+                        saved = _interpretation_ack_read(
+                            connection,
+                            target,
+                            source_identity,
+                            locale,
+                            locale_data["locale_digest"],
+                            locale_data["reader_fields"],
+                        )
+                        targets[target][locale] = (
+                            {
+                                key: saved[key]
+                                for key in (
+                                    "status",
+                                    "target_status",
+                                    "error",
+                                    "source_identity",
+                                    "locale_digest",
+                                    "draft_sha256",
+                                    "reader_fields",
+                                )
+                                if key in saved
+                            }
+                            if isinstance(saved, dict)
+                            else {"status": "pending"}
+                        )
+                if all(
+                    targets[target][locale]["status"] == "acknowledged"
+                    for target in ("china", "overseas")
+                    for locale in locales
+                ):
+                    continue
+                if len(drafts) >= payload["limit"]:
+                    more_pending = True
+                    break
+                encoded_draft = _canonical_json(draft).encode("utf-8")
+                if len(encoded_draft) > MAX_INTERPRETATION_EVENT_BYTES // 2:
+                    if len(issues) < 100:
+                        issues.append(
+                            {
+                                "interpretation_id": identity["interpretation_id"],
+                                "identity": identity,
+                                "status": "failed",
+                                "error": "draft_too_large",
+                            }
+                        )
+                    continue
+                drafts.append(
+                    {
+                        "identity": identity,
+                        "source_identity": source_identity,
+                        "draft": draft,
+                        "locales": locales,
+                        "targets": targets,
+                    }
+                )
+            if more_pending or len(page) < 100:
+                break
+            offset += len(page)
+        return {
+            "schema_version": 1,
+            "operation": "list_article_interpretation_sync_candidates",
+            "target": "china",
+            "status": "partial" if issues else "complete" if drafts else "no_candidates",
+            "drafts": drafts,
+            "issues": issues,
+            "more_pending": more_pending,
+        }
+    finally:
+        connection.close()
+
+
+def record_article_interpretation_target_ack(
+    payload: dict[str, Any], *, runtime_factory: Callable[[], Any] | None = None
+) -> dict[str, Any]:
+    if (
+        not isinstance(payload, dict)
+        or payload.get("schema_version") != 1
+        or payload.get("operation") != "record_article_interpretation_target_ack"
+        or payload.get("target") not in {"china", "overseas"}
+        or payload.get("status") not in {"acknowledged", "failed", "unknown"}
+        or payload.get("locale") not in {"zh", "en"}
+        or not isinstance(payload.get("source_identity"), dict)
+        or not isinstance(payload.get("locale_digest"), str)
+        or not re.fullmatch(r"[0-9a-f]{64}", payload["locale_digest"])
+        or not isinstance(payload.get("draft_sha256"), str)
+        or not re.fullmatch(r"[0-9a-f]{64}", payload["draft_sha256"])
+    ):
+        raise _InterpretationTargetFailure("target_ack_request_invalid")
+    target = payload["target"]
+    locale = payload["locale"]
+    source_identity = payload["source_identity"]
+    locale_digest = payload["locale_digest"]
+    draft_sha256 = payload["draft_sha256"]
+    if runtime_factory is None:
+        from ai_actuarial.task_runtime import NativeTaskRuntime
+
+        runtime_factory = NativeTaskRuntime
+    runtime = runtime_factory()
+    database = _article_interpretation_database(runtime)
+    from ai_actuarial.postgres import PostgresConnection
+
+    connection = PostgresConnection(database)
+    key = _interpretation_ack_key(target, source_identity, locale)
+    status = payload["status"]
+    error = payload.get("error")
+    if error is not None and (
+        not isinstance(error, str) or not re.fullmatch(r"[a-z0-9_]{1,80}", error)
+    ):
+        connection.close()
+        raise _InterpretationTargetFailure("target_ack_error_invalid")
+    target_status = payload.get("target_status")
+    if target_status is not None and target_status not in {
+        "verified",
+        "inserted",
+        "already_present",
+        "updated",
+    }:
+        connection.close()
+        raise _InterpretationTargetFailure("target_ack_status_invalid")
+    reader_fields = payload.get("reader_fields")
+    if status != "acknowledged" and reader_fields is not None:
+        connection.close()
+        raise _InterpretationTargetFailure("target_ack_reader_fields_invalid")
+    try:
+        connection.execute("BEGIN")
+        connection.execute(
+            "SELECT pg_advisory_xact_lock(hashtextextended(?,0))",
+            ("article-target-sync:" + key,),
+        )
+        draft_row = connection.execute(
+            "SELECT status,payload_json FROM article_interpretations WHERE interpretation_id=?",
+            (source_identity.get("interpretation_id"),),
+        ).fetchone()
+        if not draft_row or draft_row[0] != "ready":
+            raise _InterpretationTargetFailure("interpretation_not_ready")
+        draft = dict(draft_row[1])
+        full_identity = _interpretation_identity(draft)
+        expected_source_identity = _interpretation_source_identity(full_identity, draft)
+        if expected_source_identity != source_identity:
+            raise _InterpretationTargetFailure("interpretation_identity_conflict")
+        if full_identity["draft_sha256"] != draft_sha256:
+            raise _InterpretationTargetFailure("target_ack_draft_audit_mismatch")
+        expected_locale_digest = _interpretation_locale_digest(draft, locale)
+        expected_reader_fields = _interpretation_reader_fields(draft, locale)
+        if locale_digest != expected_locale_digest:
+            raise _InterpretationTargetFailure("target_ack_locale_digest_mismatch")
+        if status == "acknowledged" and reader_fields != expected_reader_fields:
+            raise _InterpretationTargetFailure("target_ack_reader_fields_mismatch")
+        _interpretation_current_row(connection, full_identity, str(draft.get("source_key") or ""))
+        existing = connection.execute(
+            "SELECT receipt_json FROM article_interpretation_rounds WHERE round_key=?",
+            (key,),
+        ).fetchone()
+        now = datetime.now(timezone.utc).isoformat()
+        if existing:
+            receipt = dict(existing[0])
+            if (
+                receipt.get("receipt_type") != "target_sync_locale"
+                or receipt.get("target") != target
+                or receipt.get("locale") != locale
+                or receipt.get("source_identity") != source_identity
+            ):
+                raise _InterpretationTargetFailure("target_receipt_identity_conflict")
+        else:
+            receipt = {
+                "receipt_type": "target_sync_locale",
+                "target": target,
+                "locale": locale,
+                "source_identity": source_identity,
+                "attempts": [],
+            }
+        if receipt.get("status") == "acknowledged":
+            if (
+                receipt.get("locale_digest") != locale_digest
+                or receipt.get("reader_fields") != expected_reader_fields
+            ):
+                raise _InterpretationTargetFailure("target_locale_ack_projection_conflict")
+            connection.rollback()
+            return {
+                "schema_version": 1,
+                "operation": "record_article_interpretation_target_ack",
+                "target": target,
+                "locale": locale,
+                "status": "acknowledged",
+                "source_identity": source_identity,
+                "locale_digest": locale_digest,
+                "draft_sha256": receipt.get("draft_sha256"),
+                "target_status": receipt.get("target_status"),
+                "preserved_ack": True,
+                "reader_fields": receipt.get("reader_fields"),
+            }
+        receipt.update(
+            status=status,
+            locale=locale,
+            source_identity=source_identity,
+            locale_digest=locale_digest,
+            draft_sha256=draft_sha256,
+            target_status=target_status,
+            error=error or "",
+            updated_at=now,
+        )
+        if status == "acknowledged":
+            receipt["reader_fields"] = expected_reader_fields
+        else:
+            receipt.pop("reader_fields", None)
+        receipt["attempts"] = [
+            *receipt.get("attempts", []),
+            {
+                "status": status,
+                "locale_digest": locale_digest,
+                "draft_sha256": draft_sha256,
+                "target_status": target_status,
+                "error": error or "",
+                "at": now,
+            },
+        ][-20:]
+        if existing:
+            connection.execute(
+                "UPDATE article_interpretation_rounds SET receipt_json=?::jsonb WHERE round_key=?",
+                (_canonical_json(receipt), key),
+            )
+        else:
+            connection.execute(
+                "INSERT INTO article_interpretation_rounds(round_key,receipt_json) VALUES (?,?::jsonb)",
+                (key, _canonical_json(receipt)),
+            )
+        connection.commit()
+        return {
+            "schema_version": 1,
+            "operation": "record_article_interpretation_target_ack",
+            "target": target,
+            "locale": locale,
+            "status": status,
+            "source_identity": source_identity,
+            "locale_digest": locale_digest,
+            "draft_sha256": draft_sha256,
+            **({"reader_fields": expected_reader_fields} if status == "acknowledged" else {}),
+        }
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+
+def _run_article_interpretation_stream_operation(payload: dict[str, Any]) -> int:
+    try:
+        run_article_interpretation_stream(payload)
+        return 0
+    except Exception as exc:
+        if isinstance(exc, _ArticleInterpretationStreamFailure):
+            code = exc.code
+        else:
+            code = "article_interpretation_stream_failed"
+        _interpretation_stream_emit(
+            sys.stdout,
+            {"schema_version": 1, "event": "failure", "code": code},
+        )
+        return 2
+
+
 def main() -> int:
     payload: Any = None
     try:
-        payload = json.load(sys.stdin)
-        if isinstance(payload, dict) and payload.get("operation") == "sync_source_portals":
+        first_line = sys.stdin.readline(MAX_INTERPRETATION_EVENT_BYTES + 1)
+        if len(first_line) > MAX_INTERPRETATION_EVENT_BYTES:
+            raise ValueError("target operation request is too large")
+        payload = json.loads(first_line)
+        if (
+            isinstance(payload, dict)
+            and payload.get("operation") == "run_article_interpretation_stream"
+        ):
+            return _run_article_interpretation_stream_operation(payload)
+        if (
+            isinstance(payload, dict)
+            and payload.get("operation") == "read_article_interpretation_locale_settings"
+        ):
+            result = read_article_interpretation_locale_settings(payload)
+        elif (
+            isinstance(payload, dict)
+            and payload.get("operation") == "list_article_interpretation_sync_candidates"
+        ):
+            result = list_article_interpretation_sync_candidates(payload)
+        elif (
+            isinstance(payload, dict)
+            and payload.get("operation") == "record_article_interpretation_target_ack"
+        ):
+            result = record_article_interpretation_target_ack(payload)
+        elif (
+            isinstance(payload, dict) and payload.get("operation") == "sync_article_interpretation"
+        ):
+            result = apply_article_interpretation(payload)
+        elif isinstance(payload, dict) and payload.get("operation") == "sync_source_portals":
             result = apply_source_portals(payload)
         elif isinstance(payload, dict) and payload.get("operation") == "sync_source_registry":
             result = apply_source_registry(payload)
@@ -2332,7 +3439,24 @@ def main() -> int:
         sys.stdout.write(_canonical_json(result) + "\n")
         return 0 if not result.get("failures") and result.get("ready_status") != "failed" else 2
     except Exception as exc:
-        failure = {"schema_version": 1, "error": str(exc)}
+        if isinstance(payload, dict) and payload.get("operation") in {
+            "sync_article_interpretation",
+            "read_article_interpretation_locale_settings",
+            "list_article_interpretation_sync_candidates",
+            "record_article_interpretation_target_ack",
+        }:
+            failure = {
+                "schema_version": 1,
+                "operation": "sync_article_interpretation",
+                "target": payload.get("target"),
+                "error": (
+                    exc.code
+                    if isinstance(exc, _InterpretationTargetFailure)
+                    else "interpretation_target_failed"
+                ),
+            }
+        else:
+            failure = {"schema_version": 1, "error": str(exc)}
         target = payload.get("target") if isinstance(payload, dict) else None
         if isinstance(target, str):
             failure["target"] = target

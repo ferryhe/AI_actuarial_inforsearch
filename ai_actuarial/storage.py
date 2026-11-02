@@ -171,6 +171,31 @@ class Storage:
         self._seed_taxonomy_state_if_empty()
 
     @classmethod
+    def open_existing(
+        cls,
+        database: DatabaseConfig | str | None = None,
+        *,
+        data_root: str | Path | None = None,
+    ) -> "Storage":
+        """Open an existing schema without initialization; caller must precheck its version."""
+        instance = cls.__new__(cls)
+        instance.database = (
+            database
+            if isinstance(database, DatabaseConfig)
+            else DatabaseConfig(database) if database is not None else resolve_database_config()
+        )
+        instance.db_path = instance.database
+        instance.data_root = (
+            Path(data_root).expanduser().resolve() if data_root else resolve_data_root()
+        )
+        instance._schema_only = False
+        instance._conn = PostgresConnection(instance.database)
+        instance._tx_depth = 0
+        instance._agentic_ready_publication_columns_cache = None
+        instance._defer_schema_commits = False
+        return instance
+
+    @classmethod
     def _legacy_sqlite_schema_for_validation(cls, db_path: str | Path = ":memory:") -> "Storage":
         """Build the frozen SQLite schema for explicit schema tests/import fixtures only."""
         instance = cls.__new__(cls)
