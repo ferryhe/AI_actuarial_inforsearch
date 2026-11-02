@@ -38,6 +38,7 @@ from ai_actuarial.content_hub import (
     content_hub_read_source_portal_capture,
     content_hub_read_version,
     content_hub_record_source_portal_capture,
+    content_hub_record_source_portal_daily,
     content_hub_schema_plan,
     content_hub_status,
     content_hub_url_exclusion,
@@ -52,6 +53,7 @@ from ai_actuarial.source_portals import (
     SOURCE_PORTALS_BY_KEY,
     SOURCE_PORTALS_BY_URL,
     source_portal_cards,
+    source_portal_for_observation,
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -2455,6 +2457,57 @@ def _capture(
     pages_visited = 0
     links_discovered = 0
     portal_captures: list[dict[str, Any]] = []
+    observed_at = dt.datetime.now(TIME_ZONE)
+    daily_run = {
+        "site_id": site.site_id,
+        "run_id": hashlib.sha256(f"{site.site_id}|{observed_at.isoformat()}".encode()).hexdigest(),
+        "captured_at": observed_at.isoformat(),
+        "acquired_on": observed_at.date().isoformat(),
+        "observations": [],
+        "hub_results": [],
+        "limits": {
+            "request_count": 0,
+            "request_limit": request_limit,
+            "budget_exhausted": False,
+            "frontier_remaining": 0,
+            "source_error_count": 0,
+            "finished": False,
+        },
+    }
+
+    def observe(url: str, body: bytes, kind: str, item: dict[str, Any]) -> None:
+        if not record_portals or not body:
+            return
+        digest = hashlib.sha256(body).hexdigest()
+        title = " ".join(str(item.get("title") or "").split())
+        if (
+            kind == "page"
+            or len(title) < 5
+            or title in {site.site_id, Path(urlsplit(url).path).name}
+            or re.fullmatch(
+                r"download(?: (?:paper|report|file|document|pdf))?|click here|read more|view|下载(?:附件|文件)?|点击下载",
+                title,
+                re.I,
+            )
+        ):
+            title = ""
+        observation = {
+            "url": _canonical_url(url),
+            "raw_sha256": digest,
+            "kind": kind,
+            "title": title[:500],
+            "source_page_url": str(item.get("referrer") or ""),
+            "artifact_path": str(_persist_cas(data_root, body, digest)),
+        }
+        if kind == "page":
+            observation["request_scope"] = hashlib.sha256(
+                _queue_identity({**item, "url": observation["url"]}).encode("utf-8")
+            ).hexdigest()
+        if observation not in daily_run["observations"]:
+            daily_run["observations"].append(observation)
+        daily_run["limits"]["request_count"] = crawler.site_attempts
+        state.setdefault("source_portal_daily_runs", {})[daily_run["run_id"]] = daily_run
+
     page_ids: set[str] = set()
     link_ids: set[str] = set()
 
@@ -2504,6 +2557,8 @@ def _capture(
                 site.seeds[0], timeout=30, delay_seconds=site.delay
             )
             record_page_read(final_url)
+            if _allowed_host(final_url, site):
+                observe(final_url, _body, "page", {})
             set_cookie = headers.get("set-cookie") or ""
             crawler.caa_cookie = set_cookie.split(";", 1)[0] if "=" in set_cookie else None
         except Exception as exc:
@@ -2526,6 +2581,8 @@ def _capture(
                 parsed = _parse_algolia_script(script_body.decode("utf-8", errors="replace"))
                 if parsed:
                     crawler.algolia_key = parsed["api_key"]
+                    if _allowed_host(final_url, site):
+                        observe(final_url, script_body, "page", {})
                 else:
                     errors.append("Australia Algolia bootstrap: public search key was not found")
             except Exception as exc:
@@ -2612,6 +2669,7 @@ def _capture(
                 cursor += 1
                 _prioritize_pending_documents(site, queue, cursor)
                 successful_requests += 1
+                observe(final_url, raw, "file", item)
                 _atomic_json(_state_path_for_data(state), state)
                 continue
 
@@ -2923,6 +2981,7 @@ def _capture(
                 link_ids.update(
                     hashlib.sha256(identity.encode("utf-8")).hexdigest() for identity in discovered
                 )
+            observe(final_url, body, "page", item)
             visited.add(work_key)
             cursor += 1
             _prioritize_pending_documents(site, queue, cursor)
@@ -2957,6 +3016,15 @@ def _capture(
     site_state["queue"] = queue
     site_state["last_request_count"] = crawler.site_attempts
     site_state["last_successful_requests"] = successful_requests
+    daily_run["limits"].update(
+        request_count=crawler.site_attempts,
+        budget_exhausted=bool(site_state.get("partial_reason")),
+        frontier_remaining=max(0, len(queue) - cursor),
+        source_error_count=len(errors),
+        finished=True,
+    )
+    if daily_run["observations"]:
+        _atomic_json(_state_path_for_data(state), state)
     if cursor >= len(queue) and not site_state.get("retry_queue"):
         site_state["completed_frontier"] = True
     file_types = {"html": 0, "pdf": 0, "other": 0}
@@ -2968,6 +3036,7 @@ def _capture(
     return {
         "downloads": downloads,
         "portal_captures": portal_captures,
+        "daily_run_id": daily_run["run_id"] if daily_run["observations"] else None,
         "errors": errors,
         "request_count": crawler.site_attempts,
         "request_limit": crawler.site_budget,
@@ -3566,7 +3635,10 @@ def _stream_source_portals(
             "schema_version": 1,
             "target": target,
             "cards": source_portal_cards(),
-            "updates": updates,
+            "updates": [
+                {key: value for key, value in update.items() if key != "capture_kind"}
+                for update in updates
+            ],
         },
     )
 
@@ -3579,7 +3651,9 @@ def _upgrade_legacy_source_portal_updates(
     upgraded = False
     errors: dict[str, str] = {}
     for identity, update in list(pending_updates.items()):
-        if not isinstance(update, dict) or update.get("captured_at"):
+        if not isinstance(update, dict) or (
+            update.get("captured_at") and update.get("capture_kind") != "daily_collection"
+        ):
             continue
         portal_key = str(update.get("portal_key") or "")
         capture_id = update.get("capture_id")
@@ -3596,11 +3670,22 @@ def _upgrade_legacy_source_portal_updates(
                 raise RuntimeErrorSafe("matching Content Hub capture was not found")
             acquired_on = str(update.get("acquired_on") or "")
             if (
-                capture.get("complete") is not True
+                (
+                    capture.get("complete") is not True
+                    and capture.get("capture_kind") != "daily_collection"
+                )
                 or capture.get("acquired_on") != acquired_on
                 or identity != f"{portal_key}|{acquired_on}"
                 or capture.get("description_zh") != update.get("description_zh")
                 or capture.get("description_en") != update.get("description_en")
+                or (
+                    update.get("capture_kind") == "daily_collection"
+                    and capture.get("capture_kind") != "daily_collection"
+                )
+                or (
+                    update.get("captured_at")
+                    and capture.get("captured_at") != update["captured_at"]
+                )
             ):
                 raise RuntimeErrorSafe("Content Hub evidence does not match the pending update")
             captured_at = dt.datetime.fromisoformat(
@@ -3611,8 +3696,9 @@ def _upgrade_legacy_source_portal_updates(
                 or captured_at.astimezone(TIME_ZONE).date().isoformat() != acquired_on
             ):
                 raise RuntimeErrorSafe("Content Hub capture date does not match the update")
-            update["captured_at"] = str(capture["captured_at"])
-            upgraded = True
+            if not update.get("captured_at"):
+                update["captured_at"] = str(capture["captured_at"])
+                upgraded = True
         except Exception as exc:
             blocked.add(identity)
             errors[identity] = (
@@ -3620,6 +3706,128 @@ def _upgrade_legacy_source_portal_updates(
                 f"{type(exc).__name__}: {exc}"
             )
     return blocked, upgraded, errors
+
+
+def _queue_source_portal_update(
+    pending_updates: dict[str, Any], portal_key: str, record: dict[str, Any]
+) -> None:
+    if (
+        not record.get("description_zh")
+        or not record.get("description_en")
+        or record.get("superseded_by_daily")
+    ):
+        return
+    identity = f"{portal_key}|{record['acquired_on']}"
+    existing = pending_updates.get(identity)
+    new_order = (
+        dt.datetime.fromisoformat(str(record["captured_at"]).replace("Z", "+00:00")),
+        int(record["capture_id"]),
+    )
+    old_order = (
+        (
+            dt.datetime.fromisoformat(str(existing["captured_at"]).replace("Z", "+00:00")),
+            int(existing["capture_id"]),
+        )
+        if isinstance(existing, dict) and existing.get("captured_at")
+        else None
+    )
+    if old_order is None or new_order > old_order:
+        pending_updates[identity] = {
+            "portal_key": portal_key,
+            **{
+                field: record[field]
+                for field in (
+                    "capture_id",
+                    "captured_at",
+                    "acquired_on",
+                    "description_zh",
+                    "description_en",
+                )
+            },
+        }
+        if record.get("capture_kind") == "daily_collection":
+            pending_updates[identity]["capture_kind"] = "daily_collection"
+
+
+def _persist_daily_source_portals(
+    state: dict[str, Any], hub: DatabaseConfig
+) -> tuple[list[dict[str, Any]], list[str]]:
+    digests, errors = [], []
+    runs = state.setdefault("source_portal_daily_runs", {})
+    for run_id, run in list(runs.items()):
+        try:
+            if "evidence" not in run:
+                grouped: dict[str, dict[str, Any]] = {}
+                for observation in run["observations"]:
+                    raw = Path(observation["artifact_path"]).read_bytes()
+                    if hashlib.sha256(raw).hexdigest() != observation["raw_sha256"]:
+                        raise RuntimeErrorSafe("daily source original failed SHA-256 verification")
+                    key = source_portal_for_observation(
+                        run["site_id"], observation["url"], observation["source_page_url"]
+                    )
+                    if key is None:
+                        raise RuntimeErrorSafe(
+                            f"unmapped daily source observation for {run['site_id']}"
+                        )
+                    group = grouped.setdefault(
+                        key,
+                        {
+                            "schema_version": 1,
+                            "portal_key": key,
+                            **{
+                                field: run[field]
+                                for field in (
+                                    "site_id",
+                                    "run_id",
+                                    "captured_at",
+                                    "acquired_on",
+                                    "limits",
+                                )
+                            },
+                            "observations": [],
+                            "hub_results": [],
+                        },
+                    )
+                    group["observations"].append(
+                        {
+                            field: value
+                            for field, value in observation.items()
+                            if field != "artifact_path"
+                        }
+                    )
+                for item in run["hub_results"]:
+                    key = source_portal_for_observation(
+                        run["site_id"], item["url"], item["source_page_url"]
+                    )
+                    if key in grouped:
+                        grouped[key]["hub_results"].append(item)
+                run["evidence"] = list(grouped.values())
+                if _ACTIVE_STATE_PATH is not None:
+                    _atomic_json(_state_path_for_data(state), state)
+            for evidence in run["evidence"]:
+                record = content_hub_record_source_portal_daily(evidence, database_url=hub)
+                _queue_source_portal_update(
+                    state.setdefault("pending_source_portal_publications", {}),
+                    evidence["portal_key"],
+                    record,
+                )
+                digests.append(
+                    {
+                        "portal_key": evidence["portal_key"],
+                        "acquired_on": record["acquired_on"],
+                        "capture_id": record["capture_id"],
+                        "digest_count": 1,
+                    }
+                )
+                # Persist the publication before removing its acquisition, for crash-safe retry.
+                if _ACTIVE_STATE_PATH is not None:
+                    _atomic_json(_state_path_for_data(state), state)
+            runs.pop(run_id)
+            if _ACTIVE_STATE_PATH is not None:
+                _atomic_json(_state_path_for_data(state), state)
+        except Exception as exc:
+            errors.append(f"daily {run.get('site_id', run_id)}: {type(exc).__name__}: {exc}")
+    return digests, errors
 
 
 def _sync_source_portals(
@@ -3632,6 +3840,7 @@ def _sync_source_portals(
     blocked_update_keys, state_upgraded, legacy_errors = _upgrade_legacy_source_portal_updates(
         pending_updates, hub
     )
+    blocked_values = {identity: pending_updates[identity] for identity in blocked_update_keys}
     if state_upgraded and _ACTIVE_STATE_PATH is not None:
         _atomic_json(_state_path_for_data(state), state)
     for observation in list(pending_captures):
@@ -3656,37 +3865,7 @@ def _sync_source_portals(
                 intro_en=portal.overview_en,
                 database_url=hub,
             )
-            if record.get("description_zh") and record.get("description_en"):
-                identity = f"{portal.portal_key}|{record['acquired_on']}"
-                existing = pending_updates.get(identity)
-                record_captured_at = dt.datetime.fromisoformat(
-                    str(record["captured_at"]).replace("Z", "+00:00")
-                ).astimezone(dt.timezone.utc)
-                existing_captured_at = (
-                    dt.datetime.fromisoformat(
-                        str(existing["captured_at"]).replace("Z", "+00:00")
-                    ).astimezone(dt.timezone.utc)
-                    if isinstance(existing, dict) and existing.get("captured_at")
-                    else None
-                )
-                if (
-                    existing_captured_at is None
-                    or record_captured_at > existing_captured_at
-                    or (
-                        record_captured_at == existing_captured_at
-                        and int(existing.get("capture_id") or 0) < int(record["capture_id"])
-                    )
-                ):
-                    blocked_update_keys.discard(identity)
-                    legacy_errors.pop(identity, None)
-                    pending_updates[identity] = {
-                        "portal_key": portal.portal_key,
-                        "capture_id": int(record["capture_id"]),
-                        "captured_at": str(record["captured_at"]),
-                        "acquired_on": str(record["acquired_on"]),
-                        "description_zh": str(record["description_zh"]),
-                        "description_en": str(record["description_en"]),
-                    }
+            _queue_source_portal_update(pending_updates, portal.portal_key, record)
             pending_captures.remove(observation)
             persisted += 1
             if _ACTIVE_STATE_PATH is not None:
@@ -3694,9 +3873,15 @@ def _sync_source_portals(
         except Exception as exc:
             errors.append(f"{portal.portal_key}: {type(exc).__name__}: {exc}")
 
+    digests, daily_errors = _persist_daily_source_portals(state, hub)
+    errors.extend(daily_errors)
     for identity in list(blocked_update_keys):
         update = pending_updates.get(identity)
-        if isinstance(update, dict) and update.get("captured_at"):
+        if (
+            isinstance(update, dict)
+            and update is not blocked_values[identity]
+            and update.get("captured_at")
+        ):
             blocked_update_keys.discard(identity)
             legacy_errors.pop(identity, None)
     errors.extend(legacy_errors.values())
@@ -3715,6 +3900,24 @@ def _sync_source_portals(
         and update.get("captured_at")
     ]
     updates = [pending_updates[identity] for identity in update_keys]
+    digests = list(
+        {
+            (item["portal_key"], item["acquired_on"]): item
+            for item in [
+                *digests,
+                *[
+                    {
+                        "portal_key": update["portal_key"],
+                        "acquired_on": update["acquired_on"],
+                        "capture_id": update["capture_id"],
+                        "digest_count": 1,
+                    }
+                    for update in updates
+                    if update.get("capture_kind") == "daily_collection"
+                ],
+            ]
+        }.values()
+    )
     target_config = config.get("targets")
     missing_targets = [
         target
@@ -3732,22 +3935,39 @@ def _sync_source_portals(
             "missing_targets": missing_targets,
             "targets": {},
             "errors": errors,
+            "digests": digests,
+            "daily_runs_pending": len(state.get("source_portal_daily_runs") or {}),
         }
-    update_batches = [updates[index : index + 1000] for index in range(0, len(updates), 1000)]
-    if not update_batches:
-        update_batches = [[]]
+    target_update_ids = state.setdefault("source_portal_target_update_ids", {})
     all_targets_current = True
     for target in ("china", "overseas"):
-        if target_hashes.get(target) == catalog_hash and not updates:
+        acknowledged = target_update_ids.setdefault(target, {})
+        target_updates = [
+            update
+            for update in updates
+            if acknowledged.get(f"{update['portal_key']}|{update['acquired_on']}")
+            != update["capture_id"]
+        ]
+        if target_hashes.get(target) == catalog_hash and not target_updates:
             target_results[target] = {"status": "already_current"}
             continue
         try:
             replies = []
+            update_batches = [
+                target_updates[index : index + 1000]
+                for index in range(0, len(target_updates), 1000)
+            ] or [[]]
             for batch in update_batches:
                 reply = _stream_source_portals(config, target, batch)
                 if reply.get("failures"):
                     raise RuntimeErrorSafe(str(reply["failures"][0]))
                 replies.append(reply)
+                for update in batch:
+                    acknowledged[f"{update['portal_key']}|{update['acquired_on']}"] = update[
+                        "capture_id"
+                    ]
+                if _ACTIVE_STATE_PATH is not None:
+                    _atomic_json(_state_path_for_data(state), state)
             target_hashes[target] = catalog_hash
             target_results[target] = {"status": "succeeded", "batches": len(replies)}
         except Exception as exc:
@@ -3757,6 +3977,8 @@ def _sync_source_portals(
     if all_targets_current:
         for identity in update_keys:
             pending_updates.pop(identity, None)
+            for acknowledged in target_update_ids.values():
+                acknowledged.pop(identity, None)
     if _ACTIVE_STATE_PATH is not None:
         _atomic_json(_state_path_for_data(state), state)
     return {
@@ -3765,6 +3987,8 @@ def _sync_source_portals(
         "updates_pending": len(pending_updates),
         "targets": target_results,
         "errors": errors,
+        "digests": digests,
+        "daily_runs_pending": len(state.get("source_portal_daily_runs") or {}),
     }
 
 
@@ -3846,6 +4070,39 @@ def _stream_target_metadata_backfill(
             "approved_categories": _load_category_keys(),
         },
     )
+
+
+def _record_daily_hub_result(
+    state: dict[str, Any],
+    site_id: str,
+    article: dict[str, Any],
+    is_new: bool,
+    version: dict[str, Any],
+) -> None:
+    run = (state.get("source_portal_daily_runs") or {}).get(
+        state.get("active_source_portal_daily_run")
+    )
+    if not run or run["site_id"] != site_id or not version.get("content_version_id"):
+        return
+    result = {
+        "url": article["url"],
+        "raw_sha256": article["raw_sha256"],
+        "source_page_url": str(article.get("source_page_url") or article.get("source_page") or ""),
+        "content_version_id": str(version["content_version_id"]),
+        "status": "new" if is_new else "existing",
+    }
+    observed = next(
+        (
+            item
+            for item in run["observations"]
+            if item["url"] == article["url"] and item["raw_sha256"] == article["raw_sha256"]
+        ),
+        None,
+    )
+    if observed:
+        result["source_page_url"] = observed["source_page_url"]
+    if result not in run["hub_results"]:
+        run["hub_results"].append(result)
 
 
 def _process_articles(
@@ -3992,6 +4249,7 @@ def _process_articles(
                 "verified_at": dt.datetime.now(dt.timezone.utc).isoformat(),
             }
             article["stage"] = "hub_ingested"
+            _record_daily_hub_result(state, site_id, article, is_new, version)
             version_counted = True
             _atomic_json(_state_path_for_data(state), state)
 
@@ -4013,6 +4271,7 @@ def _process_articles(
                 on_conversion=count_conversion,
             )
             if not version_counted:
+                _record_daily_hub_result(state, site_id, article, is_new, full)
                 summary["new_versions"] += int(is_new)
                 summary["duplicates"] += int(not is_new)
                 version_id = full.get("content_version_id")
@@ -4721,9 +4980,28 @@ def _run_site(
         request_limit=request_limit,
         record_portals=not preview,
         refresh_portal_roots=not selected_url
+        and site_id != "soa-ai-bulletin-focused"
         and bool(config.get("targets"))
         and any(site.site_id in portal.site_ids for portal in SOURCE_PORTALS),
     )
+    process_url = selected_url
+    if selected_url and captured["downloads"]:
+        # A validated same-host redirect is stored under the canonical final URL.
+        # Process precisely that captured identity so exact replay cannot report a
+        # successful download while leaving its article unprocessed.
+        process_url = _canonical_url(str(captured["downloads"][0]["url"]))
+    if not preview:
+        state["active_source_portal_daily_run"] = captured.get("daily_run_id")
+    processed = _process_articles(
+        site_id,
+        state,
+        config,
+        hub,
+        preview=preview,
+        article_limit=article_limit,
+        include_url=process_url,
+    )
+    state.pop("active_source_portal_daily_run", None)
     portal_sync = (
         {
             "status": "preview",
@@ -4748,21 +5026,22 @@ def _run_site(
             "Source portal reader updates are queued for retry: "
             + "; ".join(str(error) for error in portal_sync["errors"][:3])
         )
-    process_url = selected_url
-    if selected_url and captured["downloads"]:
-        # A validated same-host redirect is stored under the canonical final URL.
-        # Process precisely that captured identity so exact replay cannot report a
-        # successful download while leaving its article unprocessed.
-        process_url = _canonical_url(str(captured["downloads"][0]["url"]))
-    processed = _process_articles(
-        site_id,
-        state,
-        config,
-        hub,
-        preview=preview,
-        article_limit=article_limit,
-        include_url=process_url,
-    )
+    for digest in portal_sync.get("digests") or []:
+        target_status = (
+            "; ".join(
+                f"{target}={result['status']}"
+                for target, result in portal_sync.get("targets", {}).items()
+            )
+            or "targets=deferred"
+        )
+        evidence.append(
+            f"Source portal {digest['portal_key']} {digest['acquired_on']}: digest_count={digest['digest_count']}; "
+            f"capture_id={digest['capture_id']}; {target_status}."
+        )
+    if not preview and not captured.get("daily_run_id"):
+        evidence.append(
+            "Source portal digest_count=0 for this attempt: no verified source observation; pending retries are reported separately."
+        )
     source_errors = captured["errors"]
     downloaded = captured["downloads"]
     budget_pause = {

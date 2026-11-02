@@ -38,16 +38,9 @@ def _database_schema(tmp_path: Path, name: str) -> tuple[str, str]:
 
 def test_catalog_urls_are_exact_runtime_site_seeds_and_aliases() -> None:
     assert SOURCE_PORTAL_URLS
-    assert len(SOURCE_PORTALS) == 25
+    assert len(SOURCE_PORTALS) == 30
     represented = {site_id for portal in SOURCE_PORTALS for site_id in portal.site_ids}
-    assert set(runtime.SITES) - represented == {
-        "iaba",  # Monitor only: no article collection.
-        "eaa",  # Monitor only: no article collection.
-        "istituto-italiano-degli-attuari",  # Placeholder site on hold.
-        "soa-ai-bulletin-focused",  # One article, not a directory.
-        "ama",  # The current documents page has no extractable directory links.
-        "aca-colombia",  # No verified public materials directory yet.
-    }
+    assert set(runtime.SITES) - represented == set()
     for portal in SOURCE_PORTALS:
         assert set(portal.site_ids) <= set(runtime.SITES)
         assert portal.extraction_source_id in runtime.SITES

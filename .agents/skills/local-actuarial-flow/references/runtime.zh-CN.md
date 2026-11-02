@@ -12,13 +12,13 @@ python -m ai_actuarial.local_collection_runtime plan --date 2026-10-25 --json
 python -m ai_actuarial.local_collection_runtime preflight --config reports/local-automation-state/config.local.json --remote --json
 ```
 
-`preflight` 不运行采集或写入目标，会读取 Hub schema/status、AI backlog 和当前目标 profile/capacity。若 schema 显示待迁移，先完成独立 review，再显式运行 additive v3 migration：
+`preflight` 不运行采集或写入目标，会读取 Hub schema/status、AI backlog 和当前目标 profile/capacity。若 schema 显示待迁移，先完成独立 review，再显式应用待迁移的 Hub 版本（当前为 v6）：
 
 ```powershell
 python -m ai_actuarial.local_collection_runtime apply-hub-schema --config reports/local-automation-state/config.local.json --json
 ```
 
-它为新 live capture 记录来源类型，不生成虚假的 SQLite v16 snapshot，也不改写历史不可变 snapshot。历史 annotations/exclusions 由迁移前 shape check 保护。
+已有 live capture 和不可变 snapshot 合同保持。Hub v6 追加来源入口的 `capture_kind`、每日有界 `evidence_json` 和 SHA-256，保留旧目录证据；新运行时须先通过 v6 预检查。目标仍使用应用库 schema6 的既有卡片/动态合同，不要求改变服务器 API/UI。历史 annotations/exclusions 由迁移前 shape check 保护。
 
 目标文件的 `source_site` 原样保留来源提供的名称：历史 v16 记录可能是机构显示名称（例如 `Actuarial Association of Europe (AAE)`），新采集记录使用注册表 `site_id`。两者都不是需要统一成 slug 的外键；未知历史来源保持 `null`，不得从 URL 推断。
 
@@ -70,6 +70,12 @@ python .agents/skills/local-actuarial-flow/scripts/local_flow.py report --date 2
 ```
 
 每日计划为六项 baseline、最多两个不同失败重试；hold 保留位置但不执行。每次目标写入按 URL/Hub version/content fingerprint 单独确认；中国 AI 与 all 两个现有 KB 使用各自已配置 profile，海外只更新 AI KB。失败的文章 acknowledgement、chunk/embed/binding 与 Ready 阶段可单独续跑，目标之间不互相代替。只有有序 `categories[0].key == "AI"` 的 Hub 版本能进入 AI serving bucket；第二至第四类及其证据继续原样保存在 Hub enrichment 中。实时、缓存、历史 backlog、pending 重试和 target worker 都复核同一首类规则。目标容量使用原生 80% gate。旧全量替换脚本、清空/重建旧目录和向量复制不属于本运行入口。
+
+06:00 的每站真实采集在处理 Hub 后生成对应卡片的双语日动态，不额外访问来源或调用模型，常规 30 次访问预算不变。若取得相同范围的完整目录快照，优先展示其可信的增删/改名比较；其余页面、接口和文件读取形成限定范围的采集摘要，分别说明首次纳入每日观察的网址、响应内容变化、Hub 首次入库和历史积压，不推断原站发布日期、全站无变化或移除。只有成功读取并校验的内容可作为观察，失败或零成功读取不生成虚假动态。
+
+当前 30 张卡覆盖 32 个监控项；SOA focused 归 AI 卡，普通 SOA 研究须有明确 AI URL/来源页归属才进入 AI 卡。IABA/EAA 仍仅结构监测，Istituto 仍 hold；三者有入口卡但不合成采集动态。每日证据绑定运行/监控项/卡片/美东日期及原件 SHA，不可变重放；同卡同日按证据去重聚合，后到的目录重试不能覆盖日摘要。中国与海外分别保存成功确认并只重试未确认目标，失败或缺配置的更新保留 pending。卡片同步成功不等于文章入库或 Ready。
+
+页面/接口证据另存有界 `request_scope` 哈希，复用 frontier 的栏目、父项、内容类型和分页身份；只有同 URL、同请求范围才能比较响应 SHA。不同 POST 分页即使响应相同也分别计页面观察，但网址首次观察仍按 URL 去重。旧页面证据缺少请求范围时仅保留计数和网址历史，不补造范围或作为内容变化基线；其不可变证据与 SHA 保持原样。
 
 `run-daily` JSON 带整轮 `elapsed_seconds`，每站回执另存站点耗时和采集漏斗。要让离线报告区分“已运行但回执缺失”，将当次 stdout 以 UTF-8 JSON 保存，并用同日期参数传给 helper：
 

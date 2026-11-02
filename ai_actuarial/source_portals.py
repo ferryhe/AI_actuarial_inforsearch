@@ -1,4 +1,4 @@
-"""Reviewed directory pages that receive a reader-facing history of real captures."""
+"""Reviewed source entry cards and their reader-facing history of real observations."""
 
 from __future__ import annotations
 
@@ -41,7 +41,7 @@ SOURCE_PORTALS = (
     SourcePortal(
         "soa-artificial-intelligence",
         "https://www.soa.org/research/topics/artificial-intelligence-topic-landing/",
-        ("soa", "soa-ai-topic-landing"),
+        ("soa", "soa-ai-topic-landing", "soa-ai-bulletin-focused"),
         ("https://www.soa.org/research/topics/artificial-intelligence-topic-landing/",),
         "人工智能专题",
         "Artificial Intelligence",
@@ -339,6 +339,66 @@ SOURCE_PORTALS = (
         "墨西哥国家精算师学会的出版物、期刊和专业资源。",
         "Publications, journals, and professional resources from CONAC.",
     ),
+    SourcePortal(
+        "morocco-documents",
+        "https://www.ama.ma/en/documents/",
+        ("ama",),
+        ("https://www.ama.ma/en/documents/",),
+        "公开文档",
+        "Public Documents",
+        "摩洛哥精算师协会（AMA）",
+        "Moroccan Association of Actuaries (AMA)",
+        "摩洛哥精算师协会的公开文档入口。",
+        "Public documents from the Moroccan Association of Actuaries.",
+    ),
+    SourcePortal(
+        "iaba-official-site",
+        "https://www.blackactuaries.org/",
+        ("iaba",),
+        ("https://www.blackactuaries.org/",),
+        "官方入口（结构监测）",
+        "Official Site (Structure Monitoring)",
+        "国际黑人精算师协会（IABA）",
+        "International Association of Black Actuaries (IABA)",
+        "IABA 官方网站。目前仅监测网站结构，不执行资料采集。",
+        "IABA's official website. Currently monitored for site structure only; materials are not collected.",
+    ),
+    SourcePortal(
+        "eaa-official-site",
+        "https://actuarial-academy.com/",
+        ("eaa",),
+        ("https://actuarial-academy.com/",),
+        "官方入口（结构监测）",
+        "Official Site (Structure Monitoring)",
+        "欧洲精算学院（EAA）",
+        "European Actuarial Academy (EAA)",
+        "EAA 官方网站。目前仅监测网站结构，不执行资料采集。",
+        "EAA's official website. Currently monitored for site structure only; materials are not collected.",
+    ),
+    SourcePortal(
+        "istituto-historical-site",
+        "http://www.italian-actuaries.org/",
+        ("istituto-italiano-degli-attuari",),
+        ("http://www.italian-actuaries.org/",),
+        "历史入口（暂停）",
+        "Historical Site (On Hold)",
+        "意大利精算师研究所",
+        "Istituto Italiano degli Attuari",
+        "历史官方入口，目前暂停采集。页面为不完整网站演示，不能作为可采资料目录。",
+        "Historical official entry; collection is on hold. The page is an incomplete website demo, not a verified materials directory.",
+    ),
+    SourcePortal(
+        "colombia-official-site",
+        "https://actuarios.org.co/",
+        ("aca-colombia",),
+        ("https://actuarios.org.co/",),
+        "官方资料入口",
+        "Official Resources",
+        "哥伦比亚精算师协会（ACA）",
+        "Colombian Association of Actuaries (ACA)",
+        "哥伦比亚精算师协会官网的公开资料与活动入口。",
+        "Public resources and activities on the ACA's official website.",
+    ),
 )
 
 SOURCE_PORTALS_BY_URL = {}
@@ -350,6 +410,23 @@ for _portal in SOURCE_PORTALS:
         SOURCE_PORTALS_BY_URL[_url] = _portal
 SOURCE_PORTALS_BY_KEY = {portal.portal_key: portal for portal in SOURCE_PORTALS}
 SOURCE_PORTAL_URLS = tuple(SOURCE_PORTALS_BY_URL)
+
+
+def source_portal_for_observation(site_id: str, url: str, source_page_url: str = "") -> str | None:
+    """Assign each observed item once; SOA AI needs an explicit topic provenance."""
+    if site_id in {"iaba", "eaa", "istituto-italiano-degli-attuari"}:
+        return None
+    if site_id == "soa":
+        ai_roots = (
+            SOURCE_PORTALS_BY_KEY["soa-artificial-intelligence"].url,
+            "https://www.soa.org/resources/research-reports/2025/research-ai-bulletin/",
+        )
+        if any(value.startswith(root) for value in (url, source_page_url) for root in ai_roots):
+            return "soa-artificial-intelligence"
+        return "soa-research-topics"
+    return next(
+        (portal.portal_key for portal in SOURCE_PORTALS if site_id in portal.site_ids), None
+    )
 
 
 def source_portal_cards() -> list[dict[str, str | int]]:

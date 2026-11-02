@@ -22,6 +22,7 @@ from psycopg2 import sql
 from psycopg2.extras import Json
 
 from .postgres import DatabaseConfig
+from .source_portal_daily import daily_description, validate_daily_evidence
 from .source_registry import (
     PENDING_KEY,
     registry_deployed_targets,
@@ -39,7 +40,7 @@ from .sqlite_schema import (
 
 MANIFEST_FORMAT = "ai_actuarial.content_hub.artifact_manifest"
 HUB_SCHEMA = "content_hub"
-HUB_SCHEMA_VERSION = 5
+HUB_SCHEMA_VERSION = 6
 _MIGRATION_DIR = Path(__file__).with_name("content_hub_migrations")
 _HASH_RE = re.compile(r"^[0-9a-f]{64}$")
 _SOURCE_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
@@ -412,8 +413,14 @@ def content_hub_record_source_portal_capture(
             _set_search_path(cursor, schema)
             cursor.execute(
                 "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
-                (f"content_hub:source_portal:{portal_key}:{scope_key}",),
+                (f"content_hub:source_portal:{portal_key}",),
             )
+            cursor.execute(
+                "SELECT EXISTS (SELECT 1 FROM source_portal_captures WHERE portal_key = %s "
+                "AND acquired_on = %s AND capture_kind = 'daily_collection')",
+                (portal_key, acquired_on),
+            )
+            superseded_by_daily = bool(cursor.fetchone()[0])
             cursor.execute(
                 "SELECT capture_id, captured_at, complete, description_zh, description_en, "
                 "page_url, page_sha256 "
@@ -445,6 +452,7 @@ def content_hub_record_source_portal_capture(
                     "description_zh": existing[3],
                     "description_en": existing[4],
                     "duplicate": True,
+                    "superseded_by_daily": superseded_by_daily,
                 }
                 connection.commit()
                 return result
@@ -453,6 +461,7 @@ def content_hub_record_source_portal_capture(
             cursor.execute(
                 "SELECT c.capture_id FROM source_portal_captures c "
                 "WHERE c.portal_key = %s AND c.scope_key = %s AND c.complete = TRUE "
+                "AND c.capture_kind = 'directory' "
                 "AND c.acquired_on < %s "
                 "ORDER BY c.acquired_on DESC, c.captured_at DESC, c.capture_id DESC LIMIT 1",
                 (portal_key, scope_key, acquired_on),
@@ -502,10 +511,134 @@ def content_hub_record_source_portal_capture(
             "description_zh": description_zh,
             "description_en": description_en,
             "duplicate": False,
+            "superseded_by_daily": superseded_by_daily,
         }
     except psycopg2.Error as exc:
         connection.rollback()
         raise ContentHubError("Content hub source portal capture failed") from exc
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+
+def content_hub_record_source_portal_daily(
+    evidence: dict[str, Any],
+    *,
+    database_url: DatabaseConfig | str | None = None,
+    schema: str = HUB_SCHEMA,
+) -> dict[str, Any]:
+    """Append immutable run evidence; project the union of that card's observed day."""
+    schema = _validate_schema(schema)
+    try:
+        captured_at, acquired_on, evidence_sha = validate_daily_evidence(evidence)
+    except (ValueError, TypeError, KeyError, AttributeError) as exc:
+        raise ContentHubError(f"Source portal daily evidence is invalid: {exc}") from exc
+    portal_key = evidence["portal_key"]
+    connection = _connect(database_url)
+    try:
+        with connection.cursor() as cursor:
+            _require_current_schema(cursor, schema)
+            _set_search_path(cursor, schema)
+            cursor.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                (f"content_hub:source_portal:{portal_key}",),
+            )
+            cursor.execute(
+                "SELECT capture_id, evidence_sha256 FROM source_portal_captures "
+                "WHERE portal_key = %s AND capture_kind = 'daily_collection' "
+                "AND evidence_json->>'run_id' = %s",
+                (portal_key, evidence["run_id"]),
+            )
+            existing = cursor.fetchone()
+            if existing and str(existing[1]).strip() != evidence_sha:
+                raise ContentHubError(
+                    "Source portal retry conflicts with its immutable daily evidence"
+                )
+            if existing:
+                # A replay must publish the newest aggregate, even after another site/attempt.
+                cursor.execute(
+                    "SELECT capture_id, captured_at, description_zh, description_en, evidence_json, evidence_sha256 FROM source_portal_captures "
+                    "WHERE portal_key = %s AND acquired_on = %s AND capture_kind = 'daily_collection' "
+                    "ORDER BY capture_id DESC LIMIT 1",
+                    (portal_key, acquired_on),
+                )
+                (
+                    capture_id,
+                    projected_at,
+                    description_zh,
+                    description_en,
+                    newest_evidence,
+                    newest_sha,
+                ) = cursor.fetchone()
+                if validate_daily_evidence(newest_evidence)[2] != str(newest_sha).strip():
+                    raise ContentHubError(
+                        "Stored source portal daily evidence failed SHA verification"
+                    )
+            else:
+                cursor.execute(
+                    "SELECT acquired_on, evidence_json, evidence_sha256 FROM source_portal_captures "
+                    "WHERE portal_key = %s AND acquired_on <= %s AND capture_kind = 'daily_collection' "
+                    "ORDER BY capture_id",
+                    (portal_key, acquired_on),
+                )
+                current, previous = [evidence], []
+                for prior_date, prior_evidence, prior_sha in cursor.fetchall():
+                    if validate_daily_evidence(prior_evidence)[2] != str(prior_sha).strip():
+                        raise ContentHubError(
+                            "Stored source portal daily evidence failed SHA verification"
+                        )
+                    (current if prior_date == acquired_on else previous).append(prior_evidence)
+                cursor.execute(
+                    "SELECT description_zh, description_en FROM source_portal_captures "
+                    "WHERE portal_key = %s AND acquired_on = %s AND capture_kind = 'directory' "
+                    "AND complete = TRUE AND description_zh IS NOT NULL AND description_en IS NOT NULL "
+                    "ORDER BY captured_at DESC, capture_id DESC LIMIT 1",
+                    (portal_key, acquired_on),
+                )
+                directory_description = cursor.fetchone()
+                description_zh, description_en = daily_description(
+                    current, previous, directory_description
+                )
+                cursor.execute(
+                    "SELECT max(captured_at) FROM source_portal_captures "
+                    "WHERE portal_key = %s AND acquired_on = %s",
+                    (portal_key, acquired_on),
+                )
+                previous_at = cursor.fetchone()[0]
+                # The target timestamp gate must accept out-of-order runs; exact run times remain in evidence.
+                projected_at = max(captured_at, previous_at) if previous_at else captured_at
+                cursor.execute(
+                    "INSERT INTO source_portal_captures (portal_key, scope_key, captured_at, acquired_on, "
+                    "complete, description_zh, description_en, capture_kind, evidence_json, evidence_sha256) "
+                    "VALUES (%s, %s, %s, %s, FALSE, %s, %s, 'daily_collection', %s, %s) RETURNING capture_id",
+                    (
+                        portal_key,
+                        f"daily:{evidence['run_id']}",
+                        projected_at,
+                        acquired_on,
+                        description_zh,
+                        description_en,
+                        Json(evidence),
+                        evidence_sha,
+                    ),
+                )
+                capture_id = int(cursor.fetchone()[0])
+        connection.commit()
+        return {
+            "capture_id": int(capture_id),
+            "captured_at": projected_at.isoformat(),
+            "acquired_on": acquired_on.isoformat(),
+            "complete": False,
+            "capture_kind": "daily_collection",
+            "description_zh": description_zh,
+            "description_en": description_en,
+            "duplicate": bool(existing),
+        }
+    except psycopg2.Error as exc:
+        connection.rollback()
+        raise ContentHubError("Content hub source portal daily capture failed") from exc
     except Exception:
         connection.rollback()
         raise
@@ -535,7 +668,8 @@ def content_hub_read_source_portal_capture(
             _require_current_schema(cursor, schema)
             _set_search_path(cursor, schema)
             cursor.execute(
-                "SELECT captured_at, acquired_on, complete, description_zh, description_en "
+                "SELECT captured_at, acquired_on, complete, description_zh, description_en, "
+                "capture_kind, evidence_json, evidence_sha256 "
                 "FROM source_portal_captures "
                 "WHERE portal_key = %s AND capture_id = %s",
                 (portal_key, capture_id),
@@ -543,12 +677,19 @@ def content_hub_read_source_portal_capture(
             row = cursor.fetchone()
             if row is None:
                 return None
+            if (
+                row[5] == "daily_collection"
+                and validate_daily_evidence(row[6])[2] != str(row[7]).strip()
+            ):
+                raise ContentHubError("Stored source portal daily evidence failed SHA verification")
             return {
                 "captured_at": row[0].isoformat(),
                 "acquired_on": row[1].isoformat(),
                 "complete": bool(row[2]),
                 "description_zh": row[3],
                 "description_en": row[4],
+                "capture_kind": row[5],
+                "evidence_sha256": str(row[7]).strip() if row[7] else None,
             }
     except psycopg2.Error as exc:
         raise ContentHubError("Content hub source portal capture read failed") from exc

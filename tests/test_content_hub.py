@@ -77,6 +77,7 @@ def test_git_checkout_keeps_migration_sql_lf_with_autocrlf_enabled(
         "ai_actuarial/content_hub_migrations/0003_live_capture.sql",
         "ai_actuarial/content_hub_migrations/0004_source_registry.sql",
         "ai_actuarial/content_hub_migrations/0005_source_portal_captures.sql",
+        "ai_actuarial/content_hub_migrations/0006_source_portal_daily_collection.sql",
         "ai_actuarial/source_stage_migrations/0001_lossless_source_stage.sql",
     ]
     source_blobs = {
@@ -87,6 +88,7 @@ def test_git_checkout_keeps_migration_sql_lf_with_autocrlf_enabled(
                     "0002_bilingual_metadata.sql",
                     "0003_live_capture.sql",
                     "0005_source_portal_captures.sql",
+                    "0006_source_portal_daily_collection.sql",
                 )
             )
             else run_git("show", f"HEAD:{relative_path}", cwd=source_root)
@@ -143,8 +145,9 @@ def test_git_checkout_keeps_migration_sql_lf_with_autocrlf_enabled(
         {"version": 3, "file": migration_paths[2].split("/")[-1]},
         {"version": 4, "file": migration_paths[3].split("/")[-1]},
         {"version": 5, "file": migration_paths[4].split("/")[-1]},
+        {"version": 6, "file": migration_paths[5].split("/")[-1]},
     ]
-    assert stage_plan["pending"] == [{"version": 1, "file": migration_paths[5].split("/")[-1]}]
+    assert stage_plan["pending"] == [{"version": 1, "file": migration_paths[6].split("/")[-1]}]
 
 
 @pytest.mark.parametrize(
@@ -701,7 +704,7 @@ def test_legacy_local_publisher_is_consistent_across_hub_readers_and_overlay(
 def test_content_hub_import_keeps_alias_versions_text_and_source_namespaces(tmp_path: Path) -> None:
     hub_url, schema = _isolated_database_schema(tmp_path, "hub")
     assert content_hub_schema_plan(hub_url, schema=schema)["current_version"] == 0
-    assert apply_content_hub_schema(hub_url, schema=schema)["version"] == 5
+    assert apply_content_hub_schema(hub_url, schema=schema)["version"] == 6
     artifact_root = tmp_path / "shared-hub-root"
     first_path = tmp_path / "overseas-v16.db"
     second_path = tmp_path / "china-v16.db"
@@ -930,7 +933,7 @@ def test_live_capture_migration_preserves_immutable_v16_and_existing_operational
         connection.close()
 
     monkeypatch.setattr(content_hub, "_MIGRATION_DIR", repository_migrations)
-    assert apply_content_hub_schema(hub_url, schema=schema)["version"] == 5
+    assert apply_content_hub_schema(hub_url, schema=schema)["version"] == 6
     connection = psycopg2.connect(hub_url)
     try:
         with connection.cursor() as cursor:
