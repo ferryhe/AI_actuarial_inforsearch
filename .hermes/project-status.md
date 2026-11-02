@@ -1,9 +1,10 @@
 # Issue #450 本地文章解读 — 2026-11-02
 
-- 项目 AI_actuarial_inforsearch，工作树 C:/Users/ferry/.codex/worktrees/issue-450-local-interpretation/AI_actuarial_inforsearch，分支 codex/issue-450-local-interpretation。PR #452 保持 Draft，当前远端 HEAD 2bed7e51278a7e9002da6841e61c8ae81f83a0f2。改动已覆盖本机生成路由、历史 round 预算恢复、双目标 ACK/幂等同步、投影漂移与候选扫描等验收项；fresh reviewer 第 5 轮对当前产品 diff PASS。
-- 当前 HEAD 的 GitHub run 41499192227 中，python-smoke 因四处旧测试夹具/断言与现行返回契约不一致失败；其余已完成检查通过，quality-gate 当时仍运行。相同实现 worker 已仅更新 tests/test_local_collection_runtime.py 与 tests/test_local_collection_target_worker.py，补齐完整扫描状态并对齐现行 readback/conflict 结果；定向验证 9 passed，Black、isort 与 git diff --check 通过。此测试修正不改产品行为，待完成旧 run 记账后提交并推送，再检查新 HEAD CI。
-- 本机共享配置及生成路由已就绪。Hub/SSH 流程不要求启动本地 API 服务。尚未执行真实文章生成、双端数据库/API 精确读回、部署或排程变更；不重置历史日期、游标、ACK、模型身份或已耗尽预算。旧 Copilot 评论只用一次已保存快照，不重复请求；9 条评论映射的问题已在当前产品代码修复，远程 disposition 与线程关闭待登记。
-- 后续顺序：完成旧 HEAD 所有 CI 记录，推送测试修正并等待新 HEAD CI；登记匿名远程反馈结论并关闭已修复的 9 条 review threads；仅在这些门槛通过后，选择未生成且符合资格的真实样本，完成两端原生读回与幂等/恢复验证，再按授权调整排程。若无合格新样本，不复活旧版本或重置预算。
+- PR #452 保持 Draft；上一推送 HEAD 4603fc6 的 GitHub run 41502058426 六项检查全部通过。另一个必需 AC1/AC5 本机启动校准在旧 HEAD 上失败于 PowerShell npm 包装器参数异常；已按运行门失败记录，未伪称 CI 失败。
+- 本机项目路由保持 gpt-6-luna/high。Windows launcher 修复为 PATH 中 codex.exe → codex.cmd → 原 PowerShell 回退；保留 stdin、只读沙箱和工具禁用参数，不硬编码安装版本、不改全局设置。桌面 Codex CLI 0.166.0-alpha.5.1 通过同路由 Unicode JSON 合成回显（13 秒；无数据库、应用服务器或正式预算调用）。npm shim 0.154.0 对该账号/模型组合返回 model_not_found。
+- 静态验证：4 个 launcher/argv 测试通过，Black、Ruff、git diff --check 通过。独立 Sol/high review 6 PASS；匿名 TypeSafe 评估无 findings，summary coverage 0.87。当前 launcher 修复等待提交推送与新 HEAD CI。
+- 远程反馈 disposition 已登记为 clean，9 个保存的 Copilot review thread unresolved 为 0；未再次请求或刷新 Copilot。尚未执行真实文章生成、双端原生读回、幂等/单边重试、部署或排程变更；未合并或启用 08:00 计划。
+
 # PR #446 合入 main 准备 — 2026-11-01
 
 - 用户已授权核对评论修复、安全性及冲突后合并 #446。合并目标已由 #444 开发分支调整到 main；隔离工作树位于本仓库 .codex-worktrees/pr-446-main-integration，分支 codex/pr-446-main-integration，从最新 main c9ce6ac 建立，未修改外部英文开发工作树或原始脏工作树。

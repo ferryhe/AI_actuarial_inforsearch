@@ -1377,6 +1377,14 @@ def _codex_command_prefix() -> tuple[str, ...]:
             raise LLMAuthenticationError("Codex CLI is unavailable")
         return (executable,)
 
+    executable = shutil.which("codex.exe")
+    if executable:
+        return (executable,)
+
+    executable = shutil.which("codex.cmd")
+    if executable:
+        return (executable,)
+
     shell = shutil.which("powershell.exe") or shutil.which("powershell")
     if not shell:
         raise LLMAuthenticationError("Codex CLI is unavailable")
@@ -1546,7 +1554,6 @@ class CodexArticleGenerator:
                 ],
                 "--output-last-message",
                 str(output_path),
-                "-",
             ]
             process_options: dict[str, Any] = {
                 "stdin": asyncio.subprocess.PIPE,

@@ -2979,6 +2979,7 @@ def test_codex_adapter_uses_supported_ephemeral_readonly_request(monkeypatch):
     assert result == output
     assert arguments.index("--ask-for-approval") < arguments.index("exec")
     assert arguments[arguments.index("--ask-for-approval") + 1] == "never"
+    assert "-" not in arguments
     assert "--ephemeral" in arguments
     assert "--ignore-user-config" in arguments
     assert "--ignore-rules" in arguments
@@ -3009,6 +3010,59 @@ def test_codex_adapter_uses_supported_ephemeral_readonly_request(monkeypatch):
     assert b"body fixture" in calls[0]["prompt"].encode("utf-8")
     assert generator.last_call_metadata["outer_attempts"] == 1
     assert generator.last_call_metadata["internal_provider_requests"] == "unknown/unmetered"
+
+
+@pytest.mark.parametrize(
+    ("available", "expected", "powershell_output"),
+    [
+        (
+            {
+                "codex.exe": r"C:\tools\codex.exe",
+                "codex.cmd": r"C:\tools\codex.cmd",
+                "powershell.exe": r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+            },
+            (r"C:\tools\codex.exe",),
+            None,
+        ),
+        (
+            {
+                "codex.cmd": r"C:\tools\codex.cmd",
+                "powershell.exe": r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+            },
+            (r"C:\tools\codex.cmd",),
+            None,
+        ),
+        (
+            {"powershell.exe": r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"},
+            (
+                r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+                "-NoLogo",
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                r"C:\tools\codex.ps1",
+            ),
+            r"C:\tools\codex.ps1",
+        ),
+    ],
+)
+def test_windows_codex_command_prefix_fallbacks(
+    monkeypatch, available, expected, powershell_output
+):
+    monkeypatch.setattr(articles.os, "name", "nt")
+    monkeypatch.setattr(articles.shutil, "which", lambda name: available.get(name))
+    calls = []
+
+    def run(command, **_options):
+        calls.append(command)
+        return SimpleNamespace(returncode=0, stdout=powershell_output, stderr="")
+
+    monkeypatch.setattr(articles.subprocess, "run", run)
+
+    assert articles._codex_command_prefix() == expected
+    assert bool(calls) is (powershell_output is not None)
 
 
 def test_codex_login_status_uses_the_same_secret_free_environment(monkeypatch):
