@@ -70,6 +70,17 @@ def _upsert(storage, url, raw="local_docling", digest="a" * 64):
     )
 
 
+def test_aict_rename_keeps_former_chinese_bookmarks_and_article_filters(storage):
+    former_name = "中华民国精算学会"
+    _upsert(storage, "https://www.airc.org.tw/rule/101", former_name)
+    assert resolve_bookmark(storage._conn, former_name) == ("aict", "exact_alias")
+    files, count = storage.query_files_with_catalog(source=former_name)
+    assert count == len(files) == 1
+    assert files[0]["source_key"] == "aict"
+    assert files[0]["source_name_zh"] == "中华台北精算师协会"
+    assert files[0]["source_name_en"] == "Actuarial Institute Of Chinese Taibei"
+
+
 def _record(url, *, old=None, new="cas", raw="local_docling"):
     return {
         "url": url,

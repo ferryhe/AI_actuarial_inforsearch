@@ -1,5 +1,5 @@
 {
-  "registry_version": 2,
+  "registry_version": 3,
   "sources": [
     {
       "source_key": "pending",
@@ -438,6 +438,16 @@
       "resolution_status": "verified",
       "evidence": [
         "https://www.chinare.com.cn/zhzjt/fileDir/resource/cms/2014/07/2014072413524518344.pdf"
+      ]
+    },
+    {
+      "alias_norm": "中华民国精算学会",
+      "alias_kind": "name",
+      "source_key": "aict",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://en.airc.org.tw/",
+        "Former canonical Chinese display name retained for existing bookmarks; display names use the owner-approved 2026-11-03 naming."
       ]
     },
     {

@@ -16,6 +16,293 @@ from psycopg2.extras import Json
 
 PENDING_KEY = "pending"
 _KEY = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+_AICT_ENGLISH_NAME = "Actuarial Institute Of Chinese Taibei (AICT)"
+_AICT_CHINESE_NAME = "中华台北精算师协会"
+_AICT_ENGLISH_NAME_RE = re.compile(
+    r"(?<![A-Za-z0-9_])Actuarial\s+Institute\s+of\s+"
+    r"(?:the\s+)?(?:Chinese\s+Taipei|Republic\s+of\s+China)"
+    r"(?:\s*[（(]\s*(?:AICT|AIRC)\s*[）)])*(?![A-Za-z0-9_])",
+    re.IGNORECASE,
+)
+_AICT_CHINESE_NAMES = (
+    "中华民国精算学会",
+    "中華民國精算學會",
+    "中华台北精算学会",
+    "中華台北精算學會",
+    "台湾精算学会",
+    "台灣精算學會",
+    "台湾精算师协会",
+    "台灣精算師協會",
+)
+_AICT_CHINESE_NAME_RE = re.compile(
+    "(?:"
+    + "|".join(
+        re.escape(name[0]) + "".join(r"\s*" + re.escape(char) for char in name[1:])
+        for name in sorted(_AICT_CHINESE_NAMES, key=len, reverse=True)
+    )
+    + r")(?:\s*[（(]\s*(?:AICT|AIRC)\s*[）)])*(?![A-Za-z0-9_])"
+)
+_AICT_URL_RE = re.compile(r"(https?://[^\s<>]+)", re.IGNORECASE)
+_MARKDOWN_REFERENCE_DEFINITION_RE = re.compile(r"^[ ]{0,3}\[(?P<label>(?:\\.|[^\]\n])+)\]:[ \t]*")
+_HTML_TAG_RE = re.compile(r"<[^>]*>")
+_HTML_DESTINATION_ATTRIBUTE_RE = re.compile(
+    r"""\b(?:href|src)\s*=\s*(?:"(?P<double>[^"]*)"|'(?P<single>[^']*)'|(?P<bare>[^\s>]+))""",
+    re.IGNORECASE,
+)
+
+
+def _normalize_aict_plain_text(value: str) -> str:
+    value = _AICT_ENGLISH_NAME_RE.sub(_AICT_ENGLISH_NAME, value)
+    return _AICT_CHINESE_NAME_RE.sub(_AICT_CHINESE_NAME, value)
+
+
+def _markdown_reference_key(value: str) -> str:
+    return re.sub(r"\s+", " ", value.strip()).casefold()
+
+
+def _is_escaped(value: str, index: int) -> bool:
+    backslashes = 0
+    index -= 1
+    while index >= 0 and value[index] == "\\":
+        backslashes += 1
+        index -= 1
+    return bool(backslashes % 2)
+
+
+def _find_markdown_bracket_end(value: str, start: int) -> int | None:
+    depth = 0
+    index = start
+    while index < len(value):
+        char = value[index]
+        if char == "\\":
+            index += 2
+            continue
+        if char == "[":
+            depth += 1
+        elif char == "]":
+            depth -= 1
+            if depth == 0:
+                return index
+        index += 1
+    return None
+
+
+def _markdown_destination_end(value: str, start: int, *, inline: bool) -> tuple[int, int] | None:
+    """Return the destination content span and parser position after its wrapper."""
+    if start >= len(value):
+        return None
+    if value[start] == "<":
+        index = start + 1
+        while index < len(value):
+            if value[index] == "\\":
+                index += 2
+                continue
+            if value[index] == ">":
+                return (start + 1, index), index + 1
+            if value[index] in "\r\n":
+                return None
+            index += 1
+        return None
+
+    index = start
+    depth = 0
+    while index < len(value):
+        char = value[index]
+        if char == "\\":
+            index += 2
+            continue
+        if char.isspace() and depth == 0:
+            break
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            if depth == 0:
+                if inline:
+                    break
+                return None
+            depth -= 1
+        index += 1
+    if index == start or depth:
+        return None
+    return (start, index), index
+
+
+def _inline_link_destination_span(value: str, start: int) -> tuple[tuple[int, int], int] | None:
+    index = start
+    while index < len(value) and value[index].isspace():
+        index += 1
+    destination = _markdown_destination_end(value, index, inline=True)
+    if destination is None:
+        return None
+    (dest_start, dest_end), index = destination
+    while index < len(value) and value[index].isspace():
+        index += 1
+    if index < len(value) and value[index] in {'"', "'"}:
+        quote = value[index]
+        index += 1
+        while index < len(value):
+            if value[index] == "\\":
+                index += 2
+                continue
+            if value[index] == quote:
+                index += 1
+                break
+            if value[index] in "\r\n":
+                return None
+            index += 1
+        else:
+            return None
+    elif index < len(value) and value[index] == "(":
+        depth = 1
+        index += 1
+        while index < len(value) and depth:
+            if value[index] == "\\":
+                index += 2
+                continue
+            if value[index] == "(":
+                depth += 1
+            elif value[index] == ")":
+                depth -= 1
+            index += 1
+        if depth:
+            return None
+    while index < len(value) and value[index].isspace():
+        index += 1
+    if index >= len(value) or value[index] != ")":
+        return None
+    return (dest_start, dest_end), index + 1
+
+
+def _markdown_protected_spans(
+    value: str,
+) -> tuple[list[tuple[int, int]], list[tuple[int, int, str]]]:
+    spans: list[tuple[int, int]] = [match.span() for match in _AICT_URL_RE.finditer(value)]
+    rewrites: list[tuple[int, int, str]] = []
+    definitions: set[str] = set()
+    definition_starts: set[int] = set()
+    lines = value.splitlines(keepends=True)
+    offset = 0
+    for line in lines:
+        match = _MARKDOWN_REFERENCE_DEFINITION_RE.match(line)
+        if match:
+            label_start = offset + match.start("label")
+            label_end = offset + match.end("label")
+            definitions.add(_markdown_reference_key(value[label_start:label_end]))
+            definition_starts.add(label_start - 1)
+            spans.append((label_start, label_end))
+            destination = _markdown_destination_end(value, offset + match.end(), inline=False)
+            if destination is not None:
+                (start, end), _after = destination
+                spans.append((start, end))
+        offset += len(line)
+
+    index = 0
+    while index < len(value):
+        if index in definition_starts:
+            close = _find_markdown_bracket_end(value, index)
+            index = close + 1 if close is not None else index + 1
+            continue
+        if value[index] != "[" or _is_escaped(value, index):
+            index += 1
+            continue
+        close = _find_markdown_bracket_end(value, index)
+        if close is None:
+            index += 1
+            continue
+        label_start, label_end = index + 1, close
+        label = value[label_start:label_end]
+        following = close + 1
+        image = index > 0 and value[index - 1] == "!" and not _is_escaped(value, index - 1)
+        syntax_start = index - 1 if image else index
+        key = _markdown_reference_key(label)
+
+        if following < len(value) and value[following] == "(":
+            destination = _inline_link_destination_span(value, following + 1)
+            if destination is not None:
+                destination_span, link_end = destination
+                spans.append(destination_span)
+                index = link_end
+                continue
+        elif following < len(value) and value[following] == "[":
+            reference_end = _find_markdown_bracket_end(value, following)
+            if reference_end is not None:
+                reference_start = following + 1
+                reference_id = value[reference_start:reference_end]
+                if reference_id:
+                    spans.append((reference_start, reference_end))
+                elif key in definitions:
+                    normalized_label = _normalize_aict_plain_text(label)
+                    if normalized_label != label:
+                        rewrites.append(
+                            (
+                                syntax_start,
+                                reference_end + 1,
+                                f"{'!' if image else ''}[{normalized_label}][{label}]",
+                            )
+                        )
+                index = reference_end + 1
+                continue
+        elif key in definitions:
+            normalized_label = _normalize_aict_plain_text(label)
+            if normalized_label != label:
+                rewrites.append(
+                    (
+                        syntax_start,
+                        close + 1,
+                        f"{'!' if image else ''}[{normalized_label}][{label}]",
+                    )
+                )
+        index = close + 1
+
+    for tag in _HTML_TAG_RE.finditer(value):
+        for attribute in _HTML_DESTINATION_ATTRIBUTE_RE.finditer(tag.group()):
+            for group in ("double", "single", "bare"):
+                if attribute.start(group) >= 0:
+                    spans.append(
+                        (tag.start() + attribute.start(group), tag.start() + attribute.end(group))
+                    )
+                    break
+    return spans, rewrites
+
+
+def _normalize_preserving_spans(
+    value: str, spans: list[tuple[int, int]], rewrites: list[tuple[int, int, str]]
+) -> str:
+    def normalize_segment(start: int, end: int) -> str:
+        output = []
+        cursor = start
+        for span_start, span_end in sorted(
+            (max(start, left), min(end, right))
+            for left, right in spans
+            if left < end and right > start
+        ):
+            if span_start > cursor:
+                output.append(_normalize_aict_plain_text(value[cursor:span_start]))
+            if span_end > cursor:
+                output.append(value[max(cursor, span_start) : span_end])
+                cursor = span_end
+        if cursor < end:
+            output.append(_normalize_aict_plain_text(value[cursor:end]))
+        return "".join(output)
+
+    output = []
+    cursor = 0
+    for start, end, replacement in sorted(rewrites):
+        if start < cursor:
+            continue
+        output.append(normalize_segment(cursor, start))
+        output.append(replacement)
+        cursor = end
+    output.append(normalize_segment(cursor, len(value)))
+    return "".join(output)
+
+
+def normalize_aict_institution_text(value: str) -> str:
+    """Normalize former names while preserving Markdown destinations and reference IDs."""
+    if not isinstance(value, str):
+        raise TypeError("institution text must be a string")
+    spans, rewrites = _markdown_protected_spans(value)
+    return _normalize_preserving_spans(value, spans, rewrites)
 
 
 def normalize_alias(value: str) -> str:

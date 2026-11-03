@@ -25,6 +25,7 @@ from .postgres import DatabaseConfig
 from .source_portal_daily import daily_description, validate_daily_evidence
 from .source_registry import (
     PENDING_KEY,
+    normalize_aict_institution_text,
     registry_deployed_targets,
     registry_identity,
     resolve_source,
@@ -1411,20 +1412,22 @@ def ingest_live_article(
         raise ContentHubError("Live Markdown must be non-empty when supplied")
     if not isinstance(raw_bytes, bytes) or not raw_bytes:
         raise ContentHubError("Live source bytes must be non-empty")
+    title = normalize_aict_institution_text(title.strip())
+    markdown = normalize_aict_institution_text(markdown) if markdown is not None else None
     raw_sha256 = hashlib.sha256(raw_bytes).hexdigest()
     markdown_sha256 = (
         hashlib.sha256(markdown.encode("utf-8")).hexdigest() if markdown is not None else None
     )
     capture_metadata = {
+        **(metadata or {}),
         "source_site": source_site,
         "source_page_url": source_page_url,
         "canonical_url": canonical_url,
-        "title": title.strip(),
+        "title": title,
         "content_type": str(content_type or "application/octet-stream").strip().lower(),
         "raw_sha256": raw_sha256,
         "raw_bytes": len(raw_bytes),
         "markdown_sha256": markdown_sha256,
-        **(metadata or {}),
     }
     manifest_bytes = _json_text(capture_metadata).encode("utf-8")
     manifest_sha256 = hashlib.sha256(manifest_bytes).hexdigest()
