@@ -36,9 +36,12 @@ from tests.test_manifest_ingest import _sample_manifest
 
 
 def _seed() -> dict:
-    return json.loads(
+    seed = json.loads(
         (Path(__file__).parents[1] / "config/source_registry_seed.json").read_text(encoding="utf-8")
     )
+    # Revision-transition fixtures start at 1 independently of the published seed.
+    seed["registry_version"] = 1
+    return seed
 
 
 @pytest.fixture

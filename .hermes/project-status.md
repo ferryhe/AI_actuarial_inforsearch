@@ -1,3 +1,10 @@
+## AICT 中英文名称更新 — 2026-11-03
+
+- 项目 AI_actuarial_inforsearch；独立分支 fix/aict-chinese-taibei，基于 main 5a62b7d。用户指定中文“中华台北精算师协会”、英文“Actuarial Institute Of Chinese Taibei”，保留 AICT/source_key、网址及全部旧别名。中国再保险集团 2013 年第 1 期刊物有该中文称呼；中国精算师协会官网另用“中华台北精算学会”，英文 Taibei 拼写按用户明确要求。
+- 已通过既有 install_registry / sync_targets / apply_source_portals 路径将 Hub、中国站、海外站字典升至版本2；29机构、118别名，hash 6c29558905c6d54cc165fd852e436920cd6398bb1e25e1a646aa5550e7855b92。两站门户各仅改 AICT 一张卡的机构名称及简介，公开接口均已回读中英文新名；30卡、其他卡片、全部历史动态和文章绑定哈希不变。重复同步均 unchanged。操作证据在原仓库 ignored reports/aict-name-20261103/apply.json，未纳入共享提交。
+- 源码范围：来源字典 seed v2（保留115旧别名、追加3个新名别名）、门户元数据、采集站点名称、日报名称及目录说明；版本转换测试 fixture 独立从v1开始。78项来源/门户测试、35项日报测试、CLI help、Ruff/Black/diff检查通过。首次沙箱临时文件替换权限失败，沙箱外重跑78项全部通过；一次性独立PostgreSQL测试容器已停止自动移除。
+- 本次是数据更名和源码PR，不授权合并或部署。现有冻结定时采集/日报代码仍为旧名称，后续门户同步可能回写旧卡片名；需合并并部署该名称补丁才能保证持续一致。没有切换 #450 的代码、服务或排程，没有启动真实采集/模型调用。原checkout既有脏文件与四个未跟踪目录保持。
+
 # PR #441 合并 main 冲突整理 — 2026-11-03
 
 - 用户要求优先处理既有 PR #441；沿用干净的 fix/soa-obsolete-seed 独立工作树，原仓库未提交内容和 #450 工作树保持原样。

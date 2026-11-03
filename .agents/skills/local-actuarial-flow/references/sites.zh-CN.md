@@ -33,7 +33,7 @@
 | 21 | `iai` / Institute of Actuaries of India | collect | 核心 hub 每轮轻量检查；杂志按年份轮换，记录 URL/version，下载、抽取后由内容分类决定 AI 发布。2026-11-01 三条旧 GN/APS PDF 返回 404；两份名为员工政策的 PDF 可下载但无可用正文，先核对来源栏目和正文再决定是否排除，当前保留提取缺口。2026 年 1 月杂志约 43 MB，超过当前 40 MiB 单件限制，另行评估杂志处理，不因单件提额。 |
 | 22 | `iaj` / Institute of Actuaries of Japan | collect | 低频轮询研究栏目，按 URL 增量；脚本发现的 page 要另接本机正文采集。 |
 | 23 | `institute-of-actuaries-of` / Institute of Actuaries of Korea | collect | 配好本机项目 Python/PYTHONPATH；覆盖 `intlTrend` 最多 15 页或加 start-page 游标，正文页和附件需另接收集。 |
-| 24 | `aict` / Actuarial Institute of Chinese Taipei | collect | 保持少量固定 hub 检查；`/re/` 被 playbook 标为 robots 禁止，未建立允许策略前不得抓对应候选；无 lastmod 游标。 |
+| 24 | `aict` / 中华台北精算师协会 / Actuarial Institute Of Chinese Taibei | collect | 保持少量固定 hub 检查；`/re/` 被 playbook 标为 robots 禁止，未建立允许策略前不得抓对应候选；无 lastmod 游标。 |
 | 25 | `caa` / China Association of Actuaries | collect | API 枚举与附件扫描分开计数；把确认附件接入 URL/标题候选管线。2026-10-31 的 14 次访问/0 文件不等于网站不可用：公开 API 仍有条目，`/systemNews/show/...` 详情正文位于 `/systemNews/showNewsContent/...` iframe；需有界读取该正文并验证候选，不能把 API 行数当文件数。`filters.json` 当前不作用于 collector，历史 2 个候选不是脚本当轮产物。 |
 | 26 | `ashk` / Actuarial Society of Hong Kong | collect | `collect.py` 外壳实际使用 `sudo docker`、固定容器及 `/tmp` 路径；需迁移为本机可配置调用/产物路径，再保持 `max-pages` 预算和统一 schema。`MemResignationForm`、`PersonalDataUpdateForm` 两条 PDF 可访问，文件名指向会员表单；先核对来源栏目和正文，再决定是否排除，不把合并错误信息直接解释为站点故障。 |
 | 27 | `assa` / Actuarial Society of South Africa | collect | 建好本机 Python 项目路径；默认请求间隔 0.3 秒小于 playbook 的 0.5 秒，先修为不少于 0.5 秒，并有界分页。 |
