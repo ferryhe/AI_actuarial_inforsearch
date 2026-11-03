@@ -69,6 +69,13 @@ def _split_visible_categories(raw_category: str | None) -> list[str]:
     ]
 
 
+def _exclude_urls(urls: Iterable[str], column: str) -> tuple[str, tuple[str, ...]]:
+    values = tuple(dict.fromkeys(url for url in urls if isinstance(url, str) and url))
+    if not values:
+        return "", ()
+    return f"{column} NOT IN ({', '.join('?' for _ in values)})", values
+
+
 class Storage:
     AGENTIC_READY_RESERVED_ATTEMPT_DISPOSITIONS = frozenset({"superseded_generation"})
     AGENTIC_READY_FUTURE_EXECUTION_POLICY = {
@@ -2717,7 +2724,9 @@ class Storage:
         with open(output_path, "w", encoding="utf-8") as f:
             json.dump(list(items), f, ensure_ascii=False, indent=2)
 
-    def get_file_count(self, require_local: bool = True) -> int:
+    def get_file_count(
+        self, require_local: bool = True, *, exclude_urls: Iterable[str] = ()
+    ) -> int:
         """Get count of files in the database.
 
         Args:
@@ -2726,34 +2735,44 @@ class Storage:
         Returns:
             Number of files
         """
-        if require_local:
-            cur = self._conn.execute(
-                "SELECT COUNT(*) FROM files WHERE local_path IS NOT NULL AND local_path != ''"
-            )
-        else:
-            cur = self._conn.execute("SELECT COUNT(*) FROM files")
+        filters = ["local_path IS NOT NULL AND local_path != ''"] if require_local else []
+        params: tuple[str, ...] = ()
+        exclusion, excluded = _exclude_urls(exclude_urls, "url")
+        if exclusion:
+            filters.append(exclusion)
+            params = excluded
+        where = f" WHERE {' AND '.join(filters)}" if filters else ""
+        cur = self._conn.execute(f"SELECT COUNT(*) FROM files{where}", params)
         return cur.fetchone()[0]
 
-    def get_cataloged_count(self) -> int:
+    def get_cataloged_count(self, *, exclude_urls: Iterable[str] = ()) -> int:
         """Get count of successfully cataloged items.
 
         Returns:
             Number of cataloged items with status='ok'
         """
-        cur = self._conn.execute("SELECT COUNT(*) FROM catalog_items WHERE status = 'ok'")
+        exclusion, excluded = _exclude_urls(exclude_urls, "file_url")
+        where = "status = 'ok'" + (f" AND {exclusion}" if exclusion else "")
+        cur = self._conn.execute(f"SELECT COUNT(*) FROM catalog_items WHERE {where}", excluded)
         return cur.fetchone()[0]
 
-    def get_sources_count(self) -> int:
-        return len(self.get_source_options())
+    def get_sources_count(self, *, exclude_urls: Iterable[str] = ()) -> int:
+        return len(self.get_source_options(exclude_urls=exclude_urls))
 
-    def get_source_options(self) -> list[dict]:
+    def get_source_options(self, *, exclude_urls: Iterable[str] = ()) -> list[dict]:
         if self._schema_only:
             return []
-        rows = self._conn.execute(f"""
+        exclusion, excluded = _exclude_urls(exclude_urls, "f.url")
+        where = "f.local_path IS NOT NULL AND f.local_path != '' AND f.deleted_at IS NULL"
+        where += f" AND {exclusion}" if exclusion else ""
+        rows = self._conn.execute(
+            f"""
             SELECT {source_sql()} AS canonical_key, COUNT(*) FROM files f
-            WHERE f.local_path IS NOT NULL AND f.local_path != '' AND f.deleted_at IS NULL
+            WHERE {where}
             GROUP BY canonical_key ORDER BY canonical_key
-        """).fetchall()
+        """,
+            excluded,
+        ).fetchall()
         options = []
         for row in rows:
             aliases = self._conn.execute(
@@ -2771,21 +2790,27 @@ class Storage:
             options.append({**fields, "count": row[1], "aliases": unambiguous})
         return options
 
-    def get_unique_sources(self) -> list[str]:
-        return [row["source_key"] for row in self.get_source_options()]
+    def get_unique_sources(self, *, exclude_urls: Iterable[str] = ()) -> list[str]:
+        return [row["source_key"] for row in self.get_source_options(exclude_urls=exclude_urls)]
 
-    def get_unique_categories(self) -> list[str]:
+    def get_unique_categories(self, *, exclude_urls: Iterable[str] = ()) -> list[str]:
         """Get list of unique categories from catalog.
 
         Returns:
             List of category names
         """
-        cur = self._conn.execute("""
+        exclusion, excluded = _exclude_urls(exclude_urls, "file_url")
+        where = "category IS NOT NULL AND category != ''"
+        where += f" AND {exclusion}" if exclusion else ""
+        cur = self._conn.execute(
+            f"""
             SELECT DISTINCT category 
             FROM catalog_items 
-            WHERE category IS NOT NULL AND category != ''
+            WHERE {where}
             ORDER BY category
-        """)
+        """,
+            excluded,
+        )
         categories: set[str] = set()
         for row in cur.fetchall():
             for part in _split_visible_categories(row[0]):
@@ -2964,6 +2989,7 @@ class Storage:
         first_seen_from: str | None = None,
         first_seen_before: str | None = None,
         snapshot_id: str = "",
+        exclude_urls: Iterable[str] = (),
     ) -> tuple[list[dict], int]:
         """Query files with catalog information, filtering and pagination.
 
@@ -3016,6 +3042,11 @@ class Storage:
             params.append(snapshot_id)
             if order_by == "first_seen":
                 order_column = snapshot_first_seen
+
+        exclusion, excluded = _exclude_urls(exclude_urls, snapshot_url)
+        if exclusion:
+            filters.append(exclusion)
+            params.extend(excluded)
 
         if not include_deleted:
             if snapshot_id:

@@ -32,6 +32,8 @@
 
 `ready_status` 还可以是 worker 明确返回的 `not_required`。它只表示该次请求没有要求或没有执行 native Ready 检查，不代表 Ready succeeded。若存在 AI 首类候选，回执保持未完成；该值不会关闭旧 Ready case，也不会单独生成网页故障 case。不能把 ACK、容量预检或 `not_required` 改写为可搜索成功。
 
+来源入口动态沿用 v2 的 `evidence`，逐卡给出 `Source portal <portal_key> <date>: digest_count=1; capture_id=<Hub id>; china=succeeded; overseas=pending.` 等真实同步状态。`digest_count=1` 表示该卡该日的一条聚合动态，不是文章或新增文件数量；`already_current` 是该端无需重发，`pending`/缺配置仍待同步。同日其他尝试/监控项的证据聚合到同一条动态，Hub v6 仍保留每次不可变证据与 SHA。完整目录比较与有界采集摘要须分清，不能把部分预算覆盖当作全站比较。没有成功观察时记录本次 `digest_count=0`，既有 pending 重试另报；IABA/EAA monitor-only 与 Istituto hold 不合成采集动态。卡片状态独立于文章 ACK/Ready，不关闭文章失败 case。
+
 ### 可选真实运行指标
 
 运行时可在 v2 回执新增可选的顶层 `telemetry`。旧回执没有该字段时，各指标是未知，不能换算成零。示例：

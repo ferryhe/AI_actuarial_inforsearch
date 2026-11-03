@@ -14,6 +14,7 @@ from ..services.read import (
     get_file_markdown,
     list_categories,
     list_files,
+    list_source_portals,
     list_sources,
     parse_file_list_query,
 )
@@ -110,6 +111,14 @@ def api_sources(
     _auth: AuthContext = Depends(require_permissions("files.read")),
 ) -> dict[str, object]:
     return list_sources(db_path=_get_db_path(request))
+
+
+@router.get("/source-portals")
+def api_source_portals(
+    request: Request,
+    _auth: AuthContext = Depends(require_permissions("files.read")),
+) -> dict[str, object]:
+    return list_source_portals(db_path=_get_db_path(request))
 
 
 @router.get("/categories")

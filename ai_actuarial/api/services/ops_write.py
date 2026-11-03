@@ -107,6 +107,7 @@ _VALID_SCHEDULED_TASK_TYPES = [
     "embedding_generation",
     "ready_data_build",
     "weekly_summary",
+    "article_interpretation",
     "rag_indexing",
     "recategory",
 ]
@@ -132,6 +133,7 @@ _VALID_COLLECTION_TYPES = {
     "ready_data_build",
     "weekly_summary",
     "weekly_explanation",
+    "article_interpretation",
     "rag_indexing",
     "recategory",
 }
@@ -2104,6 +2106,12 @@ def add_scheduled_task(
         }
     )
     config_data["scheduled_tasks"] = tasks
+    from ai_actuarial.article_interpretations import validate_schedules
+
+    try:
+        validate_schedules(config_data)
+    except ValueError as exc:
+        raise OpsWriteError(str(exc)) from exc
     _write_config_and_reconcile_scheduler(
         config_data,
         previous_config=previous_config,
@@ -2187,6 +2195,12 @@ def update_scheduled_task(
     tasks[found_index] = updated
 
     config_data["scheduled_tasks"] = tasks
+    from ai_actuarial.article_interpretations import validate_schedules
+
+    try:
+        validate_schedules(config_data)
+    except ValueError as exc:
+        raise OpsWriteError(str(exc)) from exc
     _write_config_and_reconcile_scheduler(
         config_data,
         previous_config=previous_config,
@@ -2384,6 +2398,22 @@ def start_collection(
             data=data,
             bridge=bridge,
         )
+    if collection_type == "article_interpretation" and "file_url" in data:
+        file_url = data.get("file_url")
+        if (
+            not isinstance(file_url, str)
+            or not file_url.strip()
+            or len(file_url) > 2048
+            or data.get("retry_id")
+            or data.get("scheduled")
+        ):
+            _reject_request(
+                "Manual article interpretation requires one file_url and cannot be scheduled or retried",
+                collection_type=collection_type,
+                data=data,
+                bridge=bridge,
+            )
+        data["file_url"] = file_url.strip()
     if collection_type == "markdown_conversion":
         scope_mode = str(data.get("scope_mode") or "index").strip().lower()
         if scope_mode == "category" and not str(data.get("category") or "").strip():

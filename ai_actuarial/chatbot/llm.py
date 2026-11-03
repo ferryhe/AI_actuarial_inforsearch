@@ -202,6 +202,43 @@ def _classify_response(response: Any) -> tuple[str | None, str, str | None]:
     return content, classification, finish_reason
 
 
+def _completion_request_kwargs(
+    provider: str,
+    *,
+    messages: List[Dict[str, str]],
+    model: str,
+    temperature: float,
+    max_tokens: int,
+    stream: bool,
+    reasoning_effort: str | None = None,
+    response_format: Optional[Dict[str, str]] = None,
+    extra_body: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    request_kwargs: Dict[str, Any] = {
+        "model": model,
+        "messages": messages,
+        "stream": stream,
+    }
+    if not _uses_default_temperature_only(provider, model):
+        request_kwargs["temperature"] = temperature
+    if _uses_max_completion_tokens(provider, model):
+        request_kwargs["max_completion_tokens"] = max_tokens
+    else:
+        request_kwargs["max_tokens"] = max_tokens
+    compatible_effort = _compatible_reasoning_effort(
+        provider,
+        model,
+        reasoning_effort,
+    )
+    if compatible_effort:
+        request_kwargs["reasoning_effort"] = compatible_effort
+    if response_format is not None:
+        request_kwargs["response_format"] = response_format
+    if extra_body is not None:
+        request_kwargs["extra_body"] = extra_body
+    return request_kwargs
+
+
 class LLMClient:
     """
     LLM client with OpenAI integration.
@@ -263,6 +300,8 @@ class LLMClient:
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
         stream: bool = False,
+        response_format: Optional[Dict[str, str]] = None,
+        extra_body: Optional[Dict[str, Any]] = None,
     ) -> str:
         """
         Generate response from LLM.
@@ -292,6 +331,7 @@ class LLMClient:
             if "role" not in msg or "content" not in msg:
                 raise LLMException(f"Invalid message format: {msg}. Must have 'role' and 'content'")
 
+        self.last_response_metadata = {}
         # Rate limiting
         self._apply_rate_limit()
 
@@ -316,6 +356,8 @@ class LLMClient:
                         temperature=temperature,
                         max_tokens=max_tokens,
                         stream=stream,
+                        response_format=response_format,
+                        extra_body=extra_body,
                     )
                 )
 
@@ -358,6 +400,8 @@ class LLMClient:
                                     max_tokens=self.config.length_recovery_max_tokens,
                                     stream=stream,
                                     reasoning_effort=self.config.length_recovery_reasoning_effort,
+                                    response_format=response_format,
+                                    extra_body=extra_body,
                                 )
                             )
                         except openai.BadRequestError as exc:
@@ -505,26 +549,20 @@ class LLMClient:
         max_tokens: int,
         stream: bool,
         reasoning_effort: str | None = None,
+        response_format: Optional[Dict[str, str]] = None,
+        extra_body: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        request_kwargs: Dict[str, Any] = {
-            "model": model,
-            "messages": messages,
-            "stream": stream,
-        }
-        if not _uses_default_temperature_only(self.config.llm_provider, model):
-            request_kwargs["temperature"] = temperature
-        if _uses_max_completion_tokens(self.config.llm_provider, model):
-            request_kwargs["max_completion_tokens"] = max_tokens
-        else:
-            request_kwargs["max_tokens"] = max_tokens
-        compatible_effort = _compatible_reasoning_effort(
+        return _completion_request_kwargs(
             self.config.llm_provider,
-            model,
-            reasoning_effort,
+            messages=messages,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            stream=stream,
+            reasoning_effort=reasoning_effort,
+            response_format=response_format,
+            extra_body=extra_body,
         )
-        if compatible_effort:
-            request_kwargs["reasoning_effort"] = compatible_effort
-        return request_kwargs
 
     def _log_response_metadata(
         self,
@@ -542,6 +580,15 @@ class LLMClient:
         response_id = _safe_log_value(_field(response, "id", None)) or _safe_log_value(
             _field(response, "_request_id", None)
         )
+        self.last_response_metadata = {
+            "finish_reason": finish_reason,
+            "prompt_tokens": _safe_log_value(_field(usage, "prompt_tokens", None)),
+            "completion_tokens": _safe_log_value(_field(usage, "completion_tokens", None)),
+            "total_tokens": _safe_log_value(_field(usage, "total_tokens", None)),
+            "reasoning_tokens": _safe_log_value(
+                _field(completion_details, "reasoning_tokens", None)
+            ),
+        }
         log_method = logger.info if successful else logger.warning
         log_method(
             "LLM response metadata provider=%s model=%s finish_reason=%s "

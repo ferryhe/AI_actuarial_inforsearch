@@ -18,6 +18,7 @@ from ai_actuarial.shared_runtime import (
     resolve_data_path,
     resolve_runtime_features,
 )
+from ai_actuarial.source_portals import SOURCE_PORTAL_URLS
 from ai_actuarial.storage import Storage
 
 from .read import SENSITIVE_FILE_FIELDS, FileListQuery, project_database_files
@@ -84,6 +85,7 @@ def _query_files_for_export(
             first_seen_from=query.first_seen_from,
             first_seen_before=query.first_seen_before,
             snapshot_id=query.snapshot_id,
+            exclude_urls=SOURCE_PORTAL_URLS,
         )
         rows.extend(page)
         offset += len(page)

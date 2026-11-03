@@ -262,10 +262,18 @@ def test_fastapi_stats_and_categories_are_native(tmp_path: Path, monkeypatch) ->
     body = migration.json()
     assert "/api/stats" in body["native_paths"]
     assert "/api/sources" in body["native_paths"]
+    assert "/api/source-portals" in body["native_paths"]
     assert "/api/categories" in body["native_paths"]
     assert "/api/files" in body["native_paths"]
     assert "/api/files/detail" in body["native_paths"]
     assert "/api/files/{file_url:path}/markdown" in body["native_paths"]
+
+    portals = client.get("/api/source-portals")
+    assert portals.status_code == 200
+    portal_body = portals.json()["portals"]
+    assert portal_body
+    assert all(item["updates"] == [] for item in portal_body)
+    assert all("capture_id" not in update for item in portal_body for update in item["updates"])
 
 
 def test_fastapi_files_supports_filters_sorting_and_deleted(tmp_path: Path, monkeypatch) -> None:
