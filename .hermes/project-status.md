@@ -1,3 +1,14 @@
+# PR #441 合并 main 冲突整理 — 2026-11-03
+
+- 用户要求优先处理既有 PR #441；沿用干净的 fix/soa-obsolete-seed 独立工作树，原仓库未提交内容和 #450 工作树保持原样。
+- 当前 main dcad36c 的业务代码自动合并，仅项目状态文档冲突；保留双方全部记录。SOA 原有修复及独立审查记录保留；合并后完整 runtime 84/84、Black/isort/Ruff、diff 检查通过，使用独立临时 PostgreSQL；等待新 HEAD CI。没有启动真实采集、写 Hub/目标、部署或更改排程。
+
+# 当前候选 — SOA 失效 seed 修复 — 2026-10-31
+
+- 项目 `AI_actuarial_inforsearch`；工作树 `C:/Users/ferry/.codex/worktrees/soa-seed-repair/AI_actuarial_inforsearch`，分支 `fix/soa-obsolete-seed`。仅本仓库：删除已确认 404 的 SOA `/research/soa-research/` registry seed；保存 frontier 修补升级至 `frontier_repair_soa_v2`，从 queue/retry_queue 移除该 URL，并保留 cursor、其他有效 frontier、文章记录及有效重试。
+- 参数化 frontier 修补测试 3/3 PASS（CCA、France、SOA；SOA 用例覆盖既有 v1 marker）；Black、isort、Ruff、py_compile 与 `git diff --check` PASS。
+- 仅运行离线测试和代码检查；未运行 SOA 真实采集，未写生产状态、回执、Hub 或目标。Case 仍待修复部署后的普通来源重跑，不能据此声称恢复。未提交或推送；交由 controller fresh review。
+
 # PR #446 合入 main 准备 — 2026-11-01
 
 - 用户已授权核对评论修复、安全性及冲突后合并 #446。合并目标已由 #444 开发分支调整到 main；隔离工作树位于本仓库 .codex-worktrees/pr-446-main-integration，分支 codex/pr-446-main-integration，从最新 main c9ce6ac 建立，未修改外部英文开发工作树或原始脏工作树。
