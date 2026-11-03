@@ -2991,6 +2991,7 @@ def test_article_interpretation_sync_candidate_scan_skips_conflict_only_history(
             "status": "ready",
             "title_zh": "旧稿标题",
             "body_markdown_zh": "旧稿正文",
+            "created_at": f"2026-11-02T10:00:{index:02d}+00:00",
             "content_key": f"{index + 1:064x}",
         }
         for index in range(100)
@@ -3000,6 +3001,7 @@ def test_article_interpretation_sync_candidate_scan_skips_conflict_only_history(
             "status": "ready",
             "title_zh": "新稿标题",
             "body_markdown_zh": "新稿正文",
+            "created_at": "2026-11-02T10:01:40+00:00",
             "content_key": f"{101:064x}",
         }
     ]
@@ -3052,15 +3054,55 @@ def test_article_interpretation_sync_candidate_scan_skips_conflict_only_history(
 
         def __init__(self):
             self.offsets = []
+            self.scan_cursor = None
 
         def execute(self, statement, params=()):
-            if statement.startswith("SELECT payload_json FROM article_interpretations"):
-                offset = params[0]
+            if statement == "BEGIN" or "pg_advisory_xact_lock" in statement:
+                return Cursor([])
+            if statement.startswith("SELECT payload_json, created_at, interpretation_id"):
+                offset = params[-1]
                 self.offsets.append(offset)
-                return Cursor([(row,) for row in drafts[offset : offset + 100]])
+                ordered = drafts
+                if self.scan_cursor:
+                    position = (
+                        self.scan_cursor["last_created_at"],
+                        self.scan_cursor["last_interpretation_id"],
+                    )
+                    ordered = sorted(
+                        drafts,
+                        key=lambda row: (
+                            (
+                                row["created_at"],
+                                row["interpretation_id"],
+                            )
+                            <= position,
+                            row["created_at"],
+                            row["interpretation_id"],
+                        ),
+                    )
+                return Cursor(
+                    [
+                        (row, row["created_at"], row["interpretation_id"])
+                        for row in ordered[offset : offset + 100]
+                    ]
+                )
             if statement.startswith("SELECT receipt_json FROM article_interpretation_rounds"):
+                if params[0] == worker._INTERPRETATION_SYNC_SCAN_CURSOR_KEY:
+                    return Cursor([(self.scan_cursor,)] if self.scan_cursor else [])
                 return Cursor([(receipts[params[0]],)] if params[0] in receipts else [])
+            if statement.startswith("INSERT INTO article_interpretation_rounds"):
+                self.scan_cursor = json.loads(params[1])
+                return Cursor([])
+            if statement.startswith("UPDATE article_interpretation_rounds"):
+                self.scan_cursor = json.loads(params[0])
+                return Cursor([])
             raise AssertionError(statement)
+
+        def commit(self):
+            pass
+
+        def rollback(self):
+            pass
 
         def close(self):
             self.closed = True
@@ -3089,7 +3131,6 @@ def test_article_interpretation_sync_candidate_scan_skips_conflict_only_history(
         runtime_factory=lambda: object(),
     )
 
-    assert connection.read_only if hasattr(connection, "read_only") else True
     assert connection.offsets == [0, 100]
     assert [item["identity"]["interpretation_id"] for item in result["drafts"]] == [
         "old-000",
@@ -3145,13 +3186,35 @@ def test_article_interpretation_sync_candidates_only_add_ready_english_locale(mo
     class Connection:
         closed = False
 
+        def __init__(self):
+            self.scan_cursor = None
+            self.writes = []
+
         def execute(self, statement, params=()):
-            if statement.startswith("SELECT payload_json FROM article_interpretations"):
-                return Cursor([(draft,)])
+            if statement == "BEGIN" or "pg_advisory_xact_lock" in statement:
+                return Cursor([])
+            if statement.startswith("SELECT payload_json, created_at, interpretation_id"):
+                return Cursor([(draft, "2026-11-02T10:00:00+00:00", draft["interpretation_id"])])
             if statement.startswith("SELECT receipt_json FROM article_interpretation_rounds"):
+                if params[0] == worker._INTERPRETATION_SYNC_SCAN_CURSOR_KEY:
+                    return Cursor([(self.scan_cursor,)] if self.scan_cursor else [])
                 receipt = receipts.get(params[0])
                 return Cursor([(receipt,)] if receipt else [])
+            if statement.startswith("INSERT INTO article_interpretation_rounds"):
+                self.scan_cursor = json.loads(params[1])
+                self.writes.append(params[0])
+                return Cursor([])
+            if statement.startswith("UPDATE article_interpretation_rounds"):
+                self.scan_cursor = json.loads(params[0])
+                self.writes.append(params[1])
+                return Cursor([])
             raise AssertionError(statement)
+
+        def commit(self):
+            pass
+
+        def rollback(self):
+            pass
 
         def close(self):
             self.closed = True
@@ -3266,13 +3329,32 @@ def test_article_interpretation_candidate_preserves_ack_on_locale_projection_dri
     class Connection:
         closed = False
 
+        def __init__(self):
+            self.scan_cursor = None
+
         def execute(self, statement, params=()):
-            if statement.startswith("SELECT payload_json FROM article_interpretations"):
-                return Cursor([(draft,)])
+            if statement == "BEGIN" or "pg_advisory_xact_lock" in statement:
+                return Cursor([])
+            if statement.startswith("SELECT payload_json, created_at, interpretation_id"):
+                return Cursor([(draft, "2026-11-02T10:00:00+00:00", draft["interpretation_id"])])
             if statement.startswith("SELECT receipt_json FROM article_interpretation_rounds"):
+                if params[0] == worker._INTERPRETATION_SYNC_SCAN_CURSOR_KEY:
+                    return Cursor([(self.scan_cursor,)] if self.scan_cursor else [])
                 receipt = receipts.get(params[0])
                 return Cursor([(receipt,)] if receipt else [])
-            raise AssertionError(f"unexpected write or query: {statement}")
+            if statement.startswith("INSERT INTO article_interpretation_rounds"):
+                self.scan_cursor = json.loads(params[1])
+                return Cursor([])
+            if statement.startswith("UPDATE article_interpretation_rounds"):
+                self.scan_cursor = json.loads(params[0])
+                return Cursor([])
+            raise AssertionError(statement)
+
+        def commit(self):
+            pass
+
+        def rollback(self):
+            pass
 
         def close(self):
             self.closed = True
@@ -3566,3 +3648,159 @@ def test_locale_settings_probe_returns_only_the_two_authorized_booleans():
         "english_translation_enabled": True,
         "english_proxy_enabled": False,
     }
+
+
+def test_article_interpretation_sync_candidate_scan_rotates_past_failed_ack_history(monkeypatch):
+    from ai_actuarial import postgres
+
+    template = _interpretation_draft()
+    drafts = []
+    identities = {}
+    receipts = {}
+    for index in range(4):
+        interpretation_id = "failed-" + str(index) if index < 3 else "new-pending"
+        draft = json.loads(json.dumps(template))
+        draft.update(
+            interpretation_id=interpretation_id,
+            title_zh="标题 " + interpretation_id,
+            body_markdown_zh="正文 " + interpretation_id,
+            created_at=f"2026-11-02T10:00:{index:02d}+00:00",
+        )
+        drafts.append(draft)
+        identity = {
+            **worker._interpretation_identity(template),
+            "interpretation_id": interpretation_id,
+            "file_url": "https://example.test/" + interpretation_id + ".pdf",
+            "raw_sha256": f"{index + 1:064x}",
+            "markdown_sha256": f"{index + 11:064x}",
+            "content_key": f"{index + 21:064x}",
+            "input_fingerprint": f"{index + 31:064x}",
+            "draft_sha256": f"{index + 41:064x}",
+        }
+        identities[interpretation_id] = identity
+        if index == 3:
+            continue
+        source_identity = worker._interpretation_source_identity(identity, draft)
+        for target, status in (("china", "failed"), ("overseas", "acknowledged")):
+            locale = "zh"
+            receipts[worker._interpretation_ack_key(target, source_identity, locale)] = {
+                "receipt_type": "target_sync_locale",
+                "target": target,
+                "locale": locale,
+                "source_identity": source_identity,
+                "locale_digest": worker._interpretation_locale_digest(draft, locale),
+                "draft_sha256": identity["draft_sha256"],
+                "reader_fields": worker._interpretation_reader_fields(draft, locale),
+                "status": status,
+                "error": "fixture_target_failure" if status == "failed" else "",
+            }
+    receipts_before = json.loads(json.dumps(receipts))
+
+    class Cursor:
+        def __init__(self, rows):
+            self.rows = rows
+
+        def fetchall(self):
+            return self.rows
+
+        def fetchone(self):
+            return self.rows[0] if self.rows else None
+
+    class Connection:
+        closed = False
+
+        def __init__(self):
+            self.scan_cursor = None
+            self.writes = []
+
+        def execute(self, statement, params=()):
+            if statement == "BEGIN" or "pg_advisory_xact_lock" in statement:
+                return Cursor([])
+            if statement.startswith("SELECT payload_json, created_at, interpretation_id"):
+                offset = params[-1]
+                ordered = drafts
+                if self.scan_cursor:
+                    position = (
+                        self.scan_cursor["last_created_at"],
+                        self.scan_cursor["last_interpretation_id"],
+                    )
+                    ordered = sorted(
+                        drafts,
+                        key=lambda row: (
+                            (row["created_at"], row["interpretation_id"]) <= position,
+                            row["created_at"],
+                            row["interpretation_id"],
+                        ),
+                    )
+                return Cursor(
+                    [
+                        (row, row["created_at"], row["interpretation_id"])
+                        for row in ordered[offset : offset + 100]
+                    ]
+                )
+            if statement.startswith("SELECT receipt_json FROM article_interpretation_rounds"):
+                if params[0] == worker._INTERPRETATION_SYNC_SCAN_CURSOR_KEY:
+                    return Cursor([(self.scan_cursor,)] if self.scan_cursor else [])
+                return Cursor([(receipts[params[0]],)] if params[0] in receipts else [])
+            if statement.startswith("INSERT INTO article_interpretation_rounds"):
+                self.scan_cursor = json.loads(params[1])
+                self.writes.append(params[0])
+                return Cursor([])
+            if statement.startswith("UPDATE article_interpretation_rounds"):
+                self.scan_cursor = json.loads(params[0])
+                self.writes.append(params[1])
+                return Cursor([])
+            raise AssertionError(statement)
+
+        def commit(self):
+            pass
+
+        def rollback(self):
+            pass
+
+        def close(self):
+            self.closed = True
+
+    connection = Connection()
+    monkeypatch.setattr(worker, "_article_interpretation_database", lambda _runtime: object())
+    monkeypatch.setattr(
+        postgres,
+        "PostgresConnection",
+        lambda _database, read_only=False: connection,
+    )
+    monkeypatch.setattr(
+        worker,
+        "_interpretation_identity",
+        lambda draft: identities[draft["interpretation_id"]],
+    )
+    monkeypatch.setattr(worker, "_interpretation_current_row", lambda *_args: None)
+
+    request = {
+        "schema_version": 1,
+        "operation": "list_article_interpretation_sync_candidates",
+        "target": "china",
+        "limit": 3,
+    }
+    first = worker.list_article_interpretation_sync_candidates(
+        request, runtime_factory=lambda: object()
+    )
+    second = worker.list_article_interpretation_sync_candidates(
+        request, runtime_factory=lambda: object()
+    )
+
+    assert [item["identity"]["interpretation_id"] for item in first["drafts"]] == [
+        "failed-0",
+        "failed-1",
+        "failed-2",
+    ]
+    assert first["drafts"][0]["targets"]["china"]["zh"]["status"] == "failed"
+    assert first["drafts"][0]["targets"]["overseas"]["zh"]["status"] == "acknowledged"
+    assert "new-pending" in {item["identity"]["interpretation_id"] for item in second["drafts"]}
+    assert second["drafts"][0]["identity"]["interpretation_id"] == "new-pending"
+    third = worker.list_article_interpretation_sync_candidates(
+        request, runtime_factory=lambda: object()
+    )
+    assert "failed-2" in {item["identity"]["interpretation_id"] for item in third["drafts"]}
+    assert connection.writes == [worker._INTERPRETATION_SYNC_SCAN_CURSOR_KEY] * 3
+    assert receipts == receipts_before
+    assert connection.closed is True

@@ -5,6 +5,13 @@
 - 静态验证：4 个 launcher/argv 测试通过，Black、Ruff、git diff --check 通过。独立 Sol/high review 6 PASS；匿名 TypeSafe 评估无 findings，summary coverage 0.87。当前 launcher 修复等待提交推送与新 HEAD CI。
 - 远程反馈 disposition 已登记为 clean，9 个保存的 Copilot review thread unresolved 为 0；未再次请求或刷新 Copilot。尚未执行真实文章生成、双端原生读回、幂等/单边重试、部署或排程变更；未合并或启用 08:00 计划。
 
+
+### Issue #450 AC-3 sync candidate fairness — 2026-11-02
+
+- 修复候选扫描从最旧 ready 稿重复开始的问题：在现有 rounds 表保存独立 target_sync_scan 环形位置，并用专用事务 advisory lock 串行更新。failed/unknown ACK 继续可见且可重试；失败候选之后的新稿可达，扫描环回后失败项仍会再出现。
+- 扫描游标与生成 receipt/source cursor 分开；候选列表只写该专用位置，不改 draft、ACK、生成预算或游标，也不调用 generator。已 ACK locale 的跳过行为由现有同步路径保留。
+- 隔离红测：旧实现连续两次均只返回 failed-0/1/2，不含 new-pending。修复后聚焦候选和未 ACK 目标重试回归 6 passed；Black、Ruff、py_compile 与 git diff --check 通过。未运行真实生成、生产或目标操作，未改排程；Copilot thread disposition 未更改。精确 snapshot manifest patch SHA 69c7f46c581042f1c2cac7d2b6e8d5ad8c4ae97f3499a73cb408d19b61c9e144 获得 fresh Sol/high review 18 PASS（累计 changes-requested cycles 13）；TypeSafe Judge 记录见 reports/local-interpretation-migration-20261102/controller-supplemental17-target-sync-cursor-judge.json。
+
 # PR #446 合入 main 准备 — 2026-11-01
 
 - 用户已授权核对评论修复、安全性及冲突后合并 #446。合并目标已由 #444 开发分支调整到 main；隔离工作树位于本仓库 .codex-worktrees/pr-446-main-integration，分支 codex/pr-446-main-integration，从最新 main c9ce6ac 建立，未修改外部英文开发工作树或原始脏工作树。

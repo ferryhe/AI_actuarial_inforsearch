@@ -30,6 +30,7 @@ MAX_ARTICLE_BYTES = 40 * 1024 * 1024
 MAX_INTERPRETATION_EVENT_BYTES = 512 * 1024
 MAX_INTERPRETATION_STREAM_PROMPTS = 12
 MAX_INTERPRETATION_SYNC_LIMIT = 3
+_INTERPRETATION_SYNC_SCAN_CURSOR_KEY = "article-target-sync:v1:candidate-scan:china"
 _TERMINAL_TASK_STATES = {"completed", "error", "stopped"}
 _DATE_FACT_SEMANTICS = {
     "publication_date": "publication",
@@ -3073,18 +3074,59 @@ def list_article_interpretation_sync_candidates(
     database = _article_interpretation_database(runtime)
     from ai_actuarial.postgres import PostgresConnection
 
-    connection = PostgresConnection(database, read_only=True)
+    connection = PostgresConnection(database)
     drafts: list[dict[str, Any]] = []
     issues: list[dict[str, Any]] = []
     more_pending = False
     offset = 0
+    scan_cursor = None
+    cursor_row = None
+    last_candidate_position = None
     try:
+        connection.execute("BEGIN")
+        connection.execute(
+            "SELECT pg_advisory_xact_lock(hashtextextended(?,0))",
+            ("article-target-sync:candidate-scan:china",),
+        )
+        cursor_row = connection.execute(
+            "SELECT receipt_json FROM article_interpretation_rounds WHERE round_key=?",
+            (_INTERPRETATION_SYNC_SCAN_CURSOR_KEY,),
+        ).fetchone()
+        if cursor_row:
+            scan_cursor = dict(cursor_row[0])
+            if (
+                scan_cursor.get("receipt_type") != "target_sync_scan"
+                or scan_cursor.get("target") != "china"
+                or not isinstance(scan_cursor.get("last_created_at"), str)
+                or not isinstance(scan_cursor.get("last_interpretation_id"), str)
+                or not scan_cursor["last_interpretation_id"].strip()
+            ):
+                raise _InterpretationTargetFailure("sync_candidate_cursor_invalid")
+            try:
+                datetime.fromisoformat(scan_cursor["last_created_at"])
+            except ValueError:
+                raise _InterpretationTargetFailure("sync_candidate_cursor_invalid") from None
         while True:
-            page = connection.execute(
-                "SELECT payload_json FROM article_interpretations WHERE status='ready' "
-                "ORDER BY created_at ASC, interpretation_id ASC LIMIT 100 OFFSET ?",
-                (offset,),
-            ).fetchall()
+            if scan_cursor:
+                page = connection.execute(
+                    "SELECT payload_json, created_at, interpretation_id "
+                    "FROM article_interpretations WHERE status='ready' "
+                    "ORDER BY CASE WHEN (created_at, interpretation_id) > (?, ?) "
+                    "THEN 0 ELSE 1 END, created_at ASC, interpretation_id ASC "
+                    "LIMIT 100 OFFSET ?",
+                    (
+                        scan_cursor["last_created_at"],
+                        scan_cursor["last_interpretation_id"],
+                        offset,
+                    ),
+                ).fetchall()
+            else:
+                page = connection.execute(
+                    "SELECT payload_json, created_at, interpretation_id "
+                    "FROM article_interpretations WHERE status='ready' "
+                    "ORDER BY created_at ASC, interpretation_id ASC LIMIT 100 OFFSET ?",
+                    (offset,),
+                ).fetchall()
             if not page:
                 break
             for row in page:
@@ -3230,9 +3272,38 @@ def list_article_interpretation_sync_candidates(
                         "targets": targets,
                     }
                 )
+                created_at = row[1]
+                last_candidate_position = {
+                    "last_created_at": (
+                        created_at.isoformat()
+                        if hasattr(created_at, "isoformat")
+                        else str(created_at)
+                    ),
+                    "last_interpretation_id": identity["interpretation_id"],
+                }
             if more_pending or len(page) < 100:
                 break
             offset += len(page)
+        if last_candidate_position:
+            next_cursor = {
+                "receipt_type": "target_sync_scan",
+                "target": "china",
+                **last_candidate_position,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+            if cursor_row:
+                connection.execute(
+                    "UPDATE article_interpretation_rounds SET receipt_json=?::jsonb "
+                    "WHERE round_key=?",
+                    (_canonical_json(next_cursor), _INTERPRETATION_SYNC_SCAN_CURSOR_KEY),
+                )
+            else:
+                connection.execute(
+                    "INSERT INTO article_interpretation_rounds(round_key,receipt_json) "
+                    "VALUES (?,?::jsonb)",
+                    (_INTERPRETATION_SYNC_SCAN_CURSOR_KEY, _canonical_json(next_cursor)),
+                )
+        connection.commit()
         return {
             "schema_version": 1,
             "operation": "list_article_interpretation_sync_candidates",
@@ -3242,6 +3313,9 @@ def list_article_interpretation_sync_candidates(
             "issues": issues,
             "more_pending": more_pending,
         }
+    except Exception:
+        connection.rollback()
+        raise
     finally:
         connection.close()
 
