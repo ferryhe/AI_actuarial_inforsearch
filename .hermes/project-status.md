@@ -12,6 +12,24 @@
 - 扫描游标与生成 receipt/source cursor 分开；候选列表只写该专用位置，不改 draft、ACK、生成预算或游标，也不调用 generator。已 ACK locale 的跳过行为由现有同步路径保留。
 - 隔离红测：旧实现连续两次均只返回 failed-0/1/2，不含 new-pending。修复后聚焦候选和未 ACK 目标重试回归 6 passed；Black、Ruff、py_compile 与 git diff --check 通过。未运行真实生成、生产或目标操作，未改排程；Copilot thread disposition 未更改。精确 snapshot manifest patch SHA 69c7f46c581042f1c2cac7d2b6e8d5ad8c4ae97f3499a73cb408d19b61c9e144 获得 fresh Sol/high review 18 PASS（累计 changes-requested cycles 13）；TypeSafe Judge 记录见 reports/local-interpretation-migration-20261102/controller-supplemental17-target-sync-cursor-judge.json。
 
+### Issue #450 最新 main 整合 — 2026-11-03
+
+- 已将 origin/main 的 #441 squash SHA 5a62b7da563dcecc1b74bd4e99902514e98b209b 普通合并；唯一真实冲突为 project-status 文档，保留 #450 与 #441 两侧记录。runtime 与 runtime tests 自动合并，引入已在 main 的 SOA 失效 seed/frontier 修复；无代码冲突。
+- article_interpretation_english.py、article_interpretations.py、codex_environment.py、storage.py 四个 receiver 模块，以及 local_collection_target_worker.py 的 Git blob 均与合并前相同；本次未改变 receiver overlay 与 AC-3 修复。
+- 隔离测试：runtime、ArticleInterpretationService、英文后续步骤和 target worker 四个测试文件共 451 passed、2 skipped（本机缺少 pg_dump/pg_restore；Linux-only process-group 测试在 Windows 跳过）。仅使用新建 loopback PG16 测试容器、mock 和 fixtures；测试后删除容器 05fc5031d846ef58717d58ab8b47d0ab0549249f06ff21e78d0917608f235b33 与匿名卷 062b7d5f1626816636d3f34f9d382870bc2104e5175cba0286db98ad9c9ce6ef，精确 inspect 确认两者不存在；Black、Ruff、py_compile、git diff --check 通过。
+- Review impact: none for #450 behavior；仅吸收已进入 main 的 #441 SOA 修复。累计 review 18、changes-requested cycles 13 保持不变；未发起新 review/Judge。未运行真实模型生成、生产/目标读写、部署或排程操作；merge 暂未 commit/push，交由 controller 复核。
+
+# PR #441 合并 main 冲突整理 — 2026-11-03
+
+- 用户要求优先处理既有 PR #441；沿用干净的 fix/soa-obsolete-seed 独立工作树，原仓库未提交内容和 #450 工作树保持原样。
+- 当前 main dcad36c 的业务代码自动合并，仅项目状态文档冲突；保留双方全部记录。SOA 原有修复及独立审查记录保留；合并后完整 runtime 84/84、Black/isort/Ruff、diff 检查通过，使用独立临时 PostgreSQL；等待新 HEAD CI。没有启动真实采集、写 Hub/目标、部署或更改排程。
+
+# 当前候选 — SOA 失效 seed 修复 — 2026-10-31
+
+- 项目 `AI_actuarial_inforsearch`；工作树 `C:/Users/ferry/.codex/worktrees/soa-seed-repair/AI_actuarial_inforsearch`，分支 `fix/soa-obsolete-seed`。仅本仓库：删除已确认 404 的 SOA `/research/soa-research/` registry seed；保存 frontier 修补升级至 `frontier_repair_soa_v2`，从 queue/retry_queue 移除该 URL，并保留 cursor、其他有效 frontier、文章记录及有效重试。
+- 参数化 frontier 修补测试 3/3 PASS（CCA、France、SOA；SOA 用例覆盖既有 v1 marker）；Black、isort、Ruff、py_compile 与 `git diff --check` PASS。
+- 仅运行离线测试和代码检查；未运行 SOA 真实采集，未写生产状态、回执、Hub 或目标。Case 仍待修复部署后的普通来源重跑，不能据此声称恢复。未提交或推送；交由 controller fresh review。
+
 # PR #446 合入 main 准备 — 2026-11-01
 
 - 用户已授权核对评论修复、安全性及冲突后合并 #446。合并目标已由 #444 开发分支调整到 main；隔离工作树位于本仓库 .codex-worktrees/pr-446-main-integration，分支 codex/pr-446-main-integration，从最新 main c9ce6ac 建立，未修改外部英文开发工作树或原始脏工作树。
