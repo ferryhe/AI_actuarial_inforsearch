@@ -14,7 +14,10 @@ from typing import Any
 import psycopg2
 
 from ai_actuarial import content_hub
-from ai_actuarial.source_registry import normalize_aict_institution_text
+from ai_actuarial.source_registry import (
+    normalize_aict_institution_payload,
+    normalize_aict_institution_text,
+)
 from ai_actuarial.storage import Storage
 
 _TEXT_FIELDS = ("title", "keywords", "keywords_json", "category", "summary", "markdown_content")
@@ -28,13 +31,47 @@ def normalize_article_text(value: str) -> str:
 
 
 def _normalize_value(value: Any) -> Any:
-    if isinstance(value, str):
-        return normalize_article_text(value)
-    if isinstance(value, list):
-        return [_normalize_value(item) for item in value]
-    if isinstance(value, dict):
-        return {key: _normalize_value(item) for key, item in value.items()}
-    return value
+    return normalize_aict_institution_payload(value)
+
+
+def _legacy_copy_proof(version: dict[str, Any]) -> dict[str, Any]:
+    annotation = version.get("annotation")
+    bilingual = version.get("bilingual_metadata")
+    if not isinstance(annotation, dict) or not isinstance(bilingual, dict):
+        raise content_hub.ContentHubError("Selected legacy annotation lacks its bilingual binding")
+    old_annotation = {
+        "categories": annotation.get("categories"),
+        "date_facts": annotation.get("date_facts"),
+        "date_review_status": annotation.get("date_review_status"),
+        "date_review_reason": annotation.get("date_review_reason"),
+        "date_review_unresolved": annotation.get("date_review_unresolved"),
+    }
+    variant_id = version.get("markdown_text_variant_id")
+    hub_markdown_sha = version.get("hub_markdown_sha256")
+    return {
+        "source_text_variant_id": variant_id,
+        "markdown_sha256": version.get("markdown_sha256"),
+        "hub_markdown_sha256": hub_markdown_sha,
+        "hub_markdown_sha256_kind": version.get("hub_markdown_sha256_kind"),
+        "source_signature": annotation.get("source_signature"),
+        "result_sha256": annotation.get("result_sha256"),
+        "source_primary_category": annotation.get("source_primary_category"),
+        "annotation": old_annotation,
+        "bilingual_metadata": bilingual,
+        "bilingual_payload_sha256": content_hub._legacy_bilingual_payload_sha256(
+            variant_id, hub_markdown_sha, bilingual
+        ),
+    }
+
+
+def _assert_exact_name_only_annotation_correction(item: dict[str, Any]) -> None:
+    version = item["version"]
+    if normalize_article_text(version.get("markdown")) != item["fields"].get("markdown_content"):
+        raise content_hub.ContentHubError("Correction Markdown contains non-name changes")
+    if _normalize_value(version.get("bilingual_metadata") or {}) != item["bilingual_metadata"]:
+        raise content_hub.ContentHubError("Correction bilingual data contains non-name changes")
+    if _normalize_value(version.get("annotation")) != item["annotation"]:
+        raise content_hub.ContentHubError("Correction annotation contains non-name changes")
 
 
 def _json_value(value: Any) -> Any:
@@ -510,6 +547,80 @@ def _new_markdown_variant_id(
         connection.close()
 
 
+def _preflight_selected_annotations(
+    plan: list[dict[str, Any]], database_url: str, schema: str
+) -> dict[str, Any]:
+    result = {
+        "annotation_bound_versions": 0,
+        "legacy_empty_primary_versions": 0,
+        "binding_kind_counts": {"raw_utf8": 0, "json_payload_utf8": 0},
+    }
+    for item in plan:
+        version = item["version"]
+        annotation = item["annotation"]
+        if annotation is None:
+            if version.get("annotation") is not None:
+                raise content_hub.ContentHubError(
+                    "Unannotated correction unexpectedly has a selected annotation"
+                )
+            continue
+        result["annotation_bound_versions"] += 1
+        _assert_exact_name_only_annotation_correction(item)
+        markdown = item["fields"].get("markdown_content")
+        if not isinstance(markdown, str) or not markdown.strip():
+            raise content_hub.ContentHubError("Annotated correction has no selected Markdown")
+        categories = annotation.get("categories")
+        has_empty_primary = (
+            isinstance(categories, list)
+            and bool(categories)
+            and isinstance(categories[0], dict)
+            and categories[0].get("evidence") == []
+        )
+        common = {
+            "content_version_id": item["content_version_id"],
+            "markdown": markdown,
+            "primary_category": annotation["source_primary_category"],
+            "bilingual_metadata": item["bilingual_metadata"],
+            "categories": categories,
+            "date_facts": annotation["date_facts"],
+            "date_review_status": annotation["date_review_status"],
+            "date_review_reason": annotation.get("date_review_reason"),
+            "date_review_unresolved": annotation.get("date_review_unresolved"),
+            "recipe": _CORRECTION_RECIPE,
+            "run_id": f"aict-name-correction-preflight-{item['content_version_id']}",
+            "database_url": database_url,
+            "schema": schema,
+        }
+        if has_empty_primary:
+            proof = _legacy_copy_proof(version)
+            validated = content_hub._preflight_legacy_name_correction_copy(
+                **common,
+                legacy_copy_proof=proof,
+            )
+            result["legacy_empty_primary_versions"] += 1
+            binding_kind = validated["hub_markdown_sha256_kind"]
+            result["binding_kind_counts"][binding_kind] += 1
+        else:
+            normalized = content_hub._normalize_live_enrichment_payload(
+                primary_category=common["primary_category"],
+                bilingual_metadata=common["bilingual_metadata"],
+                categories=common["categories"],
+                date_facts=common["date_facts"],
+                date_review_status=common["date_review_status"],
+                date_review_reason=common["date_review_reason"],
+                date_review_unresolved=common["date_review_unresolved"],
+                recipe=common["recipe"],
+                run_id=common["run_id"],
+            )
+            content_hub._validate_enrichment_markdown(
+                markdown,
+                categories=normalized["categories"],
+                date_facts=normalized["date_facts"],
+                date_review_unresolved=normalized["date_review_unresolved"],
+            )
+    return result
+
+
 def run_correction(
     database_url: str,
     data_root: str | Path,
@@ -536,6 +647,7 @@ def run_correction(
         "selected_versions_to_correct": len(plan),
         "records": [],
     }
+    report["annotation_preflight"] = _preflight_selected_annotations(plan, database_url, schema)
     if not apply:
         report["records"] = [
             {
@@ -598,6 +710,12 @@ def run_correction(
                 variant_id = _new_markdown_variant_id(
                     database_url, schema, source_name, item["content_version_id"]
                 )
+                categories = item["annotation"]["categories"]
+                legacy_copy_proof = (
+                    _legacy_copy_proof(item["version"])
+                    if categories and categories[0].get("evidence") == []
+                    else None
+                )
                 saved = content_hub.save_live_enrichment(
                     content_version_id=item["content_version_id"],
                     markdown_text_variant_id=variant_id,
@@ -613,6 +731,7 @@ def run_correction(
                     run_id=f"aict-name-correction-{item['content_version_id']}-{source_name.rsplit('_', 1)[-1]}",
                     database_url=database_url,
                     schema=schema,
+                    _legacy_copy_proof=legacy_copy_proof,
                 )
             else:
                 variant_id = None

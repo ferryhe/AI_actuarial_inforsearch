@@ -1,3 +1,10 @@
+## AICT 旧绑定兼容修正已独立过审 — 2026-11-03
+
+- 分支 `fix/aict-chinese-taibei`，PR #453。增加受旧绑定证明保护的确定性名称复制路径，普通新富信息仍严格要求证据；复用已有原子写入与哈希逻辑。保留64份历史注释的空首类证据，不补造引文；旧Markdown的原始/JSON绑定、结果哈希和中英文内容哈希均核验后才重绑。旧source_signature沿用原九字段导入算法的已固定值核对，不误用新四字段公式重算；新绑定按现有新公式签名。来源、日期、分类、原始CAS、删除状态和非名称数据保持。
+- fresh Sol/high第10轮对四个实际变更文件PASS；183项受影响测试通过，Black/isort/Ruff/diff和Python-symbols（0 findings）通过。真实只读预检66版本/64旧绑定/2未注释全部通过，record SHA仍为3e49fd62ecfb437521a952ca7fc5bae0d10fdc6f5cb978beb851fe3c5a3cb5e3；候选清单SHA 3806ff08978a9b0dc9daf2680cd75209712d4d7791515429d05cf62c94c1bde1。原始47c7清单保留作审计。
+- 前一提交d95f0d0六项CI全部成功；这次新修正仍需新HEAD CI。正文/6条目标标签/3组Ready尚未写入。最终共享规则扫描还发现国内一份已发布历史周报需改名称，快照ID、生成时间、866项成员与统计保持；只在既有一行summary_markdown上做受备份/哈希保护的更名，不重生成或发布新周报。操作脚本与实际验收记录仍放ignored报告目录，完成后由原仓库状态记实际结果。
+- Copilot仅初发请求一次，旧书签意见已修复并解决；不重新请求，不合并PR，不改#450或其他服务/排程。名称专用运行快照在最终修正、CI及实际数据验收后才激活到原06/09任务。
+
 ## AICT historical name correction — CI symbol gate repair — 2026-11-03
 
 - Project `AI_actuarial_inforsearch`, branch `fix/aict-chinese-taibei`, PR #453. Fresh review6 passed the 12 reviewed implementation/test files. The current source commit `75319e1de87e7c17500554a52e4afe997831f9d1` failed CI only at the Python dead-code-symbol check: three new `cursor.itersize` assignments were unused because each cursor already uses `fetchmany(500)`. Removed exactly those three lines; no behavior or gate changes.

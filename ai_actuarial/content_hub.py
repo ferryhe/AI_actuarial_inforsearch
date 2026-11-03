@@ -25,6 +25,7 @@ from .postgres import DatabaseConfig
 from .source_portal_daily import daily_description, validate_daily_evidence
 from .source_registry import (
     PENDING_KEY,
+    normalize_aict_institution_payload,
     normalize_aict_institution_text,
     registry_deployed_targets,
     registry_identity,
@@ -1627,11 +1628,8 @@ def _canonical_json(value: Any) -> str:
     )
 
 
-def save_live_enrichment(
+def _normalize_live_enrichment_payload(
     *,
-    content_version_id: int,
-    markdown_text_variant_id: int,
-    markdown_sha256: str,
     primary_category: str,
     bilingual_metadata: dict[str, Any],
     categories: list[dict[str, Any]],
@@ -1641,30 +1639,25 @@ def save_live_enrichment(
     date_review_unresolved: list[dict[str, Any]],
     recipe: str,
     run_id: str,
-    database_url: DatabaseConfig | str | None = None,
-    schema: str = HUB_SCHEMA,
+    allow_empty_primary: bool = False,
 ) -> dict[str, Any]:
-    """Store complete version/hash-bound bilingual metadata and article annotations."""
-    schema = _validate_schema(schema)
-    if type(content_version_id) is not int or content_version_id < 1:
-        raise ContentHubError("content_version_id must be positive")
-    if type(markdown_text_variant_id) is not int or markdown_text_variant_id < 1:
-        raise ContentHubError("markdown_text_variant_id must be positive")
-    if not _HASH_RE.fullmatch(str(markdown_sha256)):
-        raise ContentHubError("Markdown SHA-256 is malformed")
+    """Validate enrichment values before either preflight or writer execution."""
     if primary_category not in APPROVED_CATEGORY_KEYS:
         raise ContentHubError("Primary category is outside the approved taxonomy")
     if not isinstance(categories, list) or not 1 <= len(categories) <= 4:
         raise ContentHubError("Enrichment must include one to four ordered categories")
     normalized_categories = []
     seen_categories: set[str] = set()
-    for category in categories:
+    for index, category in enumerate(categories):
         if not isinstance(category, dict):
             raise ContentHubError("Enrichment category is malformed")
         key, evidence = category.get("key"), category.get("evidence")
         if key not in APPROVED_CATEGORY_KEYS or key in seen_categories:
             raise ContentHubError("Enrichment category key is invalid or repeated")
-        if (
+        legacy_empty_primary = (
+            allow_empty_primary and index == 0 and key == primary_category and evidence == []
+        )
+        if not legacy_empty_primary and (
             not isinstance(evidence, list)
             or not 1 <= len(evidence) <= 3
             or any(not isinstance(item, str) or not item.strip() for item in evidence)
@@ -1674,6 +1667,8 @@ def save_live_enrichment(
         normalized_categories.append({"key": key, "evidence": evidence})
     if normalized_categories[0]["key"] != primary_category:
         raise ContentHubError("Ordered enrichment categories must preserve the bilingual primary")
+    if allow_empty_primary and normalized_categories[0]["evidence"] != []:
+        raise ContentHubError("Legacy name correction requires an empty primary evidence array")
     if not isinstance(bilingual_metadata, dict) or set(bilingual_metadata) != {"zh", "en"}:
         raise ContentHubError("Bilingual metadata must include exactly zh and en packages")
     normalized_bilingual: dict[str, dict[str, Any]] = {}
@@ -1693,17 +1688,20 @@ def save_live_enrichment(
             or category != primary_category
             or not isinstance(keywords, list)
             or not any(isinstance(word, str) and word.strip() for word in keywords)
+            or (allow_empty_primary and any(not isinstance(word, str) for word in keywords))
         ):
             raise ContentHubError(
                 "Bilingual metadata is incomplete or disagrees on primary category"
             )
         normalized_bilingual[language] = {
-            "title": title.strip(),
-            "summary": summary.strip(),
+            "title": title if allow_empty_primary else title.strip(),
+            "summary": summary if allow_empty_primary else summary.strip(),
             "category": category,
-            "keywords": [
-                word.strip() for word in keywords if isinstance(word, str) and word.strip()
-            ],
+            "keywords": (
+                list(keywords)
+                if allow_empty_primary
+                else [word.strip() for word in keywords if isinstance(word, str) and word.strip()]
+            ),
         }
     if not isinstance(date_facts, dict) or set(date_facts) != set(DATE_FIELDS):
         raise ContentHubError("Date facts must have the three approved semantic fields")
@@ -1740,7 +1738,7 @@ def save_live_enrichment(
             "precision": precision,
             "semantic": semantic,
             "evidence": evidence,
-            "location": location.strip(),
+            "location": location if allow_empty_primary else location.strip(),
         }
     if date_review_status not in {"complete", "candidate_limit_gap", "unsupported_format_gap"}:
         raise ContentHubError("Date review status is invalid")
@@ -1757,6 +1755,392 @@ def save_live_enrichment(
         or not run_id.strip()
     ):
         raise ContentHubError("Enrichment recipe and run id are required")
+    return {
+        "categories": normalized_categories,
+        "bilingual_metadata": normalized_bilingual,
+        "date_facts": normalized_dates,
+        "date_review_status": date_review_status,
+        "date_review_reason": date_review_reason,
+        "date_review_unresolved": date_review_unresolved,
+    }
+
+
+def _validate_enrichment_markdown(
+    markdown: Any,
+    *,
+    categories: list[dict[str, Any]],
+    date_facts: dict[str, Any],
+    date_review_unresolved: list[dict[str, Any]],
+) -> None:
+    if not isinstance(markdown, str) or not markdown.strip():
+        raise ContentHubError("Enrichment Markdown is missing")
+    if any(quote not in markdown for item in categories for quote in item["evidence"]):
+        raise ContentHubError("Category evidence is not an exact Markdown quote")
+    if any(fact and fact["evidence"] not in markdown for fact in date_facts.values()):
+        raise ContentHubError("Date evidence is not an exact Markdown quote")
+    for unresolved in date_review_unresolved:
+        if (
+            not isinstance(unresolved, dict)
+            or unresolved.get("field") not in DATE_FIELDS
+            or not isinstance(unresolved.get("evidence"), str)
+            or unresolved["evidence"] not in markdown
+        ):
+            raise ContentHubError("Unresolved date evidence is not bound to the Markdown")
+
+
+def _legacy_bilingual_payload_sha256(
+    variant_id: int, binding_sha256: str, bilingual_metadata: dict[str, Any]
+) -> str:
+    payload = {
+        "markdown_text_variant_id": variant_id,
+        "markdown_sha256": binding_sha256,
+        "bilingual_metadata": bilingual_metadata,
+    }
+    return hashlib.sha256(_canonical_json(payload).encode("utf-8")).hexdigest()
+
+
+def _verify_legacy_name_copy_proof(
+    cursor: Any,
+    *,
+    content_version_id: int,
+    new_variant_id: int | None,
+    new_markdown: str,
+    primary_category: str,
+    bilingual_metadata: dict[str, Any],
+    categories: list[dict[str, Any]],
+    date_facts: dict[str, Any],
+    date_review_status: str,
+    date_review_reason: str | None,
+    date_review_unresolved: list[dict[str, Any]],
+    proof: dict[str, Any],
+    for_update: bool,
+) -> dict[str, Any]:
+    proof_fields = {
+        "source_text_variant_id",
+        "markdown_sha256",
+        "hub_markdown_sha256",
+        "hub_markdown_sha256_kind",
+        "source_signature",
+        "result_sha256",
+        "source_primary_category",
+        "annotation",
+        "bilingual_metadata",
+        "bilingual_payload_sha256",
+    }
+    if not isinstance(proof, dict) or set(proof) != proof_fields:
+        raise ContentHubError("Legacy name-copy binding proof is malformed")
+    old_variant_id = proof.get("source_text_variant_id")
+    old_markdown_sha = str(proof.get("markdown_sha256") or "").strip().lower()
+    old_hub_sha = str(proof.get("hub_markdown_sha256") or "").strip().lower()
+    old_sig = str(proof.get("source_signature") or "").strip().lower()
+    old_result_sha = str(proof.get("result_sha256") or "").strip().lower()
+    old_bilingual_sha = str(proof.get("bilingual_payload_sha256") or "").strip().lower()
+    if (
+        type(old_variant_id) is not int
+        or old_variant_id < 1
+        or type(new_variant_id) is int
+        and new_variant_id == old_variant_id
+        or not all(
+            _HASH_RE.fullmatch(value)
+            for value in (old_markdown_sha, old_hub_sha, old_sig, old_result_sha, old_bilingual_sha)
+        )
+        or proof.get("hub_markdown_sha256_kind") not in {"raw_utf8", "json_payload_utf8"}
+    ):
+        raise ContentHubError("Legacy name-copy binding proof identity is malformed")
+    if proof.get("source_primary_category") != primary_category:
+        raise ContentHubError("Legacy name-copy primary category changed")
+
+    suffix = " FOR UPDATE" if for_update else ""
+    cursor.execute(
+        "SELECT source_text_variant_id, source_markdown_sha256, source_primary_category, "
+        "categories_json, date_facts_json, date_review_status, date_review_reason, "
+        "date_review_unresolved_json, source_signature, result_sha256 "
+        "FROM article_enrichment_annotations WHERE content_version_id=%s" + suffix,
+        (content_version_id,),
+    )
+    row = cursor.fetchone()
+    if row is None:
+        raise ContentHubError("Legacy name-copy requires an existing Hub annotation")
+    (
+        stored_variant_id,
+        stored_hub_sha,
+        stored_primary,
+        stored_categories,
+        stored_dates,
+        stored_review_status,
+        stored_review_reason,
+        stored_unresolved,
+        stored_source_signature,
+        stored_result_sha,
+    ) = row
+    stored_categories = (
+        stored_categories if isinstance(stored_categories, list) else _load_json(stored_categories)
+    )
+    stored_dates = stored_dates if isinstance(stored_dates, dict) else _load_json(stored_dates)
+    stored_unresolved = (
+        stored_unresolved if isinstance(stored_unresolved, list) else _load_json(stored_unresolved)
+    )
+    old_annotation = {
+        "categories": stored_categories,
+        "date_facts": stored_dates,
+        "date_review_status": stored_review_status,
+        "date_review_reason": stored_review_reason,
+        "date_review_unresolved": stored_unresolved,
+    }
+    if (
+        int(stored_variant_id) != old_variant_id
+        or str(stored_hub_sha).strip().lower() != old_hub_sha
+        or str(stored_primary) != proof.get("source_primary_category")
+        or str(stored_source_signature).strip().lower() != old_sig
+        or str(stored_result_sha).strip().lower() != old_result_sha
+        or old_annotation != proof.get("annotation")
+    ):
+        raise ContentHubError("Legacy name-copy annotation changed after planning")
+    recalculated_result_sha = hashlib.sha256(
+        _canonical_json(old_annotation).encode("utf-8")
+    ).hexdigest()
+    if recalculated_result_sha != old_result_sha:
+        raise ContentHubError("Legacy name-copy result digest does not verify")
+
+    cursor.execute(
+        "SELECT payload_value_json, payload_is_null, payload_sha256 FROM text_variants "
+        "WHERE text_variant_id=%s AND content_version_id=%s "
+        "AND field_name='markdown_content'" + suffix,
+        (old_variant_id, content_version_id),
+    )
+    markdown_row = cursor.fetchone()
+    if markdown_row is None or bool(markdown_row[1]):
+        raise ContentHubError("Legacy name-copy Markdown variant is missing")
+    old_markdown = _load_json(markdown_row[0])
+    old_raw_sha, binding_kind = _verify_hub_markdown_binding(
+        old_markdown, markdown_row[0], markdown_row[2], stored_hub_sha
+    )
+    if old_raw_sha != old_markdown_sha or binding_kind != proof.get("hub_markdown_sha256_kind"):
+        raise ContentHubError("Legacy name-copy Markdown binding changed after planning")
+
+    old_source_signature = str(stored_source_signature).strip().lower()
+    if not _HASH_RE.fullmatch(old_source_signature):
+        raise ContentHubError("Legacy name-copy source signature is malformed")
+    if not isinstance(stored_categories, list) or not 1 <= len(stored_categories) <= 4:
+        raise ContentHubError("Legacy name-copy categories are malformed")
+    if (
+        not isinstance(stored_categories[0], dict)
+        or stored_categories[0].get("key") != stored_primary
+        or stored_categories[0].get("evidence") != []
+    ):
+        raise ContentHubError("Legacy name-copy requires exactly an empty primary evidence array")
+    seen_categories: set[str] = set()
+    for index, item in enumerate(stored_categories):
+        if not isinstance(item, dict):
+            raise ContentHubError("Legacy name-copy category is malformed")
+        key, evidence = item.get("key"), item.get("evidence")
+        if key not in APPROVED_CATEGORY_KEYS or key in seen_categories:
+            raise ContentHubError("Legacy name-copy category key is invalid")
+        seen_categories.add(key)
+        if index == 0:
+            if evidence != []:
+                raise ContentHubError("Legacy name-copy primary evidence is not empty")
+        elif (
+            not isinstance(evidence, list)
+            or not 1 <= len(evidence) <= 3
+            or any(
+                not isinstance(quote, str) or not quote.strip() or quote not in old_markdown
+                for quote in evidence
+            )
+        ):
+            raise ContentHubError("Legacy name-copy secondary evidence is invalid")
+    if not isinstance(stored_dates, dict) or set(stored_dates) != set(DATE_FIELDS):
+        raise ContentHubError("Legacy name-copy date facts are malformed")
+    for fact in stored_dates.values():
+        if fact is not None and (
+            not isinstance(fact, dict)
+            or not isinstance(fact.get("evidence"), str)
+            or fact["evidence"] not in old_markdown
+        ):
+            raise ContentHubError("Legacy name-copy date quote is not exact")
+    if not isinstance(stored_unresolved, list) or any(
+        not isinstance(item, dict)
+        or item.get("field") not in DATE_FIELDS
+        or not isinstance(item.get("evidence"), str)
+        or item["evidence"] not in old_markdown
+        for item in stored_unresolved
+    ):
+        raise ContentHubError("Legacy name-copy unresolved date quote is not exact")
+
+    cursor.execute(
+        "SELECT language_code, markdown_text_variant_id, markdown_sha256, title, summary, "
+        "category, keywords_json FROM bilingual_metadata WHERE content_version_id=%s "
+        "ORDER BY language_code" + (" FOR UPDATE" if for_update else ""),
+        (content_version_id,),
+    )
+    old_bilingual: dict[str, dict[str, Any]] = {}
+    for language, variant_id, binding_sha, title, summary, category, keywords in cursor.fetchall():
+        if (
+            language in old_bilingual
+            or int(variant_id) != old_variant_id
+            or str(binding_sha).strip().lower() != old_hub_sha
+        ):
+            raise ContentHubError("Legacy name-copy bilingual Markdown binding changed")
+        if not isinstance(keywords, list):
+            keywords = _load_json(keywords)
+        old_bilingual[str(language)] = {
+            "title": title,
+            "summary": summary,
+            "category": category,
+            "keywords": keywords,
+        }
+    if set(old_bilingual) != {"zh", "en"} or old_bilingual != proof.get("bilingual_metadata"):
+        raise ContentHubError("Legacy name-copy bilingual values changed after planning")
+    for package in old_bilingual.values():
+        if (
+            not isinstance(package.get("title"), str)
+            or not package["title"].strip()
+            or not isinstance(package.get("summary"), str)
+            or not package["summary"].strip()
+            or package.get("category") != stored_primary
+            or not isinstance(package.get("keywords"), list)
+            or not any(isinstance(word, str) and word.strip() for word in package["keywords"])
+        ):
+            raise ContentHubError("Legacy name-copy bilingual metadata is incomplete")
+    if (
+        _legacy_bilingual_payload_sha256(old_variant_id, old_hub_sha, old_bilingual)
+        != old_bilingual_sha
+    ):
+        raise ContentHubError("Legacy name-copy bilingual payload digest does not verify")
+
+    if normalize_aict_institution_text(old_markdown) != new_markdown:
+        raise ContentHubError("Legacy name-copy Markdown contains changes beyond institution names")
+    if normalize_aict_institution_payload(old_bilingual) != bilingual_metadata:
+        raise ContentHubError("Legacy name-copy bilingual values contain non-name changes")
+    old_annotation_payload = {
+        **old_annotation,
+        "source_primary_category": stored_primary,
+    }
+    new_annotation_payload = {
+        "categories": categories,
+        "date_facts": date_facts,
+        "date_review_status": date_review_status,
+        "date_review_reason": date_review_reason,
+        "date_review_unresolved": date_review_unresolved,
+        "source_primary_category": primary_category,
+    }
+    if normalize_aict_institution_payload(old_annotation_payload) != new_annotation_payload:
+        raise ContentHubError("Legacy name-copy annotation contains non-name changes")
+    return {
+        "source_text_variant_id": old_variant_id,
+        "hub_markdown_sha256": old_hub_sha,
+        "hub_markdown_sha256_kind": binding_kind,
+        "source_signature": old_source_signature,
+        "result_sha256": old_result_sha,
+    }
+
+
+def _preflight_legacy_name_correction_copy(
+    *,
+    content_version_id: int,
+    markdown: str,
+    primary_category: str,
+    bilingual_metadata: dict[str, Any],
+    categories: list[dict[str, Any]],
+    date_facts: dict[str, Any],
+    date_review_status: str,
+    date_review_reason: str | None,
+    date_review_unresolved: list[dict[str, Any]],
+    recipe: str,
+    run_id: str,
+    legacy_copy_proof: dict[str, Any],
+    database_url: DatabaseConfig | str | None = None,
+    schema: str = HUB_SCHEMA,
+) -> dict[str, Any]:
+    """Read-only validation of one proof-carrying historical name-only rebind."""
+    schema = _validate_schema(schema)
+    normalized = _normalize_live_enrichment_payload(
+        primary_category=primary_category,
+        bilingual_metadata=bilingual_metadata,
+        categories=categories,
+        date_facts=date_facts,
+        date_review_status=date_review_status,
+        date_review_reason=date_review_reason,
+        date_review_unresolved=date_review_unresolved,
+        recipe=recipe,
+        run_id=run_id,
+        allow_empty_primary=True,
+    )
+    _validate_enrichment_markdown(
+        markdown,
+        categories=normalized["categories"],
+        date_facts=normalized["date_facts"],
+        date_review_unresolved=normalized["date_review_unresolved"],
+    )
+    connection = _connect(database_url)
+    connection.set_session(readonly=True)
+    try:
+        with connection.cursor() as cursor:
+            _require_current_schema(cursor, schema)
+            result = _verify_legacy_name_copy_proof(
+                cursor,
+                content_version_id=content_version_id,
+                new_variant_id=None,
+                new_markdown=markdown,
+                primary_category=primary_category,
+                bilingual_metadata=normalized["bilingual_metadata"],
+                categories=normalized["categories"],
+                date_facts=normalized["date_facts"],
+                date_review_status=normalized["date_review_status"],
+                date_review_reason=normalized["date_review_reason"],
+                date_review_unresolved=normalized["date_review_unresolved"],
+                proof=legacy_copy_proof,
+                for_update=False,
+            )
+        return {"success": True, **result}
+    except psycopg2.Error as exc:
+        raise ContentHubError("Legacy name-copy read-only preflight failed") from exc
+    finally:
+        connection.close()
+
+
+def save_live_enrichment(
+    *,
+    content_version_id: int,
+    markdown_text_variant_id: int,
+    markdown_sha256: str,
+    primary_category: str,
+    bilingual_metadata: dict[str, Any],
+    categories: list[dict[str, Any]],
+    date_facts: dict[str, Any],
+    date_review_status: str,
+    date_review_reason: str | None,
+    date_review_unresolved: list[dict[str, Any]],
+    recipe: str,
+    run_id: str,
+    database_url: DatabaseConfig | str | None = None,
+    schema: str = HUB_SCHEMA,
+    _legacy_copy_proof: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Store complete version/hash-bound bilingual metadata and article annotations."""
+    schema = _validate_schema(schema)
+    if type(content_version_id) is not int or content_version_id < 1:
+        raise ContentHubError("content_version_id must be positive")
+    if type(markdown_text_variant_id) is not int or markdown_text_variant_id < 1:
+        raise ContentHubError("markdown_text_variant_id must be positive")
+    if not _HASH_RE.fullmatch(str(markdown_sha256)):
+        raise ContentHubError("Markdown SHA-256 is malformed")
+    normalized = _normalize_live_enrichment_payload(
+        primary_category=primary_category,
+        bilingual_metadata=bilingual_metadata,
+        categories=categories,
+        date_facts=date_facts,
+        date_review_status=date_review_status,
+        date_review_reason=date_review_reason,
+        date_review_unresolved=date_review_unresolved,
+        recipe=recipe,
+        run_id=run_id,
+        allow_empty_primary=_legacy_copy_proof is not None,
+    )
+    normalized_categories = normalized["categories"]
+    normalized_bilingual = normalized["bilingual_metadata"]
+    normalized_dates = normalized["date_facts"]
+    date_review_unresolved = normalized["date_review_unresolved"]
     connection = _connect(database_url)
     try:
         with connection.cursor() as cursor:
@@ -1782,22 +2166,12 @@ def save_live_enrichment(
                 raise ContentHubError(
                     "Enrichment Markdown digest does not match the stored variant"
                 )
-            if any(
-                quote not in markdown
-                for item in normalized_categories
-                for quote in item["evidence"]
-            ):
-                raise ContentHubError("Category evidence is not an exact Markdown quote")
-            if any(fact and fact["evidence"] not in markdown for fact in normalized_dates.values()):
-                raise ContentHubError("Date evidence is not an exact Markdown quote")
-            for unresolved in date_review_unresolved:
-                if (
-                    not isinstance(unresolved, dict)
-                    or unresolved.get("field") not in DATE_FIELDS
-                    or not isinstance(unresolved.get("evidence"), str)
-                    or unresolved["evidence"] not in markdown
-                ):
-                    raise ContentHubError("Unresolved date evidence is not bound to the Markdown")
+            _validate_enrichment_markdown(
+                markdown,
+                categories=normalized_categories,
+                date_facts=normalized_dates,
+                date_review_unresolved=date_review_unresolved,
+            )
 
             source_signature = hashlib.sha256(
                 _canonical_json(
@@ -1823,11 +2197,31 @@ def save_live_enrichment(
             )
             if cursor.fetchone() is None:
                 raise ContentHubError("Enrichment references an unknown content version")
+            if _legacy_copy_proof is not None:
+                _verify_legacy_name_copy_proof(
+                    cursor,
+                    content_version_id=content_version_id,
+                    new_variant_id=markdown_text_variant_id,
+                    new_markdown=markdown,
+                    primary_category=primary_category,
+                    bilingual_metadata=normalized_bilingual,
+                    categories=normalized_categories,
+                    date_facts=normalized_dates,
+                    date_review_status=date_review_status,
+                    date_review_reason=date_review_reason,
+                    date_review_unresolved=date_review_unresolved,
+                    proof=_legacy_copy_proof,
+                    for_update=True,
+                )
             for language, package in normalized_bilingual.items():
                 provenance = [
                     {
                         "recipe": recipe,
-                        "author": "Codex CLI gpt-6-luna/high",
+                        "author": (
+                            "Deterministic AICT name-only correction copy"
+                            if _legacy_copy_proof is not None
+                            else "Codex CLI gpt-6-luna/high"
+                        ),
                         "fields": ["title", "summary", "category", "keywords"],
                     }
                 ]
@@ -1838,21 +2232,23 @@ def save_live_enrichment(
                     (content_version_id, language),
                 )
                 previous = cursor.fetchone()
-                if (
-                    previous is not None
-                    and int(previous[0]) == markdown_text_variant_id
-                    and str(previous[1]).strip() == markdown_sha256
-                ):
-                    current = {
-                        "title": previous[2],
-                        "summary": previous[3],
-                        "category": previous[4],
-                        "keywords": previous[5],
-                    }
-                    current_keywords = list(current["keywords"] or [])
-                    if current == {**package, "keywords": current_keywords}:
-                        continue
-                    provenance = list(previous[6] or []) + provenance
+                if previous is not None:
+                    current_binding = (
+                        int(previous[0]) == markdown_text_variant_id
+                        and str(previous[1]).strip() == markdown_sha256
+                    )
+                    if current_binding:
+                        current = {
+                            "title": previous[2],
+                            "summary": previous[3],
+                            "category": previous[4],
+                            "keywords": previous[5],
+                        }
+                        current_keywords = list(current["keywords"] or [])
+                        if current == {**package, "keywords": current_keywords}:
+                            continue
+                    if _legacy_copy_proof is not None or current_binding:
+                        provenance = list(previous[6] or []) + provenance
                 cursor.execute(
                     "INSERT INTO bilingual_metadata (content_version_id, language_code, markdown_text_variant_id, "
                     "markdown_sha256, title, summary, category, keywords_json, provenance_json) "

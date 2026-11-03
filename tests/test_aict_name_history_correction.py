@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 from contextlib import contextmanager
@@ -12,7 +13,12 @@ import pytest
 from ai_actuarial import content_hub
 from ai_actuarial import local_collection_target_worker as target_worker
 from ai_actuarial.source_registry import install_registry, resolve_source
-from scripts.aict_name_history_correction import normalize_article_text, run_correction
+from scripts.aict_name_history_correction import (
+    _legacy_copy_proof,
+    _normalize_value,
+    normalize_article_text,
+    run_correction,
+)
 from tests.postgres_helpers import uninitialized_postgres_url_for_path
 
 
@@ -32,6 +38,144 @@ def _hub_database(tmp_path: Path) -> tuple[str, str]:
     with psycopg2.connect(database_url) as connection:
         install_registry(connection, seed, target="hub", apply=True)
     return database_url, schema
+
+
+def _legacy_copy_preflight_fixture(
+    tmp_path: Path, monkeypatch, binding_kind: str = "raw_utf8"
+) -> dict:
+    database_url, schema = _hub_database(tmp_path)
+    data_root = tmp_path / "legacy-preflight-data"
+    url = "https://en.airc.org.tw/re/files/legacy-preflight.pdf"
+    raw = b"%PDF-1.7\nLegacy proof fixture source bytes"
+    raw_sha = hashlib.sha256(raw).hexdigest()
+    old_quote = "Actuarial Institute of Chinese Taipei (AICT)"
+    old_secondary = "中華民國精算學會发布公告。"
+    markdown = f"{old_quote}\n{old_secondary}\nPublished in 2024."
+    with monkeypatch.context() as old_intake:
+        old_intake.setattr(content_hub, "normalize_aict_institution_text", lambda value: value)
+        imported = content_hub.ingest_live_article(
+            canonical_url=url,
+            source_site="aict",
+            source_page_url="https://en.airc.org.tw/re/",
+            title=old_quote,
+            raw_bytes=raw,
+            markdown=markdown,
+            content_type="application/pdf",
+            data_root=data_root,
+            database_url=database_url,
+            schema=schema,
+        )
+    bilingual = {
+        "zh": {
+            "title": "中华民国精算学会 2024 公告",
+            "summary": "中华民国精算学会发布公告。",
+            "category": "AI",
+            "keywords": ["精算", "AI"],
+        },
+        "en": {
+            "title": "Actuarial Institute of Chinese Taipei (AICT) 2024 Update",
+            "summary": "Actuarial Institute of Chinese Taipei announced this update.",
+            "category": "AI",
+            "keywords": ["actuarial", "AI"],
+        },
+    }
+    dates = {
+        "publication_date": {
+            "value": "2024",
+            "precision": "year",
+            "semantic": "publication",
+            "evidence": "Published in 2024.",
+            "location": "Article opening",
+        },
+        "revision_date": None,
+        "document_version_date": None,
+    }
+    content_hub.save_live_enrichment(
+        content_version_id=imported["content_version_id"],
+        markdown_text_variant_id=imported["markdown_text_variant_id"],
+        markdown_sha256=hashlib.sha256(markdown.encode("utf-8")).hexdigest(),
+        primary_category="AI",
+        bilingual_metadata=bilingual,
+        categories=[
+            {"key": "AI", "evidence": [old_quote]},
+            {"key": "Pricing", "evidence": [old_secondary]},
+        ],
+        date_facts=dates,
+        date_review_status="complete",
+        date_review_reason=None,
+        date_review_unresolved=[],
+        recipe="legacy-preflight-seed-v1",
+        run_id="legacy-preflight-seed",
+        database_url=database_url,
+        schema=schema,
+    )
+    legacy_categories = [
+        {"key": "AI", "evidence": []},
+        {"key": "Pricing", "evidence": [old_secondary]},
+    ]
+    legacy_annotation = {
+        "categories": legacy_categories,
+        "date_facts": dates,
+        "date_review_status": "complete",
+        "date_review_reason": None,
+        "date_review_unresolved": [],
+    }
+    result_sha = hashlib.sha256(
+        content_hub._canonical_json(legacy_annotation).encode("utf-8")
+    ).hexdigest()
+    connection = psycopg2.connect(database_url, options=f"-c search_path={schema},pg_catalog")
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT payload_sha256 FROM text_variants WHERE text_variant_id=%s",
+                (imported["markdown_text_variant_id"],),
+            )
+            json_binding = cursor.fetchone()[0]
+            binding_sha = (
+                json_binding
+                if binding_kind == "json_payload_utf8"
+                else hashlib.sha256(markdown.encode("utf-8")).hexdigest()
+            )
+            cursor.execute(
+                "UPDATE article_enrichment_annotations SET source_markdown_sha256=%s, "
+                "source_signature=%s, categories_json=%s, result_sha256=%s "
+                "WHERE content_version_id=%s",
+                (
+                    binding_sha,
+                    "a" * 64,
+                    json.dumps(legacy_categories, ensure_ascii=False),
+                    result_sha,
+                    imported["content_version_id"],
+                ),
+            )
+            cursor.execute(
+                "UPDATE bilingual_metadata SET markdown_sha256=%s WHERE content_version_id=%s",
+                (binding_sha, imported["content_version_id"]),
+            )
+        connection.commit()
+    finally:
+        connection.close()
+    version = content_hub.content_hub_read_version(url, raw_sha, database_url, schema=schema)
+    assert version is not None
+    old_annotation = version["annotation"]
+    corrected_annotation = _normalize_value(old_annotation)
+    corrected = {
+        "content_version_id": version["content_version_id"],
+        "markdown": normalize_article_text(version["markdown"]),
+        "primary_category": old_annotation["source_primary_category"],
+        "bilingual_metadata": _normalize_value(version["bilingual_metadata"]),
+        "categories": corrected_annotation["categories"],
+        "date_facts": corrected_annotation["date_facts"],
+        "date_review_status": corrected_annotation["date_review_status"],
+        "date_review_reason": corrected_annotation["date_review_reason"],
+        "date_review_unresolved": corrected_annotation["date_review_unresolved"],
+        "recipe": "aict-name-correction-v1",
+        "run_id": "legacy-preflight-correction",
+        "database_url": database_url,
+        "schema": schema,
+        "legacy_copy_proof": _legacy_copy_proof(version),
+    }
+    return {"common": corrected, "version": version, "schema": schema}
 
 
 def test_name_normalizer_handles_wrapped_whitespace_and_preserves_url_destinations() -> None:
@@ -185,11 +329,11 @@ def test_live_ingest_normalizes_derived_text_without_changing_raw_identity(tmp_p
         connection.close()
 
 
+@pytest.mark.parametrize("old_binding_kind", ["raw_utf8", "json_payload_utf8"])
 def test_historical_selected_correction_rebinds_hashes_and_is_idempotent(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, old_binding_kind: str
 ) -> None:
     # Model a live capture created before the centrally enforced naming rule.
-    monkeypatch.setattr(content_hub, "normalize_aict_institution_text", lambda value: value)
     database_url, schema = _hub_database(tmp_path)
     data_root = tmp_path / "hub-data"
     url = "https://en.airc.org.tw/re/files/name-correction.pdf"
@@ -203,18 +347,20 @@ def test_historical_selected_correction_rebinds_hashes_and_is_idempotent(
         "Published in 2024."
     )
     raw_sha = hashlib.sha256(raw).hexdigest()
-    imported = content_hub.ingest_live_article(
-        canonical_url=url,
-        source_site="aict",
-        source_page_url="https://en.airc.org.tw/re/",
-        title=old_quote,
-        raw_bytes=raw,
-        markdown=markdown,
-        content_type="application/pdf",
-        data_root=data_root,
-        database_url=database_url,
-        schema=schema,
-    )
+    with monkeypatch.context() as old_intake:
+        old_intake.setattr(content_hub, "normalize_aict_institution_text", lambda value: value)
+        imported = content_hub.ingest_live_article(
+            canonical_url=url,
+            source_site="aict",
+            source_page_url="https://en.airc.org.tw/re/",
+            title=old_quote,
+            raw_bytes=raw,
+            markdown=markdown,
+            content_type="application/pdf",
+            data_root=data_root,
+            database_url=database_url,
+            schema=schema,
+        )
     historical_source_site = "Actuarial Institute of Chinese Taipei (AICT)"
     connection = psycopg2.connect(database_url, options=f"-c search_path={schema},pg_catalog")
     try:
@@ -280,7 +426,10 @@ def test_historical_selected_correction_rebinds_hashes_and_is_idempotent(
         connection.commit()
     finally:
         connection.close()
-    old_categories = [{"key": "AI", "evidence": [old_quote]}]
+    seed_categories = [
+        {"key": "AI", "evidence": [old_quote]},
+        {"key": "Pricing", "evidence": ["中華民國精算學會（AIRC）发布公告。"]},
+    ]
     old_dates = {
         "publication_date": {
             "value": "2024",
@@ -312,7 +461,7 @@ def test_historical_selected_correction_rebinds_hashes_and_is_idempotent(
         markdown_sha256=hashlib.sha256(markdown.encode("utf-8")).hexdigest(),
         primary_category="AI",
         bilingual_metadata=old_bilingual,
-        categories=old_categories,
+        categories=seed_categories,
         date_facts=old_dates,
         date_review_status="complete",
         date_review_reason=None,
@@ -322,17 +471,78 @@ def test_historical_selected_correction_rebinds_hashes_and_is_idempotent(
         database_url=database_url,
         schema=schema,
     )
+    assert original_enrichment["success"] is True
+    legacy_categories = [
+        {"key": "AI", "evidence": []},
+        {"key": "Pricing", "evidence": ["中華民國精算學會（AIRC）发布公告。"]},
+    ]
+    legacy_annotation = {
+        "categories": legacy_categories,
+        "date_facts": old_dates,
+        "date_review_status": "complete",
+        "date_review_reason": None,
+        "date_review_unresolved": [],
+    }
+    legacy_result_sha = hashlib.sha256(
+        content_hub._canonical_json(legacy_annotation).encode("utf-8")
+    ).hexdigest()
+    connection = psycopg2.connect(database_url, options=f"-c search_path={schema},pg_catalog")
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT language_code, provenance_json FROM bilingual_metadata "
+                "WHERE content_version_id=%s ORDER BY language_code",
+                (imported["content_version_id"],),
+            )
+            old_provenance = {language: provenance for language, provenance in cursor.fetchall()}
+            cursor.execute(
+                "SELECT payload_value_json, payload_sha256 FROM text_variants "
+                "WHERE text_variant_id=%s AND field_name='markdown_content'",
+                (imported["markdown_text_variant_id"],),
+            )
+            _old_payload, old_payload_sha = cursor.fetchone()
+            old_markdown_binding = (
+                old_payload_sha
+                if old_binding_kind == "json_payload_utf8"
+                else hashlib.sha256(markdown.encode("utf-8")).hexdigest()
+            )
+            cursor.execute(
+                "UPDATE article_enrichment_annotations SET source_markdown_sha256=%s, "
+                "source_signature=%s, categories_json=%s, result_sha256=%s "
+                "WHERE content_version_id=%s",
+                (
+                    old_markdown_binding,
+                    "a" * 64,
+                    json.dumps(legacy_categories, ensure_ascii=False),
+                    legacy_result_sha,
+                    imported["content_version_id"],
+                ),
+            )
+            cursor.execute(
+                "UPDATE bilingual_metadata SET markdown_sha256=%s WHERE content_version_id=%s",
+                (old_markdown_binding, imported["content_version_id"]),
+            )
+        connection.commit()
+    finally:
+        connection.close()
     original = content_hub.content_hub_read_version(url, raw_sha, database_url, schema=schema)
     assert original is not None
     assert original["source_key"] == "aict"
     assert original["source_name_zh"] == "中华台北精算师协会"
     assert original["source_name_en"] == "Actuarial Institute Of Chinese Taibei"
+    assert original["hub_markdown_sha256_kind"] == old_binding_kind
+    assert original["annotation"]["source_signature"] == "a" * 64
+    assert original["annotation"]["categories"] == legacy_categories
+    assert original["annotation"]["result_sha256"] == legacy_result_sha
     cas_path = data_root / original["cas_relpath"]
     assert cas_path.read_bytes() == raw
     raw_sha_before = original["raw_sha256"]
 
     plan = run_correction(database_url, data_root, schema=schema)
     assert plan["selected_versions_to_correct"] == 1
+    assert plan["annotation_preflight"]["annotation_bound_versions"] == 1
+    assert plan["annotation_preflight"]["legacy_empty_primary_versions"] == 1
+    assert plan["annotation_preflight"]["binding_kind_counts"][old_binding_kind] == 1
     assert plan["records"][0]["annotation_bound"] is True
     assert plan["records"][0]["source_site_before"] == historical_source_site
     assert plan["records"][0]["source_site_after"] == "Actuarial Institute Of Chinese Taibei (AICT)"
@@ -364,19 +574,42 @@ def test_historical_selected_correction_rebinds_hashes_and_is_idempotent(
     )
     assert corrected["hub_markdown_sha256"] == corrected["markdown_sha256"]
     assert corrected["annotation"] is not None
-    assert corrected["annotation"]["source_signature"] != original_enrichment["source_signature"]
-    assert corrected["annotation"]["result_sha256"] != original_enrichment["result_sha256"]
+    assert corrected["annotation"]["source_signature"] != original["annotation"]["source_signature"]
+    assert corrected["annotation"]["result_sha256"] != original["annotation"]["result_sha256"]
     assert corrected["annotation"]["source_primary_category"] == "AI"
-    assert [item["key"] for item in corrected["annotation"]["categories"]] == ["AI"]
+    assert [item["key"] for item in corrected["annotation"]["categories"]] == [
+        "AI",
+        "Pricing",
+    ]
     assert corrected["annotation"]["date_facts"]["publication_date"]["value"] == "2024"
     assert corrected["annotation"]["date_facts"]["publication_date"]["semantic"] == "publication"
-    assert corrected["annotation"]["categories"][0]["evidence"] == [
-        "Actuarial Institute Of Chinese Taibei (AICT)"
-    ]
+    assert corrected["annotation"]["categories"][0]["evidence"] == []
+    assert corrected["annotation"]["categories"][1]["evidence"] == ["中华台北精算师协会发布公告。"]
     assert corrected["bilingual_metadata"]["zh"]["title"] == "中华台北精算师协会 2024 公告"
     assert corrected["bilingual_metadata"]["en"]["summary"] == (
         "Actuarial Institute Of Chinese Taibei (AICT) announced this update."
     )
+    connection = psycopg2.connect(database_url, options=f"-c search_path={schema},pg_catalog")
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT language_code, provenance_json FROM bilingual_metadata "
+                "WHERE content_version_id=%s ORDER BY language_code",
+                (original["content_version_id"],),
+            )
+            current_provenance = {
+                language: provenance for language, provenance in cursor.fetchall()
+            }
+        copied_provenance = {
+            "recipe": "aict-name-correction-v1",
+            "author": "Deterministic AICT name-only correction copy",
+            "fields": ["title", "summary", "category", "keywords"],
+        }
+        assert current_provenance == {
+            language: [*prior, copied_provenance] for language, prior in old_provenance.items()
+        }
+    finally:
+        connection.close()
     assert (
         "https://example.test/Actuarial%20Institute%20of%20Chinese%20Taipei.pdf"
         in corrected["markdown"]
@@ -476,6 +709,93 @@ def test_historical_selected_correction_rebinds_hashes_and_is_idempotent(
     after_status = content_hub.content_hub_status(database_url, schema=schema)
     assert after_status["content_version_count"] == before_status["content_version_count"]
     assert after_status["text_variant_count"] == before_status["text_variant_count"] + 5
+
+
+def _run_legacy_copy_preflight(case: dict, **overrides):
+    payload = copy.deepcopy(case["common"])
+    payload.update(overrides)
+    return content_hub._preflight_legacy_name_correction_copy(**payload)
+
+
+@pytest.mark.parametrize(
+    "proof_field",
+    [
+        "source_text_variant_id",
+        "markdown_sha256",
+        "hub_markdown_sha256",
+        "hub_markdown_sha256_kind",
+        "source_signature",
+        "result_sha256",
+        "bilingual_payload_sha256",
+        "bilingual_metadata",
+    ],
+)
+def test_legacy_name_copy_preflight_rejects_stale_binding_proof(
+    tmp_path: Path, monkeypatch, proof_field: str
+) -> None:
+    case = _legacy_copy_preflight_fixture(tmp_path, monkeypatch)
+    proof = copy.deepcopy(case["common"]["legacy_copy_proof"])
+    if proof_field == "source_text_variant_id":
+        proof[proof_field] += 1
+    elif proof_field == "hub_markdown_sha256_kind":
+        proof[proof_field] = "json_payload_utf8"
+    elif proof_field == "bilingual_metadata":
+        proof[proof_field]["en"]["title"] += " changed"
+    else:
+        proof[proof_field] = "b" * 64
+    with pytest.raises(content_hub.ContentHubError):
+        _run_legacy_copy_preflight(case, legacy_copy_proof=proof)
+
+
+@pytest.mark.parametrize("mutation", ["markdown", "bilingual", "category", "date"])
+def test_legacy_name_copy_preflight_rejects_non_name_only_changes(
+    tmp_path: Path, monkeypatch, mutation: str
+) -> None:
+    case = _legacy_copy_preflight_fixture(tmp_path, monkeypatch)
+    payload = copy.deepcopy(case["common"])
+    if mutation == "markdown":
+        payload["markdown"] += "\nUnrelated added text."
+    elif mutation == "bilingual":
+        payload["bilingual_metadata"]["en"]["title"] += " changed"
+    elif mutation == "category":
+        payload["categories"][1]["key"] = "Other"
+    else:
+        payload["date_facts"]["publication_date"]["value"] = "2025"
+    with pytest.raises(
+        content_hub.ContentHubError,
+        match="non-name changes|changes beyond institution names",
+    ):
+        content_hub._preflight_legacy_name_correction_copy(**payload)
+
+
+@pytest.mark.parametrize("mutation", ["bilingual_value", "bilingual_binding"])
+def test_legacy_name_copy_preflight_rejects_changed_locked_bilingual_rows(
+    tmp_path: Path, monkeypatch, mutation: str
+) -> None:
+    case = _legacy_copy_preflight_fixture(tmp_path, monkeypatch)
+    common = case["common"]
+    connection = psycopg2.connect(
+        common["database_url"], options=f"-c search_path={common['schema']},pg_catalog"
+    )
+    try:
+        with connection.cursor() as cursor:
+            if mutation == "bilingual_value":
+                cursor.execute(
+                    "UPDATE bilingual_metadata SET title=title || ' changed' "
+                    "WHERE content_version_id=%s AND language_code='en'",
+                    (common["content_version_id"],),
+                )
+            else:
+                cursor.execute(
+                    "UPDATE bilingual_metadata SET markdown_sha256=%s "
+                    "WHERE content_version_id=%s AND language_code='en'",
+                    ("b" * 64, common["content_version_id"]),
+                )
+        connection.commit()
+    finally:
+        connection.close()
+    with pytest.raises(content_hub.ContentHubError):
+        _run_legacy_copy_preflight(case)
 
 
 def test_unannotated_correction_preserves_keywords_and_keywords_json_variants(

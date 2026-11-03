@@ -305,6 +305,17 @@ def normalize_aict_institution_text(value: str) -> str:
     return _normalize_preserving_spans(value, spans, rewrites)
 
 
+def normalize_aict_institution_payload(value: Any) -> Any:
+    """Apply the institution text normalizer through JSON-like payload values."""
+    if isinstance(value, str):
+        return normalize_aict_institution_text(value)
+    if isinstance(value, list):
+        return [normalize_aict_institution_payload(item) for item in value]
+    if isinstance(value, dict):
+        return {key: normalize_aict_institution_payload(item) for key, item in value.items()}
+    return value
+
+
 def normalize_alias(value: str) -> str:
     """v1: trim and lowercase only; CAS and CASA remain distinct."""
     return value.strip().lower()
