@@ -1,10 +1,9 @@
-## AICT 历史名称修正已独立过审 — 2026-11-03
+## AICT historical name correction — CI symbol gate repair — 2026-11-03
 
-- 项目 `AI_actuarial_inforsearch`，分支 `fix/aict-chinese-taibei`，PR #453。fresh Sol/high 第6轮对当前12个业务/测试文件 PASS；168项受影响测试由worker与reviewer分别通过，Black/isort/Ruff/diff及模块CLI help通过。原始代码哈希和报告在本机 `reports/aict-name-20261103/code-hashes-review6.json`、`review-round-6.md`。
-- 当前只读清单66版本，64带注释、2未注释；60正文、4摘要、2标题、1关键词及1JSON关键词版本，28双语版本/77单元格，11份files与11份catalog来源标签。清单SHA `c4a91faeef6e87b702f08ffdef8561a6550564cf8ec8b88d845ea9d0bbdf655f`。原始CAS、网址、原始哈希、非名称字段及删除状态保留。正文迁移和6条目标标签/三组原生Ready尚未执行。
-- 名称专用运行快照已从原dcad36c基线准备，12个相关文件与审查字节一致，不夹带#441/#450其他变更。224项快照验证中222通过，2项既有入口采集测试因本机C盘80%容量门被拦；不改生产门槛、不清理无关文件，待当前HEAD的Linux CI核验。快照和06/09自动化尚未激活。
-- Copilot首次唯一评论的旧中文书签兼容已由v3内部别名与真实筛选回归修复；本轮提交后解决讨论，不重新请求Copilot。尚无合并授权；后续实际数据库写入、Ready回读、自动化名称快照切换及当前HEAD CI分别验收，不把源码PASS当作这些操作已完成。
-
+- Project `AI_actuarial_inforsearch`, branch `fix/aict-chinese-taibei`, PR #453. Fresh review6 passed the 12 reviewed implementation/test files. The current source commit `75319e1de87e7c17500554a52e4afe997831f9d1` failed CI only at the Python dead-code-symbol check: three new `cursor.itersize` assignments were unused because each cursor already uses `fetchmany(500)`. Removed exactly those three lines; no behavior or gate changes.
+- Verification after the repair: `python-symbols` passes with 0 baseline findings; `tests/test_aict_name_history_correction.py` passes 22/22 with 3 third-party warnings; Black, isort, Ruff and `git diff --check` pass. The full read-only Hub plan is byte-for-byte record-equal to the reviewed 66-record plan, with canonical record hash `3e49fd62ecfb437521a952ca7fc5bae0d10fdc6f5cb978beb851fe3c5a3cb5e3` and unchanged variant, bilingual and source-site counts.
+- The full local `symbols` gate was attempted and stopped because Knip is not installed. The actual CI job's later checks were skipped behind the dead-code failure; new-HEAD CI is pending. Current no-write manifest SHA-256 is `47c7f5266ac17c962b133769f0a7d3b10d2ac3defb5021e07b9f524cad76b1fc`; original review6 baseline remains preserved at `c4a91faeef6e87b702f08ffdef8561a6550564cf8ec8b88d845ea9d0bbdf655f`.
+- No Hub/target/Ready writes, deployment, scheduler changes, commit or push were performed by this worker. Reviewer7 is checking the three-line repair; parent owns the commit and new-HEAD CI gate.
 ## Current candidate — AICT historical text normalization — 2026-11-03
 
 - Project `AI_actuarial_inforsearch`, branch `fix/aict-chinese-taibei`. Source Registry v3 remains applied. The shared normalizer replaces verified former English and Chinese names, including known `(AIRC)`/`(AICT)` suffixes and names adjacent to Chinese prose, while preserving ASCII letter/digit/underscore continuations. Intake applies it to article titles and Markdown before derived hashes and capture manifests are built. Visible prose, link labels and tooltip titles normalize; HTTP and valid relative Markdown destinations, reference IDs, and HTML `href`/`src` values stay intact. Raw bytes, URL identity and source keys are unchanged.

@@ -62,7 +62,6 @@ def _scan_historical_variants(connection: Any) -> tuple[Counter[str], set[int]]:
     counts: Counter[str] = Counter()
     version_ids: set[int] = set()
     with connection.cursor(name="aict_name_variant_scan") as cursor:
-        cursor.itersize = 500
         cursor.execute(
             "SELECT content_version_id, field_name, payload_value_json "
             "FROM text_variants WHERE NOT payload_is_null ORDER BY text_variant_id"
@@ -81,7 +80,6 @@ def _scan_historical_bilingual(connection: Any) -> tuple[Counter[str], set[int]]
     counts: Counter[str] = Counter()
     version_ids: set[int] = set()
     with connection.cursor(name="aict_name_bilingual_scan") as cursor:
-        cursor.itersize = 500
         cursor.execute(
             "SELECT b.content_version_id, b.language_code, b.title, b.summary, b.keywords_json "
             "FROM bilingual_metadata b JOIN article_enrichment_annotations a "
@@ -108,7 +106,6 @@ def _scan_current_source_sites(connection: Any) -> tuple[Counter[str], set[int]]
     counts: Counter[str] = Counter()
     version_ids: set[int] = set()
     with connection.cursor(name="aict_name_source_site_scan") as cursor:
-        cursor.itersize = 500
         cursor.execute(
             "SELECT DISTINCT ON (r.content_version_id, r.source_table) "
             "r.content_version_id, r.source_table, r.source_metadata_json "
