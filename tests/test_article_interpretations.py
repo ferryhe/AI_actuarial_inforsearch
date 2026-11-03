@@ -568,6 +568,7 @@ def test_output_rejects_unsupported_numbers_quotes_and_unlabelled_inference():
     original = json.loads(response(messages))
     for text, kind, error in (
         ("研究证明收益提高999%。", "source", "unsupported_number"),
+        ("解读推断：研究证明收益提高999%。", "inference", "unsupported_number"),
         ("原文称“并不存在的引文”。", "source", "unsupported_quote"),
         ("我们可以因此断定可推广。", "inference", "unlabelled_inference"),
         ("公式 a=b。", "source", "formula_requires"),
@@ -603,6 +604,73 @@ def test_numeric_validation_diagnostic_is_actionable_without_relaxing_evidence_c
         "missing_quantities": [{"dimension": "percent", "value": "999"}],
         "missing_quantities_truncated": False,
     }
+
+
+@pytest.mark.parametrize(
+    ("validation_error", "corrected", "feedback_fragment"),
+    [
+        ("unlabelled_inference", True, "只保留有来源支持的推断"),
+        ("unlabelled_inference", False, "只保留有来源支持的推断"),
+        (
+            "article_length_requires_short_reason_or_reduction",
+            True,
+            "低于1500字且资料不足时填写short_reason",
+        ),
+        (
+            "article_length_requires_short_reason_or_reduction",
+            False,
+            "低于1500字且资料不足时填写short_reason",
+        ),
+    ],
+)
+def test_validation_failures_get_bounded_targeted_correction_feedback(
+    storage, validation_error, corrected, feedback_fragment
+):
+    url = seed(storage, "a")
+
+    class CorrectingGenerator:
+        def __init__(self):
+            self.calls = []
+
+        async def generate(self, messages, *, deadline):
+            self.calls.append(messages)
+            source_messages = messages[:-1] if len(messages) > 2 else messages
+            value = json.loads(response(source_messages))
+            first_call = len(self.calls) == 1
+            apply_fix = corrected and not first_call
+            if validation_error == "unlabelled_inference":
+                paragraph = value["sections"][0]["paragraphs"][0]
+                text = "根据研究说明的适用条件，可以推断应结合样本群体理解方法。"
+                if apply_fix:
+                    text = "解读推断：" + text
+                paragraph.update(text=text, kind="inference")
+            else:
+                for section in value["sections"]:
+                    for paragraph in section["paragraphs"]:
+                        paragraph["text"] = "来源说明了方法及其适用条件。"
+                value["short_reason"] = (
+                    "现有资料不足以支持更多细节，故保留简短概述。" if apply_fix else ""
+                )
+            return json.dumps(value, ensure_ascii=False)
+
+    generator = CorrectingGenerator()
+    receipt = service(storage, generator=generator).run(
+        file_url=url, round_key="validation-feedback-fixture"
+    )
+
+    assert len(generator.calls) == receipt["provider_calls"] == 2
+    assert generator.calls[1][:-1] == generator.calls[0]
+    assert feedback_fragment in generator.calls[1][-1]["content"]
+    assert generator.calls[1][-1]["role"] == "user"
+    draft = articles.read_interpretations(storage.database, file_url=url)[0]
+    calls = draft["attempts"][-1]["calls"]
+    assert len(calls) == 2 and calls[0]["validation_error"] == validation_error
+    if corrected:
+        assert receipt["slots"][0]["status"] == "ready"
+        assert calls[1]["status"] == "valid"
+    else:
+        assert receipt["slots"][0]["status"] == "failed"
+        assert calls[1]["validation_error"] == validation_error
 
 
 def test_numeric_correction_feedback_omits_incomplete_diagnostic_when_too_large():

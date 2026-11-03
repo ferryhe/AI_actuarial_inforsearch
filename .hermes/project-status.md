@@ -1,9 +1,11 @@
 # Issue #450 本地文章解读 — 2026-11-02
+- 2026-11-04 validator retry feedback: anonymous Judge `targeted_correction` is recorded at `reports/local-interpretation-migration-20261102/controller-supplemental19-retry-feedback-judge.json`. Added allowlisted second-call guidance only for `unlabelled_inference` and `article_length_requires_short_reason_or_reduction`; validator strictness, evidence requirements, prompt version, fingerprints, routes, cursors, and the two-call budgets are unchanged. Synthetic red: 4 new parameter cases failed because no targeted feedback was sent; green: the 4 correction/rejection cases plus existing numeric-correction and unsupported-claim regression passed (6 passed). Black, Ruff, py_compile, and git diff --check passed. No real model, source-support review, production DB, harness, target, or schedule operation was run; real acceptance remains incomplete. Fresh independent Sol/high review 19 PASS; the 13 synthetic boundary checks passed. Cumulative review/change-request history remains 19/13. Authorized for normal commit and push; no merge, deployment, or production operation.
 
 - PR #452 保持 Draft；上一推送 HEAD 4603fc6 的 GitHub run 41502058426 六项检查全部通过。另一个必需 AC1/AC5 本机启动校准在旧 HEAD 上失败于 PowerShell npm 包装器参数异常；已按运行门失败记录，未伪称 CI 失败。
 - 本机项目路由保持 gpt-6-luna/high。Windows launcher 修复为 PATH 中 codex.exe → codex.cmd → 原 PowerShell 回退；保留 stdin、只读沙箱和工具禁用参数，不硬编码安装版本、不改全局设置。桌面 Codex CLI 0.166.0-alpha.5.1 通过同路由 Unicode JSON 合成回显（13 秒；无数据库、应用服务器或正式预算调用）。npm shim 0.154.0 对该账号/模型组合返回 model_not_found。
 - 静态验证：4 个 launcher/argv 测试通过，Black、Ruff、git diff --check 通过。独立 Sol/high review 6 PASS；匿名 TypeSafe 评估无 findings，summary coverage 0.87。当前 launcher 修复等待提交推送与新 HEAD CI。
 - 远程反馈 disposition 已登记为 clean，9 个保存的 Copilot review thread unresolved 为 0；未再次请求或刷新 Copilot。尚未执行真实文章生成、双端原生读回、幂等/单边重试、部署或排程变更；未合并或启用 08:00 计划。
+- 2026-11-04 真实验收诊断：本地未配置 DATABASE_URL 或 env-backed 数据库连接配置，未读取 native DB；自动审核拒绝输出由真实模型输出派生的数字 token/evidence ID，并禁止换路径绕过。最初脱敏摘要只有通用 validation；后续受限 safe-flags 仅给出固定错误类别，仍没有足够证据确认真实来源支持性。合成 validator 9 passed；真实验收仍未完成且无 ready 草稿。不得据此放宽证据校验或重试已耗尽内容版本。
 
 
 ### Issue #450 AC-3 sync candidate fairness — 2026-11-02

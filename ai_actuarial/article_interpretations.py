@@ -194,6 +194,25 @@ def _numeric_correction_message(diagnostic: dict, *, max_chars: int, max_bytes: 
     return prefix + "".join(excerpt) + suffix
 
 
+_VALIDATION_CORRECTIONS = {
+    "unlabelled_inference": (
+        "校验纠正：重新返回完整 JSON。对 inference 段落，只保留有来源支持的推断，并在 text 标注“解读推断”；"
+        "不能仅添加标签来保留无来源支持的内容。"
+    ),
+    "article_length_requires_short_reason_or_reduction": (
+        "校验纠正：重新返回完整 JSON。正文须为1500–3000中文字符，超过3000字时删减；"
+        "低于1500字且资料不足时填写short_reason；只有现有证据支持才扩写，不得为满足长度添加无依据内容。"
+    ),
+}
+
+
+def _validation_correction_message(error: str, *, max_chars: int, max_bytes: int) -> str:
+    instruction = _VALIDATION_CORRECTIONS.get(error, "")
+    if len(instruction) > max_chars or len(instruction.encode("utf-8")) > max_bytes:
+        return ""
+    return instruction
+
+
 def _hash(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
@@ -2295,7 +2314,7 @@ class ArticleInterpretationService:
                 )
                 last_error = ValueError("provider_attempt_limit")
 
-                def correction_message(diagnostic):
+                def correction_message(call):
                     input_chars = sum(len(message["content"]) for message in draft["messages"])
                     input_tokens = sum(
                         len(message["content"].encode("utf-8")) + 16
@@ -2307,24 +2326,28 @@ class ArticleInterpretationService:
                     context_tokens = int(
                         draft["coverage"].get("context_tokens", input_tokens + output_tokens)
                     )
-                    return _numeric_correction_message(
-                        diagnostic,
-                        max_chars=MAX_INPUT_CHARS - input_chars,
-                        max_bytes=context_tokens - input_tokens - output_tokens - 16,
+                    max_chars = MAX_INPUT_CHARS - input_chars
+                    max_bytes = context_tokens - input_tokens - output_tokens - 16
+                    diagnostic = call.get("validation_diagnostic")
+                    if diagnostic:
+                        return _numeric_correction_message(
+                            diagnostic, max_chars=max_chars, max_bytes=max_bytes
+                        )
+                    return _validation_correction_message(
+                        call.get("validation_error"), max_chars=max_chars, max_bytes=max_bytes
                     )
 
-                prior_diagnostic = next(
+                prior_failure = next(
                     (
-                        call.get("validation_diagnostic")
+                        call
                         for attempt_row in reversed(draft["attempts"])
                         for call in reversed(attempt_row.get("calls", []))
                         if call.get("validation_diagnostic")
+                        or call.get("validation_error") in _VALIDATION_CORRECTIONS
                     ),
                     None,
                 )
-                correction_feedback = (
-                    correction_message(prior_diagnostic) if prior_diagnostic else ""
-                )
+                correction_feedback = correction_message(prior_failure) if prior_failure else ""
                 while self._content_budget(draft["content_key"])["calls"] < 2:
                     if self.stop_check():
                         draft["status"] = "queued"
@@ -2416,7 +2439,7 @@ class ArticleInterpretationService:
                             call["validation_error"] = str(exc)[:240]
                             if isinstance(exc, _NumericEvidenceError):
                                 call["validation_diagnostic"] = exc.diagnostic
-                                correction_feedback = correction_message(exc.diagnostic)
+                            correction_feedback = correction_message(call)
                         last_error = exc
                     finally:
                         elapsed = provider_elapsed
