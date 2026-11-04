@@ -1,5 +1,12 @@
 # Issue #450 本地文章解读 — 2026-11-02
 
+### 2026-11-04 main merge and CI import-order repair
+
+- The current branch merged `origin/main` at `3f44b0571f32cf8eaa942ea09904dbf1e7557d45` normally in merge commit `4ada89679ead6b6cb0845955753fc0cb7e397ce9`. The only conflict was this status document; both the Issue #450 history and incoming weekly-summary entry were retained. Application/API editor files did not conflict. The incoming weekly-summary UI changes remain included.
+- CI's only reported failure on the prior head was isort ordering in `ai_actuarial/api/routers/article_interpretations.py`. The two import lines were sorted; commit `b4cf77b99e71a39638a4370ec7a72423471d76ec` contains only that two-line reorder and was pushed normally.
+- Post-merge checks: the FileDetail editor and incoming weekly tests passed (40 tests across three files); `npm run typecheck`, `npm run build`, `git diff --check`, and router isort/Black/Ruff/compile checks passed. Build emitted the existing large-chunk advisory. No provider, database, API, target, DAV acceptance, sync, deployment, or schedule operation was run.
+- The merge commit has not yet been pushed. The successor China-only release package and live acceptance runbook are being prepared offline from this merged HEAD; the earlier R30 frozen package remains unchanged and non-deployable. Root alone performs fresh live gates and any later target operation.
+
 ### 2026-11-04 Review30 PASS and controller handoff
 
 - Fresh independent Sol/high review30 passed the exact current implementation; its independent proof is `reports/controller-editor-review30-independent-proof.json`. The separate Jev 1.14.0 coverage result is recorded in `reports/issue450-review30/typesafe-review30-coverage-result.json` (Noul 0.89; coverage evidence only, not a substitute for review or CI).
