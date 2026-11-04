@@ -1,5 +1,6 @@
 import { apiGet } from "./api";
 import { formatDateTime, formatUtcIso } from "./date-format";
+import { localizedCatalogMetadata } from "./bilingual-metadata";
 
 const WEEKLY_HOME_PREVIEW_LIMIT = 6;
 const WEEKLY_FILES_PAGE_LIMIT = 500;
@@ -26,6 +27,7 @@ export interface WeeklySnapshotFile {
   category?: string | null;
   keywords?: unknown;
   summary?: string | null;
+  bilingual_metadata?: unknown;
 }
 
 interface WeeklyExplanation {
@@ -274,6 +276,15 @@ export function normalizePublicKeywords(value: unknown): string[] {
   return text.split(/[,;]/).map((item) => item.trim()).filter(Boolean);
 }
 
+export function localizedWeeklyFileMetadata(file: WeeklySnapshotFile, lang: string) {
+  return localizedCatalogMetadata(file.bilingual_metadata, lang, {
+    title: file.title,
+    summary: file.summary,
+    category: file.category,
+    keywords: normalizePublicKeywords(file.keywords),
+  });
+}
+
 export interface WeeklyFileGroup {
   key: string;
   label: string;
@@ -357,9 +368,10 @@ export function buildWeeklyDashboardView(
       const intro = lang === "zh" ? "本周可先关注以下资料。" : "You can start with these materials this week.";
       const escape = (value: string) => value.replace(/([\\`*{}\[\]<>])/g, "\\$1").replace(/\n/g, " ");
       const items = data.files.slice(0, 5).map((file) => {
-        const title = escape(String(file.title || file.original_filename || file.url));
+        const metadata = localizedWeeklyFileMetadata(file, lang);
+        const title = escape(String(metadata.title || file.original_filename || file.url));
         const url = file.url.replace(/\(/g, "%28").replace(/\)/g, "%29").replace(/ /g, "%20");
-        const sourceSummary = normalizePublicMetadataText(file.summary);
+        const sourceSummary = normalizePublicMetadataText(metadata.summary);
         const summary = escape(sourceSummary);
         return `- [${title}](${url})${summary ? `\n  ${summary}` : ""}`;
       });

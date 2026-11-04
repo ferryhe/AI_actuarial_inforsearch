@@ -51,6 +51,7 @@ class WeeklySnapshotFileModel(BaseModel):
     category: str | None
     keywords: list[str]
     summary: str | None
+    bilingual_metadata: dict[str, Any] | None = None
 
 
 class WeeklySnapshotListModel(BaseModel):

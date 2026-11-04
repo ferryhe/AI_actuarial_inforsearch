@@ -16,6 +16,10 @@ from ai_actuarial.ai_runtime import (
     get_ai_function_section,
     resolve_ai_function_runtime,
 )
+from ai_actuarial.bilingual_metadata import (
+    is_complete_bilingual_metadata,
+    parse_bilingual_metadata,
+)
 from ai_actuarial.chatbot.config import ChatbotConfig
 from ai_actuarial.chatbot.exceptions import (
     LLMAuthenticationError,
@@ -205,6 +209,7 @@ def _normalize_material_item(item: Mapping[str, Any]) -> dict[str, Any]:
             _truncate(v, 80) for v in list(item.get("keywords") or [])[:8] if str(v).strip()
         ],
         "category": _truncate(item.get("category"), 100),
+        "_bilingual_metadata": item.get("bilingual_metadata", item.get("_bilingual_metadata")),
         "_source_summary": source,
         "_source_id": hashlib.sha256((url + "\0" + source).encode()).hexdigest(),
         "_spans": list(item["_spans"]) if "_spans" in item else _allowed_source_spans(source),
@@ -403,6 +408,7 @@ def _build_generation_input(
                         "payload": _material_payload(row),
                         "source_id": row["_source_id"],
                         "spans": row["_spans"],
+                        "display_metadata": row.get("_bilingual_metadata"),
                     }
                     for row in material
                 ],
@@ -425,6 +431,25 @@ class ReaderOutputError(ValueError):
 
 def _plain_markdown(value):
     return re.sub(r"([\\`*{}\[\]<>])", r"\\\1", str(value)).replace("\n", " ")
+
+
+def _localized_display_metadata(item, lang):
+    metadata = parse_bilingual_metadata(
+        item.get("_bilingual_metadata", item.get("bilingual_metadata"))
+    )
+    if lang not in {"zh", "en"} or not is_complete_bilingual_metadata(metadata):
+        return {}
+    return metadata[lang]
+
+
+def _fallback_display_fingerprint(rows):
+    return [
+        {
+            "url": row.get("url"),
+            "bilingual_metadata": row.get("_bilingual_metadata", row.get("bilingual_metadata")),
+        }
+        for row in rows
+    ]
 
 
 def _render_guide(themes, articles, *, lang, fallback=False):
@@ -456,15 +481,17 @@ def _render_guide(themes, articles, *, lang, fallback=False):
     lines = [intro]
     for item in articles:
         # Markdown escaping prevents metadata from adding a second link.
-        title = _plain_markdown(item["title"])
+        localized = _localized_display_metadata(item, lang)
+        title = _plain_markdown(localized.get("title") or item["title"])
         url = item["url"].replace("(", "%28").replace(")", "%29").replace(" ", "%20")
         text = f"- [{title}]({url})"
+        source_summary = str(item.get("_source_summary", item.get("summary")) or "")
+        source_excerpt = _source_excerpt(source_summary, 600) if fallback else item.get("excerpt")
         excerpt = (
-            item.get("excerpt")
-            if not fallback
-            else _source_excerpt(str(item.get("_source_summary", item.get("summary")) or ""), 600)
+            _source_excerpt(str(localized.get("summary") or ""), 600) or source_excerpt
+            if localized and source_excerpt
+            else source_excerpt or ""
         )
-        excerpt = excerpt or ""
         if excerpt:
             text += "\n  " + _plain_markdown(excerpt)
             focus = _plain_markdown(item.get("focus") or next(iter(_focuses(item)), ""))
@@ -680,6 +707,8 @@ def generate_weekly_explanation(
         candidates, selection, source_rows = (
             ([], [], []) if empty else _load_candidates(storage, normalized_snapshot_id)
         )
+        fallback_rows = candidates[:5] or source_rows[:5]
+        fallback_display = _fallback_display_fingerprint(fallback_rows)
         try:
             if not empty:
                 runtime = resolve_ai_function_runtime("weekly_explanation", storage=storage)
@@ -693,12 +722,24 @@ def generate_weekly_explanation(
                 config=config,
                 effective_credential_id=effective_credential_id,
             )
+            fingerprint = hashlib.sha256(
+                json.dumps(
+                    {"input_fingerprint": fingerprint, "fallback_display": fallback_display},
+                    sort_keys=True,
+                    default=str,
+                ).encode()
+            ).hexdigest()
         except Exception as exc:
             preparation_error = exc
             messages, material = [], []
             fingerprint = hashlib.sha256(
                 json.dumps(
-                    {"snapshot": snapshot, "config": config, "credential": effective_credential_id},
+                    {
+                        "snapshot": snapshot,
+                        "config": config,
+                        "credential": effective_credential_id,
+                        "fallback_display": fallback_display,
+                    },
                     sort_keys=True,
                     default=str,
                 ).encode()
@@ -768,7 +809,6 @@ def generate_weekly_explanation(
         zh, en = "本周暂无新资料。", "No new material this week."
         if not empty:
             status, mode = "failed", "fallback"
-            fallback_rows = candidates[:5] or source_rows[:5]
             zh = _render_guide([], fallback_rows, lang="zh", fallback=True)
             en = _render_guide([], fallback_rows, lang="en", fallback=True)
             active = generator or ChatRuntimeWeeklyExplanationGenerator(storage, runtime=runtime)
