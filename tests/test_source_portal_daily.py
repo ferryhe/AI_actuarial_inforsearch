@@ -133,6 +133,32 @@ def test_daily_description_distinguishes_observation_change_import_and_backlog()
     assert "0个网页有变化" in daily_description([reverting], [previous, current])[0]
 
 
+@pytest.mark.parametrize("title", ["Download the full report", "Download PDF", "Read more"])
+def test_daily_description_replaces_legacy_generic_titles_with_url_filename(title):
+    evidence = _evidence()
+    evidence["observations"][0]["title"] = title
+    zh, en = daily_description([evidence], [])
+    assert "report.pdf" in zh and "report.pdf" in en
+    assert title not in zh and title not in en
+
+
+def test_daily_description_states_remaining_title_count_clearly_in_chinese():
+    evidence = _evidence()
+    first = evidence["observations"][0]
+    for index in range(1, 9):
+        evidence["observations"].append(
+            {
+                **first,
+                "url": f"https://www.cia-ica.ca/report-{index}.pdf",
+                "raw_sha256": f"{index:064x}",
+                "title": f"Mortality study {index}",
+            }
+        )
+    zh, _en = daily_description([evidence], [])
+    assert "，另有1份资料" in zh
+    assert "等1份" not in zh
+
+
 def test_daily_description_reports_observed_file_without_hub_import_result():
     evidence = _evidence()
     evidence["observations"][0]["title"] = "Observed study"
@@ -179,6 +205,64 @@ def test_daily_description_uses_first_daily_observation_to_identify_known_materi
         assert "新发现1份资料" in zh and "found 1 new file" in en
 
 
+def test_daily_description_excludes_materials_in_previous_and_same_day_backlog_hub_results():
+    prior = _evidence(day="2026-11-01", url="https://www.cia-ica.ca/other.pdf")
+    prior["hub_results"] = [
+        {
+            "url": "https://www.cia-ica.ca/report.pdf",
+            "raw_sha256": "a" * 64,
+            "source_page_url": "https://www.cia-ica.ca/publications",
+            "content_version_id": "1",
+            "status": "new",
+        }
+    ]
+    current = _evidence(day="2026-11-02", sha="b")
+    current["hub_results"] = [
+        {
+            **{
+                key: current["observations"][0][key]
+                for key in ("url", "raw_sha256", "source_page_url")
+            },
+            "content_version_id": "2",
+            "status": "new",
+        }
+    ]
+    assert "新发现0份资料" in daily_description([current], [prior])[0]
+
+    backlog = _evidence(hour=12, url="https://www.cia-ica.ca/other.pdf")
+    backlog["observations"][0].update(kind="page", title="", request_scope="c" * 64)
+    backlog["hub_results"] = [prior["hub_results"][0]]
+    current["captured_at"] = "2026-11-02T14:00:00-05:00"
+    current["run_id"] = hashlib.sha256(current["captured_at"].encode()).hexdigest()
+    for runs in ([backlog, current], [current, backlog]):
+        assert "新发现0份资料" in daily_description(list(runs), [])[0]
+
+
+def test_daily_description_excludes_materials_known_only_through_previous_hub_history():
+    previous = _evidence(day="2026-11-01", url="https://www.cia-ica.ca/other.pdf")
+    previous["hub_results"] = [
+        {
+            "url": "https://www.cia-ica.ca/report.pdf",
+            "raw_sha256": "a" * 64,
+            "source_page_url": "https://www.cia-ica.ca/publications",
+            "content_version_id": "1",
+            "status": "existing",
+        }
+    ]
+    current = _evidence(day="2026-11-02", sha="b")
+    current["hub_results"] = [
+        {
+            **{
+                key: current["observations"][0][key]
+                for key in ("url", "raw_sha256", "source_page_url")
+            },
+            "content_version_id": "2",
+            "status": "new",
+        }
+    ]
+    assert "新发现0份资料" in daily_description([current], [previous])[0]
+
+
 @pytest.mark.parametrize("kind", ["page", "file"])
 def test_daily_description_uses_general_wording_for_partial_read_failures(kind):
     evidence = _evidence()
@@ -200,6 +284,7 @@ def test_daily_description_uses_general_wording_for_partial_read_failures(kind):
         lambda e: e.update(acquired_on="2026-11-01"),
         lambda e: e["observations"][0].update(raw_sha256="bad"),
         lambda e: e["observations"].append(copy.deepcopy(e["observations"][0])),
+        lambda e: e["observations"][0].update(kind="page", request_scope="d" * 64, is_article=1),
         lambda e: e["limits"].update(request_count=31),
         lambda e: e["limits"].update(request_limit=60),
         lambda e: e["observations"][0].update(request_scope="not-a-scope-hash"),
@@ -294,6 +379,7 @@ def test_post_page_observations_keep_request_scopes_and_compare_only_matching_re
     zh, en = daily_description([evidence], [])
     assert f"we checked {unique_urls} web page" in en
     assert "0 pages changed" in en and "found 0 new files" in en
+    assert all("is_article" not in item for item in evidence["observations"])
     assert "0个网页有变化" in zh
     assert "0 pages changed" in daily_description([evidence], [evidence])[1]
     post_index = next(
@@ -464,6 +550,206 @@ class _Crawler:
         )
 
 
+@pytest.mark.parametrize(
+    "article_label,expected_title",
+    [
+        ("Annual Mortality Study", "Annual Mortality Study"),
+        ("Download PDF", "Annual Mortality Study"),
+        ("Download the full report", "Annual Mortality Study"),
+        ("Read more", "Annual Mortality Study"),
+    ],
+)
+def test_capture_reports_qualified_html_articles_but_not_navigation_pages(
+    tmp_path, monkeypatch, article_label, expected_title
+):
+    monkeypatch.setattr(runtime, "_ACTIVE_STATE_PATH", tmp_path / "state.json")
+    monkeypatch.setattr(runtime, "_atomic_json", lambda *_args: None)
+    monkeypatch.setattr(runtime, "_persist_cas", lambda _root, _body, sha: tmp_path / sha)
+    article_url = "https://www.cia-ica.ca/research/annual-mortality-study"
+    article_body = (
+        b"<html><body><main><h1>Annual Mortality Study</h1>"
+        b"<p>Research findings and methods for actuaries. "
+        b"This article contains enough substantive text to qualify as an HTML publication "
+        b"and be extracted as a local article record for the daily digest.</p></main></body></html>"
+    )
+    state = {"articles": {}}
+    captured = runtime._capture(
+        runtime.SITES["cia-ica"],
+        state,
+        _Crawler(page=article_body),
+        tmp_path,
+        {},
+        request_limit=1,
+        initial_frontier=[
+            {
+                "url": article_url,
+                "kind": "page",
+                "depth": 1,
+                "referrer": "https://www.cia-ica.ca/publications",
+                "title": article_label,
+            }
+        ],
+    )
+    assert len(captured["downloads"]) == 1
+    [run] = state["source_portal_daily_runs"].values()
+    [article_observation] = run["observations"]
+    assert article_observation["kind"] == "page"
+    assert article_observation["is_article"] is True
+    assert article_observation["title"] == (
+        "Annual Mortality Study" if expected_title == "Annual Mortality Study" else ""
+    )
+    evidence = {"schema_version": 1, "portal_key": "cia-publications", **copy.deepcopy(run)}
+    for observation in evidence["observations"]:
+        observation.pop("artifact_path")
+    validate_daily_evidence(evidence)
+    zh, en = daily_description([evidence], [])
+    assert "今天查看了1个网页" in zh and "新发现1份资料" in zh
+    assert expected_title in zh and "1 new file" in en
+    if article_label != "Annual Mortality Study":
+        assert article_label not in zh and article_label not in en
+    assert "新发现0份资料" in daily_description([evidence], [evidence])[0]
+
+    navigation_state = {"articles": {}}
+    runtime._capture(
+        runtime.SITES["cia-ica"],
+        navigation_state,
+        _Crawler(page=article_body),
+        tmp_path,
+        {},
+        request_limit=1,
+        initial_frontier=[
+            {
+                "url": "https://www.cia-ica.ca/about",
+                "kind": "page",
+                "depth": 1,
+                "referrer": "https://www.cia-ica.ca/publications",
+                "title": "About the Association",
+            }
+        ],
+    )
+    [navigation_run] = navigation_state["source_portal_daily_runs"].values()
+    assert not navigation_state["articles"]
+    assert "is_article" not in navigation_run["observations"][0]
+    navigation_evidence = {
+        "schema_version": 1,
+        "portal_key": "cia-publications",
+        **copy.deepcopy(navigation_run),
+    }
+    for observation in navigation_evidence["observations"]:
+        observation.pop("artifact_path")
+    validate_daily_evidence(navigation_evidence)
+    assert "新发现0份资料" in daily_description([navigation_evidence], [])[0]
+
+
+@pytest.mark.parametrize(
+    "source_markup,expected_title",
+    [
+        ("<title>Metadata Mortality Study</title>", "Metadata Mortality Study"),
+        ("", "annual-mortality-study"),
+    ],
+)
+def test_capture_uses_html_article_title_when_link_label_is_generic(
+    tmp_path, monkeypatch, source_markup, expected_title
+):
+    monkeypatch.setattr(runtime, "_ACTIVE_STATE_PATH", None)
+    monkeypatch.setattr(runtime, "_atomic_json", lambda *_args: None)
+    monkeypatch.setattr(runtime, "_state_path_for_data", lambda _state: tmp_path / "state.json")
+    monkeypatch.setattr(runtime, "_persist_cas", lambda _root, _body, sha: tmp_path / sha)
+    article_url = "https://www.cia-ica.ca/research/annual-mortality-study"
+    article_body = (
+        f"<html><head>{source_markup}</head><body><main>"
+        "<p>Research findings and methods for actuaries. This HTML publication has enough "
+        "substantive content to qualify as a captured article.</p>"
+        "</main></body></html>"
+    ).encode()
+    state = {"articles": {}}
+    captured = runtime._capture(
+        runtime.SITES["cia-ica"],
+        state,
+        _Crawler(page=article_body),
+        tmp_path,
+        {},
+        request_limit=1,
+        initial_frontier=[
+            {
+                "url": article_url,
+                "kind": "page",
+                "depth": 1,
+                "referrer": "https://www.cia-ica/publications",
+                "title": "Read more",
+            }
+        ],
+    )
+    assert len(captured["downloads"]) == 1
+    [article] = captured["downloads"]
+    [run] = state["source_portal_daily_runs"].values()
+    [observation] = run["observations"]
+    assert article["title"] == expected_title
+    assert observation["title"] == ("Metadata Mortality Study" if source_markup else "")
+    evidence = {"schema_version": 1, "portal_key": "cia-publications", **copy.deepcopy(run)}
+    for item in evidence["observations"]:
+        item.pop("artifact_path")
+    description_zh, _description_en = daily_description([evidence], [])
+    assert expected_title in description_zh
+    assert "Read more" not in description_zh
+
+
+@pytest.mark.parametrize(
+    "titles",
+    [
+        ("Annual Mortality Study", "Download PDF"),
+        ("Download PDF", "Annual Mortality Study"),
+        ("Annual Mortality Study", "Read more"),
+        ("Read more", "Annual Mortality Study"),
+    ],
+)
+def test_capture_duplicate_article_aliases_keep_first_useful_title(tmp_path, monkeypatch, titles):
+    monkeypatch.setattr(runtime, "_ACTIVE_STATE_PATH", None)
+    monkeypatch.setattr(runtime, "_atomic_json", lambda *_args: None)
+    monkeypatch.setattr(runtime, "_state_path_for_data", lambda _state: tmp_path / "state.json")
+    monkeypatch.setattr(runtime, "_persist_cas", lambda _root, _body, sha: tmp_path / sha)
+    final_url = "https://www.cia-ica.ca/research/annual-mortality-study"
+    body = (
+        b"<html><body><main><h1>Annual Mortality Study</h1>"
+        b"<p>Research findings and methods for actuaries. This article contains sufficient "
+        b"substantive text to qualify as an HTML publication.</p></main></body></html>"
+    )
+
+    class AliasCrawler(_Crawler):
+        def _request(self, requested_url, **_kwargs):
+            self.site_attempts += 1
+            return body, {"content-type": "text/html"}, final_url
+
+    referrer = "https://www.cia-ica.ca/publications"
+    aliases = [
+        (final_url, titles[0]),
+        (final_url + "-alias", titles[1]),
+    ]
+    state = {"articles": {}}
+    runtime._capture(
+        runtime.SITES["cia-ica"],
+        state,
+        AliasCrawler(),
+        tmp_path,
+        {},
+        request_limit=2,
+        initial_frontier=[
+            {"url": url, "kind": "page", "depth": 1, "referrer": referrer, "title": title}
+            for url, title in aliases
+        ],
+    )
+    [run] = state["source_portal_daily_runs"].values()
+    [observation] = run["observations"]
+    assert observation["is_article"] is True
+    assert observation["title"] == "Annual Mortality Study"
+    evidence = {"schema_version": 1, "portal_key": "cia-publications", **copy.deepcopy(run)}
+    for item in evidence["observations"]:
+        item.pop("artifact_path")
+    description_zh, _description_en = daily_description([evidence], [])
+    assert "Annual Mortality Study" in description_zh
+    assert "annual-mortality-study" not in description_zh
+
+
 def _processed():
     return {
         "candidate_count": 0,
@@ -487,6 +773,121 @@ def _patch_hub(monkeypatch, url, schema):
         "content_hub_read_source_portal_capture",
     ):
         monkeypatch.setattr(runtime, name, partial(getattr(hub, name), schema=schema))
+
+
+@pytest.mark.parametrize("already_frozen", [False, True])
+@pytest.mark.parametrize("first_article", [False, True])
+def test_daily_persistence_merges_article_marker_when_duplicate_referrers_collapse(
+    tmp_path, monkeypatch, already_frozen, first_article
+):
+    url, schema = _database(tmp_path, f"daily-article-duplicate-{already_frozen}")
+    _patch_hub(monkeypatch, url, schema)
+    monkeypatch.setattr(runtime, "_ACTIVE_STATE_PATH", tmp_path / "state.json")
+    portal = SOURCE_PORTALS_BY_KEY["cia-publications"]
+    final_url = "https://www.cia-ica.ca/research/annual-mortality-study"
+    article_url = "https://www.cia-ica.ca/research/annual-mortality-study-alias"
+    body = (
+        b"<html><body><main><h1>Annual Mortality Study</h1>"
+        b"<p>Research findings and methods for actuaries. This HTML article contains enough "
+        b"substantive text to qualify as a captured publication record.</p></main></body></html>"
+    )
+
+    class AliasCrawler(_Crawler):
+        def _request(self, requested_url, **_kwargs):
+            self.site_attempts += 1
+            return body, {"content-type": "text/html"}, final_url
+
+    state = {"articles": {}}
+    capture = runtime._capture(
+        runtime.SITES["cia-ica"],
+        state,
+        AliasCrawler(),
+        tmp_path,
+        {},
+        request_limit=2,
+        initial_frontier=[
+            {
+                "url": final_url,
+                "kind": "page",
+                "depth": 0,
+                "referrer": portal.url,
+                "title": "",
+            },
+            {
+                "url": article_url,
+                "kind": "page",
+                "depth": 1,
+                "referrer": portal.url + "/alias",
+                "title": "Annual Mortality Study",
+            },
+        ],
+    )
+    assert not capture["errors"] and len(capture["downloads"]) == 1
+    [run] = state["source_portal_daily_runs"].values()
+    assert len(run["observations"]) == 2
+    if first_article:
+        run["observations"][0].update(is_article=True, title="")
+    assert run["observations"][0].get("is_article", False) is first_article
+    assert run["observations"][1]["is_article"] is True
+    assert (
+        len(
+            {
+                (item["url"], item["raw_sha256"], item["request_scope"])
+                for item in run["observations"]
+            }
+        )
+        == 1
+    )
+    state["active_source_portal_daily_run"] = capture["daily_run_id"]
+    runtime._record_daily_hub_result(
+        state, "cia-ica", capture["downloads"][0], True, {"content_version_id": 1}
+    )
+    state.pop("active_source_portal_daily_run")
+    if already_frozen:
+        run["evidence"] = [
+            {
+                "schema_version": 1,
+                "portal_key": portal.portal_key,
+                **{key: copy.deepcopy(value) for key, value in run.items()},
+            }
+        ]
+        for item in run["evidence"][0]["observations"]:
+            item.pop("artifact_path")
+        with pytest.raises(ValueError, match="duplicate items"):
+            validate_daily_evidence(run["evidence"][0])
+
+    digests, errors = runtime._persist_daily_source_portals(state, url)
+    assert len(digests) == 1 and not errors
+    [evidence] = run["evidence"]
+    assert len(evidence["observations"]) == 1
+    assert evidence["observations"][0]["is_article"] is True
+    assert evidence["observations"][0]["title"] == "Annual Mortality Study"
+    assert evidence["observations"][0]["source_page_url"] == portal.url
+    validate_daily_evidence(evidence)
+    description_zh, description_en = daily_description([evidence], [])
+    assert "今天查看了1个网页" in description_zh and "新发现1份资料" in description_zh
+    assert "Annual Mortality Study" in description_zh and "1 new file" in description_en
+    with psycopg2.connect(url) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT evidence_json, evidence_sha256 FROM source_portal_captures WHERE capture_id = %s",
+                (digests[0]["capture_id"],),
+            )
+            [stored, stored_sha] = cursor.fetchone()
+    assert stored["observations"][0]["is_article"] is True
+    assert stored["observations"][0]["title"] == "Annual Mortality Study"
+    assert stored_sha.strip() == validate_daily_evidence(evidence)[2]
+    replay = hub.content_hub_record_source_portal_daily(
+        copy.deepcopy(evidence), database_url=url, schema=schema
+    )
+    assert replay["duplicate"] is True and replay["capture_id"] == digests[0]["capture_id"]
+    replayed_capture = hub.content_hub_read_source_portal_capture(
+        portal_key=portal.portal_key,
+        capture_id=replay["capture_id"],
+        database_url=url,
+        schema=schema,
+    )
+    assert replayed_capture["evidence_sha256"] == stored_sha.strip()
 
 
 def test_runtime_file_only_partial_attempt_records_hub_before_digest_and_retries_failed_target(

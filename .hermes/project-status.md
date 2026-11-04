@@ -1,8 +1,8 @@
 ## 当前候选 — 首页来源入口与日报文案 — 2026-11-04
 
-- 项目 `AI_actuarial_inforsearch`，分支 `fix/home-source-report`。首页“来源”统计卡链接到 `/source-portals`；来源日报按唯一网页统计查看数，只统计可比页面的变化。当天采集按时间排序，以首次文件观察及该次 Hub 证据判定发现：首次为 Hub `existing` 的 URL 不算新发现，首次为 `new` 或没有 Hub 结果则计一次；同 URL 的后续版本或重试不重复计数，前一天已见 URL 继续排除。无有效标题时使用最多120字符的 URL 文件名。既有目录摘要、采集证据和历史记录保持。
-- 控制器验证：独立 PostgreSQL 日报32项、来源入口21项以及前端 Vitest13项通过；lint（4条既有Hook warning）、typecheck/build、Black/isort/Ruff/diff检查通过。中英文桌面和手机 browser smoke通过，覆盖首页来源统计卡跳转、列表和详情。fresh Sol/high独立第3轮审查PASS，无剩余接受问题；累计2轮要求修改，已按既有规则完成一次实际 TypeSafe Jev1.14 有界判断并由原worker修复。
-- 工作文件：`client/src/pages/Dashboard.tsx`、`client/src/pages/SourcePortals.browser-smoke.mjs`、`ai_actuarial/source_portal_daily.py`、`tests/test_source_portal_daily.py`，以及本状态记录。控制器继续提交、推送和创建PR，并约15分钟后检查远端CI与反馈；没有合并或生产部署授权。任务仅在当前仓库进行，未读取或修改兄弟仓库。
+- 项目 `AI_actuarial_inforsearch`，分支 `fix/home-source-report`。首页“来源”统计卡链接到 `/source-portals`；日报按唯一网页统计查看数与可比较变化数。首次材料判定按采集时间顺序：前一日报观察或Hub结果、以及更早的当日积压Hub结果可证明URL已知；首次材料观察的同次Hub `existing` 不计新发现，`new` 或无Hub结果计一次，后续版本/重试不重复计数。带可选 `is_article: true` 的HTML文章仍计为网页查看；链接文字无效时，使用已提取的HTML标题或正文首个Markdown标题，并将标题写入文章记录和网页观察，均不可用时回退到URL文件名。通用下载提示（包括“Download the full report”）和“Read more”不会作为资料名，旧证据在日报展示时也执行同一过滤。普通导航/API网页不作资料。重复捕获与规范归并保留文章有效标题，不让被过滤的空标题覆盖；原始referrer、旧证据形状和原始采集证据保持。超过8个标题时，中文明确写出“另有N份资料”。
+- 用户已授权控制器依据真实逐站采集结果更新动态展示数据库，并持续维护逐站简报；产品工作线程未写生产数据库。控制器当前冻结源码完整相关PostgreSQL套件163/163通过（日报53、来源入口21、runtime84、首页合同5），Black/isort/Ruff/Pylint errors-only/diff检查通过。未变的前端 lint（4条既有warning）、typecheck/build、Vitest13项及中英文桌面/手机首页到来源入口 browser smoke此前通过。fresh Sol/high第8轮已复核完整工作树diff并PASS，无剩余接受问题；控制器继续提交同一PR并核新HEAD CI。历史动态单独备份/预览流程已核实16个有证据的入口/日期组，尚未生产写入。
+- 工作文件：`client/src/pages/Dashboard.tsx`、`client/src/pages/SourcePortals.browser-smoke.mjs`、`ai_actuarial/local_collection_runtime.py`、`ai_actuarial/source_portal_daily.py`、`tests/test_source_portal_daily.py`、`tests/test_dashboard_react_source.py`，以及本状态记录。控制器继续PR反馈复查、当前 HEAD 验证和用户已授权的历史动态刷新；本工作线程未写生产数据库。任务仅在当前仓库进行，未读取或修改兄弟仓库。
 
 ## AICT 旧绑定兼容修正已独立过审 — 2026-11-03
 

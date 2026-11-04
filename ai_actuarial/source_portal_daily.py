@@ -12,6 +12,16 @@ from zoneinfo import ZoneInfo
 
 from .source_portals import source_portal_for_observation
 
+_GENERIC_MATERIAL_LABEL = re.compile(
+    r"(?:download(?:\s+(?:(?:the|this|full|complete|entire|free|latest|current)\s+)*(?:paper|report|file|document|pdf|publication))?|click here|read more|view|下载(?:附件|文件)?|点击下载)",
+    re.IGNORECASE,
+)
+
+
+def is_generic_material_label(title: str) -> bool:
+    """Return whether a title is a generic action label rather than a material name."""
+    return bool(_GENERIC_MATERIAL_LABEL.fullmatch(" ".join(str(title).split()).strip()))
+
 
 def _observation_scope(item: dict[str, Any]) -> str | None:
     # Legacy pages lack request provenance; file downloads are always comparable GETs.
@@ -61,7 +71,14 @@ def validate_daily_evidence(evidence: dict[str, Any]) -> tuple[dt.datetime, dt.d
                 else {"url", "raw_sha256", "source_page_url", "content_version_id", "status"}
             )
             allowed_shapes = (
-                (fields, fields | {"request_scope"}) if name == "observations" else (fields,)
+                (
+                    fields,
+                    fields | {"request_scope"},
+                    fields | {"is_article"},
+                    fields | {"request_scope", "is_article"},
+                )
+                if name == "observations"
+                else (fields,)
             )
             if not isinstance(item, dict) or set(item) not in allowed_shapes:
                 raise ValueError("daily evidence item has an invalid shape")
@@ -103,6 +120,10 @@ def validate_daily_evidence(evidence: dict[str, Any]) -> tuple[dt.datetime, dt.d
                     or len(item["title"]) > 500
                 ):
                     raise ValueError("daily observation text is invalid")
+                if "is_article" in item and (
+                    type(item["is_article"]) is not bool or item["kind"] != "page"
+                ):
+                    raise ValueError("daily article observation is invalid")
             elif (
                 item["status"] not in {"new", "existing"}
                 or not isinstance(item["content_version_id"], str)
@@ -188,6 +209,7 @@ def daily_description(
         for item in run["observations"]:
             previous_urls.add(item["url"])
             previous_by_scope[(item["url"], _observation_scope(item))] = item["raw_sha256"]
+        previous_urls.update(item["url"] for item in run["hub_results"])
     changed_pages = len(
         {
             url
@@ -203,25 +225,46 @@ def daily_description(
         }
     )
     pages = {url for url, _scope, _sha, kind in observations if kind == "page"}
-    first_files: dict[str, tuple[dict[str, Any], str | None]] = {}
+    known_urls = set(previous_urls)
+    first_files: dict[str, tuple[dict[str, Any], str | None, bool]] = {}
     for run in ordered_evidence:
         hub = {(item["url"], item["raw_sha256"]): item["status"] for item in run["hub_results"]}
+        material_pairs = {
+            (item["url"], item["raw_sha256"])
+            for item in run["observations"]
+            if item["kind"] == "file" or item.get("is_article") is True
+        }
+        known_urls.update(
+            item["url"]
+            for item in run["hub_results"]
+            if (item["url"], item["raw_sha256"]) not in material_pairs
+        )
         for item in run["observations"]:
-            if item["kind"] == "file":
+            if item["kind"] == "file" or item.get("is_article") is True:
                 first_files.setdefault(
                     item["url"],
-                    (item, hub.get((item["url"], item["raw_sha256"]))),
+                    (
+                        item,
+                        hub.get((item["url"], item["raw_sha256"])),
+                        item["url"] in known_urls,
+                    ),
                 )
+                known_urls.add(item["url"])
+        known_urls.update(item["url"] for item in run["hub_results"])
     new_files = {
         item["url"]: (
             (
-                " ".join(item["title"].split())
+                (
+                    ""
+                    if is_generic_material_label(item["title"])
+                    else " ".join(item["title"].split())
+                )
                 or urlsplit(item["url"]).path.rstrip("/").rsplit("/", 1)[-1]
                 or "untitled material"
             )[:120]
         )
-        for item, status in first_files.values()
-        if item["url"] not in previous_urls and status != "existing"
+        for item, status, previously_known in first_files.values()
+        if not previously_known and status != "existing"
     }
     titles = sorted({title for title in new_files.values() if title})
     page_word = "page" if len(pages) == 1 else "pages"
@@ -236,7 +279,7 @@ def daily_description(
         remaining = max(0, len(titles) - len(shown_titles))
         if listing_zh:
             if remaining:
-                listing_zh += f"等{remaining}份"
+                listing_zh += f"，另有{remaining}份资料"
                 listing_en += f" and {remaining} more"
             zh += " 新发现的资料：" + listing_zh + "。"
             en += " Newly found: " + listing_en + "."
