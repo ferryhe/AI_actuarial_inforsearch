@@ -90,6 +90,10 @@ test("legacy failed guide uses title only when the source summary is missing", (
   const view = buildWeeklyDashboardView({ ...base, files: [{ ...files[0], summary: null }] }, "en", t);
   assert.ok(view.explanationText.includes("Study 0"));
   assert.ok(!view.explanationText.includes("Source summary"));
+  assert.ok(view.explanationText.includes("Topic details are unavailable"));
+  assert.ok(!view.explanationText.includes("highlights cover Study"));
+  assert.ok(!view.explanationText.includes("explore Study 0 in detail"));
+  assert.match(buildWeeklyDashboardView({ ...base, files: [{ ...files[0], category: "AI" }] }, "zh", t).explanationText, /适合希望了解该文具体内容的读者/);
 });
 
 test("saved recommendations share one order across languages and lead the existing cards", () => {
@@ -98,8 +102,8 @@ test("saved recommendations share one order across languages and lead the existi
   const data: WeeklyDashboardData = {
     ...base,
     files: files.map(file => ({ ...file, category: "Insurance", keywords: ["reserving"], bilingual_metadata: {
-      en: { title: file.title, summary: file.summary, category: "Insurance", keywords: ["reserving"] },
-      zh: { title: `中文${file.title}`, summary: "中文摘要。", category: "Insurance", keywords: ["准备金"] },
+      en: { title: file.title, summary: file.summary, category: "Insurance", keywords: ["AI", "data science", "reserving", "governance", "pricing"] },
+      zh: { title: `中文${file.title}`, summary: "中文摘要。", category: "Insurance", keywords: ["人工智能", "数据科学", "准备金", "治理", "定价"] },
     } })),
     explanation: { ...base.explanation!, status: "complete", explanation_en: guide(ranked), explanation_zh: guide([...ranked].reverse()) },
   };
@@ -108,7 +112,8 @@ test("saved recommendations share one order across languages and lead the existi
     assert.deepEqual(view.files.slice(0, 3).map(file => file.url), ranked.map(file => file.url));
     assert.equal(view.recommendedCount, 3);
     assert.match(view.explanationText, lang === "zh" ? /本周发现 5 篇文章/ : /discovered 5 articles/);
-    assert.match(view.explanationText, lang === "zh" ? /适合希望了解准备金主题具体内容/ : /explore reserving in detail/);
+    assert.match(view.explanationText, lang === "zh" ? /适合希望了解准备金、治理、定价主题具体内容/ : /explore reserving, governance, pricing in detail/);
+    assert.ok(!view.explanationText.includes(lang === "zh" ? "本周重点包括：准备金、治理、定价、准备金" : "highlights cover reserving, governance, pricing, reserving"));
     for (const grouped of [false, true]) {
       const markup = renderToStaticMarkup(<WeeklyHighlightCard view={view} lang={lang} t={t} onOpenFile={() => {}} grouped={grouped} />);
       assert.equal((markup.match(/data-testid="weekly-file-row-/g) || []).length, 5);
@@ -122,9 +127,9 @@ test("saved recommendations share one order across languages and lead the existi
 });
 
 test("home fetches later snapshot members before trimming the six-card preview", async () => {
-  const members = Array.from({ length: 503 }, (_, i) => ({ ...files[0], url: `https://example.org/${i}`, title: `Study ${i}` }));
+  const members = Array.from({ length: 1116 }, (_, i) => ({ ...files[0], url: `https://example.org/${i}`, title: `Study ${i}` }));
   const recommended = [members[502], members[8], members[1]];
-  const data = { ...base, snapshot: { ...snapshot, file_count: 503 }, explanation: {
+  const data = { ...base, snapshot: { ...snapshot, file_count: members.length }, explanation: {
     ...base.explanation!, status: "complete" as const,
     explanation_en: recommended.map(file => `- [${file.title}](${file.url})`).join("\n\n"),
   } };
@@ -142,12 +147,34 @@ test("home fetches later snapshot members before trimming the six-card preview",
   const loaded = await load(false);
   assert.equal(loaded.files.length, 6);
   assert.deepEqual(loaded.files.slice(0, 3), recommended);
-  assert.ok(calls.some(url => url.endsWith("limit=500&offset=500")));
+  assert.ok(calls.some(url => url.endsWith("limit=500&offset=6")));
+  assert.equal(calls.filter(url => url.includes("/files?")).length, 2, "stop once the recommendations are found");
   assert.ok(calls.every(url => !/generate|retry/.test(url)));
   const partial = await load(true);
   assert.equal(partial.files.length, 6);
   assert.equal(partial.filesUnavailable, false);
   assert.ok(!buildWeeklyDashboardView(partial, "en", t).explanationText.includes("Study 502"));
+});
+
+test("home retains recommendations from a successful page when a subsequent page fails", async () => {
+  const members = Array.from({ length: 1116 }, (_, i) => ({ ...files[0], url: `https://example.org/${i}`, title: `Study ${i}` }));
+  const loaded = await loadLatestWeeklyDashboard(async <T,>(url: string): Promise<T> => {
+    if (url.endsWith("/latest")) return { summary: { ...snapshot, file_count: members.length } } as T;
+    if (url.endsWith("/explanation")) return { explanation: { ...base.explanation!, status: "complete",
+      explanation_en: [1100, 502, 1].map(i => `- [Study ${i}](${members[i].url})`).join("\n\n"),
+    } } as T;
+    const params = new URL(url, "https://fixture").searchParams;
+    const offset = Number(params.get("offset"));
+    const limit = Number(params.get("limit"));
+    if (offset >= 506) throw new Error("Later page unavailable");
+    return { files: members.slice(offset, offset + limit), total: members.length } as T;
+  });
+  assert.equal(loaded.files.length, 6);
+  assert.equal(loaded.filesUnavailable, false);
+  assert.deepEqual(loaded.files.slice(0, 2), [members[502], members[1]]);
+  const view = buildWeeklyDashboardView(loaded, "en", t);
+  assert.ok(view.explanationText.includes("Study 502"));
+  assert.ok(!view.explanationText.includes("Study 1100"));
 });
 
 test("recommendations handle fewer than three members and escaped titles and URLs", () => {

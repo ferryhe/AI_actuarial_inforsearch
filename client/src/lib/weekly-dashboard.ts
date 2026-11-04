@@ -141,11 +141,20 @@ export async function loadLatestWeeklyDashboard(
     explanationUnavailable: explanationResult.status === "rejected",
   };
   const urls = weeklyRecommendationUrls(data);
-  if (!data.filesUnavailable && urls.some((url) => !data.files.some((file) => weeklyGuideUrl(file.url) === url))) {
+  let offset = data.files.length;
+  const total = filesResult.status === "fulfilled" ? filesResult.value.total : 0;
+  while (offset < total && urls.some((url) => !data.files.some((file) => weeklyGuideUrl(file.url) === url))) {
     try {
-      data.files = await loadAllWeeklySnapshotFiles(snapshotId, get);
+      const page = await get<WeeklySnapshotFilesResponse>(
+        `/api/weekly-updates/${snapshotId}/files?limit=${WEEKLY_FILES_PAGE_LIMIT}&offset=${offset}`,
+      );
+      const next = page.files || [];
+      if (!next.length) break;
+      data.files.push(...next);
+      offset += next.length;
     } catch {
-      // Keep the available preview when additional snapshot pages cannot be read.
+      // Keep all members read so far if a later page is unavailable.
+      break;
     }
   }
   data.files = orderWeeklyFiles(data.files, urls).slice(0, WEEKLY_HOME_PREVIEW_LIMIT);
@@ -410,17 +419,18 @@ export function buildWeeklyDashboardView(
     const items = recommendations.map((file) => {
       const metadata = localizedWeeklyFileMetadata(file, lang);
       const title = getCanonicalDisplayName({ ...file, title: metadata.title }, t("dashboard.untitled_material"));
-      const focus = metadata.keywords.slice(0, 2).join(lang === "zh" ? "、" : " and ")
-        || normalizePublicCategory(metadata.category) || title;
-      return { title: escape(title), focus: escape(focus) };
+      const topics = metadata.keywords.slice(-3).map(escape);
+      return { title: escape(title), focus: topics.join(lang === "zh" ? "、" : ", "), topics };
     });
-    const themes = [...new Set(items.map((item) => item.focus))].join(lang === "zh" ? "；" : "; ");
+    const themes = [...new Set(items.flatMap((item) => item.topics))].join(lang === "zh" ? "、" : ", ");
     const count = lang === "zh" ? `本周发现 ${data.snapshot!.file_count} 篇文章。` : `This week, we discovered ${data.snapshot!.file_count} articles.`;
-    const focus = lang === "zh" ? `本周重点包括：${themes}。` : `This week's highlights cover ${themes}.`;
+    const focus = themes
+      ? (lang === "zh" ? `本周重点包括：${themes}。` : `This week's highlights cover ${themes}.`)
+      : (lang === "zh" ? "这些文章的主题信息尚未提供。" : "Topic details are unavailable for these articles.");
     const heading = lang === "zh" ? "本周推荐阅读以下文章：" : "Recommended reading this week:";
     explanationText = [count, focus, heading, ...items.map((item, index) => lang === "zh"
-      ? `${index + 1}. ${item.title}：适合希望了解${item.focus}主题具体内容的读者。`
-      : `${index + 1}. ${item.title}: for readers who want to explore ${item.focus} in detail.`)].join("\n\n");
+      ? `${index + 1}. ${item.title}：${item.focus ? `适合希望了解${item.focus}主题具体内容的读者。` : "适合希望了解该文具体内容的读者。"}`
+      : `${index + 1}. ${item.title}: ${item.focus ? `for readers who want to explore ${item.focus} in detail.` : "for readers who want to review the article's details."}`)].join("\n\n");
   }
 
   return {
