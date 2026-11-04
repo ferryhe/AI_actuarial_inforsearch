@@ -6,6 +6,13 @@
 - 用户认可最近生成的 DAV 稿件内容并表达生成稿可直接接受。本文稿的生成验证原因仍保留为内容诊断：首份输出返回 `unsupported_number`，最后输出返回 `unlabelled_inference`。本编辑阶段未将历史 failed 记录手工改成 ready，也未写生产稿件或同步目标；这条用户偏好供后续正式接收流程执行。
 - 累计本地 review 25、changes-requested cycles 17；TypeSafe 累计 21。PR #452 仍 open、尚未更新到本次改动。当前尚未提交/推送；仍须对新提交核验当前 HEAD 六项 CI及既有最小 China 网站发布门，再按授权继续。
 
+### 2026-11-04 合并最新 main，复验待跑
+
+- 远端 `main` 已前进到 `9611c8b523f2b697e86ed074689db98da6b3f274`。Issue #450 分支用普通 merge 合入；唯一冲突为 `.hermes/project-status.md`，已保留本 Issue 与 main 上首页来源报告/AICT 的两侧记录。源代码文件均自动合并，没有强推或改写历史。合并提交 `3e8a12218b99677fde2247f8e9c293e84eddf68e`。
+- PR 相对最新 main 的当前差异 17 个文件；main 侧涉及 runtime、target worker、storage 和周报/门户更新，因此 eafd 上的 Review25 PASS 和 Revision4 浏览器报告不能单独替代合并后复核。需新鲜独立审查和该新 HEAD 六项 CI。
+- Revision4 页面哈希中 FileDetail、i18n 与解释格式化代码保持一致；编译产物及实际运行路径仍按合并树重建/复核。部署候选只能基于现行中国站基线叠加本次必要编辑文件，不带最新 main 的 Dashboard、周报、采集和门户改动；尚未生成或部署该候选。
+- 本地合并分支尚未推送，PR #452 的远端 HEAD 仍是 eafd；未写生产、未双端同步、未启用排程。
+
 ### 2026-11-04 Review24 编辑器生命周期修复
 
 - 来源身份变化后，若当前解读读回为空，页面仍保留并显示原编辑会话的草稿与冲突提示；复制入口保持可用。保存仍使用打开编辑时保存的 interpretation/source/body CAS 基线，409 后保留草稿。草稿另存初始正文以正确启用有改动的冲突保存按钮。
