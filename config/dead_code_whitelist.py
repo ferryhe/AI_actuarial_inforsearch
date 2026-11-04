@@ -10,9 +10,13 @@ from ai_actuarial.api.routers.agentic_rag import (
     api_search_agentic_titles,
     api_trace_agentic_relations,
 )
-from ai_actuarial.api.routers.article_interpretations import api_article_interpretations
+from ai_actuarial.api.routers.article_interpretations import (
+    api_article_interpretations,
+    api_update_article_interpretation_body,
+)
 
 api_article_interpretations  # reason: FastAPI registers this decorated route.
+api_update_article_interpretation_body  # reason: FastAPI registers this decorated route.
 api_search_agentic_summaries  # reason: FastAPI registers this decorated route.
 api_search_agentic_titles  # reason: FastAPI registers this decorated route.
 api_search_agentic_sections  # reason: FastAPI registers this decorated route.

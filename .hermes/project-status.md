@@ -1,9 +1,15 @@
 # Issue #450 本地文章解读 — 2026-11-02
+### 2026-11-04 CI python-symbols registered-route whitelist
+
+- GitHub Actions run `41905460187` on `dacdae5d1c804737752c6c5530f24460e1e20e40` reported one `python-symbols` baseline finding: the manual-body update handler was classified as unused. The function is a FastAPI-decorated route, its router is registered by the application, and the endpoint is exercised in `tests/test_article_interpretations.py` around line 3727.
+- Added the handler to `config/dead_code_whitelist.py` using the existing framework-registered route convention and a reason comment. No application handler or runtime behavior changed. `npm run dead-code:symbols` passed: TypeScript 0 findings; Python 0 baseline findings.
+- This only verifies the local symbol gate; the new current-HEAD GitHub run remains required. No isolated PostgreSQL, production endpoint, provider, generation, sync, deployment or schedule action was run.
+
 ### 2026-11-04 Review25 独立 PASS 与 Review24 页面验收
 
 - 新鲜独立 Sol/high 代码审查对当前 eafd 基线的完整 12 文件差异判定 PASS；未发现符合范围的 P1/P2。审查报告 `reports/issue450-editor-review4-independent-review.md`，审阅快照 SHA-256 `90FC547339EF975109B61FF1159571A87BD50AB59B63C4DFE9E04D1B18EEC384`。
 - 当前 FileDetail 页面回归 27/27、`npm run typecheck`、`npm run build`、两个改动文件 ESLint、`git diff --check` 均通过。独立真实本机 API/隔离 PG/CUA 浏览器验收 `reports/local-interpretation-migration-20261102/controller-editor-independent-browser-acceptance-revision4.json` 全部 PASS：来源变化后草稿可见/可复制，保存保留 409；保存中切语言后旧英文在 commit 后隐藏并回读新语言。只操作合成夹具，0生产连接、0模型、0双端同步。
-- 用户认可最近生成的 DAV 稿件内容并表达生成稿可直接接受。本文稿的生成验证原因仍保留为内容诊断：首份输出返回 `unsupported_number`，最后输出返回 `unlabelled_inference`。本编辑阶段未将历史 failed 记录手工改成 ready，也未写生产稿件或同步目标；这条用户偏好供后续正式接收流程执行。
+- 用户明确认可并接受最后生成的 DAV 稿件正文。这是人工编辑接受意见；生成回执仍如实记录为 `failed`、`reader_eligible=false`，两次响应的校验码分别为 `unsupported_number` 和 `unlabelled_inference`。本机未创建 ready 稿、未写生产记录或同步目标，因此不能把用户的内容认可误报为系统校验或两端接收已完成。
 - 累计本地 review 25、changes-requested cycles 17；TypeSafe 累计 21。PR #452 仍 open、尚未更新到本次改动。当前尚未提交/推送；仍须对新提交核验当前 HEAD 六项 CI及既有最小 China 网站发布门，再按授权继续。
 
 ### 2026-11-04 合并最新 main，复验待跑
