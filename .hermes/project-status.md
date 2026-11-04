@@ -1,3 +1,10 @@
+## Latest weekly additions 客户摘要与推荐排序 — 2026-11-04
+
+- 分支 `codex/weekly-reader-summary`，基线 main `9611c8b`。本次仅前端展示：摘要说明本周发现文章数、重点主题、三篇推荐及适读主题；标题与主题用现有本地化 metadata，选文沿用同快照已保存导读。复用现有文章卡片，推荐排前三且只展示一次；详情只对剩余文章分类。首页推荐超出前六条时读取快照其他页后排序截取，读取失败保留可用预览。
+- 变更：`client/src/lib/weekly-dashboard.ts`、`WeeklyHighlightCard.tsx`、两套既有周报测试及既有浏览器smoke。未增加依赖、后端接口、数据库写入或内容生成；不合并、不部署。
+- 验证：聚焦前端13项、Python展示契约6项、typecheck/build通过；lint 0错误/4既有warning，构建有既有体积提示。中英首页/详情、390/1280宽度、空/AI/失败/长摘要32组浏览器通过；另用线上7篇快照只读数据在本地8组通过，代表截图已查看。Sol/high独立只读复核PASS，无accepted findings。
+- 原checkout `fix/gpt6-parameter-compat` 的状态文档修改与4个未跟踪目录保留，兄弟仓库未读取。验证证据在 `reports/weekly-reader-summary-20261104/`（忽略目录）。PR #456已创建，初始提交14cd684；Copilot只请求1次并实际完成。接受其首页补读问题：找到全部推荐即停止，后页失败保留已读成员，detail仍全量分页；补回归并通过。真实预览还将重点主题去重、采用具体关键词，缺少主题时明确提示无主题，不把标题当主题。最终fresh Sol/high review PASS（1轮需修复已修复，累计未达Judge门槛），13项/构建/类型检查及32+8浏览器回归通过。PR创建后约15分钟回读CI及远端反馈。
+
 ## 当前候选 — 首页来源入口与日报文案 — 2026-11-04
 
 - 项目 `AI_actuarial_inforsearch`，分支 `fix/home-source-report`。首页“来源”统计卡链接到 `/source-portals`；日报按唯一网页统计查看数与可比较变化数。首次材料判定按采集时间顺序：前一日报观察或Hub结果、以及更早的当日积压Hub结果可证明URL已知；首次材料观察的同次Hub `existing` 不计新发现，`new` 或无Hub结果计一次，后续版本/重试不重复计数。带可选 `is_article: true` 的HTML文章仍计为网页查看；链接文字无效时，使用已提取的HTML标题或正文首个Markdown标题，并将标题写入文章记录和网页观察，均不可用时回退到URL文件名。通用下载提示（包括“Download the full report”）和“Read more”不会作为资料名，旧证据在日报展示时也执行同一过滤。普通导航/API网页不作资料。重复捕获与规范归并保留文章有效标题，不让被过滤的空标题覆盖；原始referrer、旧证据形状和原始采集证据保持。超过8个标题时，中文明确写出“另有N份资料”。
