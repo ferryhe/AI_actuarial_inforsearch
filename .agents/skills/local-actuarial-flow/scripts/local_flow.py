@@ -3105,7 +3105,7 @@ def _site_label(site: str, language: str = "zh") -> str:
         "iai": ("印度精算师协会", "Institute of Actuaries of India"),
         "iaj": ("日本精算师会", "Institute of Actuaries of Japan"),
         "institute-of-actuaries-of": ("韩国精算师学会", "Institute of Actuaries of Korea"),
-        "aict": ("台湾精算学会", "Actuarial Institute of Chinese Taipei"),
+        "aict": ("中华台北精算师协会", "Actuarial Institute Of Chinese Taibei"),
         "caa": ("中国精算师协会", "China Association of Actuaries"),
         "ashk": ("香港精算学会", "Actuarial Society of Hong Kong"),
         "assa": ("南非精算学会", "Actuarial Society of South Africa"),

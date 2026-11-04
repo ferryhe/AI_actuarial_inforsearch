@@ -183,6 +183,163 @@ def test_identity_is_never_truncated():
     assert weekly._normalize_material_item(row)["url"] == row["url"]
 
 
+def test_bilingual_catalog_metadata_is_displayed_only_after_source_excerpt_validation():
+    row = materials(1)[0]
+    row["bilingual_metadata"] = {
+        "zh": {
+            "title": "中文标题",
+            "summary": "中文资料摘要。更多中文内容。",
+            "category": "Insurance Applications",
+            "keywords": ["精算", "风险"],
+        },
+        "en": {
+            "title": "English title",
+            "summary": "English catalog summary. More English detail.",
+            "category": "Insurance Applications",
+            "keywords": ["actuarial", "risk"],
+        },
+    }
+    parsed = parse_source_response(output([row]), [row])
+    assert "[中文标题]" in parsed[0]
+    assert "中文资料摘要。更多中文内容。" in parsed[0]
+    assert "[English title]" in parsed[1]
+    assert "English catalog summary. More English detail." in parsed[1]
+    assert "English title" not in json.dumps(
+        weekly._material_payload(weekly._normalize_material_item(row))
+    )
+
+    empty_excerpt = weekly._render_guide(
+        ["topic"],
+        [{**weekly._normalize_material_item(row), "excerpt": "", "focus": ""}],
+        lang="zh",
+    )
+    assert "[中文标题]" in empty_excerpt
+    assert "中文资料摘要" not in empty_excerpt
+
+    row["bilingual_metadata"] = {"zh": {"title": "Incomplete title"}}
+    incomplete = parse_source_response(output([row]), [row])
+    assert "[Study 0]" in incomplete[0]
+    assert "A case study of method 0." in incomplete[0]
+
+
+def test_unparseable_localized_summary_keeps_valid_source_excerpt_and_focus():
+    row = materials(1)[0]
+    row["summary"] = "The source explains capital requirements."
+    row["keywords"] = ["capital"]
+    row["bilingual_metadata"] = {
+        lang: {
+            "title": f"{lang} title",
+            "summary": "The report compares U.S. GAAP and U.K. GAAP capital requirements.",
+            "category": "Insurance Applications",
+            "keywords": ["capital"],
+        }
+        for lang in ("zh", "en")
+    }
+
+    normal = parse_source_response(output([row]), [row])
+    assert "The source explains capital requirements." in normal[0]
+    assert "The source explains capital requirements." in normal[1]
+    assert "关注方向：capital" in normal[0]
+    assert "For readers following capital" in normal[1]
+
+    fallback = [
+        weekly._render_guide(
+            [],
+            [{**weekly._normalize_material_item(row), "focus": "capital"}],
+            lang=lang,
+            fallback=True,
+        )
+        for lang in ("zh", "en")
+    ]
+    assert "The source explains capital requirements." in fallback[0]
+    assert "The source explains capital requirements." in fallback[1]
+    assert "关注方向：capital" in fallback[0]
+    assert "For readers following capital" in fallback[1]
+
+
+def test_bilingual_metadata_survives_generation_normalization_and_invalidates_cached_display(
+    memory,
+):
+    memory.rows = materials(1)
+    memory.rows[0]["bilingual_metadata"] = {
+        "zh": {
+            "title": "中文标题",
+            "summary": "中文资料摘要。更多中文内容。",
+            "category": "Insurance Applications",
+            "keywords": ["精算", "风险"],
+        },
+        "en": {
+            "title": "English title",
+            "summary": "English catalog summary. More English detail.",
+            "category": "Insurance Applications",
+            "keywords": ["actuarial", "risk"],
+        },
+    }
+    first_generator = Generator([output(memory.rows)])
+    first = weekly.generate_weekly_explanation(
+        db_path="fixture", snapshot_id="weekly-current", generator=first_generator
+    )
+    assert "[中文标题]" in first["explanation_zh"]
+    assert "中文资料摘要。更多中文内容。" in first["explanation_zh"]
+    assert "[English title]" in first["explanation_en"]
+    assert "English catalog summary. More English detail." in first["explanation_en"]
+    assert "中文标题" not in first_generator.calls[0][0][1]["content"]
+    first_fingerprint = memory.saved["input_fingerprint"]
+
+    memory.rows[0]["bilingual_metadata"]["zh"]["title"] = "更新后的中文标题"
+    second_generator = Generator([output(memory.rows)])
+    second = weekly.generate_weekly_explanation(
+        db_path="fixture", snapshot_id="weekly-current", generator=second_generator
+    )
+    assert second_generator.calls
+    assert memory.saved["input_fingerprint"] != first_fingerprint
+    assert "[更新后的中文标题]" in second["explanation_zh"]
+
+
+def test_empty_summary_fallback_tracks_bilingual_title_without_model_calls(memory):
+    memory.rows = materials(1, summaries=False)
+    memory.rows[0]["bilingual_metadata"] = {
+        "zh": {
+            "title": "中文标题 v1",
+            "summary": "中文摘要不应被补入。",
+            "category": "Insurance Applications",
+            "keywords": ["精算"],
+        },
+        "en": {
+            "title": "English title v1",
+            "summary": "English summary must not be added.",
+            "category": "Insurance Applications",
+            "keywords": ["actuarial"],
+        },
+    }
+    raw_fallback = weekly._render_guide([], memory.rows[:1], lang="zh", fallback=True)
+    assert "[中文标题 v1]" in raw_fallback
+    assert "摘要不应被补入" not in raw_fallback
+    first_generator = Generator([])
+    first = weekly.generate_weekly_explanation(
+        db_path="fixture", snapshot_id="weekly-current", generator=first_generator
+    )
+    assert first["generation_mode"] == "fallback"
+    assert "[中文标题 v1]" in first["explanation_zh"]
+    assert "[English title v1]" in first["explanation_en"]
+    assert "摘要不应被补入" not in first["explanation_zh"]
+    assert "summary must not be added" not in first["explanation_en"]
+    assert not first_generator.calls
+    first_fingerprint = memory.saved["input_fingerprint"]
+
+    memory.rows[0]["bilingual_metadata"]["zh"]["title"] = "中文标题 v2"
+    memory.rows[0]["bilingual_metadata"]["en"]["title"] = "English title v2"
+    second_generator = Generator([])
+    second = weekly.generate_weekly_explanation(
+        db_path="fixture", snapshot_id="weekly-current", generator=second_generator
+    )
+    assert second["generation_mode"] == "fallback"
+    assert "[中文标题 v2]" in second["explanation_zh"]
+    assert "[English title v2]" in second["explanation_en"]
+    assert memory.saved["input_fingerprint"] != first_fingerprint
+    assert not second_generator.calls
+
+
 def test_overlong_custom_prompt_falls_back_without_call(memory):
     memory.rows = materials(1)
     weekly.resolve_ai_function_runtime("", storage=None).raw_config["prompt"] = "x" * 33000

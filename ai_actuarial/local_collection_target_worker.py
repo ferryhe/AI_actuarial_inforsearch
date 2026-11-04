@@ -37,6 +37,39 @@ _DATE_FACT_SEMANTICS = {
     "revision_date": "revision",
     "document_version_date": "document_version",
 }
+_AICT_NAME_ALIASES = {
+    "actuarial institute of chinese taipei": "Actuarial Institute Of Chinese Taibei (AICT)",
+    "actuarial institute of chinese taipei (aict)": "Actuarial Institute Of Chinese Taibei (AICT)",
+    "actuarial institute of chinese taipei (airc)": "Actuarial Institute Of Chinese Taibei (AICT)",
+    "actuarial institute of the republic of china": "Actuarial Institute Of Chinese Taibei (AICT)",
+    "actuarial institute of the republic of china (aict)": "Actuarial Institute Of Chinese Taibei (AICT)",
+    "actuarial institute of the republic of china (airc)": "Actuarial Institute Of Chinese Taibei (AICT)",
+}
+_AICT_CHINESE_NAME_ALIASES = (
+    "中华民国精算学会",
+    "中華民國精算學會",
+    "中华台北精算学会",
+    "中華台北精算學會",
+    "台湾精算学会",
+    "台灣精算學會",
+    "台湾精算师协会",
+    "台灣精算師協會",
+)
+for _aict_chinese_alias in (*_AICT_CHINESE_NAME_ALIASES, "中华台北精算师协会"):
+    _aict_compact_alias = "".join(_aict_chinese_alias.split()).casefold()
+    for _aict_acronym in ("aict", "airc"):
+        _AICT_NAME_ALIASES[f"{_aict_compact_alias} ({_aict_acronym})"] = "中华台北精算师协会"
+        _AICT_NAME_ALIASES[f"{_aict_compact_alias}({_aict_acronym})"] = "中华台北精算师协会"
+    _AICT_NAME_ALIASES[_aict_compact_alias] = "中华台北精算师协会"
+
+
+def _normalize_aict_display_name(value: str) -> str:
+    collapsed = " ".join(value.split()).translate(str.maketrans({"（": "(", "）": ")"}))
+    normalized = collapsed.lower()
+    if normalized in _AICT_NAME_ALIASES:
+        return _AICT_NAME_ALIASES[normalized]
+    compact = "".join(normalized.split())
+    return _AICT_NAME_ALIASES.get(compact, value)
 
 
 def _canonical_json(value: Any) -> str:
@@ -455,6 +488,8 @@ def _normalize_item(
     source_site = item.get("source_site")
     if source_site is not None and (not isinstance(source_site, str) or not source_site.strip()):
         raise ValueError("target source-site provenance is malformed")
+    if source_site is not None:
+        source_site = _normalize_aict_display_name(source_site)
     serving_metadata = {
         # The serving catalog is an AI bucket. Keep each source primary
         # category and the ordered category evidence in hub_enrichment.
@@ -745,6 +780,8 @@ def _write_item_locked(
     ensure_capacity(path="/", operation="local_content_hub_article_upsert")
     if not needs_chunks and existing_before_write:
         source_site = item.get("source_site") or existing_before_write.get("source_site")
+        if source_site is not None:
+            source_site = _normalize_aict_display_name(source_site)
         with storage.transaction(immediate=True):
             before = storage._ready_data_builder_metadata_snapshot(item["url"])
             storage._conn.execute(
@@ -765,6 +802,7 @@ def _write_item_locked(
                 pipeline_version="content-hub-live-v1",
                 status="ok",
             )
+            _update_catalog_source_site(storage, item["url"], source_site)
         row = storage.get_file_with_catalog(item["url"])
         if not row or row.get("sha256") != item["raw_sha256"]:
             raise RuntimeError("metadata-only target update failed exact URL/raw-SHA readback")
@@ -804,6 +842,8 @@ def _write_item_locked(
     source_site = item.get("source_site")
     if source_site is None and existing:
         source_site = existing.get("source_site")
+    if source_site is not None:
+        source_site = _normalize_aict_display_name(source_site)
     effective_published_time = item.get("published_time")
     if effective_published_time is None and existing:
         effective_published_time = existing.get("published_time")
@@ -850,6 +890,7 @@ def _write_item_locked(
             pipeline_version="content-hub-live-v1",
             status="ok",
         )
+        _update_catalog_source_site(storage, item["url"], source_site)
         memberships = {kb_id: manager.add_files_to_kb(kb_id, [item["url"]]) for kb_id in kb_ids}
 
     row = storage.get_file_with_catalog(item["url"])
@@ -1923,6 +1964,17 @@ def _source_ack(item: dict[str, Any], row: dict[str, Any]) -> dict[str, Any]:
     )
 
 
+def _update_catalog_source_site(storage: Any, url: str, source_site: str | None) -> None:
+    if source_site is None:
+        return
+    columns = getattr(storage._conn, "table_columns", None)
+    if callable(columns) and "source_site" in columns("catalog_items"):
+        storage._conn.execute(
+            "UPDATE catalog_items SET source_site = ? WHERE file_url = ?",
+            (source_site, url),
+        )
+
+
 def _check_source_identity(storage: Any, item: dict[str, Any]) -> None:
     if item.get("registry_version") is None:
         return
@@ -2168,6 +2220,209 @@ def apply_source_portals(
             "updates_synced": len(normalized_updates),
             "failures": [],
         }
+    finally:
+        storage.close()
+
+
+def apply_aict_source_label_normalization(
+    payload: dict[str, Any], *, storage_factory: Callable[..., Any] | None = None
+) -> dict[str, Any]:
+    """Update only explicitly listed, active file/catalog display labels."""
+    target = payload.get("target")
+    if target not in {"china", "overseas"}:
+        raise ValueError("target must be china or overseas")
+    records = payload.get("records")
+    if not isinstance(records, list) or not 1 <= len(records) <= 100:
+        raise ValueError("source-label normalization requires one to 100 records")
+    normalized = []
+    seen: set[str] = set()
+    for record in records:
+        if not isinstance(record, dict):
+            raise ValueError("source-label record must be an object")
+        url, digest, expected = (
+            record.get("url"),
+            record.get("raw_sha256"),
+            record.get("expected_source_site"),
+        )
+        if (
+            not isinstance(url, str)
+            or not url.strip()
+            or not isinstance(digest, str)
+            or not re.fullmatch(r"[0-9a-f]{64}", digest)
+            or not isinstance(expected, str)
+            or not expected.strip()
+            or _normalize_aict_display_name(expected) == expected
+            or url in seen
+        ):
+            raise ValueError("source-label record identity or former name is malformed")
+        seen.add(url)
+        normalized.append(
+            {
+                "url": url,
+                "raw_sha256": digest,
+                "expected_source_site": expected,
+                "source_site": _normalize_aict_display_name(expected),
+            }
+        )
+
+    from ai_actuarial.source_registry import resolve_source
+    from ai_actuarial.storage import Storage
+
+    apply = payload.get("apply") is True
+    storage = (
+        storage_factory() if storage_factory else (Storage() if apply else Storage.open_read_only())
+    )
+    try:
+        if not storage._conn.table_exists("catalog_items"):
+            raise RuntimeError("catalog_items is required for source-label normalization")
+        audit = []
+        context = storage.transaction(immediate=True) if apply else nullcontext()
+        with context:
+            for record in normalized:
+                suffix = " FOR UPDATE" if apply else ""
+                file_cursor = storage._conn.execute(
+                    "SELECT * FROM files WHERE url = ?" + suffix, (record["url"],)
+                )
+                file_row = file_cursor.fetchone()
+                if file_row is None:
+                    raise ValueError("target file is missing; refusing source-label update")
+                file_values = dict(zip([column[0] for column in file_cursor.description], file_row))
+                catalog_cursor = storage._conn.execute(
+                    "SELECT * FROM catalog_items WHERE file_url = ?" + suffix, (record["url"],)
+                )
+                catalog_row = catalog_cursor.fetchone()
+                if catalog_row is None:
+                    raise ValueError("target catalog item is missing; refusing source-label update")
+                catalog_values = dict(
+                    zip([column[0] for column in catalog_cursor.description], catalog_row)
+                )
+                if file_values.get("sha256") != record["raw_sha256"]:
+                    raise ValueError(
+                        "target file raw SHA-256 changed; refusing source-label update"
+                    )
+                if record["raw_sha256"] not in {
+                    catalog_values.get("sha256"),
+                    catalog_values.get("file_sha256"),
+                }:
+                    raise ValueError(
+                        "target catalog raw SHA-256 changed; refusing source-label update"
+                    )
+                if file_values.get("deleted_at") is not None:
+                    raise ValueError("target file is deleted; refusing source-label update")
+                old_file_site = file_values.get("source_site")
+                old_catalog_site = catalog_values.get("source_site")
+                if old_file_site != old_catalog_site:
+                    raise ValueError("target file and catalog source labels disagree")
+                if old_file_site not in {record["expected_source_site"], record["source_site"]}:
+                    raise ValueError("target source label changed; refusing unreviewed update")
+                effective_before = resolve_source(
+                    storage._conn,
+                    url=record["url"],
+                    raw_source=old_file_site,
+                    raw_sha256=record["raw_sha256"],
+                )
+                effective_after = resolve_source(
+                    storage._conn,
+                    url=record["url"],
+                    raw_source=record["source_site"],
+                    raw_sha256=record["raw_sha256"],
+                )
+                if effective_before != effective_after:
+                    raise ValueError("source label would change the effective publisher key")
+                changed = old_file_site != record["source_site"]
+                backup = {
+                    "file_id": file_values.get("id"),
+                    "url": record["url"],
+                    "raw_sha256": record["raw_sha256"],
+                    "file_source_site": old_file_site,
+                    "catalog_source_site": old_catalog_site,
+                    "source_key": file_values.get("source_key"),
+                    "deleted_at": file_values.get("deleted_at"),
+                    "file_row_sha256": _hash(
+                        json.dumps(
+                            file_values, ensure_ascii=False, sort_keys=True, default=str
+                        ).encode("utf-8")
+                    ),
+                    "catalog_row_sha256": _hash(
+                        json.dumps(
+                            catalog_values, ensure_ascii=False, sort_keys=True, default=str
+                        ).encode("utf-8")
+                    ),
+                }
+                if changed and apply:
+                    before_ready = storage._ready_data_builder_metadata_snapshot(record["url"])
+                    storage._conn.execute(
+                        "UPDATE files SET source_site = ? WHERE url = ? AND sha256 = ? AND source_site = ?",
+                        (record["source_site"], record["url"], record["raw_sha256"], old_file_site),
+                    )
+                    storage._conn.execute(
+                        "UPDATE catalog_items SET source_site = ? WHERE file_url = ? AND source_site = ?",
+                        (record["source_site"], record["url"], old_catalog_site),
+                    )
+                    affected_ready = storage._mark_ready_data_builder_metadata_change(
+                        file_url=record["url"], before=before_ready
+                    )
+                else:
+                    affected_ready = ()
+                check_file = storage._conn.execute(
+                    "SELECT * FROM files WHERE url = ?", (record["url"],)
+                )
+                current_file = dict(
+                    zip([column[0] for column in check_file.description], check_file.fetchone())
+                )
+                check_catalog = storage._conn.execute(
+                    "SELECT * FROM catalog_items WHERE file_url = ?", (record["url"],)
+                )
+                current_catalog = dict(
+                    zip(
+                        [column[0] for column in check_catalog.description],
+                        check_catalog.fetchone(),
+                    )
+                )
+                expected_current_site = record["source_site"] if apply else old_file_site
+                if (
+                    current_file.get("source_site") != expected_current_site
+                    or current_catalog.get("source_site") != expected_current_site
+                    or current_file.get("source_key") != file_values.get("source_key")
+                    or current_file.get("deleted_at") is not None
+                    or current_file.get("sha256") != record["raw_sha256"]
+                    or any(
+                        current_file.get(key) != value
+                        for key, value in file_values.items()
+                        if key != "source_site"
+                    )
+                    or any(
+                        current_catalog.get(key) != value
+                        for key, value in catalog_values.items()
+                        if key != "source_site"
+                    )
+                ):
+                    raise RuntimeError(
+                        "source-label update changed an unapproved file/catalog field"
+                    )
+                audit.append(
+                    {
+                        "url": record["url"],
+                        "raw_sha256": record["raw_sha256"],
+                        "source_site_before": old_file_site,
+                        "source_site_after": current_file["source_site"],
+                        "source_key_before": file_values.get("source_key"),
+                        "source_key_after": current_file.get("source_key"),
+                        "effective_publisher_key": effective_before,
+                        "backup": backup,
+                        "file_label_only": True,
+                        "catalog_label_only": True,
+                        "file_row_unchanged_except_source_site": True,
+                        "catalog_row_unchanged_except_source_site": True,
+                        "ready_affected_kbs": sorted(affected_ready),
+                        "status": (
+                            "updated"
+                            if changed and apply
+                            else "would_update" if changed else "unchanged"
+                        ),
+                    }
+                )
+        return {"schema_version": 1, "target": target, "apply": apply, "records": audit}
     finally:
         storage.close()
 
@@ -3564,6 +3819,10 @@ def main() -> int:
             result = apply_article_interpretation(payload)
         elif isinstance(payload, dict) and payload.get("operation") == "sync_source_portals":
             result = apply_source_portals(payload)
+        elif (
+            isinstance(payload, dict) and payload.get("operation") == "normalize_aict_source_labels"
+        ):
+            result = apply_aict_source_label_normalization(payload)
         elif isinstance(payload, dict) and payload.get("operation") == "sync_source_registry":
             result = apply_source_registry(payload)
         elif isinstance(payload, dict) and payload.get("operation") == "retire_non_ai_primary":

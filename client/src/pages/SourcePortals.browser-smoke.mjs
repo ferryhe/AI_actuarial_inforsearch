@@ -33,10 +33,16 @@ try {
       await page.route("**/api/**", (route) => {
         const { pathname } = new URL(route.request().url());
         const body = pathname === "/api/auth/me"
-          ? { data: { require_auth: false, authenticated: true, user: { id: 1, role: "admin", is_active: true }, permissions: ["files.read"] } }
+          ? { data: { require_auth: false, authenticated: true, user: { id: 1, role: "admin", is_active: true }, permissions: ["files.read", "stats.read"] } }
           : pathname === "/api/source-portals" ? { portals } : {};
         return route.fulfill({ contentType: "application/json", body: JSON.stringify(body) });
       });
+
+      await page.goto(base);
+      const sourceEntry = page.locator('a[data-testid^="stat-"][href="/source-portals"]');
+      await sourceEntry.waitFor();
+      await sourceEntry.click();
+      await page.waitForURL(/\/source-portals$/);
 
       await page.goto(`${base}/source-portals`);
       await page.getByTestId("source-portals-title").waitFor();

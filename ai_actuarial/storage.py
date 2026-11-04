@@ -3568,7 +3568,8 @@ class Storage:
                 m.first_seen,
                 ci.category,
                 ci.keywords,
-                ci.summary
+                ci.summary,
+                ci.bilingual_metadata_json
             FROM weekly_snapshot_members m
             LEFT JOIN files f ON f.url = m.file_url
             LEFT JOIN catalog_items ci ON ci.file_url = m.file_url
@@ -3587,6 +3588,7 @@ class Storage:
                 "category": row[4],
                 "keywords": self._decode_public_keywords(row[5]),
                 "summary": row[6],
+                "bilingual_metadata": self._decode_bilingual_metadata(row[7]),
             }
             for row in cur.fetchall()
         ]

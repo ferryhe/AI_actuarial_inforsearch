@@ -12,6 +12,16 @@ from zoneinfo import ZoneInfo
 
 from .source_portals import source_portal_for_observation
 
+_GENERIC_MATERIAL_LABEL = re.compile(
+    r"(?:download(?:\s+(?:(?:the|this|full|complete|entire|free|latest|current)\s+)*(?:paper|report|file|document|pdf|publication))?|click here|read more|view|下载(?:附件|文件)?|点击下载)",
+    re.IGNORECASE,
+)
+
+
+def is_generic_material_label(title: str) -> bool:
+    """Return whether a title is a generic action label rather than a material name."""
+    return bool(_GENERIC_MATERIAL_LABEL.fullmatch(" ".join(str(title).split()).strip()))
+
 
 def _observation_scope(item: dict[str, Any]) -> str | None:
     # Legacy pages lack request provenance; file downloads are always comparable GETs.
@@ -61,7 +71,14 @@ def validate_daily_evidence(evidence: dict[str, Any]) -> tuple[dt.datetime, dt.d
                 else {"url", "raw_sha256", "source_page_url", "content_version_id", "status"}
             )
             allowed_shapes = (
-                (fields, fields | {"request_scope"}) if name == "observations" else (fields,)
+                (
+                    fields,
+                    fields | {"request_scope"},
+                    fields | {"is_article"},
+                    fields | {"request_scope", "is_article"},
+                )
+                if name == "observations"
+                else (fields,)
             )
             if not isinstance(item, dict) or set(item) not in allowed_shapes:
                 raise ValueError("daily evidence item has an invalid shape")
@@ -103,6 +120,10 @@ def validate_daily_evidence(evidence: dict[str, Any]) -> tuple[dt.datetime, dt.d
                     or len(item["title"]) > 500
                 ):
                     raise ValueError("daily observation text is invalid")
+                if "is_article" in item and (
+                    type(item["is_article"]) is not bool or item["kind"] != "page"
+                ):
+                    raise ValueError("daily article observation is invalid")
             elif (
                 item["status"] not in {"new", "existing"}
                 or not isinstance(item["content_version_id"], str)
@@ -173,24 +194,28 @@ def daily_description(
     current_by_scope: dict[tuple[str, str | None], set[str]] = {}
     previous_by_scope: dict[tuple[str, str | None], str] = {}
     previous_urls: set[str] = set()
-    for url, scope, sha, _kind in observations:
-        current_by_scope.setdefault((url, scope), set()).add(sha)
-    for run in sorted(
-        previous,
-        key=lambda run: (
+    page_urls = {item["url"] for item in observations.values() if item["kind"] == "page"}
+
+    def run_sort_key(run: dict[str, Any]) -> tuple[dt.datetime, str]:
+        return (
             dt.datetime.fromisoformat(run["captured_at"].replace("Z", "+00:00")),
             run["run_id"],
-        ),
-    ):
+        )
+
+    ordered_evidence = sorted(evidence, key=run_sort_key)
+    for url, scope, sha, _kind in observations:
+        current_by_scope.setdefault((url, scope), set()).add(sha)
+    for run in sorted(previous, key=run_sort_key):
         for item in run["observations"]:
             previous_urls.add(item["url"])
             previous_by_scope[(item["url"], _observation_scope(item))] = item["raw_sha256"]
-    newly_observed = len({url for url, _scope in current_by_scope} - previous_urls)
-    changed = len(
+        previous_urls.update(item["url"] for item in run["hub_results"])
+    changed_pages = len(
         {
             url
             for (url, scope), shas in current_by_scope.items()
-            if scope is not None
+            if url in page_urls
+            and scope is not None
             and (
                 len(shas) > 1
                 or bool(
@@ -199,46 +224,71 @@ def daily_description(
             )
         }
     )
-    pages = sum(kind == "page" for _url, _scope, _sha, kind in observations)
-    files = sum(kind == "file" for _url, _scope, _sha, kind in observations)
-    observed_files = {(url, sha) for url, _scope, sha, _kind in observations}
-    hub: dict[tuple[str, str], str] = {}
-    for run in evidence:
-        for item in run["hub_results"]:
-            key = (item["url"], item["raw_sha256"])
-            if hub.get(key) != "new":
-                hub[key] = item["status"]
-    imported = sum(status == "new" and key in observed_files for key, status in hub.items())
-    backlog = sum(status == "new" and key not in observed_files for key, status in hub.items())
-    reused = sum(status == "existing" for status in hub.values())
-    zh = f"本日实际读取{pages}个页面/接口响应、{files}份文件；首次纳入每日观察记录的网址{newly_observed}个；在可比较的请求范围内，{changed}个网址的原始响应内容有变化。"
-    en = f"Today's observed reads cover {pages} page/API responses and {files} files; {newly_observed} URLs were first recorded in daily observation history, and raw response content differed at {changed} URLs within comparable request scopes."
-    titles = sorted(
-        {item["title"].strip() for item in observations.values() if item["title"].strip()}
-    )
-    if titles:
-        title = " ".join(titles[0].split())[:120]
-        zh += f" 本次读到的资料例如「{title}」。"
-        en += f" An observed example is “{title}”."
-    zh += f" Hub首次入库：本日读到的内容{imported}份、历史积压{backlog}份；复用既有版本{reused}份。这些数量不代表原站今日发布。"
-    en += f" Hub first imports: {imported} observed today and {backlog} from historical backlog; {reused} existing versions reused. These counts do not establish a site publication date."
-    requests = sum(run["limits"]["request_count"] for run in evidence)
-    zh += f" 仅覆盖本日{len(evidence)}次有界采集（{requests}次请求），不代表全站扫描，不据此推断移除或全站无变化。"
-    en += f" Coverage is limited to {len(evidence)} bounded collection attempts today ({requests} requests); it is not a full-site scan and cannot establish removals or no change across the site."
-    if any(run["limits"]["budget_exhausted"] for run in evidence):
-        zh += " 访问预算用完，下次继续。"
-        en += " The request budget was exhausted; continue next time."
+    pages = {url for url, _scope, _sha, kind in observations if kind == "page"}
+    known_urls = set(previous_urls)
+    first_files: dict[str, tuple[dict[str, Any], str | None, bool]] = {}
+    for run in ordered_evidence:
+        hub = {(item["url"], item["raw_sha256"]): item["status"] for item in run["hub_results"]}
+        material_pairs = {
+            (item["url"], item["raw_sha256"])
+            for item in run["observations"]
+            if item["kind"] == "file" or item.get("is_article") is True
+        }
+        known_urls.update(
+            item["url"]
+            for item in run["hub_results"]
+            if (item["url"], item["raw_sha256"]) not in material_pairs
+        )
+        for item in run["observations"]:
+            if item["kind"] == "file" or item.get("is_article") is True:
+                first_files.setdefault(
+                    item["url"],
+                    (
+                        item,
+                        hub.get((item["url"], item["raw_sha256"])),
+                        item["url"] in known_urls,
+                    ),
+                )
+                known_urls.add(item["url"])
+        known_urls.update(item["url"] for item in run["hub_results"])
+    new_files = {
+        item["url"]: (
+            (
+                (
+                    ""
+                    if is_generic_material_label(item["title"])
+                    else " ".join(item["title"].split())
+                )
+                or urlsplit(item["url"]).path.rstrip("/").rsplit("/", 1)[-1]
+                or "untitled material"
+            )[:120]
+        )
+        for item, status, previously_known in first_files.values()
+        if not previously_known and status != "existing"
+    }
+    titles = sorted({title for title in new_files.values() if title})
+    page_word = "page" if len(pages) == 1 else "pages"
+    changed_word = "page" if changed_pages == 1 else "pages"
+    file_word = "file" if len(new_files) == 1 else "files"
+    zh = f"今天查看了{len(pages)}个网页，其中{changed_pages}个网页有变化；新发现{len(new_files)}份资料。"
+    en = f"Today, we checked {len(pages)} web {page_word}; {changed_pages} {changed_word} changed, and found {len(new_files)} new {file_word}."
+    if new_files:
+        shown_titles = titles[:8]
+        listing_zh = "、".join(f"「{title}」" for title in shown_titles)
+        listing_en = "; ".join(f"“{title}”" for title in shown_titles)
+        remaining = max(0, len(titles) - len(shown_titles))
+        if listing_zh:
+            if remaining:
+                listing_zh += f"，另有{remaining}份资料"
+                listing_en += f" and {remaining} more"
+            zh += " 新发现的资料：" + listing_zh + "。"
+            en += " Newly found: " + listing_en + "."
     if any(
         run["limits"]["source_error_count"] or not run["limits"]["finished"] for run in evidence
     ):
-        zh += " 部分读取失败或运行中断；摘要只计已验证的观察。"
-        en += " Some reads failed or an attempt was interrupted; only verified observations are counted."
+        zh += " 部分内容暂时无法查看；本次汇报只包含已成功查看的内容。"
+        en += " Some content could not be checked; this report covers only successful reads."
     if directory_description:
-        zh = "完整目录快照（仅限该目录范围）：" + directory_description[0][:600] + " " + zh
-        en = (
-            "Complete directory snapshot (that directory's scope only): "
-            + directory_description[1][:600]
-            + " "
-            + en
-        )
+        zh = directory_description[0][:600] + " " + zh
+        en = directory_description[1][:600] + " " + en
     return zh, en

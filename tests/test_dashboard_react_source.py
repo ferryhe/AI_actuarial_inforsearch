@@ -30,13 +30,13 @@ def test_dashboard_uses_customer_facing_entries_not_backend_ops_statuses():
         assert term not in src
 
 
-def test_dashboard_stat_cards_link_only_the_three_content_entries():
+def test_dashboard_stat_cards_link_to_all_four_entries():
     src = DASHBOARD_TSX.read_text(encoding="utf-8")
 
     assert 'label: t("dashboard.materials")' in src and 'href: "/database"' in src
     assert 'label: t("dashboard.categories")' in src and 'href: "/categories"' in src
     assert 'label: t("dashboard.this_week_count")' in src and 'href: "/weekly"' in src
-    assert 'label: t("dashboard.sources")' in src and "href: undefined" in src
+    assert 'label: t("dashboard.sources")' in src and 'href: "/source-portals"' in src
     assert "focus-visible:ring-2" in src
     assert "focus-visible:ring-primary" in src
 

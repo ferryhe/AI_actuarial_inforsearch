@@ -1,5 +1,5 @@
 {
-  "registry_version": 1,
+  "registry_version": 3,
   "sources": [
     {
       "source_key": "pending",
@@ -43,12 +43,15 @@
     },
     {
       "source_key": "aict",
-      "name_zh": "中华民国精算学会",
-      "name_en": "Actuarial Institute of Chinese Taipei",
+      "name_zh": "中华台北精算师协会",
+      "name_en": "Actuarial Institute Of Chinese Taibei",
       "status": "active",
       "official_url": "https://airc.org.tw/",
       "evidence": [
-        "https://en.airc.org.tw/"
+        "https://en.airc.org.tw/",
+        "https://www.chinare.com.cn/zhzjt/fileDir/resource/cms/2014/07/2014072413524518344.pdf",
+        "https://www.e-caa.org.cn/systemNews/showNewsContent/8a7dab714ee79217014ee7fb0ef80072",
+        "Display names approved by the project owner on 2026-11-03; English Taibei spelling follows the owner's explicit instruction."
       ]
     },
     {
@@ -426,6 +429,43 @@
       "resolution_status": "verified",
       "evidence": [
         "https://en.airc.org.tw/"
+      ]
+    },
+    {
+      "alias_norm": "中华台北精算师协会",
+      "alias_kind": "name",
+      "source_key": "aict",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://www.chinare.com.cn/zhzjt/fileDir/resource/cms/2014/07/2014072413524518344.pdf"
+      ]
+    },
+    {
+      "alias_norm": "中华民国精算学会",
+      "alias_kind": "name",
+      "source_key": "aict",
+      "resolution_status": "verified",
+      "evidence": [
+        "https://en.airc.org.tw/",
+        "Former canonical Chinese display name retained for existing bookmarks; display names use the owner-approved 2026-11-03 naming."
+      ]
+    },
+    {
+      "alias_norm": "actuarial institute of chinese taibei",
+      "alias_kind": "name",
+      "source_key": "aict",
+      "resolution_status": "verified",
+      "evidence": [
+        "Project owner-approved English display name, 2026-11-03."
+      ]
+    },
+    {
+      "alias_norm": "actuarial institute of chinese taibei (aict)",
+      "alias_kind": "name",
+      "source_key": "aict",
+      "resolution_status": "verified",
+      "evidence": [
+        "Project owner-approved English display name, 2026-11-03."
       ]
     },
     {
