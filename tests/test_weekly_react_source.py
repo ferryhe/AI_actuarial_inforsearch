@@ -120,7 +120,8 @@ def test_weekly_groups_are_native_disclosures_with_content_metadata():
     assert "aria-controls={groupId}" in disclosure
     assert "hidden={collapsed}" in disclosure
     assert "toggleGroup(group.key)" in card
-    assert "normalizePublicCategory(file.category)" in card
+    assert "localizedWeeklyFileMetadata(file, lang)" in card
+    assert "normalizePublicCategory(metadata.category)" in card
     assert "normalizePublicCategory(file.category)" in lib
     for field in ("category", "keywords", "summary"):
         assert f"weekly.{field}" in card

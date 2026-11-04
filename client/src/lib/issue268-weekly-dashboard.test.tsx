@@ -46,6 +46,15 @@ const apiFiles = Array.from({ length: 10 }, (_, index) => ({
   title: index === 0 ? "A very long current title ".repeat(20) : `Report ${index}`,
   original_filename: `original-${index}.pdf`,
   first_seen: `2026-03-${String(10 + index).padStart(2, "0")}T00:00:00+00:00`,
+  summary: index === 0 ? "Legacy summary" : null,
+  category: index === 0 ? "Legacy category" : null,
+  keywords: index === 0 ? "legacy, terms" : [],
+  ...(index === 0 ? {
+    bilingual_metadata: {
+      zh: { title: "中文标题", summary: "中文摘要", category: "Insurance Applications", keywords: ["精算", "风险"] },
+      en: { title: "English title", summary: "English summary", category: "Insurance Applications", keywords: ["actuarial", "risk"] },
+    },
+  } : {}),
 }));
 
 const calls: string[] = [];
@@ -98,6 +107,18 @@ assert.equal(chineseView.explanationText, "中文说明");
 assert.equal(englishView.fileCount, 12);
 assert.equal(chineseView.fileCount, 12);
 assert.equal(calls.length, callsBeforeLocaleSwitch, "locale switching must not perform another request");
+const localFailure = buildWeeklyDashboardView({
+  ...loaded,
+  explanation: {
+    ...loaded.explanation!,
+    status: "failed",
+    generation_mode: "fallback",
+    explanation_zh: "",
+    explanation_en: "",
+  },
+}, "zh", tFor("zh"));
+assert.match(localFailure.explanationText, /中文标题/);
+assert.match(localFailure.explanationText, /中文摘要/);
 
 const viewAll = new URL(buildWeeklyDatabasePath(snapshot), "https://app.test");
 assert.equal(viewAll.pathname, "/database");
@@ -196,8 +217,60 @@ const markup = renderToStaticMarkup(
 assert.equal((markup.match(/data-testid="weekly-file-row-/g) || []).length, 6);
 assert.match(markup, /12 new materials/);
 assert.match(markup, /English explanation/);
+assert.match(markup, /English title/);
+assert.match(markup, /English summary/);
+assert.match(markup, /actuarial, risk/);
 assert.match(markup, /break-words/);
 assert.match(markup, /overflow-wrap:anywhere/);
+
+const chineseMarkup = renderToStaticMarkup(
+  <WeeklyDashboardSection
+    data={componentData}
+    lang="zh"
+    t={(key) => ({
+      "dashboard.this_week_additions": "最新周报新增资料",
+      "dashboard.new_materials_count": "新增 {count} 份材料",
+      "dashboard.untitled_material": "未命名资料",
+      "weekly.category": "分类",
+      "weekly.keywords": "关键词",
+      "weekly.summary": "摘要",
+    } as Record<string, string>)[key] || key}
+    onOpenFile={() => undefined}
+  />,
+);
+assert.match(chineseMarkup, /中文标题/);
+assert.match(chineseMarkup, /中文摘要/);
+assert.match(chineseMarkup, /精算, 风险/);
+
+const legacyFallbackMarkup = renderToStaticMarkup(
+  <WeeklyDashboardSection
+    data={{
+      ...componentData,
+      files: componentData.files.map((file, index) => index === 0 ? {
+        ...file,
+        title: "Legacy title",
+        summary: "Legacy summary",
+        category: "Legacy category",
+        keywords: "legacy, terms",
+        bilingual_metadata: { zh: { title: "Incomplete title" }, en: { title: "Incomplete title" } },
+      } : file),
+    }}
+    lang="en"
+    t={(key) => ({
+      "dashboard.this_week_additions": "Latest weekly additions",
+      "dashboard.new_materials_count": "{count} new materials",
+      "dashboard.untitled_material": "Untitled material",
+      "weekly.category": "Category",
+      "weekly.keywords": "Keywords",
+      "weekly.summary": "Summary",
+    } as Record<string, string>)[key] || key}
+    onOpenFile={() => undefined}
+  />,
+);
+assert.match(legacyFallbackMarkup, /Legacy title/);
+assert.match(legacyFallbackMarkup, /Legacy summary/);
+assert.match(legacyFallbackMarkup, /legacy, terms/);
+assert.doesNotMatch(legacyFallbackMarkup, /Incomplete title/);
 
 const missingExplanationMarkup = renderToStaticMarkup(
   <WeeklyDashboardSection

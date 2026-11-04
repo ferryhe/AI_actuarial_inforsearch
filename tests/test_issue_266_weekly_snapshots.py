@@ -412,6 +412,7 @@ def test_snapshot_member_title_is_resolved_live_with_safe_fallbacks(tmp_path: Pa
         "category",
         "keywords",
         "summary",
+        "bilingual_metadata",
     }
 
     _execute_postgres(
@@ -446,6 +447,34 @@ def test_api_list_latest_detail_and_files_are_typed_and_lightweight(
     )
     monkeypatch.setenv("CONFIG_PATH", str(config_path))
     monkeypatch.setenv("REQUIRE_AUTH", "false")
+    storage = Storage(postgres_url_for_path(str(db_path)))
+    try:
+        storage._conn.execute(
+            "UPDATE catalog_items SET bilingual_metadata_json = ? WHERE file_url = ?",
+            (
+                json.dumps(
+                    {
+                        "zh": {
+                            "title": "中文标题",
+                            "summary": "中文摘要",
+                            "category": "Insurance Applications",
+                            "keywords": ["精算", "风险"],
+                        },
+                        "en": {
+                            "title": "English title",
+                            "summary": "English summary",
+                            "category": "Insurance Applications",
+                            "keywords": ["actuarial", "risk"],
+                        },
+                    },
+                    ensure_ascii=False,
+                ),
+                "https://example.com/report-00000.pdf",
+            ),
+        )
+        storage._conn.commit()
+    finally:
+        storage.close()
     app = create_app()
     client = TestClient(app)
 
@@ -464,6 +493,7 @@ def test_api_list_latest_detail_and_files_are_typed_and_lightweight(
     assert files.json()["total"] == 2
     assert files.json()["included_count"] == 1
     assert files.json()["truncated"] is True
+    assert files.json()["files"][0]["bilingual_metadata"]["zh"]["title"] == "中文标题"
 
     typed_paths = {
         "/api/weekly-updates",
