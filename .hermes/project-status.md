@@ -1,4 +1,37 @@
 # Issue #450 本地文章解读 — 2026-11-02
+### 2026-11-04 Review25 独立 PASS 与 Review24 页面验收
+
+- 新鲜独立 Sol/high 代码审查对当前 eafd 基线的完整 12 文件差异判定 PASS；未发现符合范围的 P1/P2。审查报告 `reports/issue450-editor-review4-independent-review.md`，审阅快照 SHA-256 `90FC547339EF975109B61FF1159571A87BD50AB59B63C4DFE9E04D1B18EEC384`。
+- 当前 FileDetail 页面回归 27/27、`npm run typecheck`、`npm run build`、两个改动文件 ESLint、`git diff --check` 均通过。独立真实本机 API/隔离 PG/CUA 浏览器验收 `reports/local-interpretation-migration-20261102/controller-editor-independent-browser-acceptance-revision4.json` 全部 PASS：来源变化后草稿可见/可复制，保存保留 409；保存中切语言后旧英文在 commit 后隐藏并回读新语言。只操作合成夹具，0生产连接、0模型、0双端同步。
+- 用户认可最近生成的 DAV 稿件内容并表达生成稿可直接接受。本文稿的生成验证原因仍保留为内容诊断：首份输出返回 `unsupported_number`，最后输出返回 `unlabelled_inference`。本编辑阶段未将历史 failed 记录手工改成 ready，也未写生产稿件或同步目标；这条用户偏好供后续正式接收流程执行。
+- 累计本地 review 25、changes-requested cycles 17；TypeSafe 累计 21。PR #452 仍 open、尚未更新到本次改动。当前尚未提交/推送；仍须对新提交核验当前 HEAD 六项 CI及既有最小 China 网站发布门，再按授权继续。
+
+### 2026-11-04 Review24 编辑器生命周期修复
+
+- 来源身份变化后，若当前解读读回为空，页面仍保留并显示原编辑会话的草稿与冲突提示；复制入口保持可用。保存仍使用打开编辑时保存的 interpretation/source/body CAS 基线，409 后保留草稿。草稿另存初始正文以正确启用有改动的冲突保存按钮。
+- 中文保存成功后使旧解读和在途英文读取失效，并重新读取当前语言；旧英文响应不能重新显示。文章卡片仅在语言或来源切换时折叠，正文保存后的当前语言回读保持展开。
+- 红绿：两个新增 Review24 selector 在旧行为下失败（空读回丢草稿、保存后未使在途英文读取失效），修复后通过。两条新增回归及编辑保存/保存中锁定选择器共 4 passed；完整 `FileDetailForm.test.tsx` 27 passed。`npm run typecheck`、`npm run build`、针对两个改动文件的 ESLint 与 `git diff --check` 通过；build 仅有既有大 chunk advisory。Prettier 未安装，本轮未新增格式依赖。
+- 未启动隔离 PG、API/Vite 服务或模型；未访问生产端、同步、部署或更改排程。此前 Review3 浏览器验收报告保留不变；本轮没有新浏览器 smoke。
+- 累计本地 review 24、changes-requested cycles 17；TypeSafe 累计 21，Review24 两项修复已获 formal Judge 判定。当前改动等待 fresh Sol/high reviewer，不记录新 PASS；未提交或推送。审阅补丁/报告位于主 checkout 的 `reports/issue450-editor-review4.patch` 与 `reports/issue450-editor-review4-report.md`。
+
+### 2026-11-04 FileDetail CAS 与英文旧claims门禁修复
+
+- 语言切换编辑缓冲现在保留打开编辑时的 interpretation id、原始/Markdown source hash 和 expected body hash。保存始终提交此原始 CAS 基线；若另一作者在切换期间更新正文，服务端返回 409，未保存草稿保留，不会用刷新后的 hash 覆盖对方版本。
+- 有 manual_edit_revision 的中文解读不再进入英文翻译 provider 调用，receipt 记录 skipped/manual_chinese_edit_requires_claim_refresh；英文 reader 对手工修订稿保持隐藏，即使旧结构化 claims 的旧译文带有看似匹配的当前正文 hash/revision。现阶段没有基于新中文正文重建 claims 的翻译流程，因此保持隐藏，不新增流程。
+- Red/green：双作者+locale切换测试在旧逻辑下发送刷新后的新 body hash（而不是打开编辑时的基线），修复后发送原 hash 并保留 409 草稿；旧 claims 翻译 red 重放实际触发 1 次 fake generator 调用，reader red 测试证明匹配 metadata 的旧译文会被返回。修复后双作者 UI 测试通过；英文 runner 的零 provider 调用与 reader suppression 两个 selector 2 passed，英文模块+手工 CAS API 聚焦套件 32 passed；FileDetail Vitest 25 passed。
+- 静态检查：npm run typecheck、npm run build、Black、Ruff --no-cache、Python compile 与 git diff --check 均通过。Build 只有既有 chunk-size advisory。测试仅使用提供的隔离 PG16 loopback endpoint 55441；没有生产连接、生成、目标同步、部署或排程操作。pytest/服务进程已退出，容器未停止。
+- 累计本地 review 23、changes-requested cycles 16；TypeSafe 累计 19。formal Judge 与 supplemental assessment 在本轮修复请求之后完成。该修复尚待 fresh Sol/high reviewer，未记录 PASS；保留此前 review2 与独立浏览器验收记录。新补丁与报告路径为 reports/issue450-editor-review3.patch、reports/issue450-editor-review3-report.md。未提交或推送。
+### 2026-11-04 FileDetail编辑并发回归修复
+
+- 修复三项已复现问题：保存进行中禁用正文输入，避免提交后静默丢弃后续输入；编辑器的 Markdown 草稿与预览状态按当前文件缓冲，切换语言再回来可恢复，切换文件/取消/成功保存时清除；英文翻译保存通过事务条件同时匹配当前中文正文与手工编辑版本，旧翻译任务在正文被改后不能重新标为 ready，英文读取也过滤与当前正文版本不匹配的翻译。
+- 英文绑定使用中文正文 SHA-256 与 manual_edit_revision；不改变英文生成预算、同步、生产状态或目标 ACK。本轮没有恢复失败的真实稿件或执行同步。
+- 回归：隔离 PG16 上英文模块及手工编辑 CAS selector 合计 30 passed（仅连接 loopback 测试库）；FileDetail Vitest 24/24 passed。npm run typecheck、npm run build、Black、Ruff --no-cache、Python 源码 compile 与 git diff --check 通过。早期两个 proxy fake 测试失败发生于 URL 校验前，没有数据库连接或写入；随后以隔离 PG 中的真实 SQL 完成 30 项回归。production_connection_attempted=false，最终测试端点匹配专用 55441，未触及其他数据库；测试及服务进程已退出，未停止测试容器。
+- 独立浏览器验收记录保持原样。累计本地 review 22、changes-requested 15；TypeSafe 累计 17，其中 Supplemental 22 assessment 与 formal Judge 在本轮修复请求之后完成。此结果不是新鲜独立 review PASS。补丁与检查报告：reports/issue450-editor-review2.patch、reports/issue450-editor-review2-report.md。当前未提交或推送；未做真实生成、双端写入、部署或排程操作。
+- 2026-11-04 FileDetail 中文解读 Markdown 手工编辑：新增仅当前站点的 `markdown.write` API 和文章卡片编辑/预览/取消/保存/冲突提示。PG writer 在同一事务锁定来源与 ready 解读行，比较当前 file/raw/Markdown identity 和 expected body SHA；陈旧来源或正文返回 409，前端保留编辑内容。仅更新中文 body/hash，附 actor、UTC 时间、新旧正文 hash 的手工审计记录；generation attempts/round receipts/budget/cursor、标题/来源/evidence/coverage/fingerprint 和原始 Markdown 保持不变。
+- 中文正文变化后将旧英文翻译标记 stale；代理英文读取也在当前本地解读有编辑 revision 时停止返回旧翻译。原 target ACK receipt 保留；编辑 revision 进入 ACK source identity 的独立 key，使 future candidate scan 将正文视为待同步，不在本轮执行同步。
+- 隔离 PG `tests/test_article_interpretations.py` 228 passed / 2 skipped，包含权限拒绝、source/body CAS、persisted readback、英语 stale/proxy suppression、generation 历史与预算保持；`tests/test_local_collection_target_worker.py` 85 passed / 1 skipped，覆盖旧 ACK 保留与新 revision pending。FileDetail Vitest 22/22；TypeScript typecheck、Vite build、Black、Ruff、py_compile 均通过。Chromium loopback UI smoke（合成 API fixture）验证预览/取消/保存/英文隐藏/409 保留编辑；Vite 端口 5191 已停止。测试数据库仅使用 127.0.0.1:55441 的专用 test 服务；未运行真实模型、source generation、双端 sync、生产写入、部署或排程操作。
+- 本轮改动未提交/推送，等待根安排独立审查；当前 PR/Issue 生命周期门保持不变。
+
 - 2026-11-04 validator retry feedback: anonymous Judge `targeted_correction` is recorded at `reports/local-interpretation-migration-20261102/controller-supplemental19-retry-feedback-judge.json`. Added allowlisted second-call guidance only for `unlabelled_inference` and `article_length_requires_short_reason_or_reduction`; validator strictness, evidence requirements, prompt version, fingerprints, routes, cursors, and the two-call budgets are unchanged. Synthetic red: 4 new parameter cases failed because no targeted feedback was sent; green: the 4 correction/rejection cases plus existing numeric-correction and unsupported-claim regression passed (6 passed). Black, Ruff, py_compile, and git diff --check passed. No real model, source-support review, production DB, harness, target, or schedule operation was run; real acceptance remains incomplete. Fresh independent Sol/high review 19 PASS; the 13 synthetic boundary checks passed. Cumulative review/change-request history remains 19/13. Authorized for normal commit and push; no merge, deployment, or production operation.
 
 - PR #452 保持 Draft；上一推送 HEAD 4603fc6 的 GitHub run 41502058426 六项检查全部通过。另一个必需 AC1/AC5 本机启动校准在旧 HEAD 上失败于 PowerShell npm 包装器参数异常；已按运行门失败记录，未伪称 CI 失败。

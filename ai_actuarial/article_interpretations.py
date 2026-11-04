@@ -2967,6 +2967,137 @@ class ArticleInterpretationService:
             )
 
 
+class InterpretationBodyEditError(ValueError):
+    def __init__(self, code: str, status_code: int):
+        super().__init__(code)
+        self.code = code
+        self.status_code = status_code
+
+
+def update_interpretation_body(
+    database, *, interpretation_id: str, payload: dict, actor: str
+) -> dict:
+    """CAS-update one current ready draft body without changing generation history."""
+    if not isinstance(payload, dict):
+        raise InterpretationBodyEditError("interpretation_edit_invalid", 422)
+    file_url = payload.get("file_url")
+    raw_sha256 = payload.get("raw_sha256")
+    markdown_sha256 = payload.get("markdown_sha256")
+    expected_body_sha256 = payload.get("expected_body_sha256")
+    body = payload.get("body_markdown_zh")
+    if (
+        not isinstance(interpretation_id, str)
+        or not interpretation_id
+        or not isinstance(file_url, str)
+        or not file_url
+        or not isinstance(raw_sha256, str)
+        or not re.fullmatch(r"[0-9a-f]{64}", raw_sha256)
+        or not isinstance(markdown_sha256, str)
+        or not re.fullmatch(r"[0-9a-f]{64}", markdown_sha256)
+        or not isinstance(expected_body_sha256, str)
+        or not re.fullmatch(r"[0-9a-f]{64}", expected_body_sha256)
+        or not isinstance(body, str)
+        or not body.strip()
+        or len(body) > 200_000
+    ):
+        raise InterpretationBodyEditError("interpretation_edit_invalid", 422)
+
+    connection = PostgresConnection(database)
+    try:
+        connection.execute("SET statement_timeout = '5000ms'")
+        connection.execute("SET lock_timeout = '3000ms'")
+        connection.execute("BEGIN")
+        connection.execute(
+            "SELECT pg_advisory_xact_lock(hashtextextended(?,0))", (f"file:{file_url}",)
+        )
+        row = connection.execute(
+            "SELECT status,payload_json FROM article_interpretations "
+            "WHERE interpretation_id=? FOR UPDATE",
+            (interpretation_id,),
+        ).fetchone()
+        if not row:
+            raise InterpretationBodyEditError("interpretation_not_found", 404)
+        draft = dict(row[1])
+        if row[0] != "ready" or draft.get("status") != "ready":
+            raise InterpretationBodyEditError("interpretation_edit_conflict", 409)
+        requested_identity = {
+            "file_url": file_url,
+            "raw_sha256": raw_sha256,
+            "markdown_sha256": markdown_sha256,
+        }
+        saved_identity = {key: draft.get(key) for key in requested_identity}
+        source = _load_file(connection, file_url)
+        if (
+            requested_identity != saved_identity
+            or not source
+            or not _visible(source)
+            or _identity(source) != saved_identity
+        ):
+            raise InterpretationBodyEditError("interpretation_source_conflict", 409)
+
+        old_body = str(draft.get("body_markdown_zh") or "")
+        old_hash = _hash(old_body)
+        if old_hash != expected_body_sha256:
+            raise InterpretationBodyEditError("interpretation_body_conflict", 409)
+        if body == old_body:
+            connection.commit()
+            return {
+                "success": True,
+                "body_sha256": old_hash,
+                "manual_edit_revision": draft.get("manual_edit_revision"),
+            }
+
+        revision = uuid.uuid4().hex
+        updated = dict(draft)
+        updated["body_markdown_zh"] = body
+        updated["body_sha256"] = _hash(body)
+        updated["manual_edit_revision"] = revision
+        updated["manual_edits"] = [
+            *draft.get("manual_edits", []),
+            {
+                "revision": revision,
+                "edited_at_utc": _now().isoformat(),
+                "actor": str(actor or "unknown")[:200],
+                "previous_body_sha256": old_hash,
+                "body_sha256": updated["body_sha256"],
+            },
+        ]
+        translation = updated.get("english_translation")
+        if isinstance(translation, dict):
+            translation["status"] = "stale"
+            translation["stale_reason"] = "chinese_body_edited"
+        connection.execute(
+            "UPDATE article_interpretations SET payload_json=?::jsonb, "
+            "updated_at=CURRENT_TIMESTAMP WHERE interpretation_id=? AND status='ready'",
+            (_json(updated), interpretation_id),
+        )
+        readback = connection.execute(
+            "SELECT status,payload_json FROM article_interpretations " "WHERE interpretation_id=?",
+            (interpretation_id,),
+        ).fetchone()
+        persisted = dict(readback[1]) if readback else {}
+        if (
+            not readback
+            or readback[0] != "ready"
+            or {key: persisted.get(key) for key in requested_identity} != requested_identity
+            or persisted.get("body_markdown_zh") != body
+            or persisted.get("body_sha256") != updated["body_sha256"]
+            or persisted.get("manual_edit_revision") != revision
+        ):
+            raise InterpretationBodyEditError("interpretation_edit_readback_mismatch", 409)
+        connection.commit()
+        return {
+            "success": True,
+            "body_sha256": updated["body_sha256"],
+            "manual_edit_revision": revision,
+        }
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+
 def read_interpretations(database, *, file_url="", interpretation_id="") -> list[dict]:
     """Read saved articles without migrations, credentials or provider calls."""
     connection = PostgresConnection(database, read_only=True)
@@ -2980,6 +3111,7 @@ def read_interpretations(database, *, file_url="", interpretation_id="") -> list
         result = []
         for row in rows:
             draft = dict(row[0])
+            draft["body_sha256"] = _hash(str(draft.get("body_markdown_zh") or ""))
             draft["is_current"] = _current(connection, draft)
             draft["reader_eligible"] = draft["status"] == "ready" and draft["is_current"]
             source = _canonical_source(connection, draft["source_key"])

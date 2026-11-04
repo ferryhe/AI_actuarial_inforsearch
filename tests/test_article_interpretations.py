@@ -3654,3 +3654,196 @@ def test_retry_id_reports_failure_and_outer_attempt_count_after_interruption():
     assert retried["outer_attempts"] == 1
     assert retried["internal_provider_requests"] == "unknown/unmetered"
     assert retried["interpretation"]["status"] == "ready"
+
+
+def test_article_interpretation_manual_edit_api_is_current_site_cas_and_preserves_history(
+    tmp_path, monkeypatch
+):
+    from tests.test_fastapi_ops_read_endpoints import _build_test_client
+
+    client, app, auth = _build_test_client(tmp_path, monkeypatch, require_auth=True)
+    database = app.state.database
+    storage = Storage(database)
+    try:
+        storage._conn.execute(
+            "INSERT INTO canonical_sources VALUES ('a','Source A','Source A','active',NULL,'{}'::jsonb)"
+        )
+        storage._conn.execute(
+            "INSERT INTO source_aliases VALUES ('a.example','hostname','a','verified','{}'::jsonb)"
+        )
+        url = seed(storage, "a", url="https://a.example/manual-edit.pdf")
+        runner = service(storage, generator=Generator())
+        receipt = runner.run(round_key="manual-edit-cas")
+        draft = runner._get(receipt["slots"][0]["interpretation_id"])
+        assert draft["status"] == "ready"
+        draft["english_translation"] = {
+            "status": "ready",
+            "title_en": "Existing English title",
+            "body_markdown_en": "Existing English body.",
+            "attempts": [{"calls": [{"status": "success"}]}],
+        }
+        runner._save(draft)
+        storage._conn.commit()
+
+        original_body = draft["body_markdown_zh"]
+        expected_hash = articles._hash(original_body)
+        payload = {
+            "file_url": url,
+            "raw_sha256": draft["raw_sha256"],
+            "markdown_sha256": draft["markdown_sha256"],
+            "expected_body_sha256": expected_hash,
+            "body_markdown_zh": "人工修订的 Markdown 正文。",
+        }
+        before_rounds = storage._conn.execute(
+            "SELECT round_key, receipt_json FROM article_interpretation_rounds ORDER BY round_key"
+        ).fetchall()
+        before_cursor = storage._conn.execute(
+            "SELECT last_source_key FROM article_interpretation_state WHERE singleton=TRUE"
+        ).fetchone()[0]
+        before_budget = runner._content_budget(draft["content_key"])
+        protected = {
+            key: draft.get(key)
+            for key in (
+                "interpretation_id",
+                "file_url",
+                "raw_sha256",
+                "markdown_sha256",
+                "content_key",
+                "source_key",
+                "input_fingerprint",
+                "prompt_version",
+                "title_zh",
+                "references",
+                "coverage",
+                "messages",
+                "attempts",
+                "origin_round_key",
+                "selection_started_at",
+            )
+        }
+
+        assert (
+            client.post(
+                f"/api/article-interpretations/{draft['interpretation_id']}/body", json=payload
+            ).status_code
+            == 401
+        )
+        assert (
+            client.post(
+                f"/api/article-interpretations/{draft['interpretation_id']}/body",
+                json=payload,
+                headers={"X-Auth-Token": auth["reader_token"]},
+            ).status_code
+            == 403
+        )
+
+        stale_source = {**payload, "markdown_sha256": "0" * 64}
+        assert (
+            client.post(
+                f"/api/article-interpretations/{draft['interpretation_id']}/body",
+                json=stale_source,
+                headers={"X-Auth-Token": auth["operator_token"]},
+            ).status_code
+            == 409
+        )
+
+        saved = client.post(
+            f"/api/article-interpretations/{draft['interpretation_id']}/body",
+            json=payload,
+            headers={"X-Auth-Token": auth["operator_token"]},
+        )
+        assert saved.status_code == 200
+        assert saved.json()["success"] is True
+        assert saved.json()["body_sha256"] == articles._hash(payload["body_markdown_zh"])
+        revision = saved.json()["manual_edit_revision"]
+        assert len(revision) == 32
+
+        updated = runner._get(draft["interpretation_id"])
+        assert updated["body_markdown_zh"] == payload["body_markdown_zh"]
+        assert updated["body_sha256"] == articles._hash(payload["body_markdown_zh"])
+        assert updated["manual_edit_revision"] == revision
+        assert updated["manual_edits"][-1]["revision"] == revision
+        assert updated["manual_edits"][-1]["edited_at_utc"].endswith("+00:00")
+        assert updated["manual_edits"][-1]["actor"] == "operator-token"
+        assert updated["manual_edits"][-1]["previous_body_sha256"] == expected_hash
+        assert updated["manual_edits"][-1]["body_sha256"] == articles._hash(
+            payload["body_markdown_zh"]
+        )
+        assert updated["english_translation"]["status"] == "stale"
+        assert updated["english_translation"]["body_markdown_en"] == "Existing English body."
+        assert (
+            updated["english_translation"]["attempts"] == draft["english_translation"]["attempts"]
+        )
+        assert {key: updated.get(key) for key in protected} == protected
+        assert articles.read_interpretations(database, file_url=url)[0][
+            "body_sha256"
+        ] == articles._hash(payload["body_markdown_zh"])
+        from ai_actuarial.article_interpretation_english import read_english_interpretations
+
+        assert read_english_interpretations(database, file_url=url) == []
+        from ai_actuarial.api.routers import article_interpretations as reader_api
+
+        app.state.site_config = {
+            "article_interpretation": {
+                "english_proxy": {"enabled": True, "china_origin": "https://china.example"}
+            }
+        }
+        proxied = []
+        monkeypatch.setattr(
+            reader_api.requests,
+            "get",
+            lambda *args, **kwargs: proxied.append((args, kwargs)),
+        )
+        english_response = client.get(
+            "/api/article-interpretations",
+            params={"file_url": url, "locale": "en"},
+            headers={"X-Auth-Token": auth["operator_token"]},
+        )
+        assert english_response.status_code == 200
+        assert english_response.json() == {"interpretations": []}
+        assert proxied == []
+        assert runner._content_budget(draft["content_key"]) == before_budget
+        assert (
+            storage._conn.execute(
+                "SELECT round_key, receipt_json FROM article_interpretation_rounds ORDER BY round_key"
+            ).fetchall()
+            == before_rounds
+        )
+        assert (
+            storage._conn.execute(
+                "SELECT last_source_key FROM article_interpretation_state WHERE singleton=TRUE"
+            ).fetchone()[0]
+            == before_cursor
+        )
+        source = storage._conn.execute(
+            "SELECT f.sha256,c.markdown_content FROM files f JOIN catalog_items c ON c.file_url=f.url "
+            "WHERE f.url=?",
+            (url,),
+        ).fetchone()
+        assert source[0] == draft["raw_sha256"]
+        assert articles._hash(source[1]) == draft["markdown_sha256"]
+
+        stale_body = client.post(
+            f"/api/article-interpretations/{draft['interpretation_id']}/body",
+            json=payload,
+            headers={"X-Auth-Token": auth["operator_token"]},
+        )
+        assert stale_body.status_code == 409
+        assert (
+            runner._get(draft["interpretation_id"])["body_markdown_zh"]
+            == payload["body_markdown_zh"]
+        )
+
+        storage._conn.execute("UPDATE files SET sha256=? WHERE url=?", ("f" * 64, url))
+        stale_current_source = client.post(
+            f"/api/article-interpretations/{draft['interpretation_id']}/body",
+            json={**payload, "expected_body_sha256": articles._hash(payload["body_markdown_zh"])},
+            headers={"X-Auth-Token": auth["operator_token"]},
+        )
+        assert stale_current_source.status_code == 409
+        assert (
+            runner._get(draft["interpretation_id"])["body_markdown_zh"]
+            == payload["body_markdown_zh"]
+        )
+    finally:
+        storage.close()

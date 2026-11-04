@@ -2399,8 +2399,14 @@ def _interpretation_identity(draft: dict[str, Any]) -> dict[str, str]:
         or article_hash(draft["raw_sha256"] + draft["markdown_sha256"]) != draft["content_key"]
     ):
         raise _InterpretationTargetFailure("interpretation_identity_conflict")
+    revision = draft.get("manual_edit_revision")
+    if revision is not None and (
+        not isinstance(revision, str) or not re.fullmatch(r"[0-9a-f]{32}", revision)
+    ):
+        raise _InterpretationTargetFailure("interpretation_identity_invalid")
     return {
         **{field: draft[field] for field in fields},
+        **({"manual_edit_revision": revision} if revision else {}),
         "draft_sha256": _hash(_canonical_json(draft).encode("utf-8")),
     }
 
@@ -2415,6 +2421,11 @@ def _interpretation_source_identity(
         "markdown_sha256": identity["markdown_sha256"],
         "content_key": draft["content_key"],
         "input_fingerprint": identity["input_fingerprint"],
+        **(
+            {"manual_edit_revision": identity["manual_edit_revision"]}
+            if identity.get("manual_edit_revision")
+            else {}
+        ),
     }
 
 
@@ -3021,7 +3032,9 @@ def run_article_interpretation_stream(
 
 
 def _interpretation_ack_key(target: str, source_identity: dict[str, str], locale: str) -> str:
-    return f"article-target-sync:v2:{target}:{source_identity['interpretation_id']}:{locale}"
+    revision = source_identity.get("manual_edit_revision")
+    edit_revision = f":edit:{revision}" if revision else ""
+    return f"article-target-sync:v2:{target}:{source_identity['interpretation_id']}{edit_revision}:{locale}"
 
 
 def _interpretation_ack_read(

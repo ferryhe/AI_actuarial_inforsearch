@@ -3804,3 +3804,100 @@ def test_article_interpretation_sync_candidate_scan_rotates_past_failed_ack_hist
     assert connection.writes == [worker._INTERPRETATION_SYNC_SCAN_CURSOR_KEY] * 3
     assert receipts == receipts_before
     assert connection.closed is True
+
+
+def test_manual_edit_revision_preserves_old_ack_and_makes_new_body_pending(monkeypatch):
+    from ai_actuarial import postgres
+
+    old_draft = _interpretation_draft()
+    old_identity = worker._interpretation_identity(old_draft)
+    old_source = worker._interpretation_source_identity(old_identity, old_draft)
+    edited = {
+        **old_draft,
+        "body_markdown_zh": "Manually edited current Chinese body.",
+        "manual_edit_revision": "a" * 32,
+    }
+    identity = worker._interpretation_identity(edited)
+    source_identity = worker._interpretation_source_identity(identity, edited)
+    assert source_identity != old_source
+    receipts = {
+        worker._interpretation_ack_key(target, old_source, "zh"): {
+            "receipt_type": "target_sync_locale",
+            "target": target,
+            "locale": "zh",
+            "source_identity": old_source,
+            "locale_digest": worker._interpretation_locale_digest(old_draft, "zh"),
+            "reader_fields": worker._interpretation_reader_fields(old_draft, "zh"),
+            "status": "acknowledged",
+        }
+        for target in ("china", "overseas")
+    }
+    before = json.loads(json.dumps(receipts))
+
+    class Cursor:
+        def __init__(self, rows=()):
+            self.rows = list(rows)
+
+        def fetchall(self):
+            return self.rows
+
+        def fetchone(self):
+            return self.rows[0] if self.rows else None
+
+    class Connection:
+        closed = False
+
+        def __init__(self):
+            self.scan_cursor = None
+
+        def execute(self, statement, params=()):
+            if statement == "BEGIN" or "pg_advisory_xact_lock" in statement:
+                return Cursor()
+            if statement.startswith("SELECT payload_json, created_at, interpretation_id"):
+                return Cursor([(edited, "2026-11-04T10:00:00+00:00", edited["interpretation_id"])])
+            if statement.startswith("SELECT receipt_json FROM article_interpretation_rounds"):
+                if params[0] == worker._INTERPRETATION_SYNC_SCAN_CURSOR_KEY:
+                    return Cursor([(self.scan_cursor,)] if self.scan_cursor else [])
+                return Cursor([(receipts[params[0]],)] if params[0] in receipts else [])
+            if statement.startswith("INSERT INTO article_interpretation_rounds"):
+                self.scan_cursor = json.loads(params[1])
+                return Cursor()
+            if statement.startswith("UPDATE article_interpretation_rounds"):
+                self.scan_cursor = json.loads(params[0])
+                return Cursor()
+            raise AssertionError(statement)
+
+        def commit(self):
+            pass
+
+        def rollback(self):
+            pass
+
+        def close(self):
+            self.closed = True
+
+    connection = Connection()
+    monkeypatch.setattr(worker, "_article_interpretation_database", lambda _runtime: object())
+    monkeypatch.setattr(postgres, "PostgresConnection", lambda *_args, **_kwargs: connection)
+    monkeypatch.setattr(worker, "_interpretation_current_row", lambda *_args: None)
+
+    result = worker.list_article_interpretation_sync_candidates(
+        {
+            "schema_version": 1,
+            "operation": "list_article_interpretation_sync_candidates",
+            "target": "china",
+            "limit": 3,
+        },
+        runtime_factory=lambda: object(),
+    )
+
+    assert len(result["drafts"]) == 1
+    candidate = result["drafts"][0]
+    assert candidate["source_identity"] == source_identity
+    assert candidate["targets"]["china"]["zh"]["status"] == "pending"
+    assert candidate["targets"]["overseas"]["zh"]["status"] == "pending"
+    assert set(receipts) == {
+        worker._interpretation_ack_key(target, old_source, "zh") for target in ("china", "overseas")
+    }
+    assert receipts == before
+    assert connection.closed is True

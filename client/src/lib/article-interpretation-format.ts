@@ -10,6 +10,7 @@ export interface ArticleInterpretation {
   file_url: string;
   raw_sha256: string;
   markdown_sha256: string;
+  body_sha256?: string;
   china_article_url: string;
   references?: { published_time?: string; original_title?: string; author?: string | string[]; authors?: string | string[]; source?: { name_zh?: string; name_en?: string } };
 }

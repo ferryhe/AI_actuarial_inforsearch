@@ -957,6 +957,163 @@ def test_manual_ready_chinese_replay_translates_once_and_skips_hidden_or_stale(s
     assert draft["interpretation_id"] == first["slots"][0]["interpretation_id"]
 
 
+def test_manual_chinese_edit_during_translation_keeps_completed_english_stale(storage):
+    draft = _draft(storage)
+    original_body_sha256 = articles._hash(draft["body_markdown_zh"])
+
+    def edit_chinese_body_during_call():
+        from ai_actuarial.article_interpretations import update_interpretation_body
+
+        update_interpretation_body(
+            storage.database,
+            interpretation_id=draft["interpretation_id"],
+            payload={
+                "file_url": draft["file_url"],
+                "raw_sha256": draft["raw_sha256"],
+                "markdown_sha256": draft["markdown_sha256"],
+                "expected_body_sha256": original_body_sha256,
+                "body_markdown_zh": "A new, manually edited Chinese interpretation.",
+            },
+            actor="operator-token",
+        )
+
+    generator = Generator(on_call=edit_chinese_body_during_call)
+    receipt = EnglishTranslationService(storage, generator=generator).run(
+        interpretation_ids=[draft["interpretation_id"]]
+    )
+
+    assert len(generator.calls) == 1
+    assert receipt["slots"][0]["status"] == "skipped"
+    assert receipt["slots"][0]["reason"] == "chinese_body_changed_during_translation"
+    saved = dict(
+        storage._conn.execute(
+            "SELECT payload_json FROM article_interpretations WHERE interpretation_id=?",
+            (draft["interpretation_id"],),
+        ).fetchone()[0]
+    )
+    translation = saved["english_translation"]
+    assert saved["body_markdown_zh"] == "A new, manually edited Chinese interpretation."
+    assert saved["manual_edit_revision"]
+    assert translation["status"] == "stale"
+    assert translation["source_body_sha256"] == original_body_sha256
+    assert translation["source_manual_edit_revision"] == ""
+    assert translation.get("body_markdown_en") is None
+    assert read_english_interpretations(storage.database, file_url=URL) == []
+
+    legacy_completion = dict(translation)
+    legacy_completion.update(
+        status="ready",
+        title_en="Stale English title",
+        body_markdown_en="Stale English body.",
+        generated_at="2026-11-04T00:00:00+00:00",
+    )
+    legacy_completion.pop("source_body_sha256", None)
+    legacy_completion.pop("source_manual_edit_revision", None)
+    saved["english_translation"] = legacy_completion
+    storage._conn.execute(
+        "UPDATE article_interpretations SET payload_json=?::jsonb WHERE interpretation_id=?",
+        (json.dumps(saved, ensure_ascii=False), draft["interpretation_id"]),
+    )
+    assert read_english_interpretations(storage.database, file_url=URL) == []
+
+
+def test_manual_chinese_edit_blocks_translation_of_old_structured_claims(storage):
+    existing = {
+        "status": "ready",
+        "title_en": "Translation from the generated claims",
+        "body_markdown_en": "Translation based on the original structured claims.",
+        "generated_at": "2026-11-03T00:00:00+00:00",
+        "attempts": [],
+    }
+    draft = _draft(storage, existing_translation=existing)
+    claims_before = draft["claims"]
+    original_body_sha256 = articles._hash(draft["body_markdown_zh"])
+    manually_edited_body = draft["body_markdown_zh"].replace("中文正文。", "手工修订正文。", 1)
+    edit = articles.update_interpretation_body(
+        storage.database,
+        interpretation_id=draft["interpretation_id"],
+        payload={
+            "file_url": draft["file_url"],
+            "raw_sha256": draft["raw_sha256"],
+            "markdown_sha256": draft["markdown_sha256"],
+            "expected_body_sha256": original_body_sha256,
+            "body_markdown_zh": manually_edited_body,
+        },
+        actor="operator-token",
+    )
+    edited = dict(
+        storage._conn.execute(
+            "SELECT payload_json FROM article_interpretations WHERE interpretation_id=?",
+            (draft["interpretation_id"],),
+        ).fetchone()[0]
+    )
+    assert edited["claims"] == claims_before
+    assert edited["english_translation"]["status"] == "stale"
+
+    generator = Generator()
+    receipt = EnglishTranslationService(storage, generator=generator).run(
+        interpretation_ids=[draft["interpretation_id"]]
+    )
+
+    assert generator.calls == []
+    assert receipt["provider_calls"] == 0
+    assert receipt["slots"][0]["status"] == "skipped"
+    assert receipt["slots"][0]["reason"] == "manual_chinese_edit_requires_claim_refresh"
+    saved = dict(
+        storage._conn.execute(
+            "SELECT payload_json FROM article_interpretations WHERE interpretation_id=?",
+            (draft["interpretation_id"],),
+        ).fetchone()[0]
+    )
+    assert saved["claims"] == claims_before
+    assert saved["english_translation"]["status"] == "stale"
+    assert (
+        saved["english_translation"].get("source_manual_edit_revision")
+        != edit["manual_edit_revision"]
+    )
+    assert read_english_interpretations(storage.database, file_url=URL) == []
+
+
+def test_manual_revision_hides_english_even_when_old_claim_translation_has_matching_metadata(
+    storage,
+):
+    draft = _draft(storage)
+    manually_edited_body = draft["body_markdown_zh"].replace("中文正文。", "手工修订正文。", 1)
+    edit = articles.update_interpretation_body(
+        storage.database,
+        interpretation_id=draft["interpretation_id"],
+        payload={
+            "file_url": draft["file_url"],
+            "raw_sha256": draft["raw_sha256"],
+            "markdown_sha256": draft["markdown_sha256"],
+            "expected_body_sha256": articles._hash(draft["body_markdown_zh"]),
+            "body_markdown_zh": manually_edited_body,
+        },
+        actor="operator-token",
+    )
+    saved = dict(
+        storage._conn.execute(
+            "SELECT payload_json FROM article_interpretations WHERE interpretation_id=?",
+            (draft["interpretation_id"],),
+        ).fetchone()[0]
+    )
+    saved["english_translation"] = {
+        "status": "ready",
+        "title_en": "Old claims translated as current",
+        "body_markdown_en": "This translation used structured claims from before the manual edit.",
+        "generated_at": "2026-11-04T00:00:00+00:00",
+        "source_body_sha256": articles._hash(manually_edited_body),
+        "source_manual_edit_revision": edit["manual_edit_revision"],
+        "attempts": [],
+    }
+    storage._conn.execute(
+        "UPDATE article_interpretations SET payload_json=?::jsonb WHERE interpretation_id=?",
+        (json.dumps(saved, ensure_ascii=False), draft["interpretation_id"]),
+    )
+
+    assert read_english_interpretations(storage.database, file_url=URL) == []
+
+
 def test_source_change_during_translation_does_not_make_a_second_call_or_ready_english(storage):
     draft = _draft(storage)
     generator = Generator(
@@ -1057,6 +1214,7 @@ def test_overseas_proxy_requires_exact_current_identity_and_forwards_no_browser_
 ):
     local_identity = {"file_url": URL, "raw_sha256": "raw", "markdown_sha256": "md"}
     monkeypatch.setattr(api, "read_current_article_identity", lambda _db, _url: local_identity)
+    monkeypatch.setattr(api, "_has_local_manual_edit", lambda _request, _url: False)
     calls = []
 
     class Reply:
@@ -1119,6 +1277,7 @@ def test_overseas_proxy_requires_exact_current_identity_and_forwards_no_browser_
 def test_overseas_proxy_fails_closed_for_hidden_article_or_untrusted_origin(monkeypatch):
     calls = []
     monkeypatch.setattr(api, "read_current_article_identity", lambda _db, _url: None)
+    monkeypatch.setattr(api, "_has_local_manual_edit", lambda _request, _url: False)
     monkeypatch.setattr(api.requests, "get", lambda *args, **kwargs: calls.append((args, kwargs)))
     config = {
         "article_interpretation": {

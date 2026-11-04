@@ -4,12 +4,17 @@ from urllib.parse import urlsplit
 
 import requests
 from fastapi import APIRouter, Depends, Request
+from fastapi.responses import JSONResponse
 
 from ai_actuarial.article_interpretation_english import (
     read_current_article_identity,
     read_english_interpretations,
 )
-from ai_actuarial.article_interpretations import read_interpretations
+from ai_actuarial.article_interpretations import (
+    InterpretationBodyEditError,
+    read_interpretations,
+    update_interpretation_body,
+)
 
 from ..deps import AuthContext, require_permissions
 from .read import _get_db_path
@@ -24,6 +29,7 @@ _READER_FIELDS = (
     "file_url",
     "raw_sha256",
     "markdown_sha256",
+    "body_sha256",
     "china_article_url",
     "references",
 )
@@ -92,6 +98,13 @@ def _public_english_item(item: dict) -> dict:
     return result
 
 
+def _has_local_manual_edit(request: Request, file_url: str) -> bool:
+    return any(
+        draft.get("reader_eligible") and draft.get("manual_edit_revision")
+        for draft in read_interpretations(_get_db_path(request), file_url=file_url)
+    )
+
+
 def _read_overseas_english(request: Request, file_url: str) -> list[dict]:
     if not file_url:
         return []
@@ -139,7 +152,11 @@ def api_article_interpretations(
     if locale == "en":
         config = getattr(request.app.state, "site_config", {})
         if _china_proxy_enabled(config):
-            drafts = _read_overseas_english(request, file_url)
+            drafts = (
+                []
+                if _has_local_manual_edit(request, file_url)
+                else _read_overseas_english(request, file_url)
+            )
         else:
             drafts = read_english_interpretations(_get_db_path(request), file_url=file_url)
         return {"interpretations": [_public_english_item(draft) for draft in drafts]}
@@ -159,3 +176,21 @@ def api_article_interpretations(
             {key: draft[key] for key in _READER_FIELDS if key in draft} for draft in latest.values()
         ]
     }
+
+
+@router.post("/article-interpretations/{interpretation_id}/body")
+def api_update_article_interpretation_body(
+    interpretation_id: str,
+    payload: dict,
+    request: Request,
+    auth: AuthContext = Depends(require_permissions("markdown.write")),
+):
+    try:
+        return update_interpretation_body(
+            _get_db_path(request),
+            interpretation_id=interpretation_id,
+            payload=payload,
+            actor=str((auth.token or {}).get("subject") or "authenticated-user"),
+        )
+    except InterpretationBodyEditError as exc:
+        return JSONResponse(status_code=exc.status_code, content={"error": exc.code})

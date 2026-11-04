@@ -379,11 +379,21 @@ class EnglishTranslationService:
         return dict(row[0]) if row else None
 
     def _save_translation(self, draft, state):
-        self.connection.execute(
-            "UPDATE article_interpretations SET payload_json=jsonb_set(payload_json,'{english_translation}',?::jsonb,true),updated_at=CURRENT_TIMESTAMP WHERE interpretation_id=?",
-            (_json(state), draft["interpretation_id"]),
+        result = self.connection.execute(
+            "UPDATE article_interpretations SET payload_json=jsonb_set(payload_json,'{english_translation}',?::jsonb,true),updated_at=CURRENT_TIMESTAMP "
+            "WHERE interpretation_id=? AND payload_json->>'body_markdown_zh'=? "
+            "AND COALESCE(payload_json->>'manual_edit_revision','')=?",
+            (
+                _json(state),
+                draft["interpretation_id"],
+                str(draft.get("body_markdown_zh") or ""),
+                str(draft.get("manual_edit_revision") or ""),
+            ),
         )
+        if result.rowcount != 1:
+            return False
         draft["english_translation"] = state
+        return True
 
     def _content_totals(self, content_key):
         rows = self.connection.execute(
@@ -503,6 +513,9 @@ class EnglishTranslationService:
         ):
             slot.update(status="skipped", reason="chinese_interpretation_not_current_ready")
             return
+        if current.get("manual_edit_revision"):
+            slot.update(status="skipped", reason="manual_chinese_edit_requires_claim_refresh")
+            return
         draft = current
         state = dict(draft.get("english_translation") or {})
         if state.get("status") == "ready":
@@ -613,6 +626,8 @@ class EnglishTranslationService:
             provider=route["provider"],
             model=route["model"],
             route=current_route,
+            source_body_sha256=_sha(str(draft.get("body_markdown_zh") or "")),
+            source_manual_edit_revision=str(draft.get("manual_edit_revision") or ""),
             **route_fields,
         )
         attempt = (
@@ -689,7 +704,10 @@ class EnglishTranslationService:
             }
             attempt["calls"].append(call)
             with self.storage.transaction():
-                self._save_translation(draft, state)
+                if not self._save_translation(draft, state):
+                    slot.update(status="skipped", reason="chinese_body_changed_during_translation")
+                    self._save_receipt(receipt)
+                    return
                 _reserve_english_receipt_attempt(receipt, route_fields, timeout)
                 self._save_receipt(receipt)
 
@@ -770,7 +788,10 @@ class EnglishTranslationService:
                 attempt["provider_seconds"] = float(attempt.get("provider_seconds", 0)) + charge
                 receipt["provider_seconds"] += charge - timeout
                 with self.storage.transaction():
-                    self._save_translation(draft, state)
+                    if not self._save_translation(draft, state):
+                        slot.update(
+                            status="skipped", reason="chinese_body_changed_during_translation"
+                        )
                     self._save_receipt(receipt)
 
             if state.get("status") == "ready":
@@ -921,6 +942,26 @@ def read_english_interpretations(database, *, file_url="") -> list[dict]:
             draft = dict(row[0])
             translation = draft.get("english_translation") or {}
             if translation.get("status") != "ready" or not _current(connection, draft):
+                continue
+            source_body_sha256 = _sha(str(draft.get("body_markdown_zh") or ""))
+            current_edit_revision = str(draft.get("manual_edit_revision") or "")
+            if current_edit_revision:
+                continue
+            translation_edit_revision = str(translation.get("source_manual_edit_revision") or "")
+            if current_edit_revision and (
+                translation.get("source_body_sha256") != source_body_sha256
+                or translation_edit_revision != current_edit_revision
+            ):
+                continue
+            if (
+                translation.get("source_body_sha256")
+                and translation["source_body_sha256"] != source_body_sha256
+            ):
+                continue
+            if (
+                "source_manual_edit_revision" in translation
+                and translation_edit_revision != current_edit_revision
+            ):
                 continue
             source = articles._canonical_source(connection, draft["source_key"])
             saved_references = draft.get("references") or {}
