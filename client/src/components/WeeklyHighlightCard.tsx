@@ -6,8 +6,8 @@ import { formatUtcIso } from "@/lib/date-format";
 import {
   formatWeeklyShortDate,
   groupWeeklyFiles,
+  localizedWeeklyFileMetadata,
   normalizePublicCategory,
-  normalizePublicKeywords,
   normalizePublicMetadataText,
   type WeeklyDashboardView,
   type WeeklySnapshotFile,
@@ -34,10 +34,14 @@ interface WeeklyArticleCardProps {
 }
 
 function WeeklyArticleCard({ file, index, lang, t, onOpenFile }: WeeklyArticleCardProps) {
-  const displayName = getCanonicalDisplayName(file, t("dashboard.untitled_material"));
-  const category = normalizePublicCategory(file.category);
-  const keywords = normalizePublicKeywords(file.keywords);
-  const summary = normalizePublicMetadataText(file.summary);
+  const metadata = localizedWeeklyFileMetadata(file, lang);
+  const displayName = getCanonicalDisplayName(
+    { ...file, title: metadata.title },
+    t("dashboard.untitled_material"),
+  );
+  const category = normalizePublicCategory(metadata.category);
+  const keywords = metadata.keywords;
+  const summary = normalizePublicMetadataText(metadata.summary);
   const utcIso = formatUtcIso(file.first_seen);
 
   return (
