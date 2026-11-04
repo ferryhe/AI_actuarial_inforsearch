@@ -479,6 +479,45 @@ def test_target_preserves_legacy_and_registry_source_site_values(
     assert ready == []
 
 
+@pytest.mark.parametrize(
+    ("source_site", "expected_source_site"),
+    [
+        (
+            "Actuarial Institute of Chinese\u00a0Taipei (AICT)",
+            "Actuarial Institute Of Chinese Taibei (AICT)",
+        ),
+        ("中華台北精算學會", "中华台北精算师协会"),
+    ],
+)
+def test_target_normalizes_former_aict_source_site_on_capture_and_replay(
+    source_site: str, expected_source_site: str, tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(capacity, "ensure_capacity", lambda **_kwargs: None)
+    monkeypatch.setattr(
+        capacity, "capacity_status", lambda **_kwargs: {"status": "ok", "percent_used": 70}
+    )
+    storage = _FakeStorage(tmp_path)
+    item = _item(
+        "https://example.test/aict-source-site.pdf",
+        b"%PDF AICT source-site provenance",
+        "AICT source-site provenance.",
+    )
+    item["source_site"] = source_site
+    normalized = worker._normalize_item(item, "overseas", ["AI", "Pricing", "Other"])
+    assert normalized["source_site"] == expected_source_site
+
+    ready: list = []
+    saved = _apply_payload(tmp_path, storage, "overseas", [item], ready)
+    assert saved["failures"] == []
+    assert saved["acknowledgements"][0]["source_site"] == expected_source_site
+    assert storage.rows[item["url"]]["source_site"] == expected_source_site
+    ready.clear()
+    replayed = _apply_payload(tmp_path, storage, "overseas", [item], ready)
+    assert replayed["acknowledgements"][0]["status"] == "already_current"
+    assert storage.rows[item["url"]]["source_site"] == expected_source_site
+    assert ready == []
+
+
 @pytest.mark.parametrize("source_site", ["", " \t ", 123, ["cas"]])
 def test_target_rejects_blank_or_non_string_source_site(source_site) -> None:
     item = _item(
@@ -492,7 +531,13 @@ def test_target_rejects_blank_or_non_string_source_site(source_site) -> None:
         worker._normalize_item(item, "china", ["AI", "Pricing", "Other"])
 
 
-def test_target_preserves_legacy_hub_binding_and_rejects_mismatch(tmp_path: Path) -> None:
+def test_target_preserves_legacy_hub_binding_and_rejects_mismatch(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(capacity, "ensure_capacity", lambda **_kwargs: None)
+    monkeypatch.setattr(
+        capacity, "capacity_status", lambda **_kwargs: {"blocked": False, "used_percent": 70}
+    )
     raw = b"%PDF-1.7\nlegacy payload binding"
     markdown = "Pricing models use AI methods."
     item = _item("https://example.test/legacy-binding.pdf", raw, markdown)
@@ -529,7 +574,15 @@ class _FakeConnection:
     def __init__(self, storage: "_FakeStorage") -> None:
         self.storage = storage
 
+    def table_columns(self, table: str) -> set[str]:
+        return {"source_site"} if table == "catalog_items" else set()
+
     def execute(self, statement: str, params: tuple):
+        if "UPDATE catalog_items SET source_site = ? WHERE file_url = ?" in statement:
+            row = self.storage.rows.get(params[1])
+            if row:
+                row["source_site"] = params[0]
+            return None
         if "SELECT kb_id FROM rag_kb_files" in statement:
             url = params[0]
             return _ChunkSetCursor(
