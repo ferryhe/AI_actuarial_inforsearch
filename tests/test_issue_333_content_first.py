@@ -182,6 +182,7 @@ def test_weekly_public_projection_joins_catalog_without_sensitive_fields(
         "category",
         "keywords",
         "summary",
+        "bilingual_metadata",
     }
     assert not set(first).intersection(
         {"markdown_content", "markdown_source", "local_path", "sha256", "bytes", "deleted_at"}
@@ -191,6 +192,7 @@ def test_weekly_public_projection_joins_catalog_without_sensitive_fields(
     assert missing["category"] is None
     assert missing["keywords"] == []
     assert missing["summary"] is None
+    assert missing["bilingual_metadata"] == {}
     malformed = next(
         item for item in returned_files if item["url"].endswith("malformed-keywords.pdf")
     )
