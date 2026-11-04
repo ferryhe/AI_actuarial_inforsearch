@@ -11,6 +11,7 @@ from ai_actuarial.article_interpretation_english import (
     read_english_interpretations,
 )
 from ai_actuarial.article_interpretations import (
+    article_content_warning_codes,
     InterpretationBodyEditError,
     read_interpretations,
     update_interpretation_body,
@@ -32,6 +33,10 @@ _READER_FIELDS = (
     "body_sha256",
     "china_article_url",
     "references",
+    "status",
+    "content_warnings",
+    "content_warning_acceptance_available",
+    "manual_content_accepted_at_utc",
 )
 
 _ENGLISH_READER_FIELDS = (
@@ -145,7 +150,7 @@ def _read_overseas_english(request: Request, file_url: str) -> list[dict]:
 @router.get("/article-interpretations")
 def api_article_interpretations(
     request: Request,
-    _auth: AuthContext = Depends(require_permissions("files.read")),
+    auth: AuthContext = Depends(require_permissions("files.read")),
 ):
     locale = request.query_params.get("locale", "zh")
     file_url = request.query_params.get("file_url", "")
@@ -171,11 +176,33 @@ def api_article_interpretations(
     latest = {}
     for draft in current:
         latest.setdefault(draft["file_url"], draft)
-    return {
-        "interpretations": [
-            {key: draft[key] for key in _READER_FIELDS if key in draft} for draft in latest.values()
-        ]
-    }
+    if "markdown.write" in auth.permissions:
+        for draft in drafts:
+            if (
+                draft.get("file_url") not in latest
+                and draft.get("is_current")
+                and (warning_codes := article_content_warning_codes(draft))
+            ):
+                latest[draft["file_url"]] = {
+                    "interpretation_id": draft["interpretation_id"],
+                    "title_zh": "",
+                    "body_markdown_zh": "",
+                    "generated_at": draft.get("generated_at", ""),
+                    "file_url": draft["file_url"],
+                    "raw_sha256": draft["raw_sha256"],
+                    "markdown_sha256": draft["markdown_sha256"],
+                    "body_sha256": draft["body_sha256"],
+                    "status": "failed",
+                    "content_warnings": warning_codes,
+                    "content_warning_acceptance_available": True,
+                }
+    public_drafts = []
+    for draft in latest.values():
+        public = {key: draft[key] for key in _READER_FIELDS if key in draft}
+        if "content_warnings" in public and not public.get("content_warning_acceptance_available"):
+            public["content_warnings"] = article_content_warning_codes(draft)
+        public_drafts.append(public)
+    return {"interpretations": public_drafts}
 
 
 @router.post("/article-interpretations/{interpretation_id}/body")
@@ -186,11 +213,15 @@ def api_update_article_interpretation_body(
     auth: AuthContext = Depends(require_permissions("markdown.write")),
 ):
     try:
+        config = getattr(request.app.state, "site_config", {})
+        interpretation_config = config.get("article_interpretation") or {}
         return update_interpretation_body(
             _get_db_path(request),
             interpretation_id=interpretation_id,
             payload=payload,
             actor=str((auth.token or {}).get("subject") or "authenticated-user"),
+            environment=interpretation_config.get("environment", "local"),
+            china_base_url=interpretation_config.get("china_base_url", "https://aiactuary.cn"),
         )
     except InterpretationBodyEditError as exc:
         return JSONResponse(status_code=exc.status_code, content={"error": exc.code})

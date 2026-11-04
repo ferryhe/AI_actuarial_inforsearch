@@ -512,6 +512,76 @@ it("edits, previews, cancels, and saves only the Chinese interpretation body", a
   expect(screen.queryByText("Existing English title")).not.toBeInTheDocument();
 });
 
+it("requires explicit acceptance for a warning-only interpretation and preserves the draft on conflict", async () => {
+  localStorage.setItem("lang", "zh");
+  const articleUrl = "file-smoke";
+  const candidate = {
+    interpretation_id: "warning-v1",
+    title_zh: "",
+    body_markdown_zh: "",
+    generated_at: "",
+    file_url: articleUrl,
+    raw_sha256: "a".repeat(64),
+    markdown_sha256: "b".repeat(64),
+    body_sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    status: "failed",
+    content_warnings: ["unsupported_number", "unlabelled_inference"],
+    content_warning_acceptance_available: true,
+  };
+  let saved = false;
+  apiGet.mockImplementation((url) => Promise.resolve(
+    url.includes("article-interpretations")
+      ? { interpretations: [saved ? {
+        ...candidate,
+        title_zh: "Reviewed interpretation",
+        body_markdown_zh: "User-reviewed Markdown body.",
+        status: "ready",
+        content_warning_acceptance_available: undefined,
+        china_article_url: "https://aiactuary.cn/file-detail?file_id=1",
+      } : candidate] }
+      : url.includes("/detail") ? { file: { url: articleUrl, title: "Source file", original_filename: "source.pdf", source_site: "source", content_type: "text/plain", bytes: 12, local_path: "/tmp/source.pdf" } }
+        : url.includes("/markdown") ? { markdown: { markdown_content: "Source text", markdown_source: "manual" } }
+          : url.includes("chunk-sets") ? { chunk_sets: [] } : { tasks: [] },
+  ));
+  apiPost.mockRejectedValueOnce(Object.assign(new Error("source conflict"), { status: 409 }));
+  const user = userEvent.setup();
+  render(<Layout><FileDetail /></Layout>);
+  expect(await screen.findByTestId("article-interpretation-warning-candidate")).toBeInTheDocument();
+  expect(screen.getByTestId("article-interpretation-warning-candidate")).toHaveTextContent("部分数字未获所引来源证据支持。");
+  expect(screen.getByTestId("article-interpretation-warning-candidate")).toHaveTextContent("有一处推断未明确标注。");
+  await user.click(screen.getByTestId("button-interpretation-review-warnings"));
+  const title = screen.getByTestId("input-interpretation-title") as HTMLInputElement;
+  const body = screen.getByTestId("input-interpretation-markdown") as HTMLTextAreaElement;
+  await user.type(title, "Reviewed interpretation");
+  await user.type(body, "User-reviewed Markdown body.");
+  const save = screen.getByTestId("button-save-interpretation-draft");
+  expect(save).toBeDisabled();
+  await user.click(screen.getByTestId("checkbox-interpretation-accept-warnings"));
+  expect(save).toBeEnabled();
+  await user.click(save);
+  expect(await screen.findByTestId("interpretation-edit-error")).toBeInTheDocument();
+  expect((screen.getByTestId("input-interpretation-title") as HTMLInputElement).value).toBe("Reviewed interpretation");
+  expect((screen.getByTestId("input-interpretation-markdown") as HTMLTextAreaElement).value).toBe("User-reviewed Markdown body.");
+
+  saved = true;
+  apiPost.mockResolvedValueOnce({ success: true, body_sha256: "c".repeat(64), content_warnings: candidate.content_warnings });
+  await user.click(screen.getByTestId("button-save-interpretation-draft"));
+  await waitFor(() => expect(apiPost).toHaveBeenLastCalledWith(
+    `/api/article-interpretations/${candidate.interpretation_id}/body`,
+    expect.objectContaining({
+      file_url: articleUrl,
+      raw_sha256: candidate.raw_sha256,
+      markdown_sha256: candidate.markdown_sha256,
+      expected_body_sha256: candidate.body_sha256,
+      body_markdown_zh: "User-reviewed Markdown body.",
+      title_zh: "Reviewed interpretation",
+      accept_content_warnings: true,
+    }),
+  ));
+  expect(await screen.findByTestId("article-interpretation")).toHaveTextContent("内容提醒");
+  expect(screen.getByTestId("article-interpretation")).toHaveTextContent("部分数字未获所引来源证据支持。");
+});
+
 it("keeps edited Markdown visible when interpretation save fails or conflicts", async () => {
   apiPost.mockClear();
   localStorage.setItem("lang", "zh");

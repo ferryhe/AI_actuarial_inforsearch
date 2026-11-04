@@ -387,7 +387,9 @@ export default function FileDetail() {
   const [interpretationRevision, setInterpretationRevision] = useState(0);
   const [interpretationEditing, setInterpretationEditing] = useState(false);
   const [interpretationEditContent, setInterpretationEditContent] = useState("");
+  const [interpretationEditTitle, setInterpretationEditTitle] = useState("");
   const [interpretationPreview, setInterpretationPreview] = useState(false);
+  const [interpretationWarningsAcknowledged, setInterpretationWarningsAcknowledged] = useState(false);
   const [interpretationSaving, setInterpretationSaving] = useState(false);
   const interpretationEditDraft = useRef<{
     fileUrl: string;
@@ -398,6 +400,9 @@ export default function FileDetail() {
     originalBody: string;
     body: string;
     preview: boolean;
+    title: string;
+    acceptContentWarnings: boolean;
+    warningsAcknowledged: boolean;
   } | null>(null);
   const [mdLoading, setMdLoading] = useState(false);
   const [mdTab, setMdTab] = useState<"view" | "edit">("view");
@@ -524,12 +529,15 @@ export default function FileDetail() {
     const editDraft = interpretationEditDraft.current;
     if (editDraft?.fileUrl === resolvedFileUrl) {
       setInterpretationEditContent(editDraft.body);
+      setInterpretationEditTitle(editDraft.title);
       setInterpretationEditing(lang === "zh");
       setInterpretationPreview(lang === "zh" && editDraft.preview);
+      setInterpretationWarningsAcknowledged(editDraft.warningsAcknowledged);
     } else {
       interpretationEditDraft.current = null;
       setInterpretationEditing(false);
       setInterpretationPreview(false);
+      setInterpretationWarningsAcknowledged(false);
     }
     if (!resolvedFileUrl || !isLatest()) return;
     try {
@@ -687,6 +695,10 @@ export default function FileDetail() {
           markdown_sha256: editDraft.markdownSha256,
           expected_body_sha256: editDraft.expectedBodySha256,
           body_markdown_zh: interpretationEditContent,
+          ...(editDraft.acceptContentWarnings ? {
+            accept_content_warnings: interpretationWarningsAcknowledged,
+            title_zh: interpretationEditTitle,
+          } : {}),
         },
       );
       if (interpretationEditDraft.current?.interpretationId === editDraft.interpretationId
@@ -883,6 +895,12 @@ export default function FileDetail() {
     && interpretationEditing
     && interpretationEditDraft.current?.fileUrl === resolvedFileUrl
     ? interpretationEditDraft.current
+    : null;
+  const warningAcceptanceCandidate = !currentInterpretation
+    && lang === "zh"
+    && permissions.includes("markdown.write")
+    && candidateInterpretation?.content_warning_acceptance_available
+    ? candidateInterpretation
     : null;
 
   function downloadInterpretation(extension: "md" | "html") {
@@ -1174,7 +1192,12 @@ export default function FileDetail() {
                   originalBody: currentInterpretation.body_markdown_zh,
                   body: currentInterpretation.body_markdown_zh,
                   preview: false,
+                  title: currentInterpretation.title_zh,
+                  acceptContentWarnings: false,
+                  warningsAcknowledged: false,
                 };
+                setInterpretationEditTitle(currentInterpretation.title_zh);
+                setInterpretationWarningsAcknowledged(false);
                 setInterpretationPreview(false);
                 setMutationError(null);
                 setInterpretationEditing(true);
@@ -1186,6 +1209,10 @@ export default function FileDetail() {
               </>}
             </div>}
           </div>
+          {!!currentInterpretation.content_warnings?.length && <div className="mx-4 mt-3 rounded border border-amber-500/40 bg-amber-500/5 p-3 text-sm" data-testid="interpretation-content-warnings">
+            <p className="font-medium">{t("fv.interpretation_content_warning")}</p>
+            <ul className="mt-1 list-disc pl-5">{currentInterpretation.content_warnings.map((warning) => <li key={warning}>{t(warning === "unsupported_number" ? "fv.interpretation_warning_number" : "fv.interpretation_warning_inference")}</li>)}</ul>
+          </div>}
           {interpretationExpanded && <div id="article-interpretation-body" className="p-4 space-y-3" data-testid="article-interpretation-body">
             <h3 className="text-lg font-semibold break-words">{lang === "en" ? currentInterpretation.title_en : currentInterpretation.title_zh}</h3>
             {interpretationEditing ? <div className="space-y-3">
@@ -1217,20 +1244,66 @@ export default function FileDetail() {
         </section>
       )}
 
+      {warningAcceptanceCandidate && !interpretationEditing && (
+        <section className="rounded-xl border border-amber-500/40 bg-card overflow-hidden" data-testid="article-interpretation-warning-candidate">
+          <div className="p-4 space-y-3">
+            <h3 className="text-sm font-semibold">{t("fv.interpretation")}</h3>
+            <p className="text-sm">{t("fv.interpretation_warning_acceptance_available")}</p>
+            <ul className="list-disc pl-5 text-sm">{warningAcceptanceCandidate.content_warnings?.map((warning) => <li key={warning}>{t(warning === "unsupported_number" ? "fv.interpretation_warning_number" : "fv.interpretation_warning_inference")}</li>)}</ul>
+            <p className="text-xs text-muted-foreground">{t("fv.interpretation_version")}: {warningAcceptanceCandidate.raw_sha256.slice(0, 12)} · Markdown {warningAcceptanceCandidate.markdown_sha256.slice(0, 12)}</p>
+            <button type="button" className="min-h-[44px] rounded border px-3 text-xs" data-testid="button-interpretation-review-warnings" onClick={() => {
+              interpretationEditDraft.current = {
+                fileUrl: warningAcceptanceCandidate.file_url,
+                interpretationId: warningAcceptanceCandidate.interpretation_id,
+                rawSha256: warningAcceptanceCandidate.raw_sha256,
+                markdownSha256: warningAcceptanceCandidate.markdown_sha256,
+                expectedBodySha256: warningAcceptanceCandidate.body_sha256 || "",
+                originalBody: "",
+                body: "",
+                preview: false,
+                title: "",
+                acceptContentWarnings: true,
+                warningsAcknowledged: false,
+              };
+              setInterpretationEditTitle("");
+              setInterpretationEditContent("");
+              setInterpretationWarningsAcknowledged(false);
+              setInterpretationPreview(false);
+              setMutationError(null);
+              setInterpretationEditing(true);
+            }}>{t("fv.interpretation_review_warnings")}</button>
+          </div>
+        </section>
+      )}
+
       {draftOnlyInterpretation && (
         <section className="rounded-xl border border-border bg-card overflow-hidden" data-testid="article-interpretation-draft">
           <div className="px-4 py-3 bg-muted/30 flex flex-wrap items-center justify-between gap-2">
             <div>
               <h3 className="text-sm font-semibold">{t("fv.interpretation")}</h3>
-              <p role="alert" data-testid="interpretation-edit-error" className="mt-1 text-sm text-destructive">
-                {mutationError?.action === "interpretation" ? mutationError.message : t("fv.interpretation_edit_conflict")}
-              </p>
+              {draftOnlyInterpretation.acceptContentWarnings
+                ? <p className="mt-1 text-sm text-muted-foreground">{t("fv.interpretation_warning_acceptance_instruction")}</p>
+                : <p role="alert" data-testid="interpretation-edit-error" className="mt-1 text-sm text-destructive">
+                  {mutationError?.action === "interpretation" ? mutationError.message : t("fv.interpretation_edit_conflict")}
+                </p>}
             </div>
             <button type="button" className="min-h-[44px] rounded border px-3 text-xs"
               onClick={() => void navigator.clipboard.writeText(interpretationEditContent)}
               data-testid="button-copy-interpretation-draft">{t("fv.interpretation_copy")}</button>
           </div>
           <div className="p-4 space-y-3">
+            {draftOnlyInterpretation.acceptContentWarnings && <>
+              <div className="space-y-1">
+                <label htmlFor="input-interpretation-title" className="block text-xs font-medium text-muted-foreground">{t("fv.interpretation_title_label")}</label>
+                <input id="input-interpretation-title" data-testid="input-interpretation-title" value={interpretationEditTitle} disabled={interpretationSaving}
+                  onChange={(event) => { const title = event.target.value; setInterpretationEditTitle(title); draftOnlyInterpretation.title = title; }}
+                  className="w-full rounded-lg border border-border bg-background p-3 text-sm" maxLength={120} />
+              </div>
+              <div className="rounded border border-amber-500/40 bg-amber-500/5 p-3 text-sm">
+                <p className="font-medium">{t("fv.interpretation_content_warning")}</p>
+                <ul className="mt-1 list-disc pl-5">{candidateInterpretation?.content_warnings?.map((warning) => <li key={warning}>{t(warning === "unsupported_number" ? "fv.interpretation_warning_number" : "fv.interpretation_warning_inference")}</li>)}</ul>
+              </div>
+            </>}
             <div className="flex flex-wrap gap-2">
               <button type="button" className="min-h-[44px] rounded border px-3 text-xs"
                 onClick={() => { setInterpretationPreview(false); draftOnlyInterpretation.preview = false; }}
@@ -1247,15 +1320,25 @@ export default function FileDetail() {
                   onChange={(event) => { const body = event.target.value; setInterpretationEditContent(body); draftOnlyInterpretation.body = body; }}
                   rows={16} className="mt-1 w-full rounded-lg border border-border bg-background p-3 font-mono text-sm leading-relaxed focus:outline-none focus:ring-2 focus:ring-ring" />
               </div>}
+            {draftOnlyInterpretation.acceptContentWarnings && <label className="flex items-start gap-2 text-sm">
+              <input type="checkbox" checked={interpretationWarningsAcknowledged} disabled={interpretationSaving} onChange={(event) => {
+                setInterpretationWarningsAcknowledged(event.target.checked);
+                draftOnlyInterpretation.warningsAcknowledged = event.target.checked;
+              }} data-testid="checkbox-interpretation-accept-warnings" />
+              <span>{t("fv.interpretation_acknowledge_warnings")}</span>
+            </label>}
             <div className="flex flex-wrap gap-2">
               <button type="button" onClick={() => void saveInterpretation()}
-                disabled={interpretationSaving || interpretationEditContent === draftOnlyInterpretation.originalBody}
+                disabled={interpretationSaving || (draftOnlyInterpretation.acceptContentWarnings
+                  ? !interpretationEditTitle.trim() || !interpretationEditContent.trim() || !interpretationWarningsAcknowledged
+                  : interpretationEditContent === draftOnlyInterpretation.originalBody)}
                 className="min-h-[44px] rounded bg-primary px-3 text-xs text-primary-foreground disabled:opacity-50"
-                data-testid="button-save-interpretation-draft">{interpretationSaving ? t("fv.interpretation_saving") : t("fv.interpretation_save")}</button>
+                data-testid="button-save-interpretation-draft">{interpretationSaving ? t("fv.interpretation_saving") : draftOnlyInterpretation.acceptContentWarnings ? t("fv.interpretation_accept_save") : t("fv.interpretation_save")}</button>
               <button type="button" onClick={() => { interpretationEditDraft.current = null; setInterpretationEditing(false); setInterpretationPreview(false); setMutationError(null); }}
                 disabled={interpretationSaving} className="min-h-[44px] rounded border px-3 text-xs"
                 data-testid="button-cancel-interpretation-draft">{t("fv.cancel")}</button>
             </div>
+            {draftOnlyInterpretation.acceptContentWarnings && mutationError?.action === "interpretation" && <p role="alert" data-testid="interpretation-edit-error" className="text-sm text-destructive">{mutationError.message}</p>}
           </div>
         </section>
       )}
