@@ -1,3 +1,9 @@
+## 当前候选 — 首页来源入口与日报文案 — 2026-11-04
+
+- 项目 `AI_actuarial_inforsearch`，分支 `fix/home-source-report`。首页“来源”统计卡链接到 `/source-portals`；来源日报按唯一网页统计查看数，只统计可比页面的变化。当天采集按时间排序，以首次文件观察及该次 Hub 证据判定发现：首次为 Hub `existing` 的 URL 不算新发现，首次为 `new` 或没有 Hub 结果则计一次；同 URL 的后续版本或重试不重复计数，前一天已见 URL 继续排除。无有效标题时使用最多120字符的 URL 文件名。既有目录摘要、采集证据和历史记录保持。
+- 控制器验证：独立 PostgreSQL 日报32项、来源入口21项以及前端 Vitest13项通过；lint（4条既有Hook warning）、typecheck/build、Black/isort/Ruff/diff检查通过。中英文桌面和手机 browser smoke通过，覆盖首页来源统计卡跳转、列表和详情。fresh Sol/high独立第3轮审查PASS，无剩余接受问题；累计2轮要求修改，已按既有规则完成一次实际 TypeSafe Jev1.14 有界判断并由原worker修复。
+- 工作文件：`client/src/pages/Dashboard.tsx`、`client/src/pages/SourcePortals.browser-smoke.mjs`、`ai_actuarial/source_portal_daily.py`、`tests/test_source_portal_daily.py`，以及本状态记录。控制器继续提交、推送和创建PR，并约15分钟后检查远端CI与反馈；没有合并或生产部署授权。任务仅在当前仓库进行，未读取或修改兄弟仓库。
+
 ## AICT 旧绑定兼容修正已独立过审 — 2026-11-03
 
 - 分支 `fix/aict-chinese-taibei`，PR #453。增加受旧绑定证明保护的确定性名称复制路径，普通新富信息仍严格要求证据；复用已有原子写入与哈希逻辑。保留64份历史注释的空首类证据，不补造引文；旧Markdown的原始/JSON绑定、结果哈希和中英文内容哈希均核验后才重绑。旧source_signature沿用原九字段导入算法的已固定值核对，不误用新四字段公式重算；新绑定按现有新公式签名。来源、日期、分类、原始CAS、删除状态和非名称数据保持。
