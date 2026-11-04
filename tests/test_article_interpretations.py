@@ -285,6 +285,53 @@ def test_crash_after_ready_before_cursor_resumes_without_provider_or_double_adva
     )
 
 
+def test_retry_by_identity_recovers_committed_reservation_before_ready(storage):
+    seed(storage, "a")
+
+    class ProcessCrash(BaseException):
+        pass
+
+    def crash_after_reservation():
+        raise ProcessCrash("simulated process interruption")
+
+    generator = Generator(on_call=crash_after_reservation)
+    runner = service(storage, generator=generator)
+    with pytest.raises(ProcessCrash, match="simulated process interruption"):
+        runner.run(round_key="retry-reserved-call")
+
+    saved_receipt = storage._conn.execute(
+        "SELECT receipt_json FROM article_interpretation_rounds WHERE round_key=?",
+        ("retry-reserved-call",),
+    ).fetchone()[0]
+    identity = saved_receipt["slots"][0]["interpretation_id"]
+    crashed = runner._get(identity)
+    assert crashed["attempts"][-1]["status"] == "running"
+    assert crashed["attempts"][-1]["calls"][-1]["status"] == "reserved"
+    assert saved_receipt["outer_attempts"] == saved_receipt["provider_calls"] == 1
+
+    generator.on_call = None
+    retry_runner = service(storage, generator=generator)
+    retry = retry_runner.run(retry_id=identity)
+    saved = retry_runner._get(identity)
+    origin = retry_runner._origin_receipt(retry_runner._content_budget(saved["content_key"]))
+
+    assert retry["status"] == "complete" and retry["outer_attempts"] == 1
+    assert len(generator.calls) == 2
+    assert len(saved["attempts"]) == 2
+    assert saved["attempts"][0]["status"] == "interrupted"
+    assert len(saved["attempts"][0]["calls"]) == 1
+    assert saved["attempts"][0]["calls"][0]["status"] == "interrupted"
+    assert saved["attempts"][1]["status"] == "ready"
+    assert all(call["status"] != "reserved" for call in saved["attempts"][1]["calls"])
+    assert [call["status"] for attempt in saved["attempts"] for call in attempt["calls"]] == [
+        "interrupted",
+        "valid",
+    ]
+    assert retry_runner._content_budget(saved["content_key"])["calls"] == 2
+    assert origin["provider_calls"] == origin["outer_attempts"] == 2
+    assert origin["generation_retries"][-1]["status"] == "ready"
+
+
 def test_concurrent_run_claim_is_exclusive(storage):
     seed(storage, "a")
     entered, release, result = threading.Event(), threading.Event(), []

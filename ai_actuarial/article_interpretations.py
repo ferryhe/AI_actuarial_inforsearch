@@ -1892,29 +1892,31 @@ class ArticleInterpretationService:
                 return self._content_calls_exhausted_reason(origin_round=True)
         return ""
 
-    def _recover_reserved_attempt(self, receipt):
-        for slot in receipt.get("slots", []):
-            interpretation_id = slot.get("interpretation_id")
-            if not interpretation_id or slot.get("status") in {"ready", "failed", "skipped"}:
-                continue
-            draft = self._get(interpretation_id)
-            if not draft:
-                continue
+    def _interrupt_reserved_calls(self, draft):
+        interrupted = False
+        for attempt in draft.get("attempts", []):
             reserved = [
-                call
-                for attempt in draft.get("attempts", [])
-                for call in attempt.get("calls", [])
-                if call.get("status") == "reserved"
+                call for call in attempt.get("calls", []) if call.get("status") == "reserved"
             ]
             if not reserved:
                 continue
             for call in reserved:
                 call["status"] = "interrupted"
                 call["error_type"] = "ArticleStreamInterrupted"
-            for attempt in draft.get("attempts", []):
-                if any(call.get("status") == "interrupted" for call in attempt.get("calls", [])):
-                    attempt["status"] = "interrupted"
+            attempt["status"] = "interrupted"
+            interrupted = True
+        if interrupted:
             draft.update(status="failed", error="interrupted", failure_stage="generation")
+        return interrupted
+
+    def _recover_reserved_attempt(self, receipt):
+        for slot in receipt.get("slots", []):
+            interpretation_id = slot.get("interpretation_id")
+            if not interpretation_id or slot.get("status") in {"ready", "failed", "skipped"}:
+                continue
+            draft = self._get(interpretation_id)
+            if not draft or not self._interrupt_reserved_calls(draft):
+                continue
             slot.update(status="failed", reason="interrupted")
             receipt.update(status="interrupted", stopped=False)
             with self.storage.transaction():
@@ -2744,6 +2746,17 @@ class ArticleInterpretationService:
                 outer_attempts_before = sum(
                     len(attempt.get("calls", [])) for attempt in draft.get("attempts", [])
                 )
+                if self._interrupt_reserved_calls(draft):
+                    if origin:
+                        for slot in origin.get("slots", []):
+                            if slot.get("interpretation_id") == retry_id:
+                                slot.update(status="failed", reason="interrupted")
+                        origin.update(status="interrupted", stopped=False)
+                    with self.storage.transaction():
+                        self._save(draft)
+                        if origin:
+                            self._receipt(origin)
+                    draft = self._get(retry_id)
                 result = self._generate(
                     draft,
                     round_deadline=self.clock() + MAX_ARTICLE_SECONDS,

@@ -1,4 +1,11 @@
 # Issue #450 本地文章解读 — 2026-11-02
+### 2026-11-04 Review26 reserved-call retry repair
+
+- Review26 reported that retry-by-identity could reuse a running attempt after a process interruption between the reservation commit and provider completion. The fix now marks committed reserved calls and their attempt as interrupted, persists that recovery with the origin receipt, then starts the retry as a new attempt. Existing call history, content budget, origin-round accounting, and cursor are preserved.
+- Red/green: `test_retry_by_identity_recovers_committed_reservation_before_ready` failed before the fix because a ready draft still had one attempt containing the reserved call; it passes after the fix with the old call interrupted, a second ready attempt, two total calls, and matching origin receipt counters. The new regression plus six existing interruption, retry, and budget selectors passed (7 passed).
+- Formatting/static checks: Black, Ruff, Python compilation, and `git diff --check` pass. Tests used only the approved isolated loopback PostgreSQL test service; no production DB, provider, generation, target, sync, deployment, schedule, commit, or push operation was performed.
+- Review26 status: CHANGES_REQUESTED, repaired by the same worker. Cumulative local reviews: 26; changes-requested cycles: 18. TypeSafe cumulative count: 23, including the two current anonymized assessments (R25 scope support and R26 `accept_fix`). This is not a reviewer PASS; fresh Sol/high review, current-HEAD CI, and existing live acceptance gates remain.
+
 ### 2026-11-04 CI python-symbols registered-route whitelist
 
 - GitHub Actions run `41905460187` on `dacdae5d1c804737752c6c5530f24460e1e20e40` reported one `python-symbols` baseline finding: the manual-body update handler was classified as unused. The function is a FastAPI-decorated route, its router is registered by the application, and the endpoint is exercised in `tests/test_article_interpretations.py` around line 3727.
