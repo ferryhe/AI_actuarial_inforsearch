@@ -488,7 +488,7 @@ def _render_guide(themes, articles, *, lang, fallback=False):
         source_summary = str(item.get("_source_summary", item.get("summary")) or "")
         source_excerpt = _source_excerpt(source_summary, 600) if fallback else item.get("excerpt")
         excerpt = (
-            _source_excerpt(str(localized.get("summary") or ""), 600)
+            _source_excerpt(str(localized.get("summary") or ""), 600) or source_excerpt
             if localized and source_excerpt
             else source_excerpt or ""
         )

@@ -222,6 +222,41 @@ def test_bilingual_catalog_metadata_is_displayed_only_after_source_excerpt_valid
     assert "A case study of method 0." in incomplete[0]
 
 
+def test_unparseable_localized_summary_keeps_valid_source_excerpt_and_focus():
+    row = materials(1)[0]
+    row["summary"] = "The source explains capital requirements."
+    row["keywords"] = ["capital"]
+    row["bilingual_metadata"] = {
+        lang: {
+            "title": f"{lang} title",
+            "summary": "The report compares U.S. GAAP and U.K. GAAP capital requirements.",
+            "category": "Insurance Applications",
+            "keywords": ["capital"],
+        }
+        for lang in ("zh", "en")
+    }
+
+    normal = parse_source_response(output([row]), [row])
+    assert "The source explains capital requirements." in normal[0]
+    assert "The source explains capital requirements." in normal[1]
+    assert "关注方向：capital" in normal[0]
+    assert "For readers following capital" in normal[1]
+
+    fallback = [
+        weekly._render_guide(
+            [],
+            [{**weekly._normalize_material_item(row), "focus": "capital"}],
+            lang=lang,
+            fallback=True,
+        )
+        for lang in ("zh", "en")
+    ]
+    assert "The source explains capital requirements." in fallback[0]
+    assert "The source explains capital requirements." in fallback[1]
+    assert "关注方向：capital" in fallback[0]
+    assert "For readers following capital" in fallback[1]
+
+
 def test_bilingual_metadata_survives_generation_normalization_and_invalidates_cached_display(
     memory,
 ):
