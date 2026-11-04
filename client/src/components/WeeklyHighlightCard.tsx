@@ -94,7 +94,7 @@ export function WeeklyHighlightCard({
   grouped = false,
 }: WeeklyHighlightCardProps) {
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => new Set());
-  const groups = grouped ? groupWeeklyFiles(view.files, t("weekly.uncategorized")) : [];
+  const groups = grouped ? groupWeeklyFiles(view.files.slice(view.recommendedCount), t("weekly.uncategorized")) : [];
   const fileIndexes = new Map(view.files.map((file, index) => [file.url, index]));
 
   function toggleGroup(key: string) {
@@ -119,7 +119,7 @@ export function WeeklyHighlightCard({
           <p className="text-xs text-muted-foreground">{t("dashboard.explanation_failed")}</p>
         ) : null}
         <div
-          className="text-sm leading-relaxed text-muted-foreground break-words [overflow-wrap:anywhere] [&_a]:text-primary [&_a]:underline [&_p]:my-2 [&_ul]:space-y-3 [&_ul]:list-disc [&_ul]:pl-5"
+          className="text-sm leading-relaxed text-muted-foreground break-words [overflow-wrap:anywhere] [&_a]:text-primary [&_a]:underline [&_p]:my-2 [&_ul]:space-y-3 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:space-y-3 [&_ol]:list-decimal [&_ol]:pl-5"
           data-testid={`weekly-explanation-${view.explanationState}`}
         >
           <ReactMarkdown remarkPlugins={[remarkBreaks]}>{view.explanationText}</ReactMarkdown>
@@ -135,6 +135,16 @@ export function WeeklyHighlightCard({
         </div>
       ) : (
         <div className="min-w-0">
+          {grouped ? view.files.slice(0, view.recommendedCount).map((file, index) => (
+            <WeeklyArticleCard
+              key={file.url}
+              file={file}
+              index={index}
+              lang={lang}
+              t={t}
+              onOpenFile={onOpenFile}
+            />
+          )) : null}
           {grouped ? groups.map((group, groupIndex) => {
             const collapsed = collapsedGroups.has(group.key);
             const groupId = `weekly-category-group-${groupIndex}`;

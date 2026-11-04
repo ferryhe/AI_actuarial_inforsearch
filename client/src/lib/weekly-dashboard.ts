@@ -1,6 +1,7 @@
 import { apiGet } from "./api";
 import { formatDateTime, formatUtcIso } from "./date-format";
 import { localizedCatalogMetadata } from "./bilingual-metadata";
+import { getCanonicalDisplayName } from "@/pages/chat/displayName";
 
 const WEEKLY_HOME_PREVIEW_LIMIT = 6;
 const WEEKLY_FILES_PAGE_LIMIT = 500;
@@ -127,7 +128,7 @@ export async function loadLatestWeeklyDashboard(
     get<WeeklyExplanationResponse>(`/api/weekly-updates/${snapshotId}/explanation`),
   ]);
 
-  return {
+  const data: WeeklyDashboardData = {
     status: "ready",
     snapshot,
     files: filesResult.status === "fulfilled"
@@ -139,6 +140,25 @@ export async function loadLatestWeeklyDashboard(
       : null,
     explanationUnavailable: explanationResult.status === "rejected",
   };
+  const urls = weeklyRecommendationUrls(data);
+  let offset = data.files.length;
+  const total = filesResult.status === "fulfilled" ? filesResult.value.total : 0;
+  while (offset < total && urls.some((url) => !data.files.some((file) => weeklyGuideUrl(file.url) === url))) {
+    try {
+      const page = await get<WeeklySnapshotFilesResponse>(
+        `/api/weekly-updates/${snapshotId}/files?limit=${WEEKLY_FILES_PAGE_LIMIT}&offset=${offset}`,
+      );
+      const next = page.files || [];
+      if (!next.length) break;
+      data.files.push(...next);
+      offset += next.length;
+    } catch {
+      // Keep all members read so far if a later page is unavailable.
+      break;
+    }
+  }
+  data.files = orderWeeklyFiles(data.files, urls).slice(0, WEEKLY_HOME_PREVIEW_LIMIT);
+  return data;
 }
 
 async function loadAllWeeklySnapshotFiles(
@@ -337,6 +357,28 @@ export interface WeeklyDashboardView {
   filesUnavailable: boolean;
   explanationState: WeeklyExplanationState;
   explanationText: string;
+  recommendedCount: number;
+}
+
+function weeklyGuideUrl(url: string): string {
+  return url.replace(/\(/g, "%28").replace(/\)/g, "%29").replace(/ /g, "%20");
+}
+
+function weeklyRecommendationUrls(data: WeeklyDashboardData): string[] {
+  const explanation = data.explanation;
+  if (explanation?.snapshot_id !== data.snapshot?.id || !explanation
+    || !["complete", "failed"].includes(explanation.status)) return [];
+  // Saved guides use the list-link format produced by the server's _render_guide.
+  const guide = explanation.explanation_en || explanation.explanation_zh;
+  return [...new Set([...guide.matchAll(/^- \[(?:\\.|[^\]\\])*\]\((https?:\/\/\S+)\)\s*$/gm)]
+    .map((match) => match[1]))].slice(0, 3);
+}
+
+function orderWeeklyFiles(files: WeeklySnapshotFile[], urls: string[]): WeeklySnapshotFile[] {
+  const byUrl = new Map(files.map((file) => [weeklyGuideUrl(file.url), file]));
+  const recommended = urls.flatMap((url) => byUrl.has(url) ? [byUrl.get(url)!] : []);
+  const selected = new Set(recommended);
+  return [...recommended, ...files.filter((file) => !selected.has(file))];
 }
 
 export function buildWeeklyDashboardView(
@@ -346,6 +388,7 @@ export function buildWeeklyDashboardView(
 ): WeeklyDashboardView {
   const explanation = data.explanation?.snapshot_id === data.snapshot?.id ? data.explanation : null;
   const selected = lang === "zh" ? explanation?.explanation_zh : explanation?.explanation_en;
+  const files = orderWeeklyFiles(data.files, weeklyRecommendationUrls(data));
   let explanationState: WeeklyExplanationState;
   let explanationText: string;
 
@@ -360,23 +403,7 @@ export function buildWeeklyDashboardView(
     explanationText = t("dashboard.explanation_missing");
   } else if (explanation.status === "failed") {
     explanationState = "failed";
-    if (explanation.generation_mode === "fallback" && String(selected || "").trim()) {
-      explanationText = String(selected).trim();
-    } else if (data.filesUnavailable) {
-      explanationText = t("dashboard.files_unavailable");
-    } else {
-      const intro = lang === "zh" ? "本周可先关注以下资料。" : "You can start with these materials this week.";
-      const escape = (value: string) => value.replace(/([\\`*{}\[\]<>])/g, "\\$1").replace(/\n/g, " ");
-      const items = data.files.slice(0, 5).map((file) => {
-        const metadata = localizedWeeklyFileMetadata(file, lang);
-        const title = escape(String(metadata.title || file.original_filename || file.url));
-        const url = file.url.replace(/\(/g, "%28").replace(/\)/g, "%29").replace(/ /g, "%20");
-        const sourceSummary = normalizePublicMetadataText(metadata.summary);
-        const summary = escape(sourceSummary);
-        return `- [${title}](${url})${summary ? `\n  ${summary}` : ""}`;
-      });
-      explanationText = items.length ? [intro, ...items].join("\n\n") : t("dashboard.files_unavailable");
-    }
+    explanationText = t("dashboard.files_unavailable");
   } else if (!String(selected || "").trim()) {
     explanationState = "empty";
     explanationText = t("dashboard.explanation_empty");
@@ -385,12 +412,34 @@ export function buildWeeklyDashboardView(
     explanationText = String(selected).trim();
   }
 
+  const recommendations = !data.filesUnavailable && data.snapshot?.file_count
+    && ["complete", "failed"].includes(explanationState) ? files.slice(0, 3) : [];
+  if (recommendations.length) {
+    const escape = (value: string) => value.replace(/([\\`*{}\[\]<>#.!_+()\-])/g, "\\$1").replace(/\r?\n/g, " ");
+    const items = recommendations.map((file) => {
+      const metadata = localizedWeeklyFileMetadata(file, lang);
+      const title = getCanonicalDisplayName({ ...file, title: metadata.title }, t("dashboard.untitled_material"));
+      const topics = metadata.keywords.slice(-3).map(escape);
+      return { title: escape(title), focus: topics.join(lang === "zh" ? "、" : ", "), topics };
+    });
+    const themes = [...new Set(items.flatMap((item) => item.topics))].join(lang === "zh" ? "、" : ", ");
+    const count = lang === "zh" ? `本周发现 ${data.snapshot!.file_count} 篇文章。` : `This week, we discovered ${data.snapshot!.file_count} articles.`;
+    const focus = themes
+      ? (lang === "zh" ? `本周重点包括：${themes}。` : `This week's highlights cover ${themes}.`)
+      : (lang === "zh" ? "这些文章的主题信息尚未提供。" : "Topic details are unavailable for these articles.");
+    const heading = lang === "zh" ? "本周推荐阅读以下文章：" : "Recommended reading this week:";
+    explanationText = [count, focus, heading, ...items.map((item, index) => lang === "zh"
+      ? `${index + 1}. ${item.title}：${item.focus ? `适合希望了解${item.focus}主题具体内容的读者。` : "适合希望了解该文具体内容的读者。"}`
+      : `${index + 1}. ${item.title}: ${item.focus ? `for readers who want to explore ${item.focus} in detail.` : "for readers who want to review the article's details."}`)].join("\n\n");
+  }
+
   return {
     snapshot: data.snapshot,
-    files: data.files,
+    files,
     fileCount: data.snapshot?.file_count ?? 0,
     filesUnavailable: data.filesUnavailable,
     explanationState,
     explanationText,
+    recommendedCount: recommendations.length,
   };
 }
