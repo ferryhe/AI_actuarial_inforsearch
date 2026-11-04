@@ -11,8 +11,8 @@ from ai_actuarial.article_interpretation_english import (
     read_english_interpretations,
 )
 from ai_actuarial.article_interpretations import (
-    article_content_warning_codes,
     InterpretationBodyEditError,
+    article_content_warning_codes,
     read_interpretations,
     update_interpretation_body,
 )
