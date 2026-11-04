@@ -102,8 +102,8 @@ assert.equal(unavailableData.explanationUnavailable, true);
 const callsBeforeLocaleSwitch = calls.length;
 const englishView = buildWeeklyDashboardView(loaded, "en", tFor("en"));
 const chineseView = buildWeeklyDashboardView(loaded, "zh", tFor("zh"));
-assert.equal(englishView.explanationText, "English explanation");
-assert.equal(chineseView.explanationText, "中文说明");
+assert.match(englishView.explanationText, /This week, we discovered 12 articles/);
+assert.match(chineseView.explanationText, /本周发现 12 篇文章/);
 assert.equal(englishView.fileCount, 12);
 assert.equal(chineseView.fileCount, 12);
 assert.equal(calls.length, callsBeforeLocaleSwitch, "locale switching must not perform another request");
@@ -118,7 +118,7 @@ const localFailure = buildWeeklyDashboardView({
   },
 }, "zh", tFor("zh"));
 assert.match(localFailure.explanationText, /中文标题/);
-assert.match(localFailure.explanationText, /中文摘要/);
+assert.match(localFailure.explanationText, /适合希望了解精算、风险主题具体内容的读者/);
 
 const viewAll = new URL(buildWeeklyDatabasePath(snapshot), "https://app.test");
 assert.equal(viewAll.pathname, "/database");
@@ -132,7 +132,7 @@ for (const [data, lang, expectedState, expectedText] of [
   [{ ...loaded, explanation: { ...loaded.explanation!, status: "missing" as const } }, "en", "missing", "Not generated"],
   [{ ...loaded, explanation: { ...loaded.explanation!, explanation_zh: "" } }, "zh", "empty", "已生成但无内容"],
   [{ ...loaded, explanationUnavailable: true }, "en", "unavailable", "Unavailable"],
-  [{ ...loaded, explanation: { ...loaded.explanation!, status: "failed" as const } }, "zh", "failed", "本周可先关注以下资料。"],
+  [{ ...loaded, explanation: { ...loaded.explanation!, status: "failed" as const } }, "zh", "failed", "本周发现 12 篇文章。"],
 ] as const) {
   const view = buildWeeklyDashboardView(data, lang, tFor(lang));
   assert.equal(view.explanationState, expectedState);
@@ -216,7 +216,7 @@ const markup = renderToStaticMarkup(
 );
 assert.equal((markup.match(/data-testid="weekly-file-row-/g) || []).length, 6);
 assert.match(markup, /12 new materials/);
-assert.match(markup, /English explanation/);
+assert.match(markup, /Recommended reading this week/);
 assert.match(markup, /English title/);
 assert.match(markup, /English summary/);
 assert.match(markup, /actuarial, risk/);
