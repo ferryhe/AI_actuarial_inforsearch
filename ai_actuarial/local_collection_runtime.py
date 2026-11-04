@@ -48,6 +48,7 @@ from ai_actuarial.content_hub import (
 from ai_actuarial.crawler import Crawler
 from ai_actuarial.postgres import DatabaseConfig
 from ai_actuarial.security import resolve_safe_http_url
+from ai_actuarial.source_portal_daily import is_generic_material_label
 from ai_actuarial.source_portals import (
     SOURCE_PORTALS,
     SOURCE_PORTALS_BY_KEY,
@@ -55,6 +56,7 @@ from ai_actuarial.source_portals import (
     source_portal_cards,
     source_portal_for_observation,
 )
+from ai_actuarial.utils import extract_metadata
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SKILL_ROOT = PROJECT_ROOT / ".agents" / "skills" / "local-actuarial-flow"
@@ -2476,21 +2478,34 @@ def _capture(
         },
     }
 
-    def observe(url: str, body: bytes, kind: str, item: dict[str, Any]) -> None:
+    def usable_material_title(value: Any, url: str) -> str:
+        title = " ".join(str(value or "").split())
+        if (
+            len(title) < 5
+            or title in {site.site_id, Path(urlsplit(url).path).name}
+            or is_generic_material_label(title)
+        ):
+            return ""
+        return title[:500]
+
+    def observe(
+        url: str,
+        body: bytes,
+        kind: str,
+        item: dict[str, Any],
+        *,
+        is_article: bool = False,
+        article_title: str | None = None,
+    ) -> None:
         if not record_portals or not body:
             return
         digest = hashlib.sha256(body).hexdigest()
-        title = " ".join(str(item.get("title") or "").split())
-        if (
-            kind == "page"
-            or len(title) < 5
-            or title in {site.site_id, Path(urlsplit(url).path).name}
-            or re.fullmatch(
-                r"download(?: (?:paper|report|file|document|pdf))?|click here|read more|view|下载(?:附件|文件)?|点击下载",
-                title,
-                re.I,
-            )
-        ):
+        title = (
+            usable_material_title(article_title, url)
+            if is_article
+            else usable_material_title(item.get("title"), url)
+        )
+        if kind == "page" and not is_article:
             title = ""
         observation = {
             "url": _canonical_url(url),
@@ -2504,8 +2519,26 @@ def _capture(
             observation["request_scope"] = hashlib.sha256(
                 _queue_identity({**item, "url": observation["url"]}).encode("utf-8")
             ).hexdigest()
-        if observation not in daily_run["observations"]:
+        if is_article:
+            observation["is_article"] = True
+        existing = next(
+            (
+                prior
+                for prior in daily_run["observations"]
+                if prior["url"] == observation["url"]
+                and prior["raw_sha256"] == digest
+                and prior["kind"] == kind
+                and prior["source_page_url"] == observation["source_page_url"]
+                and prior.get("request_scope") == observation.get("request_scope")
+            ),
+            None,
+        )
+        if existing is None:
             daily_run["observations"].append(observation)
+        elif is_article:
+            existing["is_article"] = True
+            if observation["title"]:
+                existing["title"] = observation["title"]
         daily_run["limits"]["request_count"] = crawler.site_attempts
         state.setdefault("source_portal_daily_runs", {})[daily_run["run_id"]] = daily_run
 
@@ -2601,6 +2634,8 @@ def _capture(
             cursor += 1
             continue
         queued_before = set(queued_urls)
+        is_article = False
+        article_title = ""
         try:
             if crawler.site_attempts >= crawler.site_budget:
                 raise RequestBudgetExceeded(
@@ -2940,21 +2975,32 @@ def _capture(
                 ):
                     kind = _detect_kind(body, content_type, final_url)
                     if kind == "html":
+                        article_html = body.decode("utf-8", errors="replace")
                         markdown = WebPageCollector(
                             SimpleNamespace(data_root=data_root), str(data_root)
-                        )._extract_text(body.decode("utf-8", errors="replace"), final_url)
+                        )._extract_text(article_html, final_url)
                         if markdown and len(markdown.strip()) >= 100:
+                            is_article = True
+                            article_title = usable_material_title(item.get("title"), final_url)
+                            if not article_title:
+                                metadata_title, _published_time = extract_metadata(
+                                    article_html, final_url
+                                )
+                                heading = re.search(r"(?m)^#{1,6}\s+(.+?)\s*#*\s*$", markdown)
+                                article_title = usable_material_title(
+                                    metadata_title, final_url
+                                ) or usable_material_title(
+                                    heading.group(1) if heading else "", final_url
+                                )
                             raw_sha = hashlib.sha256(body).hexdigest()
                             artifact = _persist_cas(data_root, body, raw_sha)
                             record = {
                                 "site_id": site.site_id,
                                 "url": _canonical_url(final_url),
                                 "source_page_url": str(item.get("referrer") or ""),
-                                "title": str(
-                                    item.get("title")
-                                    or urlsplit(final_url).path.rsplit("/", 1)[-1]
-                                    or site.site_id
-                                ),
+                                "title": article_title
+                                or urlsplit(final_url).path.rsplit("/", 1)[-1]
+                                or site.site_id,
                                 "raw_sha256": raw_sha,
                                 "byte_size": len(body),
                                 "content_type": content_type,
@@ -2982,7 +3028,14 @@ def _capture(
                 link_ids.update(
                     hashlib.sha256(identity.encode("utf-8")).hexdigest() for identity in discovered
                 )
-            observe(final_url, body, "page", item)
+            observe(
+                final_url,
+                body,
+                "page",
+                item,
+                is_article=is_article,
+                article_title=article_title,
+            )
             visited.add(work_key)
             cursor += 1
             _prioritize_pending_documents(site, queue, cursor)
@@ -3814,7 +3867,11 @@ def _persist_daily_source_portals(
                             item.get("kind"),
                             item.get("request_scope"),
                         )
-                        unique.setdefault(identity, item)
+                        retained = unique.setdefault(identity, item)
+                        if field == "observations" and item.get("is_article") is True:
+                            retained["is_article"] = True
+                            if item.get("title") and not retained.get("title"):
+                                retained["title"] = item["title"]
                     evidence[field] = list(unique.values())
             if _ACTIVE_STATE_PATH is not None:
                 _atomic_json(_state_path_for_data(state), state)
