@@ -94,8 +94,11 @@ export function WeeklyHighlightCard({
   grouped = false,
 }: WeeklyHighlightCardProps) {
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => new Set());
-  const groups = grouped ? groupWeeklyFiles(view.files.slice(view.recommendedCount), t("weekly.uncategorized")) : [];
-  const fileIndexes = new Map(view.files.map((file, index) => [file.url, index]));
+  const renderFiles = view.filesUnavailable
+    ? view.files.slice(0, view.recommendedCount)
+    : view.files;
+  const groups = grouped ? groupWeeklyFiles(renderFiles.slice(view.recommendedCount), t("weekly.uncategorized")) : [];
+  const fileIndexes = new Map(renderFiles.map((file, index) => [file.url, index]));
 
   function toggleGroup(key: string) {
     setCollapsedGroups((current) => {
@@ -128,14 +131,15 @@ export function WeeklyHighlightCard({
 
       {view.filesUnavailable ? (
         <p className="p-4 text-sm text-muted-foreground">{t("dashboard.files_unavailable")}</p>
-      ) : view.files.length === 0 ? (
-        <div className="p-8 text-center">
+      ) : null}
+      {renderFiles.length === 0 ? (
+        view.filesUnavailable ? null : <div className="p-8 text-center">
           <p className="font-medium text-muted-foreground">{t("dashboard.no_weekly_files")}</p>
           <p className="text-xs text-muted-foreground/70 mt-1">{t("dashboard.no_weekly_files_desc")}</p>
         </div>
       ) : (
         <div className="min-w-0">
-          {grouped ? view.files.slice(0, view.recommendedCount).map((file, index) => (
+          {grouped ? renderFiles.slice(0, view.recommendedCount).map((file, index) => (
             <WeeklyArticleCard
               key={file.url}
               file={file}
@@ -170,7 +174,7 @@ export function WeeklyHighlightCard({
                 ))}
               </WeeklyGroupDisclosure>
             );
-          }) : view.files.map((file, index) => (
+          }) : renderFiles.map((file, index) => (
             <WeeklyArticleCard
               key={file.url}
               file={file}

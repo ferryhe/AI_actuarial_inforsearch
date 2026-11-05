@@ -248,8 +248,8 @@ def test_lost_ack_retry_reuses_frozen_pair_and_refreshes_only_for_new_guide_revi
         relay.run_weekly_publication(
             "sync",
             config_path=config_path,
-            period_start=PERIOD_START,
-            period_end=PERIOD_END,
+            period_start=PERIOD_START.replace("+00:00", "Z"),
+            period_end=PERIOD_END.replace("+00:00", "Z"),
             wait_seconds=0,
             invoke=invoke,
         )
@@ -257,6 +257,8 @@ def test_lost_ack_retry_reuses_frozen_pair_and_refreshes_only_for_new_guide_revi
     pending = json.loads(state_path.read_text(encoding="utf-8"))["pending"]
     assert pending["acks"]["china"]["target"] == "china"
     assert "overseas" not in pending["acks"]
+    assert pending["bundle"]["snapshot"]["period_start"] == PERIOD_START
+    assert pending["bundle"]["snapshot"]["period_end"] == PERIOD_END
 
     result = relay.run_weekly_publication(
         "sync",

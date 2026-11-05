@@ -344,13 +344,14 @@ test("a frozen guide keeps the same recommendations through a partial home-page 
       },
     },
   };
-  const loadSite = async (site: string, siteMembers: typeof chinaMembers, failLaterPage: boolean) =>
+  const loadSite = async (site: string, siteMembers: typeof chinaMembers, failLaterPage: boolean, failFirstPage = false) =>
     loadLatestWeeklyDashboard(async <T,>(url: string): Promise<T> => {
       if (url.endsWith("/latest")) return { summary: snapshotWithProjection } as T;
       if (url.endsWith("/explanation")) return { explanation: sourceGuide } as T;
       const params = new URL(url, "https://fixture").searchParams;
       const offset = Number(params.get("offset"));
       const limit = Number(params.get("limit"));
+      if (failFirstPage && offset === 0) throw new Error("Initial page unavailable");
       if (failLaterPage && offset >= 506) throw new Error("Later page unavailable");
       return { files: siteMembers.slice(offset, offset + limit), total: siteMembers.length } as T;
     });
@@ -381,6 +382,48 @@ test("a frozen guide keeps the same recommendations through a partial home-page 
       assert.ok(markup.includes(localizedWeeklyFileMetadata(chinaView.files[0], lang).summary));
     }
   }
+
+  const unavailableHome = await loadSite("Overseas", overseasMembers, false, true);
+  assert.equal(unavailableHome.filesUnavailable, true);
+  assert.equal(unavailableHome.files.length, 0);
+  const unavailableDetail = await loadWeeklyUpdateDetail(snapshot.id, async <T,>(url: string): Promise<T> => {
+    if (url.endsWith("/explanation")) return { explanation: sourceGuide } as T;
+    if (url === `/api/weekly-updates/${snapshot.id}`) return { summary: snapshotWithProjection } as T;
+    if (url.includes("/files?")) throw new Error("All detail pages unavailable");
+    throw new Error(`Unexpected GET ${url}`);
+  });
+  assert.equal(unavailableDetail.filesUnavailable, true);
+  assert.equal(unavailableDetail.files.length, 0);
+
+  for (const lang of ["en", "zh"]) {
+    for (const [data, grouped] of [[unavailableHome, false], [unavailableDetail, true]] as const) {
+      const unavailableView = buildWeeklyDashboardView(data, lang, t);
+      const completeView = buildWeeklyDashboardView(completeChina, lang, t);
+      assert.equal(unavailableView.filesUnavailable, true);
+      assert.equal(unavailableView.recommendedCount, 3);
+      assert.equal(unavailableView.files.length, 3);
+      assert.equal(unavailableView.explanationText, completeView.explanationText);
+      assert.deepEqual(
+        unavailableView.files.map(file => file.url),
+        completeView.files.slice(0, 3).map(file => file.url),
+      );
+      const markup = renderToStaticMarkup(<WeeklyHighlightCard view={unavailableView} lang={lang} t={t} onOpenFile={() => {}} grouped={grouped} />);
+      assert.ok(markup.includes(t("dashboard.files_unavailable")));
+      assert.equal((markup.match(/data-testid="weekly-file-row-/g) || []).length, 3);
+      assert.ok(markup.includes(localizedWeeklyFileMetadata(unavailableView.files[0], lang).title));
+      assert.ok(markup.includes(localizedWeeklyFileMetadata(unavailableView.files[0], lang).summary!));
+    }
+  }
+
+  const unownedFailure = buildWeeklyDashboardView({
+    ...unavailableHome,
+    snapshot: { ...snapshotWithProjection, metadata: {} },
+  }, "en", t);
+  const unownedFailureMarkup = renderToStaticMarkup(<WeeklyHighlightCard view={unownedFailure} lang="en" t={t} onOpenFile={() => {}} />);
+  assert.equal(unownedFailure.recommendedCount, 0);
+  assert.equal(unownedFailure.files.length, 0);
+  assert.ok(unownedFailureMarkup.includes(t("dashboard.files_unavailable")));
+  assert.equal((unownedFailureMarkup.match(/data-testid="weekly-file-row-/g) || []).length, 0);
 
   const detail = await loadWeeklyUpdateDetail(snapshot.id, async <T,>(url: string): Promise<T> => {
     if (url.endsWith("/explanation")) return { explanation: sourceGuide } as T;

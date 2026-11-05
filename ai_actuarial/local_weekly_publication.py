@@ -229,8 +229,8 @@ def run_weekly_publication(
         raise ValueError("--period-start and --period-end must be provided together")
     explicit_period = None
     if period_start is not None and period_end is not None:
-        _parse_period(period_start, period_end)
-        explicit_period = (period_start, period_end)
+        parsed_start, parsed_end = _parse_period(period_start, period_end)
+        explicit_period = (parsed_start.isoformat(), parsed_end.isoformat())
     if wait_seconds < 0 or wait_seconds > 3600:
         raise ValueError("--wait-seconds must be between 0 and 3600")
     config = local_runtime._load_config(config_path.resolve())
