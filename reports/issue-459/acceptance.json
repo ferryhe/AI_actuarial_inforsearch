@@ -1,15 +1,15 @@
 {
   "issue": 459,
   "contract_version": 1,
-  "generated_at_utc": "2026-11-05T17:47:04.433963+00:00",
-  "status": "post_pr_material_fix_validated_pending_review_and_current_head_ci",
+  "generated_at_utc": "2026-11-05T17:58:00.910383+00:00",
+  "status": "receipt_metadata_corrected_pending_current_head_ci",
   "production_deployed": false,
   "implementation_commit_sha": "f6dcdfd8ea978ed84e5c5d69631180e2b1409201",
   "implementation_commit_note": "Implementation commit records the scoped source, tests and requested receipt. The receipt binds the implementation SHA in a follow-up commit to avoid a circular hash.",
   "tested_base_commit_sha": "b9bb05b843a73603f74d2df92a4c093886809b9a",
   "tested_source_manifest": {
     "path": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-459\\worker-tested-source.json",
-    "sha256": "fbb130fd03a4e6b0955d206a7eab2d8489cef8bc8eb61a505f08f42d824558ec"
+    "sha256": "df47e51869bd61ef293eb75891f6b202bb75094cd74655ad1ebcf3bdf844bbb0"
   },
   "environment": {
     "python": "3.11.9",
@@ -246,7 +246,7 @@
     "python_dead_code_files": "PASS,0 findings",
     "python_dead_code_symbols": "PASS,0 findings",
     "diff_whitespace": "PASS",
-    "local_review": "Initial implementation PASS; fresh Sol/high review pending for material downstream-contract correction.",
+    "local_review": "PASS on initial code and material contract correction; round 2 found only receipt metadata mismatch, now corrected.",
     "typesafe_review": "PASS; 0 candidate findings; review summary coverage 0.97",
     "remote_feedback_fix_targeted": {
       "command": "python -m pytest tests/test_sqlite_schema_runner.py::test_schema_cli_plans_all_migrations_for_an_empty_postgresql_schema tests/test_fastapi_feedback_endpoints.py tests/test_feedback_storage.py -q -o addopts= --capture=sys --basetemp=.pytest_cache/issue459-remote-fixes --junitxml=C:/Project/AI_actuarial_inforsearch/reports/issue-459-464-20261105/issue-459/worker-remote-fixes.xml",
@@ -258,6 +258,13 @@
         "skipped": 0
       },
       "note": "Includes the pre-existing migration-plan regression plus all feedback tests and late-commit full-rescan regression."
+    },
+    "receipt_hash_verification": {
+      "result": "PASS",
+      "evidence": "worker-receipt-hash-verification.json",
+      "entries": 23,
+      "mismatches": 0,
+      "receipt_copies_identical": true
     }
   },
   "failed_or_interrupted_checks": [
@@ -308,7 +315,7 @@
   "evidence": {
     "worker-tested-source.json": {
       "path": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-459\\worker-tested-source.json",
-      "sha256": "fbb130fd03a4e6b0955d206a7eab2d8489cef8bc8eb61a505f08f42d824558ec"
+      "sha256": "df47e51869bd61ef293eb75891f6b202bb75094cd74655ad1ebcf3bdf844bbb0"
     },
     "worker-focused-tests-1.log": {
       "path": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-459\\worker-focused-tests-1.log",
@@ -340,7 +347,7 @@
     },
     "migration-cli-evidence.json": {
       "path": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-459\\migration-cli-evidence.json",
-      "sha256": "a9a3e33c72065110ede14aa7b13402045f03f1dbc94a98586460f1ef7739b70d"
+      "sha256": "055c2fae0dd4bd04f85eff86da5e31fbfd24180fcb9dcf6c190145ae9c4c2165"
     },
     "worker-live-evidence.py": {
       "path": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-459\\worker-live-evidence.py",
@@ -397,6 +404,22 @@
     "remote-1-typesafe-result.json": {
       "path": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-459\\remote-1-typesafe-result.json",
       "sha256": "3712e6350b9e846c4160868836fa4d34e50b94bb155a49c1cc391447f0472988"
+    },
+    "worker-receipt-fix-report.md": {
+      "path": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-459\\worker-receipt-fix-report.md",
+      "sha256": "d1bb1e1002c6cf978cefa4e873e62b4849573427bb30fee99489ce0c52301df2"
+    },
+    "worker-receipt-hash-verification.json": {
+      "path": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-459\\worker-receipt-hash-verification.json",
+      "sha256": "372a53414f0b799e7dbe8ee7429ab9e75b01b1a5d82c1aa7396a7eae0ae75159"
+    },
+    "review-2.md": {
+      "path": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-459\\review-2.md",
+      "sha256": "450bf6d793c094587dde28553e41f08cde805fd4f2237154dd5edaca64f4fd38"
+    },
+    "review-2-typesafe-result.json": {
+      "path": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-459\\review-2-typesafe-result.json",
+      "sha256": "b196517e991e13de0196cd7ce23e0973b94715d2c5139a51572ce4b81d06625a"
     }
   },
   "review": {
@@ -410,7 +433,7 @@
       "report": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-459\\review-1-typesafe-result.json"
     },
     "evidence_replay": "Current code replayed against isolated PostgreSQL 16 after review; 25 HTTP exchanges, exit 0; response timestamp verified from raw JSON as +00:00.",
-    "current_status": "material post-publication correction pending fresh independent review",
+    "current_status": "Round 2: source review found no behavioral defect; receipt evidence hash correction verified; current-head CI pending.",
     "remote_findings": [
       {
         "id": "COPILOT-1",
@@ -427,6 +450,15 @@
       "model": "jev-latest",
       "report": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-459\\remote-1-typesafe-result.json",
       "result": "both candidates preliminary-valid; manager confirmed with isolated reproductions"
+    },
+    "round_2": {
+      "verdict": "CHANGES_REQUIRED for receipt metadata only; no source defect",
+      "report": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-459\\review-2.md",
+      "typesafe_report": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-459\\review-2-typesafe-result.json",
+      "finding": "RECEIPT-SHA-1 corrected; 23/23 evidence hashes match"
     }
-  }
+  },
+  "followup_commits": [
+    "7ce29a03e3342fbbf8a1214bd9826d1987114ab4"
+  ]
 }
