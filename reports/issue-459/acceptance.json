@@ -1,11 +1,11 @@
 {
   "issue": 459,
   "contract_version": 1,
-  "generated_at_utc": "2026-11-05T17:27:22.649097+00:00",
+  "generated_at_utc": "2026-11-05T17:28:57.830641+00:00",
   "status": "local_review_passed_pending_current_head_ci",
   "production_deployed": false,
-  "implementation_commit_sha": null,
-  "implementation_commit_note": "Worker changes are uncommitted. Manager records the implementation commit after normal commit; source content hashes bind this local validation without a circular receipt hash.",
+  "implementation_commit_sha": "f6dcdfd8ea978ed84e5c5d69631180e2b1409201",
+  "implementation_commit_note": "Implementation commit records the scoped source, tests and requested receipt. The receipt binds the implementation SHA in a follow-up commit to avoid a circular hash.",
   "tested_base_commit_sha": "b9bb05b843a73603f74d2df92a4c093886809b9a",
   "tested_source_manifest": {
     "path": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-459\\worker-tested-source.json",
