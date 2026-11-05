@@ -282,7 +282,7 @@ def test_lost_ack_retry_reuses_frozen_pair_and_refreshes_only_for_new_guide_revi
     ]
 
     source_projection = None
-    source_guide = None
+    source_guide: dict[str, Any] = {}
     for database_url in (china_url, overseas_url):
         storage = Storage(database_url)
         try:
@@ -294,8 +294,10 @@ def test_lost_ack_retry_reuses_frozen_pair_and_refreshes_only_for_new_guide_revi
             storage.close()
         if source_projection is None:
             source_projection = frozen
+            assert isinstance(guide, dict)
             source_guide = guide
         else:
+            assert isinstance(source_guide, dict)
             assert frozen == source_projection
             assert owner == {
                 "snapshot_id": SNAPSHOT_ID,
