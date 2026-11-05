@@ -138,6 +138,35 @@ def test_replay_receipt_survives_admin_status_changes(tmp_path):
         assert submit_feedback(database, request, site_key="test", user_id=None) == receipt
 
 
+def test_full_rescan_recovers_lower_id_committed_after_cursor_was_observed(tmp_path):
+    database = postgres_url_for_path(tmp_path / "late-commit")
+    late_feedback_id = str(uuid4())
+    delayed = psycopg2.connect(database)
+    try:
+        with delayed.cursor() as cursor:
+            cursor.execute(
+                "INSERT INTO feedback_items "
+                "(feedback_id, client_request_id, request_hash, site_key, content, kind, origin, "
+                "page_path, locale) VALUES (%s, %s, %s, 'test', 'late commit', 'other', "
+                "'widget', '/', 'en') RETURNING id",
+                (late_feedback_id, str(uuid4()), "0" * 64),
+            )
+            late_id = cursor.fetchone()[0]
+        first_receipt = submit_feedback(database, _request(), site_key="test", user_id=None)
+        first_scan = list_feedback(database)["items"]
+        assert [item["feedback_id"] for item in first_scan] == [first_receipt["feedback_id"]]
+        observed_id = first_scan[0]["id"]
+        assert late_id < observed_id
+        delayed.commit()
+        assert list_feedback(database, cursor=observed_id)["items"] == []
+        rescan = list_feedback(database, cursor=0)["items"]
+        assert [item["id"] for item in rescan] == [late_id, observed_id]
+        known_ids = {item["feedback_id"] for item in first_scan}
+        assert {item["feedback_id"] for item in rescan} - known_ids == {late_feedback_id}
+    finally:
+        delayed.close()
+
+
 def test_real_deferred_commit_failure_rolls_back_before_receipt(tmp_path):
     database = postgres_url_for_path(tmp_path / "commit-failure")
     with psycopg2.connect(database) as connection, connection.cursor() as cursor:

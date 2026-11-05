@@ -116,9 +116,12 @@ returns `{"items":[...],"next_cursor":123}`. Filters are optional. Limit is
 mutable status. Fetch the next page with the returned cursor and unchanged
 filters until `next_cursor` is null; no offset is used. The result is a live
 list: filter changes or concurrent status changes can change membership.
-The cursor is a page continuation, not a durable sync checkpoint; #461 should
-keep the maximum observed item ID for incremental ingestion and separately
-reconcile status updates on already ingested items.
+The cursor is a page continuation, not a lossless durable sync watermark.
+PostgreSQL allocates IDs before commit, so a lower ID can become visible after
+a higher ID has already been observed. For #461, periodically scan from
+cursor 0 and deduplicate by `feedback_id` to recover these late commits;
+reconcile status updates on already ingested items as needed. A maximum
+observed ID alone cannot guarantee complete ingestion.
 
 Items include `id`, public/request UUIDs, `site_key`, immutable `content`,
 `kind`, `origin`, nullable `user_id`, sanitized `page_path`, `locale`, `status`

@@ -1,15 +1,15 @@
 {
   "issue": 459,
   "contract_version": 1,
-  "generated_at_utc": "2026-11-05T17:28:57.830641+00:00",
-  "status": "local_review_passed_pending_current_head_ci",
+  "generated_at_utc": "2026-11-05T17:47:04.433963+00:00",
+  "status": "post_pr_material_fix_validated_pending_review_and_current_head_ci",
   "production_deployed": false,
   "implementation_commit_sha": "f6dcdfd8ea978ed84e5c5d69631180e2b1409201",
   "implementation_commit_note": "Implementation commit records the scoped source, tests and requested receipt. The receipt binds the implementation SHA in a follow-up commit to avoid a circular hash.",
   "tested_base_commit_sha": "b9bb05b843a73603f74d2df92a4c093886809b9a",
   "tested_source_manifest": {
     "path": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-459\\worker-tested-source.json",
-    "sha256": "b9fcd5f220c770003b309c50f6e2430e60fd3e5b0954f510f85602ea486fb18e"
+    "sha256": "fbb130fd03a4e6b0955d206a7eab2d8489cef8bc8eb61a505f08f42d824558ec"
   },
   "environment": {
     "python": "3.11.9",
@@ -246,8 +246,19 @@
     "python_dead_code_files": "PASS,0 findings",
     "python_dead_code_symbols": "PASS,0 findings",
     "diff_whitespace": "PASS",
-    "local_review": "PASS",
-    "typesafe_review": "PASS; 0 candidate findings; review summary coverage 0.97"
+    "local_review": "Initial implementation PASS; fresh Sol/high review pending for material downstream-contract correction.",
+    "typesafe_review": "PASS; 0 candidate findings; review summary coverage 0.97",
+    "remote_feedback_fix_targeted": {
+      "command": "python -m pytest tests/test_sqlite_schema_runner.py::test_schema_cli_plans_all_migrations_for_an_empty_postgresql_schema tests/test_fastapi_feedback_endpoints.py tests/test_feedback_storage.py -q -o addopts= --capture=sys --basetemp=.pytest_cache/issue459-remote-fixes --junitxml=C:/Project/AI_actuarial_inforsearch/reports/issue-459-464-20261105/issue-459/worker-remote-fixes.xml",
+      "exit_code": 0,
+      "junit": {
+        "tests": 43,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "note": "Includes the pre-existing migration-plan regression plus all feedback tests and late-commit full-rescan regression."
+    }
   },
   "failed_or_interrupted_checks": [
     {
@@ -297,7 +308,7 @@
   "evidence": {
     "worker-tested-source.json": {
       "path": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-459\\worker-tested-source.json",
-      "sha256": "b9fcd5f220c770003b309c50f6e2430e60fd3e5b0954f510f85602ea486fb18e"
+      "sha256": "fbb130fd03a4e6b0955d206a7eab2d8489cef8bc8eb61a505f08f42d824558ec"
     },
     "worker-focused-tests-1.log": {
       "path": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-459\\worker-focused-tests-1.log",
@@ -362,6 +373,30 @@
     "review-1-typesafe-result.json": {
       "path": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-459\\review-1-typesafe-result.json",
       "sha256": "8cab4c80f8db45fe5159c6955d45eea776c45c0b9d307e48d6f6dbe00b9e0ff5"
+    },
+    "worker-remote-fix-report.md": {
+      "path": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-459\\worker-remote-fix-report.md",
+      "sha256": "e0796cf0de93b96b156233d4f92810bca08e061efac98313cd5c75f52d75afd2"
+    },
+    "worker-remote-fixes.xml": {
+      "path": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-459\\worker-remote-fixes.xml",
+      "sha256": "d385c9a5779f1da55cc4e256fe12068f7d5d0cb438758360de59a16da34519e8"
+    },
+    "remote-out-of-order-proof.json": {
+      "path": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-459\\remote-out-of-order-proof.json",
+      "sha256": "908077be52cb23f01eb245f1ac92e0cc85e260f5214694c6656f261af4c53eae"
+    },
+    "remote-assessment-1.md": {
+      "path": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-459\\remote-assessment-1.md",
+      "sha256": "0ee79ef347eb4388735df6e53d280a6770f22ec0517fdc575de329b1de3389e8"
+    },
+    "remote-feedback-snapshot-1.json": {
+      "path": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-459\\remote-feedback-snapshot-1.json",
+      "sha256": "85c01da031de90424115956c684ac3e997f1a051587b6412734fa35f2e1214a0"
+    },
+    "remote-1-typesafe-result.json": {
+      "path": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-459\\remote-1-typesafe-result.json",
+      "sha256": "3712e6350b9e846c4160868836fa4d34e50b94bb155a49c1cc391447f0472988"
     }
   },
   "review": {
@@ -374,6 +409,24 @@
       "findings": [],
       "report": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-459\\review-1-typesafe-result.json"
     },
-    "evidence_replay": "Current code replayed against isolated PostgreSQL 16 after review; 25 HTTP exchanges, exit 0; response timestamp verified from raw JSON as +00:00."
+    "evidence_replay": "Current code replayed against isolated PostgreSQL 16 after review; 25 HTTP exchanges, exit 0; response timestamp verified from raw JSON as +00:00.",
+    "current_status": "material post-publication correction pending fresh independent review",
+    "remote_findings": [
+      {
+        "id": "COPILOT-1",
+        "criterion": "AC1/AC5",
+        "disposition": "accepted; migration filename expectation fixed"
+      },
+      {
+        "id": "COPILOT-2",
+        "criterion": "AC5",
+        "disposition": "accepted; unsafe durable cursor advice replaced with periodic full-rescan/deduplication contract"
+      }
+    ],
+    "remote_typesafe": {
+      "model": "jev-latest",
+      "report": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-459\\remote-1-typesafe-result.json",
+      "result": "both candidates preliminary-valid; manager confirmed with isolated reproductions"
+    }
   }
 }
