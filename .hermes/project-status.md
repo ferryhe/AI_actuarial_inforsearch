@@ -6476,3 +6476,10 @@ Current branch head 4f030be has uncommitted small catalog/Storage variable defau
 ### Issue #460 committed local review state — 2026-11-05
 
 - Implementation commit: `0f381302e7114711e840a829c321f37dd860f589`. The ignored canonical receipt `reports/issue-460/acceptance.json` is now bound to this SHA; the receipt will be force-added in a separate evidence commit. Local review is PASS; push, current-HEAD GitHub checks, and Draft PR are pending.
+
+### Issue #460 Draft PR publication — 2026-11-05
+
+- Pushed `codex/issue-460-feedback-widget` and opened Draft PR [#466](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/466), which includes `Closes #460`. Implementation SHA remains `0f381302e7114711e840a829c321f37dd860f589`; canonical receipt is committed and SHA-bound.
+- Copilot auto mode made one initial request attempt. GitHub did not add a reviewer (`reviewRequests=[]`; review list empty), so Copilot is recorded unavailable for this Issue and will not be retried.
+- At the initial PR snapshot, `dead-code-files` passed and `dead-code-symbols` was running on head `8419542c3e6bc4d4a281eabecf2923b7ccb4f129`. The PR remains Draft while final current-HEAD checks complete. No production change.
+

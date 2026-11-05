@@ -4,7 +4,7 @@
   "branch": "codex/issue-460-feedback-widget",
   "base_sha": "4e8a06972403515502e8e7e5396b91fb235ecd29",
   "implementation_sha": "0f381302e7114711e840a829c321f37dd860f589",
-  "acceptance_state": "locally_reviewed_implementation_committed_not_published",
+  "acceptance_state": "draft_pr_created_ci_pending_not_merged",
   "generated_at": "2026-11-05",
   "scope": {
     "deliverables": [
@@ -203,8 +203,9 @@
   ],
   "publication": {
     "commit": "0f381302e7114711e840a829c321f37dd860f589",
-    "push": "pending",
-    "pull_request": "pending",
+    "push": "branch codex/issue-460-feedback-widget pushed to origin",
+    "pull_request": "Draft PR #466: https://github.com/ferryhe/AI_actuarial_inforsearch/pull/466",
+    "draft_pr_head_at_creation": "8419542c3e6bc4d4a281eabecf2923b7ccb4f129",
     "production_change": false
   },
   "latest_overlay_follow_up": {
@@ -235,8 +236,17 @@
     "local_review": "PASS",
     "reviewer_report": "reports/issue-459-464-20261105/issue-460/review-4-final.json",
     "typesafe_report": "reports/issue-459-464-20261105/issue-460/typesafe-review-4-result.json",
-    "required_github_ci": "pending",
-    "published": false,
-    "implementation_sha": "0f381302e7114711e840a829c321f37dd860f589"
+    "required_github_ci": "pending on initial Draft PR head; dead-code-files passed and dead-code-symbols was in progress",
+    "implementation_sha": "0f381302e7114711e840a829c321f37dd860f589",
+    "pull_request": "https://github.com/ferryhe/AI_actuarial_inforsearch/pull/466",
+    "published": true
+  },
+  "copilot_review": {
+    "mode": "auto",
+    "request_attempts": 1,
+    "request_method": "GitHub connector request_pull_request_reviewers(reviewer=Copilot)",
+    "result": "connector returned Action completed but did not list a reviewer",
+    "verification": "gh pr view #466 reported reviewRequests=[]; GitHub review list returned reviews=[]",
+    "disposition": "unavailable; disabled for Issue #460; no retry"
   }
 }
