@@ -8,6 +8,7 @@ from uuid import uuid4
 import psycopg2
 import pytest
 
+from ai_actuarial import storage as storage_module
 from ai_actuarial import storage_factory
 from ai_actuarial.postgres import (
     POSTGRES_SCHEMA_VERSION,
@@ -148,3 +149,36 @@ def test_path_helper_cache_restores_the_requested_database_and_data_root(tmp_pat
     assert url_b != url_a
     assert os.environ["DATABASE_URL"] == url_a
     assert os.environ["DATA_DIR"] == str(path_a.parent.resolve())
+
+
+def test_storage_open_existing_skips_schema_initialization(monkeypatch, tmp_path):
+    captured = {}
+
+    class FakeConnection:
+        def __init__(self, database):
+            captured["database"] = database
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    monkeypatch.setattr(storage_module, "PostgresConnection", FakeConnection)
+    monkeypatch.setattr(
+        storage_module,
+        "initialize_postgresql_schema",
+        lambda *_args: pytest.fail("existing-storage open must not initialize schema"),
+    )
+    monkeypatch.setattr(
+        storage_module.Storage,
+        "_seed_taxonomy_state_if_empty",
+        lambda *_args: pytest.fail("existing-storage open must not seed data"),
+    )
+    database = DatabaseConfig("postgresql://local@127.0.0.1/article_test")
+    storage = storage_module.Storage.open_existing(database, data_root=tmp_path)
+
+    assert captured["database"] is database
+    assert storage.database is database
+    assert storage._schema_only is False
+    assert storage.data_root == tmp_path.resolve()
+    storage.close()
+    assert storage._conn.closed

@@ -1,6 +1,6 @@
 import axe from "axe-core";
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import Layout from "@/components/Layout";
@@ -445,4 +445,404 @@ it("renders the canonical publisher in both languages while retaining raw proven
   await user.click(screen.getByTestId("toggle-lang"));
   expect(screen.getByTestId("text-source")).toHaveTextContent("北美产险精算协会");
   localStorage.setItem("lang", "en");
+});
+
+
+it("edits, previews, cancels, and saves only the Chinese interpretation body", async () => {
+  apiPost.mockClear();
+  localStorage.setItem("lang", "zh");
+  const articleUrl = "https://example.test/editable-paper";
+  const body = "Existing Chinese body.";
+  const current = {
+    interpretation_id: "edit-v1",
+    title_zh: "Editable interpretation",
+    body_markdown_zh: body,
+    title_en: "Existing English title",
+    body_markdown_en: "Existing English body.",
+    generated_at: "2026-11-04T00:00:00Z",
+    file_url: articleUrl,
+    raw_sha256: "a".repeat(64),
+    markdown_sha256: "b".repeat(64),
+    body_sha256: "c".repeat(64),
+    china_article_url: "https://aiactuary.cn/file-detail?file_id=4001",
+  };
+  let persisted = current;
+  apiGet.mockImplementation((url) => Promise.resolve(String(url).includes("article-interpretations")
+    ? String(url).includes("locale=en") ? { interpretations: [] } : { interpretations: [persisted] }
+    : String(url).includes("/detail") ? { file: { url: articleUrl, title: "Paper", original_filename: "paper.pdf", source_site: "test", content_type: "application/pdf", bytes: 1, local_path: "/tmp/paper.pdf" } }
+      : String(url).includes("/markdown") ? { markdown: { markdown_content: "Original source markdown", markdown_source: "manual" } }
+        : String(url).includes("chunk-sets") ? { chunk_sets: [] } : { tasks: [] }));
+  const user = userEvent.setup();
+  render(<Layout><FileDetail /></Layout>);
+  await user.click(await screen.findByTestId("button-interpretation-toggle"));
+  await user.click(await screen.findByTestId("button-interpretation-edit"));
+  const editor = screen.getByTestId("input-interpretation-markdown") as HTMLTextAreaElement;
+  expect(editor.value).toBe(body);
+  await user.clear(editor);
+  await user.type(editor, "Edited Chinese **body**.");
+  await user.click(screen.getByTestId("button-interpretation-preview"));
+  expect(await screen.findByTestId("interpretation-markdown-preview")).toHaveTextContent("Edited Chinese body.");
+  await user.click(screen.getByTestId("button-interpretation-edit-mode"));
+  await user.click(screen.getByTestId("button-cancel-interpretation"));
+  expect(await screen.findByText(body)).toBeInTheDocument();
+  expect(screen.queryByTestId("input-interpretation-markdown")).not.toBeInTheDocument();
+  expect(apiPost).not.toHaveBeenCalled();
+
+  await user.click(screen.getByTestId("button-interpretation-edit"));
+  const secondEditor = screen.getByTestId("input-interpretation-markdown") as HTMLTextAreaElement;
+  await user.clear(secondEditor);
+  await user.type(secondEditor, "Saved Chinese body.");
+  apiPost.mockImplementationOnce((_url, payload) => {
+    persisted = { ...current, body_markdown_zh: payload.body_markdown_zh as string };
+    return Promise.resolve({ success: true, body_sha256: "d".repeat(64) });
+  });
+  await user.click(screen.getByTestId("button-save-interpretation"));
+  await waitFor(() => expect(screen.getByText("Saved Chinese body.")).toBeInTheDocument());
+  expect(screen.queryByText("Existing English body.")).not.toBeInTheDocument();
+  expect(apiPost).toHaveBeenCalledWith(`/api/article-interpretations/${current.interpretation_id}/body`, {
+    file_url: articleUrl,
+    raw_sha256: current.raw_sha256,
+    markdown_sha256: current.markdown_sha256,
+    expected_body_sha256: current.body_sha256,
+    body_markdown_zh: "Saved Chinese body.",
+  });
+  await user.click(screen.getByTitle("Switch language"));
+  await waitFor(() => expect(apiGet.mock.calls.some(([url]) => String(url).includes("locale=en"))).toBe(true));
+  expect(screen.queryByTestId("article-interpretation")).not.toBeInTheDocument();
+  expect(screen.queryByText("Existing English title")).not.toBeInTheDocument();
+});
+
+it("requires explicit acceptance for a warning-only interpretation and preserves the draft on conflict", async () => {
+  localStorage.setItem("lang", "zh");
+  const articleUrl = "file-smoke";
+  const candidate = {
+    interpretation_id: "warning-v1",
+    title_zh: "",
+    body_markdown_zh: "",
+    generated_at: "",
+    file_url: articleUrl,
+    raw_sha256: "a".repeat(64),
+    markdown_sha256: "b".repeat(64),
+    body_sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    status: "failed",
+    content_warnings: ["unsupported_number", "unlabelled_inference"],
+    content_warning_acceptance_available: true,
+  };
+  let saved = false;
+  apiGet.mockImplementation((url) => Promise.resolve(
+    url.includes("article-interpretations")
+      ? { interpretations: [saved ? {
+        ...candidate,
+        title_zh: "Reviewed interpretation",
+        body_markdown_zh: "User-reviewed Markdown body.",
+        status: "ready",
+        content_warning_acceptance_available: undefined,
+        china_article_url: "https://aiactuary.cn/file-detail?file_id=1",
+      } : candidate] }
+      : url.includes("/detail") ? { file: { url: articleUrl, title: "Source file", original_filename: "source.pdf", source_site: "source", content_type: "text/plain", bytes: 12, local_path: "/tmp/source.pdf" } }
+        : url.includes("/markdown") ? { markdown: { markdown_content: "Source text", markdown_source: "manual" } }
+          : url.includes("chunk-sets") ? { chunk_sets: [] } : { tasks: [] },
+  ));
+  apiPost.mockRejectedValueOnce(Object.assign(new Error("source conflict"), { status: 409 }));
+  const user = userEvent.setup();
+  render(<Layout><FileDetail /></Layout>);
+  expect(await screen.findByTestId("article-interpretation-warning-candidate")).toBeInTheDocument();
+  expect(screen.getByTestId("article-interpretation-warning-candidate")).toHaveTextContent("部分数字未获所引来源证据支持。");
+  expect(screen.getByTestId("article-interpretation-warning-candidate")).toHaveTextContent("有一处推断未明确标注。");
+  await user.click(screen.getByTestId("button-interpretation-review-warnings"));
+  const title = screen.getByTestId("input-interpretation-title") as HTMLInputElement;
+  const body = screen.getByTestId("input-interpretation-markdown") as HTMLTextAreaElement;
+  await user.type(title, "Reviewed interpretation");
+  await user.type(body, "User-reviewed Markdown body.");
+  const save = screen.getByTestId("button-save-interpretation-draft");
+  expect(save).toBeDisabled();
+  await user.click(screen.getByTestId("checkbox-interpretation-accept-warnings"));
+  expect(save).toBeEnabled();
+  await user.click(save);
+  expect(await screen.findByTestId("interpretation-edit-error")).toBeInTheDocument();
+  expect((screen.getByTestId("input-interpretation-title") as HTMLInputElement).value).toBe("Reviewed interpretation");
+  expect((screen.getByTestId("input-interpretation-markdown") as HTMLTextAreaElement).value).toBe("User-reviewed Markdown body.");
+
+  saved = true;
+  apiPost.mockResolvedValueOnce({ success: true, body_sha256: "c".repeat(64), content_warnings: candidate.content_warnings });
+  await user.click(screen.getByTestId("button-save-interpretation-draft"));
+  await waitFor(() => expect(apiPost).toHaveBeenLastCalledWith(
+    `/api/article-interpretations/${candidate.interpretation_id}/body`,
+    expect.objectContaining({
+      file_url: articleUrl,
+      raw_sha256: candidate.raw_sha256,
+      markdown_sha256: candidate.markdown_sha256,
+      expected_body_sha256: candidate.body_sha256,
+      body_markdown_zh: "User-reviewed Markdown body.",
+      title_zh: "Reviewed interpretation",
+      accept_content_warnings: true,
+    }),
+  ));
+  expect(await screen.findByTestId("article-interpretation")).toHaveTextContent("内容提醒");
+  expect(screen.getByTestId("article-interpretation")).toHaveTextContent("部分数字未获所引来源证据支持。");
+});
+
+it("keeps edited Markdown visible when interpretation save fails or conflicts", async () => {
+  apiPost.mockClear();
+  localStorage.setItem("lang", "zh");
+  const current = {
+    interpretation_id: "edit-v2", title_zh: "Current interpretation", body_markdown_zh: "Current body.",
+    generated_at: "2026-11-04T00:00:00Z", file_url: "https://example.test/conflict-paper",
+    raw_sha256: "a".repeat(64), markdown_sha256: "b".repeat(64), body_sha256: "c".repeat(64),
+    china_article_url: "https://aiactuary.cn/file-detail?file_id=4002",
+  };
+  apiGet.mockImplementation((url) => Promise.resolve(String(url).includes("article-interpretations")
+    ? { interpretations: [current] }
+    : String(url).includes("/detail") ? { file: { url: current.file_url, title: "Paper", original_filename: "paper.pdf", source_site: "test", content_type: "application/pdf", bytes: 1, local_path: "/tmp/paper.pdf" } }
+      : String(url).includes("/markdown") ? { markdown: { markdown_content: "Original markdown", markdown_source: "manual" } }
+        : String(url).includes("chunk-sets") ? { chunk_sets: [] } : { tasks: [] }));
+  const user = userEvent.setup();
+  render(<Layout><FileDetail /></Layout>);
+  await user.click(await screen.findByTestId("button-interpretation-toggle"));
+  await user.click(await screen.findByTestId("button-interpretation-edit"));
+  const editor = screen.getByTestId("input-interpretation-markdown") as HTMLTextAreaElement;
+  await user.clear(editor);
+  await user.type(editor, "Keep this user edit.");
+  apiPost.mockRejectedValueOnce(Object.assign(new Error("version conflict"), { status: 409 }));
+  await user.click(screen.getByTestId("button-save-interpretation"));
+  expect(await screen.findByTestId("interpretation-edit-error")).toHaveTextContent("已在其他位置更新");
+  expect((screen.getByTestId("input-interpretation-markdown") as HTMLTextAreaElement).value).toBe("Keep this user edit.");
+});
+
+it("locks the interpretation editor while a save is pending", async () => {
+  apiPost.mockClear();
+  localStorage.setItem("lang", "zh");
+  const current = {
+    interpretation_id: "pending-save-v1", title_zh: "Pending save", body_markdown_zh: "Original body.",
+    generated_at: "2026-11-04T00:00:00Z", file_url: "https://example.test/pending-save",
+    raw_sha256: "a".repeat(64), markdown_sha256: "b".repeat(64), body_sha256: "c".repeat(64),
+    china_article_url: "https://aiactuary.cn/file-detail?file_id=4010",
+  };
+  let persisted = current;
+  apiGet.mockImplementation((url) => Promise.resolve(String(url).includes("article-interpretations")
+    ? { interpretations: [persisted] }
+    : String(url).includes("/detail") ? { file: { url: current.file_url, title: "Paper", original_filename: "paper.pdf", source_site: "test", content_type: "application/pdf", bytes: 1, local_path: "/tmp/paper.pdf" } }
+      : String(url).includes("/markdown") ? { markdown: { markdown_content: "Original markdown", markdown_source: "manual" } }
+        : String(url).includes("chunk-sets") ? { chunk_sets: [] } : { tasks: [] }));
+  let resolveSave!: (value: { success: boolean; body_sha256: string }) => void;
+  apiPost.mockReturnValueOnce(new Promise((resolve) => {
+    resolveSave = (result) => {
+      persisted = { ...current, body_markdown_zh: "Submitted body." };
+      resolve(result);
+    };
+  }));
+  const user = userEvent.setup();
+  render(<Layout><FileDetail /></Layout>);
+  await user.click(await screen.findByTestId("button-interpretation-toggle"));
+  await user.click(await screen.findByTestId("button-interpretation-edit"));
+  const editor = screen.getByTestId("input-interpretation-markdown") as HTMLTextAreaElement;
+  await user.clear(editor);
+  await user.type(editor, "Submitted body.");
+  await user.click(screen.getByTestId("button-save-interpretation"));
+  await waitFor(() => expect(editor).toBeDisabled());
+  expect(editor.value).toBe("Submitted body.");
+  await act(async () => resolveSave({ success: true, body_sha256: "d".repeat(64) }));
+  await waitFor(() => expect(screen.queryByTestId("input-interpretation-markdown")).not.toBeInTheDocument());
+  expect(await screen.findByText("Submitted body.")).toBeInTheDocument();
+});
+
+it("restores unsaved interpretation Markdown after a language switch", async () => {
+  apiPost.mockClear();
+  localStorage.setItem("lang", "zh");
+  const articleUrl = "https://example.test/language-switch-edit";
+  window.history.pushState({}, "", `/file-detail?url=${encodeURIComponent(articleUrl)}`);
+  const chinese = {
+    interpretation_id: "language-edit-v1", title_zh: "中文解读", body_markdown_zh: "Original Chinese body.",
+    generated_at: "2026-11-04T00:00:00Z", file_url: articleUrl,
+    raw_sha256: "a".repeat(64), markdown_sha256: "b".repeat(64), body_sha256: "c".repeat(64),
+    china_article_url: "https://aiactuary.cn/file-detail?file_id=4011",
+  };
+  const english = { ...chinese, title_en: "English interpretation", body_markdown_en: "English body." };
+  apiGet.mockImplementation((url) => {
+    if (String(url).includes("article-interpretations")) {
+      return Promise.resolve({ interpretations: [String(url).includes("locale=en") ? english : chinese] });
+    }
+    return Promise.resolve(String(url).includes("/detail")
+      ? { file: { url: articleUrl, title: "Paper", original_filename: "paper.pdf", source_site: "test", content_type: "application/pdf", bytes: 1, local_path: "/tmp/paper.pdf" } }
+      : String(url).includes("/markdown") ? { markdown: { markdown_content: "Original markdown", markdown_source: "manual" } }
+        : String(url).includes("chunk-sets") ? { chunk_sets: [] } : { tasks: [] });
+  });
+  const user = userEvent.setup();
+  render(<Layout><FileDetail /></Layout>);
+  await user.click(await screen.findByTestId("button-interpretation-toggle"));
+  await user.click(await screen.findByTestId("button-interpretation-edit"));
+  const editor = screen.getByTestId("input-interpretation-markdown") as HTMLTextAreaElement;
+  await user.clear(editor);
+  await user.type(editor, "Unsaved Chinese revision.");
+  await user.click(screen.getByTitle("Switch language"));
+  await user.click(await screen.findByTestId("button-interpretation-toggle"));
+  expect(await screen.findByText("English interpretation")).toBeInTheDocument();
+  expect(screen.queryByTestId("input-interpretation-markdown")).not.toBeInTheDocument();
+  await user.click(screen.getByTitle("Switch language"));
+  await user.click(await screen.findByTestId("button-interpretation-toggle"));
+  const restored = await screen.findByTestId("input-interpretation-markdown") as HTMLTextAreaElement;
+  expect(restored.value).toBe("Unsaved Chinese revision.");
+});
+
+it("uses the original edit CAS baseline after a concurrent writer saves during a language switch", async () => {
+  apiPost.mockClear();
+  localStorage.setItem("lang", "zh");
+  const articleUrl = "https://example.test/language-switch-conflict";
+  window.history.pushState({}, "", `/file-detail?url=${encodeURIComponent(articleUrl)}`);
+  const original = {
+    interpretation_id: "language-conflict-v1", title_zh: "中文解读", body_markdown_zh: "Original Chinese body.",
+    title_en: "English interpretation", body_markdown_en: "English body.",
+    generated_at: "2026-11-04T00:00:00Z", file_url: articleUrl,
+    raw_sha256: "a".repeat(64), markdown_sha256: "b".repeat(64), body_sha256: "c".repeat(64),
+    china_article_url: "https://aiactuary.cn/file-detail?file_id=4012",
+  };
+  const concurrent = { ...original, body_markdown_zh: "Other author's saved body.", body_sha256: "d".repeat(64) };
+  let latestChinese = original;
+  apiGet.mockImplementation((url) => {
+    if (String(url).includes("article-interpretations")) {
+      return Promise.resolve({ interpretations: [String(url).includes("locale=en") ? original : latestChinese] });
+    }
+    return Promise.resolve(String(url).includes("/detail")
+      ? { file: { url: articleUrl, title: "Paper", original_filename: "paper.pdf", source_site: "test", content_type: "application/pdf", bytes: 1, local_path: "/tmp/paper.pdf" } }
+      : String(url).includes("/markdown") ? { markdown: { markdown_content: "Original markdown", markdown_source: "manual" } }
+        : String(url).includes("chunk-sets") ? { chunk_sets: [] } : { tasks: [] });
+  });
+  const user = userEvent.setup();
+  render(<Layout><FileDetail /></Layout>);
+  await user.click(await screen.findByTestId("button-interpretation-toggle"));
+  await user.click(await screen.findByTestId("button-interpretation-edit"));
+  const editor = screen.getByTestId("input-interpretation-markdown") as HTMLTextAreaElement;
+  await user.clear(editor);
+  await user.type(editor, "My unsaved revision.");
+  await user.click(screen.getByTitle("Switch language"));
+  await user.click(await screen.findByTestId("button-interpretation-toggle"));
+  expect(await screen.findByText("English body.")).toBeInTheDocument();
+
+  latestChinese = concurrent;
+  await user.click(screen.getByTitle("Switch language"));
+  await user.click(await screen.findByTestId("button-interpretation-toggle"));
+  const restored = await screen.findByTestId("input-interpretation-markdown") as HTMLTextAreaElement;
+  expect(restored.value).toBe("My unsaved revision.");
+  apiPost.mockRejectedValueOnce(Object.assign(new Error("version conflict"), { status: 409 }));
+  await user.click(screen.getByTestId("button-save-interpretation"));
+  await screen.findByTestId("interpretation-edit-error");
+
+  expect(apiPost).toHaveBeenCalledWith(`/api/article-interpretations/${original.interpretation_id}/body`, {
+    file_url: original.file_url,
+    raw_sha256: original.raw_sha256,
+    markdown_sha256: original.markdown_sha256,
+    expected_body_sha256: original.body_sha256,
+    body_markdown_zh: "My unsaved revision.",
+  });
+  expect((screen.getByTestId("input-interpretation-markdown") as HTMLTextAreaElement).value)
+    .toBe("My unsaved revision.");
+});
+
+it("keeps a conflicted draft visible and copyable when the current interpretation disappears", async () => {
+  apiPost.mockClear();
+  localStorage.setItem("lang", "zh");
+  const articleUrl = "https://example.test/source-changed-during-edit";
+  window.history.pushState({}, "", `/file-detail?url=${encodeURIComponent(articleUrl)}`);
+  const original = {
+    interpretation_id: "source-conflict-v1", title_zh: "Original interpretation",
+    body_markdown_zh: "Original Chinese body.", generated_at: "2026-11-04T00:00:00Z",
+    file_url: articleUrl, raw_sha256: "a".repeat(64), markdown_sha256: "b".repeat(64),
+    body_sha256: "c".repeat(64), china_article_url: "https://aiactuary.cn/file-detail?file_id=4021",
+  };
+  let sourceStillCurrent = true;
+  apiGet.mockImplementation((url) => {
+    if (String(url).includes("article-interpretations")) {
+      const locale = new URLSearchParams(String(url).split("?")[1] || "").get("locale");
+      return Promise.resolve({ interpretations: locale === "zh" && sourceStillCurrent ? [original] : [] });
+    }
+    return Promise.resolve(String(url).includes("/detail")
+      ? { file: { url: articleUrl, title: "Paper", original_filename: "paper.pdf", source_site: "test", content_type: "application/pdf", bytes: 1, local_path: "/tmp/paper.pdf" } }
+      : String(url).includes("/markdown") ? { markdown: { markdown_content: "Original markdown", markdown_source: "manual" } }
+        : String(url).includes("chunk-sets") ? { chunk_sets: [] } : { tasks: [] });
+  });
+  const user = userEvent.setup();
+  render(<Layout><FileDetail /></Layout>);
+  await user.click(await screen.findByTestId("button-interpretation-toggle"));
+  await user.click(await screen.findByTestId("button-interpretation-edit"));
+  const editor = screen.getByTestId("input-interpretation-markdown") as HTMLTextAreaElement;
+  await user.clear(editor);
+  await user.type(editor, "Preserve this conflicted draft.");
+  sourceStillCurrent = false;
+  await user.click(screen.getByTitle("Switch language"));
+  await user.click(screen.getByTitle("Switch language"));
+
+  const draftCard = await screen.findByTestId("article-interpretation-draft");
+  const restored = within(draftCard).getByTestId("input-interpretation-markdown") as HTMLTextAreaElement;
+  expect(restored.value).toBe("Preserve this conflicted draft.");
+  expect(within(draftCard).getByTestId("button-copy-interpretation-draft")).toBeEnabled();
+
+  apiPost.mockRejectedValueOnce(Object.assign(new Error("source conflict"), { status: 409 }));
+  await user.click(within(draftCard).getByTestId("button-save-interpretation-draft"));
+  expect(await within(draftCard).findByTestId("interpretation-edit-error"))
+    .toHaveTextContent("已在其他位置更新");
+  expect(apiPost).toHaveBeenCalledWith(`/api/article-interpretations/${original.interpretation_id}/body`, {
+    file_url: original.file_url,
+    raw_sha256: original.raw_sha256,
+    markdown_sha256: original.markdown_sha256,
+    expected_body_sha256: original.body_sha256,
+    body_markdown_zh: "Preserve this conflicted draft.",
+  });
+  expect((within(draftCard).getByTestId("input-interpretation-markdown") as HTMLTextAreaElement).value)
+    .toBe("Preserve this conflicted draft.");
+});
+
+it("invalidates an in-flight English read after a Chinese save completes", async () => {
+  apiPost.mockClear();
+  localStorage.setItem("lang", "zh");
+  const articleUrl = "https://example.test/save-language-race";
+  window.history.pushState({}, "", `/file-detail?url=${encodeURIComponent(articleUrl)}`);
+  const chinese = {
+    interpretation_id: "save-language-v1", title_zh: "中文解读", body_markdown_zh: "Original Chinese body.",
+    generated_at: "2026-11-04T00:00:00Z", file_url: articleUrl,
+    raw_sha256: "a".repeat(64), markdown_sha256: "b".repeat(64), body_sha256: "c".repeat(64),
+    china_article_url: "https://aiactuary.cn/file-detail?file_id=4022",
+  };
+  const staleEnglish = {
+    ...chinese, title_en: "Old English interpretation", body_markdown_en: "Old English body.",
+  };
+  let englishRequests = 0;
+  let resolveFirstEnglish!: (value: { interpretations: Array<Record<string, unknown>> }) => void;
+  apiGet.mockImplementation((url) => {
+    if (String(url).includes("article-interpretations")) {
+      if (String(url).includes("locale=en")) {
+        englishRequests += 1;
+        if (englishRequests === 1) {
+          return new Promise((resolve) => { resolveFirstEnglish = resolve; });
+        }
+        return Promise.resolve({ interpretations: [] });
+      }
+      return Promise.resolve({ interpretations: [chinese] });
+    }
+    return Promise.resolve(String(url).includes("/detail")
+      ? { file: { url: articleUrl, title: "Paper", original_filename: "paper.pdf", source_site: "test", content_type: "application/pdf", bytes: 1, local_path: "/tmp/paper.pdf" } }
+      : String(url).includes("/markdown") ? { markdown: { markdown_content: "Original markdown", markdown_source: "manual" } }
+        : String(url).includes("chunk-sets") ? { chunk_sets: [] } : { tasks: [] });
+  });
+  let resolveSave!: (value: { success: boolean; body_sha256: string }) => void;
+  apiPost.mockReturnValueOnce(new Promise((resolve) => { resolveSave = resolve; }));
+  const user = userEvent.setup();
+  render(<Layout><FileDetail /></Layout>);
+  await user.click(await screen.findByTestId("button-interpretation-toggle"));
+  await user.click(await screen.findByTestId("button-interpretation-edit"));
+  const editor = screen.getByTestId("input-interpretation-markdown") as HTMLTextAreaElement;
+  await user.clear(editor);
+  await user.type(editor, "Saved Chinese revision.");
+  await user.click(screen.getByTestId("button-save-interpretation"));
+  await waitFor(() => expect(apiPost).toHaveBeenCalled());
+  await waitFor(() => expect(screen.getByTestId("input-interpretation-markdown")).toBeDisabled());
+  await user.click(screen.getByTitle("Switch language"));
+  await waitFor(() => expect(englishRequests).toBe(1));
+
+  await act(async () => resolveSave({ success: true, body_sha256: "d".repeat(64) }));
+  await waitFor(() => expect(englishRequests).toBeGreaterThan(1));
+  await waitFor(() => expect(screen.queryByTestId("article-interpretation")).not.toBeInTheDocument());
+  await act(async () => resolveFirstEnglish({ interpretations: [staleEnglish] }));
+  expect(screen.queryByTestId("article-interpretation")).not.toBeInTheDocument();
+  expect(screen.queryByText("Old English interpretation")).not.toBeInTheDocument();
+  expect(screen.queryByText("Old English body.")).not.toBeInTheDocument();
 });

@@ -168,8 +168,45 @@ class Generator:
         return _valid_response(messages)
 
 
+def _legacy_english_translation(*, provider="deepseek", model="deepseek-flash", route=None):
+    state = {
+        "status": "failed",
+        "provider": provider,
+        "model": model,
+        "attempts": [
+            {
+                "attempt_id": "legacy-attempt",
+                "status": "failed",
+                "calls": [
+                    {"status": "failed", "provider_calls": 1, "reserved_provider_seconds": 10}
+                ],
+            }
+        ],
+    }
+    if route is not None:
+        state["route"] = route
+    return state
+
+
+def _fake_routed_generator():
+    generator = Generator()
+    generator.runtime = SimpleNamespace(
+        provider="deepseek",
+        model="deepseek-flash",
+        stable_credential_id="synthetic-credential",
+        base_url=None,
+    )
+    return generator
+
+
 def test_english_generator_uses_provider_specific_defaults(monkeypatch):
-    runtime = SimpleNamespace(configured=True, provider="deepseek", model="deepseek-flash")
+    runtime = SimpleNamespace(
+        configured=True,
+        provider="deepseek",
+        model="deepseek-flash",
+        stable_credential_id="fixture-credential",
+        base_url=None,
+    )
     monkeypatch.setattr(english, "resolve_ai_function_runtime", lambda *_args, **_kwargs: runtime)
     service = object.__new__(EnglishTranslationService)
     service.storage = object()
@@ -177,9 +214,143 @@ def test_english_generator_uses_provider_specific_defaults(monkeypatch):
 
     generator, route = service._generator()
 
-    assert route == {"provider": "deepseek", "model": "deepseek-flash"}
+    assert route == {
+        "provider": "deepseek",
+        "model": "deepseek-flash",
+        "credential_id": "fixture-credential",
+        "base_url": None,
+    }
     assert generator.request_options == articles._request_options("deepseek")
     assert generator.request_options["extra_body"] == {"thinking": {"type": "disabled"}}
+
+
+def test_english_codex_receipt_counts_outer_attempt_not_provider_request():
+    codex = {
+        "provider_calls": 0,
+        "outer_attempts": 0,
+        "provider_seconds": 0,
+    }
+    english._reserve_english_receipt_attempt(
+        codex,
+        {
+            "backend": "codex-cli",
+            "requested_model": "gpt-6-luna",
+            "effective_model": "unreported",
+            "requested_reasoning_effort": "high",
+            "effective_reasoning_effort": "unreported",
+            "internal_provider_requests": "unknown/unmetered",
+        },
+        12,
+    )
+    assert codex["outer_attempts"] == 1
+    assert codex["provider_calls"] is None
+    assert codex["internal_provider_requests"] == "unknown/unmetered"
+    assert codex["provider_seconds"] == 12
+
+    chat = {"provider_calls": 0, "outer_attempts": 0, "provider_seconds": 0}
+    english._reserve_english_receipt_attempt(
+        chat, {"backend": "deepseek", "model": "deepseek-flash"}, 12
+    )
+    assert chat["outer_attempts"] == 1
+    assert chat["provider_calls"] == 1
+    assert "internal_provider_requests" not in chat
+
+
+def test_english_codex_budget_error_names_outer_attempts():
+    service = EnglishTranslationService.__new__(EnglishTranslationService)
+    service.generator = SimpleNamespace(runtime=SimpleNamespace(backend="codex-cli"))
+    assert service._content_calls_exhausted_reason() == "content_outer_attempts_exhausted"
+    service.generator = SimpleNamespace(runtime=SimpleNamespace(backend="deepseek"))
+    assert service._content_calls_exhausted_reason() == "content_provider_calls_exhausted"
+
+
+def test_legacy_translation_without_route_resumes_and_preserves_old_ledger(storage):
+    legacy = _legacy_english_translation()
+    draft = _draft(storage, existing_translation=legacy)
+    generator = _fake_routed_generator()
+
+    receipt = EnglishTranslationService(storage, generator=generator).run(
+        interpretation_ids=[draft["interpretation_id"]]
+    )
+
+    saved = dict(
+        storage._conn.execute(
+            "SELECT payload_json FROM article_interpretations WHERE interpretation_id=?",
+            (draft["interpretation_id"],),
+        ).fetchone()[0]
+    )["english_translation"]
+    service = EnglishTranslationService(storage, generator=generator)
+    budget = service._content_totals(draft["content_key"])
+    assert receipt["slots"][0]["status"] == "ready"
+    assert receipt["slots"][0]["reason"] == "translation_and_evidence_valid"
+    assert len(generator.calls) == 1
+    assert saved["route"] == articles._runtime_route(generator.runtime)
+    assert saved["attempts"][0] == legacy["attempts"][0]
+    assert len(saved["attempts"]) == 2
+    assert sum(len(attempt["calls"]) for attempt in saved["attempts"]) == 2
+    assert budget["calls"] == 2
+
+
+@pytest.mark.parametrize(
+    "provider,model",
+    [("other-provider", "deepseek-flash"), ("deepseek", "other-model")],
+)
+def test_legacy_translation_without_route_rejects_provider_or_model_mismatch(
+    storage, provider, model
+):
+    legacy = _legacy_english_translation(provider=provider, model=model)
+    draft = _draft(storage, existing_translation=legacy)
+    generator = _fake_routed_generator()
+
+    receipt = EnglishTranslationService(storage, generator=generator).run(
+        interpretation_ids=[draft["interpretation_id"]]
+    )
+
+    saved = dict(
+        storage._conn.execute(
+            "SELECT payload_json FROM article_interpretations WHERE interpretation_id=?",
+            (draft["interpretation_id"],),
+        ).fetchone()[0]
+    )["english_translation"]
+    assert receipt["slots"][0]["reason"] == "english_translation_route_changed"
+    assert generator.calls == []
+    assert saved["attempts"] == legacy["attempts"]
+    assert "route" not in saved
+    assert (
+        EnglishTranslationService(storage, generator=generator)._content_totals(
+            draft["content_key"]
+        )["calls"]
+        == 1
+    )
+
+
+def test_legacy_translation_with_route_still_requires_full_route_match(storage):
+    generator = _fake_routed_generator()
+    old_route = articles._runtime_route(generator.runtime)
+    old_route["credential_id"] = "different-synthetic-credential"
+    legacy = _legacy_english_translation(route=old_route)
+    draft = _draft(storage, existing_translation=legacy)
+
+    receipt = EnglishTranslationService(storage, generator=generator).run(
+        interpretation_ids=[draft["interpretation_id"]]
+    )
+
+    saved = dict(
+        storage._conn.execute(
+            "SELECT payload_json FROM article_interpretations WHERE interpretation_id=?",
+            (draft["interpretation_id"],),
+        ).fetchone()[0]
+    )["english_translation"]
+    assert receipt["slots"][0]["reason"] == "english_translation_route_changed"
+    assert generator.calls == []
+    assert saved["route"] == old_route
+    assert saved["attempts"] == legacy["attempts"]
+    assert (
+        EnglishTranslationService(storage, generator=generator)._content_totals(
+            draft["content_key"]
+        )["calls"]
+        == 1
+    )
 
 
 def test_saved_chinese_claims_translate_without_mutating_chinese_and_reader_hides_internals(
@@ -786,6 +957,163 @@ def test_manual_ready_chinese_replay_translates_once_and_skips_hidden_or_stale(s
     assert draft["interpretation_id"] == first["slots"][0]["interpretation_id"]
 
 
+def test_manual_chinese_edit_during_translation_keeps_completed_english_stale(storage):
+    draft = _draft(storage)
+    original_body_sha256 = articles._hash(draft["body_markdown_zh"])
+
+    def edit_chinese_body_during_call():
+        from ai_actuarial.article_interpretations import update_interpretation_body
+
+        update_interpretation_body(
+            storage.database,
+            interpretation_id=draft["interpretation_id"],
+            payload={
+                "file_url": draft["file_url"],
+                "raw_sha256": draft["raw_sha256"],
+                "markdown_sha256": draft["markdown_sha256"],
+                "expected_body_sha256": original_body_sha256,
+                "body_markdown_zh": "A new, manually edited Chinese interpretation.",
+            },
+            actor="operator-token",
+        )
+
+    generator = Generator(on_call=edit_chinese_body_during_call)
+    receipt = EnglishTranslationService(storage, generator=generator).run(
+        interpretation_ids=[draft["interpretation_id"]]
+    )
+
+    assert len(generator.calls) == 1
+    assert receipt["slots"][0]["status"] == "skipped"
+    assert receipt["slots"][0]["reason"] == "chinese_body_changed_during_translation"
+    saved = dict(
+        storage._conn.execute(
+            "SELECT payload_json FROM article_interpretations WHERE interpretation_id=?",
+            (draft["interpretation_id"],),
+        ).fetchone()[0]
+    )
+    translation = saved["english_translation"]
+    assert saved["body_markdown_zh"] == "A new, manually edited Chinese interpretation."
+    assert saved["manual_edit_revision"]
+    assert translation["status"] == "stale"
+    assert translation["source_body_sha256"] == original_body_sha256
+    assert translation["source_manual_edit_revision"] == ""
+    assert translation.get("body_markdown_en") is None
+    assert read_english_interpretations(storage.database, file_url=URL) == []
+
+    legacy_completion = dict(translation)
+    legacy_completion.update(
+        status="ready",
+        title_en="Stale English title",
+        body_markdown_en="Stale English body.",
+        generated_at="2026-11-04T00:00:00+00:00",
+    )
+    legacy_completion.pop("source_body_sha256", None)
+    legacy_completion.pop("source_manual_edit_revision", None)
+    saved["english_translation"] = legacy_completion
+    storage._conn.execute(
+        "UPDATE article_interpretations SET payload_json=?::jsonb WHERE interpretation_id=?",
+        (json.dumps(saved, ensure_ascii=False), draft["interpretation_id"]),
+    )
+    assert read_english_interpretations(storage.database, file_url=URL) == []
+
+
+def test_manual_chinese_edit_blocks_translation_of_old_structured_claims(storage):
+    existing = {
+        "status": "ready",
+        "title_en": "Translation from the generated claims",
+        "body_markdown_en": "Translation based on the original structured claims.",
+        "generated_at": "2026-11-03T00:00:00+00:00",
+        "attempts": [],
+    }
+    draft = _draft(storage, existing_translation=existing)
+    claims_before = draft["claims"]
+    original_body_sha256 = articles._hash(draft["body_markdown_zh"])
+    manually_edited_body = draft["body_markdown_zh"].replace("中文正文。", "手工修订正文。", 1)
+    edit = articles.update_interpretation_body(
+        storage.database,
+        interpretation_id=draft["interpretation_id"],
+        payload={
+            "file_url": draft["file_url"],
+            "raw_sha256": draft["raw_sha256"],
+            "markdown_sha256": draft["markdown_sha256"],
+            "expected_body_sha256": original_body_sha256,
+            "body_markdown_zh": manually_edited_body,
+        },
+        actor="operator-token",
+    )
+    edited = dict(
+        storage._conn.execute(
+            "SELECT payload_json FROM article_interpretations WHERE interpretation_id=?",
+            (draft["interpretation_id"],),
+        ).fetchone()[0]
+    )
+    assert edited["claims"] == claims_before
+    assert edited["english_translation"]["status"] == "stale"
+
+    generator = Generator()
+    receipt = EnglishTranslationService(storage, generator=generator).run(
+        interpretation_ids=[draft["interpretation_id"]]
+    )
+
+    assert generator.calls == []
+    assert receipt["provider_calls"] == 0
+    assert receipt["slots"][0]["status"] == "skipped"
+    assert receipt["slots"][0]["reason"] == "manual_chinese_edit_requires_claim_refresh"
+    saved = dict(
+        storage._conn.execute(
+            "SELECT payload_json FROM article_interpretations WHERE interpretation_id=?",
+            (draft["interpretation_id"],),
+        ).fetchone()[0]
+    )
+    assert saved["claims"] == claims_before
+    assert saved["english_translation"]["status"] == "stale"
+    assert (
+        saved["english_translation"].get("source_manual_edit_revision")
+        != edit["manual_edit_revision"]
+    )
+    assert read_english_interpretations(storage.database, file_url=URL) == []
+
+
+def test_manual_revision_hides_english_even_when_old_claim_translation_has_matching_metadata(
+    storage,
+):
+    draft = _draft(storage)
+    manually_edited_body = draft["body_markdown_zh"].replace("中文正文。", "手工修订正文。", 1)
+    edit = articles.update_interpretation_body(
+        storage.database,
+        interpretation_id=draft["interpretation_id"],
+        payload={
+            "file_url": draft["file_url"],
+            "raw_sha256": draft["raw_sha256"],
+            "markdown_sha256": draft["markdown_sha256"],
+            "expected_body_sha256": articles._hash(draft["body_markdown_zh"]),
+            "body_markdown_zh": manually_edited_body,
+        },
+        actor="operator-token",
+    )
+    saved = dict(
+        storage._conn.execute(
+            "SELECT payload_json FROM article_interpretations WHERE interpretation_id=?",
+            (draft["interpretation_id"],),
+        ).fetchone()[0]
+    )
+    saved["english_translation"] = {
+        "status": "ready",
+        "title_en": "Old claims translated as current",
+        "body_markdown_en": "This translation used structured claims from before the manual edit.",
+        "generated_at": "2026-11-04T00:00:00+00:00",
+        "source_body_sha256": articles._hash(manually_edited_body),
+        "source_manual_edit_revision": edit["manual_edit_revision"],
+        "attempts": [],
+    }
+    storage._conn.execute(
+        "UPDATE article_interpretations SET payload_json=?::jsonb WHERE interpretation_id=?",
+        (json.dumps(saved, ensure_ascii=False), draft["interpretation_id"]),
+    )
+
+    assert read_english_interpretations(storage.database, file_url=URL) == []
+
+
 def test_source_change_during_translation_does_not_make_a_second_call_or_ready_english(storage):
     draft = _draft(storage)
     generator = Generator(
@@ -886,6 +1214,7 @@ def test_overseas_proxy_requires_exact_current_identity_and_forwards_no_browser_
 ):
     local_identity = {"file_url": URL, "raw_sha256": "raw", "markdown_sha256": "md"}
     monkeypatch.setattr(api, "read_current_article_identity", lambda _db, _url: local_identity)
+    monkeypatch.setattr(api, "_has_local_manual_edit", lambda _request, _url: False)
     calls = []
 
     class Reply:
@@ -948,6 +1277,7 @@ def test_overseas_proxy_requires_exact_current_identity_and_forwards_no_browser_
 def test_overseas_proxy_fails_closed_for_hidden_article_or_untrusted_origin(monkeypatch):
     calls = []
     monkeypatch.setattr(api, "read_current_article_identity", lambda _db, _url: None)
+    monkeypatch.setattr(api, "_has_local_manual_edit", lambda _request, _url: False)
     monkeypatch.setattr(api.requests, "get", lambda *args, **kwargs: calls.append((args, kwargs)))
     config = {
         "article_interpretation": {

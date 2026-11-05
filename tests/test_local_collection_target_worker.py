@@ -832,6 +832,65 @@ def test_worker_startup_exception_json_retains_payload_target(monkeypatch) -> No
     assert reply["error"] == "database unavailable"
 
 
+def test_worker_main_accepts_valid_source_batch_above_interpretation_stream_cap(
+    monkeypatch,
+):
+    item = _item(
+        "https://example.test/large-source.pdf",
+        b"x" * 409_609,
+        "Pricing models use AI methods.",
+    )
+    payload = {
+        "schema_version": 1,
+        "target": "china",
+        "items": [item],
+        "approved_categories": ["AI", "Pricing", "Other"],
+    }
+    encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    assert len(item["raw_bytes_b64"]) > worker.MAX_INTERPRETATION_EVENT_BYTES
+    assert len(encoded.encode("utf-8")) > worker.MAX_INTERPRETATION_EVENT_BYTES
+    assert worker.MAX_ARTICLE_BYTES >= 409_609
+    worker._normalize_item(item, "china", payload["approved_categories"])
+
+    received = []
+    monkeypatch.setattr(worker.sys, "stdin", StringIO(encoded + "\n"))
+    monkeypatch.setattr(worker.sys, "stdout", StringIO())
+    monkeypatch.setattr(
+        worker,
+        "apply_batch",
+        lambda value: received.append(value)
+        or {"target": "china", "failures": [], "ready_status": "succeeded"},
+    )
+
+    assert worker.main() == 0
+    assert received == [payload]
+
+
+def test_worker_main_keeps_interpretation_stream_request_cap(monkeypatch):
+    payload = {
+        "schema_version": 1,
+        "operation": "run_article_interpretation_stream",
+        "target": "china",
+        "padding": "x" * worker.MAX_INTERPRETATION_EVENT_BYTES,
+    }
+    encoded = json.dumps(payload, separators=(",", ":"))
+    output = StringIO()
+    monkeypatch.setattr(worker.sys, "stdin", StringIO(encoded + "\n"))
+    monkeypatch.setattr(worker.sys, "stdout", output)
+    monkeypatch.setattr(
+        worker,
+        "_run_article_interpretation_stream_operation",
+        lambda _payload: pytest.fail("oversized stream request must be rejected first"),
+    )
+
+    assert worker.main() == 2
+    assert json.loads(output.getvalue()) == {
+        "schema_version": 1,
+        "event": "failure",
+        "code": "stream_request_too_large",
+    }
+
+
 @pytest.mark.parametrize(
     ("task_id", "status", "error", "log_file"),
     [
@@ -2342,3 +2401,1556 @@ def test_cleanup_file_lock_serializes_concurrent_content_replacement(
     assert row["deleted_at"] is None
     assert row["catalog_status"] == "ok"
     assert memberships == ["ai"]
+
+
+def _interpretation_draft() -> dict:
+    from ai_actuarial import article_interpretations as articles
+
+    messages = [{"role": "user", "content": "bounded evidence fixture"}]
+    coverage = {"evidence": [{"id": f"E{i}"} for i in range(1, 6)]}
+    raw_sha = "a" * 64
+    markdown_sha = "b" * 64
+    return {
+        "interpretation_id": "interpretation-fixture-1",
+        "file_url": "https://example.test/current.pdf",
+        "raw_sha256": raw_sha,
+        "markdown_sha256": markdown_sha,
+        "content_key": articles._hash(raw_sha + markdown_sha),
+        "source_key": "cas",
+        "input_fingerprint": articles._hash(
+            articles._json({"messages": messages, "coverage": coverage})
+        ),
+        "prompt_version": articles.PROMPT_VERSION,
+        "status": "ready",
+        "title_zh": "研究方法与应用边界",
+        "body_markdown_zh": "## 研究解读\n\n依据原文证据形成的说明。",
+        "coverage": coverage,
+        "messages": messages,
+        "references": {"authors": [], "evidence": coverage["evidence"]},
+    }
+
+
+class _InterpretationCursor:
+    def __init__(self, rows=()):
+        self.rows = list(rows)
+
+    def fetchone(self):
+        return self.rows[0] if self.rows else None
+
+    def fetchall(self):
+        return self.rows
+
+
+class _InterpretationConnection:
+    def __init__(self, rows=()):
+        self.rows = list(rows)
+        self.closed = False
+        self.commits = 0
+        self.rollbacks = 0
+        self.read_only = False
+        self.readback_queries = 0
+        self.updates = 0
+
+    def execute(self, statement, params=()):
+        if (
+            "input_fingerprint,status,payload_json FROM article_interpretations WHERE interpretation_id=?"
+            in statement
+            and " OR input_fingerprint=?" not in statement
+        ):
+            self.readback_queries += 1
+            return _InterpretationCursor([row for row in self.rows if row[0] == params[0]])
+        if statement.startswith("SELECT file_url,raw_sha256"):
+            selected = [row for row in self.rows if row[0] == params[0]]
+            return _InterpretationCursor(
+                [(row[1], row[2], row[3], row[6], row[7]) for row in selected]
+            )
+        if statement.startswith("SELECT interpretation_id,file_url"):
+            interpretation_id, input_fingerprint, content_key = params
+            ready_content_only = "content_key=? AND status='ready'" in statement
+            selected = [
+                row
+                for row in self.rows
+                if row[0] == interpretation_id
+                or row[5] == input_fingerprint
+                or (row[4] == content_key and (not ready_content_only or row[6] == "ready"))
+            ]
+            return _InterpretationCursor(selected)
+        if statement.startswith("INSERT INTO article_interpretations"):
+            identity, url, raw_sha, markdown_sha, content_key, source_key, fp, payload = params
+            self.rows.append(
+                (
+                    identity,
+                    url,
+                    raw_sha,
+                    markdown_sha,
+                    content_key,
+                    fp,
+                    "ready",
+                    json.loads(payload),
+                )
+            )
+            return _InterpretationCursor()
+        if statement.startswith("UPDATE article_interpretations SET payload_json=jsonb_set"):
+            self.updates += 1
+            translation = json.loads(params[0])
+            expected = tuple(params[1:])
+            for index, row in enumerate(self.rows):
+                if tuple(row[:6]) == expected and row[6] == "ready":
+                    payload = dict(row[7])
+                    payload["english_translation"] = translation
+                    self.rows[index] = (*row[:7], payload)
+                    break
+            return _InterpretationCursor()
+        return _InterpretationCursor()
+
+    def commit(self):
+        self.commits += 1
+
+    def rollback(self):
+        self.rollbacks += 1
+
+    def close(self):
+        self.closed = True
+
+
+def _use_fake_interpretation_target(monkeypatch, connection):
+    import ai_actuarial.capacity as capacity
+    import ai_actuarial.postgres as postgres
+
+    monkeypatch.setattr(worker, "_article_interpretation_database", lambda _runtime: object())
+    monkeypatch.setattr(worker, "_interpretation_current_row", lambda *_args: None)
+    monkeypatch.setattr(capacity, "capacity_status", lambda **_kwargs: {"blocked": False})
+    monkeypatch.setattr(
+        postgres,
+        "PostgresConnection",
+        lambda _database, read_only=False: _set_read_only(connection, read_only),
+    )
+
+
+def _set_read_only(connection, read_only):
+    connection.read_only = read_only
+    return connection
+
+
+def test_interpretation_target_insert_is_exact_and_duplicate_reconciliation_is_idempotent(
+    monkeypatch,
+):
+    draft = _interpretation_draft()
+    draft["english_translation"] = {
+        "status": "ready",
+        "title_en": "Methods and application boundaries",
+        "body_markdown_en": "## Research interpretation\n\nA concise evidence-based explanation.",
+    }
+    other_version = (
+        "other-version",
+        "https://example.test/other.pdf",
+        "c" * 64,
+        "d" * 64,
+        "e" * 64,
+        "f" * 64,
+        "ready",
+        {"interpretation_id": "other-version", "title_zh": "Keep this version"},
+    )
+    connection = _InterpretationConnection([other_version])
+    _use_fake_interpretation_target(monkeypatch, connection)
+
+    first = worker.apply_article_interpretation(
+        {"target": "overseas", "locale": "zh", "draft": draft},
+        runtime_factory=lambda: object(),
+    )
+    zh_duplicate = worker.apply_article_interpretation(
+        {"target": "overseas", "locale": "zh", "draft": draft},
+        runtime_factory=lambda: object(),
+    )
+    row_after_zh = dict(
+        next(row for row in connection.rows if row[0] == draft["interpretation_id"])[7]
+    )
+    en_updated = worker.apply_article_interpretation(
+        {"target": "overseas", "locale": "en", "draft": draft},
+        runtime_factory=lambda: object(),
+    )
+    en_duplicate = worker.apply_article_interpretation(
+        {"target": "overseas", "locale": "en", "draft": draft},
+        runtime_factory=lambda: object(),
+    )
+
+    assert first["status"] == "inserted"
+    assert zh_duplicate["status"] == "already_present"
+    assert en_updated["status"] == "updated"
+    assert en_duplicate["status"] == "already_present"
+    assert first["identity"] == en_updated["identity"]
+    assert first["identity"]["draft_sha256"]
+    assert first["locale"] == "zh"
+    assert first["reader_fields"]["locale"] == "zh"
+    assert first["reader_fields"]["title"] == draft["title_zh"]
+    assert first["reader_fields"]["body_chars"] == len(draft["body_markdown_zh"])
+    assert (
+        first["reader_fields"]["body_sha256"]
+        == hashlib.sha256(draft["body_markdown_zh"].encode("utf-8")).hexdigest()
+    )
+    assert "english_translation" not in row_after_zh
+    assert en_updated["locale"] == "en"
+    assert en_updated["reader_fields"]["status"] == "ready"
+    assert en_updated["reader_fields"]["title"] == "Methods and application boundaries"
+    assert en_updated["reader_fields"]["body_chars"] == len(
+        draft["english_translation"]["body_markdown_en"]
+    )
+    assert (
+        en_updated["reader_fields"]["body_sha256"]
+        == hashlib.sha256(
+            draft["english_translation"]["body_markdown_en"].encode("utf-8")
+        ).hexdigest()
+    )
+    assert "body_markdown_en" not in en_updated["reader_fields"]
+    assert "body_markdown_zh" not in first["reader_fields"]
+    assert connection.readback_queries == 4
+    assert connection.read_only is False
+    assert connection.commits == 4
+    assert connection.updates == 1
+    saved = next(row for row in connection.rows if row[0] == draft["interpretation_id"])
+    assert len(connection.rows) == 2
+    assert saved[7]["title_zh"] == row_after_zh["title_zh"]
+    assert saved[7]["body_markdown_zh"] == row_after_zh["body_markdown_zh"]
+    assert saved[7]["english_translation"] == draft["english_translation"]
+    assert connection.rows[0] == other_version
+
+
+def test_failed_historical_same_content_draft_does_not_block_ready_sync(monkeypatch):
+    draft = _interpretation_draft()
+    failed_payload = {**draft, "interpretation_id": "old-failed-draft", "status": "failed"}
+    failed_row = (
+        "old-failed-draft",
+        draft["file_url"],
+        draft["raw_sha256"],
+        draft["markdown_sha256"],
+        draft["content_key"],
+        "c" * 64,
+        "failed",
+        failed_payload,
+    )
+    connection = _InterpretationConnection([failed_row])
+    _use_fake_interpretation_target(monkeypatch, connection)
+
+    inserted = worker.apply_article_interpretation(
+        {"target": "overseas", "locale": "zh", "draft": draft},
+        runtime_factory=lambda: object(),
+    )
+    duplicate = worker.apply_article_interpretation(
+        {"target": "overseas", "locale": "zh", "draft": draft},
+        runtime_factory=lambda: object(),
+    )
+
+    assert inserted["status"] == "inserted"
+    assert duplicate["status"] == "already_present"
+    assert len(connection.rows) == 2
+    assert connection.rows[0][6] == "failed"
+    assert connection.rows[1][6] == "ready"
+
+
+def test_different_ready_draft_for_same_content_still_conflicts(monkeypatch):
+    draft = _interpretation_draft()
+    different_ready = (
+        "other-ready-interpretation",
+        draft["file_url"],
+        draft["raw_sha256"],
+        draft["markdown_sha256"],
+        draft["content_key"],
+        "c" * 64,
+        "ready",
+        {**draft, "interpretation_id": "other-ready-interpretation"},
+    )
+    connection = _InterpretationConnection([different_ready])
+    _use_fake_interpretation_target(monkeypatch, connection)
+
+    with pytest.raises(
+        worker._InterpretationTargetFailure, match="interpretation_identity_conflict"
+    ):
+        worker.apply_article_interpretation(
+            {"target": "overseas", "locale": "zh", "draft": draft},
+            runtime_factory=lambda: object(),
+        )
+    assert connection.rollbacks == 1
+
+
+@pytest.mark.parametrize(
+    "mutation,expected_error",
+    [
+        ("source", "interpretation_identity_conflict"),
+        ("zh_digest", "interpretation_chinese_locale_conflict"),
+        ("references", "interpretation_source_projection_conflict"),
+        ("ready_en", "interpretation_english_locale_conflict"),
+    ],
+)
+def test_interpretation_en_only_update_rejects_identity_or_ready_conflicts(
+    monkeypatch, mutation, expected_error
+):
+    draft = _interpretation_draft()
+    draft["english_translation"] = {
+        "status": "ready",
+        "title_en": "Methods and application boundaries",
+        "body_markdown_en": "English body.",
+    }
+    stored = dict(draft)
+    if mutation == "source":
+        stored["file_url"] = "https://example.test/other.pdf"
+    elif mutation == "zh_digest":
+        stored["title_zh"] = "Different Chinese title"
+    elif mutation == "references":
+        stored["references"] = {
+            **stored["references"],
+            "article_url": "https://example.test/other.pdf",
+        }
+    else:
+        stored["english_translation"] = {
+            "status": "ready",
+            "title_en": "Different English title",
+            "body_markdown_en": "Different English body.",
+        }
+    row = (
+        draft["interpretation_id"],
+        stored["file_url"],
+        draft["raw_sha256"],
+        draft["markdown_sha256"],
+        draft["content_key"],
+        draft["input_fingerprint"],
+        "ready",
+        stored,
+    )
+    connection = _InterpretationConnection([row])
+    _use_fake_interpretation_target(monkeypatch, connection)
+
+    with pytest.raises(worker._InterpretationTargetFailure, match=expected_error):
+        worker.apply_article_interpretation(
+            {"target": "overseas", "locale": "en", "draft": draft},
+            runtime_factory=lambda: object(),
+        )
+
+    assert connection.updates == 0
+    assert connection.rows[0][7] == stored
+
+
+def test_interpretation_en_locale_not_ready_is_not_acknowledged(monkeypatch):
+    draft = _interpretation_draft()
+    connection = _InterpretationConnection()
+    _use_fake_interpretation_target(monkeypatch, connection)
+
+    with pytest.raises(
+        worker._InterpretationTargetFailure, match="interpretation_locale_not_ready"
+    ):
+        worker.apply_article_interpretation(
+            {"target": "overseas", "locale": "en", "draft": draft},
+            runtime_factory=lambda: object(),
+        )
+    assert not connection.rows
+    assert connection.updates == 0
+
+
+def test_interpretation_target_rejects_conflict_not_ready_and_missing_evidence(monkeypatch):
+    draft = _interpretation_draft()
+    conflict = _InterpretationConnection(
+        [
+            (
+                draft["interpretation_id"],
+                draft["file_url"],
+                "c" * 64,
+                draft["markdown_sha256"],
+                draft["content_key"],
+                draft["input_fingerprint"],
+                "ready",
+                draft,
+            )
+        ]
+    )
+    _use_fake_interpretation_target(monkeypatch, conflict)
+    with pytest.raises(
+        worker._InterpretationTargetFailure, match="interpretation_identity_conflict"
+    ):
+        worker.apply_article_interpretation(
+            {"target": "overseas", "locale": "zh", "draft": draft},
+            runtime_factory=lambda: object(),
+        )
+    assert conflict.rollbacks == 1
+
+    not_ready = {**draft, "status": "failed"}
+    with pytest.raises(worker._InterpretationTargetFailure, match="interpretation_not_ready"):
+        worker._interpretation_identity(not_ready)
+    no_evidence = {**draft, "coverage": {"evidence": []}}
+    with pytest.raises(
+        worker._InterpretationTargetFailure, match="interpretation_validation_evidence_missing"
+    ):
+        worker._interpretation_identity(no_evidence)
+
+
+def test_interpretation_target_china_ack_requires_exact_saved_identity(monkeypatch):
+    draft = _interpretation_draft()
+    changed = {**draft, "title_zh": "不同稿件"}
+    connection = _InterpretationConnection(
+        [
+            (
+                draft["interpretation_id"],
+                draft["file_url"],
+                draft["raw_sha256"],
+                draft["markdown_sha256"],
+                draft["content_key"],
+                draft["input_fingerprint"],
+                "ready",
+                changed,
+            )
+        ]
+    )
+    _use_fake_interpretation_target(monkeypatch, connection)
+
+    with pytest.raises(
+        worker._InterpretationTargetFailure,
+        match="interpretation_source_projection_readback_mismatch",
+    ):
+        worker.apply_article_interpretation(
+            {"target": "china", "locale": "zh", "draft": draft},
+            runtime_factory=lambda: object(),
+        )
+    assert connection.read_only is True
+    assert not connection.commits
+
+
+def test_interpretation_current_source_rejects_missing_stale_and_unknown_source(monkeypatch):
+    from ai_actuarial import article_interpretations as articles
+
+    draft = _interpretation_draft()
+    identity = worker._interpretation_identity(draft)
+
+    class Connection:
+        source_status = ("active",)
+
+        def execute(self, *_args, **_kwargs):
+            return _InterpretationCursor([self.source_status])
+
+    connection = Connection()
+    monkeypatch.setattr(articles, "_load_file", lambda *_args: None)
+    with pytest.raises(worker._InterpretationTargetFailure, match="source_missing"):
+        worker._interpretation_current_row(connection, identity, "cas")
+
+    current = {
+        "url": draft["file_url"],
+        "sha256": draft["raw_sha256"],
+        "local_path": "fixture.pdf",
+        "deleted_at": None,
+        "status": "ok",
+        "markdown_content": "different current version",
+    }
+    monkeypatch.setattr(articles, "_load_file", lambda *_args: current)
+    with pytest.raises(worker._InterpretationTargetFailure, match="source_version_stale"):
+        worker._interpretation_current_row(connection, identity, "cas")
+
+    current["markdown_content"] = "same"
+    monkeypatch.setattr(
+        articles,
+        "_identity",
+        lambda row: {
+            "file_url": identity["file_url"],
+            "raw_sha256": identity["raw_sha256"],
+            "markdown_sha256": identity["markdown_sha256"],
+        },
+    )
+    connection.source_status = ("retired",)
+    with pytest.raises(worker._InterpretationTargetFailure, match="canonical_source_missing"):
+        worker._interpretation_current_row(connection, identity, "cas")
+
+
+def test_article_interpretation_prompt_result_stream_and_optional_english_route(monkeypatch):
+    import asyncio
+    import time
+
+    from ai_actuarial import storage as storage_module
+
+    output = StringIO()
+
+    class InputStream:
+        def readline(self, _limit):
+            prompt = json.loads(output.getvalue().splitlines()[-1])
+            return (
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "event": "result",
+                        "request_id": prompt["request_id"],
+                        "result": "validated local model result",
+                    }
+                )
+                + "\n"
+            )
+
+    class FakeRuntime:
+        data_root = Path("fixture-data")
+
+        def _load_site_config(self):
+            return {
+                "article_interpretation": {
+                    "english_translation": {"enabled": True},
+                    "english_proxy": {"enabled": True},
+                }
+            }
+
+    class FakeStorage:
+        closed = False
+
+        def close(self):
+            self.closed = True
+
+    fake_storage = FakeStorage()
+    monkeypatch.setattr(worker, "_article_interpretation_database", lambda _runtime: object())
+    monkeypatch.setattr(
+        storage_module.Storage,
+        "open_existing",
+        lambda _database, data_root=None: fake_storage,
+    )
+
+    class FakeService:
+        def __init__(self, _storage, *, generator, config):
+            self.generator = generator
+            assert config["environment"] == "china"
+
+        def run(self, **_kwargs):
+            result = asyncio.run(
+                self.generator.generate(
+                    [{"role": "user", "content": "Chinese draft prompt"}],
+                    deadline=time.monotonic() + 30,
+                )
+            )
+            assert result == "validated local model result"
+            return {
+                "status": "complete",
+                "round_key": "2026-11-02",
+                "receipt_type": "generation",
+                "provider_calls": None,
+                "outer_attempts": 1,
+                "internal_provider_requests": "unknown/unmetered",
+                "slots": [],
+            }
+
+    class FakeEnglishService:
+        def __init__(self, _storage, *, generator):
+            self.generator = generator
+
+        def run(self, *, interpretation_ids):
+            assert interpretation_ids == ["interpretation-fixture-1"]
+            result = asyncio.run(
+                self.generator.generate(
+                    [{"role": "user", "content": "English translation prompt"}],
+                    deadline=time.monotonic() + 30,
+                )
+            )
+            assert result == "validated local model result"
+            return {
+                "status": "complete",
+                "receipt_type": "english_translation",
+                "provider_calls": 1,
+                "outer_attempts": 1,
+                "internal_provider_requests": "unknown/unmetered",
+                "slots": [{"interpretation_id": "interpretation-fixture-1", "status": "ready"}],
+            }
+
+    class ReadyService(FakeService):
+        def run(self, **kwargs):
+            result = super().run(**kwargs)
+            result["slots"] = [{"interpretation_id": "interpretation-fixture-1", "status": "ready"}]
+            return result
+
+    result = worker.run_article_interpretation_stream(
+        {
+            "schema_version": 1,
+            "operation": "run_article_interpretation_stream",
+            "target": "china",
+            "round_key": "2026-11-02",
+            "retry_id": None,
+            "backend": "codex-cli",
+            "requested_model": "gpt-6-luna",
+            "reasoning_effort": "high",
+        },
+        input_stream=InputStream(),
+        output_stream=output,
+        runtime_factory=FakeRuntime,
+        service_factory=ReadyService,
+        english_service_factory=FakeEnglishService,
+    )
+
+    events = [json.loads(line) for line in output.getvalue().splitlines()]
+    prompts = [event for event in events if event["event"] == "prompt"]
+    assert [event["stage"] for event in prompts] == ["generation", "english_translation"]
+    assert len({event["request_id"] for event in prompts}) == 2
+    assert result["locale_settings"] == {
+        "english_translation_enabled": True,
+        "english_proxy_enabled": True,
+    }
+    assert result["route"]["requested_model"] == "gpt-6-luna"
+    assert result["route"]["effective_model"] == "unreported"
+    assert result["english_translation"]["internal_provider_requests"] == "unknown/unmetered"
+    assert fake_storage.closed is True
+
+
+@pytest.mark.parametrize("response_kind", ["eof", "malformed", "oversize", "mismatched_id"])
+def test_article_interpretation_stream_rejects_bad_result_frames(response_kind):
+    import asyncio
+    import time
+
+    from ai_actuarial import article_interpretations as articles
+
+    output = StringIO()
+
+    class InputStream:
+        def readline(self, limit):
+            if response_kind == "eof":
+                return ""
+            if response_kind == "malformed":
+                return "{invalid json}\n"
+            if response_kind == "oversize":
+                return "x" * (worker.MAX_INTERPRETATION_EVENT_BYTES + 1)
+            if response_kind == "mismatched_id":
+                return json.dumps(
+                    {
+                        "schema_version": 1,
+                        "event": "result",
+                        "request_id": "0" * 32,
+                        "result": "fixture",
+                    }
+                )
+            raise AssertionError(response_kind)
+
+    stream = worker._ArticleInterpretationPromptStream(
+        articles.CodexArticleRuntime(
+            backend="codex-cli", model="gpt-6-luna", reasoning_effort="high"
+        ),
+        InputStream(),
+        output,
+    )
+    with pytest.raises(articles.ArticleStreamInterrupted):
+        asyncio.run(
+            stream.generate(
+                [{"role": "user", "content": "fixture"}],
+                deadline=time.monotonic() + 10,
+            )
+        )
+    prompt = json.loads(output.getvalue().splitlines()[0])
+    assert prompt["event"] == "prompt"
+    assert prompt["schema_version"] == 1
+    assert len(prompt["request_id"]) == 32
+
+
+def test_article_interpretation_sync_candidate_scan_skips_conflict_only_history(monkeypatch):
+    from ai_actuarial import postgres
+
+    drafts = [
+        {
+            "interpretation_id": f"old-{index:03}",
+            "status": "ready",
+            "title_zh": "旧稿标题",
+            "body_markdown_zh": "旧稿正文",
+            "created_at": f"2026-11-02T10:00:{index:02d}+00:00",
+            "content_key": f"{index + 1:064x}",
+        }
+        for index in range(100)
+    ] + [
+        {
+            "interpretation_id": "new-pending",
+            "status": "ready",
+            "title_zh": "新稿标题",
+            "body_markdown_zh": "新稿正文",
+            "created_at": "2026-11-02T10:01:40+00:00",
+            "content_key": f"{101:064x}",
+        }
+    ]
+    identities = {
+        draft["interpretation_id"]: {
+            "interpretation_id": draft["interpretation_id"],
+            "file_url": f"https://example.test/{draft['interpretation_id']}.pdf",
+            "raw_sha256": f"{index + 1:064x}",
+            "markdown_sha256": f"{index + 101:064x}",
+            "content_key": draft["content_key"],
+            "prompt_version": "article-interpretation-v8",
+            "input_fingerprint": f"{index + 201:064x}",
+            "draft_sha256": f"{index + 301:064x}",
+        }
+        for index, draft in enumerate(drafts)
+    }
+    receipts = {}
+    for index, draft in enumerate(drafts[:-1]):
+        identity = identities[draft["interpretation_id"]]
+        source_identity = worker._interpretation_source_identity(identity, draft)
+        reader_fields = worker._interpretation_reader_fields(draft, "zh")
+        locale_digest = worker._interpretation_locale_digest(draft, "zh")
+        for target in ("china", "overseas"):
+            if index == 0 and target == "overseas":
+                continue
+            key = worker._interpretation_ack_key(target, source_identity, "zh")
+            receipts[key] = {
+                "receipt_type": "target_sync_locale",
+                "target": target,
+                "locale": "zh",
+                "source_identity": source_identity,
+                "locale_digest": "0" * 64 if index < 3 else locale_digest,
+                "draft_sha256": identity["draft_sha256"],
+                "status": "acknowledged",
+                "reader_fields": reader_fields,
+            }
+
+    class Cursor:
+        def __init__(self, rows):
+            self.rows = rows
+
+        def fetchall(self):
+            return self.rows
+
+        def fetchone(self):
+            return self.rows[0] if self.rows else None
+
+    class Connection:
+        closed = False
+
+        def __init__(self):
+            self.offsets = []
+            self.scan_cursor = None
+
+        def execute(self, statement, params=()):
+            if statement == "BEGIN" or "pg_advisory_xact_lock" in statement:
+                return Cursor([])
+            if statement.startswith("SELECT payload_json, created_at, interpretation_id"):
+                offset = params[-1]
+                self.offsets.append(offset)
+                ordered = drafts
+                if self.scan_cursor:
+                    position = (
+                        self.scan_cursor["last_created_at"],
+                        self.scan_cursor["last_interpretation_id"],
+                    )
+                    ordered = sorted(
+                        drafts,
+                        key=lambda row: (
+                            (
+                                row["created_at"],
+                                row["interpretation_id"],
+                            )
+                            <= position,
+                            row["created_at"],
+                            row["interpretation_id"],
+                        ),
+                    )
+                return Cursor(
+                    [
+                        (row, row["created_at"], row["interpretation_id"])
+                        for row in ordered[offset : offset + 100]
+                    ]
+                )
+            if statement.startswith("SELECT receipt_json FROM article_interpretation_rounds"):
+                if params[0] == worker._INTERPRETATION_SYNC_SCAN_CURSOR_KEY:
+                    return Cursor([(self.scan_cursor,)] if self.scan_cursor else [])
+                return Cursor([(receipts[params[0]],)] if params[0] in receipts else [])
+            if statement.startswith("INSERT INTO article_interpretation_rounds"):
+                self.scan_cursor = json.loads(params[1])
+                return Cursor([])
+            if statement.startswith("UPDATE article_interpretation_rounds"):
+                self.scan_cursor = json.loads(params[0])
+                return Cursor([])
+            raise AssertionError(statement)
+
+        def commit(self):
+            pass
+
+        def rollback(self):
+            pass
+
+        def close(self):
+            self.closed = True
+
+    connection = Connection()
+    monkeypatch.setattr(worker, "_article_interpretation_database", lambda _runtime: object())
+    monkeypatch.setattr(
+        postgres,
+        "PostgresConnection",
+        lambda _database, read_only=False: connection,
+    )
+    monkeypatch.setattr(
+        worker,
+        "_interpretation_identity",
+        lambda draft: identities[draft["interpretation_id"]],
+    )
+    monkeypatch.setattr(worker, "_interpretation_current_row", lambda *_args: None)
+
+    result = worker.list_article_interpretation_sync_candidates(
+        {
+            "schema_version": 1,
+            "operation": "list_article_interpretation_sync_candidates",
+            "target": "china",
+            "limit": 3,
+        },
+        runtime_factory=lambda: object(),
+    )
+
+    assert connection.offsets == [0, 100]
+    assert [item["identity"]["interpretation_id"] for item in result["drafts"]] == [
+        "old-000",
+        "new-pending",
+    ]
+    assert list(result["drafts"][0]["locales"]) == ["zh"]
+    assert result["drafts"][0]["targets"]["china"]["zh"]["status"] == "conflict"
+    assert result["drafts"][0]["targets"]["overseas"]["zh"]["status"] == "pending"
+    assert result["drafts"][1]["targets"]["china"]["zh"]["status"] == "pending"
+    assert result["more_pending"] is False
+    assert result["status"] == "partial"
+    assert {
+        (issue["interpretation_id"], issue["target"], issue["locale"]) for issue in result["issues"]
+    } == {(f"old-{index:03}", target, "zh") for index in (1, 2) for target in ("china", "overseas")}
+    assert all(
+        issue["error"] == "target_locale_ack_projection_conflict" for issue in result["issues"]
+    )
+    assert connection.closed is True
+
+
+def test_article_interpretation_sync_candidates_only_add_ready_english_locale(monkeypatch):
+    from ai_actuarial import postgres
+
+    draft = _interpretation_draft()
+    source_identity = worker._interpretation_source_identity(
+        worker._interpretation_identity(draft), draft
+    )
+    zh_digest = worker._interpretation_locale_digest(draft, "zh")
+    zh_reader_fields = worker._interpretation_reader_fields(draft, "zh")
+    receipts = {
+        worker._interpretation_ack_key(target, source_identity, "zh"): {
+            "receipt_type": "target_sync_locale",
+            "target": target,
+            "locale": "zh",
+            "source_identity": source_identity,
+            "locale_digest": zh_digest,
+            "reader_fields": zh_reader_fields,
+            "status": "acknowledged",
+        }
+        for target in ("china", "overseas")
+    }
+
+    class Cursor:
+        def __init__(self, rows):
+            self.rows = rows
+
+        def fetchall(self):
+            return self.rows
+
+        def fetchone(self):
+            return self.rows[0] if self.rows else None
+
+    class Connection:
+        closed = False
+
+        def __init__(self):
+            self.scan_cursor = None
+            self.writes = []
+
+        def execute(self, statement, params=()):
+            if statement == "BEGIN" or "pg_advisory_xact_lock" in statement:
+                return Cursor([])
+            if statement.startswith("SELECT payload_json, created_at, interpretation_id"):
+                return Cursor([(draft, "2026-11-02T10:00:00+00:00", draft["interpretation_id"])])
+            if statement.startswith("SELECT receipt_json FROM article_interpretation_rounds"):
+                if params[0] == worker._INTERPRETATION_SYNC_SCAN_CURSOR_KEY:
+                    return Cursor([(self.scan_cursor,)] if self.scan_cursor else [])
+                receipt = receipts.get(params[0])
+                return Cursor([(receipt,)] if receipt else [])
+            if statement.startswith("INSERT INTO article_interpretation_rounds"):
+                self.scan_cursor = json.loads(params[1])
+                self.writes.append(params[0])
+                return Cursor([])
+            if statement.startswith("UPDATE article_interpretation_rounds"):
+                self.scan_cursor = json.loads(params[0])
+                self.writes.append(params[1])
+                return Cursor([])
+            raise AssertionError(statement)
+
+        def commit(self):
+            pass
+
+        def rollback(self):
+            pass
+
+        def close(self):
+            self.closed = True
+
+    connection = Connection()
+    monkeypatch.setattr(worker, "_article_interpretation_database", lambda _runtime: object())
+    monkeypatch.setattr(
+        postgres,
+        "PostgresConnection",
+        lambda _database, read_only=False: connection,
+    )
+    monkeypatch.setattr(worker, "_interpretation_current_row", lambda *_args: None)
+
+    before_translation = worker.list_article_interpretation_sync_candidates(
+        {
+            "schema_version": 1,
+            "operation": "list_article_interpretation_sync_candidates",
+            "target": "china",
+            "limit": 3,
+        },
+        runtime_factory=lambda: object(),
+    )
+    assert before_translation["drafts"] == []
+    assert before_translation["status"] == "no_candidates"
+
+    draft["english_translation"] = {
+        "status": "ready",
+        "title_en": "Methods and application boundaries",
+        "body_markdown_en": "## Research interpretation\n\nA concise evidence-based explanation.",
+    }
+    after_translation = worker.list_article_interpretation_sync_candidates(
+        {
+            "schema_version": 1,
+            "operation": "list_article_interpretation_sync_candidates",
+            "target": "china",
+            "limit": 3,
+        },
+        runtime_factory=lambda: object(),
+    )
+
+    assert after_translation["status"] == "complete"
+    assert len(after_translation["drafts"]) == 1
+    candidate = after_translation["drafts"][0]
+    assert candidate["identity"]["interpretation_id"] == draft["interpretation_id"]
+    assert candidate["targets"]["china"]["zh"]["status"] == "acknowledged"
+    assert candidate["targets"]["overseas"]["zh"]["status"] == "acknowledged"
+    assert candidate["targets"]["china"]["en"]["status"] == "pending"
+    assert candidate["targets"]["overseas"]["en"]["status"] == "pending"
+    assert set(candidate["locales"]) == {"zh", "en"}
+    assert connection.closed is True
+
+
+@pytest.mark.parametrize("drift_locale", ["zh", "en"])
+def test_article_interpretation_candidate_preserves_ack_on_locale_projection_drift(
+    monkeypatch, drift_locale
+):
+    from ai_actuarial import postgres
+
+    old_draft = _interpretation_draft()
+    if drift_locale == "en":
+        old_draft["english_translation"] = {
+            "status": "ready",
+            "title_en": "Original English title",
+            "body_markdown_en": "Original English body.",
+        }
+    draft = json.loads(json.dumps(old_draft))
+    if drift_locale == "zh":
+        draft["title_zh"] = "Changed Chinese title"
+        draft["english_translation"] = {
+            "status": "ready",
+            "title_en": "Methods and application boundaries",
+            "body_markdown_en": "Newly ready English body.",
+        }
+    else:
+        draft["english_translation"] = {
+            "status": "ready",
+            "title_en": "Changed English title",
+            "body_markdown_en": "Changed English body.",
+        }
+
+    source_identity = worker._interpretation_source_identity(
+        worker._interpretation_identity(draft), draft
+    )
+    receipts = {}
+    for target in ("china", "overseas"):
+        for locale in ("zh", "en"):
+            if locale == "en" and drift_locale == "zh":
+                continue
+            receipt_draft = old_draft
+            receipts[worker._interpretation_ack_key(target, source_identity, locale)] = {
+                "receipt_type": "target_sync_locale",
+                "target": target,
+                "locale": locale,
+                "source_identity": source_identity,
+                "locale_digest": worker._interpretation_locale_digest(receipt_draft, locale),
+                "draft_sha256": worker._interpretation_identity(receipt_draft)["draft_sha256"],
+                "reader_fields": worker._interpretation_reader_fields(receipt_draft, locale),
+                "status": "acknowledged",
+            }
+    receipts_before = json.loads(json.dumps(receipts))
+
+    class Cursor:
+        def __init__(self, rows):
+            self.rows = rows
+
+        def fetchall(self):
+            return self.rows
+
+        def fetchone(self):
+            return self.rows[0] if self.rows else None
+
+    class Connection:
+        closed = False
+
+        def __init__(self):
+            self.scan_cursor = None
+
+        def execute(self, statement, params=()):
+            if statement == "BEGIN" or "pg_advisory_xact_lock" in statement:
+                return Cursor([])
+            if statement.startswith("SELECT payload_json, created_at, interpretation_id"):
+                return Cursor([(draft, "2026-11-02T10:00:00+00:00", draft["interpretation_id"])])
+            if statement.startswith("SELECT receipt_json FROM article_interpretation_rounds"):
+                if params[0] == worker._INTERPRETATION_SYNC_SCAN_CURSOR_KEY:
+                    return Cursor([(self.scan_cursor,)] if self.scan_cursor else [])
+                receipt = receipts.get(params[0])
+                return Cursor([(receipt,)] if receipt else [])
+            if statement.startswith("INSERT INTO article_interpretation_rounds"):
+                self.scan_cursor = json.loads(params[1])
+                return Cursor([])
+            if statement.startswith("UPDATE article_interpretation_rounds"):
+                self.scan_cursor = json.loads(params[0])
+                return Cursor([])
+            raise AssertionError(statement)
+
+        def commit(self):
+            pass
+
+        def rollback(self):
+            pass
+
+        def close(self):
+            self.closed = True
+
+    connection = Connection()
+    monkeypatch.setattr(worker, "_article_interpretation_database", lambda _runtime: object())
+    monkeypatch.setattr(
+        postgres,
+        "PostgresConnection",
+        lambda _database, read_only=False: connection,
+    )
+    monkeypatch.setattr(worker, "_interpretation_current_row", lambda *_args: None)
+
+    result = worker.list_article_interpretation_sync_candidates(
+        {
+            "schema_version": 1,
+            "operation": "list_article_interpretation_sync_candidates",
+            "target": "china",
+            "limit": 3,
+        },
+        runtime_factory=lambda: object(),
+    )
+
+    if drift_locale == "en":
+        assert result["drafts"] == []
+        assert {
+            (issue["target"], issue["locale"], issue["status"], issue["error"])
+            for issue in result["issues"]
+        } == {
+            (target, "en", "conflict", "target_locale_ack_projection_conflict")
+            for target in ("china", "overseas")
+        }
+    else:
+        assert len(result["drafts"]) == 1
+        candidate = result["drafts"][0]
+        assert candidate["source_identity"] == source_identity
+        for target in ("china", "overseas"):
+            assert candidate["targets"][target]["zh"] == {
+                "status": "conflict",
+                "error": "target_locale_ack_projection_conflict",
+            }
+            assert candidate["targets"][target]["en"]["status"] == "pending"
+        assert result["issues"] == []
+    assert receipts == receipts_before
+    assert connection.closed is True
+
+
+def test_article_interpretation_target_ack_is_independent_and_idempotent(monkeypatch):
+    from ai_actuarial import postgres
+
+    draft = _interpretation_draft()
+    identity = worker._interpretation_identity(draft)
+    source_identity = worker._interpretation_source_identity(identity, draft)
+    reader_fields = worker._interpretation_reader_fields(draft, "zh")
+    locale_digest = worker._interpretation_locale_digest(draft, "zh")
+    receipts = {}
+
+    class Cursor:
+        def __init__(self, row=None):
+            self.row = row
+
+        def fetchone(self):
+            return self.row
+
+    class Connection:
+        closed = False
+        commits = 0
+        rollbacks = 0
+
+        def execute(self, statement, params=()):
+            if statement.startswith("SELECT status,payload_json"):
+                return Cursor(("ready", draft))
+            if statement.startswith("SELECT receipt_json"):
+                receipt = receipts.get(params[0])
+                return Cursor((receipt,) if receipt else None)
+            if statement.startswith("INSERT INTO article_interpretation_rounds"):
+                receipts[params[0]] = json.loads(params[1])
+                return Cursor()
+            if statement.startswith("UPDATE article_interpretation_rounds"):
+                receipts[params[1]] = json.loads(params[0])
+                return Cursor()
+            return Cursor()
+
+        def commit(self):
+            self.commits += 1
+
+        def rollback(self):
+            self.rollbacks += 1
+
+        def close(self):
+            self.closed = True
+
+    connection = Connection()
+    monkeypatch.setattr(worker, "_article_interpretation_database", lambda _runtime: object())
+    monkeypatch.setattr(
+        postgres,
+        "PostgresConnection",
+        lambda _database, read_only=False: connection,
+    )
+    monkeypatch.setattr(worker, "_interpretation_identity", lambda _draft: identity)
+    monkeypatch.setattr(worker, "_interpretation_current_row", lambda *_args: None)
+
+    request = {
+        "schema_version": 1,
+        "operation": "record_article_interpretation_target_ack",
+        "target": "overseas",
+        "source_identity": source_identity,
+        "locale": "zh",
+        "locale_digest": locale_digest,
+        "draft_sha256": identity["draft_sha256"],
+        "status": "unknown",
+        "error": "target_ack_unknown",
+    }
+    first = worker.record_article_interpretation_target_ack(
+        request, runtime_factory=lambda: object()
+    )
+    success = worker.record_article_interpretation_target_ack(
+        {
+            **request,
+            "status": "acknowledged",
+            "error": None,
+            "target_status": "inserted",
+            "reader_fields": reader_fields,
+        },
+        runtime_factory=lambda: object(),
+    )
+    duplicate = worker.record_article_interpretation_target_ack(
+        request, runtime_factory=lambda: object()
+    )
+    acknowledged_duplicate = worker.record_article_interpretation_target_ack(
+        {
+            **request,
+            "status": "acknowledged",
+            "error": None,
+            "target_status": "already_present",
+            "reader_fields": reader_fields,
+        },
+        runtime_factory=lambda: object(),
+    )
+
+    key = worker._interpretation_ack_key("overseas", source_identity, "zh")
+    assert first["status"] == "unknown"
+    assert success["status"] == "acknowledged"
+    assert duplicate["status"] == "acknowledged"
+    assert duplicate["preserved_ack"] is True
+    assert duplicate["reader_fields"] == reader_fields
+    assert acknowledged_duplicate["status"] == "acknowledged"
+    assert acknowledged_duplicate["preserved_ack"] is True
+    assert acknowledged_duplicate["target_status"] == "inserted"
+    assert receipts[key]["source_identity"] == source_identity
+    assert receipts[key]["locale"] == "zh"
+    assert receipts[key]["locale_digest"] == locale_digest
+    assert receipts[key]["reader_fields"] == reader_fields
+    assert receipts[key]["draft_sha256"] == identity["draft_sha256"]
+    assert receipts[key]["receipt_type"] == "target_sync_locale"
+    assert receipts[key]["status"] == "acknowledged"
+    assert [attempt["status"] for attempt in receipts[key]["attempts"]] == [
+        "unknown",
+        "acknowledged",
+    ]
+    assert connection.commits == 2
+    assert connection.rollbacks == 2
+    assert connection.closed is True
+
+
+@pytest.mark.parametrize("incoming_status", ["unknown", "acknowledged"])
+def test_article_interpretation_ack_writer_preserves_ack_on_projection_drift(
+    monkeypatch, incoming_status
+):
+    from ai_actuarial import postgres
+
+    old_draft = _interpretation_draft()
+    draft = {**old_draft, "title_zh": "Changed projection, unchanged source identity"}
+    old_identity = worker._interpretation_identity(old_draft)
+    identity = worker._interpretation_identity(draft)
+    source_identity = worker._interpretation_source_identity(identity, draft)
+    old_locale_digest = worker._interpretation_locale_digest(old_draft, "zh")
+    old_reader_fields = worker._interpretation_reader_fields(old_draft, "zh")
+    locale_digest = worker._interpretation_locale_digest(draft, "zh")
+    reader_fields = worker._interpretation_reader_fields(draft, "zh")
+    key = worker._interpretation_ack_key("overseas", source_identity, "zh")
+    receipts = {
+        key: {
+            "receipt_type": "target_sync_locale",
+            "target": "overseas",
+            "locale": "zh",
+            "source_identity": source_identity,
+            "locale_digest": old_locale_digest,
+            "draft_sha256": old_identity["draft_sha256"],
+            "reader_fields": old_reader_fields,
+            "target_status": "inserted",
+            "status": "acknowledged",
+            "attempts": [{"status": "acknowledged", "locale_digest": old_locale_digest}],
+        }
+    }
+    receipts_before = json.loads(json.dumps(receipts))
+
+    class Cursor:
+        def __init__(self, row=None):
+            self.row = row
+
+        def fetchone(self):
+            return self.row
+
+    class Connection:
+        closed = False
+        commits = 0
+        rollbacks = 0
+        writes = []
+
+        def execute(self, statement, params=()):
+            if statement == "BEGIN" or statement.startswith("SELECT pg_advisory_xact_lock"):
+                return Cursor()
+            if statement.startswith("SELECT status,payload_json FROM article_interpretations"):
+                return Cursor(("ready", draft))
+            if statement.startswith("SELECT receipt_json FROM article_interpretation_rounds"):
+                receipt = receipts.get(params[0])
+                return Cursor((receipt,) if receipt else None)
+            self.writes.append(statement)
+            raise AssertionError("acknowledged projection must not be overwritten")
+
+        def commit(self):
+            self.commits += 1
+
+        def rollback(self):
+            self.rollbacks += 1
+
+        def close(self):
+            self.closed = True
+
+    connection = Connection()
+    monkeypatch.setattr(worker, "_article_interpretation_database", lambda _runtime: object())
+    monkeypatch.setattr(
+        postgres,
+        "PostgresConnection",
+        lambda _database, read_only=False: connection,
+    )
+    monkeypatch.setattr(worker, "_interpretation_current_row", lambda *_args: None)
+
+    request = {
+        "schema_version": 1,
+        "operation": "record_article_interpretation_target_ack",
+        "target": "overseas",
+        "source_identity": source_identity,
+        "locale": "zh",
+        "locale_digest": locale_digest,
+        "draft_sha256": identity["draft_sha256"],
+        "status": incoming_status,
+        "error": "target_ack_unknown" if incoming_status == "unknown" else None,
+    }
+    if incoming_status == "acknowledged":
+        request.update(target_status="verified", reader_fields=reader_fields)
+
+    with pytest.raises(
+        worker._InterpretationTargetFailure,
+        match="target_locale_ack_projection_conflict",
+    ):
+        worker.record_article_interpretation_target_ack(request, runtime_factory=lambda: object())
+
+    assert receipts == receipts_before
+    assert not connection.writes
+    assert connection.commits == 0
+    assert connection.rollbacks == 1
+    assert connection.closed is True
+
+
+def test_locale_settings_probe_returns_only_the_two_authorized_booleans():
+    class Runtime:
+        def _load_site_config(self):
+            return {
+                "article_interpretation": {
+                    "english_translation": {"enabled": True, "model": "not returned"},
+                    "english_proxy": {"enabled": False, "origin": "not returned"},
+                    "unrelated": {"secret": "not returned"},
+                },
+                "unrelated": {"secret": "not returned"},
+            }
+
+    result = worker.read_article_interpretation_locale_settings(
+        {
+            "schema_version": 1,
+            "operation": "read_article_interpretation_locale_settings",
+            "target": "china",
+        },
+        runtime_factory=Runtime,
+    )
+    assert result == {
+        "schema_version": 1,
+        "operation": "read_article_interpretation_locale_settings",
+        "target": "china",
+        "english_translation_enabled": True,
+        "english_proxy_enabled": False,
+    }
+
+
+def test_article_interpretation_sync_candidate_scan_rotates_past_failed_ack_history(monkeypatch):
+    from ai_actuarial import postgres
+
+    template = _interpretation_draft()
+    drafts = []
+    identities = {}
+    receipts = {}
+    for index in range(4):
+        interpretation_id = "failed-" + str(index) if index < 3 else "new-pending"
+        draft = json.loads(json.dumps(template))
+        draft.update(
+            interpretation_id=interpretation_id,
+            title_zh="标题 " + interpretation_id,
+            body_markdown_zh="正文 " + interpretation_id,
+            created_at=f"2026-11-02T10:00:{index:02d}+00:00",
+        )
+        drafts.append(draft)
+        identity = {
+            **worker._interpretation_identity(template),
+            "interpretation_id": interpretation_id,
+            "file_url": "https://example.test/" + interpretation_id + ".pdf",
+            "raw_sha256": f"{index + 1:064x}",
+            "markdown_sha256": f"{index + 11:064x}",
+            "content_key": f"{index + 21:064x}",
+            "input_fingerprint": f"{index + 31:064x}",
+            "draft_sha256": f"{index + 41:064x}",
+        }
+        identities[interpretation_id] = identity
+        if index == 3:
+            continue
+        source_identity = worker._interpretation_source_identity(identity, draft)
+        for target, status in (("china", "failed"), ("overseas", "acknowledged")):
+            locale = "zh"
+            receipts[worker._interpretation_ack_key(target, source_identity, locale)] = {
+                "receipt_type": "target_sync_locale",
+                "target": target,
+                "locale": locale,
+                "source_identity": source_identity,
+                "locale_digest": worker._interpretation_locale_digest(draft, locale),
+                "draft_sha256": identity["draft_sha256"],
+                "reader_fields": worker._interpretation_reader_fields(draft, locale),
+                "status": status,
+                "error": "fixture_target_failure" if status == "failed" else "",
+            }
+    receipts_before = json.loads(json.dumps(receipts))
+
+    class Cursor:
+        def __init__(self, rows):
+            self.rows = rows
+
+        def fetchall(self):
+            return self.rows
+
+        def fetchone(self):
+            return self.rows[0] if self.rows else None
+
+    class Connection:
+        closed = False
+
+        def __init__(self):
+            self.scan_cursor = None
+            self.writes = []
+
+        def execute(self, statement, params=()):
+            if statement == "BEGIN" or "pg_advisory_xact_lock" in statement:
+                return Cursor([])
+            if statement.startswith("SELECT payload_json, created_at, interpretation_id"):
+                offset = params[-1]
+                ordered = drafts
+                if self.scan_cursor:
+                    position = (
+                        self.scan_cursor["last_created_at"],
+                        self.scan_cursor["last_interpretation_id"],
+                    )
+                    ordered = sorted(
+                        drafts,
+                        key=lambda row: (
+                            (row["created_at"], row["interpretation_id"]) <= position,
+                            row["created_at"],
+                            row["interpretation_id"],
+                        ),
+                    )
+                return Cursor(
+                    [
+                        (row, row["created_at"], row["interpretation_id"])
+                        for row in ordered[offset : offset + 100]
+                    ]
+                )
+            if statement.startswith("SELECT receipt_json FROM article_interpretation_rounds"):
+                if params[0] == worker._INTERPRETATION_SYNC_SCAN_CURSOR_KEY:
+                    return Cursor([(self.scan_cursor,)] if self.scan_cursor else [])
+                return Cursor([(receipts[params[0]],)] if params[0] in receipts else [])
+            if statement.startswith("INSERT INTO article_interpretation_rounds"):
+                self.scan_cursor = json.loads(params[1])
+                self.writes.append(params[0])
+                return Cursor([])
+            if statement.startswith("UPDATE article_interpretation_rounds"):
+                self.scan_cursor = json.loads(params[0])
+                self.writes.append(params[1])
+                return Cursor([])
+            raise AssertionError(statement)
+
+        def commit(self):
+            pass
+
+        def rollback(self):
+            pass
+
+        def close(self):
+            self.closed = True
+
+    connection = Connection()
+    monkeypatch.setattr(worker, "_article_interpretation_database", lambda _runtime: object())
+    monkeypatch.setattr(
+        postgres,
+        "PostgresConnection",
+        lambda _database, read_only=False: connection,
+    )
+    monkeypatch.setattr(
+        worker,
+        "_interpretation_identity",
+        lambda draft: identities[draft["interpretation_id"]],
+    )
+    monkeypatch.setattr(worker, "_interpretation_current_row", lambda *_args: None)
+
+    request = {
+        "schema_version": 1,
+        "operation": "list_article_interpretation_sync_candidates",
+        "target": "china",
+        "limit": 3,
+    }
+    first = worker.list_article_interpretation_sync_candidates(
+        request, runtime_factory=lambda: object()
+    )
+    second = worker.list_article_interpretation_sync_candidates(
+        request, runtime_factory=lambda: object()
+    )
+
+    assert [item["identity"]["interpretation_id"] for item in first["drafts"]] == [
+        "failed-0",
+        "failed-1",
+        "failed-2",
+    ]
+    assert first["drafts"][0]["targets"]["china"]["zh"]["status"] == "failed"
+    assert first["drafts"][0]["targets"]["overseas"]["zh"]["status"] == "acknowledged"
+    assert "new-pending" in {item["identity"]["interpretation_id"] for item in second["drafts"]}
+    assert second["drafts"][0]["identity"]["interpretation_id"] == "new-pending"
+    third = worker.list_article_interpretation_sync_candidates(
+        request, runtime_factory=lambda: object()
+    )
+    assert "failed-2" in {item["identity"]["interpretation_id"] for item in third["drafts"]}
+    assert connection.writes == [worker._INTERPRETATION_SYNC_SCAN_CURSOR_KEY] * 3
+    assert receipts == receipts_before
+    assert connection.closed is True
+
+
+def test_manual_edit_revision_preserves_old_ack_and_makes_new_body_pending(monkeypatch):
+    from ai_actuarial import postgres
+
+    old_draft = _interpretation_draft()
+    old_identity = worker._interpretation_identity(old_draft)
+    old_source = worker._interpretation_source_identity(old_identity, old_draft)
+    edited = {
+        **old_draft,
+        "body_markdown_zh": "Manually edited current Chinese body.",
+        "manual_edit_revision": "a" * 32,
+    }
+    identity = worker._interpretation_identity(edited)
+    source_identity = worker._interpretation_source_identity(identity, edited)
+    assert source_identity != old_source
+    receipts = {
+        worker._interpretation_ack_key(target, old_source, "zh"): {
+            "receipt_type": "target_sync_locale",
+            "target": target,
+            "locale": "zh",
+            "source_identity": old_source,
+            "locale_digest": worker._interpretation_locale_digest(old_draft, "zh"),
+            "reader_fields": worker._interpretation_reader_fields(old_draft, "zh"),
+            "status": "acknowledged",
+        }
+        for target in ("china", "overseas")
+    }
+    before = json.loads(json.dumps(receipts))
+
+    class Cursor:
+        def __init__(self, rows=()):
+            self.rows = list(rows)
+
+        def fetchall(self):
+            return self.rows
+
+        def fetchone(self):
+            return self.rows[0] if self.rows else None
+
+    class Connection:
+        closed = False
+
+        def __init__(self):
+            self.scan_cursor = None
+
+        def execute(self, statement, params=()):
+            if statement == "BEGIN" or "pg_advisory_xact_lock" in statement:
+                return Cursor()
+            if statement.startswith("SELECT payload_json, created_at, interpretation_id"):
+                return Cursor([(edited, "2026-11-04T10:00:00+00:00", edited["interpretation_id"])])
+            if statement.startswith("SELECT receipt_json FROM article_interpretation_rounds"):
+                if params[0] == worker._INTERPRETATION_SYNC_SCAN_CURSOR_KEY:
+                    return Cursor([(self.scan_cursor,)] if self.scan_cursor else [])
+                return Cursor([(receipts[params[0]],)] if params[0] in receipts else [])
+            if statement.startswith("INSERT INTO article_interpretation_rounds"):
+                self.scan_cursor = json.loads(params[1])
+                return Cursor()
+            if statement.startswith("UPDATE article_interpretation_rounds"):
+                self.scan_cursor = json.loads(params[0])
+                return Cursor()
+            raise AssertionError(statement)
+
+        def commit(self):
+            pass
+
+        def rollback(self):
+            pass
+
+        def close(self):
+            self.closed = True
+
+    connection = Connection()
+    monkeypatch.setattr(worker, "_article_interpretation_database", lambda _runtime: object())
+    monkeypatch.setattr(postgres, "PostgresConnection", lambda *_args, **_kwargs: connection)
+    monkeypatch.setattr(worker, "_interpretation_current_row", lambda *_args: None)
+
+    result = worker.list_article_interpretation_sync_candidates(
+        {
+            "schema_version": 1,
+            "operation": "list_article_interpretation_sync_candidates",
+            "target": "china",
+            "limit": 3,
+        },
+        runtime_factory=lambda: object(),
+    )
+
+    assert len(result["drafts"]) == 1
+    candidate = result["drafts"][0]
+    assert candidate["source_identity"] == source_identity
+    assert candidate["targets"]["china"]["zh"]["status"] == "pending"
+    assert candidate["targets"]["overseas"]["zh"]["status"] == "pending"
+    assert set(receipts) == {
+        worker._interpretation_ack_key(target, old_source, "zh") for target in ("china", "overseas")
+    }
+    assert receipts == before
+    assert connection.closed is True

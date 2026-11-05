@@ -10,7 +10,12 @@ export interface ArticleInterpretation {
   file_url: string;
   raw_sha256: string;
   markdown_sha256: string;
-  china_article_url: string;
+  body_sha256?: string;
+  china_article_url?: string;
+  status?: "queued" | "running" | "ready" | "failed" | "skipped";
+  content_warnings?: string[];
+  content_warning_acceptance_available?: boolean;
+  manual_content_accepted_at_utc?: string;
   references?: { published_time?: string; original_title?: string; author?: string | string[]; authors?: string | string[]; source?: { name_zh?: string; name_en?: string } };
 }
 
@@ -32,7 +37,7 @@ export function interpretationBody(item: ArticleInterpretation, lang: string = "
   const footer = item.body_markdown_zh.slice(start);
   const normalizedFooter = footer.replace(/\r\n/g, "\n").trimEnd();
   const lines = normalizedFooter.split("\n");
-  const exactCitationLine = `[原文](${item.file_url}) · [国内阅读](${item.china_article_url})`;
+  const exactCitationLine = `[原文](${item.file_url}) · [国内阅读](${item.china_article_url ?? ""})`;
   let cursor = 5;
   if (lines[cursor] === "" && /^规范来源：[^\r\n]+。$/.test(lines[cursor + 1] || "")) cursor += 2;
   if (lines[cursor] === "" && /^未覆盖章节：[^\r\n]+$/.test(lines[cursor + 1] || "")) cursor += 2;
@@ -74,12 +79,12 @@ export function buildInterpretationHtml(item: ArticleInterpretation, fileTitle: 
     const published = item.references?.published_time && item.references.published_time !== "日期不明" && item.references.published_time !== "Unknown date" ? item.references.published_time : "";
     const attribution = `<p>Original source: ${escapeHtml(title)}</p>${item.references?.source?.name_en ? `<p>Source: ${escapeHtml(item.references.source.name_en)}</p>` : ""}${authors.length ? `<p>Author: ${escapeHtml(authors.join(", "))}</p>` : ""}${published ? `<p>Published: ${escapeHtml(published)}</p>` : ""}`;
     const translatedTitle = item.title_en ?? "";
-    return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(translatedTitle)}</title></head><body style="margin:0;padding:20px;font:16px/1.8 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#222;overflow-wrap:anywhere"><article style="box-sizing:border-box;width:100%;max-width:720px;margin:0 auto"><h1 style="font-size:1.8em;line-height:1.35;overflow-wrap:anywhere">${escapeHtml(translatedTitle)}</h1>${renderMarkdownHtml(body)}<hr style="margin:1.5em 0;border:0;border-top:1px solid #ddd">${attribution}<p><a href="${escapeHtml(item.file_url)}" style="color:#1457a6;overflow-wrap:anywhere">Original article</a></p><p><a href="${escapeHtml(item.china_article_url)}" style="color:#1457a6;overflow-wrap:anywhere">Read the original on the China site</a></p></article></body></html>`;
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(translatedTitle)}</title></head><body style="margin:0;padding:20px;font:16px/1.8 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#222;overflow-wrap:anywhere"><article style="box-sizing:border-box;width:100%;max-width:720px;margin:0 auto"><h1 style="font-size:1.8em;line-height:1.35;overflow-wrap:anywhere">${escapeHtml(translatedTitle)}</h1>${renderMarkdownHtml(body)}<hr style="margin:1.5em 0;border:0;border-top:1px solid #ddd">${attribution}<p><a href="${escapeHtml(item.file_url)}" style="color:#1457a6;overflow-wrap:anywhere">Original article</a></p><p><a href="${escapeHtml(item.china_article_url ?? "")}" style="color:#1457a6;overflow-wrap:anywhere">Read the original on the China site</a></p></article></body></html>`;
   }
   const title = item.references?.original_title ?? fileTitle;
   const body = interpretationBody(item);
   const authors = interpretationAuthors(item);
   const published = item.references?.published_time && item.references.published_time !== "日期不明" ? item.references.published_time : "";
   const attribution = `<p>原文：${escapeHtml(title)}</p>${item.references?.source?.name_zh ? `<p>机构：${escapeHtml(item.references.source.name_zh)}</p>` : ""}${authors.length ? `<p>作者：${escapeHtml(authors.join("、"))}</p>` : ""}${published ? `<p>发表日期：${escapeHtml(published)}</p>` : ""}`;
-  return `<!doctype html><html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(item.title_zh)}</title></head><body style="margin:0;padding:20px;font:16px/1.8 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#222;overflow-wrap:anywhere"><article style="box-sizing:border-box;width:100%;max-width:720px;margin:0 auto"><h1 style="font-size:1.8em;line-height:1.35;overflow-wrap:anywhere">${escapeHtml(item.title_zh)}</h1>${renderMarkdownHtml(body)}<hr style="margin:1.5em 0;border:0;border-top:1px solid #ddd">${attribution}<p><a href="${escapeHtml(item.file_url)}" style="color:#1457a6;overflow-wrap:anywhere">原文</a></p><p><a href="${escapeHtml(item.china_article_url)}" style="color:#1457a6;overflow-wrap:anywhere">在国内站阅读原文</a></p></article></body></html>`;
+  return `<!doctype html><html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(item.title_zh)}</title></head><body style="margin:0;padding:20px;font:16px/1.8 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#222;overflow-wrap:anywhere"><article style="box-sizing:border-box;width:100%;max-width:720px;margin:0 auto"><h1 style="font-size:1.8em;line-height:1.35;overflow-wrap:anywhere">${escapeHtml(item.title_zh)}</h1>${renderMarkdownHtml(body)}<hr style="margin:1.5em 0;border:0;border-top:1px solid #ddd">${attribution}<p><a href="${escapeHtml(item.file_url)}" style="color:#1457a6;overflow-wrap:anywhere">原文</a></p><p><a href="${escapeHtml(item.china_article_url ?? "")}" style="color:#1457a6;overflow-wrap:anywhere">在国内站阅读原文</a></p></article></body></html>`;
 }

@@ -7,6 +7,7 @@ import inspect
 import json
 import re
 import time
+import uuid
 from collections import Counter
 from datetime import date, datetime
 from decimal import Decimal
@@ -240,6 +241,21 @@ def _reject_model_evidence_marker(label: str, text: str) -> None:
         raise ValueError(f"{label}_unexpected_evidence_marker")
 
 
+def _outer_attempt_count(receipt: dict) -> int:
+    return int(receipt.get("outer_attempts", receipt.get("provider_calls", 0)) or 0)
+
+
+def _reserve_english_receipt_attempt(receipt: dict, route: dict, timeout: float) -> None:
+    receipt["outer_attempts"] = _outer_attempt_count(receipt) + 1
+    receipt.update(route)
+    if route.get("backend") == "codex-cli":
+        receipt["provider_calls"] = None
+        receipt["internal_provider_requests"] = "unknown/unmetered"
+    else:
+        receipt["provider_calls"] = int(receipt.get("provider_calls") or 0) + 1
+    receipt["provider_seconds"] += timeout
+
+
 def validate_english_output(raw: str, source: dict) -> dict:
     if not isinstance(raw, str) or len(raw) > 40_000:
         raise ValueError("invalid_english_output_size")
@@ -363,11 +379,21 @@ class EnglishTranslationService:
         return dict(row[0]) if row else None
 
     def _save_translation(self, draft, state):
-        self.connection.execute(
-            "UPDATE article_interpretations SET payload_json=jsonb_set(payload_json,'{english_translation}',?::jsonb,true),updated_at=CURRENT_TIMESTAMP WHERE interpretation_id=?",
-            (_json(state), draft["interpretation_id"]),
+        result = self.connection.execute(
+            "UPDATE article_interpretations SET payload_json=jsonb_set(payload_json,'{english_translation}',?::jsonb,true),updated_at=CURRENT_TIMESTAMP "
+            "WHERE interpretation_id=? AND payload_json->>'body_markdown_zh'=? "
+            "AND COALESCE(payload_json->>'manual_edit_revision','')=?",
+            (
+                _json(state),
+                draft["interpretation_id"],
+                str(draft.get("body_markdown_zh") or ""),
+                str(draft.get("manual_edit_revision") or ""),
+            ),
         )
+        if result.rowcount != 1:
+            return False
         draft["english_translation"] = state
+        return True
 
     def _content_totals(self, content_key):
         rows = self.connection.execute(
@@ -412,10 +438,18 @@ class EnglishTranslationService:
             raise ValueError("english_translation_input_too_large")
         return messages, context_tokens
 
+    def _content_calls_exhausted_reason(self) -> str:
+        runtime = getattr(getattr(self, "generator", None), "runtime", None)
+        return (
+            "content_outer_attempts_exhausted"
+            if getattr(runtime, "backend", None) == "codex-cli"
+            else "content_provider_calls_exhausted"
+        )
+
     def _call_budget(self, draft, receipt, daily_started):
         content = self._content_totals(draft["content_key"])
         if content["calls"] >= MAX_CALLS:
-            return 0.0, "content_provider_calls_exhausted"
+            return 0.0, self._content_calls_exhausted_reason()
         if content["provider_seconds"] >= MAX_PROVIDER_SECONDS:
             return 0.0, "content_provider_seconds_exhausted"
         content_age = 0.0
@@ -426,8 +460,8 @@ class EnglishTranslationService:
             )
             if content_age >= MAX_CONTENT_SECONDS:
                 return 0.0, "content_wall_budget_exhausted"
-        if receipt["provider_calls"] >= MAX_DAILY_CALLS:
-            return 0.0, "daily_provider_calls_exhausted"
+        if _outer_attempt_count(receipt) >= MAX_DAILY_CALLS:
+            return 0.0, "daily_outer_attempts_exhausted"
         if receipt["provider_seconds"] >= MAX_DAILY_PROVIDER_SECONDS:
             return 0.0, "daily_provider_seconds_exhausted"
         daily_age = max(0.0, self.clock() - daily_started)
@@ -450,7 +484,15 @@ class EnglishTranslationService:
 
     def _generator(self):
         if self.generator is not None:
-            return self.generator, {"provider": "injected", "model": "injected"}
+            runtime = getattr(self.generator, "runtime", None)
+            return (
+                self.generator,
+                (
+                    articles._runtime_route(runtime)
+                    if runtime is not None
+                    else {"provider": "injected", "model": "injected"}
+                ),
+            )
         runtime = resolve_ai_function_runtime("chatbot", storage=self.storage)
         if not runtime.configured:
             raise LLMAuthenticationError("Chat credential unavailable")
@@ -459,7 +501,7 @@ class EnglishTranslationService:
                 runtime,
                 MAX_OUTPUT_TOKENS,
             ),
-            {"provider": runtime.provider, "model": runtime.model},
+            articles._runtime_route(runtime),
         )
 
     def _translate(self, draft, receipt, slot, daily_started):
@@ -471,11 +513,27 @@ class EnglishTranslationService:
         ):
             slot.update(status="skipped", reason="chinese_interpretation_not_current_ready")
             return
+        if current.get("manual_edit_revision"):
+            slot.update(status="skipped", reason="manual_chinese_edit_requires_claim_refresh")
+            return
         draft = current
         state = dict(draft.get("english_translation") or {})
         if state.get("status") == "ready":
             slot.update(status="ready", reason="english_translation_already_ready")
             return
+        for old_attempt in state.get("attempts", []):
+            if old_attempt.get("status") != "running":
+                continue
+            reserved = [
+                call for call in old_attempt.get("calls", []) if call.get("status") == "reserved"
+            ]
+            for call in reserved:
+                call["status"] = "interrupted"
+                call["error"] = "interrupted"
+            if reserved:
+                old_attempt["status"] = "interrupted"
+                state.update(status="failed", error="interrupted")
+                self._save_translation(draft, state)
         totals = self._content_totals(draft["content_key"])
         if totals["provider_cleanup"] or state.get("error") == "provider_cleanup":
             state.update(status="failed", error="provider_cleanup")
@@ -493,6 +551,56 @@ class EnglishTranslationService:
             slot.update(status="failed", reason=reason)
             return
 
+        route_fields = {
+            key: route[key]
+            for key in (
+                "backend",
+                "requested_backend",
+                "effective_backend",
+                "requested_model",
+                "effective_model",
+                "reasoning_effort",
+                "requested_reasoning_effort",
+                "effective_reasoning_effort",
+            )
+            if key in route
+        }
+        route_fields.update(
+            {"internal_provider_requests": "unknown/unmetered"}
+            if route.get("backend") == "codex-cli"
+            else {}
+        )
+        saved_route = state.get("route")
+        current_route = {
+            key: route.get(key)
+            for key in (
+                "provider",
+                "model",
+                "credential_id",
+                "base_url",
+                "backend",
+                "requested_backend",
+                "effective_backend",
+                "requested_model",
+                "effective_model",
+                "reasoning_effort",
+                "requested_reasoning_effort",
+                "effective_reasoning_effort",
+            )
+            if key in route
+        }
+        # Legacy receipts predate full route persistence, so they only prove provider/model.
+        legacy_route_matches = state.get("provider") == current_route.get("provider") and state.get(
+            "model"
+        ) == current_route.get("model")
+        route_matches = (
+            saved_route == current_route if saved_route is not None else legacy_route_matches
+        )
+        if state.get("attempts") and not route_matches:
+            state.update(status="failed", error="english_translation_route_changed")
+            self._save_translation(draft, state)
+            slot.update(status="failed", reason=state["error"])
+            return
         fingerprint = _sha(
             _json(
                 {
@@ -517,6 +625,10 @@ class EnglishTranslationService:
             input_fingerprint=fingerprint,
             provider=route["provider"],
             model=route["model"],
+            route=current_route,
+            source_body_sha256=_sha(str(draft.get("body_markdown_zh") or "")),
+            source_manual_edit_revision=str(draft.get("manual_edit_revision") or ""),
+            **route_fields,
         )
         attempt = (
             state["attempts"][-1]
@@ -524,7 +636,12 @@ class EnglishTranslationService:
             else None
         )
         if attempt is None:
-            attempt = {"status": "running", "calls": [], "started_at": self.now().isoformat()}
+            attempt = {
+                "attempt_id": str(uuid.uuid4()),
+                "status": "running",
+                "calls": [],
+                "started_at": self.now().isoformat(),
+            }
             state["attempts"].append(attempt)
 
         while self._content_totals(draft["content_key"])["calls"] < MAX_CALLS:
@@ -579,15 +696,19 @@ class EnglishTranslationService:
             deadline = time.monotonic() + timeout
             call = {
                 "status": "reserved",
+                "outer_attempts": 1,
                 "reserved_provider_seconds": timeout,
                 "started_at": self.now().isoformat(),
                 "correction": bool(correction),
+                **route_fields,
             }
             attempt["calls"].append(call)
             with self.storage.transaction():
-                self._save_translation(draft, state)
-                receipt["provider_calls"] += 1
-                receipt["provider_seconds"] += timeout
+                if not self._save_translation(draft, state):
+                    slot.update(status="skipped", reason="chinese_body_changed_during_translation")
+                    self._save_receipt(receipt)
+                    return
+                _reserve_english_receipt_attempt(receipt, route_fields, timeout)
                 self._save_receipt(receipt)
 
             call_started = self.clock()
@@ -628,6 +749,13 @@ class EnglishTranslationService:
                 state.update(status="failed", error=call["error"])
                 attempt["status"] = "failed"
                 slot.update(status="failed", reason=call["error"])
+            except articles.ArticleStreamInterrupted as exc:
+                error = exc
+                call["status"] = "interrupted"
+                call["error"] = "interrupted"
+                state.update(status="failed", error="interrupted")
+                attempt["status"] = "interrupted"
+                slot.update(status="failed", reason="interrupted")
             except Exception as exc:  # noqa: BLE001
                 error = exc
                 call["status"] = "failed"
@@ -652,7 +780,7 @@ class EnglishTranslationService:
                 cleanup_failed = isinstance(error, ArticleRequestCleanupError)
                 charge = (
                     max(timeout, elapsed)
-                    if timed_out or cleanup_failed or call["status"] == "reserved"
+                    if timed_out or cleanup_failed or call["status"] in {"reserved", "interrupted"}
                     else elapsed
                 )
                 call["elapsed_seconds"] = elapsed
@@ -660,7 +788,10 @@ class EnglishTranslationService:
                 attempt["provider_seconds"] = float(attempt.get("provider_seconds", 0)) + charge
                 receipt["provider_seconds"] += charge - timeout
                 with self.storage.transaction():
-                    self._save_translation(draft, state)
+                    if not self._save_translation(draft, state):
+                        slot.update(
+                            status="skipped", reason="chinese_body_changed_during_translation"
+                        )
                     self._save_receipt(receipt)
 
             if state.get("status") == "ready":
@@ -674,7 +805,8 @@ class EnglishTranslationService:
                 return
 
         state.update(
-            status="failed", error=state.get("error") or "content_provider_calls_exhausted"
+            status="failed",
+            error=state.get("error") or self._content_calls_exhausted_reason(),
         )
         self._save_translation(draft, state)
         slot.update(status="failed", reason=state["error"])
@@ -708,6 +840,7 @@ class EnglishTranslationService:
                     "status": "running",
                     "started_at": now.isoformat(),
                     "provider_calls": 0,
+                    "outer_attempts": 0,
                     "provider_seconds": 0.0,
                     "elapsed_seconds": 0.0,
                     "slots": [],
@@ -772,14 +905,14 @@ class EnglishTranslationService:
                 if slot.get("status") in {"ready", "skipped"}:
                     continue
                 if (
-                    receipt["provider_calls"] >= MAX_DAILY_CALLS
+                    _outer_attempt_count(receipt) >= MAX_DAILY_CALLS
                     or receipt["provider_seconds"] >= MAX_DAILY_PROVIDER_SECONDS
                 ):
                     receipt["status"] = "budget_exhausted"
                     break
                 self._translate(draft, receipt, slot, daily_started)
                 self._save_receipt(receipt)
-                if slot.get("reason") in {"authentication", "provider_cleanup"}:
+                if slot.get("reason") in {"authentication", "provider_cleanup", "interrupted"}:
                     receipt["status"] = slot["reason"]
                     break
             else:
@@ -809,6 +942,26 @@ def read_english_interpretations(database, *, file_url="") -> list[dict]:
             draft = dict(row[0])
             translation = draft.get("english_translation") or {}
             if translation.get("status") != "ready" or not _current(connection, draft):
+                continue
+            source_body_sha256 = _sha(str(draft.get("body_markdown_zh") or ""))
+            current_edit_revision = str(draft.get("manual_edit_revision") or "")
+            if current_edit_revision:
+                continue
+            translation_edit_revision = str(translation.get("source_manual_edit_revision") or "")
+            if current_edit_revision and (
+                translation.get("source_body_sha256") != source_body_sha256
+                or translation_edit_revision != current_edit_revision
+            ):
+                continue
+            if (
+                translation.get("source_body_sha256")
+                and translation["source_body_sha256"] != source_body_sha256
+            ):
+                continue
+            if (
+                "source_manual_edit_revision" in translation
+                and translation_edit_revision != current_edit_revision
+            ):
                 continue
             source = articles._canonical_source(connection, draft["source_key"])
             saved_references = draft.get("references") or {}
