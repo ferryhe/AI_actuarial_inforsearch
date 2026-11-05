@@ -6496,3 +6496,8 @@ Current branch head 4f030be has uncommitted small catalog/Storage variable defau
 - This round changed only seven scoped source/test files: `SupportWidget.tsx`, `FeedbackForm.tsx`, `FeedbackForm.test.tsx`, `use-i18n.ts`, `Chat.tsx`, `Issue460ChatReachability.browser-smoke.mjs`, and `Issue460Feedback.browser-smoke.mjs`. No raw screenshots/logs were added to git; acceptance evidence is sanitized.
 - Dedicated FastAPI PID 51508 and container `issue460-final-matrix-pg16-20261105` were stopped/removed. Ports 8000 and 55458 are free; manager-owned Vite PID 40104 on 5173 remains running and was not stopped. Unrelated PostgreSQL containers were not touched.
 - Worktree is on `codex/issue-460-feedback-widget`, currently uncommitted. `reports/issue-460/acceptance.json` has been updated with `implementation_sha: null` pending the first authorized implementation commit; the planned follow-up binds the resulting implementation SHA. No commit or push has been made yet.
+
+### Issue #460 remote-fix implementation commit — 2026-11-05
+
+- Implementation/status commit: `f2e74df`. The sanitized canonical acceptance receipt now binds this implementation SHA and will be committed as a separate evidence commit; both commits will be pushed together once. No status-only push is planned.
+

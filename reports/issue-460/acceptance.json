@@ -3,8 +3,8 @@
   "project": "AI_actuarial_inforsearch",
   "branch": "codex/issue-460-feedback-widget",
   "base_sha": "4e8a06972403515502e8e7e5396b91fb235ecd29",
-  "implementation_sha": null,
-  "acceptance_state": "remote_fix_validated_pending_commit",
+  "implementation_sha": "f2e74df",
+  "acceptance_state": "remote_fix_committed",
   "generated_at": "2026-11-05",
   "scope": {
     "deliverables": [
@@ -367,6 +367,15 @@
       "result": "PASS",
       "exit_code": 0,
       "evidence": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-460\\browser\\remote-fix-final-matrix-20261105\\services-cleanup.json"
+    },
+    {
+      "command": "git rev-parse HEAD (implementation commit)",
+      "cwd": "C:\\Project\\AI_actuarial_inforsearch\\.codex-worktrees\\issue-460",
+      "expected": "Record implementation SHA before binding the sanitized acceptance receipt",
+      "actual": "f2e74df",
+      "result": "PASS",
+      "exit_code": 0,
+      "evidence": "local git commit f2e74df; receipt binding follows in the evidence commit"
     }
   ],
   "publication": {
@@ -419,7 +428,7 @@
   },
   "remote_fix": {
     "round": "remote review R1/R2 + C5 overlay",
-    "implementation_sha": null,
+    "implementation_sha": "f2e74df",
     "changed_files": [
       "client/src/components/support-widget/Issue460ChatReachability.browser-smoke.mjs",
       "client/src/components/support-widget/Issue460Feedback.browser-smoke.mjs",
@@ -472,6 +481,7 @@
       "submit_actual_click": true,
       "receipt_visible": true
     },
-    "uncommitted": true
+    "uncommitted": true,
+    "implementation_commit": "f2e74df"
   }
 }
