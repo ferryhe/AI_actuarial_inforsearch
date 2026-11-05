@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { test } from "vitest";
 import { WeeklyDashboardSection } from "../components/WeeklyDashboardSection";
 import { WeeklyHighlightCard } from "../components/WeeklyHighlightCard";
-import { buildWeeklyDashboardView, loadLatestWeeklyDashboard, loadWeeklyUpdateDetail, type WeeklyDashboardData } from "./weekly-dashboard";
+import { buildWeeklyDashboardView, loadLatestWeeklyDashboard, loadWeeklyUpdateDetail, localizedWeeklyFileMetadata, type WeeklyDashboardData } from "./weekly-dashboard";
 
 const snapshot = { id: "weekly-current", period_start: "2026-10-19", period_end: "2026-10-26", generated_at: "2026-10-26", status: "published" as const, file_count: 5, metadata: {} };
 const files = Array.from({ length: 5 }, (_, i) => ({ url: `https://example.org/${i}`, title: `Study ${i}`, summary: `Source summary ${i}.`, first_seen: "2026-10-20" }));
@@ -30,7 +30,8 @@ test("failed guides recommend three existing article cards and preserve failure 
     const markup = renderToStaticMarkup(<WeeklyHighlightCard view={view} lang={lang} t={t} onOpenFile={() => {}} />);
     assert.ok(markup.includes("AI guide unavailable"));
     assert.equal((markup.match(/data-testid="weekly-file-row-/g) || []).length, 5);
-    assert.equal((markup.match(/<li>/g) || []).length, 3);
+    assert.equal(view.recommendedCount, 0, "a failed guide without saved links cannot invent recommendations");
+    assert.equal((markup.match(/<li>/g) || []).length, 0);
     assert.equal((markup.match(/href="https:\/\/example.org\//g) || []).length, 0);
     assert.ok(markup.includes("Source summary 0."));
   }
@@ -67,7 +68,10 @@ test("quoted source Markdown cannot add a non-member fallback link", () => {
 
 test("existing article card keeps the complete summary and its limiting qualification", () => {
   const summary = "This model is safe under the reported conditions. " + "Evidence requires careful interpretation. ".repeat(20) + "It is not approved for general use.";
-  const data = { ...base, files: [{ ...files[0], summary }] };
+  const data = { ...base, files: [{ ...files[0], summary }], explanation: {
+    ...base.explanation!, status: "complete" as const,
+    explanation_en: `- [Study 0](${files[0].url})`,
+  } };
   const view = buildWeeklyDashboardView(data, "en", t);
   assert.ok(view.explanationText.includes("Study 0"));
   const markup = renderToStaticMarkup(<WeeklyHighlightCard view={view} lang="en" t={t} onOpenFile={() => {}} />);
@@ -87,13 +91,17 @@ test("legacy failed guide displays the complete existing 943 character summary",
 });
 
 test("legacy failed guide uses title only when the source summary is missing", () => {
-  const view = buildWeeklyDashboardView({ ...base, files: [{ ...files[0], summary: null }] }, "en", t);
+  const view = buildWeeklyDashboardView({ ...base, files: [{ ...files[0], summary: null }], explanation: {
+    ...base.explanation!, status: "complete" as const, explanation_en: `- [Study 0](${files[0].url})`,
+  } }, "en", t);
   assert.ok(view.explanationText.includes("Study 0"));
   assert.ok(!view.explanationText.includes("Source summary"));
   assert.ok(view.explanationText.includes("Topic details are unavailable"));
   assert.ok(!view.explanationText.includes("highlights cover Study"));
   assert.ok(!view.explanationText.includes("explore Study 0 in detail"));
-  assert.match(buildWeeklyDashboardView({ ...base, files: [{ ...files[0], category: "AI" }] }, "zh", t).explanationText, /适合希望了解该文具体内容的读者/);
+  assert.match(buildWeeklyDashboardView({ ...base, files: [{ ...files[0], category: "AI" }], explanation: {
+    ...base.explanation!, status: "complete" as const, explanation_zh: `- [Study 0](${files[0].url})`,
+  } }, "zh", t).explanationText, /适合希望了解该文具体内容的读者/);
 });
 
 test("saved recommendations share one order across languages and lead the existing cards", () => {
@@ -153,41 +161,263 @@ test("home fetches later snapshot members before trimming the six-card preview",
   const partial = await load(true);
   assert.equal(partial.files.length, 6);
   assert.equal(partial.filesUnavailable, false);
-  assert.ok(!buildWeeklyDashboardView(partial, "en", t).explanationText.includes("Study 502"));
+  const partialView = buildWeeklyDashboardView(partial, "en", t);
+  assert.equal(partialView.recommendedCount, 0);
+  assert.equal(partialView.explanationText, data.explanation.explanation_en);
+  assert.ok(!partialView.explanationText.includes("Recommended reading this week"));
 });
 
-test("home retains recommendations from a successful page when a subsequent page fails", async () => {
-  const members = Array.from({ length: 1116 }, (_, i) => ({ ...files[0], url: `https://example.org/${i}`, title: `Study ${i}` }));
-  const loaded = await loadLatestWeeklyDashboard(async <T,>(url: string): Promise<T> => {
-    if (url.endsWith("/latest")) return { summary: { ...snapshot, file_count: members.length } } as T;
-    if (url.endsWith("/explanation")) return { explanation: { ...base.explanation!, status: "complete",
-      explanation_en: [1100, 502, 1].map(i => `- [Study ${i}](${members[i].url})`).join("\n\n"),
-    } } as T;
-    const params = new URL(url, "https://fixture").searchParams;
-    const offset = Number(params.get("offset"));
-    const limit = Number(params.get("limit"));
-    if (offset >= 506) throw new Error("Later page unavailable");
-    return { files: members.slice(offset, offset + limit), total: members.length } as T;
+test("frozen weekly recommendation cards keep both sites' bilingual guide projections equal", () => {
+  const guide = (urls: string[]) => urls.map((url, index) => `- [Study ${index}](${url})`).join("\n\n");
+  const urls = files.slice(0, 3).map(file => file.url);
+  const localFiles = (site: string) => files.map((file, index) => ({
+    ...file,
+    original_filename: null,
+    title: `${site} base ${index}`,
+    summary: `${site} base summary ${index}`,
+    category: `${site} base category`,
+    keywords: [`${site} base keyword ${index}`],
+    bilingual_metadata: {
+      en: { title: `${site} English ${index}`, summary: `${site} English summary ${index}`, category: "Pricing", keywords: [`${site} English topic ${index}`] },
+      zh: { title: `${site} 中文标题 ${index}`, summary: `${site} 中文摘要 ${index}`, category: "Pricing", keywords: [`${site} 中文主题 ${index}`] },
+    },
+  }));
+  const canonicalFiles = localFiles("China");
+  const guideGeneratedAt = "2026-10-26T00:30:00+00:00";
+  const projections = canonicalFiles.slice(0, 3).map(file => ({
+    url: file.url,
+    first_seen: file.first_seen,
+    original_filename: file.original_filename ?? null,
+    title: file.title,
+    category: file.category,
+    keywords: file.keywords,
+    summary: file.summary,
+    bilingual_metadata: file.bilingual_metadata,
+  }));
+  const guideState = {
+    ...base,
+    snapshot: { ...snapshot, file_count: files.length, metadata: {
+      weekly_recommendation_cards_v1: projections,
+      weekly_recommendation_cards_v1_owner: {
+        snapshot_id: snapshot.id,
+        guide_generated_at: guideGeneratedAt,
+      },
+    } },
+    explanation: {
+      ...base.explanation!,
+      status: "complete" as const,
+      explanation_en: guide(urls),
+      explanation_zh: guide(urls),
+      generated_at: guideGeneratedAt,
+    },
+  };
+  const chinaData = { ...guideState, files: canonicalFiles };
+  const overseasData = { ...guideState, files: localFiles("Overseas") };
+  for (const lang of ["zh", "en"]) {
+    const sourceView = buildWeeklyDashboardView(chinaData, lang, t);
+    const overseasView = buildWeeklyDashboardView(overseasData, lang, t);
+    assert.equal(overseasView.explanationText, sourceView.explanationText);
+    assert.deepEqual(overseasView.files.slice(0, 3).map(file => file.url), urls);
+    assert.deepEqual(
+      overseasView.files.slice(0, 3).map(file => localizedWeeklyFileMetadata(file, lang).title),
+      sourceView.files.slice(0, 3).map(file => localizedWeeklyFileMetadata(file, lang).title),
+    );
+    assert.equal(overseasData.files[0].title, "Overseas base 0", "the view overlays a copy, not API rows");
+    const home = renderToStaticMarkup(<WeeklyDashboardSection data={overseasData} lang={lang} t={t} onOpenFile={() => {}} />);
+    const detail = renderToStaticMarkup(<WeeklyHighlightCard view={overseasView} lang={lang} t={t} onOpenFile={() => {}} />);
+    for (const markup of [home, detail]) {
+      assert.equal((markup.match(/data-testid="weekly-file-row-/g) || []).length, 5);
+      assert.ok(markup.includes(localizedWeeklyFileMetadata(sourceView.files[0], lang).title));
+    }
+  }
+
+  const legacyProjection = projections.map((projection, index) => index === 0
+    ? { ...projection, bilingual_metadata: null }
+    : projection);
+  const legacyState = {
+    ...guideState,
+    snapshot: { ...guideState.snapshot!, metadata: {
+      weekly_recommendation_cards_v1: legacyProjection,
+      weekly_recommendation_cards_v1_owner: {
+        snapshot_id: snapshot.id,
+        guide_generated_at: guideGeneratedAt,
+      },
+    } },
+  };
+  const legacyChina = buildWeeklyDashboardView({ ...legacyState, files: canonicalFiles }, "en", t);
+  const legacyOverseas = buildWeeklyDashboardView({ ...legacyState, files: localFiles("Overseas") }, "en", t);
+  assert.equal(
+    localizedWeeklyFileMetadata(legacyOverseas.files[0], "en").title,
+    localizedWeeklyFileMetadata(legacyChina.files[0], "en").title,
+    "a projection with legacy-only metadata still overlays shared fallback fields",
+  );
+
+  const newGuideTime = "2026-10-27T00:30:00+00:00";
+  const newGuideState = {
+    ...guideState,
+    explanation: { ...guideState.explanation!, generated_at: newGuideTime },
+  };
+  const freshChina = buildWeeklyDashboardView({ ...newGuideState, files: canonicalFiles }, "en", t);
+  const freshOverseas = buildWeeklyDashboardView({ ...newGuideState, files: localFiles("Overseas") }, "en", t);
+  assert.notEqual(freshOverseas.explanationText, freshChina.explanationText, "an old projection cannot own a new guide revision");
+
+  const refreshedProjection = localFiles("China").slice(0, 3).map(file => ({
+    url: file.url,
+    first_seen: file.first_seen,
+    original_filename: file.original_filename ?? null,
+    title: file.title,
+    category: file.category,
+    keywords: file.keywords,
+    summary: file.summary,
+    bilingual_metadata: file.bilingual_metadata,
+  }));
+  const refreshedState = {
+    ...newGuideState,
+    snapshot: { ...snapshot, file_count: files.length, metadata: {
+      weekly_recommendation_cards_v1: refreshedProjection,
+      weekly_recommendation_cards_v1_owner: {
+        snapshot_id: snapshot.id,
+        guide_generated_at: newGuideTime,
+      },
+    } },
+  };
+  for (const lang of ["zh", "en"]) {
+    const sourceView = buildWeeklyDashboardView({ ...refreshedState, files: localFiles("China") }, lang, t);
+    const overseasView = buildWeeklyDashboardView({ ...refreshedState, files: localFiles("Overseas") }, lang, t);
+    assert.equal(overseasView.explanationText, sourceView.explanationText);
+    assert.deepEqual(
+      overseasView.files.slice(0, 3).map(file => localizedWeeklyFileMetadata(file, lang).title),
+      sourceView.files.slice(0, 3).map(file => localizedWeeklyFileMetadata(file, lang).title),
+    );
+  }
+});
+
+test("a frozen guide keeps the same recommendations through a partial home-page read", async () => {
+  const recommendationIndexes = [1100, 502, 1];
+  const generatedAt = "2026-10-26T00:30:00+00:00";
+  const guideText = (site: string) => recommendationIndexes
+    .map(index => `- [Study ${index}](${membersFor(site)[index].url})`).join("\n\n");
+  const membersFor = (site: string) => Array.from({ length: 1116 }, (_, i) => ({
+    ...files[0],
+    url: `https://example.org/${i}`,
+    original_filename: `study-${i}.pdf`,
+    title: `${site} local Study ${i}`,
+    summary: `${site} local summary ${i}`,
+    category: `${site} local category`,
+    keywords: [`${site} local topic ${i}`],
+    bilingual_metadata: {
+      en: { title: `${site} local English ${i}`, summary: `${site} local English summary ${i}`, category: `${site} local category`, keywords: [`${site} local English topic ${i}`] },
+      zh: { title: `${site} local 中文 ${i}`, summary: `${site} local 中文摘要 ${i}`, category: `${site} local category`, keywords: [`${site} local 中文主题 ${i}`] },
+    },
+  }));
+  const chinaMembers = membersFor("China");
+  const overseasMembers = membersFor("Overseas");
+  const sourceGuide = {
+    ...base.explanation!,
+    status: "complete" as const,
+    explanation_en: guideText("China"),
+    explanation_zh: guideText("China"),
+    generated_at: generatedAt,
+  };
+  const projection = (index: number) => ({
+    url: chinaMembers[index].url,
+    first_seen: chinaMembers[index].first_seen,
+    original_filename: chinaMembers[index].original_filename ?? null,
+    title: `Canonical Study ${index}`,
+    summary: `Canonical summary ${index}`,
+    category: "Canonical category",
+    keywords: [`Canonical topic ${index}`],
+    bilingual_metadata: {
+      en: { title: `Canonical English ${index}`, summary: `Canonical English summary ${index}`, category: "Canonical category", keywords: [`Canonical English topic ${index}`] },
+      zh: { title: `规范中文标题 ${index}`, summary: `规范中文摘要 ${index}`, category: "Canonical category", keywords: [`规范中文主题 ${index}`] },
+    },
   });
-  assert.equal(loaded.files.length, 6);
-  assert.equal(loaded.filesUnavailable, false);
-  assert.deepEqual(loaded.files.slice(0, 2), [members[502], members[1]]);
-  const view = buildWeeklyDashboardView(loaded, "en", t);
-  assert.ok(view.explanationText.includes("Study 502"));
-  assert.ok(!view.explanationText.includes("Study 1100"));
+  const snapshotWithProjection = {
+    ...snapshot,
+    file_count: chinaMembers.length,
+    metadata: {
+      weekly_recommendation_cards_v1: recommendationIndexes.map(projection),
+      weekly_recommendation_cards_v1_owner: {
+        snapshot_id: snapshot.id,
+        guide_generated_at: generatedAt,
+      },
+    },
+  };
+  const loadSite = async (site: string, siteMembers: typeof chinaMembers, failLaterPage: boolean) =>
+    loadLatestWeeklyDashboard(async <T,>(url: string): Promise<T> => {
+      if (url.endsWith("/latest")) return { summary: snapshotWithProjection } as T;
+      if (url.endsWith("/explanation")) return { explanation: sourceGuide } as T;
+      const params = new URL(url, "https://fixture").searchParams;
+      const offset = Number(params.get("offset"));
+      const limit = Number(params.get("limit"));
+      if (failLaterPage && offset >= 506) throw new Error("Later page unavailable");
+      return { files: siteMembers.slice(offset, offset + limit), total: siteMembers.length } as T;
+    });
+  const completeChina = await loadSite("China", chinaMembers, false);
+  const partialOverseas = await loadSite("Overseas", overseasMembers, true);
+  assert.equal(partialOverseas.files.length, 6);
+  assert.equal(partialOverseas.files.some(file => file.url === overseasMembers[1100].url), false);
+
+  for (const lang of ["en", "zh"]) {
+    const chinaView = buildWeeklyDashboardView(completeChina, lang, t);
+    const overseasView = buildWeeklyDashboardView(partialOverseas, lang, t);
+    assert.equal(overseasView.files.length, 6, "home retains its six-card preview limit");
+    assert.equal(overseasView.recommendedCount, 3);
+    assert.equal(overseasView.explanationText, chinaView.explanationText);
+    assert.deepEqual(
+      overseasView.files.slice(0, 3).map(file => file.url),
+      recommendationIndexes.map(index => chinaMembers[index].url),
+    );
+    assert.deepEqual(
+      overseasView.files.slice(0, 3).map(file => localizedWeeklyFileMetadata(file, lang).title),
+      chinaView.files.slice(0, 3).map(file => localizedWeeklyFileMetadata(file, lang).title),
+    );
+    assert.equal(overseasView.files[0].title, "Canonical Study 1100");
+    const homeMarkup = renderToStaticMarkup(<WeeklyDashboardSection data={partialOverseas} lang={lang} t={t} onOpenFile={() => {}} />);
+    const weeklyMarkup = renderToStaticMarkup(<WeeklyHighlightCard view={overseasView} lang={lang} t={t} onOpenFile={() => {}} grouped />);
+    for (const markup of [homeMarkup, weeklyMarkup]) {
+      assert.ok(markup.includes(localizedWeeklyFileMetadata(chinaView.files[0], lang).title));
+      assert.ok(markup.includes(localizedWeeklyFileMetadata(chinaView.files[0], lang).summary));
+    }
+  }
+
+  const detail = await loadWeeklyUpdateDetail(snapshot.id, async <T,>(url: string): Promise<T> => {
+    if (url.endsWith("/explanation")) return { explanation: sourceGuide } as T;
+    if (url.includes("/files?")) {
+      const params = new URL(url, "https://fixture").searchParams;
+      const offset = Number(params.get("offset"));
+      const limit = Number(params.get("limit"));
+      return { files: overseasMembers.slice(offset, offset + limit), total: overseasMembers.length } as T;
+    }
+    return { summary: snapshotWithProjection } as T;
+  });
+  const detailView = buildWeeklyDashboardView(detail, "en", t);
+  assert.equal(detailView.files.length, overseasMembers.length, "weekly detail keeps every loaded member");
+  assert.equal(detailView.recommendedCount, 3);
+  assert.deepEqual(detailView.files.slice(0, 3).map(file => file.url), recommendationIndexes.map(index => chinaMembers[index].url));
+
+  const legacyData = {
+    ...partialOverseas,
+    snapshot: { ...snapshotWithProjection, metadata: {} },
+  };
+  const legacyView = buildWeeklyDashboardView(legacyData, "en", t);
+  assert.equal(legacyView.recommendedCount, 0);
+  assert.equal(legacyView.explanationText, sourceGuide.explanation_en);
+  assert.ok(!legacyView.explanationText.includes("Recommended reading this week"));
+  assert.ok(!legacyView.explanationText.includes("Study 0"));
 });
 
 test("recommendations handle fewer than three members and escaped titles and URLs", () => {
   const file = { ...files[0], url: "https://example.org/report (final).pdf", title: "Report [v2] *final*", keywords: ["pricing"] };
   const data = { ...base, snapshot: { ...snapshot, file_count: 2 }, files: [files[1], file], explanation: {
     ...base.explanation!, status: "complete" as const,
-    explanation_en: "Weekly focus.\n\n- [Report \\[v2\\] \\*final\\*](https://example.org/report%20%28final%29.pdf)\n\n- [Outside](https://outside.example/report)",
+    explanation_en: "Weekly focus.\n\n- [Report \\[v2\\] \\*final\\*](https://example.org/report%20%28final%29.pdf)",
   } };
   const view = buildWeeklyDashboardView(data, "en", t);
   assert.equal(view.files[0], file);
-  assert.equal(view.recommendedCount, 2);
+  assert.equal(view.recommendedCount, 1);
   const markup = renderToStaticMarkup(<WeeklyHighlightCard view={view} lang="en" t={t} onOpenFile={() => {}} />);
-  assert.equal((markup.match(/<li>/g) || []).length, 2);
+  assert.equal((markup.match(/<li>/g) || []).length, 1);
   assert.ok(markup.includes("Report [v2] *final*"));
   assert.ok(!markup.includes("<em>final</em>"));
   assert.ok(!markup.includes("outside.example"));

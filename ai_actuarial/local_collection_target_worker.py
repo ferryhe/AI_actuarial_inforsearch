@@ -2218,6 +2218,695 @@ def apply_source_portals(
         storage.close()
 
 
+_WEEKLY_RECOMMENDATION_CARD_FIELD = "weekly_recommendation_cards_v1"
+_WEEKLY_RECOMMENDATION_CARD_OWNER_FIELD = "weekly_recommendation_cards_v1_owner"
+_WEEKLY_GUIDE_LINK = re.compile(r"^- \[(?:\\.|[^\]\\])*\]\((https?://\S+)\)\s*$", re.MULTILINE)
+_WEEKLY_EXPLANATION_FIELDS = (
+    "snapshot_id",
+    "input_fingerprint",
+    "explanation_zh",
+    "explanation_en",
+    "provider",
+    "model",
+    "prompt_version",
+    "generated_at",
+    "status",
+    "error",
+    "coverage",
+)
+_WEEKLY_SNAPSHOT_FIELDS = (
+    "id",
+    "period_start",
+    "period_end",
+    "generated_at",
+    "status",
+    "file_count",
+    "summary_markdown",
+    "metadata",
+)
+
+
+def _weekly_guide_url(url: str) -> str:
+    return url.replace("(", "%28").replace(")", "%29").replace(" ", "%20")
+
+
+def _weekly_guide_urls(text: str) -> list[str]:
+    return [match.group(1) for match in _WEEKLY_GUIDE_LINK.finditer(text)]
+
+
+def weekly_publication_bundle_sha256(bundle: dict[str, Any]) -> str:
+    return _hash(_canonical_json(bundle).encode("utf-8"))
+
+
+def validate_weekly_publication_bundle(bundle: Any) -> dict[str, Any]:
+    if (
+        not isinstance(bundle, dict)
+        or set(bundle)
+        != {
+            "schema_version",
+            "snapshot",
+            "members",
+            "explanation",
+        }
+        or bundle.get("schema_version") != 1
+    ):
+        raise ValueError("weekly publication bundle schema_version must be 1")
+    snapshot = bundle.get("snapshot")
+    explanation = bundle.get("explanation")
+    members = bundle.get("members")
+    if (
+        not isinstance(snapshot, dict)
+        or set(snapshot) != set(_WEEKLY_SNAPSHOT_FIELDS)
+        or not isinstance(explanation, dict)
+        or set(explanation) != set(_WEEKLY_EXPLANATION_FIELDS)
+        or not isinstance(members, list)
+    ):
+        raise ValueError("weekly publication bundle is incomplete")
+    snapshot_id = snapshot.get("id")
+    if (
+        not isinstance(snapshot_id, str)
+        or not snapshot_id.strip()
+        or snapshot.get("status") != "published"
+        or not isinstance(snapshot.get("metadata"), dict)
+        or not isinstance(snapshot.get("summary_markdown"), str)
+    ):
+        raise ValueError("weekly publication snapshot is not a complete published row")
+    try:
+        period_start = datetime.fromisoformat(
+            str(snapshot.get("period_start") or "").replace("Z", "+00:00")
+        )
+        period_end = datetime.fromisoformat(
+            str(snapshot.get("period_end") or "").replace("Z", "+00:00")
+        )
+        datetime.fromisoformat(str(snapshot.get("generated_at") or "").replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError("weekly publication snapshot timestamps are malformed") from exc
+    if period_start.tzinfo is None or period_end.tzinfo is None or period_start >= period_end:
+        raise ValueError("weekly publication period must be an ordered timezone-aware range")
+    file_count = snapshot.get("file_count")
+    if type(file_count) is not int or file_count < 0 or len(members) != file_count:
+        raise ValueError("weekly publication member count does not match the snapshot")
+    member_by_guide_url: dict[str, str] = {}
+    normalized_members = []
+    for ordinal, member in enumerate(members):
+        if (
+            not isinstance(member, dict)
+            or set(member) != {"url", "first_seen", "original_filename", "ordinal"}
+            or not isinstance(member.get("url"), str)
+            or not member["url"].startswith(("http://", "https://"))
+            or not isinstance(member.get("first_seen"), str)
+            or type(member.get("ordinal")) is not int
+            or member["ordinal"] != ordinal
+            or member.get("original_filename") is not None
+            and not isinstance(member.get("original_filename"), str)
+        ):
+            raise ValueError("weekly publication membership is malformed or unordered")
+        link_url = _weekly_guide_url(member["url"])
+        if link_url in member_by_guide_url:
+            raise ValueError("weekly publication membership contains ambiguous guide URLs")
+        member_by_guide_url[link_url] = member["url"]
+        normalized_members.append(member)
+    if explanation.get("snapshot_id") != snapshot_id or explanation.get("status") != "complete":
+        raise ValueError("weekly explanation is incomplete or belongs to a different snapshot")
+    for key in (
+        "input_fingerprint",
+        "prompt_version",
+        "generated_at",
+        "explanation_zh",
+        "explanation_en",
+    ):
+        if not isinstance(explanation.get(key), str) or not explanation[key].strip():
+            raise ValueError(f"weekly explanation is missing {key}")
+    if not isinstance(explanation.get("coverage"), dict):
+        raise ValueError("weekly explanation coverage is malformed")
+    try:
+        datetime.fromisoformat(explanation["generated_at"].replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError("weekly explanation generated_at is malformed") from exc
+    zh_links = _weekly_guide_urls(explanation["explanation_zh"])
+    en_links = _weekly_guide_urls(explanation["explanation_en"])
+    if (
+        len(zh_links) != len(set(zh_links))
+        or len(en_links) != len(set(en_links))
+        or set(zh_links) != set(en_links)
+    ):
+        raise ValueError("Chinese and English guides must share the same distinct recommendations")
+    if any(url not in member_by_guide_url for url in (*zh_links, *en_links)):
+        raise ValueError("weekly guide recommendations must belong to the published snapshot")
+    recommended_urls = [member_by_guide_url[url] for url in en_links[:3]]
+    projections = snapshot["metadata"].get(_WEEKLY_RECOMMENDATION_CARD_FIELD)
+    if not isinstance(projections, list) or len(projections) != len(recommended_urls):
+        raise ValueError("weekly snapshot must freeze each visible recommendation card")
+    owner = snapshot["metadata"].get(_WEEKLY_RECOMMENDATION_CARD_OWNER_FIELD)
+    expected_owner = {
+        "snapshot_id": snapshot_id,
+        "guide_generated_at": explanation["generated_at"],
+    }
+    if owner != expected_owner:
+        raise ValueError(
+            "weekly recommendation cards are not owned by the successful guide revision"
+        )
+    expected_projection_fields = {
+        "url",
+        "first_seen",
+        "original_filename",
+        "title",
+        "category",
+        "keywords",
+        "summary",
+        "bilingual_metadata",
+    }
+    for url, projection in zip(recommended_urls, projections):
+        if (
+            not isinstance(projection, dict)
+            or set(projection) != expected_projection_fields
+            or projection.get("url") != url
+            or not isinstance(projection.get("title"), str)
+            or not isinstance(projection.get("first_seen"), str)
+            or projection.get("original_filename") is not None
+            and not isinstance(projection.get("original_filename"), str)
+            or projection.get("category") is not None
+            and not isinstance(projection.get("category"), str)
+            or not isinstance(projection.get("keywords"), list)
+            or any(not isinstance(keyword, str) for keyword in projection["keywords"])
+            or projection.get("summary") is not None
+            and not isinstance(projection.get("summary"), str)
+            or projection.get("bilingual_metadata") is not None
+            and not isinstance(projection.get("bilingual_metadata"), dict)
+        ):
+            raise ValueError("weekly recommendation card projection is incomplete or unordered")
+    return {
+        "snapshot_id": snapshot_id,
+        "period_start": snapshot["period_start"],
+        "period_end": snapshot["period_end"],
+        "recommendation_urls": recommended_urls,
+        "guide_generated_at": explanation["generated_at"],
+        "card_projection_sha256": _hash(_canonical_json(projections).encode("utf-8")),
+    }
+
+
+def export_weekly_publication(
+    payload: dict[str, Any], *, storage_factory: Callable[..., Any] | None = None
+) -> dict[str, Any]:
+    if payload.get("schema_version") != 1 or payload.get("target") != "china":
+        raise ValueError("weekly publication export requires schema v1 and the China source")
+    period_start = payload.get("period_start")
+    period_end = payload.get("period_end")
+    if not isinstance(period_start, str) or not isinstance(period_end, str):
+        raise ValueError("weekly publication export requires an exact period")
+    if storage_factory is None:
+        from ai_actuarial.storage import Storage
+
+        storage_factory = Storage.open_read_only
+    storage = storage_factory()
+    try:
+        snapshot = storage.get_published_weekly_snapshot_for_period(
+            period_start=period_start,
+            period_end=period_end,
+            include_detail=True,
+        )
+        if snapshot is None:
+            return {
+                "schema_version": 1,
+                "target": "china",
+                "status": "pending",
+                "reason": "snapshot_missing",
+            }
+        explanation_row = storage.get_weekly_explanation(snapshot_id=str(snapshot["id"]))
+        if not explanation_row or explanation_row.get("status") != "complete":
+            return {
+                "schema_version": 1,
+                "target": "china",
+                "status": "pending",
+                "reason": "guide_incomplete",
+                "snapshot_id": snapshot["id"],
+            }
+        cursor = storage._conn.execute(
+            "SELECT file_url, first_seen, original_filename, ordinal "
+            "FROM weekly_snapshot_members WHERE snapshot_id = ? ORDER BY ordinal",
+            (snapshot["id"],),
+        )
+        members = [
+            {
+                "url": str(row[0]),
+                "first_seen": str(row[1]),
+                "original_filename": row[2],
+                "ordinal": int(row[3]),
+            }
+            for row in cursor.fetchall()
+        ]
+        metadata = dict(snapshot.get("metadata") or {})
+        guide_owner = {
+            "snapshot_id": str(snapshot["id"]),
+            "guide_generated_at": str(explanation_row["generated_at"]),
+        }
+        projections = metadata.get(_WEEKLY_RECOMMENDATION_CARD_FIELD)
+        if metadata.get(_WEEKLY_RECOMMENDATION_CARD_OWNER_FIELD) != guide_owner:
+            files, offset = [], 0
+            while offset < int(snapshot["file_count"]):
+                page, _total = storage.list_weekly_snapshot_files(
+                    snapshot_id=str(snapshot["id"]), limit=500, offset=offset
+                )
+                if not page:
+                    break
+                files.extend(page)
+                offset += len(page)
+            file_by_url = {str(item["url"]): item for item in files}
+        else:
+            file_by_url = {}
+        guide_urls = _weekly_guide_urls(str(explanation_row["explanation_en"]))[:3]
+        member_by_guide_url = {
+            _weekly_guide_url(member["url"]): member["url"] for member in members
+        }
+        member_by_url = {member["url"]: member for member in members}
+        recommended_urls = [member_by_guide_url.get(url) for url in guide_urls]
+        if any(url is None for url in recommended_urls):
+            raise ValueError("weekly guide recommendation is not a current snapshot member")
+        if metadata.get(_WEEKLY_RECOMMENDATION_CARD_OWNER_FIELD) != guide_owner:
+            projections = []
+            for url in recommended_urls:
+                item = file_by_url.get(url)
+                if item is None:
+                    raise ValueError("weekly recommendation is absent from its published snapshot")
+                member = member_by_url[url]
+                projections.append(
+                    {
+                        "url": url,
+                        "first_seen": member["first_seen"],
+                        "original_filename": member["original_filename"],
+                        **{
+                            key: item.get(key)
+                            for key in (
+                                "title",
+                                "category",
+                                "keywords",
+                                "summary",
+                                "bilingual_metadata",
+                            )
+                        },
+                    }
+                )
+        metadata[_WEEKLY_RECOMMENDATION_CARD_FIELD] = projections
+        metadata[_WEEKLY_RECOMMENDATION_CARD_OWNER_FIELD] = guide_owner
+        bundle = {
+            "schema_version": 1,
+            "snapshot": {
+                key: snapshot.get(key) for key in _WEEKLY_SNAPSHOT_FIELDS if key != "metadata"
+            }
+            | {"metadata": metadata},
+            "members": members,
+            "explanation": {key: explanation_row.get(key) for key in _WEEKLY_EXPLANATION_FIELDS},
+        }
+        validate_weekly_publication_bundle(bundle)
+        return {
+            "schema_version": 1,
+            "target": "china",
+            "status": "ready",
+            "snapshot_id": snapshot["id"],
+            "bundle": bundle,
+            "bundle_sha256": weekly_publication_bundle_sha256(bundle),
+        }
+    finally:
+        storage.close()
+
+
+def _weekly_sync_row(connection: Any, sql: str, params: tuple[Any, ...]) -> dict[str, Any] | None:
+    cursor = connection.execute(sql, params)
+    row = cursor.fetchone()
+    if row is None:
+        return None
+    return dict(zip([column[0] for column in cursor.description], row))
+
+
+def _weekly_json_object(value: Any, field: str) -> dict[str, Any]:
+    try:
+        decoded = json.loads(str(value or "{}"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"stored weekly {field} JSON is invalid") from exc
+    if not isinstance(decoded, dict):
+        raise ValueError(f"stored weekly {field} must be an object")
+    return decoded
+
+
+def _weekly_snapshot_values(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": row["id"],
+        "period_start": row["period_start"],
+        "period_end": row["period_end"],
+        "generated_at": row["generated_at"],
+        "status": row["status"],
+        "file_count": int(row["file_count"]),
+        "summary_markdown": row["summary_markdown"],
+        "metadata": _weekly_json_object(row["metadata_json"], "snapshot metadata"),
+    }
+
+
+def _weekly_member_values(
+    connection: Any, snapshot_id: str, *, lock: bool = False
+) -> list[dict[str, Any]]:
+    cursor = connection.execute(
+        "SELECT file_url, first_seen, original_filename, ordinal FROM weekly_snapshot_members "
+        "WHERE snapshot_id = ? ORDER BY ordinal" + (" FOR UPDATE" if lock else ""),
+        (snapshot_id,),
+    )
+    return [
+        {
+            "url": str(row[0]),
+            "first_seen": str(row[1]),
+            "original_filename": row[2],
+            "ordinal": int(row[3]),
+        }
+        for row in cursor.fetchall()
+    ]
+
+
+def _weekly_explanation_values(
+    connection: Any, snapshot_id: str, *, lock: bool = False
+) -> dict[str, Any] | None:
+    suffix = " FOR UPDATE" if lock else ""
+    row = _weekly_sync_row(
+        connection,
+        "SELECT snapshot_id, input_fingerprint, explanation_zh, explanation_en, provider, model, "
+        "prompt_version, generated_at, status, error, coverage_json FROM weekly_explanations "
+        "WHERE snapshot_id = ?" + suffix,
+        (snapshot_id,),
+    )
+    if row is None:
+        return None
+    return {
+        key: (
+            _weekly_json_object(row["coverage_json"], "explanation coverage")
+            if key == "coverage"
+            else row[key]
+        )
+        for key in _WEEKLY_EXPLANATION_FIELDS
+    }
+
+
+def _weekly_base_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: value
+        for key, value in metadata.items()
+        if key
+        not in {
+            _WEEKLY_RECOMMENDATION_CARD_FIELD,
+            _WEEKLY_RECOMMENDATION_CARD_OWNER_FIELD,
+        }
+    }
+
+
+def _weekly_explanation_revision(explanation: dict[str, Any] | None) -> dict[str, Any] | None:
+    if explanation is None:
+        return None
+    normalized = dict(explanation)
+    if normalized.get("status") == "complete":
+        coverage = dict(normalized.get("coverage") or {})
+        coverage.pop("last_failed_attempt", None)
+        normalized["coverage"] = coverage
+    return normalized
+
+
+def _weekly_explanation_matches(current: dict[str, Any] | None, expected: dict[str, Any]) -> bool:
+    return _weekly_explanation_revision(current) == _weekly_explanation_revision(expected)
+
+
+def _weekly_insert_explanation(connection: Any, explanation: dict[str, Any]) -> None:
+    connection.execute(
+        "INSERT INTO weekly_explanations (snapshot_id, input_fingerprint, explanation_zh, "
+        "explanation_en, provider, model, prompt_version, generated_at, status, error, coverage_json, "
+        "claim_fingerprint, claim_token, claim_expires_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'complete', ?, ?, '', '', '')",
+        (
+            explanation["snapshot_id"],
+            explanation["input_fingerprint"],
+            explanation["explanation_zh"],
+            explanation["explanation_en"],
+            explanation["provider"],
+            explanation["model"],
+            explanation["prompt_version"],
+            explanation["generated_at"],
+            explanation["error"],
+            _canonical_json(explanation["coverage"]),
+        ),
+    )
+
+
+def _weekly_update_explanation(connection: Any, explanation: dict[str, Any]) -> None:
+    connection.execute(
+        "UPDATE weekly_explanations SET input_fingerprint = ?, explanation_zh = ?, "
+        "explanation_en = ?, provider = ?, model = ?, prompt_version = ?, generated_at = ?, "
+        "status = 'complete', error = ?, coverage_json = ?, claim_fingerprint = '', "
+        "claim_token = '', claim_expires_at = '' WHERE snapshot_id = ?",
+        (
+            explanation["input_fingerprint"],
+            explanation["explanation_zh"],
+            explanation["explanation_en"],
+            explanation["provider"],
+            explanation["model"],
+            explanation["prompt_version"],
+            explanation["generated_at"],
+            explanation["error"],
+            _canonical_json(explanation["coverage"]),
+            explanation["snapshot_id"],
+        ),
+    )
+
+
+def _verify_weekly_publication(storage: Any, bundle: dict[str, Any], digest: str) -> dict[str, Any]:
+    snapshot_id = bundle["snapshot"]["id"]
+    snapshot = storage.get_weekly_snapshot(snapshot_id=snapshot_id, include_detail=True)
+    if snapshot != bundle["snapshot"]:
+        raise RuntimeError("weekly snapshot read-back differs from the canonical bundle")
+    members = _weekly_member_values(storage._conn, snapshot_id)
+    if members != bundle["members"]:
+        raise RuntimeError("weekly membership read-back differs from the canonical bundle")
+    explanation = storage.get_weekly_explanation(snapshot_id=snapshot_id)
+    current = (
+        {key: explanation.get(key) for key in _WEEKLY_EXPLANATION_FIELDS} if explanation else None
+    )
+    if not _weekly_explanation_matches(current, bundle["explanation"]):
+        raise RuntimeError("weekly explanation read-back differs from the canonical bundle")
+    summary = validate_weekly_publication_bundle(bundle)
+    return {
+        "schema_version": 1,
+        "target": "china" if str(bundle.get("_source_target") or "") == "china" else "overseas",
+        "status": "acknowledged",
+        "snapshot_id": snapshot_id,
+        "bundle_sha256": digest,
+        "guide_generated_at": summary["guide_generated_at"],
+        "card_projection_sha256": summary["card_projection_sha256"],
+        "recommendation_urls": summary["recommendation_urls"],
+    }
+
+
+def apply_weekly_publication(
+    payload: dict[str, Any], *, storage_factory: Callable[..., Any] | None = None
+) -> dict[str, Any]:
+    target = payload.get("target")
+    mode = payload.get("mode")
+    if payload.get("schema_version") != 1 or mode not in {"freeze_source", "import_replica"}:
+        raise ValueError("weekly publication import requires schema v1 and a supported mode")
+    if target not in {"china", "overseas"} or (mode == "freeze_source") != (target == "china"):
+        raise ValueError("weekly publication import mode does not match its target")
+    bundle = payload.get("bundle")
+    summary = validate_weekly_publication_bundle(bundle)
+    digest = weekly_publication_bundle_sha256(bundle)
+    if payload.get("bundle_sha256") != digest:
+        raise ValueError("weekly publication bundle SHA-256 does not match its contents")
+    if storage_factory is None:
+        from ai_actuarial.storage import Storage
+
+        storage_factory = getattr(Storage, "open_existing", None)
+        if storage_factory is None:
+            raise RuntimeError(
+                "weekly publication requires the native non-initializing Storage opener"
+            )
+    storage = storage_factory()
+    snapshot = bundle["snapshot"]
+    explanation = bundle["explanation"]
+    changed = False
+    try:
+        with storage.transaction(immediate=True):
+            storage._conn.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended(?, 0))",
+                (f"weekly-snapshot:{summary['period_start']}:{summary['period_end']}",),
+            )
+            if mode == "import_replica" and summary["recommendation_urls"]:
+                recommendation_urls = summary["recommendation_urls"]
+                placeholders = ", ".join("?" for _ in recommendation_urls)
+                existing_urls = {
+                    str(row[0])
+                    for row in storage._conn.execute(
+                        "SELECT url FROM files WHERE deleted_at IS NULL "
+                        f"AND url IN ({placeholders})",
+                        tuple(recommendation_urls),
+                    ).fetchall()
+                }
+                missing_urls = [url for url in recommendation_urls if url not in existing_urls]
+                if missing_urls:
+                    raise ValueError(
+                        "Overseas is missing a non-deleted article row for weekly recommendation(s): "
+                        + ", ".join(missing_urls)
+                    )
+            if mode == "freeze_source":
+                current_row = _weekly_sync_row(
+                    storage._conn,
+                    "SELECT id, period_start, period_end, generated_at, status, file_count, "
+                    "summary_markdown, metadata_json FROM weekly_snapshots WHERE id = ? FOR UPDATE",
+                    (snapshot["id"],),
+                )
+                if current_row is None:
+                    raise ValueError(
+                        "canonical source snapshot disappeared before projection freeze"
+                    )
+                current_snapshot = _weekly_snapshot_values(current_row)
+                current_explanation = _weekly_explanation_values(
+                    storage._conn, snapshot["id"], lock=True
+                )
+                current_members = _weekly_member_values(storage._conn, snapshot["id"], lock=True)
+                if (
+                    current_snapshot["status"] != "published"
+                    or any(
+                        current_snapshot[key] != snapshot[key]
+                        for key in (
+                            "id",
+                            "period_start",
+                            "period_end",
+                            "generated_at",
+                            "status",
+                            "file_count",
+                            "summary_markdown",
+                        )
+                    )
+                    or _weekly_base_metadata(current_snapshot["metadata"])
+                    != _weekly_base_metadata(snapshot["metadata"])
+                    or current_members != bundle["members"]
+                    or not _weekly_explanation_matches(current_explanation, explanation)
+                ):
+                    raise ValueError(
+                        "canonical China weekly publication changed after it was frozen"
+                    )
+                if current_snapshot["metadata"] != snapshot["metadata"]:
+                    storage._conn.execute(
+                        "UPDATE weekly_snapshots SET metadata_json = ? WHERE id = ?",
+                        (_canonical_json(snapshot["metadata"]), snapshot["id"]),
+                    )
+                    changed = True
+            else:
+                latest = _weekly_sync_row(
+                    storage._conn,
+                    "SELECT id, period_end FROM weekly_snapshots WHERE status = 'published' "
+                    "ORDER BY period_end DESC, generated_at DESC LIMIT 1 FOR UPDATE",
+                    (),
+                )
+                if latest and str(latest["period_end"]) > str(snapshot["period_end"]):
+                    raise ValueError("refusing to replace a newer Overseas weekly publication")
+                current_row = _weekly_sync_row(
+                    storage._conn,
+                    "SELECT id, period_start, period_end, generated_at, status, file_count, "
+                    "summary_markdown, metadata_json FROM weekly_snapshots "
+                    "WHERE period_start = ? AND period_end = ? AND status = 'published' FOR UPDATE",
+                    (snapshot["period_start"], snapshot["period_end"]),
+                )
+                if current_row and current_row["id"] == snapshot["id"]:
+                    current_snapshot = _weekly_snapshot_values(current_row)
+                    current_members = _weekly_member_values(
+                        storage._conn, snapshot["id"], lock=True
+                    )
+                    current_explanation = _weekly_explanation_values(
+                        storage._conn, snapshot["id"], lock=True
+                    )
+                    if (
+                        any(
+                            current_snapshot[key] != snapshot[key]
+                            for key in (
+                                "id",
+                                "period_start",
+                                "period_end",
+                                "generated_at",
+                                "status",
+                                "file_count",
+                                "summary_markdown",
+                            )
+                        )
+                        or _weekly_base_metadata(current_snapshot["metadata"])
+                        != _weekly_base_metadata(snapshot["metadata"])
+                        or current_members != bundle["members"]
+                        or current_explanation is None
+                    ):
+                        raise ValueError(
+                            "same-ID Overseas weekly publication conflicts with the source"
+                        )
+                    if not _weekly_explanation_matches(current_explanation, explanation):
+                        current_at = datetime.fromisoformat(
+                            str(current_explanation["generated_at"]).replace("Z", "+00:00")
+                        )
+                        incoming_at = datetime.fromisoformat(
+                            explanation["generated_at"].replace("Z", "+00:00")
+                        )
+                        if current_at >= incoming_at:
+                            raise ValueError(
+                                "refusing to overwrite an equal or newer Overseas guide"
+                            )
+                        _weekly_update_explanation(storage._conn, explanation)
+                        changed = True
+                    if current_snapshot["metadata"] != snapshot["metadata"]:
+                        storage._conn.execute(
+                            "UPDATE weekly_snapshots SET metadata_json = ? WHERE id = ?",
+                            (_canonical_json(snapshot["metadata"]), snapshot["id"]),
+                        )
+                        changed = True
+                else:
+                    if current_row:
+                        storage._conn.execute(
+                            "UPDATE weekly_snapshots SET status = 'superseded' WHERE id = ?",
+                            (current_row["id"],),
+                        )
+                    existing_id = _weekly_sync_row(
+                        storage._conn,
+                        "SELECT status FROM weekly_snapshots WHERE id = ? FOR UPDATE",
+                        (snapshot["id"],),
+                    )
+                    if existing_id:
+                        raise ValueError("canonical snapshot ID already exists in Overseas history")
+                    storage._conn.execute(
+                        "INSERT INTO weekly_snapshots (id, period_start, period_end, generated_at, "
+                        "status, file_count, summary_markdown, metadata_json) "
+                        "VALUES (?, ?, ?, ?, 'published', ?, ?, ?)",
+                        (
+                            snapshot["id"],
+                            snapshot["period_start"],
+                            snapshot["period_end"],
+                            snapshot["generated_at"],
+                            snapshot["file_count"],
+                            snapshot["summary_markdown"],
+                            _canonical_json(snapshot["metadata"]),
+                        ),
+                    )
+                    storage._conn.executemany(
+                        "INSERT INTO weekly_snapshot_members (snapshot_id, file_url, first_seen, "
+                        "original_filename, ordinal) VALUES (?, ?, ?, ?, ?)",
+                        [
+                            (
+                                snapshot["id"],
+                                member["url"],
+                                member["first_seen"],
+                                member["original_filename"],
+                                member["ordinal"],
+                            )
+                            for member in bundle["members"]
+                        ],
+                    )
+                    _weekly_insert_explanation(storage._conn, explanation)
+                    changed = True
+        ack = _verify_weekly_publication(storage, bundle, digest)
+        ack["target"] = target
+        ack["status"] = "applied" if changed else "unchanged"
+        return ack
+    finally:
+        storage.close()
+
+
 def apply_aict_source_label_normalization(
     payload: dict[str, Any], *, storage_factory: Callable[..., Any] | None = None
 ) -> dict[str, Any]:
@@ -2586,6 +3275,10 @@ def main() -> int:
             isinstance(payload, dict) and payload.get("operation") == "backfill_ai_primary_metadata"
         ):
             result = apply_metadata_backfill(payload)
+        elif isinstance(payload, dict) and payload.get("operation") == "export_weekly_publication":
+            result = export_weekly_publication(payload)
+        elif isinstance(payload, dict) and payload.get("operation") == "apply_weekly_publication":
+            result = apply_weekly_publication(payload)
         else:
             result = apply_batch(payload)
         sys.stdout.write(_canonical_json(result) + "\n")

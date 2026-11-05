@@ -44,6 +44,7 @@ export interface WeeklyDashboardData {
   status: "ready" | "no_snapshot" | "unavailable";
   snapshot: WeeklySnapshot | null;
   files: WeeklySnapshotFile[];
+  filesPreviewLimit?: number;
   filesUnavailable: boolean;
   explanation: WeeklyExplanation | null;
   explanationUnavailable: boolean;
@@ -131,6 +132,7 @@ export async function loadLatestWeeklyDashboard(
   const data: WeeklyDashboardData = {
     status: "ready",
     snapshot,
+    filesPreviewLimit: WEEKLY_HOME_PREVIEW_LIMIT,
     files: filesResult.status === "fulfilled"
       ? (filesResult.value.files || []).slice(0, WEEKLY_HOME_PREVIEW_LIMIT)
       : [],
@@ -374,6 +376,69 @@ function weeklyRecommendationUrls(data: WeeklyDashboardData): string[] {
     .map((match) => match[1]))].slice(0, 3);
 }
 
+function frozenWeeklyRecommendationFiles(data: WeeklyDashboardData): WeeklySnapshotFile[] | null {
+  const snapshot = data.snapshot;
+  const explanation = data.explanation;
+  if (!snapshot || !explanation || explanation.snapshot_id !== snapshot.id || !explanation.generated_at) {
+    return null;
+  }
+  const metadata = snapshot.metadata;
+  const owner = metadata.weekly_recommendation_cards_v1_owner;
+  const projections = metadata.weekly_recommendation_cards_v1;
+  if (!owner || typeof owner !== "object" || !Array.isArray(projections)) return null;
+  const guideOwner = owner as Record<string, unknown>;
+  if (guideOwner.snapshot_id !== snapshot.id || guideOwner.guide_generated_at !== explanation.generated_at) {
+    return null;
+  }
+
+  const urls = weeklyRecommendationUrls(data);
+  if (!urls.length || projections.length !== urls.length) return null;
+  const projectionByUrl = new Map<string, Record<string, unknown>>();
+  for (const value of projections) {
+    if (!value || typeof value !== "object") return null;
+    const projection = value as Record<string, unknown>;
+    const url = typeof projection.url === "string" ? weeklyGuideUrl(projection.url) : "";
+    if (!url || projectionByUrl.has(url)) {
+      return null;
+    }
+    if (typeof projection.first_seen !== "string"
+      || (projection.original_filename !== null && typeof projection.original_filename !== "string")
+      || typeof projection.title !== "string" || !Array.isArray(projection.keywords)
+      || projection.keywords.some((keyword) => typeof keyword !== "string")
+      || (projection.category !== null && typeof projection.category !== "string")
+      || (projection.summary !== null && typeof projection.summary !== "string")
+      || (projection.bilingual_metadata !== null
+        && (typeof projection.bilingual_metadata !== "object" || Array.isArray(projection.bilingual_metadata)))) {
+      return null;
+    }
+    projectionByUrl.set(url, projection);
+  }
+  if (projections.some((value, index) => {
+    const projection = value as Record<string, unknown>;
+    return weeklyGuideUrl(projection.url as string) !== urls[index];
+  })) return null;
+  if (urls.some((url) => !projectionByUrl.has(url))) return null;
+
+  const filesByUrl = new Map(data.files.map((file) => [weeklyGuideUrl(file.url), file]));
+  const recommendations = urls.map((url) => {
+    const projection = projectionByUrl.get(url)!;
+    const existing = filesByUrl.get(url);
+    return {
+      ...existing,
+      url: existing?.url || projection.url as string,
+      first_seen: projection.first_seen as string,
+      original_filename: projection.original_filename as string | null,
+      title: projection.title as string,
+      category: projection.category as string | null,
+      keywords: projection.keywords as string[],
+      summary: projection.summary as string | null,
+      bilingual_metadata: projection.bilingual_metadata,
+    };
+  });
+  const nonRecommendations = data.files.filter((file) => !projectionByUrl.has(weeklyGuideUrl(file.url)));
+  return [...recommendations, ...nonRecommendations];
+}
+
 function orderWeeklyFiles(files: WeeklySnapshotFile[], urls: string[]): WeeklySnapshotFile[] {
   const byUrl = new Map(files.map((file) => [weeklyGuideUrl(file.url), file]));
   const recommended = urls.flatMap((url) => byUrl.has(url) ? [byUrl.get(url)!] : []);
@@ -388,7 +453,12 @@ export function buildWeeklyDashboardView(
 ): WeeklyDashboardView {
   const explanation = data.explanation?.snapshot_id === data.snapshot?.id ? data.explanation : null;
   const selected = lang === "zh" ? explanation?.explanation_zh : explanation?.explanation_en;
-  const files = orderWeeklyFiles(data.files, weeklyRecommendationUrls(data));
+  const recommendationUrls = weeklyRecommendationUrls(data);
+  const frozenFiles = frozenWeeklyRecommendationFiles(data);
+  const orderedFiles = orderWeeklyFiles(frozenFiles || data.files, recommendationUrls);
+  const files = data.filesPreviewLimit
+    ? orderedFiles.slice(0, data.filesPreviewLimit)
+    : orderedFiles;
   let explanationState: WeeklyExplanationState;
   let explanationText: string;
 
@@ -412,8 +482,15 @@ export function buildWeeklyDashboardView(
     explanationText = String(selected).trim();
   }
 
-  const recommendations = !data.filesUnavailable && data.snapshot?.file_count
-    && ["complete", "failed"].includes(explanationState) ? files.slice(0, 3) : [];
+  const loadedRecommendationUrls = new Set(data.files.map((file) => weeklyGuideUrl(file.url)));
+  const savedRecommendationsAvailable = recommendationUrls.length > 0
+    && recommendationUrls.every((url) => loadedRecommendationUrls.has(url));
+  const canBuildRecommendations = frozenFiles !== null
+    || (!data.filesUnavailable && savedRecommendationsAvailable);
+  const recommendations = data.snapshot?.file_count && canBuildRecommendations
+    && ["complete", "failed"].includes(explanationState)
+    ? files.slice(0, recommendationUrls.length)
+    : [];
   if (recommendations.length) {
     const escape = (value: string) => value.replace(/([\\`*{}\[\]<>#.!_+()\-])/g, "\\$1").replace(/\r?\n/g, " ");
     const items = recommendations.map((file) => {

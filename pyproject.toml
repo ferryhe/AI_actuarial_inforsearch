@@ -66,6 +66,7 @@ production_entries = [
     "ai_actuarial.api.app",
     "ai_actuarial.agentic_rag.eval",
     "ai_actuarial.local_collection_runtime",
+    "ai_actuarial.local_weekly_publication", # Invoked directly by the local weekly relay automation.
     "ai_actuarial.source_registry_cli",
     "ai_actuarial.local_collection_target_worker", # Streamed over SSH and executed as its own worker.
 ]
