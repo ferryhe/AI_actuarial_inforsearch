@@ -1,3 +1,10 @@
+## 2026-11-05 PR #452 main integration and acceptance state
+
+- Integrated latest main `0d75dfec4da72db8887d277e881d6d77ba86c6ed`, including PR #457. The only merge conflict was this status file; both the Issue #450 history and weekly publication record were retained. The target worker auto-merged, PR #452 editor files remain unchanged from its prior HEAD, and weekly UI files match latest main.
+
+- PR #452 remains open. Its title/body will reference #450 without an automatic-close keyword; Issue #450 remains open because full acceptance is incomplete. China current-site editor and the saved Chinese draft are accepted with warnings retained. Real local generation, bilingual readback, ACK recovery, zero-write idempotence, and schedule gates remain pending.
+
+- This integration step did not generate articles, deploy, or change schedules. Current-head CI must run on the merged commit.
 # Issue #450 本地文章解读 — 2026-11-02
 
 ### 2026-11-04 main merge and CI import-order repair
@@ -112,6 +119,15 @@
 - article_interpretation_english.py、article_interpretations.py、codex_environment.py、storage.py 四个 receiver 模块，以及 local_collection_target_worker.py 的 Git blob 均与合并前相同；本次未改变 receiver overlay 与 AC-3 修复。
 - 隔离测试：runtime、ArticleInterpretationService、英文后续步骤和 target worker 四个测试文件共 451 passed、2 skipped（本机缺少 pg_dump/pg_restore；Linux-only process-group 测试在 Windows 跳过）。仅使用新建 loopback PG16 测试容器、mock 和 fixtures；测试后删除容器 05fc5031d846ef58717d58ab8b47d0ab0549249f06ff21e78d0917608f235b33 与匿名卷 062b7d5f1626816636d3f34f9d382870bc2104e5175cba0286db98ad9c9ce6ef，精确 inspect 确认两者不存在；Black、Ruff、py_compile、git diff --check 通过。
 - Review impact: none for #450 behavior；仅吸收已进入 main 的 #441 SOA 修复。累计 review 18、changes-requested cycles 13 保持不变；未发起新 review/Judge。未运行真实模型生成、生产/目标读写、部署或排程操作；merge 暂未 commit/push，交由 controller 复核。
+## Unified weekly publication local relay — 2026-11-04
+
+- Worktree `codex/unified-weekly-publication` from `3f44b057`. China remains the only weekly generator; a local durable relay freezes the completed bilingual guide and three recommendation card projections, then applies the same snapshot/member order/guide/projection pair transactionally to China and Overseas. The relay has no generation path. The shared frontend weekly view overlays or reconstructs the three frozen cards from snapshot metadata only when their owner matches the current snapshot ID and successful guide `generated_at`; raw API/catalog reads and generator inputs remain unchanged. Frozen rows carry `first_seen` and `original_filename` so a partial home-page read can still display the canonical card; home remains capped at six rows and weekly detail remains full length. Legacy/unowned reads keep the saved guide without inventing picks when a selected URL is unavailable.
+- Added `ai_actuarial.local_weekly_publication` as a production reachability entry, streamed target worker operations, focused tests and runtime instructions. Tests cover one generation call, retry after lost ACK, unchanged no-op after ACK, a newer successful same-period guide revision refreshing projections, pending delivery surviving a failure-only guide audit append, transactional failure preserving prior publication, missing/deleted recommended articles holding the old target pair and pending outbox until article redelivery, bilingual guide ordering/four-link compatibility, frozen visible projections after catalog edits, Tuesday catch-up, and pre-slot `not_due`. Frontend regressions compare complete China versus a page-failing Overseas home read in both languages, retain exactly three canonical recommendations, preserve the six-card home cap and full detail list, and keep a legacy guide when selected rows are unavailable.
+- 首次 PR 反馈修复：手动 UTC 周期将 `Z` 规范为 `+00:00`，使首次查找与待同步重试使用相同周期键；全部文章分页失败时保留 unavailable 提示，但仅在快照与成功导读所有权匹配时显示三张已冻结推荐卡片，未拥有冻结投影的失败读取仍不展示卡片。运行环境必须提供非初始化 `Storage.open_existing`；正式应用前须由主控通过只读能力与默认路径验收。
+- 验证：隔离 PostgreSQL 55442 上周报同步测试 10/10 通过；BuildInfo、Issue 268、Issue 434 前端测试 16/16 通过；前端构建、类型检查、Ruff、isort、Black、`py_compile`、`git diff --check` 通过。Lint 无错误（4 条现有警告）；A11y 浏览器检查通过；周报浏览器 fixture 32/32 通过且无模型调用。该 PR 反馈修复是本地审查限额耗尽后的已测试未审查修复，主控须执行当前 HEAD CI 和原生默认路径验收；本 worker 未提交或推送，也未进行生产写入。
+- Focused validation: 10 PostgreSQL cases passed on the dedicated disposable `weekly_test` database; frontend weekly reader test 12/12 passed. Black, isort, Ruff, py_compile, Python dead-code files/symbol gates, CLI help/JSON contract, frontend build/typecheck/ESLint, Chromium smoke and `git diff --check` passed. `Storage` is byte-identical to `origin/main`. No production connections, model calls, live writes, schedule edits, commit or push.
+- Next: final local independent review, then controller-owned frontend-only rollout, commit/PR and automation activation. The controller owns production actions.
+
 ## Latest weekly additions 客户摘要与推荐排序 — 2026-11-04
 
 - 分支 `codex/weekly-reader-summary`，基线 main `9611c8b`。本次仅前端展示：摘要说明本周发现文章数、重点主题、三篇推荐及适读主题；标题与主题用现有本地化 metadata，选文沿用同快照已保存导读。复用现有文章卡片，推荐排前三且只展示一次；详情只对剩余文章分类。首页推荐超出前六条时读取快照其他页后排序截取，读取失败保留可用预览。
