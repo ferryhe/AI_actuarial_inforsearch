@@ -33,12 +33,12 @@ const syntheticFile = {
   deleted_at: null,
 };
 
-async function assertHitTarget(page, locator, testId, width) {
+async function assertHitTarget(page, locator, testId, width, height = 844) {
   await locator.waitFor({ state: "visible" });
   await locator.click({ trial: true, timeout: 1200 });
   const box = await locator.boundingBox();
   assert.ok(box && box.x + box.width / 2 >= 0 && box.y + box.height / 2 >= 0 &&
-    box.x + box.width / 2 <= width && box.y + box.height / 2 <= 844,
+    box.x + box.width / 2 <= width && box.y + box.height / 2 <= height,
   `${testId} center outside viewport at ${width}px: ${JSON.stringify(box)}`);
   const hit = await page.evaluate(({ x, y, id }) => {
     const element = document.elementFromPoint(x, y);
@@ -67,6 +67,25 @@ async function captureHitTarget(page, locator, testId, width) {
   }
 }
 
+async function probeVerticalEdges(page, locator, testId) {
+  const box = await locator.boundingBox();
+  assert.ok(box, `${testId} must have a measurable rectangle`);
+  const samples = [];
+  for (const [edge, y] of [["top-inner", 2], ["bottom-inner", box.height - 2]]) {
+    await locator.click({ trial: true, position: { x: box.width / 2, y } });
+    const hit = await page.evaluate(({ x, y: pointY, id }) => {
+      const element = document.elementFromPoint(x, pointY);
+      return {
+        element: element?.tagName.toLowerCase() || null,
+        control: element?.closest(`[data-testid="${id}"]`)?.getAttribute("data-testid") || null,
+      };
+    }, { x: box.x + box.width / 2, y: box.y + y, id: testId });
+    assert.equal(hit.control, testId, `${testId} ${edge} was intercepted: ${JSON.stringify({ box, hit })}`);
+    samples.push({ edge, point: { x: box.x + box.width / 2, y: box.y + y }, hit });
+  }
+  return { box, samples };
+}
+
 async function installDialogApiMocks(page) {
   await page.route("**/api/**", async (route) => {
     const url = new URL(route.request().url());
@@ -91,15 +110,59 @@ async function installDialogApiMocks(page) {
 await mkdir(evidenceDir, { recursive: true });
 const browser = await chromium.launch({ executablePath, headless: true });
 try {
+  const lazyFailurePage = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await installDialogApiMocks(lazyFailurePage);
+  let lazyChatQueryPosts = 0;
+  await lazyFailurePage.route("**/api/chat/**", async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    if (url.pathname === "/api/chat/conversations" && request.method() === "POST") return route.fulfill({ json: { success: true, data: { conversation_id: "lazy-failure-chat-smoke" } } });
+    if (url.pathname === "/api/chat/conversations") return route.fulfill({ json: { success: true, data: { conversations: [] } } });
+    if (url.pathname === "/api/chat/query" && request.method() === "POST") {
+      lazyChatQueryPosts += 1;
+      return route.fulfill({ json: { success: true, data: { conversation_id: "lazy-failure-chat-smoke", response: "Synthetic Chat survived feedback module failure", citations: [] } } });
+    }
+    return route.fulfill({ json: {} });
+  });
+  let failedFeedbackChunk = false;
+  await lazyFailurePage.route("**/src/features/feedback/FeedbackForm.tsx*", async (route) => {
+    if (!failedFeedbackChunk) { failedFeedbackChunk = true; await route.abort("failed"); }
+    else await route.continue();
+  });
+  await lazyFailurePage.goto(`${baseUrl}/chat`, { waitUntil: "domcontentloaded" });
+  const lazyChatInput = lazyFailurePage.getByTestId("input-chat-message");
+  await lazyChatInput.waitFor({ state: "visible" });
+  const lazyChatSend = lazyFailurePage.getByTestId("button-send-message");
+  await lazyFailurePage.getByTestId("support-widget-trigger").click();
+  await lazyFailurePage.getByRole("alert").waitFor({ state: "visible" });
+  assert.equal(await lazyChatInput.isVisible(), true, "a failed feedback chunk must not remove Chat input");
+  assert.equal(await lazyChatSend.isVisible(), true, "a failed feedback chunk must not remove Chat send");
+  await lazyChatInput.fill("Chat remains usable after feedback chunk failure");
+  const lazyChatResponse = lazyFailurePage.waitForResponse((response) => response.url().includes("/api/chat/query") && response.request().method() === "POST");
+  await lazyChatSend.click();
+  assert.equal((await lazyChatResponse).status(), 200);
+  assert.equal(lazyChatQueryPosts, 1);
+  await lazyFailurePage.screenshot({ path: path.join(evidenceDir, "feedback-lazy-chunk-failure-localized-390x844.png"), fullPage: false });
+  await lazyFailurePage.getByRole("button", { name: "Try again" }).click();
+  await lazyFailurePage.locator("#feedback-panel").waitFor({ state: "visible" });
+  assert.equal(await lazyChatInput.isVisible(), true, "Chat remains available after feedback module retry");
+  const lazyFailureRecovery = { failedChunkLocalized: true, chatInputRemainsVisible: true, chatSendRemainsVisible: true, mockedChatSendAfterFailure: true, mockedChatQueryPosts: lazyChatQueryPosts, retryReloadsModule: await lazyFailurePage.locator("#feedback-panel").isVisible(), providerCalls: 0, screenshot: "feedback-lazy-chunk-failure-localized-390x844.png" };
+  await lazyFailurePage.close();
+
   for (const width of [390, 1024]) {
     const page = await browser.newPage({ viewport: { width, height: 844 } });
     const requests = [];
+    const feedbackPosts = [];
     await page.route("**/api/**", async (route) => {
       const request = route.request();
       const url = new URL(request.url());
       requests.push({ method: request.method(), path: `${url.pathname}${url.search}` });
       if (url.pathname === "/api/support/capabilities") {
         return route.fulfill({ json: { feedback_enabled: true, assistant_enabled: false } });
+      }
+      if (url.pathname === "/api/feedback" && request.method() === "POST") {
+        feedbackPosts.push(request.postDataJSON());
+        return route.fulfill({ status: 201, json: { feedback_id: `feedback-smoke-${width}`, status: "recorded", created_at: "2026-11-05T00:00:00Z" } });
       }
       if (url.pathname === "/api/auth/me") {
         return route.fulfill({ json: { data: { require_auth: true, authenticated: true, user: { id: 1, email: "smoke@example.test", role: "admin" }, permissions } } });
@@ -172,6 +235,14 @@ try {
     assert.equal(await feedbackInput.inputValue(), feedbackText, `feedback text was lost at ${width}px`);
     assert.equal(await feedbackSubmit.isVisible(), true, `feedback panel closed at ${width}px`);
 
+    const feedbackSubmitControl = page.getByTestId("feedback-submit");
+    const feedbackSubmitHit = await assertHitTarget(page, feedbackSubmitControl, "feedback-submit", width);
+    const feedbackResponse = page.waitForResponse((response) => response.url().includes("/api/feedback") && response.request().method() === "POST");
+    await feedbackSubmitControl.click();
+    assert.equal((await feedbackResponse).status(), 201);
+    await page.getByRole("status").waitFor({ state: "visible" });
+    assert.equal(feedbackPosts.length, 1, `feedback submit should send once at ${width}px`);
+
     const finalBoxes = await Promise.all([chatInput.boundingBox(), chatSend.boundingBox(), page.locator("#feedback-panel").boundingBox()]);
     const [inputBox, sendBox, feedbackBox] = finalBoxes;
     assert.ok(inputBox && sendBox && feedbackBox, `missing controls at ${width}px`);
@@ -190,6 +261,10 @@ try {
       selected_mode: "summary", selected_rag_mode: "standard", selected_knowledge_base: kb.kb_id,
       feedback_text_preserved: await feedbackInput.inputValue() === feedbackText,
       feedback_panel_remains_open: await feedbackSubmit.isVisible(),
+      actual_feedback_submit_clicked: true,
+      feedback_submit_hit: feedbackSubmitHit,
+      feedback_request_id: feedbackPosts[0].client_request_id,
+      feedback_receipt: await page.getByRole("status").innerText(),
       feedback_submit_did_not_intercept_chat: true, actual_chat_send_clicked: true,
       mocked_chat_query_posts: 1, real_provider_calls: 0,
       chat_input: inputBox, chat_send: sendBox, feedback_panel: feedbackBox,
@@ -226,6 +301,24 @@ try {
         drawer_closed_by_real_click: true,
         feedback_panel_remains_open: await feedbackSubmit.isVisible(),
         sentinel_preserved_and_editable: await feedbackInput.inputValue() === feedbackText,
+      });
+
+      await chatOpen.click();
+      const escapeClose = page.getByTestId("button-close-chat-sidebar");
+      await escapeClose.waitFor({ state: "visible" });
+      await escapeClose.focus();
+      await page.keyboard.press("Escape");
+      await escapeClose.waitFor({ state: "hidden" });
+      assert.equal(await feedbackSubmit.isVisible(), true, "Escape inside the Chat drawer must leave feedback open");
+      assert.equal(await feedbackInput.inputValue(), feedbackText, "Chat drawer Escape must preserve feedback text");
+      overlayFlows.push({
+        case: "chat-drawer-escape-does-not-close-feedback",
+        viewport: "390x844",
+        focus_before_escape: "button-close-chat-sidebar",
+        chat_drawer_closed: true,
+        feedback_panel_remains_open: await feedbackSubmit.isVisible(),
+        feedback_text_preserved: await feedbackInput.inputValue() === feedbackText,
+        focus_after_escape: await page.evaluate(() => document.activeElement?.getAttribute("data-testid")),
       });
 
       await supportTrigger.click();
@@ -286,6 +379,76 @@ try {
     }
     await page.close();
   }
+
+  const keyboardPage = await browser.newPage({ viewport: { width: 390, height: 500 } });
+  await installDialogApiMocks(keyboardPage);
+  const keyboardFeedbackPosts = [];
+  await keyboardPage.route("**/api/feedback", async (route) => {
+    keyboardFeedbackPosts.push(route.request().postDataJSON());
+    return route.fulfill({ status: 201, json: { feedback_id: "feedback-keyboard-sim", status: "recorded", created_at: "2026-11-05T00:00:00Z" } });
+  });
+  await keyboardPage.goto(`${baseUrl}/chat`, { waitUntil: "domcontentloaded" });
+  const keyboardChatInput = keyboardPage.getByTestId("input-chat-message");
+  await keyboardChatInput.waitFor({ state: "visible" });
+  await keyboardChatInput.fill(Array.from({ length: 18 }, (_, index) => `Synthetic keyboard height line ${index + 1}`).join("\n"));
+  assert.equal(await keyboardChatInput.evaluate((element) => getComputedStyle(element).height), "120px");
+  await keyboardPage.getByTestId("support-widget-trigger").click();
+  await keyboardPage.locator("#feedback-panel").waitFor({ state: "visible" });
+  const keyboardFeedbackInput = keyboardPage.getByLabel("Your feedback");
+  await keyboardFeedbackInput.fill("Keyboard available-height submission simulation");
+  const keyboardForm = keyboardPage.locator("#feedback-panel form");
+  const keyboardFeedbackSubmit = keyboardPage.getByTestId("feedback-submit");
+  const keyboardScrollTopBefore = await keyboardForm.evaluate((element) => element.scrollTop);
+  await keyboardFeedbackSubmit.scrollIntoViewIfNeeded();
+  const keyboardFormScrollTop = await keyboardForm.evaluate((element) => element.scrollTop);
+  assert.ok(keyboardFormScrollTop > 0, "390x500 simulation should require scrolling the feedback form to reach submit");
+  const keyboardPanelBox = await keyboardPage.locator("#feedback-panel").boundingBox();
+  assert.ok(keyboardPanelBox && keyboardPanelBox.y >= 16 && keyboardPanelBox.y + keyboardPanelBox.height <= 500,
+    `feedback panel must stay in the simulated keyboard viewport: ${JSON.stringify(keyboardPanelBox)}`);
+  const keyboardSubmitHit = await assertHitTarget(keyboardPage, keyboardFeedbackSubmit, "feedback-submit", 390, 500);
+  const keyboardSubmitEdgeHits = await probeVerticalEdges(keyboardPage, keyboardFeedbackSubmit, "feedback-submit");
+  const keyboardModeSelector = keyboardPage.getByTestId("button-mode-selector");
+  const keyboardModeEdgeHits = await probeVerticalEdges(keyboardPage, keyboardModeSelector, "button-mode-selector");
+  const keyboardModePanelGap = keyboardModeEdgeHits.box.y - (keyboardPanelBox.y + keyboardPanelBox.height);
+  await keyboardPage.screenshot({ path: path.join(evidenceDir, "keyboard-available-height-submit-ready-390x500.png"), fullPage: false });
+  const keyboardFeedbackResponse = keyboardPage.waitForResponse((response) => response.url().includes("/api/feedback") && response.request().method() === "POST");
+  await keyboardFeedbackSubmit.click();
+  assert.equal((await keyboardFeedbackResponse).status(), 201);
+  const keyboardReceiptStatus = keyboardPage.getByRole("status");
+  await keyboardReceiptStatus.waitFor({ state: "visible" });
+  await keyboardReceiptStatus.scrollIntoViewIfNeeded();
+  const keyboardReceiptBox = await keyboardReceiptStatus.boundingBox();
+  const keyboardFormBoxAfterReceipt = await keyboardForm.boundingBox();
+  assert.ok(keyboardReceiptBox && keyboardFormBoxAfterReceipt && keyboardReceiptBox.y >= keyboardFormBoxAfterReceipt.y &&
+    keyboardReceiptBox.y + keyboardReceiptBox.height <= keyboardFormBoxAfterReceipt.y + keyboardFormBoxAfterReceipt.height,
+  `receipt must be visible inside the scrollable form: ${JSON.stringify({ keyboardReceiptBox, keyboardFormBoxAfterReceipt })}`);
+  assert.equal(keyboardFeedbackPosts.length, 1);
+  await keyboardPage.screenshot({ path: path.join(evidenceDir, "keyboard-available-height-simulation-390x500.png"), fullPage: false });
+  const keyboardCase = {
+    scenario: "keyboard_available_height_simulation",
+    viewport: "390x500",
+    route: "/chat",
+    actualChatComposerHeight: "120px",
+    chatComposerBox: await keyboardChatInput.boundingBox(),
+    feedbackPanel: keyboardPanelBox,
+    feedbackFormScrollTopBefore: keyboardScrollTopBefore,
+    feedbackFormScrollTopAfter: keyboardFormScrollTop,
+    feedbackFormScrollTopAfterReceipt: await keyboardForm.evaluate((element) => element.scrollTop),
+    feedbackFormScrolled: keyboardFormScrollTop > keyboardScrollTopBefore,
+    feedbackSubmitHit: keyboardSubmitHit,
+    feedbackSubmitEdgeHits: keyboardSubmitEdgeHits,
+    chatModeEdgeHits: keyboardModeEdgeHits,
+    feedbackPanelToModeSelectorGap: keyboardModePanelGap,
+    actualFeedbackSubmitClicked: true,
+    receiptBox: keyboardReceiptBox,
+    receiptVisibleInsideForm: true,
+    feedbackRequestId: keyboardFeedbackPosts[0].client_request_id,
+    feedbackReceipt: await keyboardPage.getByRole("status").innerText(),
+    providerCalls: 0,
+    submitReadyScreenshot: "keyboard-available-height-submit-ready-390x500.png",
+    screenshot: "keyboard-available-height-simulation-390x500.png",
+  };
+  await keyboardPage.close();
 
   for (const width of [390, 1024]) {
     for (const scenario of ["database", "file-detail"]) {
@@ -422,6 +585,8 @@ try {
     overlayFlows,
     modalFlows,
     fileDetailModalFlows,
+    keyboardAvailableHeightCase: keyboardCase,
+    lazyFailureRecovery,
     actualChatSends: outcomes.length,
     realProviderCalls: 0,
   };

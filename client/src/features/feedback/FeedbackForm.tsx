@@ -9,14 +9,21 @@ type Receipt = { feedback_id: string; status: "recorded"; created_at: string };
 type Submission = { client_request_id: string; content: string; kind: Kind; origin: "widget"; page_path: string; locale: string };
 type Translate = (key: string, values?: Record<string, string | number>) => string;
 
-export default function FeedbackForm({ t, lang, onClose }: { t: Translate; lang: string; onClose: () => void }) {
+export default function FeedbackForm({ t, lang, open = true, onClose }: { t: Translate; lang: string; open?: boolean; onClose: () => void }) {
   const [location] = useLocation();
+  const locationRef = useRef(location);
+  const routeGeneration = useRef(0);
+  if (locationRef.current !== location) {
+    locationRef.current = location;
+    routeGeneration.current += 1;
+  }
   const [kind, setKind] = useState<Kind>("suggestion");
   const [content, setContent] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [receipt, setReceipt] = useState("");
-  const submissionRef = useRef<Submission | null>(null);
+  const [statusLocation, setStatusLocation] = useState(location);
+  const submissionRef = useRef<{ route: string; payload: Submission } | null>(null);
   const contentRef = useRef<HTMLTextAreaElement>(null);
   const previousLocation = useRef(location);
 
@@ -24,24 +31,24 @@ export default function FeedbackForm({ t, lang, onClose }: { t: Translate; lang:
     if (previousLocation.current !== location) {
       previousLocation.current = location;
       submissionRef.current = null;
+      setSubmitting(false);
       setReceipt("");
       setError("");
+      setStatusLocation(location);
     }
   }, [location]);
 
   useEffect(() => {
-    requestAnimationFrame(() => contentRef.current?.focus());
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [onClose]);
+    if (!open) return;
+    const frame = requestAnimationFrame(() => contentRef.current?.focus());
+    return () => cancelAnimationFrame(frame);
+  }, [open]);
 
   const edit = () => {
     submissionRef.current = null;
     setReceipt("");
     setError("");
+    setStatusLocation(location);
   };
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -51,11 +58,14 @@ export default function FeedbackForm({ t, lang, onClose }: { t: Translate; lang:
     if (!length || length > 4000 || trimmed.includes("\0")) {
       setError(t("feedback.invalid_content"));
       setReceipt("");
+      setStatusLocation(location);
       contentRef.current?.focus();
       return;
     }
 
-    const submission = submissionRef.current || {
+    const route = location;
+    const generation = routeGeneration.current;
+    const submission = submissionRef.current?.route === route ? submissionRef.current.payload : {
       client_request_id: crypto.randomUUID(),
       content: trimmed,
       kind,
@@ -63,27 +73,30 @@ export default function FeedbackForm({ t, lang, onClose }: { t: Translate; lang:
       page_path: window.location.pathname || "/",
       locale: lang === "zh" ? "zh-CN" : "en",
     };
-    submissionRef.current = submission;
+    submissionRef.current = { route, payload: submission };
     setSubmitting(true);
     setError("");
     setReceipt("");
+    setStatusLocation(route);
     try {
       const result = await apiPost<Receipt>("/api/feedback", submission);
       if (!result?.feedback_id || result.status !== "recorded") throw new Error("Invalid feedback receipt");
-      setReceipt(result.feedback_id);
+      if (routeGeneration.current === generation && locationRef.current === route) setReceipt(result.feedback_id);
     } catch (err) {
-      setError(err instanceof ApiError && err.status === 429
-        ? t("feedback.rate_limited")
-        : err instanceof ApiError && err.status >= 500
-          ? t("feedback.server_error")
-          : t("feedback.network_error"));
+      if (routeGeneration.current === generation && locationRef.current === route) {
+        setError(err instanceof ApiError && err.status === 429
+          ? t("feedback.rate_limited")
+          : err instanceof ApiError && err.status >= 500
+            ? t("feedback.server_error")
+            : t("feedback.network_error"));
+      }
     } finally {
-      setSubmitting(false);
+      if (routeGeneration.current === generation && locationRef.current === route) setSubmitting(false);
     }
   }
 
   return (
-    <section id="feedback-panel" aria-labelledby="feedback-title" className="flex max-h-[min(38rem,calc(100dvh-6rem))] max-[1279px]:max-h-[min(50dvh,calc(100dvh-6rem))] w-[min(22.5rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-xl border border-border bg-card text-card-foreground shadow-2xl">
+    <section id="feedback-panel" aria-labelledby="feedback-title" className="flex max-h-[min(38rem,calc(100dvh-6rem))] max-[1279px]:max-h-[min(calc(50dvh-18px),calc(100dvh-7rem))] w-[min(22.5rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-xl border border-border bg-card text-card-foreground shadow-2xl">
       <header className="flex items-center justify-between border-b border-border px-4 py-2">
         <h2 id="feedback-title" className="text-base font-semibold">{t("feedback.title")}</h2>
         <IconButton label={t("a11y.close_feedback")} onClick={onClose}>
@@ -121,12 +134,13 @@ export default function FeedbackForm({ t, lang, onClose }: { t: Translate; lang:
           <p id="feedback-content-hint" className="mt-1 text-xs text-muted-foreground">{t("feedback.content_hint")}</p>
         </div>
         <p className="break-all text-xs text-muted-foreground">{t("feedback.page")}: {location || "/"}</p>
-        {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
-        {receipt && <p role="status" aria-live="polite" className="break-all text-sm text-green-700 dark:text-green-400">{t("feedback.receipt", { id: receipt })}</p>}
+        {error && statusLocation === location && <p role="alert" className="text-sm text-destructive">{error}</p>}
+        {receipt && statusLocation === location && <p role="status" aria-live="polite" className="break-all text-sm text-green-700 dark:text-green-400">{t("feedback.receipt", { id: receipt })}</p>}
         <button
           type="submit"
           disabled={submitting}
           className="min-h-[44px] w-full rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:cursor-wait disabled:opacity-60"
+          data-testid="feedback-submit"
         >
           {submitting ? t("feedback.sending") : t("feedback.submit")}
         </button>

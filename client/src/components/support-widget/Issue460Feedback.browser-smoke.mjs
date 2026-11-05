@@ -91,7 +91,10 @@ try {
           });
           smoke.axeViolations.push(...axe.map((item) => ({ ...item, viewport: viewport.name, route, lang, theme })));
           await page.keyboard.press("Escape");
-          await page.waitForFunction(() => !document.querySelector("#feedback-panel"));
+          await page.waitForFunction(() => {
+            const panel = document.querySelector("#feedback-panel");
+            return !panel || panel.closest("[hidden]") !== null;
+          });
           await page.waitForFunction(() => document.activeElement?.getAttribute("data-testid") === "support-widget-trigger");
 
           await page.getByTestId("toggle-lang").click();

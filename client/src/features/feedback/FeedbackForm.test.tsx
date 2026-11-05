@@ -40,6 +40,47 @@ describe("feedback support widget", () => {
     expect(apiPost).not.toHaveBeenCalled();
   });
 
+  it("contains a rejected lazy form import inside the widget", async () => {
+    vi.resetModules();
+    vi.doMock("@/features/feedback/FeedbackForm", () => { throw new Error("synthetic chunk failure"); });
+    apiGet.mockResolvedValue({ feedback_enabled: true, assistant_enabled: false });
+    const { default: LazyWidget } = await import("@/components/support-widget/SupportWidget");
+    render(<LazyWidget />);
+    const trigger = await screen.findByTestId("support-widget-trigger");
+    fireEvent.click(trigger);
+    expect(await screen.findByRole("alert")).toHaveTextContent("feedback.load_error");
+    expect(trigger).toBeInTheDocument();
+    fireEvent.click(trigger);
+    await waitFor(() => expect(trigger).toHaveAttribute("aria-expanded", "false"));
+    vi.doUnmock("@/features/feedback/FeedbackForm");
+  });
+
+  it("keeps the draft and request id when the mounted panel closes during an uncertain submission", async () => {
+    apiGet.mockResolvedValue({ feedback_enabled: true, assistant_enabled: false });
+    let rejectPending!: (error: Error) => void;
+    apiPost.mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectPending = reject; }))
+      .mockResolvedValueOnce({ feedback_id: "receipt-after-reopen", status: "recorded", created_at: "now" });
+    render(<SupportWidget />);
+    const trigger = await screen.findByTestId("support-widget-trigger");
+    fireEvent.click(trigger);
+    const textarea = await screen.findByLabelText("feedback.content");
+    fireEvent.change(textarea, { target: { value: "Keep this draft while hidden" } });
+    fireEvent.click(screen.getByRole("button", { name: "feedback.submit" }));
+    await waitFor(() => expect(apiPost).toHaveBeenCalledOnce());
+    const originalId = apiPost.mock.calls[0][1].client_request_id;
+
+    fireEvent.click(trigger);
+    expect(textarea).not.toBeVisible();
+    fireEvent.click(trigger);
+    expect(await screen.findByLabelText("feedback.content")).toHaveValue("Keep this draft while hidden");
+    rejectPending(new TypeError("response lost"));
+    await screen.findByRole("alert");
+    fireEvent.click(screen.getByRole("button", { name: "feedback.submit" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("receipt-after-reopen");
+    expect(apiPost).toHaveBeenCalledTimes(2);
+    expect(apiPost.mock.calls[1][1].client_request_id).toBe(originalId);
+  });
+
   it("keeps the request id on retry and only shows a server receipt on success", async () => {
     window.history.replaceState({}, "", "/database");
     apiPost.mockRejectedValueOnce(new ApiError("server error", 500)).mockResolvedValueOnce({ feedback_id: "receipt-1", status: "recorded", created_at: "now" });
@@ -146,12 +187,39 @@ describe("feedback support widget", () => {
 
   it("closes on Escape and restores focus to the entry", async () => {
     apiGet.mockResolvedValue({ feedback_enabled: true, assistant_enabled: false });
-    render(<SupportWidget />);
+    render(<><button data-testid="outside-widget">Chat drawer control</button><SupportWidget /></>);
     const trigger = await screen.findByTestId("support-widget-trigger");
     fireEvent.click(trigger);
     await screen.findByLabelText("feedback.content");
-    fireEvent.keyDown(window, { key: "Escape" });
-    await waitFor(() => expect(screen.queryByLabelText("feedback.content")).not.toBeInTheDocument());
+    fireEvent.keyDown(screen.getByTestId("outside-widget"), { key: "Escape" });
+    expect(screen.getByLabelText("feedback.content")).toBeVisible();
+    fireEvent.keyDown(screen.getByLabelText("feedback.content"), { key: "Escape" });
+    await waitFor(() => expect(screen.getByLabelText("feedback.content")).not.toBeVisible());
     await waitFor(() => expect(trigger).toHaveFocus());
+  });
+
+  it.each(["receipt", "error"] as const)("ignores a stale %s after the route changes", async (outcome) => {
+    let resolveRequest!: (value: unknown) => void;
+    let rejectRequest!: (error: unknown) => void;
+    apiPost.mockImplementationOnce(() => new Promise((resolve, reject) => {
+      resolveRequest = resolve;
+      rejectRequest = reject;
+    }));
+    route.value = "/database";
+    const props = { t, lang: "en", open: true, onClose: vi.fn() };
+    const { rerender } = render(<FeedbackForm {...props} />);
+    fireEvent.change(screen.getByLabelText("feedback.content"), { target: { value: "Submission from old route" } });
+    fireEvent.click(screen.getByRole("button", { name: "feedback.submit" }));
+    await waitFor(() => expect(apiPost).toHaveBeenCalledOnce());
+
+    route.value = "/chat";
+    window.history.replaceState({}, "", "/chat");
+    rerender(<FeedbackForm {...props} />);
+    await waitFor(() => expect(screen.queryByRole("status")).not.toBeInTheDocument());
+    if (outcome === "receipt") resolveRequest({ feedback_id: "stale-receipt", status: "recorded", created_at: "now" });
+    else rejectRequest(new ApiError("stale server error", 500));
+    await waitFor(() => expect(screen.queryByRole("status")).not.toBeInTheDocument());
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("feedback.content")).toHaveValue("Submission from old route");
   });
 });
