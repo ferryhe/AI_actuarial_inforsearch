@@ -6472,3 +6472,8 @@ Current branch head 4f030be has uncommitted small catalog/Storage variable defau
 - Focused Vitest passed 9/9; typecheck, build, and diff check passed. Build retains the existing Vite large-chunk advisory. Fresh independent local review passed; TypeSafe review assessment recorded no candidate findings.
 - The earlier 32/32 browser matrix and seven-row isolated API/PostgreSQL closure remain in the acceptance receipt and evidence bundle; they were not rerun after overlay-only changes. No production service, live data, or provider was used. No dependency or lockfile changed.
 - Local acceptance and review are complete. The implementation SHA, current-HEAD GitHub checks, PR, and publication remain pending.
+
+### Issue #460 committed local review state — 2026-11-05
+
+- Implementation commit: `0f381302e7114711e840a829c321f37dd860f589`. The ignored canonical receipt `reports/issue-460/acceptance.json` is now bound to this SHA; the receipt will be force-added in a separate evidence commit. Local review is PASS; push, current-HEAD GitHub checks, and Draft PR are pending.
+
