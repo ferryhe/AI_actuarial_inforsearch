@@ -1,0 +1,379 @@
+{
+  "issue": 459,
+  "contract_version": 1,
+  "generated_at_utc": "2026-11-05T17:27:22.649097+00:00",
+  "status": "local_review_passed_pending_current_head_ci",
+  "production_deployed": false,
+  "implementation_commit_sha": null,
+  "implementation_commit_note": "Worker changes are uncommitted. Manager records the implementation commit after normal commit; source content hashes bind this local validation without a circular receipt hash.",
+  "tested_base_commit_sha": "b9bb05b843a73603f74d2df92a4c093886809b9a",
+  "tested_source_manifest": {
+    "path": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-459\\worker-tested-source.json",
+    "sha256": "b9fcd5f220c770003b309c50f6e2430e60fd3e5b0954f510f85602ea486fb18e"
+  },
+  "environment": {
+    "python": "3.11.9",
+    "postgres": "16.15 (Debian 16.15-1.pgdg13+2)",
+    "target": "disposable codex-issue-459-pg16, loopback127.0.0.1:51974, databaseissue459, test-owned schemas",
+    "database_env": "POSTGRES_TEST_URL and DATABASE_URL explicitly set to isolated test URL per process",
+    "invocation_env": {
+      "FAISS_OPT_LEVEL": "generic"
+    },
+    "cwd": "C:\\Project\\AI_actuarial_inforsearch\\.codex-worktrees\\issue-459"
+  },
+  "deliverables": {
+    "D1": [
+      "ai_actuarial/feedback/store.py",
+      "ai_actuarial/migrations/0007_feedback.sql"
+    ],
+    "D2": [
+      "ai_actuarial/api/routers/feedback.py",
+      "tests/fixtures/feedback_contract.json",
+      "docs/feedback-api.md"
+    ],
+    "D3": [
+      "ai_actuarial/shared_runtime.py",
+      "ai_actuarial/api/routers/support.py",
+      "config/sites.yaml"
+    ],
+    "D4": [
+      "tests/test_fastapi_feedback_endpoints.py",
+      "tests/test_feedback_storage.py",
+      "reports/issue-459/acceptance.json"
+    ]
+  },
+  "validation": [
+    {
+      "id": "V1",
+      "acceptance": [
+        "AC1",
+        "AC5"
+      ],
+      "expected": "Empty/v6 upgrade/repeat apply succeed; preserve existing data and versioned table/indexes",
+      "actual": {
+        "versions_before": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6
+        ],
+        "versions_after": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ],
+        "existing_tables_compared": 54,
+        "existing_data_unchanged": true,
+        "new_table_columns": 14,
+        "new_table_indexes": 6,
+        "cli_exit_codes": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "result": "PASS",
+      "commands": [
+        [
+          "C:\\Users\\ferry\\AppData\\Local\\Programs\\Python\\Python311\\python.exe",
+          "-m",
+          "ai_actuarial",
+          "schema",
+          "--help"
+        ],
+        [
+          "C:\\Users\\ferry\\AppData\\Local\\Programs\\Python\\Python311\\python.exe",
+          "-m",
+          "ai_actuarial",
+          "schema",
+          "plan",
+          "--json"
+        ],
+        [
+          "C:\\Users\\ferry\\AppData\\Local\\Programs\\Python\\Python311\\python.exe",
+          "-m",
+          "ai_actuarial",
+          "schema",
+          "apply",
+          "--json"
+        ],
+        [
+          "C:\\Users\\ferry\\AppData\\Local\\Programs\\Python\\Python311\\python.exe",
+          "-m",
+          "ai_actuarial",
+          "schema",
+          "apply",
+          "--json"
+        ],
+        [
+          "C:\\Users\\ferry\\AppData\\Local\\Programs\\Python\\Python311\\python.exe",
+          "-m",
+          "ai_actuarial",
+          "schema",
+          "plan",
+          "--json"
+        ],
+        [
+          "C:\\Users\\ferry\\AppData\\Local\\Programs\\Python\\Python311\\python.exe",
+          "-m",
+          "ai_actuarial",
+          "schema",
+          "apply",
+          "--json"
+        ],
+        [
+          "C:\\Users\\ferry\\AppData\\Local\\Programs\\Python\\Python311\\python.exe",
+          "-m",
+          "ai_actuarial",
+          "schema",
+          "apply",
+          "--json"
+        ]
+      ],
+      "evidence": [
+        "migration-cli-evidence.json",
+        "worker-focused-final.xml"
+      ]
+    },
+    {
+      "id": "V2",
+      "acceptance": [
+        "AC2",
+        "AC5"
+      ],
+      "expected": "Anonymous/account server ownership; validated bounds; committed-only receipt; replay/409;429 no write",
+      "actual": "Fresh current-code HTTP+PostgreSQL replay and final focused tests pass: anonymous/logged server identity and configured site, validation bounds, committed-only receipt, replay/409, commit-failure 503 with no row or receipt and successful retry, bounded 429; returned timestamp is UTC (+00:00).",
+      "result": "PASS",
+      "command": "python -m pytest tests/test_fastapi_feedback_endpoints.py tests/test_feedback_storage.py -q -o addopts= --capture=sys --basetemp=.pytest_cache/issue459-focused-final --junitxml=C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-459\\worker-focused-final.xml",
+      "evidence": [
+        "http-pg-evidence.json",
+        "worker-focused-final.xml"
+      ],
+      "fault_injection": "Real isolated PostgreSQL deferred constraint trigger raises during COMMIT; separate from normal request proof; no persistence mocks"
+    },
+    {
+      "id": "V3",
+      "acceptance": [
+        "AC3",
+        "AC5"
+      ],
+      "expected": "Anonymous401/ordinary403; admin filters and complete nonduplicate keyset pages; explicit status only, immutable body",
+      "actual": {
+        "permission_checks": "401/403 on both admin routes",
+        "pagination_complete_distinct_count": 5,
+        "timestamp_ties": true,
+        "body_unchanged": true
+      },
+      "result": "PASS",
+      "command": "python -m pytest tests/test_fastapi_feedback_endpoints.py tests/test_feedback_storage.py -q -o addopts= --capture=sys --basetemp=.pytest_cache/issue459-focused-final --junitxml=C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-459\\worker-focused-final.xml",
+      "evidence": [
+        "http-pg-evidence.json",
+        "worker-focused-final.xml"
+      ]
+    },
+    {
+      "id": "V4",
+      "acceptance": [
+        "AC4",
+        "AC5"
+      ],
+      "expected": "Default off, YAML/env priority, closed intake404/history retained across restart/reopen; truthful safe capabilities",
+      "actual": {
+        "default": {
+          "feedback_enabled": false,
+          "assistant_enabled": false
+        },
+        "history_unchanged_across_restart": true,
+        "assistant_unimplemented_available": false,
+        "capabilities_field_allowlist": [
+          "feedback_enabled",
+          "assistant_enabled"
+        ]
+      },
+      "result": "PASS",
+      "command": "python -m pytest tests/test_fastapi_feedback_endpoints.py tests/test_feedback_storage.py -q -o addopts= --capture=sys --basetemp=.pytest_cache/issue459-focused-final --junitxml=C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-459\\worker-focused-final.xml",
+      "evidence": [
+        "http-pg-evidence.json",
+        "worker-focused-final.xml"
+      ]
+    }
+  ],
+  "checks": {
+    "focused_final": {
+      "command": "python -m pytest tests/test_fastapi_feedback_endpoints.py tests/test_feedback_storage.py -q -o addopts= --capture=sys --basetemp=.pytest_cache/issue459-focused-final --junitxml=C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-459\\worker-focused-final.xml",
+      "exit_code": 0,
+      "junit": {
+        "tests": 41,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      }
+    },
+    "worker_expanded": {
+      "exit_code": 1,
+      "junit": {
+        "tests": 153,
+        "failures": 4,
+        "errors": 0,
+        "skipped": 1
+      },
+      "note": "4 existing Windows os.link WinError5 failures in combined process; not implementation findings"
+    },
+    "controller_runtime_followup": {
+      "exit_code": 0,
+      "junit": {
+        "tests": 19,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 1
+      },
+      "source": "controller-runtime-result.json",
+      "note": "Controller authorized host standalone proof:18 pass/1skip. Keep distinct from worker combined results."
+    },
+    "black": "PASS",
+    "isort": "PASS",
+    "pylint_errors_only": "PASS, []",
+    "python_dead_code_files": "PASS,0 findings",
+    "python_dead_code_symbols": "PASS,0 findings",
+    "diff_whitespace": "PASS",
+    "local_review": "PASS",
+    "typesafe_review": "PASS; 0 candidate findings; review summary coverage 0.97"
+  },
+  "failed_or_interrupted_checks": [
+    {
+      "command": "Initial expanded pytest with native/default capture; redirected generic retry",
+      "exit_code": -1073741819,
+      "actual": "Native FAISS DLL initialization failure during collection",
+      "evidence": [
+        "worker-regression.log",
+        "worker-regression-generic.log"
+      ],
+      "resolution": "No dependency/product change; direct invocation with generic and --capture=sys reached/runs cases"
+    },
+    {
+      "command": "Worker expanded regression",
+      "exit_code": 1,
+      "actual": "148 pass/1skip/4 existing bootstrap os.link WinError5 failures",
+      "evidence": [
+        "worker-regression-workspace.xml"
+      ],
+      "resolution": "Controller standalone runtime file18pass/1skip exit0"
+    },
+    {
+      "command": "python scripts/dead_code_gate.py files --report-dir reports/issue459-dead-code-files",
+      "actual": "Knip not installed",
+      "next_command": "npm ci; python scripts/dead_code_gate.py files --report-dir reports/issue459-dead-code-files"
+    },
+    {
+      "command": "python scripts/quality_gate.py --report-dir reports/issue459-quality",
+      "actual": "Interrupted after discovering full-suite launch; no full quality PASS claimed"
+    }
+  ],
+  "not_run": [
+    "UI/browser(#460)",
+    "Inbox/poller/schedules(#461)",
+    "Assistant/provider/KB(#462-464)",
+    "Production deployment",
+    "Independent review and current-HEAD CI (manager gate)"
+  ],
+  "known_limits": [
+    "Existing process-local rate store: quotas per API process, reset on restart",
+    "Admin keyset is live; status changes may change filter membership",
+    "Legacy tokens without an email account have null user_id",
+    "Assistant capabilities staysfalse until implementation"
+  ],
+  "receipt_git_status": "reports/ is ignored; worktree receipt not force-added",
+  "retained_receipt": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-459\\acceptance.json",
+  "evidence": {
+    "worker-tested-source.json": {
+      "path": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-459\\worker-tested-source.json",
+      "sha256": "b9fcd5f220c770003b309c50f6e2430e60fd3e5b0954f510f85602ea486fb18e"
+    },
+    "worker-focused-tests-1.log": {
+      "path": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-459\\worker-focused-tests-1.log",
+      "sha256": "a00effc2868ab5cda17b269b303f092ca6d5a0e3a7080eb2eeb750c5f25ffa0a"
+    },
+    "worker-focused-final.xml": {
+      "path": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-459\\worker-focused-final.xml",
+      "sha256": "9bb65141fb64bd1430eb18449a5ca5a265ae4b7556b908d1b4cb30c663667077"
+    },
+    "worker-regression.xml": {
+      "path": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-459\\worker-regression.xml",
+      "sha256": "456104226d6b8c06dbd1ca67c422ced2232a070afd02cd5799c8918fdac45ee5"
+    },
+    "worker-regression-workspace.xml": {
+      "path": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-459\\worker-regression-workspace.xml",
+      "sha256": "02f50e8228aa7aac6407f79ebd40fc3895bcbbdfb2a81fed6f98e4d2c7e67341"
+    },
+    "worker-regression.log": {
+      "path": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-459\\worker-regression.log",
+      "sha256": "a168b2c2167ab7c15608125cec661f5afad88e38eba0950c7b1d84cc9473bf0d"
+    },
+    "worker-regression-generic.log": {
+      "path": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-459\\worker-regression-generic.log",
+      "sha256": "2a529768df8d68192885ef790dda5a72a7fe05b4b56f1cb5128b40760cfc1a57"
+    },
+    "http-pg-evidence.json": {
+      "path": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-459\\http-pg-evidence.json",
+      "sha256": "21465c0d40ae58c578852d42a94d68ae99ab41f48eea84af81e2281a3c4d0d9c"
+    },
+    "migration-cli-evidence.json": {
+      "path": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-459\\migration-cli-evidence.json",
+      "sha256": "a9a3e33c72065110ede14aa7b13402045f03f1dbc94a98586460f1ef7739b70d"
+    },
+    "worker-live-evidence.py": {
+      "path": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-459\\worker-live-evidence.py",
+      "sha256": "439ad07e016cdee23b2df91ed948759dcddfdcb4abccf2215284c3a19d53833e"
+    },
+    "worker-live-evidence.log": {
+      "path": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-459\\worker-live-evidence.log",
+      "sha256": "e0625e71d45153c11c6fec45a2ca2f904b46369859178595c027ef3b09f1258a"
+    },
+    "root-validation-request.json": {
+      "path": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-459\\root-validation-request.json",
+      "sha256": "30facb57322fdac8ba7b3f5013b1e68748ec87ae906f25e2b63656ac47fcacf0"
+    },
+    "controller-runtime-result.json": {
+      "path": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-459\\controller-runtime-result.json",
+      "sha256": "c301bb8e11820950bad3bcbb0eeb98684ae429f1e978532f3f8d94bb5a2e749e"
+    },
+    "controller-runtime.xml": {
+      "path": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-459\\controller-runtime.xml",
+      "sha256": "c4fcff4443d9727a17a9d8663e893f6b14da5b9d3f775631da217c55e3b654ef"
+    },
+    "worker-report.md": {
+      "path": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-459\\worker-report.md",
+      "sha256": "b1579b6e8b2b9e12fda22c6387ea0b9195dbccb86742713eae8795fa12f746d5"
+    },
+    "review-1.md": {
+      "path": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-459\\review-1.md",
+      "sha256": "344e60105eb225150b98ee749e57a8ee95c1891fd399102babd819cdd9ef9eb5"
+    },
+    "review-1-typesafe-result.json": {
+      "path": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-459\\review-1-typesafe-result.json",
+      "sha256": "8cab4c80f8db45fe5159c6955d45eea776c45c0b9d307e48d6f6dbe00b9e0ff5"
+    }
+  },
+  "review": {
+    "verdict": "PASS",
+    "reviewer": "/root/reviewer_459_1 (gpt-6-sol/high)",
+    "report": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-459\\review-1.md",
+    "typesafe": {
+      "model": "jev-latest",
+      "review_summary_coverage": 0.97,
+      "findings": [],
+      "report": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-459\\review-1-typesafe-result.json"
+    },
+    "evidence_replay": "Current code replayed against isolated PostgreSQL 16 after review; 25 HTTP exchanges, exit 0; response timestamp verified from raw JSON as +00:00."
+  }
+}

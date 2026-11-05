@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import secrets
 
 from fastapi import FastAPI, HTTPException
@@ -34,6 +35,8 @@ from .routers.agentic_rag import router as agentic_rag_router
 from .routers.article_interpretations import router as article_interpretations_router
 from .routers.auth import router as auth_router
 from .routers.chat import router as chat_router
+from .routers.feedback import feedback_disabled_response
+from .routers.feedback import router as feedback_router
 from .routers.files_write import router as files_write_router
 from .routers.meta import router as meta_router
 from .routers.metrics import router as metrics_router
@@ -44,6 +47,7 @@ from .routers.rag_admin import router as rag_admin_router
 from .routers.read import router as read_router
 from .routers.ready_data_automation import router as ready_data_automation_router
 from .routers.ready_data_publication import router as ready_data_publication_router
+from .routers.support import router as support_router
 from .routers.weekly_updates import router as weekly_updates_router
 
 logger = logging.getLogger(__name__)
@@ -110,6 +114,13 @@ def _default_session_cookie_secure(require_auth: bool, config_data: dict[str, ob
 
 
 def _apply_runtime_feature_state(app: FastAPI, features: dict[str, object]) -> None:
+    app.state.feedback_enabled = bool(features.get("feedback_enabled"))
+    app.state.feedback_site_key = str(features.get("feedback_site_key") or "")
+    app.state.feedback_rate_limit = str(features.get("feedback_rate_limit") or "")
+    if app.state.feedback_enabled and not re.fullmatch(
+        r"[a-z0-9][a-z0-9_-]{0,63}", app.state.feedback_site_key
+    ):
+        raise ValueError("Enabled feedback requires a valid deployment feedback_site_key")
     app.state.require_auth = bool(features.get("require_auth"))
     app.state.enable_global_logs_api = bool(features.get("enable_global_logs_api"))
     app.state.enable_rate_limiting = bool(features.get("enable_rate_limiting"))
@@ -198,6 +209,13 @@ def create_app() -> FastAPI:
 
     class _CsrfProtectionMiddleware(BaseHTTPMiddleware):
         async def dispatch(self, request, call_next):
+            # Let the disabled feature return its stable 404 before CSRF or rate checks.
+            if (
+                request.method == "POST"
+                and request.url.path == "/api/feedback"
+                and not getattr(request.app.state, "feedback_enabled", False)
+            ):
+                return feedback_disabled_response()
             if not bool(getattr(request.app.state, "enable_csrf", False)):
                 return await call_next(request)
 
@@ -248,6 +266,8 @@ def create_app() -> FastAPI:
     app.add_middleware(_CsrfProtectionMiddleware)
 
     app.include_router(meta_router, prefix="/api", tags=["meta"])
+    app.include_router(support_router, prefix="/api", tags=["support"])
+    app.include_router(feedback_router, prefix="/api", tags=["feedback"])
     app.include_router(metrics_router, prefix="/api", tags=["metrics"])
     app.include_router(migration_router, prefix="/api", tags=["migration"])
     app.include_router(read_router, prefix="/api", tags=["read"])
