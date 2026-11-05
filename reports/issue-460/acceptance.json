@@ -481,7 +481,7 @@
       "submit_actual_click": true,
       "receipt_visible": true
     },
-    "uncommitted": true,
+    "uncommitted": false,
     "implementation_commit": "f2e74df"
   }
 }
