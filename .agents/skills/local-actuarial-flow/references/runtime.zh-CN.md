@@ -195,4 +195,24 @@ python -m ai_actuarial.local_collection_runtime cleanup-targets --target china -
 
 Chunk/embed 恢复会针对当前 URL 幂等重跑原生 chunk generation，并把该任务返回的确切 `chunk_set_id` 列表与当前 KB `embedding_identity_key` 传给 embedding generation；不会按 URL/profile 在历史 ready sets 中猜选。该阶段失败时 pending URL 保留，重试完成 chunk、embedding 和 binding 后才继续完整 KB index 与 Ready。
 
+## 两站周报本地同步
+
+周报只由中国站现有周一 08:30（北京时间）任务生成。下面的本地 CLI 只读取指定的完整周报和中英文导读，不调用模型；它把同一快照、成员顺序、导读和三篇推荐卡片投影送到中国与海外。共享周报页面只在快照 ID 和成功导读生成时间匹配时使用这三条冻结投影。原始 API 卡片和文章目录仍使用各站本地数据，周报生成器也继续读取原始目录。海外导入前只检查三篇推荐文章在目标站仍有未删除的文章记录；缺失时保留旧周报和待同步内容，待现有文章同步补齐后重跑即可。发送前会把内容和每站 ACK 保存在本地 `state_root`，失败后重跑会重放同一内容；不会因传输重试重新生成导读。目标端事务失败时保留原有已发布周报。
+
+流式周报发布要求目标部署提供非初始化的 `Storage.open_existing`；上线前须通过只读能力检查和默认路径验收，不得回退到会初始化 schema 的构造器。
+
+先用只读预览查看即将同步的当前 UTC 周报：
+
+```powershell
+python -m ai_actuarial.local_weekly_publication preview --config reports/local-automation-state/config.local.json --json
+```
+
+自动运行入口选择最近一个已到生成时点的完整 UTC 周。周一 00:30Z 前会返回 `not_due`；之后在后续工作日运行也会补同步最近的已完成周，便于本地设备错过预定时点后追赶。目标尚未生成完整快照/导读时，最多等待 600 秒。首次手动迁移可明确指定完整周界限：
+
+```powershell
+python -m ai_actuarial.local_weekly_publication sync --config reports/local-automation-state/config.local.json --period-start 2026-10-26T00:00:00+00:00 --period-end 2026-11-02T00:00:00+00:00 --wait-seconds 600 --json
+```
+
+同一周期全部 ACK 后重复调用返回 `unchanged`，不再连接目标或写入。预览不写目标；同步失败返回非零状态并保留可重试状态。此 CLI 本身不创建或管理 Scheduler，定时入口沿用本地自动化 owner。
+
 `run-daily` 不是 Scheduler。日报 09:00 触发和任务开关继续沿用现有 automation owner；本地运行 CLI 不迁移或新建调度。首次真实写入和 automation 启用须由独立 review/验收流程批准。
