@@ -294,20 +294,30 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         self.enabled = enabled
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
+        is_feedback = request.method.upper() == "POST" and request.url.path == "/api/feedback"
+        if is_feedback and not getattr(request.app.state, "feedback_enabled", False):
+            return await call_next(request)
         enabled = (
             bool(getattr(request.app.state, "enable_rate_limiting", False))
             if self.enabled is None
             else bool(self.enabled)
         )
-        if not enabled:
+        if not enabled and not is_feedback:
             return await call_next(request)
 
-        if not _should_rate_limit(request):
+        if not is_feedback and not _should_rate_limit(request):
             return await call_next(request)
 
         is_auth_mutation = _is_auth_mutation(request)
         role = "anonymous" if is_auth_mutation else _get_user_role(request)
-        if is_auth_mutation:
+        if is_feedback:
+            rules = parse_rate_limit_rules(getattr(request.app.state, "feedback_rate_limit", ""))
+            rules = [
+                RateLimitRule(min(rule.limit, 1000), rule.window_seconds, rule.label)
+                for rule in rules
+            ] or [RateLimitRule(5, 60, "minute"), RateLimitRule(30, 3600, "hour")]
+            key = f"feedback:{_get_rate_limit_key(request)}"
+        elif is_auth_mutation:
             rules = list(AUTH_RATE_LIMIT_RULES)
             key = f"auth:{request.url.path}:ip:{client_ip(request)}"
         else:
@@ -334,9 +344,14 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 logger.warning("Rate limit exceeded for %s (role: %s)", key, role)
                 retry_after = _retry_after_seconds(bucket, rule.window_seconds, now)
                 detail = f"Rate limit exceeded. Limit: {rule.limit} requests/{rule.label}."
-                content: dict[str, int | str] = {"detail": detail, "retry_after": retry_after}
+                content: dict[str, object] = {"detail": detail, "retry_after": retry_after}
                 if is_auth_mutation:
                     content["error"] = "rate_limit_exceeded"
+                if is_feedback:
+                    content = {
+                        "error": {"code": "RATE_LIMITED", "message": detail},
+                        "retry_after": retry_after,
+                    }
                 headers = {"Retry-After": str(retry_after)}
                 headers.update(_cors_headers_for_rate_limit(request))
                 return JSONResponse(

@@ -1,0 +1,64 @@
+{
+  "contract_version": 1,
+  "submission": {
+    "method": "POST",
+    "path": "/api/feedback",
+    "request": {
+      "client_request_id": "f1b8f461-0111-4bdc-b1a0-f35c73f756b0",
+      "content": "请增加按日期筛选功能。",
+      "kind": "suggestion",
+      "origin": "widget",
+      "page_path": "/database?search=private#results",
+      "locale": "zh-CN"
+    },
+    "status": 201,
+    "receipt": {
+      "feedback_id": "f6ab7860-316a-4e8b-b62c-916bcbbeced0",
+      "status": "recorded",
+      "created_at": "2026-11-05T12:00:00+00:00"
+    }
+  },
+  "admin_page": {
+    "method": "GET",
+    "path": "/api/admin/feedback?status=new&site_key=china&limit=1&cursor=0",
+    "response": {
+      "items": [{
+        "id": 10,
+        "feedback_id": "f6ab7860-316a-4e8b-b62c-916bcbbeced0",
+        "client_request_id": "f1b8f461-0111-4bdc-b1a0-f35c73f756b0",
+        "site_key": "china",
+        "content": "请增加按日期筛选功能。",
+        "kind": "suggestion",
+        "origin": "widget",
+        "user_id": null,
+        "page_path": "/database",
+        "locale": "zh-CN",
+        "status": "new",
+        "created_at": "2026-11-05T12:00:00+00:00",
+        "updated_at": "2026-11-05T12:00:00+00:00"
+      }],
+      "next_cursor": 10
+    },
+    "last_page": {"items": [], "next_cursor": null}
+  },
+  "status_update": {
+    "method": "PATCH",
+    "path": "/api/admin/feedback/f6ab7860-316a-4e8b-b62c-916bcbbeced0",
+    "request": {"status": "reviewed"}
+  },
+  "capabilities": {
+    "path": "/api/support/capabilities",
+    "default": {"feedback_enabled": false, "assistant_enabled": false},
+    "feedback_only": {"feedback_enabled": true, "assistant_enabled": false}
+  },
+  "errors": {
+    "feature_disabled": {"error": {"code": "FEATURE_DISABLED", "message": "Feedback is disabled"}},
+    "invalid_request": {"error": {"code": "INVALID_REQUEST", "message": "Invalid feedback request"}},
+    "idempotency_conflict": {"error": {"code": "IDEMPOTENCY_CONFLICT", "message": "client_request_id was already used for a different request"}},
+    "unavailable": {"error": {"code": "FEEDBACK_UNAVAILABLE", "message": "Feedback could not be recorded; retry later"}},
+    "not_found": {"error": {"code": "FEEDBACK_NOT_FOUND", "message": "Feedback was not found"}},
+    "rate_limited": {"error": {"code": "RATE_LIMITED", "message": "Rate limit exceeded. Limit: 5 requests/minute."}, "retry_after": 60},
+    "unauthorized": {"detail": "Unauthorized"},
+    "forbidden": {"detail": "Forbidden"}
+  }
+}

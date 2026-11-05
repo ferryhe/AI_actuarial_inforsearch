@@ -724,6 +724,10 @@ rag_config:
   include_hierarchy: true
   index_type: Flat
 features:
+  feedback_enabled: false
+  assistant_enabled: false
+  feedback_site_key: local
+  feedback_rate_limit: 5 per minute, 30 per hour
   enable_file_deletion: true
   require_auth: true
   enable_csrf: true
