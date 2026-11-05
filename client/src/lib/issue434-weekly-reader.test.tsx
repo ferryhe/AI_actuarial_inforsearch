@@ -30,9 +30,10 @@ test("failed guides recommend three existing article cards and preserve failure 
     const markup = renderToStaticMarkup(<WeeklyHighlightCard view={view} lang={lang} t={t} onOpenFile={() => {}} />);
     assert.ok(markup.includes("AI guide unavailable"));
     assert.equal((markup.match(/data-testid="weekly-file-row-/g) || []).length, 5);
-    assert.equal(view.recommendedCount, 0, "a failed guide without saved links cannot invent recommendations");
-    assert.equal((markup.match(/<li>/g) || []).length, 0);
-    assert.equal((markup.match(/href="https:\/\/example.org\//g) || []).length, 0);
+    assert.equal(view.recommendedCount, 3, "a legacy failed guide without saved links uses the deterministic first three cards");
+    assert.deepEqual(view.files.slice(0, 3).map(file => file.url), files.slice(0, 3).map(file => file.url));
+    assert.equal((markup.match(/<li>/g) || []).length, 3);
+    assert.ok(markup.includes(lang === "zh" ? "本周推荐阅读以下文章：" : "Recommended reading this week:"));
     assert.ok(markup.includes("Source summary 0."));
   }
   assert.equal(buildWeeklyDashboardView({ ...base, filesUnavailable: true }, "en", t).explanationText, "Files unavailable");

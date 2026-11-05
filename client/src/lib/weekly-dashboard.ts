@@ -483,13 +483,19 @@ export function buildWeeklyDashboardView(
   }
 
   const loadedRecommendationUrls = new Set(data.files.map((file) => weeklyGuideUrl(file.url)));
+  const hasSavedRecommendationUrls = recommendationUrls.length > 0;
   const savedRecommendationsAvailable = recommendationUrls.length > 0
     && recommendationUrls.every((url) => loadedRecommendationUrls.has(url));
   const canBuildRecommendations = frozenFiles !== null
-    || (!data.filesUnavailable && savedRecommendationsAvailable);
+    || (!data.filesUnavailable && (hasSavedRecommendationUrls
+      ? savedRecommendationsAvailable
+      : data.files.length > 0));
+  const recommendationFiles = hasSavedRecommendationUrls
+    ? files.slice(0, recommendationUrls.length)
+    : files.slice(0, 3);
   const recommendations = data.snapshot?.file_count && canBuildRecommendations
     && ["complete", "failed"].includes(explanationState)
-    ? files.slice(0, recommendationUrls.length)
+    ? recommendationFiles
     : [];
   if (recommendations.length) {
     const escape = (value: string) => value.replace(/([\\`*{}\[\]<>#.!_+()\-])/g, "\\$1").replace(/\r?\n/g, " ");
