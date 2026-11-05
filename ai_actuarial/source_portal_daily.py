@@ -23,11 +23,6 @@ def is_generic_material_label(title: str) -> bool:
     return bool(_GENERIC_MATERIAL_LABEL.fullmatch(" ".join(str(title).split()).strip()))
 
 
-def _observation_scope(item: dict[str, Any]) -> str | None:
-    # Legacy pages lack request provenance; file downloads are always comparable GETs.
-    return item.get("request_scope", "" if item["kind"] == "file" else None)
-
-
 def validate_daily_evidence(evidence: dict[str, Any]) -> tuple[dt.datetime, dt.date, str]:
     if not isinstance(evidence, dict) or set(evidence) != {
         "schema_version",
@@ -184,17 +179,10 @@ def validate_daily_evidence(evidence: dict[str, Any]) -> tuple[dt.datetime, dt.d
 def daily_description(
     evidence: list[dict[str, Any]],
     previous: list[dict[str, Any]],
-    directory_description: tuple[str, str] | None = None,
+    *,
+    ai_materials: set[tuple[str, str]],
 ) -> tuple[str, str]:
-    observations = {
-        (item["url"], _observation_scope(item), item["raw_sha256"], item["kind"]): item
-        for run in evidence
-        for item in run["observations"]
-    }
-    current_by_scope: dict[tuple[str, str | None], set[str]] = {}
-    previous_by_scope: dict[tuple[str, str | None], str] = {}
     previous_urls: set[str] = set()
-    page_urls = {item["url"] for item in observations.values() if item["kind"] == "page"}
 
     def run_sort_key(run: dict[str, Any]) -> tuple[dt.datetime, str]:
         return (
@@ -203,28 +191,10 @@ def daily_description(
         )
 
     ordered_evidence = sorted(evidence, key=run_sort_key)
-    for url, scope, sha, _kind in observations:
-        current_by_scope.setdefault((url, scope), set()).add(sha)
     for run in sorted(previous, key=run_sort_key):
         for item in run["observations"]:
             previous_urls.add(item["url"])
-            previous_by_scope[(item["url"], _observation_scope(item))] = item["raw_sha256"]
         previous_urls.update(item["url"] for item in run["hub_results"])
-    changed_pages = len(
-        {
-            url
-            for (url, scope), shas in current_by_scope.items()
-            if url in page_urls
-            and scope is not None
-            and (
-                len(shas) > 1
-                or bool(
-                    previous_by_scope.get((url, scope)) and shas - {previous_by_scope[(url, scope)]}
-                )
-            )
-        }
-    )
-    pages = {url for url, _scope, _sha, kind in observations if kind == "page"}
     known_urls = set(previous_urls)
     first_files: dict[str, tuple[dict[str, Any], str | None, bool]] = {}
     for run in ordered_evidence:
@@ -264,31 +234,30 @@ def daily_description(
             )[:120]
         )
         for item, status, previously_known in first_files.values()
-        if not previously_known and status != "existing"
+        if (item["url"], item["raw_sha256"]) in ai_materials
+        and not previously_known
+        and status != "existing"
     }
-    titles = sorted({title for title in new_files.values() if title})
-    page_word = "page" if len(pages) == 1 else "pages"
-    changed_word = "page" if changed_pages == 1 else "pages"
-    file_word = "file" if len(new_files) == 1 else "files"
-    zh = f"今天查看了{len(pages)}个网页，其中{changed_pages}个网页有变化；新发现{len(new_files)}份资料。"
-    en = f"Today, we checked {len(pages)} web {page_word}; {changed_pages} {changed_word} changed, and found {len(new_files)} new {file_word}."
+    titles = sorted(new_files.values())
     if new_files:
+        zh = f"新发现{len(new_files)}份AI资料"
+        material_word = "material" if len(new_files) == 1 else "materials"
+        en = f"Found {len(new_files)} new AI {material_word}"
         shown_titles = titles[:8]
         listing_zh = "、".join(f"「{title}」" for title in shown_titles)
         listing_en = "; ".join(f"“{title}”" for title in shown_titles)
-        remaining = max(0, len(titles) - len(shown_titles))
-        if listing_zh:
-            if remaining:
-                listing_zh += f"，另有{remaining}份资料"
-                listing_en += f" and {remaining} more"
-            zh += " 新发现的资料：" + listing_zh + "。"
-            en += " Newly found: " + listing_en + "."
+        remaining = len(new_files) - len(shown_titles)
+        if remaining:
+            listing_zh += f"，另有{remaining}份AI资料"
+            listing_en += f" and {remaining} more"
+        zh += "：" + listing_zh + "。"
+        en += ": " + listing_en + "."
+    else:
+        zh = "未发现新的AI资料。"
+        en = "No new AI materials were found."
     if any(
         run["limits"]["source_error_count"] or not run["limits"]["finished"] for run in evidence
     ):
         zh += " 部分内容暂时无法查看；本次汇报只包含已成功查看的内容。"
         en += " Some content could not be checked; this report covers only successful reads."
-    if directory_description:
-        zh = directory_description[0][:600] + " " + zh
-        en = directory_description[1][:600] + " " + en
     return zh, en

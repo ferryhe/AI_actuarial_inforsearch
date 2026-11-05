@@ -11,7 +11,8 @@ import pytest
 
 import ai_actuarial.content_hub as hub
 import ai_actuarial.local_collection_runtime as runtime
-from ai_actuarial.source_portal_daily import daily_description, validate_daily_evidence
+from ai_actuarial.source_portal_daily import daily_description as _daily_description
+from ai_actuarial.source_portal_daily import validate_daily_evidence
 from ai_actuarial.source_portals import SOURCE_PORTALS_BY_KEY, source_portal_for_observation
 from tests.postgres_helpers import uninitialized_postgres_url_for_path
 
@@ -46,6 +47,13 @@ def _evidence(*, day="2026-11-02", hour=12, site="cia-ica", sha="a", url=None):
     }
 
 
+def _describe_as_ai(current, previous=()):
+    materials = {
+        (item["url"], item["raw_sha256"]) for run in current for item in run["observations"]
+    }
+    return _daily_description(current, list(previous), ai_materials=materials)
+
+
 def _database(tmp_path, name):
     url = uninitialized_postgres_url_for_path(tmp_path / name)
     with psycopg2.connect(url) as connection:
@@ -71,7 +79,7 @@ def test_collect_sites_have_cards_and_soa_topic_provenance_is_exact():
     )
 
 
-def test_daily_description_distinguishes_observation_change_import_and_backlog():
+def test_daily_description_lists_first_new_material_and_suppresses_backlog():
     previous = _evidence(day="2026-11-01")
     current = _evidence(sha="b")
     previous["observations"].append(
@@ -120,24 +128,23 @@ def test_daily_description_distinguishes_observation_change_import_and_backlog()
             "status": "new",
         },
     ]
-    zh, en = daily_description([current, copy.deepcopy(current)], [previous])
-    assert "今天查看了1个网页，其中1个网页有变化；新发现1份资料" in zh
-    assert "新发现的资料：「New mortality study」" in zh
-    assert "Today, we checked 1 web page; 1 page changed, and found 1 new file" in en
+    zh, en = _describe_as_ai([current, copy.deepcopy(current)], [previous])
+    assert "新发现1份AI资料：「New mortality study」" in zh
+    assert "Found 1 new AI material: “New mortality study”." in en
     assert "New mortality study" in en and "AI mortality study" not in en and "older.pdf" not in en
     assert "不代表全站扫描" not in zh and "full-site scan" not in en
     assert "预算用完" not in zh and "request budget" not in en
     assert len(zh) <= 2000 and len(en) <= 2000
-    # A different file version is neither a changed webpage nor a newly found file.
+    # A different file version remains known by URL on later daily runs.
     reverting = _evidence(sha="a", day="2026-11-03")
-    assert "0个网页有变化" in daily_description([reverting], [previous, current])[0]
+    assert _describe_as_ai([reverting], [previous, current])[0] == "未发现新的AI资料。"
 
 
 @pytest.mark.parametrize("title", ["Download the full report", "Download PDF", "Read more"])
 def test_daily_description_replaces_legacy_generic_titles_with_url_filename(title):
     evidence = _evidence()
     evidence["observations"][0]["title"] = title
-    zh, en = daily_description([evidence], [])
+    zh, en = _describe_as_ai([evidence], [])
     assert "report.pdf" in zh and "report.pdf" in en
     assert title not in zh and title not in en
 
@@ -154,17 +161,17 @@ def test_daily_description_states_remaining_title_count_clearly_in_chinese():
                 "title": f"Mortality study {index}",
             }
         )
-    zh, _en = daily_description([evidence], [])
-    assert "，另有1份资料" in zh
+    zh, _en = _describe_as_ai([evidence], [])
+    assert "，另有1份AI资料" in zh
     assert "等1份" not in zh
 
 
 def test_daily_description_reports_observed_file_without_hub_import_result():
     evidence = _evidence()
     evidence["observations"][0]["title"] = "Observed study"
-    zh, en = daily_description([evidence], [])
-    assert "新发现1份资料" in zh and "「Observed study」" in zh
-    assert "found 1 new file" in en and "“Observed study”" in en
+    zh, en = _describe_as_ai([evidence], [])
+    assert "新发现1份AI资料：「Observed study」" in zh
+    assert "Found 1 new AI material: “Observed study”." in en
 
     evidence["hub_results"] = [
         {
@@ -176,7 +183,21 @@ def test_daily_description_reports_observed_file_without_hub_import_result():
             "status": "existing",
         }
     ]
-    assert "新发现0份资料" in daily_description([evidence], [])[0]
+    assert "未发现新的AI资料" in _describe_as_ai([evidence], [])[0]
+
+
+def test_daily_description_requires_exact_ai_identity_without_title_keyword_guessing():
+    evidence = _evidence()
+    observation = evidence["observations"][0]
+    observation["title"] = "Governance study"
+    identity = (observation["url"], observation["raw_sha256"])
+
+    assert "Governance study" in _daily_description([evidence], [], ai_materials={identity})[0]
+    assert _daily_description([evidence], [], ai_materials=set())[0] == "未发现新的AI资料。"
+    assert (
+        _daily_description([evidence], [], ai_materials={(identity[0], "f" * 64)})[0]
+        == "未发现新的AI资料。"
+    )
 
 
 def test_daily_description_uses_first_daily_observation_to_identify_known_materials():
@@ -196,13 +217,13 @@ def test_daily_description_uses_first_daily_observation_to_identify_known_materi
     known = evidence_with_status(12, "a", "existing")
     updated = evidence_with_status(14, "b", "new")
     for runs in ([known, updated], [updated, known]):
-        assert "新发现0份资料" in daily_description(list(runs), [])[0]
+        assert "未发现新的AI资料" in _describe_as_ai(list(runs), [])[0]
 
     discovered = evidence_with_status(12, "a", "new")
     retry = evidence_with_status(14, "a", "existing")
     for runs in ([discovered, retry], [retry, discovered]):
-        zh, en = daily_description(list(runs), [])
-        assert "新发现1份资料" in zh and "found 1 new file" in en
+        zh, en = _describe_as_ai(list(runs), [])
+        assert "新发现1份AI资料" in zh and "Found 1 new AI material" in en
 
 
 def test_daily_description_excludes_materials_in_previous_and_same_day_backlog_hub_results():
@@ -227,7 +248,7 @@ def test_daily_description_excludes_materials_in_previous_and_same_day_backlog_h
             "status": "new",
         }
     ]
-    assert "新发现0份资料" in daily_description([current], [prior])[0]
+    assert "未发现新的AI资料" in _describe_as_ai([current], [prior])[0]
 
     backlog = _evidence(hour=12, url="https://www.cia-ica.ca/other.pdf")
     backlog["observations"][0].update(kind="page", title="", request_scope="c" * 64)
@@ -235,7 +256,7 @@ def test_daily_description_excludes_materials_in_previous_and_same_day_backlog_h
     current["captured_at"] = "2026-11-02T14:00:00-05:00"
     current["run_id"] = hashlib.sha256(current["captured_at"].encode()).hexdigest()
     for runs in ([backlog, current], [current, backlog]):
-        assert "新发现0份资料" in daily_description(list(runs), [])[0]
+        assert "未发现新的AI资料" in _describe_as_ai(list(runs), [])[0]
 
 
 def test_daily_description_excludes_materials_known_only_through_previous_hub_history():
@@ -260,7 +281,7 @@ def test_daily_description_excludes_materials_known_only_through_previous_hub_hi
             "status": "new",
         }
     ]
-    assert "新发现0份资料" in daily_description([current], [previous])[0]
+    assert "未发现新的AI资料" in _describe_as_ai([current], [previous])[0]
 
 
 @pytest.mark.parametrize("kind", ["page", "file"])
@@ -270,7 +291,7 @@ def test_daily_description_uses_general_wording_for_partial_read_failures(kind):
     if kind == "page":
         evidence["observations"][0]["request_scope"] = "d" * 64
     evidence["limits"]["source_error_count"] = 1
-    zh, en = daily_description([evidence], [])
+    zh, en = _describe_as_ai([evidence], [])
     assert "部分内容暂时无法查看；本次汇报只包含已成功查看的内容。" in zh
     assert "Some content could not be checked; this report covers only successful reads." in en
     assert "网页暂时无法查看" not in zh and "pages could not be checked" not in en
@@ -321,7 +342,7 @@ def test_daily_evidence_rejects_empty_misattributed_or_unbounded_data(mutation):
     ],
 )
 @pytest.mark.parametrize("same_response", [False, True])
-def test_post_page_observations_keep_request_scopes_and_compare_only_matching_requests(
+def test_post_page_observations_preserve_request_scopes_and_hashes(
     tmp_path, monkeypatch, site_id, kind, dimensions, same_response
 ):
     monkeypatch.setattr(runtime, "_ACTIVE_STATE_PATH", tmp_path / "state.json")
@@ -375,28 +396,10 @@ def test_post_page_observations_keep_request_scopes_and_compare_only_matching_re
     for item in evidence["observations"]:
         item.pop("artifact_path")
     validate_daily_evidence(evidence)
-    unique_urls = 2 if site_id == "caa" else 1
-    zh, en = daily_description([evidence], [])
-    assert f"we checked {unique_urls} web page" in en
-    assert "0 pages changed" in en and "found 0 new files" in en
+    _zh, en = _describe_as_ai([evidence], [])
+    assert "No new AI materials were found." in en
+    assert "checked" not in en and "page changed" not in en
     assert all("is_article" not in item for item in evidence["observations"])
-    assert "0个网页有变化" in zh
-    assert "0 pages changed" in daily_description([evidence], [evidence])[1]
-    post_index = next(
-        index
-        for index, item in enumerate(evidence["observations"])
-        if item["url"] == runtime._canonical_url(endpoint)
-    )
-    # Another request scope is not another new URL, nor a comparable content change.
-    other_scope = copy.deepcopy(evidence)
-    other_scope["observations"][post_index]["request_scope"] = "e" * 64
-    other_scope["observations"][post_index]["raw_sha256"] = "f" * 64
-    assert "0 pages changed" in daily_description([other_scope], [evidence])[1]
-    # Re-reading one existing request scope with different bytes is a verified change.
-    changed = copy.deepcopy(evidence)
-    changed["observations"][post_index]["raw_sha256"] = "f" * 64
-    assert "1 page changed" in daily_description([changed], [evidence])[1]
-    assert "1 page changed" in daily_description([evidence, changed], [])[1]
 
 
 def test_legacy_page_evidence_retains_hash_and_url_history_without_comparing_unknown_scopes(
@@ -411,12 +414,12 @@ def test_legacy_page_evidence_retains_hash_and_url_history_without_comparing_unk
     current = _evidence(url=legacy["observations"][0]["url"], sha="b")
     current["observations"][0].update(kind="page", request_scope="c" * 64)
     projected = record(current)
-    assert "0 pages changed" in projected["description_en"]
+    assert projected["description_en"] == "No new AI materials were found."
     legacy_multiple = copy.deepcopy(legacy)
     legacy_multiple["observations"].append(
         {**legacy_multiple["observations"][0], "raw_sha256": "d" * 64}
     )
-    assert "0 pages changed" in daily_description([legacy_multiple], [])[1]
+    assert _describe_as_ai([legacy_multiple], [])[1] == "No new AI materials were found."
     saved = hub.content_hub_read_source_portal_capture(
         portal_key=legacy["portal_key"],
         capture_id=old["capture_id"],
@@ -444,9 +447,8 @@ def test_hub_same_day_union_replay_conflict_and_separate_directory_scope(tmp_pat
     later = _evidence(hour=14, site="cia-research-publications", sha="b")
     two = record_daily(later)
     assert two["capture_id"] > one["capture_id"]
-    assert "we checked 0 web pages" in two["description_en"]
-    assert "found 1 new file" in two["description_en"]
-    assert "AI mortality study" in two["description_en"]
+    assert two["description_en"] == "No new AI materials were found."
+    assert "AI mortality study" not in two["description_en"]
     replay = record_daily(first)
     assert replay["duplicate"] is True and replay["capture_id"] == two["capture_id"]
     conflicting = copy.deepcopy(first)
@@ -488,10 +490,9 @@ def test_hub_same_day_union_replay_conflict_and_separate_directory_scope(tmp_pat
     assert "Directory study" in directory["description_en"]
     earlier_arrival = _evidence(hour=11, url="https://www.cia-ica.ca/other.pdf")
     three = record_daily(earlier_arrival)
-    assert "found 2 new files" in three["description_en"]
-    assert "Directory study" in three["description_en"]
-    assert three["description_en"].startswith(directory["description_en"])
-    assert "no longer lists “Old directory study”" in three["description_en"]
+    assert three["description_en"] == "No new AI materials were found."
+    assert "Directory study" not in three["description_en"]
+    assert "Old directory study" not in three["description_en"]
     assert three["captured_at"] == directory["captured_at"]
     assert three["capture_id"] > directory["capture_id"]
     read = hub.content_hub_read_source_portal_capture(
@@ -517,6 +518,137 @@ def test_hub_same_day_union_replay_conflict_and_separate_directory_scope(tmp_pat
             database_url=url,
             schema=schema,
         )
+
+
+def test_hub_daily_description_only_lists_exact_ai_first_enrichment(tmp_path):
+    url, schema = _database(tmp_path, "daily-ai-material-filter")
+    portal = SOURCE_PORTALS_BY_KEY["cia-publications"]
+
+    def version(slug, title, markdown, *, primary=None, categories=None):
+        canonical_url = f"https://www.cia-ica.ca/research/{slug}.pdf"
+        imported = hub.ingest_live_article(
+            canonical_url=canonical_url,
+            source_site="cia-ica",
+            source_page_url=portal.url,
+            title=title,
+            raw_bytes=f"{slug} source bytes".encode(),
+            markdown=markdown,
+            content_type="application/pdf",
+            data_root=tmp_path / "live-data",
+            database_url=url,
+            schema=schema,
+        )
+        if primary:
+            package = {
+                "title": title,
+                "summary": f"Summary for {title}",
+                "category": primary,
+                "keywords": [primary],
+            }
+            hub.save_live_enrichment(
+                content_version_id=imported["content_version_id"],
+                markdown_text_variant_id=imported["markdown_text_variant_id"],
+                markdown_sha256=imported["markdown_sha256"],
+                primary_category=primary,
+                bilingual_metadata={"zh": package, "en": package},
+                categories=categories,
+                date_facts={
+                    "publication_date": None,
+                    "revision_date": None,
+                    "document_version_date": None,
+                },
+                date_review_status="complete",
+                date_review_reason=None,
+                date_review_unresolved=[],
+                recipe="daily-description-test",
+                run_id=f"daily-{slug}",
+                database_url=url,
+                schema=schema,
+            )
+        return {"url": canonical_url, **imported}
+
+    ai = version(
+        "governance",
+        "Governance study",
+        "AI governance evidence supports this study.",
+        primary="AI",
+        categories=[{"key": "AI", "evidence": ["AI governance evidence"]}],
+    )
+    secondary = version(
+        "pricing",
+        "Pricing with AI",
+        "Pricing analysis discusses AI tools.",
+        primary="Pricing",
+        categories=[
+            {"key": "Pricing", "evidence": ["Pricing analysis"]},
+            {"key": "AI", "evidence": ["AI tools"]},
+        ],
+    )
+    unclassified = version("unclassified", "Unclassified AI survey", "Unreviewed survey.")
+    mismatch = version(
+        "version-mismatch",
+        "Version changed AI overview",
+        "AI overview evidence for the stored version.",
+        primary="AI",
+        categories=[{"key": "AI", "evidence": ["AI overview evidence"]}],
+    )
+    excluded = version(
+        "excluded",
+        "Excluded AI survey",
+        "AI evidence for an excluded source.",
+        primary="AI",
+        categories=[{"key": "AI", "evidence": ["AI evidence"]}],
+    )
+    with psycopg2.connect(url) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "INSERT INTO excluded_urls (url_identity_sha256, url_value_json, reason) "
+                "VALUES (%s, %s, 'tender')",
+                (hashlib.sha256(excluded["url"].encode()).hexdigest(), json.dumps(excluded["url"])),
+            )
+
+    directory = hub.content_hub_record_source_portal_capture(
+        portal_key=portal.portal_key,
+        page_url=portal.url,
+        scope_key=portal.scope_key,
+        captured_at="2026-11-02T10:00:00-05:00",
+        acquired_on="2026-11-02",
+        page_sha256="e" * 64,
+        entries=[{"url": secondary["url"], "title": "Unrelated finance item"}],
+        complete=True,
+        intro_zh="目录前言和无关资料清单",
+        intro_en="Directory introduction and unrelated material list.",
+        database_url=url,
+        schema=schema,
+    )
+    evidence = _evidence()
+    evidence["observations"] = [
+        {
+            "url": item["url"],
+            "raw_sha256": raw_sha or item["raw_sha256"],
+            "source_page_url": portal.url,
+            "title": title,
+            "kind": "file",
+        }
+        for item, raw_sha, title in (
+            (ai, None, "Governance study"),
+            (secondary, None, "Pricing with AI"),
+            (unclassified, None, "Unclassified AI survey"),
+            (mismatch, "f" * 64, "Version changed AI overview"),
+            (excluded, None, "Excluded AI survey"),
+        )
+    ]
+
+    daily = hub.content_hub_record_source_portal_daily(evidence, database_url=url, schema=schema)
+    assert daily["description_zh"] == "新发现1份AI资料：「Governance study」。"
+    assert daily["description_en"] == "Found 1 new AI material: “Governance study”."
+    assert "Unrelated finance item" not in daily["description_en"]
+    assert "Pricing with AI" not in daily["description_en"]
+    assert "Unclassified AI survey" not in daily["description_en"]
+    assert "Version changed AI overview" not in daily["description_en"]
+    assert "Excluded AI survey" not in daily["description_en"]
+    assert "Directory introduction" not in daily["description_en"]
+    assert directory["description_en"] != daily["description_en"]
 
 
 class _Crawler:
@@ -602,12 +734,12 @@ def test_capture_reports_qualified_html_articles_but_not_navigation_pages(
     for observation in evidence["observations"]:
         observation.pop("artifact_path")
     validate_daily_evidence(evidence)
-    zh, en = daily_description([evidence], [])
-    assert "今天查看了1个网页" in zh and "新发现1份资料" in zh
-    assert expected_title in zh and "1 new file" in en
+    zh, en = _describe_as_ai([evidence], [])
+    assert f"新发现1份AI资料：「{expected_title}" in zh
+    assert expected_title in en and "Found 1 new AI material" in en
     if article_label != "Annual Mortality Study":
         assert article_label not in zh and article_label not in en
-    assert "新发现0份资料" in daily_description([evidence], [evidence])[0]
+    assert "未发现新的AI资料" in _describe_as_ai([evidence], [evidence])[0]
 
     navigation_state = {"articles": {}}
     runtime._capture(
@@ -638,7 +770,7 @@ def test_capture_reports_qualified_html_articles_but_not_navigation_pages(
     for observation in navigation_evidence["observations"]:
         observation.pop("artifact_path")
     validate_daily_evidence(navigation_evidence)
-    assert "新发现0份资料" in daily_description([navigation_evidence], [])[0]
+    assert "未发现新的AI资料" in _describe_as_ai([navigation_evidence], [])[0]
 
 
 @pytest.mark.parametrize(
@@ -689,7 +821,7 @@ def test_capture_uses_html_article_title_when_link_label_is_generic(
     evidence = {"schema_version": 1, "portal_key": "cia-publications", **copy.deepcopy(run)}
     for item in evidence["observations"]:
         item.pop("artifact_path")
-    description_zh, _description_en = daily_description([evidence], [])
+    description_zh, _description_en = _describe_as_ai([evidence], [])
     assert expected_title in description_zh
     assert "Read more" not in description_zh
 
@@ -745,7 +877,7 @@ def test_capture_duplicate_article_aliases_keep_first_useful_title(tmp_path, mon
     evidence = {"schema_version": 1, "portal_key": "cia-publications", **copy.deepcopy(run)}
     for item in evidence["observations"]:
         item.pop("artifact_path")
-    description_zh, _description_en = daily_description([evidence], [])
+    description_zh, _description_en = _describe_as_ai([evidence], [])
     assert "Annual Mortality Study" in description_zh
     assert "annual-mortality-study" not in description_zh
 
@@ -864,9 +996,11 @@ def test_daily_persistence_merges_article_marker_when_duplicate_referrers_collap
     assert evidence["observations"][0]["title"] == "Annual Mortality Study"
     assert evidence["observations"][0]["source_page_url"] == portal.url
     validate_daily_evidence(evidence)
-    description_zh, description_en = daily_description([evidence], [])
-    assert "今天查看了1个网页" in description_zh and "新发现1份资料" in description_zh
-    assert "Annual Mortality Study" in description_zh and "1 new file" in description_en
+    description_zh, description_en = _describe_as_ai([evidence], [])
+    assert "新发现1份AI资料：「Annual Mortality Study」" in description_zh
+    assert (
+        "Annual Mortality Study" in description_en and "Found 1 new AI material" in description_en
+    )
     with psycopg2.connect(url) as connection:
         with connection.cursor() as cursor:
             cursor.execute(
@@ -957,8 +1091,8 @@ def test_runtime_file_only_partial_attempt_records_hub_before_digest_and_retries
         request_limit=1,
     )
     [update] = sent[0][1]
-    assert "1 new file" in update["description_en"]
-    assert "Mortality study" in update["description_en"]
+    assert update["description_en"] == "No new AI materials were found."
+    assert "Mortality study" not in update["description_en"]
     assert any(
         "cia-publications" in item and "digest_count=1" in item and "overseas=pending" in item
         for item in receipt["evidence"]
@@ -1001,7 +1135,8 @@ def test_partial_page_without_directory_entries_still_has_daily_digest(tmp_path,
         state, {"targets": {target: {"host": target} for target in ("china", "overseas")}}, url
     )
     assert len(sent) == 2
-    assert "we checked 1 web page" in sent[0]["description_en"]
+    assert sent[0]["description_en"] == "No new AI materials were found."
+    assert "checked" not in sent[0]["description_en"]
     assert "directory no longer" not in sent[0]["description_en"].lower()
 
 

@@ -592,16 +592,45 @@ def content_hub_record_source_portal_daily(
                             "Stored source portal daily evidence failed SHA verification"
                         )
                     (current if prior_date == acquired_on else previous).append(prior_evidence)
-                cursor.execute(
-                    "SELECT description_zh, description_en FROM source_portal_captures "
-                    "WHERE portal_key = %s AND acquired_on = %s AND capture_kind = 'directory' "
-                    "AND complete = TRUE AND description_zh IS NOT NULL AND description_en IS NOT NULL "
-                    "ORDER BY captured_at DESC, capture_id DESC LIMIT 1",
-                    (portal_key, acquired_on),
+                observed = sorted(
+                    {
+                        (item["url"], item["raw_sha256"])
+                        for run in current
+                        for item in run["observations"]
+                    }
                 )
-                directory_description = cursor.fetchone()
+                url_hashes = [
+                    hashlib.sha256(url.encode("utf-8")).hexdigest() for url, _sha in observed
+                ]
+                url_by_hash = {
+                    identity_hash: url
+                    for (url, _sha), identity_hash in zip(observed, url_hashes, strict=True)
+                }
+                ai_materials: set[tuple[str, str]] = set()
+                if observed:
+                    cursor.execute(
+                        "SELECT v.url_value_json, v.url_identity_sha256, v.raw_sha256 "
+                        "FROM content_versions v "
+                        "JOIN article_enrichment_annotations a USING (content_version_id) "
+                        "JOIN unnest(%s::text[], %s::text[]) AS observed(url_identity_sha256, raw_sha256) "
+                        "ON observed.url_identity_sha256 = v.url_identity_sha256 "
+                        "AND observed.raw_sha256 = v.raw_sha256 "
+                        "WHERE a.categories_json->0->>'key' = 'AI' "
+                        "AND a.source_primary_category = 'AI' "
+                        "AND NOT EXISTS (SELECT 1 FROM excluded_urls e "
+                        "WHERE e.url_identity_sha256 = v.url_identity_sha256)",
+                        (url_hashes, [sha for _url, sha in observed]),
+                    )
+                    for url_value, identity_hash, raw_sha in cursor.fetchall():
+                        identity_hash = str(identity_hash).strip()
+                        url = _load_json(url_value)
+                        if url != url_by_hash.get(identity_hash):
+                            raise ContentHubError(
+                                "AI URL identity hash does not match the exact stored URL"
+                            )
+                        ai_materials.add((url, str(raw_sha).strip()))
                 description_zh, description_en = daily_description(
-                    current, previous, directory_description
+                    current, previous, ai_materials=ai_materials
                 )
                 cursor.execute(
                     "SELECT max(captured_at) FROM source_portal_captures "
