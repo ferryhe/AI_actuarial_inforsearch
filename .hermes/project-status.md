@@ -6500,4 +6500,3 @@ Current branch head 4f030be has uncommitted small catalog/Storage variable defau
 ### Issue #460 remote-fix implementation commit — 2026-11-05
 
 - Implementation/status commit: `f2e74df`. The sanitized canonical acceptance receipt now binds this implementation SHA and will be committed as a separate evidence commit; both commits will be pushed together once. No status-only push is planned.
-
