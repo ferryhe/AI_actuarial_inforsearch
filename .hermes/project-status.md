@@ -6403,3 +6403,72 @@ Current branch head 4f030be has uncommitted small catalog/Storage variable defau
 - Independent Linux full self-check passed on the exact adapter with before/after hashes unchanged, cached Python 3.11, no network, read-only source and temporary-only writable storage. Both targets also passed an isolated native systemd smoke: stop an owned test timer, start a uniquely named recovery timer, run /usr/bin/true successfully, and clean all test units. Existing services, containers, databases and production schedules were untouched by those smoke tests.
 - Per the user's quick-mode local-review-limit exception, this is the final tested correction without another Sol review. It is not recorded as reviewer PASS; no review 16 or additional TypeSafe call is permitted under this completed budget.
 - Product receiver source remains 337df9c46727e4166d57f27ba7e4e55ebde86d52 for four modules; full site identity remains EEE and no database migration is requested. This status commit binds the final artifact for current-HEAD CI. Live receiver cutover, real local Chinese/English generation, two-target readback/idempotency, old-plan disable/local08 enable, merge and cleanup remain required.
+
+## 2026-11-05 Issue #460 local implementation
+
+- Worker branch `codex/issue-460-feedback-widget`, based on `4e8a06972403515502e8e7e5396b91fb235ecd29`. Added a lazy-loaded feedback-only widget and bilingual form, mounted in Layout; no AI UI or generation path.
+- Final local acceptance: feedback component tests 8/8, typecheck/build/diff whitespace checks pass. Browser: 32 route × viewport × locale × theme cases, 0 axe violations; desktop Ask Agent card remains uncovered and mobile main scrolls while drawer is open. All panel targets are at least 44px.
+- Real isolated PostgreSQL 16.15/loopback API/browser acceptance: seven receipt/text readbacks match one row each; retry after a committed response drop returns same receipt; 500/429 fault-injected retries, double-click one POST, feedback-disabled and capabilities-failure states request no feedback module; generation count 0. Evidence and screenshots under `reports/issue-459-464-20261105/issue-460/`; sanitized ignored receipt in `reports/issue-460/acceptance.json`.
+- Initial automated run passed but a manager visual check found the panel covered the homepage Ask Agent card. It is retained as initial visual FAIL; final corrected matrix and screenshots PASS under the evidence `browser/final/` directory. Initial evidence is preserved under `browser/initial/`.
+- No commit, push, PR, deployment, or production change by the worker. Independent review and manager SHA binding remain pending.
+- Isolated validation resources were shut down after readback: disposable container `codex-issue460-pg16` removed; loopback ports 8000, 5173, and 56618 verified free. See the shutdown receipt in the retained evidence directory.
+
+### Issue #460 review-fix R1/R2 — 2026-11-05
+
+- Addressed accepted review items R1/R2 on the same Issue branch. The SupportWidget's fixed transparent wrapper now lets pointer events pass through except on the panel and entry; on `/chat` below 1280px the panel is raised 64px. Other routes retain the existing panel position. Final browser smoke at 390x844 and 1024x844 confirms the input hit target is Chat's `textarea[data-testid=input-chat-message]`, the send hit target belongs to `button-send-message`, and clicking it submits one mocked Chat request at each width. No provider request occurred. The first panel-only adjustment still intercepted the input; failed and corrected evidence is retained under `browser/review-fix/`.
+- Feedback submissions now retain the complete first payload (including locale) and `client_request_id` while the outcome is uncertain. A language change therefore retries the same canonical request and can recover the original receipt; editing content/type or changing route clears that retry snapshot and creates a new id.
+- Review-fix checks: focused Vitest 9/9, typecheck, production build, browser smoke at both widths, and `git diff --check` passed. Full 32-combination matrix and real API/PostgreSQL closure were not rerun for these targeted changes; prior evidence remains preserved. Exact logs/results are listed in `reports/issue-460/acceptance-review-fix.json` and the worker report addendum.
+- Worker-owned Vite server was stopped and port 5173 had no listener. Changes remain local and uncommitted; no commit, push, PR, or production operation was performed.
+
+### Issue #460 R1 Chat control-row follow-up — 2026-11-05
+
+- Manager visual review found that the Chat textarea and send were reachable, but Expert mode, the RAG selector row, and Knowledge Bases were obscured at 390px and 1024px. Corrected by moving only the `/chat` panel farther upward (128px bottom margin at widths up to 1279px); the entry trigger remains in place and other routes retain their layout.
+- The expanded browser smoke trial-clicked and hit-tested the composer, send, Expert selector, both RAG choices, and Knowledge Bases selector. All six were visible and actual `elementFromPoint` targets mapped to Chat at both viewport sizes. Actual Chat send remained functional; mocked requests per viewport 1, provider calls 0.
+- New evidence: `browser/review-fix-chat-controls/`. Focused Vitest 9/9, typecheck, build, diff-check, and browser smoke passed; the full matrix and real API/PostgreSQL closure were not repeated. The acceptance receipt and worker report were updated with exact paths/results.
+
+### Issue #460 R1 Chat expanded-menu follow-up — 2026-11-05
+
+- The review-2/Judge finding traced to Chat's composer/footer `backdrop-blur` stacking context: increasing only the popup child z-index did not move it above the SupportWidget stacking layer. Set the Chat footer context to z-60; feedback panel and Chat state remain independent.
+- Browser smoke now actually expands and selects a Chat mode, both RAG choices, and a synthetic available KB with feedback open at 390px and 1024px. Mode/KB menu options pass `elementFromPoint` and trial-click checks, and their selected state is verified. Feedback text remains unchanged, feedback stays open, Chat send remains reachable, and provider count is 0 (all `/api` is mocked).
+- Final smoke, focused tests 9/9, typecheck, build, and diff-check pass. Failed/intermediate attempts are retained in `browser/review-fix-chat-menus/`; final screenshots, JSON and logs are also there. Full 32-case/API-PG checks were not rerun.
+
+### Issue #460 R1 final conditional layer and validation — 2026-11-05
+
+- The Chat footer stacking layer now rises to z-60 only while the support widget is open. Layout provides `group/support-widget` plus `data-feedback-open`; Chat uses Tailwind's matching group-data selector. This preserves the default Chat stacking order while allowing the menus above the feedback panel.
+- Conditional final version passed the menu smoke at both viewport sizes. All mode/RAG/KB choices were selected; feedback text and open panel were preserved, Chat send worked, and provider count stayed at 0. Final screenshots were reviewed and are saved in `browser/review-fix-chat-menus/`; pre-conditional screenshots and all failed/intermediate logs remain alongside them.
+- Final validations on the exact final code: focused Vitest 9/9, typecheck, build, diff-check, and browser menu smoke all PASS, exit 0. The JSON receipt now points to the final logs/results. Full 32-case matrix and real API/PostgreSQL were not rerun.
+
+### Popup z-index baseline restored — 2026-11-05
+
+- The two Chat dropdown popup classes are restored to their original `z-50`; the composer/footer stacking context alone conditionally becomes z-60 while feedback is open. This keeps the menu fix local to the open-widget state.
+- Repeated final menu smoke at 390px/1024px passed after this correction, including actual mode/RAG/KB selection, hit tests, trial clicks, feedback text/panel preservation, and mocked Chat send. Provider calls 0. `npm run build` and `git diff --check` also passed, exit 0. Final evidence and refreshed receipt are in `browser/review-fix-chat-menus/` and `reports/issue-460/acceptance-review-fix.json`.
+- Vitest was not rerun for the popup z-index-only adjustment; the preceding 9/9 run remains valid. Full matrix/API-PG were not rerun.
+
+### Issue #460 round-3 overlay audit — 2026-11-05 (in progress)
+
+- Added bounded overlay order for the Chat drawer and Layout mobile navigation while preserving the feedback widget/form and draft. Drawer/navigation actual click cases pass at 390x844; Chat mode/RAG/KB actual selection smoke passes at 390x844 and 1024x844.
+- Database and FileDetail dialog hit checks were extended to both 390px and 1024px, including header close, confirm trial only, and actual cancel. At 390px all tested actions hit the dialog. At 1024px header close and cancel work, but confirm center is intercepted by feedback form on both routes; no confirm action was submitted. This is a reproducible in-scope AC1 issue awaiting a narrow host-layer solution from the read-only Architect.
+- Current smoke evidence: `browser/overlay-review-3/issue460-overlay-round3-control-audit.json` and `.log`; pre-Architect tests: focused Vitest 9/9, typecheck, build, and diff-check all pass, logs in `browser/overlay-review-3/checks/`. The browser smoke exits 1 to report the confirmed 1024px collision. Full 32-case/API-PG closure was not rerun.
+
+### Issue #460 round-3 overlay audit — final — 2026-11-05
+
+- Read-only caller review confirmed `ConfirmDeleteModal` is used by Database, FileDetail, and Knowledge with no lower route stacking context. At 1024px, its `lg:z-50` tied the later SupportWidget z-50, causing the measured confirm hit collision. Removed only that responsive override; the dialog remains z-60 at all widths.
+- Final target smoke passed at 390x844 and 1024x844. Chat mode/RAG/KB selection and send passed; feedback text/panel remained intact. At 390px, Chat drawer interactions, drawer-first backdrop interception, and Layout sidebar navigation to `/knowledge` passed with the feedback draft preserved. Database/FileDetail at both widths: header close, confirm trial-only hit, and actual cancel click all hit the dialog. Confirm was never submitted; feedback drafts survived cancel.
+- Pre-fix 1024px confirm hit failures remain in `browser/overlay-review-3/`; final JSON/log and screenshots are in `browser/review-fix-chat-menus-final-z60/`. Focused Vitest 9/9, typecheck, build, diff-check and targeted browser smoke all PASS. Full 32-case matrix and real API/PostgreSQL were not rerun. All API calls were mocked, provider calls 0.
+- Vite stopped; port 5173 has no listener. Worktree remains uncommitted. Receipt and worker report include exact checks and evidence paths.
+- Repeated final smoke after adding a wait for the dialog opacity animation before screenshots; all browser actions still pass. Final modal screenshot is stable and shows the dialog above the widget; transition captures are retained with `-pre-animation-wait` suffixes. Final `git diff --check` also passes.
+
+### Issue #460 FileDetail-owned dialog overlay follow-up — final — 2026-11-05
+
+- The expanded browser smoke reproduced the Catalog cancel control being intercepted by the feedback textarea at 390px. The pre-fix failure is preserved in `browser/review-fix-owned-modals/`.
+- Raised only FileDetail's own Catalog/Chunk `Modal` overlay from z-50 to z-[60] and added stable IDs for the modal surface/cancel controls. At both widths, Catalog and Chunk submit controls now pass trial-click/element hit checks (no submit action is performed), cancel controls hit the correct modal and actual cancel clicks close it; feedback remains open and retains its synthetic sentinel.
+- Final complete overlay/control audit passed: Chat menu selections at 390/1024, drawer-after-feedback controls/conversation, drawer-first support-trigger interception, Layout nav to `/knowledge`, Database/FileDetail ConfirmDelete header/confirm-trial/cancel at 390/1024, and FileDetail Catalog/Chunk submit-trial/cancel at 390/1024. API routes are synthetic mocks; provider calls 0.
+- Focused Vitest 9/9, typecheck, build, diff-check, and full targeted overlay browser smoke PASS. Final evidence: `browser/review-fix-owned-modals-final/`; no full 32-case matrix or real PG/API closure rerun. Vite stopped; port 5173 has no listener. Work remains local/uncommitted.
+
+### Issue #460 final local review and overlay verification — 2026-11-05
+
+- Final implementation keeps feedback and future assistant modules separate. The support entry is gated by #459 capabilities and loads the feedback form on open. Current overlay ordering keeps Chat menus above feedback, Chat and site drawers above overlapping content, and Database/FileDetail modal controls clickable while preserving typed feedback.
+- The final targeted browser audit passed at 390x844 and 1024x844: Chat mode/RAG/KB selection and send; Chat drawer in both open orders; mobile site navigation; Database/FileDetail delete dialogs; FileDetail Catalog and Chunk dialogs. Destructive or submit controls were trial-clicked only; cancel actions were clicked. Feedback text remained intact and model/provider calls were zero.
+- Focused Vitest passed 9/9; typecheck, build, and diff check passed. Build retains the existing Vite large-chunk advisory. Fresh independent local review passed; TypeSafe review assessment recorded no candidate findings.
+- The earlier 32/32 browser matrix and seven-row isolated API/PostgreSQL closure remain in the acceptance receipt and evidence bundle; they were not rerun after overlay-only changes. No production service, live data, or provider was used. No dependency or lockfile changed.
+- Local acceptance and review are complete. The implementation SHA, current-HEAD GitHub checks, PR, and publication remain pending.
