@@ -5339,6 +5339,35 @@ def test_remote_article_sync_requests_only_the_manual_interpretation_id():
     assert requests[0]["interpretation_id"] == interpretation_id
 
 
+def test_remote_article_sync_manual_candidate_lookup_error_is_not_acknowledged():
+    issue = {
+        "interpretation_id": "missing-manual-ready",
+        "status": "failed",
+        "error": "sync_candidate_interpretation_not_found",
+    }
+
+    def invoke(_config, target, payload):
+        assert target == "china"
+        assert payload["interpretation_id"] == issue["interpretation_id"]
+        return {
+            "schema_version": 1,
+            "operation": payload["operation"],
+            "target": "china",
+            "status": "partial",
+            "drafts": [],
+            "issues": [issue],
+            "more_pending": False,
+        }
+
+    result = runtime._sync_saved_remote_article_interpretations(
+        {}, interpretation_id=issue["interpretation_id"], invoke=invoke
+    )
+
+    assert result["status"] == "partial"
+    assert result["all_targets_acknowledged"] is False
+    assert result["issues"] == [issue]
+
+
 def test_local_article_interpretations_no_candidate_and_sync_only_never_generate():
     result = runtime.run_local_article_interpretations(
         {},

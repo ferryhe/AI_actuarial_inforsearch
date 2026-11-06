@@ -4090,8 +4090,8 @@ def list_article_interpretation_sync_candidates(
         while True:
             if interpretation_id is not None:
                 page = connection.execute(
-                    "SELECT payload_json, created_at, interpretation_id "
-                    "FROM article_interpretations WHERE interpretation_id=? AND status='ready'",
+                    "SELECT payload_json, created_at, interpretation_id, status "
+                    "FROM article_interpretations WHERE interpretation_id=?",
                     (interpretation_id,),
                 ).fetchall()
             elif scan_cursor:
@@ -4115,8 +4115,25 @@ def list_article_interpretation_sync_candidates(
                     (offset,),
                 ).fetchall()
             if not page:
+                if interpretation_id is not None:
+                    issues.append(
+                        {
+                            "interpretation_id": interpretation_id,
+                            "status": "failed",
+                            "error": "sync_candidate_interpretation_not_found",
+                        }
+                    )
                 break
             for row in page:
+                if interpretation_id is not None and row[3] != "ready":
+                    issues.append(
+                        {
+                            "interpretation_id": interpretation_id,
+                            "status": "failed",
+                            "error": "sync_candidate_interpretation_not_ready",
+                        }
+                    )
+                    continue
                 draft = dict(row[0])
                 try:
                     identity = _interpretation_identity(draft)

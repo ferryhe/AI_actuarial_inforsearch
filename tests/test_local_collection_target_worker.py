@@ -3163,12 +3163,9 @@ def test_article_interpretation_sync_candidate_scan_skips_conflict_only_history(
             if "pg_advisory_xact_lock" in statement:
                 self.scan_locks += 1
                 return Cursor([])
-            if (
-                "FROM article_interpretations WHERE interpretation_id=? AND status='ready'"
-                in statement
-            ):
+            if "FROM article_interpretations WHERE interpretation_id=?" in statement:
                 row = next((row for row in drafts if row["interpretation_id"] == params[0]), None)
-                return Cursor([(row, row["created_at"], params[0])] if row else [])
+                return Cursor([(row, row["created_at"], params[0], row["status"])] if row else [])
             if statement.startswith("SELECT payload_json, created_at, interpretation_id"):
                 offset = params[-1]
                 self.offsets.append(offset)
@@ -3280,6 +3277,36 @@ def test_article_interpretation_sync_candidate_scan_skips_conflict_only_history(
     assert connection.scan_locks == scan_locks_before
     assert connection.cursor_reads == cursor_reads_before
     assert connection.cursor_writes == cursor_writes_before
+
+    ready_draft = drafts[-1]
+    ready_identity = identities[ready_draft["interpretation_id"]]
+    ready_source_identity = worker._interpretation_source_identity(ready_identity, ready_draft)
+    ready_locale_digest = worker._interpretation_locale_digest(ready_draft, "zh")
+    ready_reader_fields = worker._interpretation_reader_fields(ready_draft, "zh")
+    for target in ("china", "overseas"):
+        receipts[worker._interpretation_ack_key(target, ready_source_identity, "zh")] = {
+            "receipt_type": "target_sync_locale",
+            "target": target,
+            "locale": "zh",
+            "source_identity": ready_source_identity,
+            "locale_digest": ready_locale_digest,
+            "draft_sha256": ready_identity["draft_sha256"],
+            "status": "acknowledged",
+            "reader_fields": ready_reader_fields,
+        }
+    already_acknowledged = worker.list_article_interpretation_sync_candidates(
+        {
+            "schema_version": 1,
+            "operation": "list_article_interpretation_sync_candidates",
+            "target": "china",
+            "limit": 3,
+            "interpretation_id": ready_draft["interpretation_id"],
+        },
+        runtime_factory=lambda: object(),
+    )
+    assert already_acknowledged["status"] == "no_candidates"
+    assert already_acknowledged["drafts"] == []
+    assert already_acknowledged["issues"] == []
     assert connection.closed is True
 
 
@@ -3296,6 +3323,93 @@ def test_article_interpretation_sync_candidate_id_rejects_blank_request():
                 "interpretation_id": " ",
             }
         )
+
+
+@pytest.mark.parametrize(
+    ("stored_status", "expected_error"),
+    [
+        (None, "sync_candidate_interpretation_not_found"),
+        ("failed", "sync_candidate_interpretation_not_ready"),
+    ],
+    ids=["missing", "not-ready"],
+)
+def test_article_interpretation_sync_candidate_reports_missing_or_nonready_id(
+    monkeypatch, stored_status, expected_error
+):
+    from ai_actuarial import postgres
+
+    draft = _interpretation_draft()
+    if stored_status is not None:
+        draft["status"] = stored_status
+
+    class Cursor:
+        def __init__(self, rows):
+            self.rows = rows
+
+        def fetchall(self):
+            return self.rows
+
+    class Connection:
+        closed = False
+
+        def execute(self, statement, params=()):
+            if statement == "BEGIN":
+                return Cursor([])
+            if "FROM article_interpretations WHERE interpretation_id=?" in statement:
+                if stored_status is None or (
+                    "AND status='ready'" in statement and stored_status != "ready"
+                ):
+                    return Cursor([])
+                return Cursor(
+                    [
+                        (
+                            draft,
+                            "2026-11-02T10:00:00+00:00",
+                            draft["interpretation_id"],
+                            stored_status,
+                        )
+                    ]
+                )
+            raise AssertionError(statement)
+
+        def commit(self):
+            pass
+
+        def rollback(self):
+            pass
+
+        def close(self):
+            self.closed = True
+
+    connection = Connection()
+    monkeypatch.setattr(worker, "_article_interpretation_database", lambda _runtime: object())
+    monkeypatch.setattr(
+        postgres,
+        "PostgresConnection",
+        lambda _database, read_only=False: connection,
+    )
+
+    result = worker.list_article_interpretation_sync_candidates(
+        {
+            "schema_version": 1,
+            "operation": "list_article_interpretation_sync_candidates",
+            "target": "china",
+            "limit": 1,
+            "interpretation_id": draft["interpretation_id"],
+        },
+        runtime_factory=lambda: object(),
+    )
+
+    assert result["status"] == "partial"
+    assert result["drafts"] == []
+    assert result["issues"] == [
+        {
+            "interpretation_id": draft["interpretation_id"],
+            "status": "failed",
+            "error": expected_error,
+        }
+    ]
+    assert connection.closed is True
 
 
 def test_article_interpretation_sync_candidates_only_add_ready_english_locale(monkeypatch):

@@ -6650,3 +6650,10 @@ Current branch head 4f030be has uncommitted small catalog/Storage variable defau
 - 最终file-url回执保留cumulative_outer_attempts，并只以本次实际Chinese prompt数记outer_attempts；本次0不自动sync，原生累计预算/完成receipt不写回、不重置。51项聚焦测试通过（一次faiss DLL初始化瞬时失败后单次重跑通过），Ruff/Black/help/json/diff通过；fresh Sol/high R4 PASS，真实审查4完成/3 CHANGES，裁定及历史报告保存在独立报告目录。
 - 一次真实本机IAA新原文Chinese1、English2 outer尝试，中英文native Ready；保留unlabelled_inference/unsupported_number两项nonfatal内容提示，不宣称推断/数字依据完全核实。原生两端各locale只投影一次并各ACK，中国verified、海外zh inserted/en updated。代码末次计数修正不改变已实跑的generator、validator、原文或writer正向路径，没有为它重复生成或重放同步。
 - 本机稿和真实生成/同步回执在`reports/local-interpretation-enable-20261106/runs/2026-11-06-real-iaa/`与相邻candidate-run。实际DB/API一次读回仍以其单独readback.json为准；当前代码提交不把尚未完成的排程启用或CI写成成功。任务只做本轮生成/同步，交付后用户编辑不监控、不追同步。
+
+
+## 2026-11-06 PR471 精确ID缺失回执修复
+
+- 初始手动Copilot请求被API422拒绝；仓库自动review真实在b845 HEAD完成，15分钟反馈快照确认1条scope内问题：精确ID缺失/非Ready不能空集误报全部ACK。已由同一Luna/high worker修复，targeted查status并分别记录not_found/not_ready issue；Ready且已确认ACK及global空扫描语义保持。
+- 56项聚焦测试、Ruff/Black/diff通过，fresh Sol/high定点复核PASS；期间既有faiss DLL初始化瞬时失败保留，完整重跑通过。TypeSafe按新证据真实jev1.14选择最小修复；不重请Copilot或开新反馈窗口。
+- 修复仅影响未命中/非Ready负路径；本轮真实稿已交付的gen、writer正向路径与既有ACK/DB/API回读证据保持，不再生成、重放同步或读取用户后续稿件编辑。原定10点计划仍待当前HEAD代码检查后正式启用。
