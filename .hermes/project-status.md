@@ -51,6 +51,20 @@
 - Touched-file Black/isort/Pylint and existing Python dead-code file/symbol gates PASS. Full combined dead-code gate needs local Knip installation (`npm ci`); required CI and independent review remain manager gates. Framework whitelist additions reference only new feedback/capabilities routes and Pydantic hooks.
 - Local receipt `reports/issue-459/acceptance.json` is ignored by Git and has not been force-added; retained copy, hashes, exact commands, detailed report and raw evidence are under root-checkout `reports/issue-459-464-20261105/issue-459/`. Receipt records tested base/source hashes and leaves implementation commit null until the manager commits; no circular SHA claim. This worker did not commit, push, publish or merge.
 
+## 2026-11-06 PR #458 合并准备
+
+- 用户已授权按检查结果直接合并 #458。分支 `fix/periodic-ai-materials` 正常合并最新 main `2e4cd2424ba511fec2fcf7d80eb52d70116be660`；唯一冲突为本状态文档，双方原始记录完整保留。
+- 三个产品/测试文件与已通过 Sol/high 和 Copilot 审查的 `daf205d` 精确一致；相对 main 的代码补丁与原审查补丁逐字节一致。本次只处理合并和文档，不新增产品逻辑；等待新 HEAD 的全部必需 CI 后合并，不重请 Copilot。
+- 先前已授权的采集端部署及三库历史修正保持原状；本轮不修改运行包、生产数据或排程。下方“未授权合并或部署”仅描述 11 月 5 日原始实现阶段。
+
+## 2026-11-05 定期更新仅披露新发现的 AI 资料
+
+- 项目 `AI_actuarial_inforsearch`，任务分支 `fix/periodic-ai-materials`，基于 `origin/main` 的 `b9bb05b`。本次范围为 `source_portal_daily.py`、`content_hub.py`、对应测试和本状态记录；兄弟仓库未读取。
+- 日常摘要改为只列新增 AI 资料名称；AI 身份沿用 Hub 的首分类及来源主分类均为 AI 的规则，并精确匹配观察 URL / 原文 SHA，排除 excluded URLs。无新增时中英明确说明；通用目录前言、非 AI 项和抓取/页面变化统计不再拼入摘要。原始采集证据、SHA 验证、新增判定、重试幂等和部分读取说明保留。未修改旧目录独立采集路径或历史生产数据。
+- 本地 76 项相关 Python 测试通过；原环境运行 60 通过 / 16 被现有 80% 容量门拦截。重跑只在测试进程使用既有 `ensure_capacity(disk_usage=(1000,500,500))` 接缝，生产阈值和保护未改。13 项摘要 selector、Black、Ruff、compileall、diff 空白检查通过。前端 build 和 5 项 SourcePortals 测试通过；8 组中英/390及1280/混合及空列表本地浏览器 smoke 通过，模拟 API、截图已查看。
+- Luna/high 实现；新鲜 Sol/high 独立审查 PASS，0 项范围内 finding。按仓库规则 commit/push/创建 PR，并只在首次发布申请一次 Copilot，约15分钟后检查反馈和当前 HEAD CI。完整回执、PR 地址及远端结果归档于本地 `reports/periodic-ai-materials-20261105/`。未授权合并或部署，当前线上旧摘要未被改写。
+- 原始 checkout 仍在 `fix/gpt6-parameter-compat`，既有状态文件修改与 `.codex-tmp-agentic-rag/`、`.hermes/research/`、`diagrams/`、`graphify-out/` 四个未跟踪目录保留。
+
 ## 2026-11-05 PR #452 main integration and acceptance state
 
 - Integrated latest main `0d75dfec4da72db8887d277e881d6d77ba86c6ed`, including PR #457. The only merge conflict was this status file; both the Issue #450 history and weekly publication record were retained. The target worker auto-merged, PR #452 editor files remain unchanged from its prior HEAD, and weekly UI files match latest main.
