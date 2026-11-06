@@ -2856,7 +2856,14 @@ def test_interpretation_current_source_rejects_missing_stale_and_unknown_source(
         worker._interpretation_current_row(connection, identity, "cas")
 
 
-def test_article_interpretation_prompt_result_stream_and_optional_english_route(monkeypatch):
+@pytest.mark.parametrize(
+    "file_url",
+    [None, "https://example.test/current.pdf"],
+    ids=["daily-compatible", "manual"],
+)
+def test_article_interpretation_prompt_result_stream_and_optional_english_route(
+    monkeypatch, file_url
+):
     import asyncio
     import time
 
@@ -2904,12 +2911,15 @@ def test_article_interpretation_prompt_result_stream_and_optional_english_route(
         lambda _database, data_root=None: fake_storage,
     )
 
+    service_run_calls = []
+
     class FakeService:
         def __init__(self, _storage, *, generator, config):
             self.generator = generator
             assert config["environment"] == "china"
 
-        def run(self, **_kwargs):
+        def run(self, **kwargs):
+            service_run_calls.append(kwargs)
             result = asyncio.run(
                 self.generator.generate(
                     [{"role": "user", "content": "Chinese draft prompt"}],
@@ -2955,17 +2965,20 @@ def test_article_interpretation_prompt_result_stream_and_optional_english_route(
             result["slots"] = [{"interpretation_id": "interpretation-fixture-1", "status": "ready"}]
             return result
 
+    stream_request = {
+        "schema_version": 1,
+        "operation": "run_article_interpretation_stream",
+        "target": "china",
+        "round_key": "2026-11-02",
+        "retry_id": None,
+        "backend": "codex-cli",
+        "requested_model": "gpt-6-luna",
+        "reasoning_effort": "high",
+    }
+    if file_url is not None:
+        stream_request["file_url"] = file_url
     result = worker.run_article_interpretation_stream(
-        {
-            "schema_version": 1,
-            "operation": "run_article_interpretation_stream",
-            "target": "china",
-            "round_key": "2026-11-02",
-            "retry_id": None,
-            "backend": "codex-cli",
-            "requested_model": "gpt-6-luna",
-            "reasoning_effort": "high",
-        },
+        stream_request,
         input_stream=InputStream(),
         output_stream=output,
         runtime_factory=FakeRuntime,
@@ -2984,7 +2997,39 @@ def test_article_interpretation_prompt_result_stream_and_optional_english_route(
     assert result["route"]["requested_model"] == "gpt-6-luna"
     assert result["route"]["effective_model"] == "unreported"
     assert result["english_translation"]["internal_provider_requests"] == "unknown/unmetered"
+    expected_run_kwargs = {"round_key": "2026-11-02", "retry_id": None}
+    if file_url is not None:
+        expected_run_kwargs["file_url"] = file_url
+    assert service_run_calls == [expected_run_kwargs]
     assert fake_storage.closed is True
+
+
+@pytest.mark.parametrize(
+    "override,error",
+    [
+        ({"file_url": "http://example.test/current.pdf"}, "file_url_invalid"),
+        ({"file_url": "https://user:pass@example.test/current.pdf"}, "file_url_invalid"),
+        (
+            {"retry_id": "saved-draft", "file_url": "https://example.test/current.pdf"},
+            "file_url_and_retry_id_are_mutually_exclusive",
+        ),
+    ],
+    ids=["http", "userinfo", "retry-conflict"],
+)
+def test_article_interpretation_stream_request_rejects_invalid_file_url(override, error):
+    payload = {
+        "schema_version": 1,
+        "operation": "run_article_interpretation_stream",
+        "target": "china",
+        "round_key": "2026-11-02",
+        "retry_id": None,
+        "backend": "codex-cli",
+        "requested_model": "gpt-6-luna",
+        "reasoning_effort": "high",
+        **override,
+    }
+    with pytest.raises(worker._ArticleInterpretationStreamFailure, match=error):
+        worker._article_interpretation_stream_request(payload)
 
 
 @pytest.mark.parametrize("response_kind", ["eof", "malformed", "oversize", "mismatched_id"])
@@ -3108,10 +3153,22 @@ def test_article_interpretation_sync_candidate_scan_skips_conflict_only_history(
         def __init__(self):
             self.offsets = []
             self.scan_cursor = None
+            self.scan_locks = 0
+            self.cursor_reads = 0
+            self.cursor_writes = 0
 
         def execute(self, statement, params=()):
-            if statement == "BEGIN" or "pg_advisory_xact_lock" in statement:
+            if statement == "BEGIN":
                 return Cursor([])
+            if "pg_advisory_xact_lock" in statement:
+                self.scan_locks += 1
+                return Cursor([])
+            if (
+                "FROM article_interpretations WHERE interpretation_id=? AND status='ready'"
+                in statement
+            ):
+                row = next((row for row in drafts if row["interpretation_id"] == params[0]), None)
+                return Cursor([(row, row["created_at"], params[0])] if row else [])
             if statement.startswith("SELECT payload_json, created_at, interpretation_id"):
                 offset = params[-1]
                 self.offsets.append(offset)
@@ -3141,13 +3198,16 @@ def test_article_interpretation_sync_candidate_scan_skips_conflict_only_history(
                 )
             if statement.startswith("SELECT receipt_json FROM article_interpretation_rounds"):
                 if params[0] == worker._INTERPRETATION_SYNC_SCAN_CURSOR_KEY:
+                    self.cursor_reads += 1
                     return Cursor([(self.scan_cursor,)] if self.scan_cursor else [])
                 return Cursor([(receipts[params[0]],)] if params[0] in receipts else [])
             if statement.startswith("INSERT INTO article_interpretation_rounds"):
                 self.scan_cursor = json.loads(params[1])
+                self.cursor_writes += 1
                 return Cursor([])
             if statement.startswith("UPDATE article_interpretation_rounds"):
                 self.scan_cursor = json.loads(params[0])
+                self.cursor_writes += 1
                 return Cursor([])
             raise AssertionError(statement)
 
@@ -3201,7 +3261,41 @@ def test_article_interpretation_sync_candidate_scan_skips_conflict_only_history(
     assert all(
         issue["error"] == "target_locale_ack_projection_conflict" for issue in result["issues"]
     )
+    cursor_before = json.loads(json.dumps(connection.scan_cursor))
+    scan_locks_before = connection.scan_locks
+    cursor_reads_before = connection.cursor_reads
+    cursor_writes_before = connection.cursor_writes
+    targeted = worker.list_article_interpretation_sync_candidates(
+        {
+            "schema_version": 1,
+            "operation": "list_article_interpretation_sync_candidates",
+            "target": "china",
+            "limit": 3,
+            "interpretation_id": "new-pending",
+        },
+        runtime_factory=lambda: object(),
+    )
+    assert [item["identity"]["interpretation_id"] for item in targeted["drafts"]] == ["new-pending"]
+    assert connection.scan_cursor == cursor_before
+    assert connection.scan_locks == scan_locks_before
+    assert connection.cursor_reads == cursor_reads_before
+    assert connection.cursor_writes == cursor_writes_before
     assert connection.closed is True
+
+
+def test_article_interpretation_sync_candidate_id_rejects_blank_request():
+    with pytest.raises(
+        worker._InterpretationTargetFailure, match="sync_candidate_interpretation_id_invalid"
+    ):
+        worker.list_article_interpretation_sync_candidates(
+            {
+                "schema_version": 1,
+                "operation": "list_article_interpretation_sync_candidates",
+                "target": "china",
+                "limit": 1,
+                "interpretation_id": " ",
+            }
+        )
 
 
 def test_article_interpretation_sync_candidates_only_add_ready_english_locale(monkeypatch):

@@ -4879,8 +4879,296 @@ def test_article_interpretations_cli_help_contract(capsys):
     output = capsys.readouterr().out
     assert "--sync-only" in output
     assert "--retry-id" in output
+    assert "--file-url" in output
     assert "--limit" in output
     assert "--json" in output
+
+
+@pytest.mark.parametrize(
+    "mode_args",
+    [
+        ["--sync-only", "--file-url", "https://example.test/current.pdf"],
+        ["--retry-id", "saved-draft", "--file-url", "https://example.test/current.pdf"],
+    ],
+    ids=["sync-only", "retry-id"],
+)
+def test_article_interpretations_cli_file_url_is_mutually_exclusive(mode_args):
+    with pytest.raises(SystemExit) as exit_info:
+        runtime.build_parser().parse_args(["article-interpretations", *mode_args])
+    assert exit_info.value.code == 2
+
+
+@pytest.mark.parametrize(
+    "file_url",
+    [
+        "",
+        "not-a-url",
+        "http://example.test/current.pdf",
+        "https://user:pass@example.test/current.pdf",
+    ],
+    ids=["empty", "malformed", "http", "userinfo"],
+)
+def test_local_article_interpretations_reject_invalid_manual_file_url(file_url):
+    with pytest.raises(runtime.RuntimeErrorSafe, match="article_interpretation_file_url_invalid"):
+        runtime.run_local_article_interpretations({}, file_url=file_url)
+
+
+def test_article_interpretations_manual_file_url_cli_json(monkeypatch, capsys):
+    url = "https://example.test/current.pdf"
+    stream_calls = []
+    sync_calls = []
+
+    class Generator:
+        runtime = SimpleNamespace(backend="codex-cli", model="gpt-6-luna", reasoning_effort="high")
+
+    monkeypatch.setattr(
+        runtime,
+        "_load_config",
+        lambda _path: {
+            "schema_version": 1,
+            "data_root": "fixture-data",
+            "targets": {},
+            "article_interpretation": {
+                "backend": "codex-cli",
+                "model": "gpt-6-luna",
+                "reasoning_effort": "high",
+            },
+        },
+    )
+    from ai_actuarial import article_interpretations as articles
+
+    monkeypatch.setattr(articles, "create_codex_article_generator", lambda _config: Generator())
+
+    def stream(_config, **kwargs):
+        stream_calls.append(kwargs)
+        return {
+            "status": "complete",
+            "generation": {
+                "status": "complete",
+                "receipt_type": "manual",
+                "outer_attempts": 1,
+                "slots": [{"interpretation_id": "manual-fixture", "status": "ready"}],
+            },
+            "english_translation": {
+                "status": "complete",
+                "slots": [{"interpretation_id": "manual-fixture", "status": "ready"}],
+            },
+            "locale_settings": {
+                "english_translation_enabled": True,
+                "english_proxy_enabled": False,
+            },
+        }
+
+    monkeypatch.setattr(runtime, "_run_article_interpretation_stream", stream)
+
+    def sync(_config, **kwargs):
+        sync_calls.append(kwargs)
+        return {
+            "status": "complete",
+            "all_targets_acknowledged": True,
+            "more_pending": False,
+            "issues": [],
+        }
+
+    monkeypatch.setattr(
+        runtime,
+        "_sync_saved_remote_article_interpretations",
+        sync,
+    )
+
+    exit_code = runtime.main(
+        ["article-interpretations", "--file-url", url, "--json", "--config", "fixture.json"]
+    )
+    result = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert stream_calls[0]["file_url"] == url
+    assert sync_calls[0]["interpretation_id"] == "manual-fixture"
+    assert result["status"] == "complete"
+    assert result["generation"]["receipt_type"] == "manual"
+    assert result["generation"]["outer_attempts"] == 1
+    assert result["english_translation"]["status"] == "complete"
+    assert result["locale_settings"]["english_translation_enabled"] is True
+
+
+def test_local_article_interpretations_failed_manual_skips_sync():
+    class Generator:
+        runtime = SimpleNamespace(backend="codex-cli", model="gpt-6-luna", reasoning_effort="high")
+
+    result = runtime.run_local_article_interpretations(
+        {},
+        generator=Generator(),
+        file_url="https://example.test/current.pdf",
+        stream_function=lambda *_args, **_kwargs: {
+            "status": "failed",
+            "generation": {"status": "failed", "slots": []},
+        },
+        sync_function=lambda *_args, **_kwargs: pytest.fail(
+            "an unsuccessful manual generation must not scan or sync saved drafts"
+        ),
+    )
+
+    assert result["status"] == "failed"
+    assert result["sync"]["status"] == "no_candidates"
+    assert result["sync"]["drafts"] == []
+
+
+def test_article_interpretations_cli_json_rejects_invalid_file_url(monkeypatch, capsys):
+    monkeypatch.setattr(
+        runtime,
+        "_load_config",
+        lambda _path: pytest.fail("invalid URL must be rejected before loading the runtime config"),
+    )
+    exit_code = runtime.main(
+        ["article-interpretations", "--file-url", "http://example.test/current.pdf", "--json"]
+    )
+    result = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 2
+    assert result["error"].endswith("article_interpretation_file_url_invalid")
+
+
+def test_article_interpretation_stream_wrapper_forwards_file_url(monkeypatch):
+    received = []
+
+    async def stream(_config, **kwargs):
+        received.append(kwargs)
+        return {"status": "complete"}
+
+    monkeypatch.setattr(runtime, "_run_article_interpretation_stream_async", stream)
+    url = "https://example.test/current.pdf"
+
+    result = runtime._run_article_interpretation_stream(
+        {}, generator=object(), round_key="2026-11-02", file_url=url
+    )
+
+    assert result["status"] == "complete"
+    assert received[0]["file_url"] == url
+    assert received[0]["retry_id"] is None
+
+
+@pytest.mark.parametrize("prompt_count", [0, 1], ids=["no-new-prompt", "new-prompt"])
+def test_manual_file_url_sync_requires_current_generation_prompt(
+    monkeypatch, tmp_path: Path, prompt_count
+):
+    worker_script = tmp_path / "worker.py"
+    worker_script.write_text("print('fixture')", encoding="utf-8")
+    monkeypatch.setattr(runtime, "TARGET_WORKER", worker_script)
+    monkeypatch.setattr(
+        runtime,
+        "_article_interpretation_target_command",
+        lambda *_args: (["ssh", "fixture-host"], {"timeout_seconds": 60}),
+    )
+    prompt = {
+        "schema_version": 1,
+        "event": "prompt",
+        "stage": "generation",
+        "request_id": "c" * 32,
+        "timeout_seconds": 30,
+        "messages": [{"role": "user", "content": "fixture"}],
+    }
+    complete = {
+        "schema_version": 1,
+        "event": "complete",
+        "route": {"backend": "codex-cli"},
+        "locale_settings": {
+            "english_translation_enabled": False,
+            "english_proxy_enabled": False,
+        },
+        "generation": {
+            "status": "complete",
+            "outer_attempts": 7,
+            "slots": [{"interpretation_id": "historic-ready", "status": "ready"}],
+        },
+    }
+    events = ([prompt] if prompt_count else []) + [complete]
+
+    class Writer:
+        def __init__(self):
+            self.data = bytearray()
+            self.closed = False
+
+        def write(self, value):
+            self.data.extend(value)
+
+        async def drain(self):
+            return None
+
+        def is_closing(self):
+            return self.closed
+
+        def close(self):
+            self.closed = True
+
+        async def wait_closed(self):
+            return None
+
+    class Reader:
+        def __init__(self):
+            self.lines = [json.dumps(event).encode("utf-8") + b"\n" for event in events]
+
+        async def readline(self):
+            return self.lines.pop(0)
+
+    class Process:
+        pid = 4010
+        returncode = 0
+
+        def __init__(self):
+            self.stdin = Writer()
+            self.stdout = Reader()
+
+        async def wait(self):
+            return self.returncode
+
+    process = Process()
+
+    async def create_process(*_args, **_kwargs):
+        return process
+
+    monkeypatch.setattr(runtime.asyncio, "create_subprocess_exec", create_process)
+
+    class Generator:
+        runtime = SimpleNamespace(
+            backend="codex-cli",
+            model="gpt-6-luna",
+            reasoning_effort="high",
+            receipt_metadata=lambda: {"backend": "codex-cli"},
+        )
+
+        async def generate(self, _messages, *, deadline):
+            return "fixture result"
+
+    sync_calls = []
+
+    def sync(_config, **kwargs):
+        sync_calls.append(kwargs)
+        return {
+            "schema_version": 1,
+            "status": "complete",
+            "all_targets_acknowledged": True,
+            "more_pending": False,
+            "drafts": [],
+            "issues": [],
+            "generation_calls": 0,
+        }
+
+    result = runtime.run_local_article_interpretations(
+        {},
+        generator=Generator(),
+        round_key="manual-attempt-fixture",
+        file_url="https://example.test/current.pdf",
+        sync_function=sync,
+    )
+
+    assert result["generation"]["outer_attempts"] == prompt_count
+    assert result["generation"]["cumulative_outer_attempts"] == 7
+    assert result["outer_attempts"] == prompt_count
+    if prompt_count:
+        assert [call["interpretation_id"] for call in sync_calls] == ["historic-ready"]
+    else:
+        assert sync_calls == []
+        assert result["sync"]["status"] == "no_candidates"
 
 
 def test_article_interpretations_sync_only_cli_json_skips_codex(monkeypatch, capsys):
@@ -5008,6 +5296,7 @@ def test_remote_article_sync_empty_complete_scan_is_acknowledged():
     def invoke(_config, target, payload):
         assert target == "china"
         assert payload["operation"] == "list_article_interpretation_sync_candidates"
+        assert "interpretation_id" not in payload
         return {
             "schema_version": 1,
             "operation": payload["operation"],
@@ -5023,6 +5312,31 @@ def test_remote_article_sync_empty_complete_scan_is_acknowledged():
     assert result["status"] == "complete"
     assert result["all_targets_acknowledged"] is True
     assert result["drafts"] == []
+
+
+def test_remote_article_sync_requests_only_the_manual_interpretation_id():
+    requests = []
+    interpretation_id = "manual-ready"
+
+    def invoke(_config, target, payload):
+        assert target == "china"
+        requests.append(payload)
+        return {
+            "schema_version": 1,
+            "operation": payload["operation"],
+            "target": "china",
+            "status": "no_candidates",
+            "drafts": [],
+            "issues": [],
+            "more_pending": False,
+        }
+
+    result = runtime._sync_saved_remote_article_interpretations(
+        {}, interpretation_id=interpretation_id, invoke=invoke
+    )
+
+    assert result["status"] == "complete"
+    assert requests[0]["interpretation_id"] == interpretation_id
 
 
 def test_local_article_interpretations_no_candidate_and_sync_only_never_generate():
@@ -5825,8 +6139,13 @@ def test_article_interpretation_stream_missing_target_timeout_uses_round_default
     assert result["status"] == "complete"
 
 
+@pytest.mark.parametrize(
+    "file_url",
+    [None, "https://example.test/current.pdf"],
+    ids=["daily-compatible", "manual"],
+)
 def test_article_interpretation_ssh_stream_cancellation_reaps_worker_tree(
-    monkeypatch, tmp_path: Path
+    monkeypatch, tmp_path: Path, file_url
 ):
     import asyncio
 
@@ -5895,11 +6214,13 @@ def test_article_interpretation_ssh_stream_cancellation_reaps_worker_tree(
     monkeypatch.setattr(runtime, "_terminate_article_interpretation_stream", terminate)
 
     async def cancel_stream():
+        stream_args = {"generator": generator, "round_key": "2026-11-02"}
+        if file_url is not None:
+            stream_args["file_url"] = file_url
         task = asyncio.create_task(
             runtime._run_article_interpretation_stream_async(
                 {"targets": {"china": {"timeout_seconds": 60}}},
-                generator=generator,
-                round_key="2026-11-02",
+                **stream_args,
             )
         )
         await started.wait()
@@ -5916,6 +6237,9 @@ def test_article_interpretation_ssh_stream_cancellation_reaps_worker_tree(
     assert len(initial_input) == 2
     request = json.loads(initial_input[1])
     assert request["operation"] == "run_article_interpretation_stream"
+    assert request.get("file_url") == file_url
+    if file_url is None:
+        assert "file_url" not in request
     assert "credential" not in json.dumps(request).lower()
 
 
