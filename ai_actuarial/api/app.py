@@ -33,6 +33,7 @@ from .route_inventory import (
 )
 from .routers.agentic_rag import router as agentic_rag_router
 from .routers.article_interpretations import router as article_interpretations_router
+from .routers.assistant_help import router as assistant_help_router
 from .routers.auth import router as auth_router
 from .routers.chat import router as chat_router
 from .routers.feedback import feedback_disabled_response
@@ -115,6 +116,7 @@ def _default_session_cookie_secure(require_auth: bool, config_data: dict[str, ob
 
 def _apply_runtime_feature_state(app: FastAPI, features: dict[str, object]) -> None:
     app.state.feedback_enabled = bool(features.get("feedback_enabled"))
+    app.state.assistant_enabled = bool(features.get("assistant_enabled"))
     app.state.feedback_site_key = str(features.get("feedback_site_key") or "")
     app.state.feedback_rate_limit = str(features.get("feedback_rate_limit") or "")
     if app.state.feedback_enabled and not re.fullmatch(
@@ -267,6 +269,7 @@ def create_app() -> FastAPI:
 
     app.include_router(meta_router, prefix="/api", tags=["meta"])
     app.include_router(support_router, prefix="/api", tags=["support"])
+    app.include_router(assistant_help_router, prefix="/api", tags=["assistant-help"])
     app.include_router(feedback_router, prefix="/api", tags=["feedback"])
     app.include_router(metrics_router, prefix="/api", tags=["metrics"])
     app.include_router(migration_router, prefix="/api", tags=["migration"])
