@@ -7,7 +7,7 @@ import Layout from "@/components/Layout";
 import { WebListeningForm } from "@/pages/tasks/WebListeningForm";
 
 const { apiPost } = vi.hoisted(() => ({ apiPost: vi.fn() }));
-vi.mock("@/lib/api", () => ({ apiPost }));
+vi.mock("@/lib/api", () => ({ apiPost, apiGet: vi.fn().mockResolvedValue({ assistant_enabled: false, feedback_enabled: false }) }));
 vi.mock("@/context/AuthContext", () => ({ useAuth: () => ({ permissions: ["sites.write", "schedule.write"] }) }));
 vi.mock("@/hooks/use-theme", () => ({ useTheme: () => ({ theme: "light", toggleTheme: vi.fn() }) }));
 afterEach(() => { cleanup(); vi.clearAllMocks(); });

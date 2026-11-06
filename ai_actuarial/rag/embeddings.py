@@ -16,7 +16,7 @@ import hashlib
 import json
 import time
 from pathlib import Path
-from typing import List, Optional
+from typing import Callable, List, Optional
 
 from openai import APIError, APITimeoutError, OpenAI, RateLimitError
 
@@ -84,6 +84,8 @@ class EmbeddingGenerator:
         config: Optional[RAGConfig] = None,
         *,
         storage=None,
+        deadline: float | None = None,
+        on_attempt: Callable[[], None] | None = None,
     ):
         """
         Initialize embedding generator.
@@ -92,6 +94,8 @@ class EmbeddingGenerator:
             config: RAG configuration (defaults to config-based config)
         """
         self.config = config or RAGConfig.from_config(storage=storage)
+        self.deadline = deadline
+        self.on_attempt = on_attempt
         self.cache = (
             EmbeddingCache(f"{self.config.data_dir}/embeddings_cache")
             if self.config.embedding_cache_enabled
@@ -129,6 +133,8 @@ class EmbeddingGenerator:
             }
             if self.config.api_base_url:
                 client_kwargs["base_url"] = self.config.api_base_url
+            if deadline is not None:
+                client_kwargs["max_retries"] = 0
             self.openai_client = OpenAI(**client_kwargs)
         else:
             self.openai_client = None
@@ -247,13 +253,21 @@ class EmbeddingGenerator:
             List of embedding vectors
         """
         max_retries = self.config.openai_max_retries
+        if self.deadline is not None:
+            max_retries = max(1, min(3, max_retries))
         base_delay = 1.0
 
         for attempt in range(max_retries):
             try:
-                response = self.openai_client.embeddings.create(
-                    model=self.config.embedding_model, input=texts
-                )
+                client = self.openai_client
+                if self.deadline is not None:
+                    remaining = self.deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise TimeoutError()
+                    client = client.with_options(max_retries=0, timeout=remaining)
+                if self.on_attempt is not None:
+                    self.on_attempt()
+                response = client.embeddings.create(model=self.config.embedding_model, input=texts)
 
                 items = list(response.data)
                 if len(items) != len(texts):
@@ -270,7 +284,7 @@ class EmbeddingGenerator:
                 if attempt < max_retries - 1:
                     # Exponential backoff
                     delay = base_delay * (2**attempt)
-                    time.sleep(delay)
+                    self._retry_sleep(delay)
                 else:
                     raise EmbeddingException(
                         f"Rate limit exceeded after {max_retries} retries: {e}"
@@ -279,21 +293,28 @@ class EmbeddingGenerator:
             except APITimeoutError as e:
                 if attempt < max_retries - 1:
                     delay = base_delay * (2**attempt)
-                    time.sleep(delay)
+                    self._retry_sleep(delay)
                 else:
                     raise EmbeddingException(f"API timeout after {max_retries} retries: {e}")
 
             except APIError as e:
                 if attempt < max_retries - 1:
                     delay = base_delay * (2**attempt)
-                    time.sleep(delay)
+                    self._retry_sleep(delay)
                 else:
                     raise EmbeddingException(f"API error after {max_retries} retries: {e}")
 
+            except TimeoutError:
+                raise
             except Exception as e:
                 raise EmbeddingException(f"Unexpected error generating embeddings: {e}")
 
         raise EmbeddingException("Failed to generate embeddings")
+
+    def _retry_sleep(self, delay: float) -> None:
+        if self.deadline is not None and time.monotonic() + delay >= self.deadline:
+            raise TimeoutError()
+        time.sleep(delay)
 
     def _generate_local_embeddings(self, texts: List[str]) -> List[List[float]]:
         """
@@ -319,9 +340,15 @@ class EmbeddingGenerator:
                 )
 
         try:
+            if self.deadline is not None and time.monotonic() >= self.deadline:
+                raise TimeoutError()
+            if self.on_attempt is not None:
+                self.on_attempt()
             embeddings = self._local_model.encode(texts, convert_to_numpy=True)
             # Convert numpy arrays to lists
             return [emb.tolist() for emb in embeddings]
+        except TimeoutError:
+            raise
         except Exception as e:
             raise EmbeddingException(f"Local embedding generation failed: {e}")
 

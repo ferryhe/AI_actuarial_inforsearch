@@ -257,6 +257,28 @@ def _text_snippet(value: Any, max_chars: int = 240) -> str:
     return text[: max_chars - 3].rstrip() + "..."
 
 
+def _matching_excerpt(text: str, terms: set[str], max_chars: int = 1600) -> str:
+    """Keep an exact, bounded passage around the best-covered body match."""
+    if len(text) <= max_chars or not terms:
+        return text[:max_chars]
+    pattern = re.compile(
+        "|".join(
+            re.escape(term) if _CJK_RE.search(term) else rf"\b{re.escape(term)}\b"
+            for term in sorted(terms, key=lambda term: (-len(term), term))
+        ),
+        re.IGNORECASE,
+    )
+    best = text[:max_chars]
+    best_coverage = -1
+    for match in pattern.finditer(text):
+        start = min(max(0, match.start() - max_chars // 4), len(text) - max_chars)
+        passage = text[start : start + max_chars]
+        coverage = len({hit.group().casefold() for hit in pattern.finditer(passage)})
+        if coverage > best_coverage:
+            best, best_coverage = passage, coverage
+    return best.strip()
+
+
 def _normalized_phrase(value: Any) -> str:
     return " ".join(_norm(value).lower().split())
 
@@ -459,7 +481,9 @@ def search_titles(query: str, *, output_dir: str | Path, limit: int = 10) -> lis
     return (alias_hits + scored)[: _limit(limit)]
 
 
-def search_sections(query: str, *, output_dir: str | Path, limit: int = 10) -> list[dict[str, Any]]:
+def search_sections(
+    query: str, *, output_dir: str | Path, limit: int = 10, excerpt_terms: set[str] | None = None
+) -> list[dict[str, Any]]:
     """Search L1 structured sections, falling back to L0 sections when needed."""
     query_text = _norm(query)
     query_tokens = _tokens(query_text)
@@ -508,7 +532,11 @@ def search_sections(query: str, *, output_dir: str | Path, limit: int = 10) -> l
                     "section_id": _norm(section.get("section_id")),
                     "heading_path": heading_path,
                     "heading": heading,
-                    "text_snippet": _text_snippet(text),
+                    "text_snippet": (
+                        _matching_excerpt(text, excerpt_terms)
+                        if excerpt_terms is not None
+                        else _text_snippet(text)
+                    ),
                     "score": round(float(score), 4),
                     "source": source,
                 },

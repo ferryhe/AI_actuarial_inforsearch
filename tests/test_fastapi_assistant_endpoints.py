@@ -49,6 +49,8 @@ def test_query_response_contract_and_current_prompt_only(client):
         "error_code": None,
         "generation_attempts": 0,
         "embedding_attempts": 0,
+        "routing_generation_attempts": 0,
+        "answer_generation_attempts": 0,
     }
 
 
@@ -57,6 +59,8 @@ def test_query_response_contract_and_current_prompt_only(client):
     [
         {"message": "ok", "conversation_id": "forbidden"},
         {"message": "ok", "history": []},
+        {"message": "ok", "mode": "knowledge", "kb_id": "staff"},
+        {"message": "ok", "mode": "knowledge", "kb_ids": []},
         {"message": " "},
         {"message": "a\0b"},
         {"message": "x" * 4001},

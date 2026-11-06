@@ -7,7 +7,7 @@ from knowledge bases, generate citations, and handle multi-KB queries.
 
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Union
 
 import numpy as np
 
@@ -35,7 +35,14 @@ class RAGRetriever:
     and supports multi-KB queries with result ranking and deduplication.
     """
 
-    def __init__(self, storage: Storage, config: Optional[ChatbotConfig] = None):
+    def __init__(
+        self,
+        storage: Storage,
+        config: Optional[ChatbotConfig] = None,
+        *,
+        embedding_deadline: float | None = None,
+        embedding_attempt: Callable[[], None] | None = None,
+    ):
         """
         Initialize RAG retriever.
 
@@ -48,7 +55,10 @@ class RAGRetriever:
 
         # Initialize RAG components
         self.kb_manager = KnowledgeBaseManager(storage)
-        self.embedding_generator = EmbeddingGenerator(storage=self.storage)
+        embedding_options = {}
+        if embedding_deadline is not None:
+            embedding_options = {"deadline": embedding_deadline, "on_attempt": embedding_attempt}
+        self.embedding_generator = EmbeddingGenerator(storage=self.storage, **embedding_options)
 
         # Cache for loaded vector stores
         self._vector_store_cache: Dict[str, VectorStore] = {}

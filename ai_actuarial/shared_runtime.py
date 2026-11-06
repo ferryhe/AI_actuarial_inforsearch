@@ -141,6 +141,13 @@ def resolve_runtime_features(config_data: dict[str, Any]) -> dict[str, Any]:
             resolved[key] = default
             sources[key] = "default"
 
+    for key in ("assistant_public_kb_ids", "assistant_staff_kb_ids"):
+        value = features.get(key, [])
+        if not isinstance(value, list) or any(
+            not isinstance(item, str) or not item.strip() for item in value
+        ):
+            raise ValueError(f"{key} must be a list of nonempty KB IDs")
+        resolved[key] = list(dict.fromkeys(item.strip() for item in value))
     resolved["feature_sources"] = sources
     return resolved
 

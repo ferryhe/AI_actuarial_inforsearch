@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import secrets
-from typing import Any, Literal
+from typing import Literal
 
 from typing_extensions import TypedDict
 
@@ -36,6 +36,7 @@ PERMISSIONS: frozenset[str] = frozenset(
         "tokens.manage",  # Manage API tokens
         "chat.view",  # View chat interface
         "chat.query",  # Send chat messages
+        "assistant.internal",  # Read configured staff KBs through the assistant
         "chat.conversations",  # Manage conversations
         "users.manage",  # Manage users
         "feedback.read",  # Read private feedback inbox
@@ -98,6 +99,7 @@ PREMIUM_PERMISSIONS: frozenset[str] = REGISTERED_PERMISSIONS
 # global/system logs.
 OPERATOR_PERMISSIONS: frozenset[str] = frozenset(
     {
+        "assistant.internal",
         "stats.read",
         "files.read",
         "files.download",

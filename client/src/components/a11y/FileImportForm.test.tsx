@@ -6,7 +6,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import Layout from "@/components/Layout";
 import { FileImportForm } from "@/pages/tasks/FileImportForm";
 
-vi.mock("@/lib/api", () => ({ apiPostForm: vi.fn(), getStoredAuthToken: vi.fn() }));
+vi.mock("@/lib/api", () => ({ apiPostForm: vi.fn(), getStoredAuthToken: vi.fn(), apiGet: vi.fn().mockResolvedValue({ assistant_enabled: false, feedback_enabled: false }) }));
 vi.mock("@/context/AuthContext", () => ({ useAuth: () => ({ permissions: ["tasks.run"] }) }));
 vi.mock("@/hooks/use-theme", () => ({ useTheme: () => ({ theme: "light", toggleTheme: vi.fn() }) }));
 afterEach(cleanup);

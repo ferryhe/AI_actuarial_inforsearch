@@ -364,6 +364,8 @@ def _notify_runtime_features_updated(
     if bridge is None or bridge.app_state is None:
         return
     features = resolve_runtime_features(config_data)
+    bridge.app_state.feedback_enabled = bool(features.get("feedback_enabled"))
+    bridge.app_state.assistant_enabled = bool(features.get("assistant_enabled"))
     bridge.app_state.require_auth = bool(features.get("require_auth"))
     bridge.app_state.enable_global_logs_api = bool(features.get("enable_global_logs_api"))
     bridge.app_state.enable_rate_limiting = bool(features.get("enable_rate_limiting"))
@@ -1216,6 +1218,8 @@ def update_backend_settings(
     if isinstance(features_in, dict):
         features_cfg = config_data["features"]
         for key in [
+            "feedback_enabled",
+            "assistant_enabled",
             "enable_file_deletion",
             "require_auth",
             "enable_global_logs_api",

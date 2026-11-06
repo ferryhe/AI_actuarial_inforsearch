@@ -164,7 +164,7 @@ def test_mixed_feedback_help_request_keeps_clarification(runtime):
 
 def test_explicit_knowledge_skips_quota_and_provider(runtime):
     result = runtime.run("How do I send feedback?", mode="knowledge")
-    assert result.intent == "knowledge" and result.error_code == "KNOWLEDGE_UNAVAILABLE"
+    assert result.intent == "knowledge" and result.error_code == "KNOWLEDGE_SCOPE_EMPTY"
     assert runtime.initialized == len(runtime.calls) == len(runtime.quota) == 0
 
 
@@ -184,7 +184,9 @@ def test_explicit_usage_has_one_raw_attempt_and_exact_reference(runtime):
     runtime.outputs = [json.dumps({"steps": [{"source": index, "quote": quote}]})]
     result = runtime.run(message, mode="usage")
     assert result.intent == "usage" and quote in result.answer
-    assert result.citations[0].model_dump() == section.reference()
+    assert result.citations[0].model_dump(exclude={"source_type", "link"}) == section.reference()
+    assert result.citations[0].source_type == "help"
+    assert result.citations[0].link.startswith("/api/assistant/help/section?")
     assert len(runtime.calls) == result.generation_attempts == 1
     assert runtime.config.max_retries == 3 and runtime.config.length_recovery_enabled
     assert runtime.options[0]["max_retries"] == 0
