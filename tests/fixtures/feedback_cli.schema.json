@@ -1,0 +1,205 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Feedback CLI response v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "command",
+    "error",
+    "items",
+    "outcome",
+    "schema_version",
+    "sites",
+    "success"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "command": {
+      "enum": [
+        "feedback",
+        "pull",
+        "list",
+        "mark"
+      ]
+    },
+    "success": {
+      "type": "boolean"
+    },
+    "outcome": {
+      "enum": [
+        "listed",
+        "marked",
+        "updated",
+        "no_new_data",
+        "partial_failure",
+        "failed"
+      ]
+    },
+    "items": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/item"
+      }
+    },
+    "sites": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/site"
+      }
+    },
+    "error": {
+      "$ref": "#/$defs/error"
+    }
+  },
+  "$defs": {
+    "error": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "message"
+      ],
+      "properties": {
+        "code": {
+          "enum": [
+            "config",
+            "authentication",
+            "permission",
+            "connection",
+            "remote",
+            "local_write",
+            "local_read",
+            "protocol",
+            "not_found",
+            "busy"
+          ]
+        },
+        "message": {
+          "type": "string"
+        }
+      }
+    },
+    "item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "client_request_id",
+        "content",
+        "created_at",
+        "feedback_id",
+        "id",
+        "kind",
+        "locale",
+        "origin",
+        "page_path",
+        "site_key",
+        "status",
+        "updated_at",
+        "user_id"
+      ],
+      "properties": {
+        "client_request_id": {
+          "type": "string"
+        },
+        "content": {
+          "type": "string"
+        },
+        "created_at": {
+          "type": "string"
+        },
+        "feedback_id": {
+          "type": "string"
+        },
+        "id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "kind": {
+          "type": "string"
+        },
+        "locale": {
+          "type": "string"
+        },
+        "origin": {
+          "type": "string"
+        },
+        "page_path": {
+          "type": "string"
+        },
+        "site_key": {
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "new",
+            "reviewed",
+            "closed"
+          ]
+        },
+        "updated_at": {
+          "type": "string"
+        },
+        "user_id": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      }
+    },
+    "site": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "error",
+        "last_attempt_at",
+        "last_success_at",
+        "new_count",
+        "outcome",
+        "site_key",
+        "success",
+        "updated_count"
+      ],
+      "properties": {
+        "site_key": {
+          "type": "string"
+        },
+        "success": {
+          "type": "boolean"
+        },
+        "outcome": {
+          "enum": [
+            "updated",
+            "no_new_data",
+            "failed"
+          ]
+        },
+        "new_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "updated_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "last_attempt_at": {
+          "type": "string"
+        },
+        "last_success_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "error": {
+          "$ref": "#/$defs/error"
+        }
+      }
+    }
+  }
+}

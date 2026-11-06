@@ -123,6 +123,9 @@ cursor 0 and deduplicate by `feedback_id` to recover these late commits;
 reconcile status updates on already ingested items as needed. A maximum
 observed ID alone cannot guarantee complete ingestion.
 
+The local consumer's commands, cached-state semantics and disabled scheduling
+instructions are in [feedback-inbox.md](feedback-inbox.md).
+
 Items include `id`, public/request UUIDs, `site_key`, immutable `content`,
 `kind`, `origin`, nullable `user_id`, sanitized `page_path`, `locale`, `status`
 and UTC ISO timestamps. The internal hash is not returned.

@@ -1,0 +1,12 @@
+# Copy outside the checkout and replace URLs/site keys with the deployments' identities.
+# No database or model is used. Credentials are environment-variable names only.
+paths:
+  data: C:/Users/YourName/AIActuarialData
+feedback_inbox:
+  sites:
+    - site_key: china
+      url: https://china.example.invalid
+      token_env: CHINA_FEEDBACK_TOKEN
+    - site_key: overseas
+      url: https://overseas.example.invalid
+      token_env: OVERSEAS_FEEDBACK_TOKEN

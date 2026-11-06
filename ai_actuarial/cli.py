@@ -36,6 +36,8 @@ from .collectors import CollectionConfig
 from .collectors.file import FileCollector
 from .collectors.url import URLCollector
 from .crawler import Crawler, SiteConfig
+from .feedback.inbox import FeedbackArgumentParser
+from .feedback.inbox import add_parser as add_feedback_parser
 from .postgres import (
     DatabaseConfigurationError,
     DatabaseConnectionError,
@@ -1068,7 +1070,7 @@ def cmd_config_bootstrap(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="ai-actuarial")
+    p = FeedbackArgumentParser(prog="ai-actuarial")
     p.add_argument(
         "--config",
         default=get_sites_config_path(),
@@ -1092,6 +1094,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Override max crawl depth per site for this run",
     )
     sub = p.add_subparsers(dest="cmd", required=True)
+    add_feedback_parser(sub)
 
     p_config_bootstrap = sub.add_parser(
         "config-bootstrap",

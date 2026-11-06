@@ -1,0 +1,409 @@
+{
+  "schema_version": 1,
+  "issue": 461,
+  "title": "[反馈 3/3] 本机建议收件箱：增量去重、状态整理与可选定时拉取",
+  "project": "AI_actuarial_inforsearch",
+  "branch": "codex/issue-461-feedback-inbox",
+  "base_sha": "ee86c8c285dd48e4cca6cecb8046761f2130e7c8",
+  "implementation_sha": "cdcf17f60876e0b24e2f141d765b5fe6be4bcb10",
+  "local_acceptance": "PASS",
+  "production_deployment": "NOT_DEPLOYED",
+  "formal_scheduler_enabled": false,
+  "scope": "Issue 461 only. Isolated loopback PostgreSQL/API and a temporary user-scope scheduled task; no sibling repository or production service changed.",
+  "deliverables": [
+    {
+      "id": "D1",
+      "result": "PASS",
+      "artifacts": [
+        "ai_actuarial/feedback/inbox.py",
+        "ai_actuarial/cli.py",
+        "reports/issue-461/acceptance.json"
+      ]
+    },
+    {
+      "id": "D2",
+      "result": "PASS",
+      "artifacts": [
+        "tests/test_feedback_cli.py",
+        "tests/fixtures/feedback_cli.schema.json",
+        "tests/fixtures/feedback_cli_contract.json"
+      ]
+    },
+    {
+      "id": "D3",
+      "result": "PASS",
+      "artifacts": [
+        "config/feedback-inbox.example.yaml",
+        "docs/feedback-inbox.md"
+      ]
+    },
+    {
+      "id": "D4",
+      "result": "PASS",
+      "artifacts": [
+        "reports/issue-461/acceptance.json"
+      ]
+    }
+  ],
+  "acceptance_criteria": [
+    {
+      "id": "AC1",
+      "result": "PASS",
+      "validation": "V1 plus repaired-source V4",
+      "actual": "202 isolated records were retained under 202 unique (site_key, feedback_id) keys; a post-fix browser receipt was read from PostgreSQL and appeared in both local reports."
+    },
+    {
+      "id": "AC2",
+      "result": "PASS",
+      "validation": "V2 simulated failure/recovery coverage",
+      "actual": "Unit simulations covered pagination writes, lower-ID late commits, retry from cursor 0, isolated site failure, JSON/Markdown write failures, mark rollback behavior and concurrent writers. Pull remains GET-only."
+    },
+    {
+      "id": "AC3",
+      "result": "PASS",
+      "validation": "V3 real management API evidence plus post-fix local failure tests",
+      "actual": "Real mark success was read back from the server; invalid and insufficient credentials returned their contract exit codes; failed marks preserved local bytes; intake-disabled history remained readable and manageable."
+    },
+    {
+      "id": "AC4",
+      "result": "PASS",
+      "validation": "CLI contracts, docs, V4",
+      "actual": "Help, JSON schema/envelope, exit codes and idempotency passed; a disabled-by-default independent task ran once on schedule, generated the matching report, then stayed disabled across the next due time."
+    }
+  ],
+  "validations": [
+    {
+      "id": "V1",
+      "criteria": [
+        "AC1",
+        "AC2",
+        "AC4"
+      ],
+      "phase": "real isolated run on pre-fix source; preserved historical evidence",
+      "source_sha256": "146b6958661c15380a130feca54fc2b3799ad15cf947677b435119c12dc2a7c4",
+      "environment": "Two loopback-only isolated PostgreSQL 16.15-backed services, site-a and site-b; 101 records per site, same timestamp per site, one shared feedback UUID across sites.",
+      "operations": [
+        "Configured two isolated site identities and credentials by environment-variable name.",
+        "Ran feedback pull twice with --json, then listed the cache and compared exact source/local sets and server status."
+      ],
+      "expected": "All records retained once per site/feedback UUID, exact source key set, repeat pull idempotent, server status unchanged.",
+      "actual": "202 cached rows; 202 unique composite keys; zero duplicates; full source key set matched; repeat outcome no_new_data; all V1 statuses were new.",
+      "result": "PASS",
+      "evidence": [
+        "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-461\\acceptance-run\\v1-exact-set-comparison.json",
+        "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-461\\acceptance-run\\cli-pull-paged.json",
+        "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-461\\acceptance-run\\cli-pull-paged-repeat.json",
+        "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-461\\acceptance-run\\cli-list-paged.json",
+        "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-461\\acceptance-run\\cli-list-paged-repeat.json"
+      ],
+      "limitation": "One later explicit mark changed status and updated_at for one browser record after this snapshot; the original comparison file preserves that chronology."
+    },
+    {
+      "id": "V2",
+      "criteria": [
+        "AC2",
+        "AC4"
+      ],
+      "phase": "post-fix repeatable unit simulations; user authorized simulation for fault cases",
+      "source_sha256": "40e0c8bafbf2327043deaa894fbbb6d77055d3a736c58715852cb8f2cdd61970",
+      "environment": "Isolated local test fixtures; no production service.",
+      "command": "python -m pytest tests/test_feedback_cli.py",
+      "expected": "Failure and recovery cases preserve records, statuses, per-site last-success evidence and JSON contracts; failures return nonzero.",
+      "actual": "The focused suite passed 46 tests. The combined CLI regression passed 50 tests. Simulated cases covered new writes during pagination, late lower-ID commits, connection retry, partial site outage, atomic page write failure, Markdown failure, failed mark writes and overlapping writers.",
+      "result": "PASS",
+      "evidence": [
+        "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-461\\worker-round1-pytest-feedback-cli.log",
+        "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-461\\worker-round1-pytest-cli-regression.log",
+        "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-461\\worker-round1-validation.json"
+      ]
+    },
+    {
+      "id": "V3",
+      "criteria": [
+        "AC3",
+        "AC4"
+      ],
+      "phase": "real isolated API/CLI run on pre-fix source; post-fix report-write failure covered by V2 regression tests",
+      "source_sha256": "146b6958661c15380a130feca54fc2b3799ad15cf947677b435119c12dc2a7c4",
+      "environment": "Isolated PostgreSQL 16.15-backed site-a/site-b APIs; synthetic management credentials stored only in temporary environment variables.",
+      "operations": [
+        "Marked the real site-a feedback UUID reviewed, then verified content and reviewed status through the admin GET readback.",
+        "With public intake disabled, marked the same site-a record closed and verified closed through the admin GET readback.",
+        "Tested an ambiguous cross-site UUID, a missing/invalid credential, and a separate credential that reached the endpoint but lacked permission."
+      ],
+      "expected": "Successful mark state matches server GET readback; ambiguous, authentication and permission failures return distinct nonzero contract codes; intake disable does not remove historical administration.",
+      "actual": "The first real mark returned reviewed and api-get-readback.json confirmed reviewed. With intake disabled, the admin PATCH returned closed and admin GET confirmed closed. Exit codes were 2 for ambiguous identity, 3 for missing/invalid authentication, and 4 for insufficient permission. The initial permission test attempt lacked a valid credential and returned authentication; the separate retry file contains the actual permission error.",
+      "result": "PASS",
+      "evidence": [
+        {
+          "path": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-461\\acceptance-run\\api-get-readback.json",
+          "meaning": "Admin GET confirms the real record status reviewed after the first mark."
+        },
+        {
+          "path": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-461\\acceptance-run\\cli-mark-site-a.json",
+          "meaning": "Successful CLI mark response for reviewed."
+        },
+        {
+          "path": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-461\\acceptance-run\\intake-disabled-admin-test.json",
+          "meaning": "With intake disabled, admin PATCH/GET succeeds with closed and local pull/list remain available."
+        },
+        {
+          "path": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-461\\acceptance-run\\cli-mark-ambiguous.json",
+          "meaning": "Exit 2 for ambiguous same UUID across sites."
+        },
+        {
+          "path": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-461\\acceptance-run\\cli-mark-invalid-auth.json",
+          "meaning": "Exit 3 for invalid authentication."
+        },
+        {
+          "path": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-461\\acceptance-run\\cli-mark-permission-denied.json",
+          "meaning": "Initial setup attempt; result is authentication failure, not permission denial. Preserved as historical evidence."
+        },
+        {
+          "path": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-461\\acceptance-run\\cli-mark-permission-denied-retry.json",
+          "meaning": "Exit 4 and error.code=permission for valid credential lacking permission."
+        },
+        {
+          "path": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-461\\acceptance-run\\cli-list-after-mark.json",
+          "meaning": "Local report after successful status management."
+        }
+      ]
+    },
+    {
+      "id": "V4",
+      "criteria": [
+        "AC1",
+        "AC4"
+      ],
+      "phase": "real repaired-source browser-to-PostgreSQL-to-scheduled-CLI-to-report run",
+      "source_bundle_sha256": "c95267a180c69405e4b8a5d8bcb55cbe7cc56ac5f7f50736082bc2274208813c",
+      "source_fingerprint_at_run": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-461\\acceptance-run\\postfix-v4\\source-fingerprint-before-v4.json",
+      "source_hashes_at_run": [
+        {
+          "path": ".hermes/project-status.md",
+          "sha256": "d2752fc491e7a3bfcc56c06cf99d232afb84cd6cc38d3e9fc0e2e72ff9bf927a"
+        },
+        {
+          "path": "ai_actuarial/cli.py",
+          "sha256": "b01ab3a4d4a5164fb9b8753422af794cf6f391de4f9b8e451931f13241e8a2d1"
+        },
+        {
+          "path": "ai_actuarial/feedback/inbox.py",
+          "sha256": "40e0c8bafbf2327043deaa894fbbb6d77055d3a736c58715852cb8f2cdd61970"
+        },
+        {
+          "path": "config/feedback-inbox.example.yaml",
+          "sha256": "ede83a2db0619c0ef7c6b715d448134277720daa7a9b7304d4500df1ada9a9db"
+        },
+        {
+          "path": "docs/feedback-api.md",
+          "sha256": "35bce607254461a98bacba1d2f4ce6a6e40e4bf784363b124daf642b48aeef6b"
+        },
+        {
+          "path": "docs/feedback-inbox.md",
+          "sha256": "5387a4f6d063c9d7489d927aaad06356327fab362a1b237d4c6b9bdf30f79589"
+        },
+        {
+          "path": "tests/fixtures/feedback_cli.schema.json",
+          "sha256": "04ec00fbf698c01a6714fc09c24ff866209cf3d270cc4897337409a2f253548b"
+        },
+        {
+          "path": "tests/fixtures/feedback_cli_contract.json",
+          "sha256": "7c483bc7362a0be0da579fb8ec8dcd21868c8581a7530b72c294b3053108ee17"
+        },
+        {
+          "path": "tests/test_feedback_cli.py",
+          "sha256": "f094ce0bf8c38d0ef05c69e1ce03c0290f5cce5d453e3279907e7d3e473de029"
+        }
+      ],
+      "status_file_note": "V4 is bound to the source_hashes_at_run listed above. At that run, the CLI, inbox implementation, configuration, tests, and documentation matched the captured fingerprint. Subsequent project-status-only updates are separately recorded; later remote-feedback repairs changed inbox.py, its tests, and docs and are not covered by this V4 result. The later source is bound under remote_review_fixes.",
+      "environment": "Local browser on 127.0.0.1:15161; isolated PostgreSQL 16.15 container on loopback 127.0.0.1:55461; isolated FastAPI on 127.0.0.1:8000; Windows Task Scheduler under current non-elevated user, Limited/Interactive, separate temporary task AIActuarial-FeedbackInbox-postfix-v4-41ca041a.",
+      "operations": [
+        "Submitted synthetic feedback through the browser after the temporary task was registered disabled.",
+        "Verified the receipt and exact content in isolated PostgreSQL feedback_items.",
+        "Enabled only the temporary task and allowed its registered timer to invoke python -m ai_actuarial --config <feedback-sites.yaml> feedback pull --json.",
+        "Disabled the temporary task after the first successful scheduled run, waited past the next due time, and compared task state, LastRunTime, CLI/report hashes and timestamps."
+      ],
+      "expected": "The scheduled task fires at its registered trigger with exit 0; reports contain the same receipt ID and text; after disable, no next run changes LastRunTime or reports.",
+      "actual": {
+        "browser_receipt_id": "13dd82d9-bea6-4d03-9c59-3c59b46623e2",
+        "content": "Issue 461 post-fix scheduled acceptance: browser feedback should reach JSON and Markdown after the task trigger.",
+        "postgres_match": true,
+        "scheduled_run_local": "2026-11-05T21:11:48-05:00",
+        "last_task_result": 0,
+        "cli_success": true,
+        "site_key": "postfix-site",
+        "new_count": 1,
+        "error": null,
+        "inbox_json_contains_exact_id_and_content": true,
+        "inbox_markdown_contains_exact_id_content_and_sync_line": true,
+        "disabled_after_next_due_time": true,
+        "last_run_time_unchanged": true,
+        "raw_cli_and_report_hashes_unchanged": 5,
+        "task_removed_after_capture": true
+      },
+      "result": "PASS",
+      "evidence": [
+        "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-461\\acceptance-run\\postfix-v4\\repaired-v4-first-run-evidence.json",
+        "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-461\\acceptance-run\\postfix-v4\\repaired-v4-disabled-next-trigger-evidence.json",
+        "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-461\\acceptance-run\\postfix-v4\\repaired-v4-time-format-diagnostic.json",
+        "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-461\\controller-postfix-v4-scheduler-native.json",
+        "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-461\\reviewer-r2-v4-addendum.json",
+        "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-461\\acceptance-run\\postfix-v4\\cleanup-verification.json"
+      ],
+      "limitations": [
+        "Task Scheduler Operational event logging was already disabled and was left unchanged.",
+        "A first text comparison differed only in zero fractional-second display; the retained diagnostic and UTC tick comparison confirm the same LastRunTime instant.",
+        "No production deployment or formal recurring task was enabled."
+      ]
+    }
+  ],
+  "checks": [
+    {
+      "id": "feedback-focused-tests",
+      "command": "python -m pytest tests/test_feedback_cli.py",
+      "expected": "Feedback CLI tests pass.",
+      "actual": "46 passed.",
+      "result": "PASS",
+      "evidence": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-461\\worker-round1-pytest-feedback-cli.log"
+    },
+    {
+      "id": "cli-regression",
+      "command": "python -m pytest tests/test_feedback_cli.py tests/test_pipeline_baton_cli.py --no-cov -q",
+      "expected": "Feedback and existing pipeline CLI regressions pass.",
+      "actual": "50 passed.",
+      "result": "PASS",
+      "evidence": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-461\\worker-round1-pytest-cli-regression.log"
+    },
+    {
+      "id": "postgres-adjacency-initial-attempt",
+      "command": "python -m pytest tests/test_pipeline_baton_cli.py tests/test_fastapi_feedback_endpoints.py tests/test_feedback_storage.py --no-cov -q",
+      "environment": "Worker invocation without POSTGRES_TEST_URL.",
+      "expected": "Existing API/pipeline/storage adjacency suite requires its PostgreSQL test URL.",
+      "actual": "6 failed, 35 setup errors, 5 passed; all failures were missing POSTGRES_TEST_URL setup.",
+      "result": "BLOCKED_ENVIRONMENT_SETUP",
+      "evidence": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-461\\worker-pytest-adjacent.log",
+      "disposition": "Preserved raw failure; not classified as a product-code failure."
+    },
+    {
+      "id": "postgres-adjacency-isolated-rerun",
+      "command": "python -m pytest tests/test_pipeline_baton_cli.py tests/test_fastapi_feedback_endpoints.py tests/test_feedback_storage.py --no-cov -q",
+      "environment": "POSTGRES_TEST_URL=postgresql://postgres@127.0.0.1:55461/issue461_a with dedicated loopback-only isolated PostgreSQL 16.15.",
+      "expected": "Adjacent pipeline/API/storage suite passes with a configured test database.",
+      "actual": "46 passed; 3 existing SWIG deprecation warnings.",
+      "result": "PASS",
+      "evidence": [
+        "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-461\\acceptance-run\\pytest-adjacent-isolated-postgres.log",
+        "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-461\\acceptance-run\\postgres-adjacent-validation.json"
+      ]
+    },
+    {
+      "id": "static-checks",
+      "command": "Black; isort; Pylint errors-only; Ruff; Python dead-code file/symbol gates; git diff --check",
+      "expected": "All scoped static and diff checks pass.",
+      "actual": "All passed.",
+      "result": "PASS",
+      "evidence": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-461\\worker-round1-validation.json"
+    }
+  ],
+  "reviews": [
+    {
+      "round": 1,
+      "reviewer": "/root/issue461_review_r1",
+      "result": "CHANGES",
+      "accepted_findings": 3,
+      "fix_report": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-461\\worker-round1-fix-report.md",
+      "typesafe_assessment": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-461\\review-round-1\\typesafe-result-supplement.json"
+    },
+    {
+      "round": 2,
+      "reviewer": "/root/issue461_review_r2",
+      "result": "PASS",
+      "source_code_report": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-461\\controller-review-2-native.json",
+      "repaired_v4_addendum": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-461\\reviewer-r2-v4-addendum.json",
+      "typesafe_assessment": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-461\\review-round-2\\typesafe-result-v4-complete.json",
+      "typesafe_model": "jev-1.14.0",
+      "typesafe_review_summary_coverage": 0.93,
+      "source_code_changes_after_review": false
+    }
+  ],
+  "cleanup": {
+    "temporary_task_absent": true,
+    "synthetic_user_credential_absent": true,
+    "isolated_container_absent": true,
+    "api_vite_and_pg_test_ports_listening": false,
+    "existing_containers_untouched_and_running": [
+      "aiinforsearch-issue450-editor-test-pg",
+      "ai-actuarial-content-hub-pg16"
+    ],
+    "scheduler_operational_log_changed": false,
+    "evidence": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-461\\acceptance-run\\postfix-v4\\cleanup-verification.json"
+  },
+  "remote_review_fixes": {
+    "source_commit_sha": "00b1f53daa5ce213387899da988cd7c8a7091431",
+    "source_files": {
+      "ai_actuarial/feedback/inbox.py": "2bc50ef40a7efe7d523a78e1fc6391867d93e8e41f6d97556881d1586e714c48",
+      "tests/test_feedback_cli.py": "65f3ec4cff3b21504e5a5df6cbd9eabb838949d227a19955dd720f54b5ce4ae0",
+      "docs/feedback-inbox.md": "01c153c51d74cbaf8261edd9f75877c9234d54fcb11b360290bc9862bae55ec9"
+    },
+    "scope": "One-time PR #467 Copilot review of prior PR HEAD 07d35a11e421368410ef01d02c4b4696c98e8a76; four findings were directly mapped to the configured credential boundary, AC2/AC4, and D2/V2. This evidence is distinct from V1/V3/V4.",
+    "comment_ids": [
+      4488504564,
+      4488504600,
+      4488504633,
+      4488504660
+    ],
+    "source_findings_reproduced_on_prior_head": {
+      "command": "python -m pytest tests/test_feedback_cli.py --no-cov -q -k 'actual_cross_origin or malformed_http_response or invalid_sync_values or sync_write_failure'",
+      "actual": "20 failed, 46 deselected",
+      "result": "RED",
+      "evidence": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-461\\worker-remote-red.log"
+    },
+    "fixed_source_checks": [
+      {
+        "command": "python -m pytest tests/test_feedback_cli.py",
+        "actual": "66 passed; 3 existing SWIG deprecation warnings",
+        "result": "PASS",
+        "evidence": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-461\\worker-remote-feedback-focused.log"
+      },
+      {
+        "command": "python -m pytest tests/test_feedback_cli.py tests/test_pipeline_baton_cli.py --no-cov -q",
+        "actual": "70 passed",
+        "result": "PASS",
+        "evidence": "Worker tool output; source hash above"
+      },
+      {
+        "command": "Black; isort; Pylint errors-only; Ruff; Python file/symbol dead-code gates; git diff --check",
+        "actual": "All passed",
+        "result": "PASS",
+        "evidence": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-461\\worker-remote-static.json"
+      }
+    ],
+    "review_assessment": {
+      "copilot_review_id": 5795095508,
+      "result": "COMMENTED; four issues fixed",
+      "snapshot": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-461\\remote-feedback-snapshot-1.json",
+      "manager_disposition": "All four accepted within scope based on exact acceptance mapping and reproducible old-head failures.",
+      "typesafe_judge": {
+        "choice": "accept_all_four",
+        "probability": 0.63,
+        "confidence": 0.51,
+        "model": "jev-1.14.0",
+        "report": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-461\\copilot-scope-result.json"
+      },
+      "typesafe_remote_review_assessment": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-461\\remote-review-typesafe.json",
+      "independent_supplemental_code_audit": {
+        "reviewer": "/root/issue461_remote_review",
+        "result": "PASS",
+        "source_sha256": "2bc50ef40a7efe7d523a78e1fc6391867d93e8e41f6d97556881d1586e714c48",
+        "formal_lifecycle_round": false,
+        "evidence": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-461\\controller-remote-review-native.json"
+      },
+      "formal_fresh_local_review_after_published_fix": "Pending on final PR HEAD; see Issue manager state and final review evidence."
+    },
+    "limitations": [
+      "No PostgreSQL/browser/V4 Task Scheduler rerun for these local CLI error-handling changes. Earlier V1/V3/V4 results remain historical and are not relabeled as this source.",
+      "At the one-time remote-feedback snapshot, five CI jobs passed and quality-gate was still in progress. Final merge requires checks on the final PR HEAD."
+    ]
+  }
+}
