@@ -11,11 +11,11 @@ This guide describes the current browsing, file, knowledge base, Chat, account, 
 
 ## Browsing and search {#browse-search}
 
-Open **Database** to browse collected files. Search by title, filename, or source; use the category and source filters, sorting, and page controls to narrow the list. Select a row to open its file details. The list reflects files currently available to your account.
+Open **Database** to browse collected files. Use text search to find files; the separate category and source filters, sorting, and page controls narrow the list. Select a row to open its file details. The list reflects files currently available to your account.
 
 ## Categories and sources {#categories-sources}
 
-Open **Categories** to browse categories currently used by files. Open **Source Portals** to see monitored source sites and their summaries. A category view can link to matching files. Some deployments show an **Ask AI** link when a ready knowledge base is available for that category and your account can use Chat.
+Open **Categories** to browse categories currently used by files. Open **Source Portals** to browse reviewed source entries, their overviews, and recent updates. Some entries are historical or on hold. A category view can link to matching files. Some deployments show an **Ask AI** link when a ready knowledge base is available for that category and your account can use Chat.
 
 ## File details and reading {#file-details}
 

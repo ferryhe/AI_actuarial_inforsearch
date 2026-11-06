@@ -55,10 +55,30 @@ def test_section_heading_only_queries_find_their_section(query, language, sectio
     [
         "Where can I configure SMTP mail delivery relay?",
         "What is SMTP mail delivery?",
+        "Can you tell me about SMTP mail delivery?",
+        "How does one configure SMTP mail delivery?",
+        "What happened after SMTP mail delivery?",
+        "Do you have SMTP mail delivery?",
+        "What if SMTP mail delivery?",
+        "What's SMTP mail delivery?",
+        "Is SMTP delivery something this system cannot do?",
     ],
 )
-def test_unmatched_natural_language_questions_ignore_stopword_only_overlap(query):
+def test_unmatched_natural_language_questions_ignore_function_word_only_overlap(query):
     assert search_help(query, language="en", limit=5) == []
+
+
+@pytest.mark.parametrize(
+    "query",
+    "about after another but cannot has have if its not one only s some that their then those while yet".split(),
+)
+def test_new_english_stopwords_alone_do_not_match_help_sections(query):
+    assert search_help(query, language="en", limit=5) == []
+
+
+def test_function_word_filter_keeps_substantive_topic_matches():
+    results = search_help("Is that knowledge base ready yet?", language="en", limit=3)
+    assert any(result["section_id"] == "knowledge-chat" for result in results)
 
 
 def test_reload_picks_up_edits_and_removed_sections(tmp_path):
