@@ -1,0 +1,1513 @@
+{
+  "schema_version": 1,
+  "issue": 462,
+  "title": "[助手 1/3] 建立可维护的项目使用帮助知识库与可引用检索",
+  "recorded_at_utc": "2026-11-06T05:32:49.038456+00:00",
+  "implementation_commit": "a871e22236edb01f590a04e6d7f14c0db54af3ec",
+  "branch": "codex/issue-462-help-docs",
+  "status": "PASS_LOCAL_ISOLATED_ACCEPTANCE; NOT_DEPLOYED",
+  "scope": "Issue #462 only; help sources, deterministic retrieval, exact citation API, shared assistant flag and truthful capability reporting. No production enablement or deployment.",
+  "environment": {
+    "runtime": "Windows local worktree, Python 3.11.9, full create_app Uvicorn at 127.0.0.1:18662",
+    "database": "Disposable PostgreSQL 16.15 in task-specific local container; no production database or data used.",
+    "config": "Temporary isolated sites YAML under reports/issue-459-464-20261105/issue-462; restored byte-for-byte after tests.",
+    "data_root": "Temporary isolated directory under reports/issue-459-464-20261105/issue-462/isolated-data.",
+    "ai_credentials": "OPENAI_API_KEY and TYPESAFE_API_KEY were empty; no model/provider call was made by help search.",
+    "frontend_version": {
+      "package_json": "1.0.0",
+      "build_identity": "unknown (no built frontend served in this local API check)"
+    },
+    "api_version": {
+      "release_manifest_id": "unknown",
+      "git_sha": "unknown"
+    },
+    "production": "Not enabled or changed."
+  },
+  "v1": {
+    "criterion": "AC1, AC5; D1, D3, D4",
+    "status": "PASS",
+    "implementation_commit": "a871e22236edb01f590a04e6d7f14c0db54af3ec",
+    "expected": "7 usage categories × 2 languages; accurate current page/role and shipped-feature descriptions; source version recorded; planned features not shown as shipped.",
+    "actual_count": 14,
+    "actual_items": [
+      {
+        "id": "en-browse-search",
+        "doc_id": "user-guide-en",
+        "section_id": "browse-search",
+        "language": "en",
+        "implementation_commit": "a871e22236edb01f590a04e6d7f14c0db54af3ec",
+        "guide_source_version": "1.0.0",
+        "content_hash": "cea3b4b5487c7aeae44a5e99a66c00e8651f3b60bb89ad9bb9fd140c466056ed",
+        "environment": {
+          "source_baseline": "6b183ffb73a579230a45fba838cf037571105276",
+          "frontend_package_version": "1.0.0",
+          "frontend_build_info": "unknown (no built frontend identity was available in this local run)",
+          "local_api_build_info": {
+            "release_manifest_id": "unknown",
+            "git_sha": "unknown"
+          },
+          "production_deployment": "not performed"
+        },
+        "steps": [
+          "Read docs/help/user-guide.en.md section browse-search.",
+          "Cross-check client/src/components/Layout.tsx, client/src/pages/Database.tsx, ai_actuarial/shared_auth.py against source baseline and current implementation."
+        ],
+        "expected": "The guide describes only shipped UI/API behavior, states applicable permission or deployment conditions, and does not present planned assistant-panel behavior as available.",
+        "actual": "Database: browse files; search title/file name/source; category/source filters, sort and pagination. Role check: Layout nav and Database require files.read. Guest, registered, operator and admin include files.read; available records remain account-scoped. The guide correctly identifies any unshipped panel or feature.",
+        "status": "PASS",
+        "evidence": [
+          "docs/help/user-guide.en.md",
+          "client/src/components/Layout.tsx",
+          "client/src/pages/Database.tsx",
+          "ai_actuarial/shared_auth.py",
+          "package.json",
+          "client/src/components/BuildInfo.tsx",
+          "ai_actuarial/build_info.py"
+        ]
+      },
+      {
+        "id": "en-categories-sources",
+        "doc_id": "user-guide-en",
+        "section_id": "categories-sources",
+        "language": "en",
+        "implementation_commit": "a871e22236edb01f590a04e6d7f14c0db54af3ec",
+        "guide_source_version": "1.0.0",
+        "content_hash": "e3b2e11729bc2b2865a3c4c5f0122f00711dca077f9a78ed6e216974963d77b8",
+        "environment": {
+          "source_baseline": "6b183ffb73a579230a45fba838cf037571105276",
+          "frontend_package_version": "1.0.0",
+          "frontend_build_info": "unknown (no built frontend identity was available in this local run)",
+          "local_api_build_info": {
+            "release_manifest_id": "unknown",
+            "git_sha": "unknown"
+          },
+          "production_deployment": "not performed"
+        },
+        "steps": [
+          "Read docs/help/user-guide.en.md section categories-sources.",
+          "Cross-check client/src/components/Layout.tsx, client/src/pages/Categories.tsx, client/src/pages/SourcePortals.tsx, ai_actuarial/shared_auth.py against source baseline and current implementation."
+        ],
+        "expected": "The guide describes only shipped UI/API behavior, states applicable permission or deployment conditions, and does not present planned assistant-panel behavior as available.",
+        "actual": "Categories shows used categories; Source Portals shows monitored sites and summaries; category page may link to a ready dedicated KB in Chat. Role check: Categories and Source Portals require files.read. Ask AI is shown only when chat.view and chat.query are present and a dedicated ready KB is available. The guide correctly identifies any unshipped panel or feature.",
+        "status": "PASS",
+        "evidence": [
+          "docs/help/user-guide.en.md",
+          "client/src/components/Layout.tsx",
+          "client/src/pages/Categories.tsx",
+          "client/src/pages/SourcePortals.tsx",
+          "ai_actuarial/shared_auth.py",
+          "package.json",
+          "client/src/components/BuildInfo.tsx",
+          "ai_actuarial/build_info.py"
+        ]
+      },
+      {
+        "id": "en-file-details",
+        "doc_id": "user-guide-en",
+        "section_id": "file-details",
+        "language": "en",
+        "implementation_commit": "a871e22236edb01f590a04e6d7f14c0db54af3ec",
+        "guide_source_version": "1.0.0",
+        "content_hash": "01eb5ff59fe8d2948e81638aebce732584c606cf5b67297955c778852748f0c1",
+        "environment": {
+          "source_baseline": "6b183ffb73a579230a45fba838cf037571105276",
+          "frontend_package_version": "1.0.0",
+          "frontend_build_info": "unknown (no built frontend identity was available in this local run)",
+          "local_api_build_info": {
+            "release_manifest_id": "unknown",
+            "git_sha": "unknown"
+          },
+          "production_deployment": "not performed"
+        },
+        "steps": [
+          "Read docs/help/user-guide.en.md section file-details.",
+          "Cross-check client/src/pages/FileDetail.tsx, client/src/pages/Database.tsx, ai_actuarial/shared_auth.py, ai_actuarial/api/routers/read.py against source baseline and current implementation."
+        ],
+        "expected": "The guide describes only shipped UI/API behavior, states applicable permission or deployment conditions, and does not present planned assistant-panel behavior as available.",
+        "actual": "File detail shows metadata and available content; Preview depends on a local file; Download is permission-gated; Markdown read is shown only when available; editing and processing actions need separate grants. Role check: files.read/markdown.read gate read surfaces; files.download is required for Download and is absent from guest permissions; catalog.write, markdown.write and task permissions gate changes. The guide correctly identifies any unshipped panel or feature.",
+        "status": "PASS",
+        "evidence": [
+          "docs/help/user-guide.en.md",
+          "client/src/pages/FileDetail.tsx",
+          "client/src/pages/Database.tsx",
+          "ai_actuarial/shared_auth.py",
+          "ai_actuarial/api/routers/read.py",
+          "package.json",
+          "client/src/components/BuildInfo.tsx",
+          "ai_actuarial/build_info.py"
+        ]
+      },
+      {
+        "id": "en-knowledge-chat",
+        "doc_id": "user-guide-en",
+        "section_id": "knowledge-chat",
+        "language": "en",
+        "implementation_commit": "a871e22236edb01f590a04e6d7f14c0db54af3ec",
+        "guide_source_version": "1.0.0",
+        "content_hash": "9753207f7b3ce046b948bbd2409fd597c40b9c14c0238564ef524cc441b0ec7a",
+        "environment": {
+          "source_baseline": "6b183ffb73a579230a45fba838cf037571105276",
+          "frontend_package_version": "1.0.0",
+          "frontend_build_info": "unknown (no built frontend identity was available in this local run)",
+          "local_api_build_info": {
+            "release_manifest_id": "unknown",
+            "git_sha": "unknown"
+          },
+          "production_deployment": "not performed"
+        },
+        "steps": [
+          "Read docs/help/user-guide.en.md section knowledge-chat.",
+          "Cross-check client/src/components/Layout.tsx, client/src/pages/Knowledge.tsx, client/src/pages/Chat.tsx, client/src/pages/Categories.tsx, ai_actuarial/shared_auth.py against source baseline and current implementation."
+        ],
+        "expected": "The guide describes only shipped UI/API behavior, states applicable permission or deployment conditions, and does not present planned assistant-panel behavior as available.",
+        "actual": "Knowledge Bases lists available/readiness state; current Chat asks questions against a selected ready KB and mode; category Ask AI opens current Chat. Assistant panel and KB-question panel are not shipped. Role check: Knowledge navigation requires catalog.read; Chat requires chat.view; submitting requires chat.query. Setup/indexing controls require management/task permissions. The guide correctly identifies any unshipped panel or feature.",
+        "status": "PASS",
+        "evidence": [
+          "docs/help/user-guide.en.md",
+          "client/src/components/Layout.tsx",
+          "client/src/pages/Knowledge.tsx",
+          "client/src/pages/Chat.tsx",
+          "client/src/pages/Categories.tsx",
+          "ai_actuarial/shared_auth.py",
+          "package.json",
+          "client/src/components/BuildInfo.tsx",
+          "ai_actuarial/build_info.py"
+        ]
+      },
+      {
+        "id": "en-account-quota",
+        "doc_id": "user-guide-en",
+        "section_id": "account-quota",
+        "language": "en",
+        "implementation_commit": "a871e22236edb01f590a04e6d7f14c0db54af3ec",
+        "guide_source_version": "1.0.0",
+        "content_hash": "5db306b5a8162308bf819fd1502a3ce8978d0fe266d2d497a3799d50bc3ef7da",
+        "environment": {
+          "source_baseline": "6b183ffb73a579230a45fba838cf037571105276",
+          "frontend_package_version": "1.0.0",
+          "frontend_build_info": "unknown (no built frontend identity was available in this local run)",
+          "local_api_build_info": {
+            "release_manifest_id": "unknown",
+            "git_sha": "unknown"
+          },
+          "production_deployment": "not performed"
+        },
+        "steps": [
+          "Read docs/help/user-guide.en.md section account-quota.",
+          "Cross-check client/src/components/Layout.tsx, client/src/pages/Profile.tsx, ai_actuarial/shared_auth.py, ai_actuarial/api/routers/auth.py against source baseline and current implementation."
+        ],
+        "expected": "The guide describes only shipped UI/API behavior, states applicable permission or deployment conditions, and does not present planned assistant-panel behavior as available.",
+        "actual": "Signed-in users may open Profile to see role, Chat quota usage, remaining quota and recent activity; configured limits vary by deployment and role. Role check: Profile link is shown to signed-in users. Backend returns account-specific quota; guest can use permitted public Chat but is not promised a Profile view. The guide correctly identifies any unshipped panel or feature.",
+        "status": "PASS",
+        "evidence": [
+          "docs/help/user-guide.en.md",
+          "client/src/components/Layout.tsx",
+          "client/src/pages/Profile.tsx",
+          "ai_actuarial/shared_auth.py",
+          "ai_actuarial/api/routers/auth.py",
+          "package.json",
+          "client/src/components/BuildInfo.tsx",
+          "ai_actuarial/build_info.py"
+        ]
+      },
+      {
+        "id": "en-feedback-entry",
+        "doc_id": "user-guide-en",
+        "section_id": "feedback-entry",
+        "language": "en",
+        "implementation_commit": "a871e22236edb01f590a04e6d7f14c0db54af3ec",
+        "guide_source_version": "1.0.0",
+        "content_hash": "612602a0cd505a2e58cc57c4ac08404251cb2ecf2624546bc8c4e7eb3f870a2d",
+        "environment": {
+          "source_baseline": "6b183ffb73a579230a45fba838cf037571105276",
+          "frontend_package_version": "1.0.0",
+          "frontend_build_info": "unknown (no built frontend identity was available in this local run)",
+          "local_api_build_info": {
+            "release_manifest_id": "unknown",
+            "git_sha": "unknown"
+          },
+          "production_deployment": "not performed"
+        },
+        "steps": [
+          "Read docs/help/user-guide.en.md section feedback-entry.",
+          "Cross-check client/src/components/support-widget/SupportWidget.tsx, ai_actuarial/api/routers/support.py, ai_actuarial/api/routers/feedback.py, ai_actuarial/shared_runtime.py against source baseline and current implementation."
+        ],
+        "expected": "The guide describes only shipped UI/API behavior, states applicable permission or deployment conditions, and does not present planned assistant-panel behavior as available.",
+        "actual": "When feedback is enabled, floating Help and feedback collects suggestions/problems and confirms a receipt; it does not answer help questions or send a Chat query. Role check: SupportWidget reads feedback_enabled and hides when false; API feedback uses the independent feedback flag. assistant_enabled is a separate capability and not implied. The guide correctly identifies any unshipped panel or feature.",
+        "status": "PASS",
+        "evidence": [
+          "docs/help/user-guide.en.md",
+          "client/src/components/support-widget/SupportWidget.tsx",
+          "ai_actuarial/api/routers/support.py",
+          "ai_actuarial/api/routers/feedback.py",
+          "ai_actuarial/shared_runtime.py",
+          "package.json",
+          "client/src/components/BuildInfo.tsx",
+          "ai_actuarial/build_info.py"
+        ]
+      },
+      {
+        "id": "en-common-failures",
+        "doc_id": "user-guide-en",
+        "section_id": "common-failures",
+        "language": "en",
+        "implementation_commit": "a871e22236edb01f590a04e6d7f14c0db54af3ec",
+        "guide_source_version": "1.0.0",
+        "content_hash": "84e67a1a9b4b225fe25cfafd4bdd2c2d6d79d281cbaff89a337e7b632609603f",
+        "environment": {
+          "source_baseline": "6b183ffb73a579230a45fba838cf037571105276",
+          "frontend_package_version": "1.0.0",
+          "frontend_build_info": "unknown (no built frontend identity was available in this local run)",
+          "local_api_build_info": {
+            "release_manifest_id": "unknown",
+            "git_sha": "unknown"
+          },
+          "production_deployment": "not performed"
+        },
+        "steps": [
+          "Read docs/help/user-guide.en.md section common-failures.",
+          "Cross-check client/src/pages/Database.tsx, client/src/pages/FileDetail.tsx, client/src/pages/Knowledge.tsx, client/src/pages/Chat.tsx, client/src/components/support-widget/SupportWidget.tsx, ai_actuarial/shared_auth.py against source baseline and current implementation."
+        ],
+        "expected": "The guide describes only shipped UI/API behavior, states applicable permission or deployment conditions, and does not present planned assistant-panel behavior as available.",
+        "actual": "Troubleshooting steps cover cleared filters/reload, missing local preview/Markdown, unavailable KB readiness, Chat quota, feedback service, and permission errors. Role check: Advice reflects the existing per-page role gates and requires administrators for readiness or account-permission issues; it promises no new capability. The guide correctly identifies any unshipped panel or feature.",
+        "status": "PASS",
+        "evidence": [
+          "docs/help/user-guide.en.md",
+          "client/src/pages/Database.tsx",
+          "client/src/pages/FileDetail.tsx",
+          "client/src/pages/Knowledge.tsx",
+          "client/src/pages/Chat.tsx",
+          "client/src/components/support-widget/SupportWidget.tsx",
+          "ai_actuarial/shared_auth.py",
+          "package.json",
+          "client/src/components/BuildInfo.tsx",
+          "ai_actuarial/build_info.py"
+        ]
+      },
+      {
+        "id": "zh-browse-search",
+        "doc_id": "user-guide-zh",
+        "section_id": "browse-search",
+        "language": "zh",
+        "implementation_commit": "a871e22236edb01f590a04e6d7f14c0db54af3ec",
+        "guide_source_version": "1.0.0",
+        "content_hash": "c54ab7ec918aa7cc81c87c9a2270124ee85078c4883e74e402ecf89f7c3e8ad9",
+        "environment": {
+          "source_baseline": "6b183ffb73a579230a45fba838cf037571105276",
+          "frontend_package_version": "1.0.0",
+          "frontend_build_info": "unknown (no built frontend identity was available in this local run)",
+          "local_api_build_info": {
+            "release_manifest_id": "unknown",
+            "git_sha": "unknown"
+          },
+          "production_deployment": "not performed"
+        },
+        "steps": [
+          "Read docs/help/user-guide.zh.md section browse-search.",
+          "Cross-check client/src/components/Layout.tsx, client/src/pages/Database.tsx, ai_actuarial/shared_auth.py against source baseline and current implementation."
+        ],
+        "expected": "The guide describes only shipped UI/API behavior, states applicable permission or deployment conditions, and does not present planned assistant-panel behavior as available.",
+        "actual": "Database: browse files; search title/file name/source; category/source filters, sort and pagination. Role check: Layout nav and Database require files.read. Guest, registered, operator and admin include files.read; available records remain account-scoped. The guide correctly identifies any unshipped panel or feature.",
+        "status": "PASS",
+        "evidence": [
+          "docs/help/user-guide.zh.md",
+          "client/src/components/Layout.tsx",
+          "client/src/pages/Database.tsx",
+          "ai_actuarial/shared_auth.py",
+          "package.json",
+          "client/src/components/BuildInfo.tsx",
+          "ai_actuarial/build_info.py"
+        ]
+      },
+      {
+        "id": "zh-categories-sources",
+        "doc_id": "user-guide-zh",
+        "section_id": "categories-sources",
+        "language": "zh",
+        "implementation_commit": "a871e22236edb01f590a04e6d7f14c0db54af3ec",
+        "guide_source_version": "1.0.0",
+        "content_hash": "5ee791db1528bb034517f199e4c63ed71b5d649f511b1aabeb35d6f49ba3cded",
+        "environment": {
+          "source_baseline": "6b183ffb73a579230a45fba838cf037571105276",
+          "frontend_package_version": "1.0.0",
+          "frontend_build_info": "unknown (no built frontend identity was available in this local run)",
+          "local_api_build_info": {
+            "release_manifest_id": "unknown",
+            "git_sha": "unknown"
+          },
+          "production_deployment": "not performed"
+        },
+        "steps": [
+          "Read docs/help/user-guide.zh.md section categories-sources.",
+          "Cross-check client/src/components/Layout.tsx, client/src/pages/Categories.tsx, client/src/pages/SourcePortals.tsx, ai_actuarial/shared_auth.py against source baseline and current implementation."
+        ],
+        "expected": "The guide describes only shipped UI/API behavior, states applicable permission or deployment conditions, and does not present planned assistant-panel behavior as available.",
+        "actual": "Categories shows used categories; Source Portals shows monitored sites and summaries; category page may link to a ready dedicated KB in Chat. Role check: Categories and Source Portals require files.read. Ask AI is shown only when chat.view and chat.query are present and a dedicated ready KB is available. The guide correctly identifies any unshipped panel or feature.",
+        "status": "PASS",
+        "evidence": [
+          "docs/help/user-guide.zh.md",
+          "client/src/components/Layout.tsx",
+          "client/src/pages/Categories.tsx",
+          "client/src/pages/SourcePortals.tsx",
+          "ai_actuarial/shared_auth.py",
+          "package.json",
+          "client/src/components/BuildInfo.tsx",
+          "ai_actuarial/build_info.py"
+        ]
+      },
+      {
+        "id": "zh-file-details",
+        "doc_id": "user-guide-zh",
+        "section_id": "file-details",
+        "language": "zh",
+        "implementation_commit": "a871e22236edb01f590a04e6d7f14c0db54af3ec",
+        "guide_source_version": "1.0.0",
+        "content_hash": "58b38c53013faa42a38ce2d0eae34fe66ceadb0aadb99e6d029d00d82a9444b6",
+        "environment": {
+          "source_baseline": "6b183ffb73a579230a45fba838cf037571105276",
+          "frontend_package_version": "1.0.0",
+          "frontend_build_info": "unknown (no built frontend identity was available in this local run)",
+          "local_api_build_info": {
+            "release_manifest_id": "unknown",
+            "git_sha": "unknown"
+          },
+          "production_deployment": "not performed"
+        },
+        "steps": [
+          "Read docs/help/user-guide.zh.md section file-details.",
+          "Cross-check client/src/pages/FileDetail.tsx, client/src/pages/Database.tsx, ai_actuarial/shared_auth.py, ai_actuarial/api/routers/read.py against source baseline and current implementation."
+        ],
+        "expected": "The guide describes only shipped UI/API behavior, states applicable permission or deployment conditions, and does not present planned assistant-panel behavior as available.",
+        "actual": "File detail shows metadata and available content; Preview depends on a local file; Download is permission-gated; Markdown read is shown only when available; editing and processing actions need separate grants. Role check: files.read/markdown.read gate read surfaces; files.download is required for Download and is absent from guest permissions; catalog.write, markdown.write and task permissions gate changes. The guide correctly identifies any unshipped panel or feature.",
+        "status": "PASS",
+        "evidence": [
+          "docs/help/user-guide.zh.md",
+          "client/src/pages/FileDetail.tsx",
+          "client/src/pages/Database.tsx",
+          "ai_actuarial/shared_auth.py",
+          "ai_actuarial/api/routers/read.py",
+          "package.json",
+          "client/src/components/BuildInfo.tsx",
+          "ai_actuarial/build_info.py"
+        ]
+      },
+      {
+        "id": "zh-knowledge-chat",
+        "doc_id": "user-guide-zh",
+        "section_id": "knowledge-chat",
+        "language": "zh",
+        "implementation_commit": "a871e22236edb01f590a04e6d7f14c0db54af3ec",
+        "guide_source_version": "1.0.0",
+        "content_hash": "8118b043b1932ddcd7ab360b8e7f4316b761a792ddc30edbc2ce64d710036d32",
+        "environment": {
+          "source_baseline": "6b183ffb73a579230a45fba838cf037571105276",
+          "frontend_package_version": "1.0.0",
+          "frontend_build_info": "unknown (no built frontend identity was available in this local run)",
+          "local_api_build_info": {
+            "release_manifest_id": "unknown",
+            "git_sha": "unknown"
+          },
+          "production_deployment": "not performed"
+        },
+        "steps": [
+          "Read docs/help/user-guide.zh.md section knowledge-chat.",
+          "Cross-check client/src/components/Layout.tsx, client/src/pages/Knowledge.tsx, client/src/pages/Chat.tsx, client/src/pages/Categories.tsx, ai_actuarial/shared_auth.py against source baseline and current implementation."
+        ],
+        "expected": "The guide describes only shipped UI/API behavior, states applicable permission or deployment conditions, and does not present planned assistant-panel behavior as available.",
+        "actual": "Knowledge Bases lists available/readiness state; current Chat asks questions against a selected ready KB and mode; category Ask AI opens current Chat. Assistant panel and KB-question panel are not shipped. Role check: Knowledge navigation requires catalog.read; Chat requires chat.view; submitting requires chat.query. Setup/indexing controls require management/task permissions. The guide correctly identifies any unshipped panel or feature.",
+        "status": "PASS",
+        "evidence": [
+          "docs/help/user-guide.zh.md",
+          "client/src/components/Layout.tsx",
+          "client/src/pages/Knowledge.tsx",
+          "client/src/pages/Chat.tsx",
+          "client/src/pages/Categories.tsx",
+          "ai_actuarial/shared_auth.py",
+          "package.json",
+          "client/src/components/BuildInfo.tsx",
+          "ai_actuarial/build_info.py"
+        ]
+      },
+      {
+        "id": "zh-account-quota",
+        "doc_id": "user-guide-zh",
+        "section_id": "account-quota",
+        "language": "zh",
+        "implementation_commit": "a871e22236edb01f590a04e6d7f14c0db54af3ec",
+        "guide_source_version": "1.0.0",
+        "content_hash": "856e11f3547463c60c14acacc7819d44d5e9ef279584942bb6de379e3ceee6e2",
+        "environment": {
+          "source_baseline": "6b183ffb73a579230a45fba838cf037571105276",
+          "frontend_package_version": "1.0.0",
+          "frontend_build_info": "unknown (no built frontend identity was available in this local run)",
+          "local_api_build_info": {
+            "release_manifest_id": "unknown",
+            "git_sha": "unknown"
+          },
+          "production_deployment": "not performed"
+        },
+        "steps": [
+          "Read docs/help/user-guide.zh.md section account-quota.",
+          "Cross-check client/src/components/Layout.tsx, client/src/pages/Profile.tsx, ai_actuarial/shared_auth.py, ai_actuarial/api/routers/auth.py against source baseline and current implementation."
+        ],
+        "expected": "The guide describes only shipped UI/API behavior, states applicable permission or deployment conditions, and does not present planned assistant-panel behavior as available.",
+        "actual": "Signed-in users may open Profile to see role, Chat quota usage, remaining quota and recent activity; configured limits vary by deployment and role. Role check: Profile link is shown to signed-in users. Backend returns account-specific quota; guest can use permitted public Chat but is not promised a Profile view. The guide correctly identifies any unshipped panel or feature.",
+        "status": "PASS",
+        "evidence": [
+          "docs/help/user-guide.zh.md",
+          "client/src/components/Layout.tsx",
+          "client/src/pages/Profile.tsx",
+          "ai_actuarial/shared_auth.py",
+          "ai_actuarial/api/routers/auth.py",
+          "package.json",
+          "client/src/components/BuildInfo.tsx",
+          "ai_actuarial/build_info.py"
+        ]
+      },
+      {
+        "id": "zh-feedback-entry",
+        "doc_id": "user-guide-zh",
+        "section_id": "feedback-entry",
+        "language": "zh",
+        "implementation_commit": "a871e22236edb01f590a04e6d7f14c0db54af3ec",
+        "guide_source_version": "1.0.0",
+        "content_hash": "5972ae4e5ff86c0bdb97a84b7d9d1b8474145dba1a8de65f566d2563c8e46e83",
+        "environment": {
+          "source_baseline": "6b183ffb73a579230a45fba838cf037571105276",
+          "frontend_package_version": "1.0.0",
+          "frontend_build_info": "unknown (no built frontend identity was available in this local run)",
+          "local_api_build_info": {
+            "release_manifest_id": "unknown",
+            "git_sha": "unknown"
+          },
+          "production_deployment": "not performed"
+        },
+        "steps": [
+          "Read docs/help/user-guide.zh.md section feedback-entry.",
+          "Cross-check client/src/components/support-widget/SupportWidget.tsx, ai_actuarial/api/routers/support.py, ai_actuarial/api/routers/feedback.py, ai_actuarial/shared_runtime.py against source baseline and current implementation."
+        ],
+        "expected": "The guide describes only shipped UI/API behavior, states applicable permission or deployment conditions, and does not present planned assistant-panel behavior as available.",
+        "actual": "When feedback is enabled, floating Help and feedback collects suggestions/problems and confirms a receipt; it does not answer help questions or send a Chat query. Role check: SupportWidget reads feedback_enabled and hides when false; API feedback uses the independent feedback flag. assistant_enabled is a separate capability and not implied. The guide correctly identifies any unshipped panel or feature.",
+        "status": "PASS",
+        "evidence": [
+          "docs/help/user-guide.zh.md",
+          "client/src/components/support-widget/SupportWidget.tsx",
+          "ai_actuarial/api/routers/support.py",
+          "ai_actuarial/api/routers/feedback.py",
+          "ai_actuarial/shared_runtime.py",
+          "package.json",
+          "client/src/components/BuildInfo.tsx",
+          "ai_actuarial/build_info.py"
+        ]
+      },
+      {
+        "id": "zh-common-failures",
+        "doc_id": "user-guide-zh",
+        "section_id": "common-failures",
+        "language": "zh",
+        "implementation_commit": "a871e22236edb01f590a04e6d7f14c0db54af3ec",
+        "guide_source_version": "1.0.0",
+        "content_hash": "d33bcad7248914bec7b1c8c9b702e79bdbefe9a1076d7c6794307da5199a8927",
+        "environment": {
+          "source_baseline": "6b183ffb73a579230a45fba838cf037571105276",
+          "frontend_package_version": "1.0.0",
+          "frontend_build_info": "unknown (no built frontend identity was available in this local run)",
+          "local_api_build_info": {
+            "release_manifest_id": "unknown",
+            "git_sha": "unknown"
+          },
+          "production_deployment": "not performed"
+        },
+        "steps": [
+          "Read docs/help/user-guide.zh.md section common-failures.",
+          "Cross-check client/src/pages/Database.tsx, client/src/pages/FileDetail.tsx, client/src/pages/Knowledge.tsx, client/src/pages/Chat.tsx, client/src/components/support-widget/SupportWidget.tsx, ai_actuarial/shared_auth.py against source baseline and current implementation."
+        ],
+        "expected": "The guide describes only shipped UI/API behavior, states applicable permission or deployment conditions, and does not present planned assistant-panel behavior as available.",
+        "actual": "Troubleshooting steps cover cleared filters/reload, missing local preview/Markdown, unavailable KB readiness, Chat quota, feedback service, and permission errors. Role check: Advice reflects the existing per-page role gates and requires administrators for readiness or account-permission issues; it promises no new capability. The guide correctly identifies any unshipped panel or feature.",
+        "status": "PASS",
+        "evidence": [
+          "docs/help/user-guide.zh.md",
+          "client/src/pages/Database.tsx",
+          "client/src/pages/FileDetail.tsx",
+          "client/src/pages/Knowledge.tsx",
+          "client/src/pages/Chat.tsx",
+          "client/src/components/support-widget/SupportWidget.tsx",
+          "ai_actuarial/shared_auth.py",
+          "package.json",
+          "client/src/components/BuildInfo.tsx",
+          "ai_actuarial/build_info.py"
+        ]
+      }
+    ],
+    "version_summary": "Both guides use source_version 1.0.0. Root package.json is 1.0.0. Local API /api/health returned build_info release_manifest_id=unknown and git_sha=unknown. Frontend build identity also unknown; no version was inferred.",
+    "evidence": [
+      "docs/help/user-guide.en.md",
+      "docs/help/user-guide.zh.md",
+      "client/src/components/Layout.tsx",
+      "client/src/pages/Database.tsx",
+      "client/src/pages/Categories.tsx",
+      "client/src/pages/SourcePortals.tsx",
+      "client/src/pages/FileDetail.tsx",
+      "client/src/pages/Knowledge.tsx",
+      "client/src/pages/Chat.tsx",
+      "client/src/pages/Profile.tsx",
+      "ai_actuarial/shared_auth.py",
+      "client/src/components/support-widget/SupportWidget.tsx"
+    ]
+  },
+  "v2": {
+    "criterion": "AC2, AC4; D2, D3; V2",
+    "status": "PASS",
+    "implementation_commit": "a871e22236edb01f590a04e6d7f14c0db54af3ec",
+    "environment": "real HTTP on isolated uvicorn + PostgreSQL 16.15; OPENAI_API_KEY empty; TYPESAFE_API_KEY empty",
+    "steps": "Loop through the committed fixed fixture and issue a real GET to the isolated /api/assistant/help route per row, using limit=3; compare each returned top-three list to the fixture. Empty AI keys and deterministic route code were checked.",
+    "expected": "14 positive rows hit their exact expected section within the first three results; 4 negatives return zero results; candidate and snippet sizes are bounded; model generation calls are 0.",
+    "actual": {
+      "positive_passes": 14,
+      "positive_count": 14,
+      "negative_passes": 4,
+      "negative_count": 4,
+      "max_result_count": 3,
+      "max_snippet_length": 280,
+      "api_contract_max_results": 10,
+      "api_contract_max_snippet_chars": 280,
+      "generation_calls": 0,
+      "cases": [
+        {
+          "id": "en-browse",
+          "language": "en",
+          "question": "Database search by title filename and source",
+          "implementation_commit": "a871e22236edb01f590a04e6d7f14c0db54af3ec",
+          "environment": "real HTTP on isolated uvicorn + PostgreSQL 16.15; OPENAI_API_KEY empty; TYPESAFE_API_KEY empty",
+          "steps": "GET /api/assistant/help?q='Database search by title filename and source'&language=en&limit=3 against the isolated full API.",
+          "expected": {
+            "doc_id": "user-guide-en",
+            "section_id": "browse-search"
+          },
+          "actual": {
+            "http_status": 200,
+            "result_count": 3,
+            "top_results": [
+              {
+                "doc_id": "user-guide-en",
+                "section_id": "browse-search",
+                "language": "en",
+                "source_version": "1.0.0",
+                "content_hash": "cea3b4b5487c7aeae44a5e99a66c00e8651f3b60bb89ad9bb9fd140c466056ed",
+                "snippet_length": 266
+              },
+              {
+                "doc_id": "user-guide-en",
+                "section_id": "file-details",
+                "language": "en",
+                "source_version": "1.0.0",
+                "content_hash": "01eb5ff59fe8d2948e81638aebce732584c606cf5b67297955c778852748f0c1",
+                "snippet_length": 280
+              },
+              {
+                "doc_id": "user-guide-en",
+                "section_id": "categories-sources",
+                "language": "en",
+                "source_version": "1.0.0",
+                "content_hash": "e3b2e11729bc2b2865a3c4c5f0122f00711dca077f9a78ed6e216974963d77b8",
+                "snippet_length": 280
+              }
+            ]
+          },
+          "status": "PASS",
+          "evidence": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-462\\manager-v2-round-2.json#en-browse"
+        },
+        {
+          "id": "zh-browse",
+          "language": "zh",
+          "question": "数据库搜索标题文件名来源",
+          "implementation_commit": "a871e22236edb01f590a04e6d7f14c0db54af3ec",
+          "environment": "real HTTP on isolated uvicorn + PostgreSQL 16.15; OPENAI_API_KEY empty; TYPESAFE_API_KEY empty",
+          "steps": "GET /api/assistant/help?q='数据库搜索标题文件名来源'&language=zh&limit=3 against the isolated full API.",
+          "expected": {
+            "doc_id": "user-guide-zh",
+            "section_id": "browse-search"
+          },
+          "actual": {
+            "http_status": 200,
+            "result_count": 3,
+            "top_results": [
+              {
+                "doc_id": "user-guide-zh",
+                "section_id": "browse-search",
+                "language": "zh",
+                "source_version": "1.0.0",
+                "content_hash": "c54ab7ec918aa7cc81c87c9a2270124ee85078c4883e74e402ecf89f7c3e8ad9",
+                "snippet_length": 93
+              },
+              {
+                "doc_id": "user-guide-zh",
+                "section_id": "file-details",
+                "language": "zh",
+                "source_version": "1.0.0",
+                "content_hash": "58b38c53013faa42a38ce2d0eae34fe66ceadb0aadb99e6d029d00d82a9444b6",
+                "snippet_length": 180
+              },
+              {
+                "doc_id": "user-guide-zh",
+                "section_id": "categories-sources",
+                "language": "zh",
+                "source_version": "1.0.0",
+                "content_hash": "5ee791db1528bb034517f199e4c63ed71b5d649f511b1aabeb35d6f49ba3cded",
+                "snippet_length": 140
+              }
+            ]
+          },
+          "status": "PASS",
+          "evidence": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-462\\manager-v2-round-2.json#zh-browse"
+        },
+        {
+          "id": "en-categories",
+          "language": "en",
+          "question": "Categories page Source Portals monitored sites",
+          "implementation_commit": "a871e22236edb01f590a04e6d7f14c0db54af3ec",
+          "environment": "real HTTP on isolated uvicorn + PostgreSQL 16.15; OPENAI_API_KEY empty; TYPESAFE_API_KEY empty",
+          "steps": "GET /api/assistant/help?q='Categories page Source Portals monitored sites'&language=en&limit=3 against the isolated full API.",
+          "expected": {
+            "doc_id": "user-guide-en",
+            "section_id": "categories-sources"
+          },
+          "actual": {
+            "http_status": 200,
+            "result_count": 3,
+            "top_results": [
+              {
+                "doc_id": "user-guide-en",
+                "section_id": "categories-sources",
+                "language": "en",
+                "source_version": "1.0.0",
+                "content_hash": "e3b2e11729bc2b2865a3c4c5f0122f00711dca077f9a78ed6e216974963d77b8",
+                "snippet_length": 280
+              },
+              {
+                "doc_id": "user-guide-en",
+                "section_id": "browse-search",
+                "language": "en",
+                "source_version": "1.0.0",
+                "content_hash": "cea3b4b5487c7aeae44a5e99a66c00e8651f3b60bb89ad9bb9fd140c466056ed",
+                "snippet_length": 266
+              },
+              {
+                "doc_id": "user-guide-en",
+                "section_id": "file-details",
+                "language": "en",
+                "source_version": "1.0.0",
+                "content_hash": "01eb5ff59fe8d2948e81638aebce732584c606cf5b67297955c778852748f0c1",
+                "snippet_length": 280
+              }
+            ]
+          },
+          "status": "PASS",
+          "evidence": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-462\\manager-v2-round-2.json#en-categories"
+        },
+        {
+          "id": "zh-categories",
+          "language": "zh",
+          "question": "类别页面来源门户监测网站",
+          "implementation_commit": "a871e22236edb01f590a04e6d7f14c0db54af3ec",
+          "environment": "real HTTP on isolated uvicorn + PostgreSQL 16.15; OPENAI_API_KEY empty; TYPESAFE_API_KEY empty",
+          "steps": "GET /api/assistant/help?q='类别页面来源门户监测网站'&language=zh&limit=3 against the isolated full API.",
+          "expected": {
+            "doc_id": "user-guide-zh",
+            "section_id": "categories-sources"
+          },
+          "actual": {
+            "http_status": 200,
+            "result_count": 3,
+            "top_results": [
+              {
+                "doc_id": "user-guide-zh",
+                "section_id": "categories-sources",
+                "language": "zh",
+                "source_version": "1.0.0",
+                "content_hash": "5ee791db1528bb034517f199e4c63ed71b5d649f511b1aabeb35d6f49ba3cded",
+                "snippet_length": 140
+              },
+              {
+                "doc_id": "user-guide-zh",
+                "section_id": "knowledge-chat",
+                "language": "zh",
+                "source_version": "1.0.0",
+                "content_hash": "8118b043b1932ddcd7ab360b8e7f4316b761a792ddc30edbc2ce64d710036d32",
+                "snippet_length": 174
+              },
+              {
+                "doc_id": "user-guide-zh",
+                "section_id": "browse-search",
+                "language": "zh",
+                "source_version": "1.0.0",
+                "content_hash": "c54ab7ec918aa7cc81c87c9a2270124ee85078c4883e74e402ecf89f7c3e8ad9",
+                "snippet_length": 93
+              }
+            ]
+          },
+          "status": "PASS",
+          "evidence": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-462\\manager-v2-round-2.json#zh-categories"
+        },
+        {
+          "id": "en-file",
+          "language": "en",
+          "question": "File detail Preview Download Markdown content",
+          "implementation_commit": "a871e22236edb01f590a04e6d7f14c0db54af3ec",
+          "environment": "real HTTP on isolated uvicorn + PostgreSQL 16.15; OPENAI_API_KEY empty; TYPESAFE_API_KEY empty",
+          "steps": "GET /api/assistant/help?q='File detail Preview Download Markdown content'&language=en&limit=3 against the isolated full API.",
+          "expected": {
+            "doc_id": "user-guide-en",
+            "section_id": "file-details"
+          },
+          "actual": {
+            "http_status": 200,
+            "result_count": 3,
+            "top_results": [
+              {
+                "doc_id": "user-guide-en",
+                "section_id": "file-details",
+                "language": "en",
+                "source_version": "1.0.0",
+                "content_hash": "01eb5ff59fe8d2948e81638aebce732584c606cf5b67297955c778852748f0c1",
+                "snippet_length": 280
+              },
+              {
+                "doc_id": "user-guide-en",
+                "section_id": "common-failures",
+                "language": "en",
+                "source_version": "1.0.0",
+                "content_hash": "84e67a1a9b4b225fe25cfafd4bdd2c2d6d79d281cbaff89a337e7b632609603f",
+                "snippet_length": 280
+              },
+              {
+                "doc_id": "user-guide-en",
+                "section_id": "browse-search",
+                "language": "en",
+                "source_version": "1.0.0",
+                "content_hash": "cea3b4b5487c7aeae44a5e99a66c00e8651f3b60bb89ad9bb9fd140c466056ed",
+                "snippet_length": 266
+              }
+            ]
+          },
+          "status": "PASS",
+          "evidence": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-462\\manager-v2-round-2.json#en-file"
+        },
+        {
+          "id": "zh-file",
+          "language": "zh",
+          "question": "文件详情预览下载Markdown内容",
+          "implementation_commit": "a871e22236edb01f590a04e6d7f14c0db54af3ec",
+          "environment": "real HTTP on isolated uvicorn + PostgreSQL 16.15; OPENAI_API_KEY empty; TYPESAFE_API_KEY empty",
+          "steps": "GET /api/assistant/help?q='文件详情预览下载Markdown内容'&language=zh&limit=3 against the isolated full API.",
+          "expected": {
+            "doc_id": "user-guide-zh",
+            "section_id": "file-details"
+          },
+          "actual": {
+            "http_status": 200,
+            "result_count": 3,
+            "top_results": [
+              {
+                "doc_id": "user-guide-zh",
+                "section_id": "file-details",
+                "language": "zh",
+                "source_version": "1.0.0",
+                "content_hash": "58b38c53013faa42a38ce2d0eae34fe66ceadb0aadb99e6d029d00d82a9444b6",
+                "snippet_length": 180
+              },
+              {
+                "doc_id": "user-guide-zh",
+                "section_id": "browse-search",
+                "language": "zh",
+                "source_version": "1.0.0",
+                "content_hash": "c54ab7ec918aa7cc81c87c9a2270124ee85078c4883e74e402ecf89f7c3e8ad9",
+                "snippet_length": 93
+              },
+              {
+                "doc_id": "user-guide-zh",
+                "section_id": "common-failures",
+                "language": "zh",
+                "source_version": "1.0.0",
+                "content_hash": "d33bcad7248914bec7b1c8c9b702e79bdbefe9a1076d7c6794307da5199a8927",
+                "snippet_length": 184
+              }
+            ]
+          },
+          "status": "PASS",
+          "evidence": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-462\\manager-v2-round-2.json#zh-file"
+        },
+        {
+          "id": "en-knowledge",
+          "language": "en",
+          "question": "Knowledge Bases readiness Chat response mode",
+          "implementation_commit": "a871e22236edb01f590a04e6d7f14c0db54af3ec",
+          "environment": "real HTTP on isolated uvicorn + PostgreSQL 16.15; OPENAI_API_KEY empty; TYPESAFE_API_KEY empty",
+          "steps": "GET /api/assistant/help?q='Knowledge Bases readiness Chat response mode'&language=en&limit=3 against the isolated full API.",
+          "expected": {
+            "doc_id": "user-guide-en",
+            "section_id": "knowledge-chat"
+          },
+          "actual": {
+            "http_status": 200,
+            "result_count": 3,
+            "top_results": [
+              {
+                "doc_id": "user-guide-en",
+                "section_id": "knowledge-chat",
+                "language": "en",
+                "source_version": "1.0.0",
+                "content_hash": "9753207f7b3ce046b948bbd2409fd597c40b9c14c0238564ef524cc441b0ec7a",
+                "snippet_length": 280
+              },
+              {
+                "doc_id": "user-guide-en",
+                "section_id": "categories-sources",
+                "language": "en",
+                "source_version": "1.0.0",
+                "content_hash": "e3b2e11729bc2b2865a3c4c5f0122f00711dca077f9a78ed6e216974963d77b8",
+                "snippet_length": 280
+              },
+              {
+                "doc_id": "user-guide-en",
+                "section_id": "common-failures",
+                "language": "en",
+                "source_version": "1.0.0",
+                "content_hash": "84e67a1a9b4b225fe25cfafd4bdd2c2d6d79d281cbaff89a337e7b632609603f",
+                "snippet_length": 280
+              }
+            ]
+          },
+          "status": "PASS",
+          "evidence": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-462\\manager-v2-round-2.json#en-knowledge"
+        },
+        {
+          "id": "zh-knowledge",
+          "language": "zh",
+          "question": "知识库就绪状态Chat回答模式",
+          "implementation_commit": "a871e22236edb01f590a04e6d7f14c0db54af3ec",
+          "environment": "real HTTP on isolated uvicorn + PostgreSQL 16.15; OPENAI_API_KEY empty; TYPESAFE_API_KEY empty",
+          "steps": "GET /api/assistant/help?q='知识库就绪状态Chat回答模式'&language=zh&limit=3 against the isolated full API.",
+          "expected": {
+            "doc_id": "user-guide-zh",
+            "section_id": "knowledge-chat"
+          },
+          "actual": {
+            "http_status": 200,
+            "result_count": 3,
+            "top_results": [
+              {
+                "doc_id": "user-guide-zh",
+                "section_id": "knowledge-chat",
+                "language": "zh",
+                "source_version": "1.0.0",
+                "content_hash": "8118b043b1932ddcd7ab360b8e7f4316b761a792ddc30edbc2ce64d710036d32",
+                "snippet_length": 174
+              },
+              {
+                "doc_id": "user-guide-zh",
+                "section_id": "common-failures",
+                "language": "zh",
+                "source_version": "1.0.0",
+                "content_hash": "d33bcad7248914bec7b1c8c9b702e79bdbefe9a1076d7c6794307da5199a8927",
+                "snippet_length": 184
+              },
+              {
+                "doc_id": "user-guide-zh",
+                "section_id": "categories-sources",
+                "language": "zh",
+                "source_version": "1.0.0",
+                "content_hash": "5ee791db1528bb034517f199e4c63ed71b5d649f511b1aabeb35d6f49ba3cded",
+                "snippet_length": 140
+              }
+            ]
+          },
+          "status": "PASS",
+          "evidence": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-462\\manager-v2-round-2.json#zh-knowledge"
+        },
+        {
+          "id": "en-account",
+          "language": "en",
+          "question": "Profile Chat quota usage remaining",
+          "implementation_commit": "a871e22236edb01f590a04e6d7f14c0db54af3ec",
+          "environment": "real HTTP on isolated uvicorn + PostgreSQL 16.15; OPENAI_API_KEY empty; TYPESAFE_API_KEY empty",
+          "steps": "GET /api/assistant/help?q='Profile Chat quota usage remaining'&language=en&limit=3 against the isolated full API.",
+          "expected": {
+            "doc_id": "user-guide-en",
+            "section_id": "account-quota"
+          },
+          "actual": {
+            "http_status": 200,
+            "result_count": 3,
+            "top_results": [
+              {
+                "doc_id": "user-guide-en",
+                "section_id": "account-quota",
+                "language": "en",
+                "source_version": "1.0.0",
+                "content_hash": "5db306b5a8162308bf819fd1502a3ce8978d0fe266d2d497a3799d50bc3ef7da",
+                "snippet_length": 280
+              },
+              {
+                "doc_id": "user-guide-en",
+                "section_id": "common-failures",
+                "language": "en",
+                "source_version": "1.0.0",
+                "content_hash": "84e67a1a9b4b225fe25cfafd4bdd2c2d6d79d281cbaff89a337e7b632609603f",
+                "snippet_length": 280
+              },
+              {
+                "doc_id": "user-guide-en",
+                "section_id": "categories-sources",
+                "language": "en",
+                "source_version": "1.0.0",
+                "content_hash": "e3b2e11729bc2b2865a3c4c5f0122f00711dca077f9a78ed6e216974963d77b8",
+                "snippet_length": 280
+              }
+            ]
+          },
+          "status": "PASS",
+          "evidence": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-462\\manager-v2-round-2.json#en-account"
+        },
+        {
+          "id": "zh-account",
+          "language": "zh",
+          "question": "个人资料Chat额度使用剩余",
+          "implementation_commit": "a871e22236edb01f590a04e6d7f14c0db54af3ec",
+          "environment": "real HTTP on isolated uvicorn + PostgreSQL 16.15; OPENAI_API_KEY empty; TYPESAFE_API_KEY empty",
+          "steps": "GET /api/assistant/help?q='个人资料Chat额度使用剩余'&language=zh&limit=3 against the isolated full API.",
+          "expected": {
+            "doc_id": "user-guide-zh",
+            "section_id": "account-quota"
+          },
+          "actual": {
+            "http_status": 200,
+            "result_count": 3,
+            "top_results": [
+              {
+                "doc_id": "user-guide-zh",
+                "section_id": "account-quota",
+                "language": "zh",
+                "source_version": "1.0.0",
+                "content_hash": "856e11f3547463c60c14acacc7819d44d5e9ef279584942bb6de379e3ceee6e2",
+                "snippet_length": 123
+              },
+              {
+                "doc_id": "user-guide-zh",
+                "section_id": "categories-sources",
+                "language": "zh",
+                "source_version": "1.0.0",
+                "content_hash": "5ee791db1528bb034517f199e4c63ed71b5d649f511b1aabeb35d6f49ba3cded",
+                "snippet_length": 140
+              },
+              {
+                "doc_id": "user-guide-zh",
+                "section_id": "common-failures",
+                "language": "zh",
+                "source_version": "1.0.0",
+                "content_hash": "d33bcad7248914bec7b1c8c9b702e79bdbefe9a1076d7c6794307da5199a8927",
+                "snippet_length": 184
+              }
+            ]
+          },
+          "status": "PASS",
+          "evidence": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-462\\manager-v2-round-2.json#zh-account"
+        },
+        {
+          "id": "en-feedback",
+          "language": "en",
+          "question": "Help and feedback widget submit receipt",
+          "implementation_commit": "a871e22236edb01f590a04e6d7f14c0db54af3ec",
+          "environment": "real HTTP on isolated uvicorn + PostgreSQL 16.15; OPENAI_API_KEY empty; TYPESAFE_API_KEY empty",
+          "steps": "GET /api/assistant/help?q='Help and feedback widget submit receipt'&language=en&limit=3 against the isolated full API.",
+          "expected": {
+            "doc_id": "user-guide-en",
+            "section_id": "feedback-entry"
+          },
+          "actual": {
+            "http_status": 200,
+            "result_count": 3,
+            "top_results": [
+              {
+                "doc_id": "user-guide-en",
+                "section_id": "feedback-entry",
+                "language": "en",
+                "source_version": "1.0.0",
+                "content_hash": "612602a0cd505a2e58cc57c4ac08404251cb2ecf2624546bc8c4e7eb3f870a2d",
+                "snippet_length": 280
+              },
+              {
+                "doc_id": "user-guide-en",
+                "section_id": "common-failures",
+                "language": "en",
+                "source_version": "1.0.0",
+                "content_hash": "84e67a1a9b4b225fe25cfafd4bdd2c2d6d79d281cbaff89a337e7b632609603f",
+                "snippet_length": 280
+              },
+              {
+                "doc_id": "user-guide-en",
+                "section_id": "account-quota",
+                "language": "en",
+                "source_version": "1.0.0",
+                "content_hash": "5db306b5a8162308bf819fd1502a3ce8978d0fe266d2d497a3799d50bc3ef7da",
+                "snippet_length": 280
+              }
+            ]
+          },
+          "status": "PASS",
+          "evidence": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-462\\manager-v2-round-2.json#en-feedback"
+        },
+        {
+          "id": "zh-feedback",
+          "language": "zh",
+          "question": "帮助反馈浮动按钮提交回执",
+          "implementation_commit": "a871e22236edb01f590a04e6d7f14c0db54af3ec",
+          "environment": "real HTTP on isolated uvicorn + PostgreSQL 16.15; OPENAI_API_KEY empty; TYPESAFE_API_KEY empty",
+          "steps": "GET /api/assistant/help?q='帮助反馈浮动按钮提交回执'&language=zh&limit=3 against the isolated full API.",
+          "expected": {
+            "doc_id": "user-guide-zh",
+            "section_id": "feedback-entry"
+          },
+          "actual": {
+            "http_status": 200,
+            "result_count": 2,
+            "top_results": [
+              {
+                "doc_id": "user-guide-zh",
+                "section_id": "feedback-entry",
+                "language": "zh",
+                "source_version": "1.0.0",
+                "content_hash": "5972ae4e5ff86c0bdb97a84b7d9d1b8474145dba1a8de65f566d2563c8e46e83",
+                "snippet_length": 125
+              },
+              {
+                "doc_id": "user-guide-zh",
+                "section_id": "common-failures",
+                "language": "zh",
+                "source_version": "1.0.0",
+                "content_hash": "d33bcad7248914bec7b1c8c9b702e79bdbefe9a1076d7c6794307da5199a8927",
+                "snippet_length": 184
+              }
+            ]
+          },
+          "status": "PASS",
+          "evidence": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-462\\manager-v2-round-2.json#zh-feedback"
+        },
+        {
+          "id": "en-failures",
+          "language": "en",
+          "question": "clear search filters reload quota limit",
+          "implementation_commit": "a871e22236edb01f590a04e6d7f14c0db54af3ec",
+          "environment": "real HTTP on isolated uvicorn + PostgreSQL 16.15; OPENAI_API_KEY empty; TYPESAFE_API_KEY empty",
+          "steps": "GET /api/assistant/help?q='clear search filters reload quota limit'&language=en&limit=3 against the isolated full API.",
+          "expected": {
+            "doc_id": "user-guide-en",
+            "section_id": "common-failures"
+          },
+          "actual": {
+            "http_status": 200,
+            "result_count": 3,
+            "top_results": [
+              {
+                "doc_id": "user-guide-en",
+                "section_id": "common-failures",
+                "language": "en",
+                "source_version": "1.0.0",
+                "content_hash": "84e67a1a9b4b225fe25cfafd4bdd2c2d6d79d281cbaff89a337e7b632609603f",
+                "snippet_length": 280
+              },
+              {
+                "doc_id": "user-guide-en",
+                "section_id": "account-quota",
+                "language": "en",
+                "source_version": "1.0.0",
+                "content_hash": "5db306b5a8162308bf819fd1502a3ce8978d0fe266d2d497a3799d50bc3ef7da",
+                "snippet_length": 280
+              },
+              {
+                "doc_id": "user-guide-en",
+                "section_id": "browse-search",
+                "language": "en",
+                "source_version": "1.0.0",
+                "content_hash": "cea3b4b5487c7aeae44a5e99a66c00e8651f3b60bb89ad9bb9fd140c466056ed",
+                "snippet_length": 266
+              }
+            ]
+          },
+          "status": "PASS",
+          "evidence": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-462\\manager-v2-round-2.json#en-failures"
+        },
+        {
+          "id": "zh-failures",
+          "language": "zh",
+          "question": "清除搜索筛选重新加载额度用完",
+          "implementation_commit": "a871e22236edb01f590a04e6d7f14c0db54af3ec",
+          "environment": "real HTTP on isolated uvicorn + PostgreSQL 16.15; OPENAI_API_KEY empty; TYPESAFE_API_KEY empty",
+          "steps": "GET /api/assistant/help?q='清除搜索筛选重新加载额度用完'&language=zh&limit=3 against the isolated full API.",
+          "expected": {
+            "doc_id": "user-guide-zh",
+            "section_id": "common-failures"
+          },
+          "actual": {
+            "http_status": 200,
+            "result_count": 3,
+            "top_results": [
+              {
+                "doc_id": "user-guide-zh",
+                "section_id": "common-failures",
+                "language": "zh",
+                "source_version": "1.0.0",
+                "content_hash": "d33bcad7248914bec7b1c8c9b702e79bdbefe9a1076d7c6794307da5199a8927",
+                "snippet_length": 184
+              },
+              {
+                "doc_id": "user-guide-zh",
+                "section_id": "browse-search",
+                "language": "zh",
+                "source_version": "1.0.0",
+                "content_hash": "c54ab7ec918aa7cc81c87c9a2270124ee85078c4883e74e402ecf89f7c3e8ad9",
+                "snippet_length": 93
+              },
+              {
+                "doc_id": "user-guide-zh",
+                "section_id": "account-quota",
+                "language": "zh",
+                "source_version": "1.0.0",
+                "content_hash": "856e11f3547463c60c14acacc7819d44d5e9ef279584942bb6de379e3ceee6e2",
+                "snippet_length": 123
+              }
+            ]
+          },
+          "status": "PASS",
+          "evidence": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-462\\manager-v2-round-2.json#zh-failures"
+        },
+        {
+          "id": "en-negative-mail",
+          "language": "en",
+          "question": "Configure SMTP mail delivery relay",
+          "implementation_commit": "a871e22236edb01f590a04e6d7f14c0db54af3ec",
+          "environment": "real HTTP on isolated uvicorn + PostgreSQL 16.15; OPENAI_API_KEY empty; TYPESAFE_API_KEY empty",
+          "steps": "GET /api/assistant/help?q='Configure SMTP mail delivery relay'&language=en&limit=3 against the isolated full API.",
+          "expected": null,
+          "actual": {
+            "http_status": 200,
+            "result_count": 0,
+            "top_results": []
+          },
+          "status": "PASS",
+          "evidence": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-462\\manager-v2-round-2.json#en-negative-mail"
+        },
+        {
+          "id": "en-negative-physics",
+          "language": "en",
+          "question": "Quantum chromodynamics particle collider",
+          "implementation_commit": "a871e22236edb01f590a04e6d7f14c0db54af3ec",
+          "environment": "real HTTP on isolated uvicorn + PostgreSQL 16.15; OPENAI_API_KEY empty; TYPESAFE_API_KEY empty",
+          "steps": "GET /api/assistant/help?q='Quantum chromodynamics particle collider'&language=en&limit=3 against the isolated full API.",
+          "expected": null,
+          "actual": {
+            "http_status": 200,
+            "result_count": 0,
+            "top_results": []
+          },
+          "status": "PASS",
+          "evidence": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-462\\manager-v2-round-2.json#en-negative-physics"
+        },
+        {
+          "id": "zh-negative-mail",
+          "language": "zh",
+          "question": "象棋棋谱残局开局",
+          "implementation_commit": "a871e22236edb01f590a04e6d7f14c0db54af3ec",
+          "environment": "real HTTP on isolated uvicorn + PostgreSQL 16.15; OPENAI_API_KEY empty; TYPESAFE_API_KEY empty",
+          "steps": "GET /api/assistant/help?q='象棋棋谱残局开局'&language=zh&limit=3 against the isolated full API.",
+          "expected": null,
+          "actual": {
+            "http_status": 200,
+            "result_count": 0,
+            "top_results": []
+          },
+          "status": "PASS",
+          "evidence": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-462\\manager-v2-round-2.json#zh-negative-mail"
+        },
+        {
+          "id": "zh-negative-physics",
+          "language": "zh",
+          "question": "量子色动力学粒子对撞机",
+          "implementation_commit": "a871e22236edb01f590a04e6d7f14c0db54af3ec",
+          "environment": "real HTTP on isolated uvicorn + PostgreSQL 16.15; OPENAI_API_KEY empty; TYPESAFE_API_KEY empty",
+          "steps": "GET /api/assistant/help?q='量子色动力学粒子对撞机'&language=zh&limit=3 against the isolated full API.",
+          "expected": null,
+          "actual": {
+            "http_status": 200,
+            "result_count": 0,
+            "top_results": []
+          },
+          "status": "PASS",
+          "evidence": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-462\\manager-v2-round-2.json#zh-negative-physics"
+        }
+      ]
+    },
+    "command": "python -m pytest tests/test_assistant_help.py tests/test_fastapi_assistant_help_endpoints.py",
+    "test_result": "13 passed, 3 existing SWIG deprecation warnings.",
+    "endpoint_contract": "The endpoint rejects limit=99 with HTTP 422; valid exact references round-trip; current tests validate stale/missing/bad references.",
+    "evidence": [
+      "tests/fixtures/assistant_help_questions.json",
+      "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-462\\manager-v2-round-2.json",
+      "ai_actuarial/assistant/help.py",
+      "ai_actuarial/api/routers/assistant_help.py"
+    ]
+  },
+  "v3": {
+    "criterion": "AC3, AC4, AC5; D1, D2, D4; V3",
+    "status": "PASS",
+    "implementation_commit": "a871e22236edb01f590a04e6d7f14c0db54af3ec",
+    "environment": "real HTTP: isolated uvicorn + PostgreSQL 16.15; OPENAI_API_KEY and TYPESAFE_API_KEY empty",
+    "procedure": "Started the real full app with `python -m uvicorn ai_actuarial.api.app:create_app --factory --host 127.0.0.1 --port 18662 --log-level warning`, CONFIG_PATH and DATABASE_URL set to task-isolated files/PG16.15, and AI keys empty. Temporarily edited the actual English help guide, restarted the full app with assistant_enabled=false from isolated YAML, then restored all original bytes.",
+    "expected": "Current citation opens exact content; edited content is reloaded with a new version/hash and old ref cannot return new text; withdrawn section stops matching and returns missing; malformed IDs/metadata are rejected; disabled feature rejects both APIs.",
+    "actual": {
+      "baseline": {
+        "health_status": 200,
+        "capabilities_status": 200,
+        "assistant_enabled": true,
+        "search_status": 200,
+        "reference": {
+          "doc_id": "user-guide-en",
+          "section_id": "common-failures",
+          "language": "en",
+          "title": "AI Actuarial Info Search — User Guide",
+          "source_version": "1.0.0",
+          "content_hash": "84e67a1a9b4b225fe25cfafd4bdd2c2d6d79d281cbaff89a337e7b632609603f",
+          "snippet": "If a list or file does not appear, try clearing the search and filters, then reload the page. If a preview or Markdown view is unavailable, that file may not have a local copy or readable Markdown. If a knowledge base is unavailable, choose another ready base or ask an administra"
+        },
+        "exact_status": 200,
+        "exact_content_length": 584
+      },
+      "content_update": {
+        "search_status": 200,
+        "new_reference": {
+          "doc_id": "user-guide-en",
+          "section_id": "common-failures",
+          "language": "en",
+          "title": "AI Actuarial Info Search — User Guide",
+          "source_version": "1.0.1",
+          "content_hash": "8f48f3adb7e5da32a98084321ba83db630067af41bac25d33401f536f97a8af3",
+          "snippet": "Temporary acceptance phrase marigold-662."
+        },
+        "new_exact_status": 200,
+        "new_exact_contains_marker": true,
+        "old_reference_status": 410,
+        "old_reference_code": "HELP_REFERENCE_EXPIRED",
+        "old_response_has_content": false
+      },
+      "withdrawal": {
+        "search_status": 200,
+        "result_count": 0,
+        "previous_reference_status": 404,
+        "previous_reference_code": "HELP_NOT_FOUND"
+      },
+      "bad_references": {
+        "unknown_section_status": 404,
+        "unknown_section_code": "HELP_NOT_FOUND",
+        "malformed_section_id_status": 422
+      },
+      "duplicate_id_validation": {
+        "rejected": true,
+        "error": "Duplicate help section: user-guide-en#browse-search"
+      },
+      "bad_metadata_validation": {
+        "rejected": true,
+        "error": "Invalid help metadata fields: user-guide.en.md"
+      },
+      "disabled_runtime": {
+        "environment": "real HTTP: isolated uvicorn + PostgreSQL 16.15; assistant_enabled=false from isolated YAML; AI keys empty",
+        "health_status": 200,
+        "capabilities_status": 200,
+        "capabilities": {
+          "feedback_enabled": false,
+          "assistant_enabled": false
+        },
+        "search_status": 404,
+        "search_code": "FEATURE_DISABLED",
+        "exact_status": 404,
+        "exact_code": "FEATURE_DISABLED",
+        "exact_response_has_content": false,
+        "result": "PASS",
+        "restored_config_sha256": "54ad768ee35957f1e29e264ebbb70d9028357af2777979babbd7dccc1196a0b1",
+        "original_config_sha256": "54ad768ee35957f1e29e264ebbb70d9028357af2777979babbd7dccc1196a0b1"
+      },
+      "guide_restoration": {
+        "english_sha256_original": "40fc4e859b0f801862ca0057d043a20475785c5dc548257ac1f091f6386bdeb1",
+        "english_sha256_after": "40fc4e859b0f801862ca0057d043a20475785c5dc548257ac1f091f6386bdeb1",
+        "chinese_sha256_after": "08f1dac227dd7d38b057d4163c295f94d78ae8312bd74dcaece17751f181814",
+        "isolated_config_sha256_original": "54ad768ee35957f1e29e264ebbb70d9028357af2777979babbd7dccc1196a0b1",
+        "isolated_config_sha256_after": "54ad768ee35957f1e29e264ebbb70d9028357af2777979babbd7dccc1196a0b1"
+      }
+    },
+    "steps_expected_actual_status": [
+      {
+        "implementation_commit": "a871e22236edb01f590a04e6d7f14c0db54af3ec",
+        "environment": "real HTTP: isolated uvicorn + PostgreSQL 16.15; OPENAI_API_KEY and TYPESAFE_API_KEY empty",
+        "steps": "GET current `common-failures` search reference and pass its six fields to the exact-section endpoint.",
+        "expected": "200 with exact current content.",
+        "actual": "HTTP 200 with 584 content characters; hash 84e67a1a9b4b225fe25cfafd4bdd2c2d6d79d281cbaff89a337e7b632609603f.",
+        "status": "PASS",
+        "evidence": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-462\\manager-v3-round-2.json#baseline"
+      },
+      {
+        "implementation_commit": "a871e22236edb01f590a04e6d7f14c0db54af3ec",
+        "environment": "real HTTP: isolated uvicorn + PostgreSQL 16.15; OPENAI_API_KEY and TYPESAFE_API_KEY empty",
+        "steps": "Temporarily replace the English section body with unique marker `marigold-662` and bump source_version 1.0.0 → 1.0.1; search and exact-read, then retry old reference.",
+        "expected": "New ref has different content hash/version and opens new content; old ref explicitly expires without content.",
+        "actual": "New hash 8f48f3adb7e5da32a98084321ba83db630067af41bac25d33401f536f97a8af3 (old 84e67a1a9b4b225fe25cfafd4bdd2c2d6d79d281cbaff89a337e7b632609603f); exact HTTP 200; old HTTP 410 code HELP_REFERENCE_EXPIRED; old response has content=False.",
+        "status": "PASS",
+        "evidence": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-462\\manager-v3-round-2.json#content_update"
+      },
+      {
+        "implementation_commit": "a871e22236edb01f590a04e6d7f14c0db54af3ec",
+        "environment": "real HTTP: isolated uvicorn + PostgreSQL 16.15; OPENAI_API_KEY and TYPESAFE_API_KEY empty",
+        "steps": "Remove the section containing the unique test marker; query and exact-read the previous reference.",
+        "expected": "Search returns zero and exact read reports not found.",
+        "actual": {
+          "search_status": 200,
+          "result_count": 0,
+          "previous_reference_status": 404,
+          "previous_reference_code": "HELP_NOT_FOUND"
+        },
+        "status": "PASS",
+        "evidence": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-462\\manager-v3-round-2.json#withdrawal"
+      },
+      {
+        "implementation_commit": "a871e22236edb01f590a04e6d7f14c0db54af3ec",
+        "environment": "real HTTP: isolated uvicorn + PostgreSQL 16.15; OPENAI_API_KEY and TYPESAFE_API_KEY empty",
+        "steps": "Send unknown, malformed, duplicate-ID and malformed-metadata cases to the source/API validators.",
+        "expected": "Invalid citations are rejected with explicit client status; duplicate identifiers and bad metadata fail loader validation.",
+        "actual": {
+          "bad_references": {
+            "unknown_section_status": 404,
+            "unknown_section_code": "HELP_NOT_FOUND",
+            "malformed_section_id_status": 422
+          },
+          "duplicate_id": {
+            "rejected": true,
+            "error": "Duplicate help section: user-guide-en#browse-search"
+          },
+          "bad_metadata": {
+            "rejected": true,
+            "error": "Invalid help metadata fields: user-guide.en.md"
+          }
+        },
+        "status": "PASS",
+        "evidence": [
+          "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-462\\manager-v3-round-2.json#bad_references",
+          "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-462\\manager-v3-round-2.json#duplicate_id_validation",
+          "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-462\\manager-v3-round-2.json#bad_metadata_validation"
+        ]
+      },
+      {
+        "implementation_commit": "a871e22236edb01f590a04e6d7f14c0db54af3ec",
+        "environment": "real HTTP: isolated uvicorn + PostgreSQL 16.15; assistant_enabled=false from isolated YAML; AI keys empty",
+        "steps": "Set assistant_enabled=false in isolated YAML, restart the full app, request capabilities, search, and exact-read using a valid prior ref.",
+        "expected": "Capabilities report false; both help APIs return 404 FEATURE_DISABLED and no content.",
+        "actual": {
+          "environment": "real HTTP: isolated uvicorn + PostgreSQL 16.15; assistant_enabled=false from isolated YAML; AI keys empty",
+          "health_status": 200,
+          "capabilities_status": 200,
+          "capabilities": {
+            "feedback_enabled": false,
+            "assistant_enabled": false
+          },
+          "search_status": 404,
+          "search_code": "FEATURE_DISABLED",
+          "exact_status": 404,
+          "exact_code": "FEATURE_DISABLED",
+          "exact_response_has_content": false,
+          "result": "PASS",
+          "restored_config_sha256": "54ad768ee35957f1e29e264ebbb70d9028357af2777979babbd7dccc1196a0b1",
+          "original_config_sha256": "54ad768ee35957f1e29e264ebbb70d9028357af2777979babbd7dccc1196a0b1"
+        },
+        "status": "PASS",
+        "evidence": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-462\\manager-v3-disabled.json"
+      }
+    ],
+    "evidence": [
+      "ai_actuarial/api/app.py",
+      "ai_actuarial/api/routers/assistant_help.py",
+      "ai_actuarial/assistant/help.py",
+      "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-462\\manager-v3-round-2.json",
+      "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-462\\manager-v3-disabled.json"
+    ]
+  },
+  "other_checks": [
+    {
+      "implementation_commit": "a871e22236edb01f590a04e6d7f14c0db54af3ec",
+      "environment": "Local Windows/Python 3.11.9; isolated PostgreSQL 16.15 for storage-backed feedback tests.",
+      "command": "python -m pytest tests/test_fastapi_feedback_endpoints.py -q -o addopts=",
+      "expected": "Changed capability contract remains truthful and feedback behavior remains independent.",
+      "actual": "36 passed, 3 dependency deprecation warnings.",
+      "status": "PASS",
+      "evidence": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-462\\manager-feedback-postgres-01.log"
+    },
+    {
+      "implementation_commit": "a871e22236edb01f590a04e6d7f14c0db54af3ec",
+      "environment": "Local Python 3.11.9.",
+      "command": [
+        "python -m black --check ai_actuarial/api/app.py ai_actuarial/api/routers/support.py ai_actuarial/api/routers/assistant_help.py ai_actuarial/assistant tests/test_fastapi_feedback_endpoints.py tests/test_assistant_help.py tests/test_fastapi_assistant_help_endpoints.py",
+        "python -m isort --check-only ai_actuarial/api/app.py ai_actuarial/api/routers/support.py ai_actuarial/api/routers/assistant_help.py ai_actuarial/assistant tests/test_fastapi_feedback_endpoints.py tests/test_assistant_help.py tests/test_fastapi_assistant_help_endpoints.py",
+        "python -m ruff check ai_actuarial/api/app.py ai_actuarial/api/routers/support.py ai_actuarial/api/routers/assistant_help.py ai_actuarial/assistant tests/test_fastapi_feedback_endpoints.py tests/test_assistant_help.py tests/test_fastapi_assistant_help_endpoints.py",
+        "python -m compileall -q ai_actuarial/api/app.py ai_actuarial/api/routers/support.py ai_actuarial/api/routers/assistant_help.py ai_actuarial/assistant",
+        "git diff --check"
+      ],
+      "expected": "No formatting, import-order, lint, syntax or whitespace errors.",
+      "actual": "All checks passed.",
+      "status": "PASS",
+      "evidence": "Current worktree command output; independent reviewer also reports git diff --check PASS."
+    },
+    {
+      "implementation_commit": "a871e22236edb01f590a04e6d7f14c0db54af3ec",
+      "environment": "Local tests.",
+      "command": "FAISS_OPT_LEVEL=generic; python -m pytest tests/test_docker_build_context.py -q -o addopts=",
+      "expected": "Docker build context includes approved docs/help content.",
+      "actual": "Independent reviewer: 1 passed.",
+      "status": "PASS",
+      "evidence": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-462\\review-round-2.md"
+    },
+    {
+      "implementation_commit": "a871e22236edb01f590a04e6d7f14c0db54af3ec",
+      "environment": "GitHub Actions pending after PR publication.",
+      "command": "Required workflow CI on current PR HEAD.",
+      "expected": "All repository-required jobs pass on the final current HEAD before merge.",
+      "actual": "Not run before PR creation; pending publication.",
+      "status": "PENDING_MERGE_GATE",
+      "evidence": "PR current-HEAD checks to be recorded in lifecycle state and GitHub."
+    }
+  ],
+  "reviews": {
+    "round_1": {
+      "outcome": "changes",
+      "accepted_findings": [
+        "Heading queries did not match actual section heading text.",
+        "Loader accepted section IDs rejected by exact endpoint."
+      ],
+      "fix_report": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-462\\fix-round-1-worker-report.md",
+      "typesafe": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-462\\typesafe-review-round-1.json"
+    },
+    "round_2": {
+      "outcome": "PASS",
+      "reviewer_model": "gpt-6-sol/high",
+      "report": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-462\\review-round-2.md",
+      "typesafe": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-462\\typesafe-review-round-2.json",
+      "typesafe_coverage": 0.96
+    },
+    "failed_review_cycles": 1
+  },
+  "limitations_and_boundary": {
+    "not_run": [
+      "Production deployment or enabling the feature in production.",
+      "Browser smoke; no UI behavior changed.",
+      "Full repository CI before PR; it remains a required merge gate."
+    ],
+    "actual_failures": [],
+    "environment_blocks": [],
+    "note": "V1 is a local source/UI/role check; local build identity is unknown and is reported as unknown. Controller V3 used a real full create_app Uvicorn process and isolated PostgreSQL 16.15; temporary docs/config modifications were fully restored."
+  }
+}
