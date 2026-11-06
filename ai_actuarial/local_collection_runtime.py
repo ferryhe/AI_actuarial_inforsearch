@@ -947,6 +947,8 @@ def _canonical_http_link(base_url: str, href: str) -> str | None:
 def _relevant_page(url: str, label: str, site: Site) -> bool:
     probe = f"{url} {label}".lower()
     parsed = urlsplit(url)
+    if site.site_id == "cia-ica" and parsed.path.lower().startswith("/news/"):
+        return True
     if (
         site.site_id == "cca"
         and (parsed.hostname or "").lower() == "my.ccactuaries.org"
@@ -995,10 +997,21 @@ def _initial_frontier(site: Site) -> list[dict[str, Any]]:
     if site.site_id in {"cia-ica", "cia-research-publications"}:
         rest_url = "https://www.cia-ica.ca/wp-json/wp/v2/publication?per_page=100&page=1&_fields=id,slug,link,title,content,acf,publication-category,publication-type,publication-topic"
         page_url = "https://www.cia-ica.ca/publications/"
-        return [
+        result = [
             {"url": page_url, "kind": "page", "depth": 0, "referrer": page_url},
             {"url": rest_url, "kind": "json_rest", "page": 1, "referrer": page_url},
         ]
+        if site.site_id == "cia-ica":
+            result.append(
+                {
+                    "url": "https://www.cia-ica.ca/wp-json/wp/v2/news?per_page=100&page=1&_fields=id,link,title,content,date",
+                    "kind": "json_rest",
+                    "page": 1,
+                    "collection": "news",
+                    "referrer": "https://www.cia-ica.ca/news/",
+                }
+            )
+        return result
     if site.site_id == "iba-brazil":
         return [
             {
@@ -1192,6 +1205,12 @@ def _site_document_relevant(
 
 
 def _queue_identity(item: dict[str, Any]) -> str:
+    if (
+        item.get("collection") == "news"
+        and item.get("poll_id") is not None
+        and item.get("page", 1) == 1
+    ):
+        return f"{item.get('url')}|news-poll|{item.get('poll_id')}"
     if item.get("kind") == "algolia":
         return f"{item.get('url')}|{item.get('content_type')}|{item.get('page')}"
     if item.get("kind") == "json_post":
@@ -1221,6 +1240,18 @@ def _prioritize_pending_documents(site: Site, queue: list[dict[str, Any]], curso
             return 1
         if item.get("source_portal_key"):
             return -2
+        if (
+            site.site_id == "cia-ica"
+            and item.get("collection") == "news"
+            and item.get("page", 1) == 1
+        ):
+            return -3
+        if site.site_id == "cia-ica" and (
+            item.get("collection") == "news"
+            or (item.get("discovery_metadata") or {}).get("cia_news")
+            or urlsplit(str(item.get("url") or "")).path.lower().startswith("/news/")
+        ):
+            return -1
         if site.site_id == "france" and item.get("frontier_priority") == "france_memoirs_v2":
             return -1
         if item.get("kind") != "document":
@@ -1252,7 +1283,19 @@ def _prioritize_pending_documents(site: Site, queue: list[dict[str, Any]], curso
 def _frontier_repair_items(site: Site) -> tuple[set[str], list[dict[str, Any]]]:
     if site.site_id in {"cia-ica", "cia-research-publications"}:
         page = "https://www.cia-ica.ca/publications/"
-        return set(), [{"url": page, "kind": "page", "depth": 0, "referrer": page}]
+        additions = [{"url": page, "kind": "page", "depth": 0, "referrer": page}]
+        if site.site_id == "cia-ica":
+            news_page = "https://www.cia-ica.ca/news/"
+            additions.append(
+                {
+                    "url": "https://www.cia-ica.ca/wp-json/wp/v2/news?per_page=100&page=1&_fields=id,link,title,content,date",
+                    "kind": "json_rest",
+                    "page": 1,
+                    "collection": "news",
+                    "referrer": news_page,
+                }
+            )
+        return set(), additions
     if site.site_id == "cca":
         old = {
             "https://www.ccactuaries.org/papers",
@@ -1517,6 +1560,8 @@ def _wp_item_relevant(site: Site, row: dict[str, Any], title: str, url: str) -> 
         str(v) for _, v in _recursive_values(row) if isinstance(v, str)
     )
     if site.site_id in {"cia-ica", "cia-research-publications"}:
+        if site.site_id == "cia-ica" and urlsplit(url).path.lower().startswith("/news/"):
+            return True
         return bool(
             re.search(
                 r"research|publication|study|report|technical|practice|standard|actuar|research|经验|研究|publication",
@@ -1555,12 +1600,17 @@ def _enqueue_wordpress_results(
         title = str(
             (title_value.get("rendered") if isinstance(title_value, dict) else title_value) or ""
         ).strip()
+        if site.site_id == "cia-ica" and item.get("collection") == "news":
+            title = html.unescape(title)
         link = str(row.get("link") or "").strip()
         content = row.get("content")
         rendered = (
             str(content.get("rendered") or "") if isinstance(content, dict) else str(content or "")
         )
         if link and _wp_item_relevant(site, row, title, link):
+            metadata = {"wp_id": row.get("id")}
+            if item.get("collection") == "news":
+                metadata["cia_news"] = True
             _enqueue_url(
                 site,
                 queue,
@@ -1568,7 +1618,7 @@ def _enqueue_wordpress_results(
                 link,
                 title=title,
                 referrer=final_url,
-                metadata={"wp_id": row.get("id")},
+                metadata=metadata,
             )
             _wp_html_links(site, rendered, link, queue, queued, title)
             for key, value in _recursive_values(row):
@@ -2539,6 +2589,29 @@ def _capture(
     visited = set(site_state.get("visited") or [])
     cursor = int(site_state.get("cursor") or 0)
     queue.extend(site_state.pop("retry_queue", []))
+    if (
+        site.site_id == "cia-ica"
+        and initial_frontier is None
+        and not any(
+            item.get("collection") == "news" and item.get("page", 1) == 1
+            for item in queue[cursor:]
+            if isinstance(item, dict)
+        )
+    ):
+        poll_id = int(site_state.get("cia_news_poll_sequence") or 0) + 1
+        site_state["cia_news_poll_sequence"] = poll_id
+        queue.insert(
+            cursor,
+            {
+                "url": "https://www.cia-ica.ca/wp-json/wp/v2/news?per_page=100&page=1&_fields=id,link,title,content,date",
+                "kind": "json_rest",
+                "page": 1,
+                "collection": "news",
+                "poll_id": poll_id,
+                "referrer": "https://www.cia-ica.ca/news/",
+            },
+        )
+        site_state["cursor"] = cursor
     if initial_frontier is None and refresh_portal_roots:
         portal_roots = [
             {
@@ -2759,6 +2832,16 @@ def _capture(
                 )
             if not _allowed_host(final_url, site):
                 raise RuntimeErrorSafe("source page redirect left the approved host list")
+            exact_metadata = item.get("discovery_metadata") or {}
+            if (
+                site.site_id == "cia-ica"
+                and exact_metadata.get("operator_exact_url")
+                and urlsplit(url).path.lower().startswith("/news/")
+                and not _site_candidate_allowed(
+                    site, final_url, str(item.get("title") or ""), exact_metadata
+                )
+            ):
+                raise RuntimeErrorSafe("exact article redirect matched a source exclusion")
             successful_requests += 1
             if item.get("kind") != "document":
                 record_page_read(final_url)
@@ -2909,6 +2992,8 @@ def _capture(
                             queue.append(query_item)
                             queued_urls.add(identity)
                 for href, label in parser.links:
+                    if (item.get("discovery_metadata") or {}).get("operator_exact_url"):
+                        break
                     candidate = _canonical_http_link(final_url, href)
                     if candidate is None:
                         continue
@@ -2956,7 +3041,10 @@ def _capture(
                 if (
                     int(item.get("depth") or 0) > 0
                     and url not in SOURCE_PORTALS_BY_URL
-                    and _relevant_page(url, str(item.get("title") or ""), site)
+                    and (
+                        _relevant_page(url, str(item.get("title") or ""), site)
+                        or (item.get("discovery_metadata") or {}).get("operator_exact_url")
+                    )
                 ):
                     kind = _detect_kind(body, content_type, final_url)
                     if kind == "html":
@@ -2967,6 +3055,14 @@ def _capture(
                         if markdown and len(markdown.strip()) >= 100:
                             is_article = True
                             article_title = usable_material_title(item.get("title"), final_url)
+                            if not article_title:
+                                headline = re.search(r"(?is)<h1\b[^>]*>(.*?)</h1>", article_html)
+                                headline_text = (
+                                    re.sub(r"<[^>]+>", " ", headline.group(1)) if headline else ""
+                                )
+                                article_title = usable_material_title(
+                                    html.unescape(headline_text), final_url
+                                )
                             if not article_title:
                                 metadata_title, _published_time = extract_metadata(
                                     article_html, final_url
@@ -5789,6 +5885,33 @@ def _new_crawler(data_root: Path) -> _BudgetCrawler:
     )
 
 
+def _migrate_pending_cia_news_exact_replay(selected_url: str, replay_state: dict[str, Any]) -> None:
+    """Switch only pending saved CIA news exact-replay rows to HTML capture."""
+    queue = replay_state.get("queue")
+    if not isinstance(queue, list):
+        return
+    cursor = min(max(0, int(replay_state.get("cursor") or 0)), len(queue))
+    retry_queue = replay_state.get("retry_queue")
+
+    def migrate(row: Any) -> None:
+        if not isinstance(row, dict):
+            return
+        try:
+            matches = _canonical_url(str(row.get("url") or "")) == selected_url
+        except RuntimeErrorSafe:
+            return
+        if matches:
+            row["kind"] = "page"
+            row["depth"] = 1
+            row["title"] = ""
+
+    for row in queue[cursor:]:
+        migrate(row)
+    if isinstance(retry_queue, list):
+        for row in retry_queue:
+            migrate(row)
+
+
 def _run_site(
     site_id: str,
     date_text: str,
@@ -5873,16 +5996,21 @@ def _run_site(
         exact_site = Site(
             site.site_id, site.action, (selected_url,), site.hosts, site.delay, 0, site.page_hints
         )
+        exact_html_article = site_id == "cia-ica" and urlsplit(
+            selected_url
+        ).path.lower().startswith("/news/")
         initial_frontier = [
             {
                 "url": selected_url,
-                "kind": "document",
-                "depth": 0,
+                "kind": "page" if exact_html_article else "document",
+                "depth": 1 if exact_html_article else 0,
                 "referrer": _canonical_url(source_page_url) if source_page_url else selected_url,
-                "title": Path(urlsplit(selected_url).path).name,
+                "title": "" if exact_html_article else Path(urlsplit(selected_url).path).name,
                 "discovery_metadata": {"operator_exact_url": True},
             }
         ]
+        if exact_html_article:
+            _migrate_pending_cia_news_exact_replay(selected_url, capture_state)
     else:
         exact_site = site
     crawler = _new_crawler(Path(config["data_root"]).resolve())

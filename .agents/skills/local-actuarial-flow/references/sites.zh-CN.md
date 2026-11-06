@@ -17,7 +17,7 @@
 | 05 | `soa-ai-bulletin-focused` / SOA AI Bulletin | collect | 并入 SOA 父站周期并按 URL 去重；保留来源页身份以区分发现来源。 |
 | 06 | `cas` / Casualty Actuarial Society | collect | 每次传 `--refresh` 更新 sitemap；报告只计可采文件并拆分 research 页面，不把历史 `status.candidates` 当文件数。 |
 | 07 | `aaa` / American Academy of Actuaries | collect | 保留 REST 全量核对并按 URL/SHA 幂等去重；`--since` 当前未约束 REST AI-resource 列表，增量上线前补更新时间过滤。 |
-| 08 | `cia-ica` / Canadian Institute of Actuaries | collect | 同时从 `/publications/` 与原 WordPress REST frontier 发现；只接收公开 `/app/themes/wicket/custom/dl_file.php` 且带 `p`、`fid` 参数的附件，始终拒绝 `/private-files/`。已保存 REST frontier 会在保留游标时补入公开页面。 |
+| 08 | `cia-ica` / Canadian Institute of Actuaries | collect | 从 `/publications/` 与公开 WordPress `news` REST frontier 发现；新闻优先于积压附件处理，新闻 page 1 会在后续轮次刷新，即使旧 story/page 2 仍在排队。只接收公开 `/app/themes/wicket/custom/dl_file.php` 且带 `p`、`fid` 参数的附件，始终拒绝 `/private-files/`。已保存 frontier 会在保留游标时幂等补入入口。 |
 | 09 | `cia-research-publications` / CIA Research & Publications | collect | 与父项候选 URL 有重叠；保留独立监控 ID 和现有 REST 队列，并把 `/publications/` 作为有界 HTML 发现入口；不从私有 media API 合成附件地址。 |
 | 10 | `cca` / Conference of Consulting Actuaries | collect | 入口使用 `/professional-resources/papers` 和 `/professional-resources/technical-resource-library-main`；旧错误路径从待处理队列中幂等替换，跳过 my 子域的 Security/Sign-In 导航。2026-10-31 三条无扩展名的 Intersector Meeting Notes 链接实为 HTML 详情页，页内另有 `/docs/default-source/...pdf`；应按页面解析真实 PDF，并修正已保存的误标为文件的队列项，不追登录页。 |
 | 11 | `aae` / Actuarial Association of Europe | collect | 保留 sitemap `lastmod` 作为变化线索；`/paper/` 只能召回，最终分类后才决定 AI 发布。 |

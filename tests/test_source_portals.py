@@ -246,6 +246,8 @@ def test_collection_refreshes_visited_portal_root_without_classifying_it_as_an_a
         def _request(self, url: str, **_kwargs):
             self.site_attempts += 1
             self.requests.append(url)
+            if "/wp-json/wp/v2/news" in url:
+                return b"[]", {"content-type": "application/json"}, url
             return body, {"content-type": "text/html"}, url
 
     monkeypatch.setattr(runtime, "_ACTIVE_STATE_PATH", tmp_path / "runtime-state.json")
@@ -273,16 +275,17 @@ def test_collection_refreshes_visited_portal_root_without_classifying_it_as_an_a
         crawler,
         tmp_path / "data",
         site_state,
-        request_limit=1,
+        request_limit=2,
         refresh_portal_roots=True,
     )
 
-    assert result["request_count"] == 1
+    assert result["request_count"] == 2
     assert result["portal_captures"], (result["errors"], site_state)
     assert result["portal_captures"][0]["portal_key"] == portal.portal_key
     assert result["portal_captures"][0]["page_sha256"] == hashlib.sha256(body).hexdigest()
     assert result["downloads"] == []
-    assert crawler.requests == [portal.capture_urls[0]]
+    assert "/wp-json/wp/v2/news" in crawler.requests[0]
+    assert crawler.requests[1] == portal.capture_urls[0]
     assert result["portal_captures"][0]["page_url"] == portal.capture_urls[0]
 
 

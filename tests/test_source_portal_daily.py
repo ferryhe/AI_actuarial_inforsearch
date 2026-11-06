@@ -663,6 +663,8 @@ class _Crawler:
         self.site_attempts += 1
         if self.fail:
             raise OSError("fixture source unavailable")
+        if "/wp-json/wp/v2/news" in url:
+            return b"[]", {"content-type": "application/json"}, url
         return self.page, {"content-type": "text/html"}, url
 
     def _download_file(self, url, root, **_kwargs):
@@ -1053,7 +1055,7 @@ def test_runtime_file_only_partial_attempt_records_hub_before_digest_and_retries
         _Crawler(),
         tmp_path / "data",
         state["sites"]["cia-ica"],
-        request_limit=1,
+        request_limit=2,
     )
     assert captured["budget_exhausted"] and len(captured["downloads"]) == 1, captured
     assert not captured["portal_captures"]
@@ -1291,6 +1293,11 @@ def test_cia_two_referrers_deduplicate_before_hub_and_replay_after_commit(
     _patch_hub(monkeypatch, url, schema)
     monkeypatch.setattr(runtime, "_ACTIVE_STATE_PATH", tmp_path / "state.json")
     portal = SOURCE_PORTALS_BY_KEY["cia-publications"]
+    news_poll = next(
+        item
+        for item in runtime._initial_frontier(runtime.SITES["cia-ica"])
+        if item.get("collection") == "news"
+    )
 
     class RedirectCrawler(_Crawler):
         def _request(self, requested_url, **kwargs):
@@ -1299,8 +1306,12 @@ def test_cia_two_referrers_deduplicate_before_hub_and_replay_after_commit(
 
     state = {"articles": {}}
     site_state = {
-        "queue": [{"url": portal.url + "/", "kind": "page", "referrer": portal.url + "/"}],
+        "queue": [
+            {"url": portal.url + "/", "kind": "page", "referrer": portal.url + "/"},
+            news_poll,
+        ],
         "cursor": 0,
+        "visited": [runtime._queue_identity(news_poll)],
     }
     captured = runtime._capture(
         runtime.SITES["cia-ica"],
