@@ -19,7 +19,7 @@ Open **Categories** to browse categories currently used by files. Open **Source 
 
 ## File details and reading {#file-details}
 
-Open a file from Database to see its title, source, category, summary, keywords, and available content. When a local file is available, **Preview** opens the readable file and **Download** appears only when your permissions allow it. Markdown content can be read on the detail page when available. Editing catalog metadata, changing Markdown, running processing tasks, and deleting files require separate permissions; controls are hidden or disabled when unavailable.
+Open a file from Database to see its title, source, category, summary, keywords, and available content. When a local file exists, **Preview** is enabled. The **Download** button remains visible but is enabled only when a local file exists and your account has download permission. Markdown content can be read on the detail page when available. Editing catalog metadata, changing Markdown, running processing tasks, and deleting files require separate permissions; controls are hidden or disabled when unavailable.
 
 ## Knowledge bases and current Chat {#knowledge-chat}
 
