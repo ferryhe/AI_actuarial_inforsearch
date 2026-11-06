@@ -23,15 +23,15 @@ Open a file from Database to see its title, source, category, summary, keywords,
 
 ## Knowledge bases and current Chat {#knowledge-chat}
 
-Open **Knowledge Bases** to see available knowledge bases and their readiness. Users with catalog management or task permissions may see additional setup and processing controls. Open **Chat** to ask a question after choosing an available knowledge base and response mode. A category's **Ask AI** link opens Chat with the category's dedicated knowledge base when one is ready. Chat results may include cited source documents. The new assistant question panel and its knowledge-base question feature are not shipped yet.
+Open **Knowledge Bases** to see available knowledge bases and their readiness. Users with catalog management or task permissions may see additional setup and processing controls. Open **Chat** to ask a question after choosing an available knowledge base and response mode. A category's **Ask AI** link opens Chat with the category's dedicated knowledge base when one is ready. Chat results may include cited source documents. The floating website assistant can answer usage questions when enabled. Its knowledge-base question mode is not enabled yet (planned in #464); use the existing Chat for knowledge-base questions.
 
 ## Account and quota {#account-quota}
 
-Sign in or register when the deployment offers those options. Open **Profile** while signed in to see your role, Chat quota usage, remaining quota, and recent activity. Anonymous visitors can use only the public features granted by the deployment. Chat limits vary by deployment and account; ask your administrator about the configured limits.
+Sign in or register when the deployment offers those options. Open **Profile** while signed in to see your role, Chat quota usage, remaining quota, and recent activity. Anonymous visitors can use only the public features granted by the deployment. Chat and the website assistant share one daily AI quota: guests have 5 queries and registered users have 20 queries per UTC day; other roles follow the existing Chat allowance. Manual feedback and opening help do not call AI or consume the allowance.
 
 ## Feedback entry {#feedback-entry}
 
-When feedback is enabled by the deployment, use the floating **Help and feedback** button, then describe the issue or suggestion and submit it. The widget is hidden when feedback is disabled. Submission confirms with a receipt; feedback does not send a Chat question. The widget currently provides feedback only; it does not answer help questions.
+Feedback and assistant are independent switches, both off by default. The floating **Help and feedback** entry appears when either is enabled. If only feedback is enabled, the entry opens the ordinary editable form. When the assistant is also enabled, choose **Send a suggestion** to open that form without calling AI. Submit only after reviewing the text; success requires a server receipt. With the assistant enabled, select Auto, Website usage, or Knowledge. Usage answers cite the current guide; open a citation to read that exact section/version. Missing help is reported rather than invented. Knowledge mode remains unavailable until #464. Auto feedback only prepares your original text as an editable draft: canceling does not submit it. If feedback is disabled, no submission action is shown. Each question is independent; history stays on the current page, clears on navigation or refresh, and is not saved to Chat. **Read user guide (no AI)** remains available when the model fails.
 
 ## Common failures {#common-failures}
 

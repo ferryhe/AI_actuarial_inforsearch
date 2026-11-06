@@ -9,7 +9,7 @@ type Receipt = { feedback_id: string; status: "recorded"; created_at: string };
 type Submission = { client_request_id: string; content: string; kind: Kind; origin: "widget"; page_path: string; locale: string };
 type Translate = (key: string, values?: Record<string, string | number>) => string;
 
-export default function FeedbackForm({ t, lang, open = true, onClose }: { t: Translate; lang: string; open?: boolean; onClose: () => void }) {
+export default function FeedbackForm({ t, lang, open = true, onClose, initialContent = "", onCancel }: { t: Translate; lang: string; open?: boolean; onClose: () => void; initialContent?: string; onCancel?: () => void }) {
   const [location] = useLocation();
   const locationRef = useRef(location);
   const routeGeneration = useRef(0);
@@ -18,7 +18,7 @@ export default function FeedbackForm({ t, lang, open = true, onClose }: { t: Tra
     routeGeneration.current += 1;
   }
   const [kind, setKind] = useState<Kind>("suggestion");
-  const [content, setContent] = useState("");
+  const [content, setContent] = useState(initialContent);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [receipt, setReceipt] = useState("");
@@ -134,6 +134,7 @@ export default function FeedbackForm({ t, lang, open = true, onClose }: { t: Tra
           <p id="feedback-content-hint" className="mt-1 text-xs text-muted-foreground">{t("feedback.content_hint")}</p>
         </div>
         <p className="break-all text-xs text-muted-foreground">{t("feedback.page")}: {location || "/"}</p>
+        {onCancel && <button type="button" disabled={submitting} className="min-h-[44px] rounded-md border border-border px-3" onClick={onCancel}>{t("assistant.cancel")}</button>}
         {error && statusLocation === location && <p role="alert" className="text-sm text-destructive">{error}</p>}
         {receipt && statusLocation === location && <p role="status" aria-live="polite" className="break-all text-sm text-green-700 dark:text-green-400">{t("feedback.receipt", { id: receipt })}</p>}
         <button

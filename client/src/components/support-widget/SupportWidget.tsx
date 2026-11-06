@@ -24,17 +24,24 @@ export default function SupportWidget({ onOpenChange }: { onOpenChange?: (open: 
   const [location] = useLocation();
   const isChat = location.split("?")[0] === "/chat";
   const [enabled, setEnabled] = useState(false);
+  const [assistantEnabled, setAssistantEnabled] = useState(false);
+  const [feedbackEnabled, setFeedbackEnabled] = useState(false);
   const [open, setOpen] = useState(false);
   const [hasOpened, setHasOpened] = useState(false);
   const [loadAttempt, setLoadAttempt] = useState(0);
   const trigger = useRef<HTMLButtonElement>(null);
   const FeedbackForm = useMemo(() => lazy(() => import("@/features/feedback/FeedbackForm")), [loadAttempt]);
+  const AssistantPanel = useMemo(() => lazy(() => import("@/features/assistant/AssistantPanel")), [loadAttempt]);
 
   useEffect(() => {
     let mounted = true;
     apiGet<Capabilities>("/api/support/capabilities")
       .then((capabilities) => {
-        if (mounted) setEnabled(capabilities?.feedback_enabled === true);
+        if (mounted) {
+          setEnabled(capabilities?.feedback_enabled === true || capabilities?.assistant_enabled === true);
+          setAssistantEnabled(capabilities?.assistant_enabled === true);
+          setFeedbackEnabled(capabilities?.feedback_enabled === true);
+        }
       })
       .catch(() => { if (mounted) setEnabled(false); });
     return () => { mounted = false; };
@@ -58,7 +65,7 @@ export default function SupportWidget({ onOpenChange }: { onOpenChange?: (open: 
   return (
     <div className="pointer-events-none fixed bottom-[max(1rem,env(safe-area-inset-bottom))] right-4 z-50 flex flex-col items-end gap-3" onKeyDown={handleKeyDown}>
       {hasOpened && (
-        <div hidden={!open} className={cn("pointer-events-auto", isChat && "max-xl:mb-[12.875rem]")}>
+        <div id="support-panel" hidden={!open} className={cn("pointer-events-auto", isChat && "max-xl:mb-[12.875rem]")}>
           <FeedbackLoadErrorBoundary
             key={loadAttempt}
             fallback={(
@@ -69,7 +76,7 @@ export default function SupportWidget({ onOpenChange }: { onOpenChange?: (open: 
             )}
           >
             <Suspense fallback={<div role="status" className="w-[min(22.5rem,calc(100vw-2rem))] rounded-xl border border-border bg-card p-4 text-sm shadow-xl">{t("feedback.title")}</div>}>
-              <FeedbackForm t={t} lang={lang} open={open} onClose={close} />
+              {assistantEnabled ? <AssistantPanel key={location} t={t} lang={lang} open={open} onClose={close} feedbackEnabled={feedbackEnabled} /> : <FeedbackForm t={t} lang={lang} open={open} onClose={close} />}
             </Suspense>
           </FeedbackLoadErrorBoundary>
         </div>
@@ -78,7 +85,7 @@ export default function SupportWidget({ onOpenChange }: { onOpenChange?: (open: 
         ref={trigger}
         label={open ? t("a11y.close_feedback") : t("a11y.open_feedback")}
         aria-expanded={open}
-        aria-controls="feedback-panel"
+        aria-controls="support-panel"
         onClick={() => {
           if (open) close();
           else { setHasOpened(true); setOpen(true); onOpenChange?.(true); }

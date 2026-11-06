@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from itsdangerous import BadSignature, URLSafeSerializer
 
+from ai_actuarial.assistant.router import router as assistant_router
 from ai_actuarial.build_info import public_build_info
 from ai_actuarial.config import settings
 from ai_actuarial.postgres import resolve_data_root, resolve_database_config
@@ -270,6 +271,7 @@ def create_app() -> FastAPI:
     app.include_router(meta_router, prefix="/api", tags=["meta"])
     app.include_router(support_router, prefix="/api", tags=["support"])
     app.include_router(assistant_help_router, prefix="/api", tags=["assistant-help"])
+    app.include_router(assistant_router, prefix="/api", tags=["assistant"])
     app.include_router(feedback_router, prefix="/api", tags=["feedback"])
     app.include_router(metrics_router, prefix="/api", tags=["metrics"])
     app.include_router(migration_router, prefix="/api", tags=["migration"])
