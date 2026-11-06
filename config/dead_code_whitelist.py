@@ -11,6 +11,8 @@ from ai_actuarial.api.routers.feedback import (
     api_update_feedback,
 )
 from ai_actuarial.api.routers.support import api_support_capabilities
+from ai_actuarial.assistant.query import QueryRequest
+from ai_actuarial.assistant.router import api_assistant_query
 from ai_actuarial.feedback.store import FeedbackRequest
 
 api_list_feedback  # reason: FastAPI registers this decorated route.
@@ -22,6 +24,8 @@ api_support_capabilities  # reason: FastAPI registers this decorated route.
 StatusUpdate.model_config  # reason: Pydantic reads this request-schema configuration.
 FeedbackRequest.trim_content  # reason: Pydantic invokes this decorated field validator.
 FeedbackRequest.local_path  # reason: Pydantic invokes this decorated field validator.
+QueryRequest.valid_message  # reason: Pydantic invokes this decorated field validator.
+api_assistant_query  # reason: FastAPI registers this decorated route.
 
 from ai_actuarial.api.routers.agentic_rag import (
     api_agentic_rag_chat,

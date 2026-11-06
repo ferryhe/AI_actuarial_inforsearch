@@ -1,0 +1,563 @@
+{
+  "issue": 463,
+  "generated_at": "2026-11-06T10:55:55.500832+00:00",
+  "branch": "codex/issue-463-single-turn-assistant",
+  "baseline_commit_sha": "2e4cd2424ba511fec2fcf7d80eb52d70116be660",
+  "implementation_commit_sha": "9b54b95b409e7604f51d0a1516a4a978e2b11a62",
+  "source_state": "Implementation source commit 9b54b95b409e7604f51d0a1516a4a978e2b11a62 contains the two accepted PR #469 remote-review corrections and is followed by this updated acceptance receipt. V1-V4 real acceptance remains recorded against the original source commit; the behavior corrections have separate regression and current-source real-provider evidence below.",
+  "environment": "Windows; Python 3.11.9; Node 24.14.1; Vitest 3.2.4; task-owned PostgreSQL 16.15. Actual OpenAI gpt-5.4-mini provider exercised through the explicit isolated openai:llm:env profile, with the existing repository credential read into server memory only. Chat and assistant shared the same isolated profile and PostgreSQL quota ledger. No production connection, credential write, or new key. Online stored database-instance binding remains unverified.",
+  "source_fingerprints": {
+    "kind": "SHA-256 working-file bytes, not Git blobs",
+    "files": {
+      "ai_actuarial/assistant/query.py": "d0b2a2fa85d3247c4ba08c586436213e8bd92301fd87ed0b16c8df5c071f4659",
+      "ai_actuarial/assistant/router.py": "c7ed23f7a9bc48d6cab22081ac7afca54bf584ce45a0da3e91ab7df274d22acc",
+      "ai_actuarial/api/app.py": "8d6f01c8b203710c8d832ee82b41df8f966dbc0cef0a05365bd3519cd53936c8",
+      "ai_actuarial/api/middleware/rate_limit.py": "4ab33360d1306a0f53fc6be608ac918b7e44cc9693462992ce365a411543321a",
+      "client/src/features/assistant/AssistantPanel.tsx": "7ddbe9648eacb38633c7089ce2d83226448aef4d925f4f2441c6a568637de3e8",
+      "client/src/features/assistant/AssistantPanel.test.tsx": "014452d5ed62387d355240158bc1111d1100908a8bcbec2d3add342232356bac",
+      "client/src/features/feedback/FeedbackForm.tsx": "ba7d9f6cbaf93bba05d82e4eec15f76c10939c27b4cf235b52cfab663b2edaf1",
+      "client/src/components/support-widget/SupportWidget.tsx": "d630ab37c9ad0110abc9d1b0b4a22bcc6785b2098bccd027ea3d30a813ce56af",
+      "client/src/hooks/use-i18n.ts": "d3b50ae13aeb073f94bbda05bfc7ff31e529805c6996c1a454de0781aa2ef468",
+      "config/dead_code_whitelist.py": "ce22d51258c233a27c6e5ad14d50aaf2b5795bd8ca0bb43eac1d6106890da0ba",
+      "docs/help/user-guide.en.md": "f2f9b1735bf23e3e8df89ba11eb7ee27f8c5223538acba065379caf3966b88dd",
+      "docs/help/user-guide.zh.md": "1d00600af8de01c92ec97bf84597a7c3ce26bf216fbcde7bb5c40f18a28c495a",
+      "tests/test_assistant_routing.py": "555ae3298efdd65c3442fdd657351557706bf29e4ceaa3fd6dbb5a812fec12b9",
+      "tests/test_fastapi_assistant_endpoints.py": "9e3e3096139f49e708fc1efa33f76089fd25f87a262c511c66d748ca908fd124"
+    },
+    "verified_against_commit": "9b54b95b409e7604f51d0a1516a4a978e2b11a62"
+  },
+  "fixture": {
+    "path": "tests/fixtures/assistant_help_questions.json",
+    "cases": 18,
+    "unchanged_from_baseline_checkout_bytes": true,
+    "working_file_sha256": "fd9f92e504b6bfca2aa45362e94a6824fd83b2d98860082db5a5694d9d0525ba",
+    "baseline_checkout_filtered_sha256": "fd9f92e504b6bfca2aa45362e94a6824fd83b2d98860082db5a5694d9d0525ba",
+    "baseline_git_blob_bytes_sha256": "30de31e181e0b7369368b3bdf0895154a6df8ae8e5bb0b89be0977c5e0a84edc",
+    "line_endings": "Git blob LF; baseline/working checkout CRLF per core.autocrlf=true"
+  },
+  "checks": [
+    {
+      "id": "required-python",
+      "command": "python -m pytest tests/test_fastapi_assistant_endpoints.py tests/test_assistant_routing.py tests/test_fastapi_chat_endpoints.py",
+      "expected": "Assistant and original Chat regression pass",
+      "actual": "Original full assistant/API/Chat suite: 101 passed on the initial implementation; subsequent assistant/API/Chat suite: 107 passed after the two first remote fixes. After the final How-about guard refinement, the exact focused assistant/API suite passed 54 tests, including all three explicit proposal drafts, three genuine feedback how-to counterexamples, and the Python 3.10 timeout simulation. The Chat endpoint suite was not rerun after that final one-guard refinement; no Chat code changed. Python 3.10 is not installed locally; compatibility was verified with a distinct asyncio.TimeoutError simulation and official Python 3.10 behavior.",
+      "status": "PASS",
+      "evidence": "Worker remote-fix report and archived raw outputs (controller-log-archive/index.json); final current-source assistant/API result 54 passed after the final guard adjustment."
+    },
+    {
+      "id": "required-ui",
+      "command": "npx vitest run --config vitest.config.ts client/src/features/assistant client/src/features/feedback client/src/components/support-widget",
+      "expected": "Draft/edit/cancel/confirm/retry/Markdown/citation/a11y and feedback checks pass",
+      "actual": "25 passed after review-01 retry repair; includes the new rejected-import retry regression.",
+      "status": "PASS",
+      "evidence": "C:/Project/AI_actuarial_inforsearch/reports/issue-459-464-20261105/issue-463/review-01-fix-report.md and C:/Project/AI_actuarial_inforsearch/reports/issue-459-464-20261105/issue-463/worker-report.md"
+    },
+    {
+      "id": "typecheck",
+      "command": "npm run typecheck",
+      "expected": "Exit 0",
+      "actual": "tsc --noEmit --pretty false; exit 0; no diagnostics",
+      "status": "PASS",
+      "evidence": null
+    },
+    {
+      "id": "build",
+      "command": "npm run build",
+      "expected": "Production build succeeds",
+      "actual": "2441 modules transformed; built in 3.89s; existing main chunk >500 kB warning",
+      "status": "PASS",
+      "evidence": null
+    },
+    {
+      "id": "help-regression",
+      "command": "python -m pytest tests/test_assistant_help.py tests/test_fastapi_assistant_help_endpoints.py -o addopts= -q",
+      "expected": "Existing help suite and fixed 18 questions pass",
+      "actual": "43 passed, 3 warnings; fixed 18-question fixture unchanged.",
+      "status": "PASS",
+      "evidence": "C:/Project/AI_actuarial_inforsearch/reports/issue-459-464-20261105/issue-463/worker-report.md"
+    },
+    {
+      "id": "dead-symbols",
+      "command": "npm run dead-code:symbols",
+      "expected": "No new symbols",
+      "actual": "typescript-symbols: PASS (0 baseline findings); python-symbols: PASS (0 baseline findings)",
+      "status": "PASS",
+      "evidence": null
+    },
+    {
+      "id": "dead-files",
+      "command": "python scripts/dead_code_gate.py python-files --report-dir reports/issue-463-dead-code-files",
+      "expected": "No new production Python files unreferenced",
+      "actual": "python-files: PASS (0 baseline findings)",
+      "status": "PASS",
+      "evidence": null
+    },
+    {
+      "id": "black",
+      "command": "python -m black --check ai_actuarial/assistant ai_actuarial/api/app.py ai_actuarial/api/middleware/rate_limit.py tests/test_assistant_routing.py tests/test_fastapi_assistant_endpoints.py",
+      "expected": "Formatting clean",
+      "actual": "8 files would be left unchanged",
+      "status": "PASS",
+      "evidence": null
+    },
+    {
+      "id": "isort",
+      "command": "python -m isort --check-only ai_actuarial/assistant ai_actuarial/api/app.py ai_actuarial/api/middleware/rate_limit.py tests/test_assistant_routing.py tests/test_fastapi_assistant_endpoints.py",
+      "expected": "Imports clean",
+      "actual": "exit 0; no diagnostics",
+      "status": "PASS",
+      "evidence": null
+    },
+    {
+      "id": "ruff",
+      "command": "python -m ruff check ai_actuarial/assistant ai_actuarial/api/app.py ai_actuarial/api/middleware/rate_limit.py tests/test_assistant_routing.py tests/test_fastapi_assistant_endpoints.py",
+      "expected": "No scoped lint findings",
+      "actual": "All checks passed!",
+      "status": "PASS",
+      "evidence": null
+    },
+    {
+      "id": "pylint",
+      "command": "python -m pylint -E ai_actuarial/assistant/query.py ai_actuarial/assistant/router.py",
+      "expected": "No Python errors",
+      "actual": "exit 0; no diagnostics",
+      "status": "PASS",
+      "evidence": null
+    },
+    {
+      "id": "diff",
+      "command": "git diff --check",
+      "expected": "No whitespace issues",
+      "actual": "exit 0; no diagnostics",
+      "status": "PASS",
+      "evidence": null
+    },
+    {
+      "id": "explicit-binding-failures",
+      "command": "python -m pytest tests/test_assistant_routing.py -k 'binding_failure' -o addopts= -q",
+      "expected": "Missing/mismatched explicit binding and absent env credential stop before SDK initialization, without fallback",
+      "actual": "3 passed, 32 deselected, 3 warnings in 1.92s; actual ChatbotConfig.from_config/resolver used with unit-test config only",
+      "status": "PASS"
+    },
+    {
+      "id": "live-provider-config",
+      "command": "python reports/issue-463/provider-config-probe.py",
+      "expected": "Resolve current provider config without exposing credentials or calling the provider",
+      "actual": "PASS: provider=openai; model=gpt-5.4-mini; credential binding=openai:llm:env; LLMClient initialized; no key output; no provider call in probe. Chat and embeddings resolve to the same env binding; embedding calls remained zero.",
+      "status": "PASS",
+      "evidence": "C:/Project/AI_actuarial_inforsearch/reports/issue-459-464-20261105/issue-463/controller-live-acceptance.json"
+    },
+    {
+      "id": "live-assistant-provider",
+      "command": "Browser assistant usage, feedback how-to counterexample, and suggestion classification through local FastAPI",
+      "expected": "Real configured provider returns supported cited usage, keeps feedback how-to as usage, and produces an editable original-text draft without writing before confirmation",
+      "actual": "PASS: Chinese local-preview usage answer cited file-details (1.0.0); English “How do I send feedback?” returned usage guidance and no draft; suggestion remained exact editable text and created no row before explicit submit. Exact help citation was opened and matched version/hash/content.",
+      "status": "PASS",
+      "evidence": "C:/Project/AI_actuarial_inforsearch/reports/issue-459-464-20261105/issue-463/controller-live-acceptance.json"
+    },
+    {
+      "id": "live-feedback-idempotency",
+      "command": "POST /api/feedback with the same confirmed client_request_id and payload",
+      "expected": "Duplicate returns the original receipt without another feedback row",
+      "actual": "PASS: HTTP 201; receipt stayed 9edfc840-224b-476e-bb9f-c41a9bcd2e28; isolated DB contains one row for client_request_id 7c4c89c2-3052-4ac6-b7fe-f2277b561c58.",
+      "status": "PASS",
+      "evidence": "C:/Project/AI_actuarial_inforsearch/reports/issue-459-464-20261105/issue-463/controller-live-acceptance.json"
+    },
+    {
+      "id": "live-chat-shared-quota",
+      "command": "Existing /api/chat/query route using synthetic direct document content, then quota-exhausted assistant query",
+      "expected": "Chat uses same current provider profile and identity/quota as assistant; over-quota assistant request makes no model attempt",
+      "actual": "PASS: real Chat route HTTP 200 answered from synthetic note; shared anonymous IP quota advanced to 5/5 across assistant and Chat. Next assistant usage response was QUOTA_EXCEEDED with generation_attempts=0; count remained 5. UI Chat page with an empty knowledge index showed its retryable retrieval error before the direct-content Chat call.",
+      "status": "PASS",
+      "evidence": "C:/Project/AI_actuarial_inforsearch/reports/issue-459-464-20261105/issue-463/controller-live-acceptance.json"
+    },
+    {
+      "id": "live-browser-v4",
+      "command": "Chrome local browser at desktop and 390x844; English and Chinese; existing Chat route",
+      "expected": "Responsive bilingual assistant, no horizontal overflow, no-AI guide/citation access and existing Chat interaction remain available",
+      "actual": "PASS: 1440x900 initial desktop flow; 390x844 mobile body/document width both 390px and panel 315px; both language labels checked. No-AI guide listed seven current sections and exact file-details citation opened. Existing Chat route rendered; empty isolated KB returned the expected retryable retrieval message. Viewport override reset.",
+      "status": "PASS",
+      "evidence": "C:/Project/AI_actuarial_inforsearch/reports/issue-459-464-20261105/issue-463/controller-live-acceptance.json; C:/Project/AI_actuarial_inforsearch/reports/issue-459-464-20261105/issue-463/controller-browser-v4-supplement.json"
+    }
+  ],
+  "coverage": [
+    {
+      "id": "D1",
+      "expected": "D1 contract from Issue #463",
+      "actual": "Independent backend assistant query service/router + frontend lazy feature in thin shell; strict schema rejects conversation/history/unknown fields; manual feedback uses existing form.",
+      "local_status": "PASS",
+      "acceptance_status": "PASS",
+      "commit_sha": "d63da6bdfc5cc043d73fc3910a9de32d2a725344",
+      "manager_acceptance": "AC1/AC2 routing and draft behavior observed with the real provider; original text preserved and no write before confirmation."
+    },
+    {
+      "id": "D2",
+      "expected": "D2 contract from Issue #463",
+      "actual": "Exact #462 reference and server-validated source excerpts; original editable draft and existing receipt/idempotency confirmation; state only in current page and clears on navigation/refresh.",
+      "local_status": "PASS",
+      "acceptance_status": "PASS",
+      "commit_sha": "d63da6bdfc5cc043d73fc3910a9de32d2a725344",
+      "manager_acceptance": "#462 current citation search and exact section were opened from the browser and the HTTP reference matched the current guide hash/version; feedback confirmation, duplicate receipt, cancel, and page-refresh state were confirmed."
+    },
+    {
+      "id": "D3",
+      "expected": "D3 contract from Issue #463",
+      "actual": "Unchanged Chat identity and atomic quota helper; copied bound ChatbotConfig; existing LLMClient; app attempt=1 plus SDK retry=0 per stage, recovery off; 30s response deadline; embedding=0.",
+      "local_status": "PASS",
+      "acceptance_status": "PASS",
+      "commit_sha": "d63da6bdfc5cc043d73fc3910a9de32d2a725344",
+      "manager_acceptance": "Assistant and existing Chat used the same isolated provider/model source and shared guest quota ledger; denied generation reported zero attempts. Online stored instance binding remains unverified."
+    },
+    {
+      "id": "D4",
+      "expected": "D4 contract from Issue #463",
+      "actual": "Mock/API/jsdom/isolated-PG tests and focused gates complete. Actual configured-provider and real-browser acceptance pending manager.",
+      "local_status": "PASS",
+      "acceptance_status": "PASS",
+      "commit_sha": "d63da6bdfc5cc043d73fc3910a9de32d2a725344",
+      "manager_acceptance": "All V1-V4 manager acceptance passed, including actual provider calls, desktop/mobile bilingual browser, feedback persistence and idempotency, Chat regression path, and quota denial."
+    },
+    {
+      "id": "AC1",
+      "expected": "AC1 contract from Issue #463",
+      "actual": "Fixed intent table plus how-to forced feedback counterexamples, malformed/unknown outputs, clarification and explicit choice checks.",
+      "local_status": "PASS",
+      "acceptance_status": "PASS",
+      "commit_sha": "d63da6bdfc5cc043d73fc3910a9de32d2a725344",
+      "manager_acceptance": "Validated by focused tests and real acceptance evidence; see V1-V4 receipt rows."
+    },
+    {
+      "id": "AC2",
+      "expected": "AC2 contract from Issue #463",
+      "actual": "Query makes no feedback calls; real PG query-only row counts unchanged. Components cover original/edit/cancel/confirm/lost-receipt retry. Manager actual confirmation readback pending.",
+      "local_status": "PASS",
+      "acceptance_status": "PASS",
+      "commit_sha": "d63da6bdfc5cc043d73fc3910a9de32d2a725344",
+      "manager_acceptance": "Validated by focused tests and real acceptance evidence; see V1-V4 receipt rows."
+    },
+    {
+      "id": "AC3",
+      "expected": "AC3 contract from Issue #463",
+      "actual": "Only source excerpts validated against exact current guide returned; unsupported/missing evidence refused; knowledge unavailable; manual feedback independent.",
+      "local_status": "PASS",
+      "acceptance_status": "PASS",
+      "commit_sha": "d63da6bdfc5cc043d73fc3910a9de32d2a725344",
+      "manager_acceptance": "Validated by focused tests and real acceptance evidence; see V1-V4 receipt rows."
+    },
+    {
+      "id": "AC4",
+      "expected": "AC4 contract from Issue #463",
+      "actual": "Same identity/quota helper (guest5/registered20 UTC); permission/disabled/invalid-client gates, budget/deadline and SDK MockTransport 429 tests pass.",
+      "local_status": "PASS",
+      "acceptance_status": "PASS",
+      "commit_sha": "d63da6bdfc5cc043d73fc3910a9de32d2a725344",
+      "manager_acceptance": "Validated by focused tests and real acceptance evidence; see V1-V4 receipt rows."
+    },
+    {
+      "id": "AC5",
+      "expected": "AC5 contract from Issue #463",
+      "actual": "24 component checks incl axe; Python98 and help43; typecheck/build. Actual provider/browser smoke pending manager.",
+      "local_status": "PASS",
+      "acceptance_status": "PASS",
+      "commit_sha": "d63da6bdfc5cc043d73fc3910a9de32d2a725344",
+      "manager_acceptance": "Validated by focused tests and real acceptance evidence; see V1-V4 receipt rows."
+    }
+  ],
+  "validation": [
+    {
+      "id": "V1",
+      "status": "PASS",
+      "kind": "real provider + full FastAPI + isolated PostgreSQL 16.15",
+      "expected": "Intent + confirmed receipt/readback/idempotency",
+      "actual": "Confirmed intent and idempotency: before explicit submit feedback_rows=0; submit created receipt 9edfc840-224b-476e-bb9f-c41a9bcd2e28 with exact original text; duplicate client_request_id returned HTTP 201 and the same receipt; database has one row. Cancelled draft also left that sole row unchanged.",
+      "evidence": [
+        "C:/Project/AI_actuarial_inforsearch/reports/issue-459-464-20261105/issue-463/controller-live-acceptance.json",
+        "C:/Project/AI_actuarial_inforsearch/reports/issue-459-464-20261105/issue-463/controller-browser-v4-supplement.json"
+      ]
+    },
+    {
+      "id": "V2",
+      "status": "PASS",
+      "kind": "real configured OpenAI provider + bilingual Chrome",
+      "expected": "Actual usage/draft/how-to and citation open, zero unconfirmed writes",
+      "actual": "Isolated profile explicitly used provider openai / model gpt-5.4-mini / credential binding openai:llm:env from the existing local .env in process memory only. Chinese local-preview usage returned exact file-details (1.0.0) help excerpts and citation; English “How do I send feedback?” remained usage with no draft; suggestion text opened as an editable draft and no row existed before confirmation. Exact citation round-trip matched current section/version/hash.",
+      "evidence": [
+        "C:/Project/AI_actuarial_inforsearch/reports/issue-459-464-20261105/issue-463/controller-live-acceptance.json",
+        "C:/Project/AI_actuarial_inforsearch/reports/issue-459-464-20261105/issue-463/controller-help-http-inspection.json"
+      ]
+    },
+    {
+      "id": "V3",
+      "status": "PASS",
+      "kind": "full FastAPI + real Chat provider + isolated PostgreSQL quota ledger",
+      "expected": "Shared quota/identity/gates/attempts/deadline/error fallback",
+      "actual": "Existing Chat page rendered; empty isolated KB showed its retryable retrieval error. The normal Chat API route with synthetic direct-document content succeeded HTTP 200 through the same profile/model. Assistant and Chat used anonymous identity 127.0.0.1 and one quota ledger: count 3 after assistant, unchanged by feedback, 4 after empty-KB Chat attempt, 5 after real Chat success. At limit, assistant returned QUOTA_EXCEEDED with generation_attempts=0; retry left count at 5. Embedding attempts remained zero.",
+      "evidence": [
+        "C:/Project/AI_actuarial_inforsearch/reports/issue-459-464-20261105/issue-463/controller-live-acceptance.json",
+        "C:/Project/AI_actuarial_inforsearch/reports/issue-459-464-20261105/issue-463/controller-browser-v4-supplement.json"
+      ]
+    },
+    {
+      "id": "V4",
+      "status": "PASS",
+      "kind": "real Chrome desktop/mobile browser; English and Chinese; existing Chat route",
+      "expected": "Desktop/390px bilingual real browser and Chat interaction",
+      "actual": "PASS at desktop 1440x900 and mobile 390x844. At mobile, body/document width both remained 390px and panel width was 315px. Bilingual controls, no-AI help directory, exact file-details section, existing Chat retry message, quota denial/retry, static help while over quota, feedback-form cancellation, and refresh-cleared page-local history were observed. Post-cancel DB still contained exactly the original confirmed receipt. The viewport override was reset after the initial responsive run.",
+      "evidence": [
+        "C:/Project/AI_actuarial_inforsearch/reports/issue-459-464-20261105/issue-463/controller-live-acceptance.json",
+        "C:/Project/AI_actuarial_inforsearch/reports/issue-459-464-20261105/issue-463/controller-browser-v4-supplement.json"
+      ]
+    }
+  ],
+  "help_category_audit": [
+    {
+      "section_id": "browse-search",
+      "sources": [
+        "client/src/pages/Database.tsx"
+      ],
+      "result": "Text search/category/source/sort/page controls checked; paragraph retained."
+    },
+    {
+      "section_id": "categories-sources",
+      "sources": [
+        "client/src/pages/Categories.tsx",
+        "client/src/pages/SourcePortals.tsx"
+      ],
+      "result": "Ask AI permission/ready KB and overview/update controls checked; paragraph retained."
+    },
+    {
+      "section_id": "file-details",
+      "sources": [
+        "client/src/pages/FileDetail.tsx"
+      ],
+      "result": "Preview local-file and visible disabled Download local-file+permission gate checked; paragraph retained."
+    },
+    {
+      "section_id": "knowledge-chat",
+      "sources": [
+        "client/src/pages/Knowledge.tsx",
+        "client/src/pages/Chat.tsx",
+        "ai_actuarial/assistant/query.py"
+      ],
+      "result": "Existing Chat retained; new assistant usage and #464 unavailable boundary updated."
+    },
+    {
+      "section_id": "account-quota",
+      "sources": [
+        "client/src/pages/Profile.tsx",
+        "ai_actuarial/shared_auth.py",
+        "ai_actuarial/api/services/chat.py",
+        "ai_actuarial/api/services/auth.py",
+        "ai_actuarial/storage.py"
+      ],
+      "result": "Shared atomic ledger, guest5/registered20, UTC reset checked and documented."
+    },
+    {
+      "section_id": "feedback-entry",
+      "sources": [
+        "client/src/components/support-widget/SupportWidget.tsx",
+        "client/src/features/feedback/FeedbackForm.tsx",
+        "client/src/features/assistant/AssistantPanel.tsx",
+        "ai_actuarial/shared_runtime.py",
+        "config/sites.yaml"
+      ],
+      "result": "Both flags default false; either exposes entry; draft/receipt/current-page scope updated."
+    },
+    {
+      "section_id": "common-failures",
+      "sources": [
+        "client/src/pages/FileDetail.tsx",
+        "client/src/pages/Chat.tsx",
+        "client/src/features/feedback/FeedbackForm.tsx",
+        "client/src/features/assistant/AssistantPanel.tsx"
+      ],
+      "result": "Existing file/KB/quota/permission advice retained; assistant has no-AI help browse and manual fallback."
+    }
+  ],
+  "earlier_attempts": [
+    {
+      "status": "FAIL_RESOLVED",
+      "actual": "Initial frontend commands lacked worktree dev dependencies; pinned npm ci installed without package edits."
+    },
+    {
+      "status": "FAIL_RESOLVED",
+      "actual": "Initial default Markdown import and two help wording search collisions fixed; final checks pass; fixture unchanged."
+    },
+    {
+      "status": "FAIL_RESOLVED",
+      "actual": "Concurrent manager dependency install caused transient ERR_MODULE_NOT_FOUND; exact Vitest command reran successfully.",
+      "evidence": "reports/issue-463-vitest-transient-dependency-failure.log"
+    },
+    {
+      "status": "FAIL_RESOLVED",
+      "actual": "Dead-symbol gate detected decorated route/validator; existing-convention whitelist references added; aggregate final gate PASS."
+    },
+    {
+      "status": "INITIAL_WORKER_ACCEPTANCE_SNAPSHOT_SUPERSEDED",
+      "actual": "The initial worker receipt listed V1, V3 and V4 manager work as pending and reported V2 not run. This is preserved as historical context only; final manager results are in validation V1-V4 above.",
+      "evidence": "C:/Project/AI_actuarial_inforsearch/reports/issue-459-464-20261105/issue-463/worker-report.md"
+    }
+  ],
+  "limitations": [
+    "30s deadline bounds response waiting; an already-running synchronous provider transport may finish later. Deadline checks prevent subsequent generation; SDK/application retries disabled.",
+    "Usage returns source excerpts rather than unconstrained paraphrases; unsupported excerpts rejected.",
+    "Model/quota failures are typed availability/error_code responses; permission/disabled/invalid payload retain HTTP 403/404/422.",
+    "Required Python98 run preceded the final three additional binding regressions and the last guide wording clarification. Binding3 and help43 then passed separately; no runtime code changed after the98-test run.",
+    "Live acceptance uses the explicitly isolated openai:llm:env profile and task-owned PostgreSQL; the online openai:llm:instance:default binding remains unverified.",
+    "The isolated database has no indexed knowledge base, so the existing Chat UI displayed its retryable retrieval error; the normal Chat API route succeeded with a synthetic direct-document context and the configured live provider.",
+    "No production DB, key write/import, deployment, schedule, or cross-project read/write was used."
+  ],
+  "live_acceptance": {
+    "recorded_at": "2026-11-06T10:01:15.309467+00:00",
+    "profile": "reports/issue-463/isolated-profile.yaml",
+    "api_base": "http://127.0.0.1:8000 (loopback only)",
+    "database": "issue463_runtime on task-owned PostgreSQL 16.15 at 127.0.0.1:55463",
+    "provider": {
+      "provider": "openai",
+      "model": "gpt-5.4-mini",
+      "credential_binding": "openai:llm:env",
+      "key_source": "existing repository .env read into isolated process memory only",
+      "key_value_output": false,
+      "new_key_created": false,
+      "tracked_product_config_changed": false,
+      "online_instance_binding_verified": false
+    },
+    "assistant_usage": [
+      {
+        "locale": "zh",
+        "question": "怎样预览本地文件？",
+        "result": "Live provider answered with exact current guide excerpts and a file-details citation (1.0.0); exact citation section opened in browser."
+      },
+      {
+        "locale": "en",
+        "question": "How do I send feedback?",
+        "result": "Classified as usage, returned current feedback-entry guide excerpts and citation, no feedback draft; live generation completed."
+      },
+      {
+        "locale": "en",
+        "question": "I suggest adding a publication-date filter to the Database page.",
+        "result": "Classified as feedback; exact original text appeared in the editable existing feedback form. Database count was zero before explicit confirmation."
+      }
+    ],
+    "feedback": {
+      "confirmed_by_ui": true,
+      "feedback_id": "9edfc840-224b-476e-bb9f-c41a9bcd2e28",
+      "client_request_id": "7c4c89c2-3052-4ac6-b7fe-f2277b561c58",
+      "duplicate_http_status": 201,
+      "duplicate_receipt_same": true,
+      "database_rows_for_request_id": 1,
+      "status": "new",
+      "quota_count_after_feedback": 3
+    },
+    "chat": {
+      "ui_path": "/chat",
+      "ui_result": "Expected retryable knowledge-index retrieval error because the isolated database has no indexed knowledge base.",
+      "api_path": "POST /api/chat/query",
+      "api_http_status": 200,
+      "synthetic_document": "Synthetic test note for Issue 463: The policy is reviewed annually.",
+      "answer": "The policy is reviewed annually, with the response citing the synthetic filename.",
+      "conversation_id": "conv_12b369ced8d14233",
+      "message_id": "msg_953cfc4adbc24815"
+    },
+    "shared_quota": {
+      "identity": "anonymous guest keyed by loopback IP 127.0.0.1",
+      "date_utc": "2026-11-06",
+      "after_assistant_requests": 3,
+      "after_feedback_submit": 3,
+      "after_chat_ui_index_error": 4,
+      "after_live_chat_success": 5,
+      "assistant_at_limit": {
+        "error_code": "QUOTA_EXCEEDED",
+        "generation_attempts": 0
+      },
+      "final_count": 5
+    },
+    "browser": {
+      "desktop": "1440x900 observed; final screenshot at default 1280 width",
+      "mobile": "390x844; document and body scroll width 390px; assistant panel 315px",
+      "locales": [
+        "zh",
+        "en"
+      ],
+      "no_ai_help": "Seven guide sections listed; file-details (1.0.0) opened and exact Chinese section displayed",
+      "existing_chat": "Rendered; no-KB retrieval failure displayed with retry action",
+      "viewport_reset": true
+    },
+    "controller_evidence": [
+      "C:/Project/AI_actuarial_inforsearch/reports/issue-459-464-20261105/issue-463/controller-precommit-source-verification.json",
+      "C:/Project/AI_actuarial_inforsearch/reports/issue-459-464-20261105/issue-463/controller-help-http-inspection.json"
+    ],
+    "limitation": "The original online credential binding openai:llm:instance:default is not available in this local runtime and was not claimed as verified. The isolated profile explicitly bound the same provider and model to the repository-supported env source as authorized. The isolated database has no indexed KB; the existing Chat UI retrieval error is recorded separately from successful direct-content real-provider Chat."
+  },
+  "reviews": {
+    "round_1": {
+      "reviewer": "issue-463-review-01",
+      "model": "gpt-6-sol",
+      "reasoning": "high",
+      "outcome": "changes",
+      "finding": "AC5 lazy FeedbackForm import retry defect; fixed by same worker and regression added",
+      "typesafe_report": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-463\\review-01-typesafe-result.json"
+    },
+    "round_2": {
+      "reviewer": "issue-463-review-02",
+      "model": "gpt-6-sol",
+      "reasoning": "high",
+      "outcome": "pass",
+      "finding_count": 0,
+      "report": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-463\\review-02-report.md",
+      "typesafe_report": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-463\\review-02-typesafe-result.json",
+      "typesafe_review_summary_coverage": 0.79
+    }
+  },
+  "receipt_preparation_head_sha": "e0a500fd5f874a7eb8ec1cb721bfc0f9353454fd",
+  "remote_review_fixes": {
+    "snapshot_count": 1,
+    "snapshot_path": "reports/issue-463/remote-feedback-2026-11-06.json",
+    "snapshot_head_sha": "7f463dc2bc8d1d7d75fef64ee8aa1f29c81bf574",
+    "copilot_review_id": 5798744341,
+    "typesafe_remote_assessment": "C:/Project/AI_actuarial_inforsearch/reports/issue-459-464-20261105/issue-463/remote-typesafe-result-2026-11-06.json",
+    "typesafe_judge": {
+      "report": "C:/Project/AI_actuarial_inforsearch/reports/issue-459-464-20261105/issue-463/remote-judge-result-2026-11-06.json",
+      "model": "jev-latest",
+      "choice": "accept_both",
+      "confidence": 0.74
+    },
+    "fix_commit_sha": "9b54b95b409e7604f51d0a1516a4a978e2b11a62",
+    "findings": [
+      {
+        "comment_id": 4491362941,
+        "criteria": [
+          "AC1",
+          "AC2"
+        ],
+        "disposition": "valid_and_fixed",
+        "fix": "The usage guard now restricts feedback how-to correction to direct question forms and excludes the How about suggestion form. The three English/Chinese proposal cases are preserved as exact editable drafts; three genuine how-to cases remain usage.",
+        "regression": "One distinct proposal case was added after the red/green run and captured in the final same-rule red/green evidence; final focused assistant/API suite passed 54."
+      },
+      {
+        "comment_id": 4491362972,
+        "criteria": [
+          "AC4",
+          "AC5"
+        ],
+        "disposition": "valid_and_fixed",
+        "fix": "Assistant router catches asyncio.TimeoutError so Python 3.10 deadline failures map to the stable ASSISTANT_TIMEOUT response; Python 3.11+ uses its built-in alias.",
+        "regression": "A distinct legacy asyncio timeout exception is simulated at the API boundary; it returns HTTP 200, ASSISTANT_TIMEOUT, 0 generation and embedding attempts."
+      }
+    ],
+    "current_source_live_provider_check": {
+      "evidence": "C:/Project/AI_actuarial_inforsearch/reports/issue-459-464-20261105/issue-463/controller-current-source-provider-check-2026-11-06.json",
+      "provider": "openai",
+      "model": "gpt-5.4-mini",
+      "credential_binding": "openai:llm:env",
+      "cases_passed": 2,
+      "each_case_generation_attempts": 1,
+      "embedding_attempts": 0,
+      "drafts_exact": true,
+      "new_feedback_rows": 0,
+      "test_quota_reset": "The isolated 127.0.0.1 quota row (5) was reset for this distinct current-source validation phase; the earlier 5/5 evidence remains unchanged. The new phase ended at 2/5."
+    },
+    "review_impact": "material",
+    "source_fingerprint_observation": "C:/Project/AI_actuarial_inforsearch/reports/issue-459-464-20261105/issue-463/controller-remote-fix-freeze-observation.json"
+  }
+}
