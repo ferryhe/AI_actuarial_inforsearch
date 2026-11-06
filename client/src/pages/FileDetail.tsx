@@ -1523,7 +1523,7 @@ export default function FileDetail() {
               {t("tasks.form.bilingual_metadata_note")}
             </p>
             <div className="flex justify-end gap-2 pt-2 border-t border-border">
-              <button onClick={() => { setMutationError(null); setShowCatalogModal(false); }} className="min-h-[48px] text-sm px-3 py-2 rounded-lg border border-border hover:bg-muted transition-colors">
+              <button onClick={() => { setMutationError(null); setShowCatalogModal(false); }} className="min-h-[48px] text-sm px-3 py-2 rounded-lg border border-border hover:bg-muted transition-colors" data-testid="button-cancel-catalog">
                 {t("fv.cancel")}
               </button>
               <button onClick={submitCatalog} disabled={catalogSubmitting || taskOptions.catalogProviders.length === 0}
@@ -1570,7 +1570,7 @@ export default function FileDetail() {
             </div>
             {chunkEmbeddingError && <p id="error-file-chunk-submit" role="alert" className="text-xs text-destructive">{chunkEmbeddingError}</p>}
             <div className="flex justify-end gap-2 pt-2 border-t border-border">
-              <button onClick={() => setShowChunkModal(false)} className="min-h-[48px] text-sm px-3 py-2 rounded-lg border border-border hover:bg-muted transition-colors">
+              <button onClick={() => setShowChunkModal(false)} className="min-h-[48px] text-sm px-3 py-2 rounded-lg border border-border hover:bg-muted transition-colors" data-testid="button-cancel-chunk">
                 {t("fv.cancel")}
               </button>
               <button onClick={submitChunk} disabled={chunkSubmitting}
@@ -1598,10 +1598,10 @@ function MetaRow({ label, children, testId }: { label: string; children: React.R
 
 function Modal({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={onClose}>
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/50" onClick={onClose}>
       <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }}
         className="w-full max-w-lg rounded-xl border border-border bg-card p-5 shadow-xl"
-        onClick={(e) => e.stopPropagation()}>
+        onClick={(e) => e.stopPropagation()} data-testid="file-detail-modal-surface">
         {children}
       </motion.div>
     </div>
