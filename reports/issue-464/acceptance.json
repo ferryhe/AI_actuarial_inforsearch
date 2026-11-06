@@ -1,0 +1,634 @@
+{
+  "schema_version": 1,
+  "issue": 464,
+  "overall_status": "local_acceptance_complete_remote_gates_pending",
+  "task_close": null,
+  "branch": "codex/issue-464-assistant-knowledge",
+  "base_sha": "f40da1a065c314db6b2239d52e82525ca04949cc",
+  "implementation_sha": "bc1fdab375b7db748a9c6a8f5df406be021cc3b8",
+  "implementation_source_sha256": "d48e176fdd90777df6c7aa6b849719f17094d6247f458ecbbd00cc3f2a3b9a52",
+  "changed_files": [
+    {
+      "path": ".hermes/project-status.md",
+      "working_sha256": "8957ed1c404036d30352fe831267d4337ab31674e687034872454e194d55ab3b",
+      "git_blob_oid": "72aadef9137a1c9202e326c64d6951ec07eb7bdd"
+    },
+    {
+      "path": "ai_actuarial/agentic_rag/ready_data_tools.py",
+      "working_sha256": "3d5c9215e9bcad5f8d9489adf9d7f1d6c4a6ba4a7ec7dcc3de4ff8f6dc35a694",
+      "git_blob_oid": "e50e4e117c2d1a63c318bff7164c300640994016"
+    },
+    {
+      "path": "ai_actuarial/api/__init__.py",
+      "working_sha256": "4813a1735061731f5b3d36d594fb401525e691ba75ed401cf131a35277b38aa5",
+      "git_blob_oid": "4de28af62752a3d1e05c751daf8a412325e8e837"
+    },
+    {
+      "path": "ai_actuarial/api/app.py",
+      "working_sha256": "6701fba47891d8e6064cac46dc05cb6cf3e2061908d796b783c3b1cd60554e48",
+      "git_blob_oid": "5a092f2e31265d8372a7be8f468002dacd56bb11"
+    },
+    {
+      "path": "ai_actuarial/api/services/ops_write.py",
+      "working_sha256": "2a6702df67bba764f60716120c3bf5bc0b78446184c6834ccb783117f7712997",
+      "git_blob_oid": "5a60052897c18fcc62da0655afc2ae4e502cbfee"
+    },
+    {
+      "path": "ai_actuarial/assistant/knowledge.py",
+      "working_sha256": "d48e176fdd90777df6c7aa6b849719f17094d6247f458ecbbd00cc3f2a3b9a52",
+      "git_blob_oid": "b0b99fa30e6f005829c1d887ddc2e6ae224e9877"
+    },
+    {
+      "path": "ai_actuarial/assistant/query.py",
+      "working_sha256": "8a33e488d94cb6c5a297af06335c1deed2513cf7c4fe80b5336017bc9828f97e",
+      "git_blob_oid": "bcc11ea47793489e2c4ebb986da5c212a47d5bf2"
+    },
+    {
+      "path": "ai_actuarial/assistant/router.py",
+      "working_sha256": "30a226eb0050d03627356406fc39a65cd40591a2145bb56e552910851acd4e16",
+      "git_blob_oid": "37629660603a977a371d0b9bd5983be80deebd23"
+    },
+    {
+      "path": "ai_actuarial/chatbot/retrieval.py",
+      "working_sha256": "7bcdca7c025a1a4b8825679c38c21fd0a5257172d9d9d09e0fad49a1313e498c",
+      "git_blob_oid": "1ec3c3c3191ca32c8976a257eff98c086a2b8d79"
+    },
+    {
+      "path": "ai_actuarial/rag/embeddings.py",
+      "working_sha256": "7e799170cb437636fec804a39153990febbde99ba71646ed6eac8aa14f6982c7",
+      "git_blob_oid": "768f42574407acdf9c74b563ef9573ecca922bb3"
+    },
+    {
+      "path": "ai_actuarial/shared_auth.py",
+      "working_sha256": "ba8190e438a730a0cf0eb47f4fdf4502039633b28239b507db7ebe1a2084e56d",
+      "git_blob_oid": "98bc41542546c4ff1f79aca0b9feee54063575de"
+    },
+    {
+      "path": "ai_actuarial/shared_runtime.py",
+      "working_sha256": "19d6433ed079fe573717b24312b8570485372eee19a058f8424c1bc1a7e5df04",
+      "git_blob_oid": "5201051f0209f813122709260cc704bcb4020290"
+    },
+    {
+      "path": "ai_actuarial/storage.py",
+      "working_sha256": "892587920f8fea24b095f1fec9342ec44e52a55376a22337eb94bb98c02c2dca",
+      "git_blob_oid": "90ea3f0b158bd3fddba457bbd938fe453acf524e"
+    },
+    {
+      "path": "client/src/components/a11y/FileImportForm.test.tsx",
+      "working_sha256": "897af13e55f95d6afaab094fcfffee661ce7ac14931f1d3e78d1b187dc065dbc",
+      "git_blob_oid": "b1bfdf68620c33cc49b3decd917cd0eb88dbf201"
+    },
+    {
+      "path": "client/src/components/a11y/FilterBar.test.tsx",
+      "working_sha256": "d95ed094510c5d4ed64dda9306ccb79617b76b17e0ae549193840af9c788f339",
+      "git_blob_oid": "fdda928be4bd30953c1c7453002fa14f6204927c"
+    },
+    {
+      "path": "client/src/components/a11y/WebListeningForm.test.tsx",
+      "working_sha256": "d4a3bd961536884afb75e4eaefd6d6d171514751ce79ae764877c04c056273f3",
+      "git_blob_oid": "a8c5772c429acfd704865cb34d091a1065be63a2"
+    },
+    {
+      "path": "client/src/features/assistant/AssistantPanel.test.tsx",
+      "working_sha256": "57210f49b9849c8fa79bff1210d6564d80d863fa431d2820fc43bf4a9e528d5c",
+      "git_blob_oid": "e13ce26342349c0b29b1744eabfd8e032821071f"
+    },
+    {
+      "path": "client/src/features/assistant/AssistantPanel.tsx",
+      "working_sha256": "3c83b987571f6d5d01983c7147756695e9dcda05912ca95439b5f6604984c1e0",
+      "git_blob_oid": "347b1af8c9fe6456f105a9d1ce23eef48c955734"
+    },
+    {
+      "path": "client/src/hooks/use-i18n.ts",
+      "working_sha256": "a145f73260ec14186fa9e58a3480604833cd2271624a57a4f46a70c3bd797db5",
+      "git_blob_oid": "c63da852b54d6bbef5311aea4c2f740f0d13c59c"
+    },
+    {
+      "path": "config/dead_code_whitelist.py",
+      "working_sha256": "f9f7110131144e8823ffde85155cc8e90d49cbc6d076a9b6cc1f985391afe727",
+      "git_blob_oid": "2daba6ed6677b25fd21302a3d023b24203b7973a"
+    },
+    {
+      "path": "config/sites.yaml",
+      "working_sha256": "0861220bcc40ba2ebb02865ac74cdf0b2f704ea70615a6edf9468b0fda6a804d",
+      "git_blob_oid": "d2b3019e646c6645293e0508f462cb10c12ca4ce"
+    },
+    {
+      "path": "docs/assistant-knowledge.md",
+      "working_sha256": "2f5bb309f1d0a40d7acb9d5506db865e9bf3846bd7e160e32dc0f2a76b53410a",
+      "git_blob_oid": "954bdce2b16935c6926839cd349d195d63afa664"
+    },
+    {
+      "path": "docs/help/user-guide.en.md",
+      "working_sha256": "e4b2659df97407f31a31450a5b257128ea5be0b7b6411a47f6ea56a2bec9a2aa",
+      "git_blob_oid": "e5e3ff89b5f6b1d24d2da55257c1d03c9f323981"
+    },
+    {
+      "path": "docs/help/user-guide.zh.md",
+      "working_sha256": "2cd398e297c6fa594e3a1793292f4871094fdef514aeedff0939800902382ef3",
+      "git_blob_oid": "e05f302519e3c5c92b099b1889925270a050ac98"
+    },
+    {
+      "path": "reports/issue-464/browser-smoke.json",
+      "working_sha256": "7bfeff69d8f372d2a3ba7d22fc5759956c431a638c0c53929960a2e75fd3e2d6",
+      "git_blob_oid": "24441a1e01107c2dafbec30bc6735e55e399d7a0"
+    },
+    {
+      "path": "tests/test_assistant_feature_matrix.py",
+      "working_sha256": "5b20fa00125f169d6cb8daf90d4dca91b2d546950ccc8c7435fac57e0ac92be8",
+      "git_blob_oid": "781da8e58609d0e43686586fa85cdd96fb6a8b7d"
+    },
+    {
+      "path": "tests/test_assistant_knowledge.py",
+      "working_sha256": "ae27bf76f76868ecdbe639816877eba38dbdeaa3b59a516716fb8b27cbd8c7ba",
+      "git_blob_oid": "3e520e5e68f5c28718cd1718589536351ea6cb49"
+    },
+    {
+      "path": "tests/test_assistant_routing.py",
+      "working_sha256": "9ef79bb510e8f352036cec5610da9ce11d38897a3efc789855df8066bcf16908",
+      "git_blob_oid": "3b34c310ea49f430f5edf4734255a03f8adce497"
+    },
+    {
+      "path": "tests/test_fastapi_assistant_endpoints.py",
+      "working_sha256": "5d90a5d1f8811cd4e5122db3aa4038e93856ef4b3768a27f1b6267a01ca279bc",
+      "git_blob_oid": "0884220bee6f64d7fc44168feedce7ee0245bdc1"
+    },
+    {
+      "path": "tests/test_source_registry.py",
+      "working_sha256": "bbb0ffb6718adb571b0006915e9680c24f0b887bd1e9081022fd1869fa82a6ae",
+      "git_blob_oid": "e71494883720f7cf414f56821200525f52eef474"
+    }
+  ],
+  "environment": {
+    "repository": "ferryhe/AI_actuarial_inforsearch",
+    "runtime": "isolated local acceptance only",
+    "postgres_container": "codex-issue464-pg16-20261106",
+    "postgres_version": "16",
+    "api_port": 8000,
+    "api_pid": 77416,
+    "api_source_root": "C:/Project/AI_actuarial_inforsearch/.codex-worktrees/issue-464",
+    "vite_port": 4173,
+    "vite_pid": 47580,
+    "scheduler_disabled": true,
+    "configured_sites": 0,
+    "public_production_used": false,
+    "provider": "OpenAI gpt-5.4-mini through existing ChatbotConfig/LLMClient and env binding",
+    "credential_values_recorded": false
+  },
+  "local_review": {
+    "latest": "review7",
+    "outcome": "PASS",
+    "reviewer_model": "gpt-6-sol/high",
+    "report": "reports/issue-459-464-20261105/issue-464/review7-report.json",
+    "validation": "reports/issue-459-464-20261105/issue-464/review7-validation.json",
+    "typesafe_case": "issue-464-local-review-6",
+    "typesafe_report": "reports/issue-459-464-20261105/issue-464/review7-typesafe-result.json",
+    "completed_failed_review_cycles": 5
+  },
+  "local_validation": [
+    {
+      "command": "python -m pytest tests/test_assistant_knowledge.py tests/test_assistant_feature_matrix.py tests/test_fastapi_assistant_endpoints.py tests/test_fastapi_chat_endpoints.py tests/test_fastapi_agentic_rag_endpoints.py tests/test_rag_runtime.py tests/test_assistant_routing.py tests/test_assistant_help.py tests/test_fastapi_assistant_help_endpoints.py tests/unit/test_permissions.py tests/agentic_rag/test_ready_data_tools.py tests/test_source_registry.py tests/test_fastapi_ops_write_endpoints.py -q --no-cov",
+      "result": "364 passed, 4 warnings in 189.36s; exit code 0",
+      "evidence": "reports/issue-459-464-20261105/issue-464/controller-recorded-backend.log",
+      "command_as_run_recorded": true,
+      "command_provenance": "Fresh recorded validation; does not claim recovery of the earlier unretained invocation",
+      "prior_run_evidence": "reports/issue-459-464-20261105/issue-464/manager-final-backend.log",
+      "implementation_sha": "bc1fdab375b7db748a9c6a8f5df406be021cc3b8",
+      "started_at_utc": "2026-11-06T15:27:54.520713+00:00",
+      "completed_at_utc": "2026-11-06T15:31:06.655081+00:00",
+      "environment": {
+        "POSTGRES_TEST_URL": "task-owned PostgreSQL16 at127.0.0.1:55464/ai_actuarial_issue464; per-test isolated schemas",
+        "DATABASE_URL": "same task-owned PostgreSQL binding",
+        "CONFIG_PATH": "unset for pytest fixtures"
+      },
+      "argv": [
+        "C:\\Users\\ferry\\AppData\\Local\\Programs\\Python\\Python311\\python.exe",
+        "-m",
+        "pytest",
+        "tests/test_assistant_knowledge.py",
+        "tests/test_assistant_feature_matrix.py",
+        "tests/test_fastapi_assistant_endpoints.py",
+        "tests/test_fastapi_chat_endpoints.py",
+        "tests/test_fastapi_agentic_rag_endpoints.py",
+        "tests/test_rag_runtime.py",
+        "tests/test_assistant_routing.py",
+        "tests/test_assistant_help.py",
+        "tests/test_fastapi_assistant_help_endpoints.py",
+        "tests/unit/test_permissions.py",
+        "tests/agentic_rag/test_ready_data_tools.py",
+        "tests/test_source_registry.py",
+        "tests/test_fastapi_ops_write_endpoints.py",
+        "-q",
+        "--no-cov"
+      ]
+    },
+    {
+      "command": "npx vitest run --config vitest.config.ts client/src/features/assistant client/src/features/feedback client/src/components/support-widget",
+      "result": "PASS, 26 tests",
+      "evidence": "reports/issue-459-464-20261105/issue-464/worker-vitest.log",
+      "phase": "historical final-R6 frontend/quality check before the implementation commit",
+      "applies_to_implementation_sha": "bc1fdab375b7db748a9c6a8f5df406be021cc3b8",
+      "reuse_basis": "No source edits followed these recorded passes; the corresponding frontend source blobs match the implementation commit and the fresh backend replay ran on that commit."
+    },
+    {
+      "command": "npm run typecheck",
+      "result": "PASS",
+      "evidence": "reports/issue-459-464-20261105/issue-464/worker-typecheck.log",
+      "phase": "historical final-R6 frontend/quality check before the implementation commit",
+      "applies_to_implementation_sha": "bc1fdab375b7db748a9c6a8f5df406be021cc3b8",
+      "reuse_basis": "No source edits followed these recorded passes; the corresponding frontend source blobs match the implementation commit and the fresh backend replay ran on that commit."
+    },
+    {
+      "command": "npm run build",
+      "result": "PASS; existing large-chunk advisory",
+      "evidence": "reports/issue-459-464-20261105/issue-464/worker-build.log",
+      "phase": "historical final-R6 frontend/quality check before the implementation commit",
+      "applies_to_implementation_sha": "bc1fdab375b7db748a9c6a8f5df406be021cc3b8",
+      "reuse_basis": "No source edits followed these recorded passes; the corresponding frontend source blobs match the implementation commit and the fresh backend replay ran on that commit."
+    },
+    {
+      "command": "npm run test:a11y",
+      "result": "PASS, 96 tests",
+      "evidence": "reports/issue-459-464-20261105/issue-464/worker-a11y-final.log",
+      "phase": "historical final-R6 frontend/quality check before the implementation commit",
+      "applies_to_implementation_sha": "bc1fdab375b7db748a9c6a8f5df406be021cc3b8",
+      "reuse_basis": "No source edits followed these recorded passes; the corresponding frontend source blobs match the implementation commit and the fresh backend replay ran on that commit."
+    },
+    {
+      "command": "npm run dead-code:check",
+      "result": "PASS",
+      "evidence": "reports/issue-459-464-20261105/issue-464/worker-dead-code-final2.log",
+      "phase": "historical final-R6 frontend/quality check before the implementation commit",
+      "applies_to_implementation_sha": "bc1fdab375b7db748a9c6a8f5df406be021cc3b8",
+      "reuse_basis": "No source edits followed these recorded passes; the corresponding frontend source blobs match the implementation commit and the fresh backend replay ran on that commit."
+    },
+    {
+      "command": "Black, isort, Ruff, Pylint errors-only, Python file/symbol gates, git diff --check",
+      "result": "PASS",
+      "evidence": "reports/issue-459-464-20261105/issue-464/worker-report.json",
+      "phase": "historical final-R6 frontend/quality check before the implementation commit",
+      "applies_to_implementation_sha": "bc1fdab375b7db748a9c6a8f5df406be021cc3b8",
+      "reuse_basis": "No source edits followed these recorded passes; the corresponding frontend source blobs match the implementation commit and the fresh backend replay ran on that commit."
+    }
+  ],
+  "v1_v5": [
+    {
+      "id": "V1",
+      "result": "PASS",
+      "actual": "Catalog and KB-body paths both returned their proper citation types. The catalog run preserved one real-provider INVALID_MODEL_RESPONSE and a successful manual retry with five catalog citations. The real-provider KB-body answer cited a permitted Ready Data source; soft-stale serving kept the active version and hard-stale fell back only within the same KB.",
+      "evidence": [
+        "reports/issue-459-464-20261105/issue-464/live-current-api-fingerprint.json",
+        "reports/issue-459-464-20261105/issue-464/live-current-catalog-retry.json",
+        "reports/issue-459-464-20261105/issue-464/live-catalog-after-fix-confirmed.json",
+        "reports/issue-459-464-20261105/issue-464/live-current-soft-stale-api.json",
+        "reports/issue-459-464-20261105/issue-464/live-current-hard-stale-api.json"
+      ],
+      "expected": "Catalog questions use metadata only; body answers use retrieved body evidence. Citations match the served source/version and open to the in-site source."
+    },
+    {
+      "id": "V2",
+      "result": "PASS",
+      "actual": "The identity × server configuration × selected KB matrix used actual retrieval/prompt evidence and generation/embedding counters. Authorized staff used its configured KB; unauthorized identities and spoofed client kb_id/kb_ids were denied; empty, unavailable and mismatched scopes failed before answer generation.",
+      "evidence": [
+        "reports/issue-459-464-20261105/issue-464/live-final-api-matrix.json",
+        "reports/issue-459-464-20261105/issue-464/live-current-auto-spoof.json",
+        "reports/issue-459-464-20261105/issue-464/live-final-empty-scope-after-r6.json",
+        "reports/issue-459-464-20261105/issue-464/live-final-index-mismatch-after-r6.json",
+        "reports/issue-459-464-20261105/issue-464/live-final-unavailable-after-r6.json"
+      ],
+      "expected": "Retrieval is limited to the intersection of caller identity and server configuration. Unauthorized or empty scope is rejected before retrieval/answer generation with zero generation and embedding calls; prompts contain only permitted source IDs."
+    },
+    {
+      "id": "V3",
+      "result": "PASS",
+      "actual": "Live evidence covered catalog/body citations, soft-stale and hard-stale serving, index mismatch, unavailable index and empty scope. Summary-only and no-result edge cases are covered by the focused fixture tests; they are not claimed as separate live-provider runs.",
+      "evidence": [
+        "reports/issue-459-464-20261105/issue-464/live-current-catalog-retry.json",
+        "reports/issue-459-464-20261105/issue-464/live-current-soft-stale-api.json",
+        "reports/issue-459-464-20261105/issue-464/live-current-hard-stale-api.json",
+        "reports/issue-459-464-20261105/issue-464/live-final-index-mismatch-after-r6.json",
+        "reports/issue-459-464-20261105/issue-464/live-final-unavailable-after-r6.json",
+        "reports/issue-459-464-20261105/issue-464/live-final-empty-scope-after-r6.json",
+        "tests/test_assistant_knowledge.py"
+      ],
+      "expected": "Without usable evidence the request returns a deterministic no-result/error and performs no later answer generation. Any earlier routing/embedding calls are counted separately. Valid stale evidence follows the active serving-version rule."
+    },
+    {
+      "id": "V4",
+      "result": "PASS",
+      "actual": "The four feature-flag combinations were exercised. While off/off, stale-page feedback and assistant POSTs returned 404; refresh hid the entry and yielded no assistant/help/feedback business requests. The actual quota-error→manual-feedback path and assistant-provider format failure are preserved; feedback history remained readable and both flags were restored on.",
+      "evidence": [
+        "reports/issue-459-464-20261105/issue-464/live-current-feature-matrix.json",
+        "reports/issue-459-464-20261105/issue-464/api-observations-switch-gates-r6.jsonl",
+        "reports/issue-459-464-20261105/issue-464/live-current-feedback-preservation.json",
+        "reports/issue-464/browser-smoke.json"
+      ],
+      "expected": "All four flag combinations behave independently; stale old-page requests are rejected; assistant failure does not block feedback submission or history reads."
+    },
+    {
+      "id": "V5",
+      "result": "PASS",
+      "actual": "Across separate real-browser/API paths, help returned a help citation, catalog returned metadata citations, and KB-body answers cited permitted KB evidence. Auto-classified suggestion text became an editable draft, then persisted after confirmation to isolated PostgreSQL and the existing #461 local inbox. A distinct earlier browser path recorded quota error followed by manual suggestion submit. Desktop and mobile captures are recorded below.",
+      "evidence": [
+        "reports/issue-459-464-20261105/issue-464/live-help-api.json",
+        "reports/issue-459-464-20261105/issue-464/live-current-catalog-retry.json",
+        "reports/issue-459-464-20261105/issue-464/live-current-soft-stale-api.json",
+        "reports/issue-459-464-20261105/issue-464/feedback-pg-readback-r6.json",
+        "reports/issue-459-464-20261105/issue-464/feedback-list-r6-final.json",
+        "reports/issue-459-464-20261105/issue-464/feedback-pull-r6-final.json",
+        "reports/issue-464/browser-smoke.json"
+      ],
+      "expected": "Help, catalog, KB-body and suggestion requests route to the correct source. Suggestions remain editable until confirmed; PostgreSQL and the #461 inbox show the same ID and original text, and saved history survives switch changes."
+    }
+  ],
+  "feedback_paths": [
+    {
+      "path": "assistant classify -> original draft -> user confirm -> PostgreSQL -> #461 inbox",
+      "result": "observed",
+      "feedback_id": "81974bf9-dc11-4acd-af76-ac02971136cb",
+      "client_request_id": "ac45e50a-f8bb-4ad5-828c-942902e85f1b",
+      "content": "Please add the publication date next to each search result so readers can tell how current a document is.",
+      "generation_attempts": 1,
+      "embedding_attempts": 0,
+      "pg_rows": 3,
+      "unique_client_request_ids": 3,
+      "inbox_readback": true
+    },
+    {
+      "path": "quota error -> manual feedback submit",
+      "result": "observed in earlier Issue #464 Chrome run",
+      "feedback_id": "83620296-199f-4563-9fa6-55e40d3ad6c8",
+      "content": "Issue #464 local acceptance suggestion: keep the directory list accessible from the help and feedback panel.",
+      "evidence": "reports/issue-464/browser-smoke.json"
+    }
+  ],
+  "quota_phase": {
+    "first_ui_outcome": "QUOTA_EXCEEDED; no provider generation",
+    "isolated_ip_date_count_before_reset": 9,
+    "isolated_ip_date_count_after_reset": 0,
+    "successful_real_provider_retry_generation_count": 1,
+    "final_ip_date_count": 1,
+    "reset_scope": "Only the task-owned PostgreSQL user_quotas row for 127.0.0.1 / 2026-11-06; app quota limit, provider binding and feedback rows unchanged.",
+    "evidence": "reports/issue-464/browser-smoke.json"
+  },
+  "remote_gates": {
+    "status": "pending_at_receipt_creation",
+    "current_head_ci": "pending",
+    "github_review_threads": "pending",
+    "copilot": "auto; one initial request only after PR publication",
+    "merge": "pending",
+    "task_close": null
+  },
+  "browser_evidence_limitations": {
+    "current_r6_run": "Two completed native CUA screenshot+emitImage calls are retained inline in the task thread and identified by native tool-call item IDs. No separate image attachment ID or filesystem PNG was exposed.",
+    "earlier_manual_after_error": "The earlier /chat CUA sequence is recorded in the issue task history and its receipt is independently read from the database and #461 inbox; no screenshot or AX IDs were saved.",
+    "prior_viewports": "Earlier bilingual desktop/mobile observations remain historical; the current run separately captured 1280x900 English and 390x844 Chinese screenshots."
+  },
+  "browser_screenshots": [
+    {
+      "viewport": "1280x900",
+      "locale": "en",
+      "route": "/chat",
+      "visible_state": "Website assistant open; current reviewed Issue #464 build",
+      "implementation_sha": "bc1fdab375b7db748a9c6a8f5df406be021cc3b8",
+      "tab_id": "1829210998",
+      "capture_method": "tab.screenshot({fullPage:false}) followed by nodeRepl.emitImage",
+      "capture_origin": "Completed native CUA screenshot+emitImage call; title: Saving desktop acceptance view; thread 01a1b0bc-c101-7333-abb7-15b7d8c6e82e",
+      "native_attachment_item_id": null,
+      "native_tool_call_item_id": "call_1dbb2c42c08a4920a2e25099db1a6448",
+      "separate_attachment_id_exposed": false
+    },
+    {
+      "viewport": "390x844",
+      "locale": "zh",
+      "route": "/chat",
+      "visible_state": "Website assistant open; current reviewed Issue #464 build",
+      "implementation_sha": "bc1fdab375b7db748a9c6a8f5df406be021cc3b8",
+      "tab_id": "1829210998",
+      "capture_method": "tab.screenshot({fullPage:false}) followed by nodeRepl.emitImage",
+      "capture_origin": "Completed native CUA screenshot+emitImage call; title: Capturing mobile view; thread 01a1b0bc-c101-7333-abb7-15b7d8c6e82e",
+      "native_attachment_item_id": null,
+      "native_tool_call_item_id": "call_4021d1398a03465384680d4da75d5ab1",
+      "separate_attachment_id_exposed": false
+    }
+  ],
+  "coverage": {
+    "deliverables": [
+      {
+        "id": "D1",
+        "status": "PASS",
+        "coverage": "Read-only catalog projection and configured Standard RAG/Ready Data retrieval with server-side public/staff authorization.",
+        "evidence": [
+          "ai_actuarial/assistant/knowledge.py",
+          "ai_actuarial/assistant/query.py",
+          "ai_actuarial/storage.py",
+          "config/sites.yaml",
+          "reports/issue-459-464-20261105/issue-464/live-final-api-matrix.json",
+          "reports/issue-459-464-20261105/issue-464/live-current-catalog-retry.json"
+        ]
+      },
+      {
+        "id": "D2",
+        "status": "PASS",
+        "coverage": "Typed source citations and body/summary-only/no-result/mismatch/unavailable/stale handling; summary-only and no-result are fixture-tested, live outcomes are listed in V3.",
+        "evidence": [
+          "ai_actuarial/assistant/knowledge.py",
+          "docs/assistant-knowledge.md",
+          "reports/issue-459-464-20261105/issue-464/live-current-soft-stale-api.json",
+          "reports/issue-459-464-20261105/issue-464/live-current-hard-stale-api.json",
+          "reports/issue-459-464-20261105/issue-464/live-final-index-mismatch-after-r6.json",
+          "reports/issue-459-464-20261105/issue-464/live-final-unavailable-after-r6.json",
+          "reports/issue-459-464-20261105/issue-464/live-final-empty-scope-after-r6.json",
+          "tests/test_assistant_knowledge.py"
+        ]
+      },
+      {
+        "id": "D3",
+        "status": "PASS",
+        "coverage": "Four combinations, stale-page/API gates, independent loading and prior Chat/RAG regressions.",
+        "evidence": [
+          "tests/test_assistant_feature_matrix.py",
+          "reports/issue-459-464-20261105/issue-464/live-current-feature-matrix.json",
+          "reports/issue-459-464-20261105/issue-464/api-observations-switch-gates-r6.jsonl",
+          "reports/issue-459-464-20261105/issue-464/worker-required-pytest-final2.log",
+          "reports/issue-459-464-20261105/issue-464/worker-vitest.log"
+        ]
+      },
+      {
+        "id": "D4",
+        "status": "PASS",
+        "coverage": "Three intent routes, real provider and restricted KB, editable suggestion confirmation, PostgreSQL→#461 readback, and this canonical receipt.",
+        "evidence": [
+          "reports/issue-464/acceptance.json",
+          "reports/issue-464/browser-smoke.json",
+          "reports/issue-459-464-20261105/issue-464/live-help-api.json",
+          "reports/issue-459-464-20261105/issue-464/feedback-pg-readback-r6.json",
+          "reports/issue-459-464-20261105/issue-464/feedback-list-r6-final.json",
+          "reports/issue-459-464-20261105/issue-464/feedback-pull-r6-final.json"
+        ]
+      }
+    ],
+    "acceptance_criteria": [
+      {
+        "id": "AC1",
+        "status": "PASS",
+        "coverage": "Catalog, KB body and help used the corresponding source types; suggestions were confirmed and read back through #461.",
+        "evidence": [
+          "reports/issue-459-464-20261105/issue-464/live-current-catalog-retry.json",
+          "reports/issue-459-464-20261105/issue-464/live-current-soft-stale-api.json",
+          "reports/issue-459-464-20261105/issue-464/live-help-api.json",
+          "reports/issue-459-464-20261105/issue-464/feedback-pg-readback-r6.json",
+          "reports/issue-459-464-20261105/issue-464/feedback-list-r6-final.json"
+        ]
+      },
+      {
+        "id": "AC2",
+        "status": "PASS",
+        "coverage": "Identity/config/retrieval matrix, forged client scope rejection, empty/unavailable/mismatched scope and counters.",
+        "evidence": [
+          "reports/issue-459-464-20261105/issue-464/live-final-api-matrix.json",
+          "reports/issue-459-464-20261105/issue-464/live-current-auto-spoof.json",
+          "reports/issue-459-464-20261105/issue-464/live-final-empty-scope-after-r6.json",
+          "reports/issue-459-464-20261105/issue-464/live-final-index-mismatch-after-r6.json",
+          "reports/issue-459-464-20261105/issue-464/live-final-unavailable-after-r6.json"
+        ]
+      },
+      {
+        "id": "AC3",
+        "status": "PASS",
+        "coverage": "Fixture coverage for summary-only/no-result; live catalog/body citations, stale rules, mismatch, unavailable and empty scope.",
+        "evidence": [
+          "tests/test_assistant_knowledge.py",
+          "reports/issue-459-464-20261105/issue-464/live-current-catalog-retry.json",
+          "reports/issue-459-464-20261105/issue-464/live-current-soft-stale-api.json",
+          "reports/issue-459-464-20261105/issue-464/live-current-hard-stale-api.json",
+          "reports/issue-459-464-20261105/issue-464/live-final-index-mismatch-after-r6.json",
+          "reports/issue-459-464-20261105/issue-464/live-final-unavailable-after-r6.json",
+          "reports/issue-459-464-20261105/issue-464/live-final-empty-scope-after-r6.json"
+        ]
+      },
+      {
+        "id": "AC4",
+        "status": "PASS",
+        "coverage": "Four flags, disabled stale requests, refresh behavior, manual feedback during AI/quota error, row preservation and restored flags.",
+        "evidence": [
+          "reports/issue-459-464-20261105/issue-464/live-current-feature-matrix.json",
+          "reports/issue-459-464-20261105/issue-464/api-observations-switch-gates-r6.jsonl",
+          "reports/issue-459-464-20261105/issue-464/live-current-feedback-preservation.json",
+          "reports/issue-464/browser-smoke.json"
+        ]
+      },
+      {
+        "id": "AC5",
+        "status": "PASS",
+        "coverage": "Old-page disabled API requests failed; refreshed UI had no business requests; existing #461 inbox history remained readable. No separate deployment or module coupling was added.",
+        "evidence": [
+          "reports/issue-459-464-20261105/issue-464/api-observations-switch-gates-r6.jsonl",
+          "reports/issue-459-464-20261105/issue-464/live-current-feedback-preservation.json",
+          "reports/issue-459-464-20261105/issue-464/feedback-list-r6-final.json",
+          "tests/test_assistant_feature_matrix.py"
+        ]
+      },
+      {
+        "id": "AC6",
+        "status": "PASS",
+        "coverage": "Final backend/API/RAG suite, frontend, type, build, accessibility and dead-code checks plus real-provider/API and desktop/mobile browser evidence.",
+        "evidence": [
+          "reports/issue-459-464-20261105/issue-464/manager-final-backend.log",
+          "reports/issue-459-464-20261105/issue-464/worker-vitest.log",
+          "reports/issue-459-464-20261105/issue-464/worker-typecheck.log",
+          "reports/issue-459-464-20261105/issue-464/worker-build.log",
+          "reports/issue-459-464-20261105/issue-464/worker-a11y-final.log",
+          "reports/issue-459-464-20261105/issue-464/worker-dead-code-final2.log",
+          "browser_screenshots"
+        ]
+      }
+    ],
+    "requirements": [
+      {
+        "id": "R1",
+        "status": "PASS",
+        "coverage": "Website feedback entry and suggestion submission.",
+        "evidence": [
+          "reports/issue-464/browser-smoke.json",
+          "browser_screenshots"
+        ]
+      },
+      {
+        "id": "R2",
+        "status": "PASS",
+        "coverage": "Original suggestion persisted under the same receipt and was manageable/readable in the local inbox.",
+        "evidence": [
+          "reports/issue-459-464-20261105/issue-464/feedback-pg-readback-r6.json",
+          "reports/issue-459-464-20261105/issue-464/feedback-list-r6-final.json",
+          "reports/issue-459-464-20261105/issue-464/feedback-pull-r6-final.json"
+        ]
+      },
+      {
+        "id": "R3",
+        "status": "PASS_REUSED_ISSUE_461",
+        "coverage": "Existing #461 local scheduled-task path was demonstrated end-to-end and reused without changing its CLI or scheduler code in Issue #464.",
+        "evidence": [
+          "reports/issue-459-464-20261105/issue-461/acceptance-run/postfix-v4/repaired-v4-first-run-evidence.json",
+          "reports/issue-459-464-20261105/issue-461/acceptance-run/postfix-v4/scheduled-cli-output.json",
+          "reports/issue-459-464-20261105/issue-461/acceptance-run/postfix-v4/cli-data/feedback/inbox.json"
+        ]
+      },
+      {
+        "id": "R4",
+        "status": "PASS",
+        "coverage": "Usage help answer cites the bilingual user guide section.",
+        "evidence": [
+          "reports/issue-459-464-20261105/issue-464/live-help-api.json",
+          "docs/help/user-guide.en.md",
+          "docs/help/user-guide.zh.md"
+        ]
+      },
+      {
+        "id": "R5",
+        "status": "PASS",
+        "coverage": "Intent routing to suggestion, help and catalog/KB paths.",
+        "evidence": [
+          "reports/issue-459-464-20261105/issue-464/live-current-feature-matrix.json",
+          "reports/issue-459-464-20261105/issue-464/live-help-api.json",
+          "reports/issue-459-464-20261105/issue-464/live-current-catalog-retry.json",
+          "reports/issue-459-464-20261105/issue-464/feedback-pg-readback-r6.json"
+        ]
+      },
+      {
+        "id": "R6",
+        "status": "PASS",
+        "coverage": "Catalog metadata and permitted KB body answer with actual citations and current serving/stale behavior.",
+        "evidence": [
+          "reports/issue-459-464-20261105/issue-464/live-current-catalog-retry.json",
+          "reports/issue-459-464-20261105/issue-464/live-current-soft-stale-api.json",
+          "reports/issue-459-464-20261105/issue-464/live-current-hard-stale-api.json"
+        ]
+      },
+      {
+        "id": "R7",
+        "status": "PASS",
+        "coverage": "Feedback and assistant directories, routes and switches remain independent; four switch states and stale requests were exercised.",
+        "evidence": [
+          "tests/test_assistant_feature_matrix.py",
+          "reports/issue-459-464-20261105/issue-464/live-current-feature-matrix.json",
+          "reports/issue-459-464-20261105/issue-464/api-observations-switch-gates-r6.jsonl"
+        ]
+      }
+    ]
+  },
+  "browser_screenshots_observation": "reports/issue-459-464-20261105/issue-464/controller-native-screenshots-observation.json",
+  "status_record": "Local acceptance and review complete; PR/current-head CI/review gates pending. Receipt is bound to implementation_sha and will be force-added in the evidence commit.",
+  "historical_validation": [
+    {
+      "command": "python -m pytest tests/test_assistant_knowledge.py tests/test_assistant_feature_matrix.py tests/test_fastapi_assistant_endpoints.py tests/test_fastapi_chat_endpoints.py tests/test_fastapi_agentic_rag_endpoints.py tests/test_rag_runtime.py tests/test_assistant_routing.py tests/test_assistant_help.py tests/test_fastapi_assistant_help_endpoints.py tests/unit/test_permissions.py -q --no-cov",
+      "result": "PASS, 242 tests",
+      "evidence": "reports/issue-459-464-20261105/issue-464/worker-required-pytest-final2.log",
+      "phase": "historical focused subset on the final R6 source before the recorded 364-module replay",
+      "disposition": "superseded_by_new364",
+      "superseded_by": "local_validation[0]",
+      "applies_to_implementation_sha": "bc1fdab375b7db748a9c6a8f5df406be021cc3b8",
+      "reuse_basis": "The focused subset is retained as historical evidence; the fresh recorded 364-module run is the current backend/API/RAG validation."
+    }
+  ]
+}
