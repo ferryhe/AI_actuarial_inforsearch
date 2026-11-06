@@ -15,8 +15,8 @@ from ai_actuarial.api.routers.feedback import (
     api_update_feedback,
 )
 from ai_actuarial.api.routers.support import api_support_capabilities
-from ai_actuarial.assistant.query import QueryRequest
 from ai_actuarial.assistant.knowledge import SourceCitation
+from ai_actuarial.assistant.query import QueryRequest
 from ai_actuarial.assistant.router import api_assistant_query
 from ai_actuarial.feedback.store import FeedbackRequest
 
@@ -33,8 +33,8 @@ QueryRequest.valid_message  # reason: Pydantic invokes this decorated field vali
 api_assistant_query  # reason: FastAPI registers this decorated route.
 SourceCitation.source_date  # reason: Pydantic serializes the citation source date by name.
 
-from tests.test_assistant_knowledge import pytest_plugins as _assistant_knowledge_plugins
 from tests.test_assistant_feature_matrix import pytest_plugins as _assistant_matrix_plugins
+from tests.test_assistant_knowledge import pytest_plugins as _assistant_knowledge_plugins
 
 _assistant_knowledge_plugins  # reason: Pytest discovers shared routing fixtures through this module variable.
 _assistant_matrix_plugins  # reason: Pytest discovers shared feedback fixtures through this module variable.
