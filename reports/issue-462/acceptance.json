@@ -2,7 +2,7 @@
   "schema_version": 1,
   "issue": 462,
   "title": "[助手 1/3] 建立可维护的项目使用帮助知识库与可引用检索",
-  "recorded_at_utc": "2026-11-06T05:32:49.038456+00:00",
+  "recorded_at_utc": "2026-11-06T07:17:34.602735+00:00",
   "implementation_commit": "a871e22236edb01f590a04e6d7f14c0db54af3ec",
   "branch": "codex/issue-462-help-docs",
   "status": "PASS_LOCAL_ISOLATED_ACCEPTANCE; NOT_DEPLOYED",
@@ -1501,7 +1501,7 @@
       "typesafe": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-462\\typesafe-review-round-2.json",
       "typesafe_coverage": 0.96
     },
-    "failed_review_cycles": 2,
+    "failed_review_cycles": 3,
     "round_3": {
       "outcome": "CHANGES_REQUIRED",
       "reviewer_model": "gpt-6-sol/high",
@@ -1516,7 +1516,77 @@
       "post_fix_real_http_v2": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-462\\remote-fix-ac1-docs-v2-http-468.json",
       "post_fix_real_http_result": "20/20 passed: 14 positive and 6 negative; max 3 candidates and 280-character snippets; generation calls 0; both AI keys absent from service environment."
     },
-    "cumulative_completed_reviews_requiring_changes": 3
+    "cumulative_completed_reviews_requiring_changes": 4,
+    "round_4": {
+      "outcome": "CHANGES_REQUIRED",
+      "reviewer_model": "gpt-6-sol/high",
+      "report": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-462\\review-round-4.md",
+      "typesafe_assessment": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-462\\typesafe-review-round-4.json",
+      "typesafe_summary_coverage": 0.57,
+      "typesafe_candidate_findings": [
+        {
+          "id": "R1",
+          "criterion": "AC1",
+          "disposition": "valid",
+          "mapping_probability": 0.91,
+          "reproduction_probability": 0.87
+        },
+        {
+          "id": "R2",
+          "criterion": "AC1",
+          "disposition": "valid",
+          "mapping_probability": 0.93,
+          "reproduction_probability": 0.84
+        },
+        {
+          "id": "R3",
+          "criterion": "AC2",
+          "disposition": "valid",
+          "mapping_probability": 0.93,
+          "reproduction_probability": 0.84
+        }
+      ],
+      "accepted_findings": [
+        "AC1: both bilingual guides described source names as text-searchable although a separate source filter handles source selection.",
+        "AC1: both bilingual guides called Source Portals monitored sites although a visible historical entry is on hold.",
+        "AC2: ordinary unsupported SMTP queries returned unrelated sections based only on function words/contraction fragments."
+      ],
+      "judge_request": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-462\\judge-request-local-review-4.md",
+      "judge_input": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-462\\typesafe-judge-local-review-4-input.json",
+      "judge_result": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-462\\typesafe-judge-local-review-4.json",
+      "judge_choice": "accept_ac1_copy_and_curated_20_token_fix",
+      "judge_confidence": 0.74,
+      "judge_accept_probability": 0.83,
+      "scope_decision": "The Architect also suggested two frontend search-placeholder changes. The user explicitly excluded those edits from this Issue; only the four bilingual guide statements, the existing query-only set plus the 20 specified tokens, and necessary tests/receipt were accepted.",
+      "fix_commit": "982f9db02f071cd5a1bc039258169fbaba455827",
+      "fix_report": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-462\\remote-fix-r4-worker-468.md",
+      "files": [
+        "ai_actuarial/assistant/help.py",
+        "docs/help/user-guide.en.md",
+        "docs/help/user-guide.zh.md",
+        "tests/test_assistant_help.py"
+      ],
+      "validation": {
+        "pre_fix_red": "27 failed, 2 passed, 11 deselected: the seven added SMTP variants and twenty one-token cases reproduced false matches; the two prior SMTP negative cases remained passing.",
+        "focused_test_suite": "43 passed; 3 existing SWIG deprecation warnings.",
+        "format_and_lint": "Black, isort, Ruff, Pylint errors-only, and git diff --check passed.",
+        "fixed_fixture_sha256_unchanged": "30de31e181e0b7369368b3bdf0895154a6df8ae8e5bb0b89be0977c5e0a84edc",
+        "real_http_v2_report": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-462\\final-v2-http-r4-468.json",
+        "real_http_v2": "26/26 queries passed (15 positive, 11 negative); four bilingual guide search/exact-reference checks passed; max 3 results and 280-character snippets; generation calls 0; OpenAI and TypeSafe keys absent from app process.",
+        "real_http_source_commit": "982f9db02f071cd5a1bc039258169fbaba455827",
+        "real_http_help_source_sha256": "155704752c8bff68e85f0491a9d95d96cdaaec5930c067998463fca38ce01b8c",
+        "real_http_guide_source_sha256": {
+          "user-guide.en.md": "9c8739780f215555309d63a4c2b05c08bbbbd8a9b3897993015ef65c5fd121e7",
+          "user-guide.zh.md": "d33ad334dd8a06bac67d3092456275f6dd0600c92ea2551bb70e0ace26b90525"
+        }
+      },
+      "cumulative_completed_reviews_requiring_changes": 4,
+      "formal_local_failed_review_cycles": 3,
+      "next_review_report": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-462\\review-round-5.md",
+      "next_review": "Fresh gpt-6-sol/high review required on the final pushed HEAD after this material AC1/AC2 fix.",
+      "current_head_ci": "Pending on the final pushed HEAD after acceptance receipt/status commit.",
+      "production_deployment": "not performed"
+    }
   },
   "limitations_and_boundary": {
     "not_run": [
@@ -1539,7 +1609,7 @@
     ],
     "note": "V1 is a local source/UI/role check; local build identity is unknown and is reported as unknown. Controller V3 used a real full create_app Uvicorn process and isolated PostgreSQL 16.15; temporary docs/config modifications were fully restored."
   },
-  "acceptance_receipt_updated_at_utc": "2026-11-06T06:24:21.258855+00:00",
+  "acceptance_receipt_updated_at_utc": "2026-11-06T07:17:34.602735+00:00",
   "ci_gate_repair": {
     "implementation_commit": "a871e22236edb01f590a04e6d7f14c0db54af3ec",
     "initial_pr_head": "5c173b11b0c748fab9eb62bf14b7e2aa222da59a",
@@ -1651,9 +1721,9 @@
       "historical_v1_v2_v3_note": "Prior V1, V2, V3, content hashes, HTTP evidence and implementation_commit remain bound to a871e22236edb01f590a04e6d7f14c0db54af3ec. This section records only the later AC2 retrieval correction."
     },
     "final_delivery_gates": {
-      "fresh_local_review_report": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-462\\review-round-4.md",
-      "fresh_local_review": "Round 3 returned changes; its accepted AC1 wording correction is recorded separately. Fresh round 4 is required before merge.",
-      "current_pr_head_ci": "Pending on the final pushed HEAD after the documentation correction and receipt commit.",
+      "fresh_local_review_report": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-462\\review-round-5.md",
+      "fresh_local_review": "Round 4 returned changes; the accepted AC1/AC2 fix is committed as 982f9db. A fresh round 5 is required on the final pushed HEAD before merge.",
+      "current_pr_head_ci": "Pending on the final pushed HEAD after the acceptance receipt/status commit.",
       "production_deployment": "not performed"
     }
   },
@@ -1677,9 +1747,50 @@
     "historical_evidence_note": "Original V1/V2/V3 and real HTTP lifecycle records remain bound to implementation commit a871e22236edb01f590a04e6d7f14c0db54af3ec. The stopword remote fix and the later wording correction have separate validation records.",
     "cumulative_completed_reviews_requiring_changes": 3,
     "formal_local_failed_review_cycles": 2,
-    "next_review_report": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-462\\review-round-4.md",
-    "next_review": "required on the final pushed HEAD before merge",
-    "current_head_ci": "pending on the final pushed HEAD",
+    "next_review_report": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-462\\review-round-5.md",
+    "next_review": "A fresh Sol/high round 5 is required after the material round-4 AC1/AC2 fix.",
+    "current_head_ci": "Pending on the final pushed HEAD after the receipt/status commit.",
+    "production_deployment": "not performed"
+  },
+  "followup_review_4_fix": {
+    "criteria": [
+      "AC1",
+      "AC2"
+    ],
+    "disposition": "accepted by TypeSafe Judge within user-approved scope",
+    "judge_result": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-462\\typesafe-judge-local-review-4.json",
+    "judge_choice": "accept_ac1_copy_and_curated_20_token_fix",
+    "judge_confidence": 0.74,
+    "judge_accept_probability": 0.83,
+    "architect_ui_placeholder_recommendation": "Explicitly excluded by the user; UI placeholders were not changed.",
+    "fix_commit": "982f9db02f071cd5a1bc039258169fbaba455827",
+    "files": [
+      "ai_actuarial/assistant/help.py",
+      "docs/help/user-guide.en.md",
+      "docs/help/user-guide.zh.md",
+      "tests/test_assistant_help.py"
+    ],
+    "worker_report": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-462\\remote-fix-r4-worker-468.md",
+    "validation": {
+      "pre_fix_red": "27 failed, 2 passed, 11 deselected: the seven added SMTP variants and twenty one-token cases reproduced false matches; the two prior SMTP negative cases remained passing.",
+      "focused_test_suite": "43 passed; 3 existing SWIG deprecation warnings.",
+      "format_and_lint": "Black, isort, Ruff, Pylint errors-only, and git diff --check passed.",
+      "fixed_fixture_sha256_unchanged": "30de31e181e0b7369368b3bdf0895154a6df8ae8e5bb0b89be0977c5e0a84edc",
+      "real_http_v2_report": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-462\\final-v2-http-r4-468.json",
+      "real_http_v2": "26/26 queries passed (15 positive, 11 negative); four bilingual guide search/exact-reference checks passed; max 3 results and 280-character snippets; generation calls 0; OpenAI and TypeSafe keys absent from app process.",
+      "real_http_source_commit": "982f9db02f071cd5a1bc039258169fbaba455827",
+      "real_http_help_source_sha256": "155704752c8bff68e85f0491a9d95d96cdaaec5930c067998463fca38ce01b8c",
+      "real_http_guide_source_sha256": {
+        "user-guide.en.md": "9c8739780f215555309d63a4c2b05c08bbbbd8a9b3897993015ef65c5fd121e7",
+        "user-guide.zh.md": "d33ad334dd8a06bac67d3092456275f6dd0600c92ea2551bb70e0ace26b90525"
+      }
+    },
+    "historical_evidence_note": "Original V1/V2/V3 and prior V2 reruns were not overwritten or relabeled. This report is a new real HTTP V2 run bound to source commit 982f9db02f071cd5a1bc039258169fbaba455827.",
+    "cumulative_completed_reviews_requiring_changes": 4,
+    "formal_local_failed_review_cycles": 3,
+    "next_review_report": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-462\\review-round-5.md",
+    "next_review": "required on final pushed HEAD before merge",
+    "current_head_ci": "pending on final pushed HEAD after receipt/status commit",
     "production_deployment": "not performed"
   }
 }
