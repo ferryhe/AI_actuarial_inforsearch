@@ -10,8 +10,8 @@
   "changed_files": [
     {
       "path": ".hermes/project-status.md",
-      "working_sha256": "8957ed1c404036d30352fe831267d4337ab31674e687034872454e194d55ab3b",
-      "git_blob_oid": "72aadef9137a1c9202e326c64d6951ec07eb7bdd"
+      "working_sha256": "87c203ac374d49c94b1a71462fef15516512298834043fae8cb571939a3526c5",
+      "git_blob_oid": "aead98af837483b3f19faee481b2142a61bc0dd1"
     },
     {
       "path": "ai_actuarial/agentic_rag/ready_data_tools.py",
@@ -220,55 +220,56 @@
         "tests/test_fastapi_ops_write_endpoints.py",
         "-q",
         "--no-cov"
-      ]
+      ],
+      "phase": "fresh current-source backend/API/RAG replay on implementation_sha"
     },
     {
       "command": "npx vitest run --config vitest.config.ts client/src/features/assistant client/src/features/feedback client/src/components/support-widget",
       "result": "PASS, 26 tests",
       "evidence": "reports/issue-459-464-20261105/issue-464/worker-vitest.log",
-      "phase": "historical final-R6 frontend/quality check before the implementation commit",
-      "applies_to_implementation_sha": "bc1fdab375b7db748a9c6a8f5df406be021cc3b8",
-      "reuse_basis": "No source edits followed these recorded passes; the corresponding frontend source blobs match the implementation commit and the fresh backend replay ran on that commit."
+      "phase": "earlier frontend check, before the later backend repair iterations",
+      "reuse_basis": "The subsequent backend fixes did not change client files; the client blobs in the implementation commit match this earlier check. This does not assert that the whole repository was unchanged.",
+      "reused_scope": "client files only"
     },
     {
       "command": "npm run typecheck",
       "result": "PASS",
       "evidence": "reports/issue-459-464-20261105/issue-464/worker-typecheck.log",
-      "phase": "historical final-R6 frontend/quality check before the implementation commit",
-      "applies_to_implementation_sha": "bc1fdab375b7db748a9c6a8f5df406be021cc3b8",
-      "reuse_basis": "No source edits followed these recorded passes; the corresponding frontend source blobs match the implementation commit and the fresh backend replay ran on that commit."
+      "phase": "earlier frontend check, before the later backend repair iterations",
+      "reuse_basis": "The subsequent backend fixes did not change client files; the client blobs in the implementation commit match this earlier check. This does not assert that the whole repository was unchanged.",
+      "reused_scope": "client files only"
     },
     {
       "command": "npm run build",
       "result": "PASS; existing large-chunk advisory",
       "evidence": "reports/issue-459-464-20261105/issue-464/worker-build.log",
-      "phase": "historical final-R6 frontend/quality check before the implementation commit",
-      "applies_to_implementation_sha": "bc1fdab375b7db748a9c6a8f5df406be021cc3b8",
-      "reuse_basis": "No source edits followed these recorded passes; the corresponding frontend source blobs match the implementation commit and the fresh backend replay ran on that commit."
+      "phase": "earlier frontend check, before the later backend repair iterations",
+      "reuse_basis": "The subsequent backend fixes did not change client files; the client blobs in the implementation commit match this earlier check. This does not assert that the whole repository was unchanged.",
+      "reused_scope": "client files only"
     },
     {
       "command": "npm run test:a11y",
       "result": "PASS, 96 tests",
       "evidence": "reports/issue-459-464-20261105/issue-464/worker-a11y-final.log",
-      "phase": "historical final-R6 frontend/quality check before the implementation commit",
-      "applies_to_implementation_sha": "bc1fdab375b7db748a9c6a8f5df406be021cc3b8",
-      "reuse_basis": "No source edits followed these recorded passes; the corresponding frontend source blobs match the implementation commit and the fresh backend replay ran on that commit."
+      "phase": "earlier frontend check, before the later backend repair iterations",
+      "reuse_basis": "The subsequent backend fixes did not change client files; the client blobs in the implementation commit match this earlier check. This does not assert that the whole repository was unchanged.",
+      "reused_scope": "client files only"
     },
     {
       "command": "npm run dead-code:check",
-      "result": "PASS",
+      "result": "PASS (historical only; not current-source proof)",
       "evidence": "reports/issue-459-464-20261105/issue-464/worker-dead-code-final2.log",
-      "phase": "historical final-R6 frontend/quality check before the implementation commit",
-      "applies_to_implementation_sha": "bc1fdab375b7db748a9c6a8f5df406be021cc3b8",
-      "reuse_basis": "No source edits followed these recorded passes; the corresponding frontend source blobs match the implementation commit and the fresh backend replay ran on that commit."
+      "phase": "earlier whole-repository dead-code check",
+      "reuse_basis": "This scanner included Python files; later backend changes mean this earlier result does not establish the current Python dead-code gate.",
+      "current_source_replacement": "Final R6 Python file/symbol gates in worker-report.json; current-head required CI is still pending."
     },
     {
       "command": "Black, isort, Ruff, Pylint errors-only, Python file/symbol gates, git diff --check",
       "result": "PASS",
       "evidence": "reports/issue-459-464-20261105/issue-464/worker-report.json",
-      "phase": "historical final-R6 frontend/quality check before the implementation commit",
+      "phase": "final R6 Python static checks before the implementation commit",
       "applies_to_implementation_sha": "bc1fdab375b7db748a9c6a8f5df406be021cc3b8",
-      "reuse_basis": "No source edits followed these recorded passes; the corresponding frontend source blobs match the implementation commit and the fresh backend replay ran on that commit."
+      "reuse_basis": "The final R6 worker report records Black, isort, Ruff, Pylint errors-only, Python file/symbol gates and diff check; implementation commit contains the same source bytes."
     }
   ],
   "v1_v5": [
@@ -532,14 +533,16 @@
       {
         "id": "AC6",
         "status": "PASS",
-        "coverage": "Final backend/API/RAG suite, frontend, type, build, accessibility and dead-code checks plus real-provider/API and desktop/mobile browser evidence.",
+        "coverage": "Fresh 364-test backend/API/RAG replay on the implementation SHA; final R6 Python static gates from worker-report.json; earlier frontend checks reused only for unchanged client blobs. The earlier whole-repo dead-code check is historical-only. Current-head GitHub CI remains pending.",
         "evidence": [
-          "reports/issue-459-464-20261105/issue-464/manager-final-backend.log",
+          "reports/issue-459-464-20261105/issue-464/controller-recorded-backend.log",
+          "reports/issue-459-464-20261105/issue-464/controller-recorded-backend-proof.json",
+          "reports/issue-459-464-20261105/issue-464/worker-report.json",
           "reports/issue-459-464-20261105/issue-464/worker-vitest.log",
           "reports/issue-459-464-20261105/issue-464/worker-typecheck.log",
           "reports/issue-459-464-20261105/issue-464/worker-build.log",
           "reports/issue-459-464-20261105/issue-464/worker-a11y-final.log",
-          "reports/issue-459-464-20261105/issue-464/worker-dead-code-final2.log",
+          "reports/issue-459-464-20261105/issue-464/worker-dead-code-final2.log (historical-only)",
           "browser_screenshots"
         ]
       }
@@ -624,11 +627,14 @@
       "command": "python -m pytest tests/test_assistant_knowledge.py tests/test_assistant_feature_matrix.py tests/test_fastapi_assistant_endpoints.py tests/test_fastapi_chat_endpoints.py tests/test_fastapi_agentic_rag_endpoints.py tests/test_rag_runtime.py tests/test_assistant_routing.py tests/test_assistant_help.py tests/test_fastapi_assistant_help_endpoints.py tests/unit/test_permissions.py -q --no-cov",
       "result": "PASS, 242 tests",
       "evidence": "reports/issue-459-464-20261105/issue-464/worker-required-pytest-final2.log",
-      "phase": "historical focused subset on the final R6 source before the recorded 364-module replay",
+      "phase": "initial pre-review working diff from the worker's first delivery, before the R1–R6 repair iterations",
       "disposition": "superseded_by_new364",
       "superseded_by": "local_validation[0]",
-      "applies_to_implementation_sha": "bc1fdab375b7db748a9c6a8f5df406be021cc3b8",
-      "reuse_basis": "The focused subset is retained as historical evidence; the fresh recorded 364-module run is the current backend/API/RAG validation."
+      "reuse_basis": "Superseded by the fresh recorded 364-module run on the implementation commit; this initial subset is retained only as history.",
+      "phase_evidence": [
+        "reports/issue-459-464-20261105/issue-464/worker-initial-report.json",
+        "reports/issue-459-464-20261105/issue-464/controller-initial-source-observation.json"
+      ]
     }
   ]
 }
