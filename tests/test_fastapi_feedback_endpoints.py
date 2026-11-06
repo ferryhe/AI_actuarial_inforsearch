@@ -351,7 +351,7 @@ def test_switches_apply_after_app_restart_and_preserve_history(feedback_client, 
     with TestClient(create_app()) as disabled:
         assert disabled.get("/api/support/capabilities").json() == {
             "feedback_enabled": False,
-            "assistant_enabled": False,
+            "assistant_enabled": True,
         }
         assert disabled.post("/api/feedback", json=_request()).status_code == 404
         assert disabled.get("/api/admin/feedback", headers=_admin()).json() == before
@@ -359,7 +359,7 @@ def test_switches_apply_after_app_restart_and_preserve_history(feedback_client, 
     with TestClient(create_app()) as reopened:
         assert reopened.get("/api/support/capabilities").json() == {
             "feedback_enabled": True,
-            "assistant_enabled": False,
+            "assistant_enabled": True,
         }
         assert reopened.get("/api/admin/feedback", headers=_admin()).json() == before
     monkeypatch.setenv("FEEDBACK_SITE_KEY", "https://forged.example")
@@ -375,6 +375,7 @@ def test_disabled_and_reopened_feedback_retains_admin_history_and_truthful_capab
     before = list_feedback(database)
     for feedback, assistant in ((False, False), (True, False), (False, True), (True, True)):
         app.state.feedback_enabled = feedback
+        app.state.assistant_enabled = assistant
         assert (
             resolve_runtime_features({"features": {"assistant_enabled": assistant}})[
                 "assistant_enabled"
@@ -383,7 +384,7 @@ def test_disabled_and_reopened_feedback_retains_admin_history_and_truthful_capab
         )
         assert client.get("/api/support/capabilities").json() == {
             "feedback_enabled": feedback,
-            "assistant_enabled": False,
+            "assistant_enabled": assistant,
         }
     app.state.feedback_enabled = False
     app.state.enable_csrf = True

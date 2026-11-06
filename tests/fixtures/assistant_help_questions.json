@@ -1,0 +1,23 @@
+{
+  "source_version": "1.0.0",
+  "questions": [
+    {"id": "en-browse", "language": "en", "question": "Database search by title filename and source", "expected": {"doc_id": "user-guide-en", "section_id": "browse-search"}},
+    {"id": "zh-browse", "language": "zh", "question": "数据库搜索标题文件名来源", "expected": {"doc_id": "user-guide-zh", "section_id": "browse-search"}},
+    {"id": "en-categories", "language": "en", "question": "Categories page Source Portals monitored sites", "expected": {"doc_id": "user-guide-en", "section_id": "categories-sources"}},
+    {"id": "zh-categories", "language": "zh", "question": "类别页面来源门户监测网站", "expected": {"doc_id": "user-guide-zh", "section_id": "categories-sources"}},
+    {"id": "en-file", "language": "en", "question": "File detail Preview Download Markdown content", "expected": {"doc_id": "user-guide-en", "section_id": "file-details"}},
+    {"id": "zh-file", "language": "zh", "question": "文件详情预览下载Markdown内容", "expected": {"doc_id": "user-guide-zh", "section_id": "file-details"}},
+    {"id": "en-knowledge", "language": "en", "question": "Knowledge Bases readiness Chat response mode", "expected": {"doc_id": "user-guide-en", "section_id": "knowledge-chat"}},
+    {"id": "zh-knowledge", "language": "zh", "question": "知识库就绪状态Chat回答模式", "expected": {"doc_id": "user-guide-zh", "section_id": "knowledge-chat"}},
+    {"id": "en-account", "language": "en", "question": "Profile Chat quota usage remaining", "expected": {"doc_id": "user-guide-en", "section_id": "account-quota"}},
+    {"id": "zh-account", "language": "zh", "question": "个人资料Chat额度使用剩余", "expected": {"doc_id": "user-guide-zh", "section_id": "account-quota"}},
+    {"id": "en-feedback", "language": "en", "question": "Help and feedback widget submit receipt", "expected": {"doc_id": "user-guide-en", "section_id": "feedback-entry"}},
+    {"id": "zh-feedback", "language": "zh", "question": "帮助反馈浮动按钮提交回执", "expected": {"doc_id": "user-guide-zh", "section_id": "feedback-entry"}},
+    {"id": "en-failures", "language": "en", "question": "clear search filters reload quota limit", "expected": {"doc_id": "user-guide-en", "section_id": "common-failures"}},
+    {"id": "zh-failures", "language": "zh", "question": "清除搜索筛选重新加载额度用完", "expected": {"doc_id": "user-guide-zh", "section_id": "common-failures"}},
+    {"id": "en-negative-mail", "language": "en", "question": "Configure SMTP mail delivery relay", "expected": null},
+    {"id": "en-negative-physics", "language": "en", "question": "Quantum chromodynamics particle collider", "expected": null},
+    {"id": "zh-negative-mail", "language": "zh", "question": "象棋棋谱残局开局", "expected": null},
+    {"id": "zh-negative-physics", "language": "zh", "question": "量子色动力学粒子对撞机", "expected": null}
+  ]
+}
