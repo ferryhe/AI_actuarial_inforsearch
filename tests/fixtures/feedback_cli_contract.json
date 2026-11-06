@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "response_fields": ["command", "error", "items", "outcome", "schema_version", "sites", "success"],
+  "exit_codes": {"config": 2, "authentication": 3, "permission": 4, "connection": 5, "remote": 6, "local_write": 7, "local_read": 8, "protocol": 9, "not_found": 10, "busy": 11},
+  "success_exit_code": 0,
+  "outcomes": ["listed", "marked", "updated", "no_new_data", "partial_failure", "failed"],
+  "item_fields": ["client_request_id", "content", "created_at", "feedback_id", "id", "kind", "locale", "origin", "page_path", "site_key", "status", "updated_at", "user_id"],
+  "site_fields": ["error", "last_attempt_at", "last_success_at", "new_count", "outcome", "site_key", "success", "updated_count"]
+}
