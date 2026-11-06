@@ -1,16 +1,16 @@
 {
   "issue": 463,
-  "generated_at": "2026-11-06T10:10:55.829099+00:00",
+  "generated_at": "2026-11-06T10:55:55.500832+00:00",
   "branch": "codex/issue-463-single-turn-assistant",
   "baseline_commit_sha": "2e4cd2424ba511fec2fcf7d80eb52d70116be660",
-  "implementation_commit_sha": "d63da6bdfc5cc043d73fc3910a9de32d2a725344",
-  "source_state": "Implementation source commit d63da6bdfc5cc043d73fc3910a9de32d2a725344 is pushed. Canonical acceptance receipt is being added as a required publication deliverable on top of receipt-preparation head e0a500fd5f874a7eb8ec1cb721bfc0f9353454fd.",
+  "implementation_commit_sha": "9b54b95b409e7604f51d0a1516a4a978e2b11a62",
+  "source_state": "Implementation source commit 9b54b95b409e7604f51d0a1516a4a978e2b11a62 contains the two accepted PR #469 remote-review corrections and is followed by this updated acceptance receipt. V1-V4 real acceptance remains recorded against the original source commit; the behavior corrections have separate regression and current-source real-provider evidence below.",
   "environment": "Windows; Python 3.11.9; Node 24.14.1; Vitest 3.2.4; task-owned PostgreSQL 16.15. Actual OpenAI gpt-5.4-mini provider exercised through the explicit isolated openai:llm:env profile, with the existing repository credential read into server memory only. Chat and assistant shared the same isolated profile and PostgreSQL quota ledger. No production connection, credential write, or new key. Online stored database-instance binding remains unverified.",
   "source_fingerprints": {
     "kind": "SHA-256 working-file bytes, not Git blobs",
     "files": {
-      "ai_actuarial/assistant/query.py": "125ff8bee7d01b09f6aa6b2b322d89273cfa025dd2e6d0109c498a5a6945297b",
-      "ai_actuarial/assistant/router.py": "7b18a134e9d297ce8bf1c88d41a0ba8d8a67675a08b0353344062da10f9441e1",
+      "ai_actuarial/assistant/query.py": "d0b2a2fa85d3247c4ba08c586436213e8bd92301fd87ed0b16c8df5c071f4659",
+      "ai_actuarial/assistant/router.py": "c7ed23f7a9bc48d6cab22081ac7afca54bf584ce45a0da3e91ab7df274d22acc",
       "ai_actuarial/api/app.py": "8d6f01c8b203710c8d832ee82b41df8f966dbc0cef0a05365bd3519cd53936c8",
       "ai_actuarial/api/middleware/rate_limit.py": "4ab33360d1306a0f53fc6be608ac918b7e44cc9693462992ce365a411543321a",
       "client/src/features/assistant/AssistantPanel.tsx": "7ddbe9648eacb38633c7089ce2d83226448aef4d925f4f2441c6a568637de3e8",
@@ -21,10 +21,10 @@
       "config/dead_code_whitelist.py": "ce22d51258c233a27c6e5ad14d50aaf2b5795bd8ca0bb43eac1d6106890da0ba",
       "docs/help/user-guide.en.md": "f2f9b1735bf23e3e8df89ba11eb7ee27f8c5223538acba065379caf3966b88dd",
       "docs/help/user-guide.zh.md": "1d00600af8de01c92ec97bf84597a7c3ce26bf216fbcde7bb5c40f18a28c495a",
-      "tests/test_assistant_routing.py": "6851eb51b366183070dd4900fbad4b6d8011a9ee6cc76eb333f63f7040f6d605",
-      "tests/test_fastapi_assistant_endpoints.py": "f488cb7febcc5db64fe0749a372064342b0ababb4d5eb62a1df8713bc592d23e"
+      "tests/test_assistant_routing.py": "555ae3298efdd65c3442fdd657351557706bf29e4ceaa3fd6dbb5a812fec12b9",
+      "tests/test_fastapi_assistant_endpoints.py": "9e3e3096139f49e708fc1efa33f76089fd25f87a262c511c66d748ca908fd124"
     },
-    "verified_against_commit": "d63da6bdfc5cc043d73fc3910a9de32d2a725344"
+    "verified_against_commit": "9b54b95b409e7604f51d0a1516a4a978e2b11a62"
   },
   "fixture": {
     "path": "tests/fixtures/assistant_help_questions.json",
@@ -40,9 +40,9 @@
       "id": "required-python",
       "command": "python -m pytest tests/test_fastapi_assistant_endpoints.py tests/test_assistant_routing.py tests/test_fastapi_chat_endpoints.py",
       "expected": "Assistant and original Chat regression pass",
-      "actual": "101 passed, 3 warnings, exit 0; exact required suite rerun by the manager after the binding-failure cases were added. The worker report preserves the prior 98-case run plus the separate 3-case binding run; no backend code changed after the required suite.",
+      "actual": "Original full assistant/API/Chat suite: 101 passed on the initial implementation; subsequent assistant/API/Chat suite: 107 passed after the two first remote fixes. After the final How-about guard refinement, the exact focused assistant/API suite passed 54 tests, including all three explicit proposal drafts, three genuine feedback how-to counterexamples, and the Python 3.10 timeout simulation. The Chat endpoint suite was not rerun after that final one-guard refinement; no Chat code changed. Python 3.10 is not installed locally; compatibility was verified with a distinct asyncio.TimeoutError simulation and official Python 3.10 behavior.",
       "status": "PASS",
-      "evidence": "C:/Project/AI_actuarial_inforsearch/reports/issue-459-464-20261105/issue-463/worker-report.md and manager final validation record in this receipt."
+      "evidence": "Worker remote-fix report and archived raw outputs (controller-log-archive/index.json); final current-source assistant/API result 54 passed after the final guard adjustment."
     },
     {
       "id": "required-ui",
@@ -509,5 +509,55 @@
       "typesafe_review_summary_coverage": 0.79
     }
   },
-  "receipt_preparation_head_sha": "e0a500fd5f874a7eb8ec1cb721bfc0f9353454fd"
+  "receipt_preparation_head_sha": "e0a500fd5f874a7eb8ec1cb721bfc0f9353454fd",
+  "remote_review_fixes": {
+    "snapshot_count": 1,
+    "snapshot_path": "reports/issue-463/remote-feedback-2026-11-06.json",
+    "snapshot_head_sha": "7f463dc2bc8d1d7d75fef64ee8aa1f29c81bf574",
+    "copilot_review_id": 5798744341,
+    "typesafe_remote_assessment": "C:/Project/AI_actuarial_inforsearch/reports/issue-459-464-20261105/issue-463/remote-typesafe-result-2026-11-06.json",
+    "typesafe_judge": {
+      "report": "C:/Project/AI_actuarial_inforsearch/reports/issue-459-464-20261105/issue-463/remote-judge-result-2026-11-06.json",
+      "model": "jev-latest",
+      "choice": "accept_both",
+      "confidence": 0.74
+    },
+    "fix_commit_sha": "9b54b95b409e7604f51d0a1516a4a978e2b11a62",
+    "findings": [
+      {
+        "comment_id": 4491362941,
+        "criteria": [
+          "AC1",
+          "AC2"
+        ],
+        "disposition": "valid_and_fixed",
+        "fix": "The usage guard now restricts feedback how-to correction to direct question forms and excludes the How about suggestion form. The three English/Chinese proposal cases are preserved as exact editable drafts; three genuine how-to cases remain usage.",
+        "regression": "One distinct proposal case was added after the red/green run and captured in the final same-rule red/green evidence; final focused assistant/API suite passed 54."
+      },
+      {
+        "comment_id": 4491362972,
+        "criteria": [
+          "AC4",
+          "AC5"
+        ],
+        "disposition": "valid_and_fixed",
+        "fix": "Assistant router catches asyncio.TimeoutError so Python 3.10 deadline failures map to the stable ASSISTANT_TIMEOUT response; Python 3.11+ uses its built-in alias.",
+        "regression": "A distinct legacy asyncio timeout exception is simulated at the API boundary; it returns HTTP 200, ASSISTANT_TIMEOUT, 0 generation and embedding attempts."
+      }
+    ],
+    "current_source_live_provider_check": {
+      "evidence": "C:/Project/AI_actuarial_inforsearch/reports/issue-459-464-20261105/issue-463/controller-current-source-provider-check-2026-11-06.json",
+      "provider": "openai",
+      "model": "gpt-5.4-mini",
+      "credential_binding": "openai:llm:env",
+      "cases_passed": 2,
+      "each_case_generation_attempts": 1,
+      "embedding_attempts": 0,
+      "drafts_exact": true,
+      "new_feedback_rows": 0,
+      "test_quota_reset": "The isolated 127.0.0.1 quota row (5) was reset for this distinct current-source validation phase; the earlier 5/5 evidence remains unchanged. The new phase ended at 2/5."
+    },
+    "review_impact": "material",
+    "source_fingerprint_observation": "C:/Project/AI_actuarial_inforsearch/reports/issue-459-464-20261105/issue-463/controller-remote-fix-freeze-observation.json"
+  }
 }
