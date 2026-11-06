@@ -1473,12 +1473,15 @@
     },
     {
       "implementation_commit": "a871e22236edb01f590a04e6d7f14c0db54af3ec",
-      "environment": "GitHub Actions pending after PR publication.",
-      "command": "Required workflow CI on current PR HEAD.",
-      "expected": "All repository-required jobs pass on the final current HEAD before merge.",
-      "actual": "Not run before PR creation; pending publication.",
-      "status": "PENDING_MERGE_GATE",
-      "evidence": "PR current-HEAD checks to be recorded in lifecycle state and GitHub."
+      "environment": "GitHub Actions on the initial Ready PR head, followed by the scoped CI repair commit.",
+      "command": "The repository .github/workflows/ci.yml required workflow (six jobs).",
+      "expected": "All six repository jobs pass on the final current PR HEAD before merge.",
+      "actual": "Initial run #821 on head 5c173b1: dead-code-files passed, dead-code-symbols failed because two decorated assistant routes lacked existing whitelist references, and four dependent jobs skipped. Repair commit 2ebe221 adds the two framework references. GitHub CI on the next current PR HEAD is pending and must be verified before merge.",
+      "status": "PENDING_CURRENT_HEAD_RERUN",
+      "evidence": [
+        "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-462\\ci-failure-01.md",
+        "GitHub Actions run 42169257650"
+      ]
     }
   ],
   "reviews": {
@@ -1506,8 +1509,73 @@
       "Browser smoke; no UI behavior changed.",
       "Full repository CI before PR; it remains a required merge gate."
     ],
-    "actual_failures": [],
-    "environment_blocks": [],
+    "actual_failures": [
+      {
+        "head": "5c173b11b0c748fab9eb62bf14b7e2aa222da59a",
+        "workflow_run": "42169257650",
+        "job": "dead-code-symbols",
+        "expected": "Both newly added FastAPI help routes are represented in the reviewed dynamic-route whitelist and the symbol gate passes.",
+        "actual": "Vulture reported api_get_help_section and api_search_help as newly unused; four dependent CI jobs were skipped.",
+        "disposition": "Scoped whitelist repair commit 2ebe221862ffc2e10a0bedffd1ae888cf76f1128 added the two handlers. Current PR HEAD CI rerun remains pending."
+      }
+    ],
+    "environment_blocks": [
+      "The aggregate symbols check was not run locally because Knip is not installed; GitHub CI will provide the required aggregate validation on the next current PR HEAD."
+    ],
     "note": "V1 is a local source/UI/role check; local build identity is unknown and is reported as unknown. Controller V3 used a real full create_app Uvicorn process and isolated PostgreSQL 16.15; temporary docs/config modifications were fully restored."
+  },
+  "acceptance_receipt_updated_at_utc": "2026-11-06T05:42:45.035559+00:00",
+  "ci_gate_repair": {
+    "implementation_commit": "a871e22236edb01f590a04e6d7f14c0db54af3ec",
+    "initial_pr_head": "5c173b11b0c748fab9eb62bf14b7e2aa222da59a",
+    "initial_github_workflow": {
+      "name": "CI",
+      "run_number": 821,
+      "run_id": 42169257650,
+      "fetched_at_utc": "2026-11-06T05:36:57Z",
+      "result": "FAIL",
+      "jobs": {
+        "dead-code-files": "success",
+        "dead-code-symbols": "failure",
+        "quality-gate": "skipped",
+        "frontend-check": "skipped",
+        "python-smoke": "skipped",
+        "office-conversion-smoke": "skipped"
+      },
+      "failure_evidence": "reports/issue-459-464-20261105/issue-462/ci-failure-01.md"
+    },
+    "classification": "Required check failure, not a code-review finding.",
+    "repair_commit": "2ebe221862ffc2e10a0bedffd1ae888cf76f1128",
+    "repair_scope": [
+      "config/dead_code_whitelist.py",
+      ".hermes/project-status.md"
+    ],
+    "runtime_behavior_changed": false,
+    "dead_code_baseline_changed": false,
+    "repair": "Added api_search_help and api_get_help_section to the existing, reason-checked FastAPI dynamic-route whitelist. No runtime source changed.",
+    "local_validation": [
+      {
+        "command": "python scripts/dead_code_gate.py python-symbols --report-dir reports/dead-code-symbols",
+        "expected": "The Python symbol gate accepts both live framework-registered route handlers and reports no new findings.",
+        "actual": "PASS (0 baseline findings).",
+        "status": "PASS"
+      },
+      {
+        "command": "python -m isort --check-only config/dead_code_whitelist.py",
+        "expected": "Existing import order remains valid.",
+        "actual": "PASS.",
+        "status": "PASS"
+      },
+      {
+        "command": "git diff --check",
+        "expected": "No whitespace errors.",
+        "actual": "PASS.",
+        "status": "PASS"
+      }
+    ],
+    "local_aggregate_gate": "Not run because local Knip is not installed; no npm ci was run. The next GitHub CI run must exercise the aggregate symbols check on current PR HEAD.",
+    "post_repair_pr_head_before_receipt_commit": "2ebe221862ffc2e10a0bedffd1ae888cf76f1128",
+    "post_repair_github_ci": "PENDING until the next branch push; this receipt does not claim the fix passed GitHub CI.",
+    "historical_v1_v2_v3_note": "V1, V2, V3, source hashes, HTTP responses and tests remain attached to implementation commit a871e22236edb01f590a04e6d7f14c0db54af3ec. The CI repair only changes Vulture references and status text; historical HTTP checks are not re-labelled as reruns on the CI repair commit."
   }
 }
