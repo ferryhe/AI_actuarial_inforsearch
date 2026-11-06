@@ -24,6 +24,7 @@ import { useI18n } from "@/hooks/use-i18n";
 import { useState, createContext, useContext, useRef } from "react";
 import { useAuth } from "@/context/AuthContext";
 import { IconButton } from "@/components/a11y/IconButton";
+import SupportWidget from "@/components/support-widget/SupportWidget";
 
 const I18nContext = createContext<ReturnType<typeof useI18n>>({
   lang: "en",
@@ -61,7 +62,8 @@ function Sidebar({ collapsed, onClose, showClose = false, testIdPrefix = "" }: {
   return (
     <aside
       className={cn(
-        "fixed inset-y-0 left-0 z-40 flex flex-col bg-card border-r border-border transition-all duration-300",
+        "fixed inset-y-0 left-0 flex flex-col bg-card border-r border-border transition-all duration-300",
+        showClose ? "z-[100] lg:z-40" : "z-40",
         collapsed ? "w-16" : "w-60",
         "lg:relative"
       )}
@@ -114,6 +116,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const { theme, toggleTheme } = useTheme();
   const { user, isLoggedIn, logout, permissions } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [supportWidgetOpen, setSupportWidgetOpen] = useState(false);
   const openSidebarRef = useRef<HTMLButtonElement>(null);
   const closeSidebar = () => {
     setSidebarOpen(false);
@@ -122,10 +125,11 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
   return (
     <I18nContext.Provider value={i18n}>
+      <>
       <div className="flex h-screen overflow-hidden">
         {sidebarOpen && (
           <div
-            className="fixed inset-0 z-30 bg-black/30 lg:hidden"
+            className="fixed inset-0 z-[90] bg-black/30 lg:hidden"
             onClick={closeSidebar}
           />
         )}
@@ -140,7 +144,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           </div>
         )}
 
-        <div className="flex-1 flex flex-col min-w-0">
+        <div className={cn("flex-1 flex flex-col min-w-0", supportWidgetOpen && "xl:mr-[24rem]")}>
           <header className="h-14 border-b border-border flex items-center justify-between px-4 bg-card/80 backdrop-blur-sm shrink-0">
             <IconButton
               ref={openSidebarRef}
@@ -211,13 +215,15 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             </div>
           </header>
 
-          <main className="flex-1 overflow-y-auto">
+          <main className="group/support-widget flex-1 overflow-y-auto" data-feedback-open={supportWidgetOpen}>
             <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6">
               {children}
             </div>
           </main>
         </div>
       </div>
+      <SupportWidget onOpenChange={setSupportWidgetOpen} />
+      </>
     </I18nContext.Provider>
   );
 }

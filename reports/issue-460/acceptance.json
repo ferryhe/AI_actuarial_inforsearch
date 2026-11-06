@@ -1,0 +1,487 @@
+{
+  "issue": 460,
+  "project": "AI_actuarial_inforsearch",
+  "branch": "codex/issue-460-feedback-widget",
+  "base_sha": "4e8a06972403515502e8e7e5396b91fb235ecd29",
+  "implementation_sha": "f2e74df",
+  "acceptance_state": "remote_fix_committed",
+  "generated_at": "2026-11-05",
+  "scope": {
+    "deliverables": [
+      "D1",
+      "D2",
+      "D3"
+    ],
+    "acceptance_criteria": [
+      "AC1",
+      "AC2",
+      "AC3",
+      "AC4"
+    ],
+    "validation": [
+      "V1",
+      "V2",
+      "V3"
+    ]
+  },
+  "initial_review": {
+    "automated_matrix": "32/32 passed",
+    "visual_review": "failed: panel obscured homepage Ask Agent card",
+    "retained_under": "reports/issue-459-464-20261105/issue-460/browser/initial/"
+  },
+  "final_review": {
+    "browser_matrix": 32,
+    "routes": [
+      "/",
+      "/database",
+      "/file-detail",
+      "/chat"
+    ],
+    "viewports": [
+      "1280x900",
+      "390x844"
+    ],
+    "locales": [
+      "en",
+      "zh"
+    ],
+    "themes": [
+      "light",
+      "dark"
+    ],
+    "axe_violations": 0,
+    "panel_interactive_targets_at_least_44px": true,
+    "desktop_home_ask_agent_uncovered": true,
+    "mobile_home_main_scroll_works_with_panel_open": true,
+    "capabilities_feedback_enabled_assistant_disabled": true,
+    "feedback_module_requests_when_disabled_or_capabilities_fail": 0,
+    "real_browser_api_receipts": 7,
+    "postgresql_version": "16.15",
+    "postgres_readback_rows": 7,
+    "receipt_and_text_exactly_match_rows": true,
+    "same_request_replayed_after_committed_response_drop": true,
+    "double_click_api_posts": 1,
+    "generation_calls": 0,
+    "evidence": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-460\\browser\\remote-fix-final-matrix-20261105\\issue460-browser-smoke-final-v2.json",
+    "keyboard_available_height_simulation": {
+      "viewport": "390x500",
+      "panel_top": 19.25,
+      "panel_bottom": 251.25,
+      "scroll_top_before": 0,
+      "scroll_top_to_submit": 159,
+      "scroll_top_to_receipt": 159,
+      "submit_target_height": 44,
+      "submit_top_inner_hit": "feedback-submit",
+      "submit_bottom_inner_hit": "feedback-submit",
+      "submit_clicked": true,
+      "receipt_visible_inside_form": true,
+      "screenshot": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-460\\remote-fix-lifecycle-final\\keyboard-available-height-submit-ready-390x500.png"
+    },
+    "overlay_final": {
+      "result": "PASS",
+      "chat_viewports": [
+        "390x844",
+        "1024x844"
+      ],
+      "mode_rag_kb_input_send_actual_clicks": true,
+      "drawer_sidebar_delete_and_file_detail_modal_flows": "PASS",
+      "feedback_sentinel_preserved": true,
+      "provider_calls": 0,
+      "evidence": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-460\\remote-fix-lifecycle-final\\overlay-smoke-final-architect-v3.json"
+    },
+    "lifecycle_close_reopen": {
+      "result": "PASS",
+      "real_api_statuses": [
+        201,
+        201
+      ],
+      "first_response_dropped_to_browser": true,
+      "same_request_id_and_payload": true,
+      "same_receipt": true,
+      "postgresql_version": "16.15",
+      "pg_rows_for_request": 1,
+      "provider_calls": 0,
+      "evidence": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-460\\remote-fix-lifecycle-final-v2\\browser-api-retry.json",
+      "pg_readback": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-460\\remote-fix-lifecycle-final-v2\\postgres-readback.json"
+    }
+  },
+  "checks": [
+    {
+      "command": "npm ci",
+      "cwd": "C:\\Project\\AI_actuarial_inforsearch\\.codex-worktrees\\issue-460",
+      "expected": "Install the locked dependencies without changing the manifest or lockfile.",
+      "actual": "565 packages installed; package files unchanged. npm printed 29 audit advisories (2 low, 13 moderate, 11 high, 3 critical); no audit fix was run.",
+      "result": "PASS",
+      "exit_code": 0,
+      "evidence": "reports/issue-459-464-20261105/issue-460/tests/npm-ci.log"
+    },
+    {
+      "command": "npx vitest run --config vitest.config.ts client/src/features/feedback",
+      "cwd": "C:\\Project\\AI_actuarial_inforsearch\\.codex-worktrees\\issue-460",
+      "expected": "Focused feedback component and a11y interaction tests pass.",
+      "actual": "8 tests passed.",
+      "result": "PASS",
+      "exit_code": 0,
+      "evidence": "reports/issue-459-464-20261105/issue-460/tests/feedback-vitest.log"
+    },
+    {
+      "command": "npm run typecheck",
+      "cwd": "C:\\Project\\AI_actuarial_inforsearch\\.codex-worktrees\\issue-460",
+      "expected": "No TypeScript errors.",
+      "actual": "TypeScript completed without errors.",
+      "result": "PASS",
+      "exit_code": 0,
+      "evidence": "reports/issue-459-464-20261105/issue-460/tests/typecheck.log"
+    },
+    {
+      "command": "npm run build",
+      "cwd": "C:\\Project\\AI_actuarial_inforsearch\\.codex-worktrees\\issue-460",
+      "expected": "Vite production build completes.",
+      "actual": "Build completed; Vite printed the large JavaScript chunk advisory.",
+      "result": "PASS",
+      "exit_code": 0,
+      "evidence": "reports/issue-459-464-20261105/issue-460/tests/build.log"
+    },
+    {
+      "command": "node client/src/components/support-widget/Issue460Feedback.browser-smoke.mjs",
+      "cwd": "C:\\Project\\AI_actuarial_inforsearch\\.codex-worktrees\\issue-460",
+      "non_sensitive_environment": {
+        "CHROME_PATH": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+        "SMOKE_EVIDENCE_DIR": "reports/issue-459-464-20261105/issue-460/browser/final",
+        "SMOKE_RESULT_PATH": "reports/issue-459-464-20261105/issue-460/browser/final/issue460-browser-smoke.json"
+      },
+      "target": "127.0.0.1:5173 frontend; Vite /api proxy to 127.0.0.1:8000",
+      "expected": "32 route/viewport/locale/theme combinations pass; panel and all interactive targets fit; no new axe violations; real feedback flow and fault scenarios complete; generation calls stay zero.",
+      "actual": "32 combinations passed; all controls at least 44px; panel viewport bounds passed; homepage Ask Agent does not intersect on desktop; 390px main scroll works with panel open; axe 0; capabilities response was feedback true/assistant false; no FeedbackForm module request when disabled/capabilities failed; 7 browser API receipt entries; generation calls 0.",
+      "result": "PASS",
+      "exit_code": 0,
+      "evidence": "reports/issue-459-464-20261105/issue-460/browser/final/issue460-browser-smoke.json and .log; desktop-home-en-light.png; mobile390-home-en-light.png"
+    },
+    {
+      "command": "python C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-460\\runtime\\verify_pg_readback.py",
+      "cwd": "C:\\Project\\AI_actuarial_inforsearch\\.codex-worktrees\\issue-460",
+      "non_sensitive_environment": {
+        "SMOKE_DATABASE_URL": "postgresql://postgres@127.0.0.1:56618/issue460_test"
+      },
+      "expected": "Each real browser receipt maps to exactly one isolated PostgreSQL row with identical receipt id and submitted text; replay returns one row; double click writes once.",
+      "actual": "7 rows matched response feedback_id, request id, exact synthetic content, kind, origin, local site key, /database pathname, zh-CN locale; retry after a committed response drop returned same receipt; 1 double-click browser POST; generation calls 0.",
+      "result": "PASS",
+      "exit_code": 0,
+      "evidence": "reports/issue-459-464-20261105/issue-460/browser/final/pg-readback.json and .log"
+    },
+    {
+      "command": "docker exec codex-issue460-pg16 psql -U postgres -d issue460_test -Atqc \"select split_part(version(), ' ', 2);\"",
+      "cwd": "C:\\Project\\AI_actuarial_inforsearch\\.codex-worktrees\\issue-460",
+      "expected": "Disposable local database runs PostgreSQL 16.",
+      "actual": "16.15.",
+      "result": "PASS",
+      "exit_code": 0,
+      "evidence": "reports/issue-459-464-20261105/issue-460/runtime/postgres-version.log"
+    },
+    {
+      "command": "git diff --check",
+      "cwd": "C:\\Project\\AI_actuarial_inforsearch\\.codex-worktrees\\issue-460",
+      "expected": "No whitespace errors in the code diff.",
+      "actual": "No output; exit success.",
+      "result": "PASS",
+      "exit_code": 0,
+      "evidence": "reports/issue-459-464-20261105/issue-460/tests/diff-check.log"
+    },
+    {
+      "command": "docker stop codex-issue460-pg16; Get-NetTCPConnection -State Listen -LocalPort 8000,5173,56618",
+      "cwd": "C:\\Project\\AI_actuarial_inforsearch\\.codex-worktrees\\issue-460",
+      "expected": "Stop only the disposable PostgreSQL and worker-owned loopback API/dev server; confirm the container and ports are released.",
+      "actual": "The disposable container was removed; no listener remains on 127.0.0.1 ports 8000, 5173, or 56618.",
+      "result": "PASS",
+      "exit_code": 0,
+      "evidence": "reports/issue-459-464-20261105/issue-460/runtime/services-shutdown.log"
+    },
+    {
+      "command": "node client/src/components/support-widget/Issue460ChatReachability.browser-smoke.mjs",
+      "cwd": "C:\\Project\\AI_actuarial_inforsearch\\.codex-worktrees\\issue-460",
+      "expected": "Current overlay controls remain reachable at 390px and 1024px while feedback is open; tested submissions are intercepted/trial-only.",
+      "actual": "PASS: Chat menus/drawer, site navigation, shared delete dialogs, FileDetail Catalog/Chunk dialogs; feedback draft preserved; provider calls 0.",
+      "result": "PASS",
+      "exit_code": 0,
+      "evidence": "reports/issue-459-464-20261105/issue-460/browser/review-fix-owned-modals-final//issue460-overlay-owned-modals-final.json and .log"
+    },
+    {
+      "command": "npx vitest run --config vitest.config.ts client/src/features/feedback",
+      "cwd": "C:\\Project\\AI_actuarial_inforsearch\\.codex-worktrees\\issue-460",
+      "expected": "Feedback component regressions pass.",
+      "actual": "9 tests passed.",
+      "result": "PASS",
+      "exit_code": 0,
+      "evidence": "reports/issue-459-464-20261105/issue-460/browser/review-fix-owned-modals-final//checks/feedback-vitest-final.log"
+    },
+    {
+      "command": "npm run typecheck",
+      "cwd": "C:\\Project\\AI_actuarial_inforsearch\\.codex-worktrees\\issue-460",
+      "expected": "No TypeScript errors.",
+      "actual": "Completed without errors.",
+      "result": "PASS",
+      "exit_code": 0,
+      "evidence": "reports/issue-459-464-20261105/issue-460/browser/review-fix-owned-modals-final//checks/typecheck-final.log"
+    },
+    {
+      "command": "npm run build",
+      "cwd": "C:\\Project\\AI_actuarial_inforsearch\\.codex-worktrees\\issue-460",
+      "expected": "Production build completes.",
+      "actual": "Build completed with the existing Vite large-chunk advisory.",
+      "result": "PASS",
+      "exit_code": 0,
+      "evidence": "reports/issue-459-464-20261105/issue-460/browser/review-fix-owned-modals-final//checks/build-final.log"
+    },
+    {
+      "command": "git diff --check",
+      "cwd": "C:\\Project\\AI_actuarial_inforsearch\\.codex-worktrees\\issue-460",
+      "expected": "No whitespace errors.",
+      "actual": "No output; success.",
+      "result": "PASS",
+      "exit_code": 0,
+      "evidence": "reports/issue-459-464-20261105/issue-460/browser/review-fix-owned-modals-final//checks/diff-check-final.log"
+    },
+    {
+      "command": "node client/src/components/support-widget/Issue460Feedback.browser-smoke.mjs",
+      "cwd": "C:\\Project\\AI_actuarial_inforsearch\\.codex-worktrees\\issue-460",
+      "environment": {
+        "SMOKE_EVIDENCE_DIR": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-460\\browser\\remote-fix-final-matrix-20261105",
+        "SMOKE_URL": "http://127.0.0.1:5173"
+      },
+      "expected": "32 route×viewport×locale×theme combinations pass against final source",
+      "actual": "Attempt 1 received HTTP 500 for capabilities because the dedicated API had already been stopped; environment precondition failure, not product",
+      "result": "FAIL_ENVIRONMENT",
+      "exit_code": 1,
+      "evidence": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-460\\browser\\remote-fix-final-matrix-20261105\\issue460-browser-smoke.log"
+    },
+    {
+      "command": "node client/src/components/support-widget/Issue460Feedback.browser-smoke.mjs",
+      "cwd": "C:\\Project\\AI_actuarial_inforsearch\\.codex-worktrees\\issue-460",
+      "environment": {
+        "SMOKE_EVIDENCE_DIR": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-460\\browser\\remote-fix-final-matrix-20261105",
+        "SMOKE_URL": "http://127.0.0.1:5173"
+      },
+      "expected": "32 combinations on mounted-hidden widget contract",
+      "actual": "Attempt 2 reached Escape then timed out because old harness expected the panel to unmount; harness was corrected and full matrix restarted",
+      "result": "FAIL_HARNESS_EXPECTATION",
+      "exit_code": 1,
+      "evidence": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-460\\browser\\remote-fix-final-matrix-20261105\\issue460-browser-smoke-final.log"
+    },
+    {
+      "command": "node client/src/components/support-widget/Issue460Feedback.browser-smoke.mjs",
+      "cwd": "C:\\Project\\AI_actuarial_inforsearch\\.codex-worktrees\\issue-460",
+      "environment": {
+        "SMOKE_EVIDENCE_DIR": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-460\\browser\\remote-fix-final-matrix-20261105",
+        "SMOKE_URL": "http://127.0.0.1:5173",
+        "CHROME_PATH": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+        "SMOKE_RESULT_PATH": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-460\\browser\\remote-fix-final-matrix-20261105\\issue460-browser-smoke-final-v2.json"
+      },
+      "expected": "All 32 combinations, a11y checks, API retry/failure tests and zero AI generation calls pass",
+      "actual": "32/32; axe 0; 6 fault scenarios; 7 API receipt entries; PostgreSQL readback 7 rows; provider calls 0",
+      "result": "PASS",
+      "exit_code": 0,
+      "evidence": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-460\\browser\\remote-fix-final-matrix-20261105\\issue460-browser-smoke-final-v2.json and .log"
+    },
+    {
+      "command": "node client/src/components/support-widget/Issue460ChatReachability.browser-smoke.mjs",
+      "cwd": "C:\\Project\\AI_actuarial_inforsearch\\.codex-worktrees\\issue-460",
+      "environment": {
+        "SMOKE_EVIDENCE_DIR": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-460\\remote-fix-lifecycle-final",
+        "SMOKE_URL": "http://127.0.0.1:5173",
+        "SMOKE_RESULT_PATH": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-460\\remote-fix-lifecycle-final\\overlay-smoke-final-architect-v3.json"
+      },
+      "expected": "390/1024 Chat/menu/modal controls pass; 390x500 panel bounds, feedback scrolling, submit edge hits, successful submit and receipt visible",
+      "actual": "PASS; 390x500 panel y=19.25..251.25; form scrollTop 0→159; 44px submit upper/lower inside hits both feedback-submit and actual click; mode selector inside hits; receipt visible; Chat modes/RAG/KB/input/send and overlays pass; provider calls 0",
+      "result": "PASS",
+      "exit_code": 0,
+      "evidence": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-460\\remote-fix-lifecycle-final\\overlay-smoke-final-architect-v3.json and log; keyboard-available-height-submit-ready-390x500.png; keyboard-available-height-simulation-390x500.png"
+    },
+    {
+      "command": "node C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-460\\remote-fix-lifecycle-final-v2\\real-api-close-reopen-smoke.mjs",
+      "cwd": "C:\\Project\\AI_actuarial_inforsearch\\.codex-worktrees\\issue-460",
+      "environment": {
+        "CHROME_PATH": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+        "EVIDENCE_DIR": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-460\\remote-fix-lifecycle-final-v2",
+        "target": "127.0.0.1:5173 -> 127.0.0.1:8000 -> PostgreSQL16 127.0.0.1:55458"
+      },
+      "expected": "Real API commits before first response is dropped; close/reopen preserves draft/id; retry returns original receipt with one PG row",
+      "actual": "201 then browser abort; retry 201 with identical id+payload; same receipt; PG exactly one matching row; provider generation calls 0",
+      "result": "PASS",
+      "exit_code": 0,
+      "evidence": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-460\\remote-fix-lifecycle-final-v2\\browser-api-retry.json and postgres-readback.json"
+    },
+    {
+      "command": "python -m ai_actuarial schema apply --json",
+      "cwd": "C:\\Project\\AI_actuarial_inforsearch\\.codex-worktrees\\issue-460",
+      "environment": {
+        "DATABASE_URL": "isolated loopback test database (value omitted from receipt)",
+        "CONFIG_PATH": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-460\\remote-fix-lifecycle-final\\sites.yaml"
+      },
+      "expected": "Schema version 7 current on isolated PostgreSQL16",
+      "actual": "current_schema_version=7; success=true",
+      "result": "PASS",
+      "exit_code": 0,
+      "evidence": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-460\\browser\\remote-fix-final-matrix-20261105\\schema-apply.log"
+    },
+    {
+      "command": "npx vitest run --config vitest.config.ts client/src/features/feedback",
+      "cwd": "C:\\Project\\AI_actuarial_inforsearch\\.codex-worktrees\\issue-460",
+      "expected": "Focused feedback component/a11y regressions pass",
+      "actual": "13 tests passed",
+      "result": "PASS",
+      "exit_code": 0,
+      "evidence": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-460\\remote-fix-lifecycle-final-v2\\focused-vitest.log"
+    },
+    {
+      "command": "npm run typecheck",
+      "cwd": "C:\\Project\\AI_actuarial_inforsearch\\.codex-worktrees\\issue-460",
+      "expected": "TypeScript check passes",
+      "actual": "tsc --noEmit --pretty false succeeded",
+      "result": "PASS",
+      "exit_code": 0,
+      "evidence": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-460\\remote-fix-lifecycle-final-v2\\typecheck.log"
+    },
+    {
+      "command": "npm run build",
+      "cwd": "C:\\Project\\AI_actuarial_inforsearch\\.codex-worktrees\\issue-460",
+      "expected": "Production build completes",
+      "actual": "Vite build succeeded; existing >500kB chunk advisory printed",
+      "result": "PASS_WITH_EXISTING_WARNING",
+      "exit_code": 0,
+      "evidence": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-460\\remote-fix-lifecycle-final-v2\\build.log"
+    },
+    {
+      "command": "git diff --check",
+      "cwd": "C:\\Project\\AI_actuarial_inforsearch\\.codex-worktrees\\issue-460",
+      "expected": "No whitespace errors",
+      "actual": "No diff-check findings",
+      "result": "PASS",
+      "exit_code": 0,
+      "evidence": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-460\\remote-fix-lifecycle-final-v2\\diff-check.log"
+    },
+    {
+      "command": "docker stop issue460-final-matrix-pg16-20261105; docker rm issue460-final-matrix-pg16-20261105; Ctrl+C uvicorn session 23830",
+      "cwd": "C:\\Project\\AI_actuarial_inforsearch\\.codex-worktrees\\issue-460",
+      "expected": "Only worker-owned API and PostgreSQL16 test services stopped; ports 8000/55458 released",
+      "actual": "Container absent; 8000/55458 no listeners; manager-owned Vite 5173 remains PID40104; unrelated PG containers untouched",
+      "result": "PASS",
+      "exit_code": 0,
+      "evidence": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-460\\browser\\remote-fix-final-matrix-20261105\\services-cleanup.json"
+    },
+    {
+      "command": "git rev-parse HEAD (implementation commit)",
+      "cwd": "C:\\Project\\AI_actuarial_inforsearch\\.codex-worktrees\\issue-460",
+      "expected": "Record implementation SHA before binding the sanitized acceptance receipt",
+      "actual": "f2e74df",
+      "result": "PASS",
+      "exit_code": 0,
+      "evidence": "local git commit f2e74df; receipt binding follows in the evidence commit"
+    }
+  ],
+  "publication": {
+    "commit": "0f381302e7114711e840a829c321f37dd860f589",
+    "push": "branch codex/issue-460-feedback-widget pushed to origin",
+    "pull_request": "Draft PR #466: https://github.com/ferryhe/AI_actuarial_inforsearch/pull/466",
+    "draft_pr_head_at_creation": "8419542c3e6bc4d4a281eabecf2923b7ccb4f129",
+    "production_change": false
+  },
+  "latest_overlay_follow_up": {
+    "state": "local_overlay_validation_and_review_passed_not_published",
+    "final_source_scope": [
+      "client/src/components/ConfirmDeleteModal.tsx",
+      "client/src/components/Layout.tsx",
+      "client/src/hooks/use-i18n.ts",
+      "client/src/pages/Chat.tsx",
+      "client/src/pages/FileDetail.tsx",
+      "client/src/components/support-widget/",
+      "client/src/features/feedback/",
+      ".hermes/project-status.md"
+    ],
+    "targeted_browser_smoke": "PASS at 390x844 and 1024x844: Chat mode/RAG/KB choices and sends; Chat drawer both open orders; Layout site navigation to /knowledge; Database/FileDetail ConfirmDelete header/confirm trial/cancel; FileDetail Catalog/Chunk submit trial/cancel. Feedback draft preserved; no destructive or submit action executed; provider calls 0.",
+    "focused_tests": "PASS, 9/9",
+    "typecheck": "PASS",
+    "build": "PASS with existing Vite large-chunk advisory",
+    "diff_check": "PASS",
+    "independent_review": "PASS, review-4-final.json; TypeSafe review-4 recorded no findings, summary coverage 0.96",
+    "browser_evidence": "reports/issue-459-464-20261105/issue-460/browser/review-fix-owned-modals-final/",
+    "earlier_full_matrix": "32/32 earlier evidence retained; not rerun after final overlay-only changes",
+    "earlier_real_api_postgresql": "7/7 exact API receipt to PostgreSQL row matches earlier evidence retained; real closure not rerun after final overlay-only changes",
+    "production_changed": false,
+    "implementation_sha": "0f381302e7114711e840a829c321f37dd860f589"
+  },
+  "implementation_commit_review": {
+    "local_review": "PASS",
+    "reviewer_report": "reports/issue-459-464-20261105/issue-460/review-4-final.json",
+    "typesafe_report": "reports/issue-459-464-20261105/issue-460/typesafe-review-4-result.json",
+    "required_github_ci": "pending on initial Draft PR head; dead-code-files passed and dead-code-symbols was in progress",
+    "implementation_sha": "0f381302e7114711e840a829c321f37dd860f589",
+    "pull_request": "https://github.com/ferryhe/AI_actuarial_inforsearch/pull/466",
+    "published": true
+  },
+  "copilot_review": {
+    "mode": "auto",
+    "request_attempts": 1,
+    "request_method": "GitHub connector request_pull_request_reviewers(reviewer=Copilot)",
+    "result": "connector returned Action completed but did not list a reviewer",
+    "verification": "gh pr view #466 reported reviewRequests=[]; GitHub review list returned reviews=[]",
+    "disposition": "unavailable; disabled for Issue #460; no retry"
+  },
+  "remote_fix": {
+    "round": "remote review R1/R2 + C5 overlay",
+    "implementation_sha": "f2e74df",
+    "changed_files": [
+      "client/src/components/support-widget/Issue460ChatReachability.browser-smoke.mjs",
+      "client/src/components/support-widget/Issue460Feedback.browser-smoke.mjs",
+      "client/src/components/support-widget/SupportWidget.tsx",
+      "client/src/features/feedback/FeedbackForm.test.tsx",
+      "client/src/features/feedback/FeedbackForm.tsx",
+      "client/src/hooks/use-i18n.ts",
+      "client/src/pages/Chat.tsx"
+    ],
+    "findings": {
+      "lazy_chunk_error_boundary": "PASS",
+      "close_reopen_draft_and_request_id": "PASS",
+      "scoped_escape": "PASS",
+      "stale_route_result_guard": "PASS",
+      "chat_overlay_and_keyboard_height": "PASS"
+    },
+    "matrix": {
+      "count": 32,
+      "routes": [
+        "/",
+        "/database",
+        "/file-detail",
+        "/chat"
+      ],
+      "viewports": [
+        "1280x900",
+        "390x844"
+      ],
+      "locales": [
+        "en",
+        "zh"
+      ],
+      "themes": [
+        "light",
+        "dark"
+      ],
+      "axe_violations": 0,
+      "api_receipts": 7,
+      "pg_rows": 7,
+      "provider_calls": 0,
+      "old_32_case_result_is_historical": true,
+      "evidence": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-460\\browser\\remote-fix-final-matrix-20261105\\issue460-browser-smoke-final-v2.json"
+    },
+    "keyboard_simulation": {
+      "viewport": "390x500",
+      "status": "PASS",
+      "panel_top": 19.25,
+      "panel_bottom": 251.25,
+      "scroll_to_submit": 159,
+      "submit_actual_click": true,
+      "receipt_visible": true
+    },
+    "uncommitted": false,
+    "implementation_commit": "f2e74df"
+  }
+}

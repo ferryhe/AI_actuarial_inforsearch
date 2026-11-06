@@ -38,6 +38,8 @@ PERMISSIONS: frozenset[str] = frozenset(
         "chat.query",  # Send chat messages
         "chat.conversations",  # Manage conversations
         "users.manage",  # Manage users
+        "feedback.read",  # Read private feedback inbox
+        "feedback.manage",  # Update feedback status
     }
 )
 

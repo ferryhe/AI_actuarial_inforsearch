@@ -95,6 +95,8 @@ def resolve_runtime_features(config_data: dict[str, Any]) -> dict[str, Any]:
 
     specs: dict[str, tuple[bool, tuple[str, ...]]] = {
         "require_auth": (False, ("REQUIRE_AUTH",)),
+        "feedback_enabled": (False, ("FEEDBACK_ENABLED",)),
+        "assistant_enabled": (False, ("ASSISTANT_ENABLED",)),
         "enable_global_logs_api": (False, ("ENABLE_GLOBAL_LOGS_API",)),
         "enable_rate_limiting": (False, ("ENABLE_RATE_LIMITING", "RATE_LIMIT_ENABLED")),
         "enable_csrf": (False, ("ENABLE_CSRF",)),
@@ -121,6 +123,8 @@ def resolve_runtime_features(config_data: dict[str, Any]) -> dict[str, Any]:
     sources["file_deletion_enabled"] = file_deletion_source
 
     string_specs: dict[str, tuple[str, str]] = {
+        "feedback_site_key": ("FEEDBACK_SITE_KEY", ""),
+        "feedback_rate_limit": ("FEEDBACK_RATE_LIMIT", "5 per minute, 30 per hour"),
         "rate_limit_defaults": ("RATE_LIMIT_DEFAULTS", "200 per hour, 50 per minute"),
         "rate_limit_storage_uri": ("RATE_LIMIT_STORAGE_URI", "memory://"),
         "content_security_policy": ("CONTENT_SECURITY_POLICY", ""),
@@ -438,6 +442,10 @@ def serialize_backend_settings(config_data: dict[str, Any]) -> dict[str, Any]:
             "queries": search.get("queries", []),
         },
         "features": {
+            "feedback_enabled": bool(features["feedback_enabled"]),
+            "assistant_enabled": bool(features["assistant_enabled"]),
+            "feedback_site_key": features["feedback_site_key"],
+            "feedback_rate_limit": features["feedback_rate_limit"],
             "enable_file_deletion": bool(features["enable_file_deletion"]),
             "require_auth": bool(features["require_auth"]),
             "enable_global_logs_api": bool(features["enable_global_logs_api"]),
@@ -451,6 +459,8 @@ def serialize_backend_settings(config_data: dict[str, Any]) -> dict[str, Any]:
             "sources": dict(features["feature_sources"]),
         },
         "runtime": {
+            "feedback_enabled": bool(features["feedback_enabled"]),
+            "assistant_enabled": bool(features["assistant_enabled"]),
             "config_path": get_sites_config_path(),
             "categories_config_path": get_categories_config_path(),
             "require_auth": bool(features["require_auth"]),

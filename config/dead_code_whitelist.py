@@ -1,5 +1,28 @@
 """Reviewed symbol references for framework-discovered Python entry points."""
 
+from ai_actuarial.api.routers.assistant_help import (
+    api_get_help_section,
+    api_search_help,
+)
+from ai_actuarial.api.routers.feedback import (
+    StatusUpdate,
+    api_list_feedback,
+    api_submit_feedback,
+    api_update_feedback,
+)
+from ai_actuarial.api.routers.support import api_support_capabilities
+from ai_actuarial.feedback.store import FeedbackRequest
+
+api_list_feedback  # reason: FastAPI registers this decorated route.
+api_submit_feedback  # reason: FastAPI registers this decorated route.
+api_update_feedback  # reason: FastAPI registers this decorated route.
+api_search_help  # reason: FastAPI registers this decorated route.
+api_get_help_section  # reason: FastAPI registers this decorated route.
+api_support_capabilities  # reason: FastAPI registers this decorated route.
+StatusUpdate.model_config  # reason: Pydantic reads this request-schema configuration.
+FeedbackRequest.trim_content  # reason: Pydantic invokes this decorated field validator.
+FeedbackRequest.local_path  # reason: Pydantic invokes this decorated field validator.
+
 from ai_actuarial.api.routers.agentic_rag import (
     api_agentic_rag_chat,
     api_search_agentic_calculation_terms,

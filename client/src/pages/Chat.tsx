@@ -1053,7 +1053,7 @@ export default function Chat() {
             {isMobile && (
               <div
                 aria-hidden="true"
-                className="fixed inset-0 z-40 bg-black/40"
+                className="fixed inset-0 z-[70] bg-black/40"
                 data-testid="chat-sidebar-backdrop"
                 onClick={() => setSidebarOpen(false)}
               />
@@ -1065,7 +1065,7 @@ export default function Chat() {
             transition={{ duration: 0.2 }}
             className={cn(
               "border-r border-border bg-card flex flex-col overflow-hidden",
-              isMobile ? "fixed inset-y-0 left-0 z-50 w-[min(18.75rem,calc(100vw-1rem))] shadow-xl" : "shrink-0",
+              isMobile ? "fixed inset-y-0 left-0 z-[80] w-[min(18.75rem,calc(100vw-1rem))] shadow-xl" : "shrink-0",
             )}
           >
             <div className="p-3 border-b border-border space-y-2">
@@ -1556,9 +1556,9 @@ export default function Chat() {
           </div>
         )}
 
-        <div className="border-t border-border bg-card/80 backdrop-blur-sm px-4 sm:px-6 py-3">
+        <div className="relative group-data-[feedback-open=true]/support-widget:z-[60] group-data-[feedback-open=true]/support-widget:pointer-events-none group-data-[feedback-open=true]/support-widget:border-transparent group-data-[feedback-open=true]/support-widget:bg-transparent group-data-[feedback-open=true]/support-widget:backdrop-blur-none border-t border-border bg-card/80 backdrop-blur-sm px-4 sm:px-6 py-3">
           <div className="flex items-center gap-2 mb-2 flex-wrap">
-            <div className="relative">
+            <div className="relative group-data-[feedback-open=true]/support-widget:pointer-events-auto">
               <button
                 onClick={() => {
                   setShowModeDropdown(!showModeDropdown);
@@ -1595,7 +1595,7 @@ export default function Chat() {
               )}
             </div>
 
-            <div className="flex rounded-lg bg-muted p-0.5" data-testid="rag-mode-selector">
+            <div className="flex rounded-lg bg-muted p-0.5 group-data-[feedback-open=true]/support-widget:pointer-events-auto" data-testid="rag-mode-selector">
               {RAG_MODES.map((nextMode) => (
                 <button
                   key={nextMode}
@@ -1626,7 +1626,7 @@ export default function Chat() {
               ))}
             </div>
 
-            <div className="relative">
+            <div className="relative group-data-[feedback-open=true]/support-widget:pointer-events-auto">
               <button
                 onClick={() => {
                   setShowKbDropdown(!showKbDropdown);
@@ -1717,7 +1717,7 @@ export default function Chat() {
             </div>
           </div>
 
-          <div className="flex items-end gap-2">
+          <div className="flex items-end gap-2 group-data-[feedback-open=true]/support-widget:pointer-events-auto">
             {quotaWarning && (
               <div className="w-full mb-1 px-2 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-600 dark:text-amber-400 text-xs flex items-center gap-1.5">
                 <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
