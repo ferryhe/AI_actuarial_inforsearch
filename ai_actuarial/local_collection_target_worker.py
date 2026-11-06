@@ -3777,13 +3777,29 @@ def _article_interpretation_stream_request(payload: Any) -> dict[str, Any]:
         not isinstance(retry_id, str) or not retry_id.strip() or len(retry_id) > 80
     ):
         raise _ArticleInterpretationStreamFailure("retry_id_invalid")
-    return {
+    request = {
         "round_key": round_key,
         "retry_id": retry_id,
         "backend": route.backend,
         "requested_model": route.model,
         "reasoning_effort": route.reasoning_effort,
     }
+    file_url = payload.get("file_url")
+    if file_url is not None:
+        if retry_id:
+            raise _ArticleInterpretationStreamFailure(
+                "file_url_and_retry_id_are_mutually_exclusive"
+            )
+        if not isinstance(file_url, str) or not file_url.strip() or len(file_url) > 2048:
+            raise _ArticleInterpretationStreamFailure("file_url_invalid")
+        try:
+            parsed = urlsplit(file_url.strip())
+        except ValueError:
+            raise _ArticleInterpretationStreamFailure("file_url_invalid") from None
+        if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
+            raise _ArticleInterpretationStreamFailure("file_url_invalid")
+        request["file_url"] = file_url.strip()
+    return request
 
 
 def _interpretation_generation_summary(receipt: dict[str, Any]) -> dict[str, Any]:
@@ -3932,10 +3948,10 @@ def run_article_interpretation_stream(
                 ),
             },
         )
-        generation = service.run(
-            round_key=request["round_key"],
-            retry_id=request["retry_id"],
-        )
+        run_kwargs = {"round_key": request["round_key"], "retry_id": request["retry_id"]}
+        if "file_url" in request:
+            run_kwargs["file_url"] = request["file_url"]
+        generation = service.run(**run_kwargs)
         english = None
         if locale_settings["english_translation_enabled"] and generation.get("status") not in {
             "authentication",
@@ -4023,6 +4039,13 @@ def list_article_interpretation_sync_candidates(
         or not 1 <= payload["limit"] <= MAX_INTERPRETATION_SYNC_LIMIT
     ):
         raise _InterpretationTargetFailure("sync_candidate_request_invalid")
+    interpretation_id = payload.get("interpretation_id")
+    if interpretation_id is not None and (
+        not isinstance(interpretation_id, str)
+        or not interpretation_id.strip()
+        or len(interpretation_id) > 80
+    ):
+        raise _InterpretationTargetFailure("sync_candidate_interpretation_id_invalid")
     if runtime_factory is None:
         from ai_actuarial.task_runtime import NativeTaskRuntime
 
@@ -4041,30 +4064,37 @@ def list_article_interpretation_sync_candidates(
     last_candidate_position = None
     try:
         connection.execute("BEGIN")
-        connection.execute(
-            "SELECT pg_advisory_xact_lock(hashtextextended(?,0))",
-            ("article-target-sync:candidate-scan:china",),
-        )
-        cursor_row = connection.execute(
-            "SELECT receipt_json FROM article_interpretation_rounds WHERE round_key=?",
-            (_INTERPRETATION_SYNC_SCAN_CURSOR_KEY,),
-        ).fetchone()
-        if cursor_row:
-            scan_cursor = dict(cursor_row[0])
-            if (
-                scan_cursor.get("receipt_type") != "target_sync_scan"
-                or scan_cursor.get("target") != "china"
-                or not isinstance(scan_cursor.get("last_created_at"), str)
-                or not isinstance(scan_cursor.get("last_interpretation_id"), str)
-                or not scan_cursor["last_interpretation_id"].strip()
-            ):
-                raise _InterpretationTargetFailure("sync_candidate_cursor_invalid")
-            try:
-                datetime.fromisoformat(scan_cursor["last_created_at"])
-            except ValueError:
-                raise _InterpretationTargetFailure("sync_candidate_cursor_invalid") from None
+        if interpretation_id is None:
+            connection.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended(?,0))",
+                ("article-target-sync:candidate-scan:china",),
+            )
+            cursor_row = connection.execute(
+                "SELECT receipt_json FROM article_interpretation_rounds WHERE round_key=?",
+                (_INTERPRETATION_SYNC_SCAN_CURSOR_KEY,),
+            ).fetchone()
+            if cursor_row:
+                scan_cursor = dict(cursor_row[0])
+                if (
+                    scan_cursor.get("receipt_type") != "target_sync_scan"
+                    or scan_cursor.get("target") != "china"
+                    or not isinstance(scan_cursor.get("last_created_at"), str)
+                    or not isinstance(scan_cursor.get("last_interpretation_id"), str)
+                    or not scan_cursor["last_interpretation_id"].strip()
+                ):
+                    raise _InterpretationTargetFailure("sync_candidate_cursor_invalid")
+                try:
+                    datetime.fromisoformat(scan_cursor["last_created_at"])
+                except ValueError:
+                    raise _InterpretationTargetFailure("sync_candidate_cursor_invalid") from None
         while True:
-            if scan_cursor:
+            if interpretation_id is not None:
+                page = connection.execute(
+                    "SELECT payload_json, created_at, interpretation_id, status "
+                    "FROM article_interpretations WHERE interpretation_id=?",
+                    (interpretation_id,),
+                ).fetchall()
+            elif scan_cursor:
                 page = connection.execute(
                     "SELECT payload_json, created_at, interpretation_id "
                     "FROM article_interpretations WHERE status='ready' "
@@ -4085,8 +4115,25 @@ def list_article_interpretation_sync_candidates(
                     (offset,),
                 ).fetchall()
             if not page:
+                if interpretation_id is not None:
+                    issues.append(
+                        {
+                            "interpretation_id": interpretation_id,
+                            "status": "failed",
+                            "error": "sync_candidate_interpretation_not_found",
+                        }
+                    )
                 break
             for row in page:
+                if interpretation_id is not None and row[3] != "ready":
+                    issues.append(
+                        {
+                            "interpretation_id": interpretation_id,
+                            "status": "failed",
+                            "error": "sync_candidate_interpretation_not_ready",
+                        }
+                    )
+                    continue
                 draft = dict(row[0])
                 try:
                     identity = _interpretation_identity(draft)
@@ -4241,7 +4288,7 @@ def list_article_interpretation_sync_candidates(
             if more_pending or len(page) < 100:
                 break
             offset += len(page)
-        if last_candidate_position:
+        if last_candidate_position and interpretation_id is None:
             next_cursor = {
                 "receipt_type": "target_sync_scan",
                 "target": "china",

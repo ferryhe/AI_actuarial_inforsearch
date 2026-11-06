@@ -3771,7 +3771,10 @@ async def _run_article_interpretation_stream_async(
     generator: Any,
     round_key: str,
     retry_id: str | None = None,
+    file_url: str | None = None,
 ) -> dict[str, Any]:
+    if file_url is not None:
+        file_url = _validate_article_interpretation_file_url(file_url)
     command, target_cfg = _article_interpretation_target_command(config, "china")
     worker_code = base64.b64encode(TARGET_WORKER.read_bytes()).decode("ascii")
     route = getattr(generator, "runtime", None)
@@ -3792,6 +3795,8 @@ async def _run_article_interpretation_stream_async(
         "requested_model": route.model,
         "reasoning_effort": route.reasoning_effort,
     }
+    if file_url is not None:
+        request["file_url"] = file_url
     request_line = json.dumps(request, ensure_ascii=False, separators=(",", ":"))
     if len(request_line.encode("utf-8")) > ARTICLE_INTERPRETATION_STREAM_EVENT_BYTES:
         raise RuntimeErrorSafe("article interpretation stream request is too large")
@@ -3875,6 +3880,10 @@ async def _run_article_interpretation_stream_async(
                         "article interpretation stream did not confirm completion"
                     )
                 complete = True
+                if file_url is not None:
+                    generation = dict(generation)
+                    generation["cumulative_outer_attempts"] = generation.get("outer_attempts", 0)
+                    generation["outer_attempts"] = prompt_counts["generation"]
                 return {
                     "status": str(generation.get("status") or "failed"),
                     "generation": generation,
@@ -3989,13 +3998,15 @@ def _run_article_interpretation_stream(
     generator: Any,
     round_key: str,
     retry_id: str | None = None,
+    file_url: str | None = None,
 ) -> dict[str, Any]:
+    stream_args = {"generator": generator, "round_key": round_key, "retry_id": retry_id}
+    if file_url is not None:
+        stream_args["file_url"] = file_url
     return asyncio.run(
         _run_article_interpretation_stream_async(
             config,
-            generator=generator,
-            round_key=round_key,
-            retry_id=retry_id,
+            **stream_args,
         )
     )
 
@@ -4004,21 +4015,21 @@ def _sync_saved_remote_article_interpretations(
     config: dict[str, Any],
     *,
     limit: int = 3,
+    interpretation_id: str | None = None,
     invoke: Callable[[dict[str, Any], str, dict[str, Any]], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     if not 1 <= int(limit) <= 3:
         raise RuntimeErrorSafe("interpretation sync limit must be between 1 and 3")
     invoke = invoke or _invoke_article_interpretation_target_worker
-    listed = invoke(
-        config,
-        "china",
-        {
-            "schema_version": 1,
-            "operation": "list_article_interpretation_sync_candidates",
-            "target": "china",
-            "limit": int(limit),
-        },
-    )
+    request = {
+        "schema_version": 1,
+        "operation": "list_article_interpretation_sync_candidates",
+        "target": "china",
+        "limit": int(limit),
+    }
+    if interpretation_id is not None:
+        request["interpretation_id"] = interpretation_id
+    listed = invoke(config, "china", request)
     if (
         listed.get("_transport") == "unknown"
         or listed.get("operation") != "list_article_interpretation_sync_candidates"
@@ -4360,12 +4371,26 @@ def _article_interpretation_run_status(
     return "partial"
 
 
+def _validate_article_interpretation_file_url(file_url: str) -> str:
+    if not isinstance(file_url, str) or not file_url.strip() or len(file_url) > 2048:
+        raise RuntimeErrorSafe("article_interpretation_file_url_invalid")
+    file_url = file_url.strip()
+    try:
+        parsed = urlsplit(file_url)
+    except ValueError:
+        raise RuntimeErrorSafe("article_interpretation_file_url_invalid") from None
+    if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
+        raise RuntimeErrorSafe("article_interpretation_file_url_invalid")
+    return file_url
+
+
 def run_local_article_interpretations(
     target_config: dict[str, Any],
     *,
     generator: Any | None = None,
     sync_only: bool = False,
     retry_id: str | None = None,
+    file_url: str | None = None,
     limit: int = 3,
     round_key: str | None = None,
     stream_function: Callable[..., dict[str, Any]] | None = None,
@@ -4376,6 +4401,10 @@ def run_local_article_interpretations(
         raise RuntimeErrorSafe("interpretation sync limit must be between 1 and 3")
     if sync_only and retry_id:
         raise RuntimeErrorSafe("--sync-only and --retry-id are mutually exclusive")
+    if file_url is not None and (sync_only or retry_id):
+        raise RuntimeErrorSafe("--file-url is mutually exclusive with --sync-only and --retry-id")
+    if file_url is not None:
+        file_url = _validate_article_interpretation_file_url(file_url)
     generation = None
     route = {}
     if not sync_only:
@@ -4388,17 +4417,52 @@ def run_local_article_interpretations(
         if callable(receipt_metadata):
             route = receipt_metadata()  # pylint: disable=not-callable
         round_key = round_key or dt.datetime.now(ZoneInfo("America/New_York")).date().isoformat()
+        stream_kwargs = {
+            "generator": generator,
+            "round_key": round_key,
+            "retry_id": retry_id,
+        }
+        if file_url is not None:
+            stream_kwargs["file_url"] = file_url
         generation = (stream_function or _run_article_interpretation_stream)(
-            target_config,
-            generator=generator,
-            round_key=round_key,
-            retry_id=retry_id,
+            target_config, **stream_kwargs
         )
-    sync = (sync_function or _sync_saved_remote_article_interpretations)(
-        target_config,
-        limit=limit,
-        invoke=target_invoke,
-    )
+    manual_interpretation_id = None
+    if file_url is not None:
+        receipt = (generation or {}).get("generation")
+        if (
+            isinstance(receipt, dict)
+            and receipt.get("status") == "complete"
+            and type(receipt.get("outer_attempts")) is int
+            and receipt["outer_attempts"] > 0
+        ):
+            ready_ids = [
+                slot["interpretation_id"]
+                for slot in receipt.get("slots", [])
+                if isinstance(slot, dict)
+                and slot.get("status") == "ready"
+                and isinstance(slot.get("interpretation_id"), str)
+                and slot["interpretation_id"].strip()
+            ]
+            if len(ready_ids) == 1:
+                manual_interpretation_id = ready_ids[0]
+    if file_url is not None and manual_interpretation_id is None:
+        sync = {
+            "schema_version": 1,
+            "status": "no_candidates",
+            "all_targets_acknowledged": False,
+            "more_pending": False,
+            "drafts": [],
+            "issues": [],
+            "generation_calls": 0,
+        }
+    else:
+        sync_kwargs = {"limit": limit, "invoke": target_invoke}
+        if manual_interpretation_id is not None:
+            sync_kwargs["interpretation_id"] = manual_interpretation_id
+        sync = (sync_function or _sync_saved_remote_article_interpretations)(
+            target_config, **sync_kwargs
+        )
     generation_receipt = (generation or {}).get("generation") or (
         {"status": (generation or {}).get("status"), "error": (generation or {}).get("error")}
         if generation is not None
@@ -4433,6 +4497,9 @@ def run_local_article_interpretations(
 
 
 def _run_article_interpretations_command(args) -> dict[str, Any]:
+    file_url = getattr(args, "file_url", None)
+    if file_url is not None:
+        file_url = _validate_article_interpretation_file_url(file_url)
     target_config = _load_config(args.config.resolve())
     generator = None
     if not args.sync_only:
@@ -4458,6 +4525,7 @@ def _run_article_interpretations_command(args) -> dict[str, Any]:
             generator=generator,
             sync_only=args.sync_only,
             retry_id=args.retry_id,
+            file_url=file_url,
             limit=args.limit,
         )
     except RuntimeErrorSafe:
@@ -6802,6 +6870,10 @@ def build_parser() -> argparse.ArgumentParser:
     mode.add_argument(
         "--retry-id",
         help="retry one saved interpretation without changing its source identity or budget",
+    )
+    mode.add_argument(
+        "--file-url",
+        help="generate an interpretation for one current HTTPS source URL",
     )
     interpretations.add_argument(
         "--limit",
