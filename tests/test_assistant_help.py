@@ -50,6 +50,17 @@ def test_section_heading_only_queries_find_their_section(query, language, sectio
     assert results[0]["section_id"] == section_id
 
 
+@pytest.mark.parametrize(
+    "query",
+    [
+        "Where can I configure SMTP mail delivery relay?",
+        "What is SMTP mail delivery?",
+    ],
+)
+def test_unmatched_natural_language_questions_ignore_stopword_only_overlap(query):
+    assert search_help(query, language="en", limit=5) == []
+
+
 def test_reload_picks_up_edits_and_removed_sections(tmp_path):
     english = tmp_path / "user-guide.en.md"
     _write_doc(tmp_path, english.name, "guide", "## Search {#search}\n\nalpha beta")

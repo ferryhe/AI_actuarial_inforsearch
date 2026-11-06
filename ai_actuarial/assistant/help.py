@@ -14,6 +14,10 @@ _FRONT_MATTER = re.compile(r"\A---\s*\n(.*?)\n---\s*\n(.*)\Z", re.DOTALL)
 _HEADING = re.compile(r"^##\s+(.+?)\s+\{#([a-z0-9][a-z0-9-]*)\}\s*$", re.MULTILINE)
 _WORD = re.compile(r"[a-z0-9]+", re.IGNORECASE)
 _CJK = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]+")
+_EN_STOPWORDS = frozenset(
+    "a an and are as at be by can could did do does for from how i in is it may of on or "
+    "the to was were what when where which with you your".split()
+)
 
 
 class HelpIndexError(ValueError):
@@ -131,7 +135,7 @@ def load_help_sections(root: Path = HELP_ROOT) -> list[HelpSection]:
 def search_help(
     query: str, *, language: str | None = None, limit: int = 5, root: Path = HELP_ROOT
 ) -> list[dict[str, object]]:
-    query_tokens = _tokens(query)
+    query_tokens = _tokens(query) - _EN_STOPWORDS
     if not query_tokens:
         return []
     ranked: list[tuple[int, HelpSection]] = []
