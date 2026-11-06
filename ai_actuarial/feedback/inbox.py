@@ -149,8 +149,9 @@ def api_request(site, *, cursor=None, feedback_id=None, status=None):
         url,
         data=data,
         method="GET" if data is None else "PATCH",
-        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        headers={"Content-Type": "application/json"},
     )
+    request.add_unredirected_header("Authorization", f"Bearer {token}")
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
             return json.loads(response.read())
@@ -169,7 +170,7 @@ def api_request(site, *, cursor=None, feedback_id=None, status=None):
                 "not_found", "Feedback management endpoint or record was not found"
             ) from exc
         raise InboxError("remote", f"Feedback API returned HTTP {exc.code}") from exc
-    except (urllib.error.URLError, TimeoutError, OSError, http.client.IncompleteRead) as exc:
+    except (urllib.error.URLError, TimeoutError, OSError, http.client.HTTPException) as exc:
         raise InboxError(
             "connection", "Feedback API connection failed; retry the same operation"
         ) from exc
@@ -354,12 +355,6 @@ def _lock(root):
 
 def _sync_state(root):
     state = _read_json(root / "sync.json", {"schema_version": 1, "sites": {}})
-    if (
-        not isinstance(state, dict)
-        or state.get("schema_version") != 1
-        or not isinstance(state.get("sites"), dict)
-    ):
-        raise InboxError("local_read", "Local feedback sync evidence is invalid")
     fields = {
         "site_key",
         "success",
@@ -370,11 +365,53 @@ def _sync_state(root):
         "last_success_at",
         "error",
     }
-    if any(
-        not isinstance(value, dict) or set(value) != fields or value["site_key"] != key
-        for key, value in state["sites"].items()
-    ):
-        raise InboxError("local_read", "Local feedback sync site evidence is invalid")
+    try:
+        if (
+            not isinstance(state, dict)
+            or set(state) != {"schema_version", "sites"}
+            or type(state["schema_version"]) is not int
+            or state["schema_version"] != 1
+            or not isinstance(state["sites"], dict)
+        ):
+            raise ValueError
+        for key, value in state["sites"].items():
+            if (
+                not _SITE_KEY.fullmatch(key)
+                or not isinstance(value, dict)
+                or set(value) != fields
+                or value["site_key"] != key
+                or type(value["success"]) is not bool
+                or value["outcome"] not in {"updated", "no_new_data", "failed"}
+            ):
+                raise ValueError
+            if any(
+                type(value[field]) is not int or value[field] < 0
+                for field in ("new_count", "updated_count")
+            ):
+                raise ValueError
+            for field in ("last_attempt_at", "last_success_at"):
+                timestamp = value[field]
+                if timestamp is None and field == "last_success_at" and not value["success"]:
+                    continue
+                if (
+                    not isinstance(timestamp, str)
+                    or datetime.fromisoformat(timestamp).tzinfo is None
+                ):
+                    raise ValueError
+            error = value["error"]
+            if error is not None and (
+                not isinstance(error, dict)
+                or set(error) != {"code", "message"}
+                or error["code"] not in EXIT_CODES
+                or not isinstance(error["message"], str)
+            ):
+                raise ValueError
+            if value["success"] != (value["outcome"] != "failed") or value["success"] != (
+                error is None
+            ):
+                raise ValueError
+    except (KeyError, TypeError, ValueError) as exc:
+        raise InboxError("local_read", "Local feedback sync evidence is invalid") from exc
     return state
 
 
@@ -443,11 +480,11 @@ def _pull(root, sites, payload):
                 result["error"] = exc.payload()
             state["sites"][key] = result
             payload["sites"].append(result)
-            _atomic_write(
-                root / "sync.json", json.dumps(state, ensure_ascii=False, indent=2) + "\n"
-            )
             try:
                 _write_report(root, records, state["sites"].values())
+                _atomic_write(
+                    root / "sync.json", json.dumps(state, ensure_ascii=False, indent=2) + "\n"
+                )
             except InboxError as exc:
                 result.update(
                     success=False,
@@ -455,9 +492,17 @@ def _pull(root, sites, payload):
                     last_success_at=previous.get("last_success_at"),
                     error=exc.payload(),
                 )
-                _atomic_write(
-                    root / "sync.json", json.dumps(state, ensure_ascii=False, indent=2) + "\n"
-                )
+                # Error evidence is best effort; failed storage must not skip the next site.
+                try:
+                    _atomic_write(
+                        root / "sync.json", json.dumps(state, ensure_ascii=False, indent=2) + "\n"
+                    )
+                except InboxError:
+                    pass
+                try:
+                    _write_report(root, records, state["sites"].values())
+                except InboxError:
+                    pass
     failures = [result for result in payload["sites"] if not result["success"]]
     if failures:
         payload.update(

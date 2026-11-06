@@ -6,6 +6,7 @@ import subprocess
 import sys
 import threading
 import urllib.error
+from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from uuid import UUID
@@ -665,3 +666,206 @@ def test_human_views_show_cached_sync_success_and_failure(setup, monkeypatch, ca
     monkeypatch.setattr(inbox, "api_request", fail)
     assert run(setup, capsys, "pull")[0] == inbox.EXIT_CODES["connection"]
     assert_views("failed", "connection")
+
+
+@contextmanager
+def loopback_server(handler):
+    with HTTPServer(("127.0.0.1", 0), handler) as server:
+        thread = threading.Thread(
+            target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True
+        )
+        thread.start()
+        try:
+            yield f"http://127.0.0.1:{server.server_port}"
+        finally:
+            server.shutdown()
+            thread.join(timeout=3)
+
+
+def test_actual_cross_origin_redirect_does_not_forward_management_token(setup, capsys):
+    headers = []
+
+    class Destination(BaseHTTPRequestHandler):
+        def do_GET(self):
+            headers.append(("destination", self.headers.get("Authorization")))
+            self.send_response(401)
+            self.end_headers()
+
+        def log_message(self, *args):
+            pass
+
+    with loopback_server(Destination) as destination:
+
+        class Redirect(BaseHTTPRequestHandler):
+            def do_GET(self):
+                headers.append(("configured", self.headers.get("Authorization")))
+                self.send_response(302)
+                self.send_header(
+                    "Location", destination.replace("127.0.0.1", "localhost") + "/unconfigured"
+                )
+                self.end_headers()
+
+            def log_message(self, *args):
+                pass
+
+        with loopback_server(Redirect) as configured:
+            setup[0]["feedback_inbox"]["sites"][0]["url"] = configured
+            setup[1]()
+            code, payload = run(setup, capsys, "pull")
+    assert code == inbox.EXIT_CODES["authentication"]
+    assert payload["sites"][0]["success"] is False
+    assert headers == [("configured", "Bearer private-token"), ("destination", None)]
+
+
+@pytest.mark.parametrize("malformed", ["status", "long_header"])
+def test_malformed_http_response_isolated_from_next_site(setup, capsys, malformed):
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            if self.path.startswith("/china/"):
+                self.wfile.write(
+                    b"invalid-status\r\n\r\n"
+                    if malformed == "status"
+                    else b"HTTP/1.0 200 OK\r\nX-Long: " + b"x" * 65537 + b"\r\n\r\n"
+                )
+            else:
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(
+                    json.dumps({"items": [item(site="overseas")], "next_cursor": None}).encode()
+                )
+
+        def log_message(self, *args):
+            pass
+
+    with loopback_server(Handler) as base:
+        setup[0]["feedback_inbox"]["sites"] = [
+            {
+                "site_key": site,
+                "url": f"{base}/{site}",
+                "token_env": f"{site.upper()}_FEEDBACK_TOKEN",
+            }
+            for site in ("china", "overseas")
+        ]
+        setup[1]()
+        code, payload = run(setup, capsys, "pull")
+    assert code == inbox.EXIT_CODES["connection"]
+    assert payload["outcome"] == "partial_failure"
+    assert payload["sites"][0]["error"]["code"] == "connection"
+    assert payload["sites"][1]["success"]
+    assert run(setup, capsys, "list")[1]["items"] == [item(site="overseas")]
+
+
+@pytest.mark.parametrize(
+    "invalid",
+    [
+        {"success": "true"},
+        {"success": 1},
+        {"outcome": "listed"},
+        {"new_count": -1},
+        {"updated_count": True},
+        {"last_attempt_at": None},
+        {"last_success_at": 123},
+        {"last_attempt_at": "not-a-time"},
+        {"last_success_at": "2026-11-05T12:00:00"},
+        {"error": {"code": "connection"}},
+        {"error": {"code": "unknown", "message": "failure"}},
+        {"error": {"code": "connection", "message": []}},
+        {"error": False},
+        {"success": False, "outcome": "failed", "error": None},
+    ],
+)
+def test_invalid_sync_values_return_local_read_before_network_or_writes(
+    setup, monkeypatch, capsys, invalid
+):
+    monkeypatch.setattr(
+        inbox, "api_request", lambda *a, **k: {"items": [item()], "next_cursor": None}
+    )
+    run(setup, capsys, "pull")
+    path = setup[3] / "sync.json"
+    state = json.loads(path.read_text(encoding="utf-8"))
+    state["sites"]["china"].update(invalid)
+    path.write_text(json.dumps(state), encoding="utf-8")
+    before = {
+        name: (setup[3] / name).read_bytes() for name in ("inbox.json", "inbox.md", "sync.json")
+    }
+    monkeypatch.setattr(
+        inbox, "api_request", lambda *a, **k: pytest.fail("invalid cache must fail before network")
+    )
+    for command in ("list", "pull"):
+        code, payload = run(setup, capsys, command)
+        assert code == inbox.EXIT_CODES["local_read"]
+        assert payload["error"]["code"] == "local_read"
+    args = cli.build_parser().parse_args(["--config", str(setup[2]), "feedback", "list"])
+    assert args.func(args) == inbox.EXIT_CODES["local_read"]
+    assert "local_read" in capsys.readouterr().out
+    assert all((setup[3] / name).read_bytes() == data for name, data in before.items())
+
+
+@pytest.mark.parametrize("failure_mode", ["once", "always", "report_then_sync"])
+def test_sync_write_failure_keeps_prior_success_and_processes_next_site(
+    setup, monkeypatch, capsys, failure_mode
+):
+    setup[0]["feedback_inbox"]["sites"].append(
+        {
+            "site_key": "overseas",
+            "url": "https://overseas.example",
+            "token_env": "OVERSEAS_FEEDBACK_TOKEN",
+        }
+    )
+    setup[1]()
+    monkeypatch.setattr(
+        inbox,
+        "api_request",
+        lambda site, **k: {"items": [item(site=site["site_key"])], "next_cursor": None},
+    )
+    _, first = run(setup, capsys, "pull")
+    last_success = {site["site_key"]: site["last_success_at"] for site in first["sites"]}
+    before_sync = (setup[3] / "sync.json").read_bytes()
+    calls = []
+
+    def request(site, **kwargs):
+        calls.append(site["site_key"])
+        return {"items": [item(20, site=site["site_key"])], "next_cursor": None}
+
+    monkeypatch.setattr(inbox, "api_request", request)
+    replace = inbox.os.replace
+    attempts = 0
+    report_failed = False
+
+    def fail(source, target):
+        nonlocal attempts, report_failed
+        if (
+            Path(target).name == "inbox.md"
+            and failure_mode == "report_then_sync"
+            and not report_failed
+        ):
+            report_failed = True
+            raise OSError("report failure")
+        if Path(target).name == "sync.json":
+            attempts += 1
+            if failure_mode != "once" or attempts == 1:
+                raise OSError("sync failure")
+        return replace(source, target)
+
+    monkeypatch.setattr(inbox.os, "replace", fail)
+    code, payload = run(setup, capsys, "pull")
+    assert code == inbox.EXIT_CODES["local_write"]
+    assert calls == ["china", "overseas"]
+    assert payload["sites"][0]["success"] is False
+    assert payload["sites"][0]["last_success_at"] == last_success["china"]
+    assert payload["sites"][0]["error"]["code"] == "local_write"
+    if failure_mode == "once":
+        assert payload["outcome"] == "partial_failure"
+        assert payload["sites"][1]["success"]
+        assert (
+            json.loads((setup[3] / "sync.json").read_text())["sites"]["china"]["success"] is False
+        )
+    else:
+        assert payload["outcome"] == "failed"
+        assert all(
+            not site["success"] and site["last_success_at"] == last_success[site["site_key"]]
+            for site in payload["sites"]
+        )
+        assert (setup[3] / "sync.json").read_bytes() == before_sync
+    assert len(run(setup, capsys, "list")[1]["items"]) == 4
+    assert "error=local_write" in (setup[3] / "inbox.md").read_text(encoding="utf-8")

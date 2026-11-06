@@ -12,7 +12,10 @@ Each entry requires a unique, stable `site_key`, an HTTP(S) base `url`, and a
 server identity. Keep the same key when its URL changes; do not reuse a key for
 a different deployment. Duplicate/missing keys and embedded URL credentials are
 rejected. Do not put tokens in YAML, command arguments or reports. Use HTTPS for
-remote endpoints. The existing admin API token needs `feedback.read` for pull
+remote endpoints and configure their final base URL. Redirected requests never
+receive the management token, even when the redirect stays on the same origin;
+an authenticated endpoint behind a redirect must therefore be configured directly.
+The existing admin API token needs `feedback.read` for pull
 and `feedback.manage` for mark. A missing/expired token returns an explicit
 authentication failure; a credential lacking permission returns permission.
 
@@ -78,7 +81,14 @@ state, not a live view. If pull's Markdown write fails after JSON succeeds, the
 canonical record remains readable and the command fails; the next full scan
 repairs the report. A failed JSON page is never continued. A site failure does not erase a prior
 successful site's records or its last-success timestamp. Do not erase malformed
-local files to hide an error: preserve them and repair before retrying. A shared
+local files to hide an error: preserve them and repair before retrying. Invalid
+sync values, timestamps or nested error data return `local_read` before network
+requests or report writes. A sync/report write failure marks that site failed,
+retains its prior last-success time and continues to subsequent sites. Failure
+evidence is written on a best-effort basis; if `sync.json` remains unwritable,
+its previous contents stay intact while the current command returns `local_write`
+and updates Markdown if possible. An unchanged sync file does not prove a fresh
+successful run. A shared
 OS writer lock prevents overlapping manual/scheduled pulls or marks from losing
 each other's updates; readers need no lock. There is no unattended retry loop:
 the next run starts fresh. A busy writer returns failure; rerun later.
