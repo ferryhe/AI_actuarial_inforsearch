@@ -1,3 +1,14 @@
+## 2026-11-06 CIA news — final reviewed recovery/exclusion fixes
+
+- Current source passed fresh independent Sol/high review 4, zero findings. Controlled four-module suite: 287 passed; frozen-runtime-v2 QA: 227 passed. Black/Ruff/whitespace checks passed. Source-byte hashes were checked before publication.
+- Exact CIA news HTML now checks source exclusions at the final redirected URL before capture. Matching legacy pending replay rows use the page route while preserving processed history/cursor and retry evidence; other exact document routes remain unchanged. Source-portal fixture accounts for the new feed and resolves the sole initial CI test failure.
+- Existing source/import acceptance is retained: one visible article on each native target, both Ready; two different HTML originals have identical extracted text and remain preserved in Hub. AI-first monitoring remains a proposal. Controller owns the new frozen-runtime activation and final current-HEAD CI readback; no merge authorized.
+
+## 2026-11-06 CIA news — current remote-feedback code checkpoint
+
+- Current scope is final-destination source exclusions for operator-selected CIA news HTML and pending legacy exact-replay route upgrade, with existing prefix/cursor/retry history preserved. Source-portal test fixtures account for the added news-feed request.
+- Controlled runtime/target-worker/source-portal-daily/source-portals suite: 287 passed, 3 warnings. Black/Ruff/whitespace checks passed. Current code awaits fresh independent review and controller-owned frozen-runtime follow-up acceptance; no new live operation was performed for this code revision.
+
 ## 2026-11-06 CIA news collection — reviewed code checkpoint
 
 - `fix/cia-news-discovery`: fresh independent Sol/high review 3 PASS, zero findings; actual code/test fingerprints checked. Controlled product suite 264 passed; narrow frozen runtime suite 204 passed. Black/Ruff/whitespace checks passed.

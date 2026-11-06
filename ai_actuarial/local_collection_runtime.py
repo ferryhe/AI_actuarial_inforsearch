@@ -2832,6 +2832,16 @@ def _capture(
                 )
             if not _allowed_host(final_url, site):
                 raise RuntimeErrorSafe("source page redirect left the approved host list")
+            exact_metadata = item.get("discovery_metadata") or {}
+            if (
+                site.site_id == "cia-ica"
+                and exact_metadata.get("operator_exact_url")
+                and urlsplit(url).path.lower().startswith("/news/")
+                and not _site_candidate_allowed(
+                    site, final_url, str(item.get("title") or ""), exact_metadata
+                )
+            ):
+                raise RuntimeErrorSafe("exact article redirect matched a source exclusion")
             successful_requests += 1
             if item.get("kind") != "document":
                 record_page_read(final_url)
@@ -5807,6 +5817,33 @@ def _new_crawler(data_root: Path) -> _BudgetCrawler:
     )
 
 
+def _migrate_pending_cia_news_exact_replay(selected_url: str, replay_state: dict[str, Any]) -> None:
+    """Switch only pending saved CIA news exact-replay rows to HTML capture."""
+    queue = replay_state.get("queue")
+    if not isinstance(queue, list):
+        return
+    cursor = min(max(0, int(replay_state.get("cursor") or 0)), len(queue))
+    retry_queue = replay_state.get("retry_queue")
+
+    def migrate(row: Any) -> None:
+        if not isinstance(row, dict):
+            return
+        try:
+            matches = _canonical_url(str(row.get("url") or "")) == selected_url
+        except RuntimeErrorSafe:
+            return
+        if matches:
+            row["kind"] = "page"
+            row["depth"] = 1
+            row["title"] = ""
+
+    for row in queue[cursor:]:
+        migrate(row)
+    if isinstance(retry_queue, list):
+        for row in retry_queue:
+            migrate(row)
+
+
 def _run_site(
     site_id: str,
     date_text: str,
@@ -5904,6 +5941,8 @@ def _run_site(
                 "discovery_metadata": {"operator_exact_url": True},
             }
         ]
+        if exact_html_article:
+            _migrate_pending_cia_news_exact_replay(selected_url, capture_state)
     else:
         exact_site = site
     crawler = _new_crawler(Path(config["data_root"]).resolve())

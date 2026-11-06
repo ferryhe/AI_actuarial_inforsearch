@@ -2664,6 +2664,157 @@ def test_exact_html_capture_uses_article_path_and_deduplicates(tmp_path: Path, m
     assert len(state["articles"]) == 1
 
 
+def test_exact_cia_news_redirect_to_excluded_path_is_not_captured(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(runtime, "_ACTIVE_STATE_PATH", tmp_path / "state.json")
+    url = "https://www.cia-ica.ca/news/public-story/"
+    final_url = "https://www.cia-ica.ca/private-files/redirected/"
+    raw = (
+        "<html><body><h1>Public story</h1><p>"
+        + "Article text that must not be captured after an excluded redirect. " * 5
+        + "</p></body></html>"
+    ).encode()
+
+    class RedirectCrawler:
+        site_attempts = 0
+        site_budget = runtime.MAX_SITE_REQUESTS
+
+        def begin_site(self, budget: int) -> None:
+            self.site_attempts = 0
+            self.site_budget = budget
+
+        def _request(self, requested_url: str, **_kwargs):
+            self.site_attempts += 1
+            assert requested_url == url
+            return raw, {"content-type": "text/html"}, final_url
+
+    crawler = RedirectCrawler()
+    site = runtime.SITES["cia-ica"]
+    site_state = {"queue": [], "cursor": 0, "visited": [], "retry_queue": []}
+    state = {"articles": {}}
+
+    result = runtime._capture(
+        site,
+        state,
+        crawler,
+        tmp_path / "data",
+        site_state,
+        initial_frontier=[
+            {
+                "url": url,
+                "kind": "page",
+                "depth": 1,
+                "referrer": "https://www.cia-ica.ca/news/",
+                "title": "",
+                "discovery_metadata": {"operator_exact_url": True},
+            }
+        ],
+    )
+
+    assert crawler.site_attempts == 1
+    assert result["downloads"] == []
+    assert state["articles"] == {}
+    assert any("matched a source exclusion" in error for error in result["errors"])
+
+
+def test_legacy_cia_news_exact_replay_migrates_only_pending_retry(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(runtime, "_ACTIVE_STATE_PATH", tmp_path / "state.json")
+    monkeypatch.setattr(capacity, "ensure_capacity", lambda **_kwargs: None)
+    url = "https://www.cia-ica.ca/news/actuaries-ai-lessons-legal-troubles/"
+    raw = (
+        "<html><body><h1>Actuaries, AI, Lessons &amp; Legal Troubles</h1><p>"
+        + "A complete article body with verified source text. " * 10
+        + "</p></body></html>"
+    ).encode()
+
+    class ResumeCrawler:
+        site_attempts = 0
+        site_budget = runtime.MAX_SITE_REQUESTS
+        requested: list[str] = []
+
+        def begin_site(self, budget: int) -> None:
+            self.site_attempts = 0
+            self.site_budget = budget
+
+        def _request(self, requested_url: str, **_kwargs):
+            self.site_attempts += 1
+            self.requested.append(requested_url)
+            return raw, {"content-type": "text/html"}, url
+
+        def _download_file(self, *_args, **_kwargs):
+            raise AssertionError("legacy CIA news retry should use HTML capture")
+
+    exact_document = {
+        "url": url,
+        "kind": "document",
+        "depth": 0,
+        "referrer": "https://www.cia-ica.ca/news/",
+        "title": "actuaries-ai-lessons-legal-troubles",
+        "discovery_metadata": {"operator_exact_url": True},
+        "attempts": 1,
+        "last_error": "document link returned a non-document response",
+    }
+    processed_prefix = {"url": "https://www.cia-ica.ca/old-report.pdf", "kind": "document"}
+    cursor_prefix = {**exact_document}
+    replay_state = {
+        "url": url,
+        "queue": [processed_prefix.copy(), cursor_prefix.copy()],
+        "cursor": 2,
+        "visited": [],
+        "retry_queue": [{**exact_document}],
+        "completed_frontier": False,
+    }
+    old_prefix = json.loads(json.dumps(replay_state["queue"]))
+    runtime._migrate_pending_cia_news_exact_replay(url, replay_state)
+
+    assert replay_state["cursor"] == 2
+    assert replay_state["queue"] == old_prefix
+    assert replay_state["retry_queue"] == [
+        {
+            **exact_document,
+            "kind": "page",
+            "depth": 1,
+            "title": "",
+        }
+    ]
+
+    crawler = ResumeCrawler()
+    result = runtime._capture(
+        runtime.SITES["cia-ica"],
+        {"articles": {}},
+        crawler,
+        tmp_path / "data",
+        replay_state,
+        initial_frontier=[
+            {
+                "url": url,
+                "kind": "page",
+                "depth": 1,
+                "referrer": "https://www.cia-ica.ca/news/",
+                "title": "",
+                "discovery_metadata": {"operator_exact_url": True},
+            }
+        ],
+    )
+    assert crawler.requested == [url]
+    assert result["errors"] == []
+    assert len(result["downloads"]) == 1
+    assert result["downloads"][0]["detected_kind"] == "html"
+
+    pdf_url = "https://www.cia-ica.ca/app/uploads/official-report.pdf"
+    pdf_replay = {
+        "queue": [{"url": pdf_url, "kind": "document", "depth": 0, "title": "report.pdf"}],
+        "cursor": 0,
+        "retry_queue": [],
+    }
+    runtime._migrate_pending_cia_news_exact_replay(url, pdf_replay)
+    assert pdf_replay["queue"][0]["kind"] == "document"
+    assert pdf_replay["queue"][0]["depth"] == 0
+
+
 def test_cia_news_feed_refreshes_after_saved_prefix_without_replaying_it(
     tmp_path: Path, monkeypatch
 ) -> None:
