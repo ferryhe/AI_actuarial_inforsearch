@@ -121,6 +121,36 @@ def test_realistic_json_and_embedded_site_adapters_apply_include_rules() -> None
     )
     assert any(row["kind"] == "page" and row["url"].endswith("ai-pricing-report") for row in queue)
 
+    cia_news_queue: list[dict] = []
+    runtime._enqueue_wordpress_results(
+        runtime.SITES["cia-ica"],
+        {"url": "https://www.cia-ica.ca/wp-json/wp/v2/news", "collection": "news"},
+        json.dumps(
+            [
+                {
+                    "id": 843131,
+                    "link": "https://www.cia-ica.ca/news/actuaries-ai-lessons-legal-troubles/",
+                    "title": {"rendered": "Actuaries, AI, Lessons &amp; Legal Troubles"},
+                    "content": {"rendered": "<p>News article body.</p>"},
+                }
+            ]
+        ).encode(),
+        {},
+        "https://www.cia-ica.ca/wp-json/wp/v2/news",
+        cia_news_queue,
+        set(),
+    )
+    assert cia_news_queue == [
+        {
+            "url": "https://www.cia-ica.ca/news/actuaries-ai-lessons-legal-troubles/",
+            "kind": "page",
+            "depth": 1,
+            "referrer": "https://www.cia-ica.ca/wp-json/wp/v2/news",
+            "title": "Actuaries, AI, Lessons & Legal Troubles",
+            "discovery_metadata": {"wp_id": 843131, "cia_news": True},
+        }
+    ]
+
     caa = runtime.SITES["caa"]
     queue, queued = [], set()
     runtime._enqueue_caa_results(
@@ -1186,6 +1216,11 @@ def test_exact_url_processes_canonical_same_host_redirect(tmp_path: Path, monkey
             "https://www.cia-ica.ca/publications/",
         ),
         (
+            "cia-ica",
+            "https://www.cia-ica.ca/news/actuaries-ai-lessons-legal-troubles/",
+            "https://www.cia-ica.ca/news/",
+        ),
+        (
             "cia-research-publications",
             "https://www.cia-ica.ca/app/themes/wicket/custom/dl_file.php?p=840374&fid=840377",
             "https://www.cia-ica.ca/publications/",
@@ -1241,7 +1276,7 @@ def test_exact_url_capture_does_not_repair_normal_site_frontier(
             self.calls.append(url)
             self.site_attempts += 1
             body = (
-                "<html><body><h1>Research publications</h1><p>"
+                "<html><body><h1>Actuaries, AI, Lessons &amp; Legal Troubles</h1><p>"
                 + "Verified actuarial research listing. " * 8
                 + "</p></body></html>"
             ).encode()
@@ -1311,6 +1346,10 @@ def test_exact_url_capture_does_not_repair_normal_site_frontier(
     assert state["sites"][site_id]["cursor"] == 1
     replay_state = next(iter(state["sites"][site_id]["exact_replays"].values()))
     assert [row["url"] for row in replay_state["queue"]] == [canonical_exact_url]
+    if "/news/" in exact_url:
+        article = next(iter(state["articles"].values()))
+        assert article["detected_kind"] == "html"
+        assert article["title"] == "Actuaries, AI, Lessons & Legal Troubles"
 
 
 def test_frontier_budget_and_restart_advance_without_replaying_first_page(
@@ -2528,6 +2567,359 @@ def test_cia_legacy_frontier_adds_verified_publications_page_without_resetting_r
     assert site_state["queue"][0] == rest
     assert site_state["queue"][1]["url"] == "https://www.cia-ica.ca/publications/"
     assert site_state["queue"][2] == later
+
+
+def test_cia_ica_news_feed_is_added_to_existing_frontier_and_prioritized() -> None:
+    news_feed = "https://www.cia-ica.ca/wp-json/wp/v2/news?per_page=100&page=1&_fields=id,link,title,content,date"
+    assert any(
+        item.get("collection") == "news"
+        for item in runtime._initial_frontier(runtime.SITES["cia-ica"])
+    )
+    assert not any(
+        item.get("collection") == "news"
+        for item in runtime._initial_frontier(runtime.SITES["cia-research-publications"])
+    )
+
+    site = runtime.SITES["cia-ica"]
+    saved = {
+        "queue": [
+            {"url": "https://www.cia-ica.ca/app/uploads/report.pdf", "kind": "document"},
+            {"url": news_feed, "kind": "json_rest", "collection": "news"},
+        ],
+        "cursor": 0,
+        "visited": [],
+    }
+    runtime._repair_saved_frontier(site, saved)
+    assert saved["cursor"] == 0
+    runtime._prioritize_pending_documents(site, saved["queue"], saved["cursor"])
+    assert any(item.get("collection") == "news" for item in saved["queue"][:2])
+
+
+def test_exact_html_capture_uses_article_path_and_deduplicates(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(runtime, "_ACTIVE_STATE_PATH", tmp_path / "state.json")
+    monkeypatch.setattr(capacity, "ensure_capacity", lambda **_kwargs: None)
+    url = "https://www.cia-ica.ca/news/actuaries-ai-lessons-legal-troubles/"
+    raw = (
+        "<html><head><title>Actuaries, AI, Lessons &amp; Legal Troubles | CIA</title></head>"
+        "<body><h1>Actuaries, AI, Lessons &amp; Legal Troubles</h1><p>"
+        + "A complete article body with verified source text. " * 12
+        + "</p><a href='/news/unrelated/'>unrelated</a></body></html>"
+    ).encode()
+
+    class HtmlCrawler:
+        site_attempts = 0
+        site_budget = runtime.MAX_SITE_REQUESTS
+
+        def begin_site(self, budget: int) -> None:
+            self.site_attempts = 0
+            self.site_budget = budget
+
+        def _request(self, requested_url: str, **_kwargs):
+            self.site_attempts += 1
+            assert requested_url == url
+            return raw, {"content-type": "text/html"}, url
+
+    crawler = HtmlCrawler()
+    site = runtime.Site("cia-ica", "collect", (url,), ("cia-ica.ca",), 0, 1)
+    site_state = {
+        "queue": [
+            {
+                "url": url,
+                "kind": "page",
+                "depth": 1,
+                "referrer": "https://www.cia-ica.ca/news/",
+                "discovery_metadata": {"operator_exact_url": True},
+            }
+        ],
+        "cursor": 0,
+        "visited": [],
+    }
+    state = {"sites": {"cia-ica": site_state}, "articles": {}}
+    site_state["frontier_repair_cia-ica_v1"] = True
+    result = runtime._capture(
+        site,
+        state,
+        crawler,
+        tmp_path / "data",
+        site_state,
+        initial_frontier=site_state["queue"].copy(),
+    )
+
+    assert len(result["downloads"]) == 1
+    article = result["downloads"][0]
+    assert article["detected_kind"] == "html"
+    assert article["title"] == "Actuaries, AI, Lessons & Legal Troubles"
+    assert len(article["preset_markdown"]) >= 100
+    assert crawler.site_attempts == 1
+    assert len(state["articles"]) == 1
+    replay = runtime._capture(
+        site,
+        state,
+        crawler,
+        tmp_path / "data",
+        site_state,
+        initial_frontier=site_state["queue"].copy(),
+    )
+    assert len(replay["downloads"]) == 1
+    assert len(state["articles"]) == 1
+
+
+def test_cia_news_feed_refreshes_after_saved_prefix_without_replaying_it(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(runtime, "_ACTIVE_STATE_PATH", tmp_path / "state.json")
+    monkeypatch.setattr(capacity, "ensure_capacity", lambda **_kwargs: None)
+    site = runtime.SITES["cia-ica"]
+    feed_url = "https://www.cia-ica.ca/wp-json/wp/v2/news?per_page=100&page=1&_fields=id,link,title,content,date"
+    prefix = {"url": "https://www.cia-ica.ca/old-item/", "kind": "page", "outcome": "visited"}
+    site_state = {
+        "queue": [prefix, {"url": "https://www.cia-ica.ca/old-report.pdf", "kind": "document"}],
+        "cursor": 1,
+        "visited": [runtime._queue_identity(prefix)],
+        "frontier_repair_cia-ica_v1": True,
+    }
+    state = {"sites": {"cia-ica": site_state}, "articles": {}}
+
+    class FeedCrawler:
+        site_attempts = 0
+        site_budget = 1
+
+        def begin_site(self, budget: int) -> None:
+            self.site_attempts = 0
+            self.site_budget = budget
+
+        def _request(self, url: str, **_kwargs):
+            assert runtime._canonical_url(url) == runtime._canonical_url(feed_url)
+            self.site_attempts += 1
+            return b"[]", {"content-type": "application/json"}, url
+
+    for sequence in (1, 2):
+        crawler = FeedCrawler()
+        runtime._capture(
+            site,
+            state,
+            crawler,
+            tmp_path / f"data-{sequence}",
+            site_state,
+            request_limit=1,
+        )
+        assert site_state["queue"][0] == prefix
+        assert site_state["cursor"] == sequence + 1
+        assert site_state["queue"][sequence]["collection"] == "news"
+        assert site_state["queue"][sequence]["poll_id"] == sequence
+
+
+def test_cia_news_page_two_backlog_does_not_suppress_fresh_page_one_poll(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(runtime, "_ACTIVE_STATE_PATH", tmp_path / "state.json")
+    monkeypatch.setattr(capacity, "ensure_capacity", lambda **_kwargs: None)
+    site = runtime.SITES["cia-ica"]
+    feed_url = "https://www.cia-ica.ca/wp-json/wp/v2/news?per_page=100&page=1&_fields=id,link,title,content,date"
+    poll = {
+        "url": feed_url,
+        "kind": "json_rest",
+        "page": 1,
+        "collection": "news",
+        "poll_id": 1,
+        "referrer": "https://www.cia-ica.ca/news/",
+    }
+    queued_news: list[dict] = []
+    runtime._enqueue_wordpress_results(
+        site,
+        poll,
+        json.dumps(
+            [
+                {
+                    "id": 31,
+                    "link": "https://www.cia-ica.ca/news/older-story-one/",
+                    "title": {"rendered": "Older story one"},
+                    "content": {"rendered": "<p>Story one.</p>"},
+                },
+                {
+                    "id": 32,
+                    "link": "https://www.cia-ica.ca/news/older-story-two/",
+                    "title": {"rendered": "Older story two"},
+                    "content": {"rendered": "<p>Story two.</p>"},
+                },
+            ]
+        ).encode(),
+        {"x-wp-totalpages": "2"},
+        feed_url,
+        queued_news,
+        set(),
+    )
+    [page_two] = [item for item in queued_news if item.get("page") == 2]
+    story_pages = [item for item in queued_news if item.get("kind") == "page"]
+    assert len(story_pages) == 2
+
+    prefix = dict(poll, outcome="visited")
+    site_state = {
+        "queue": [prefix, *queued_news],
+        "cursor": 1,
+        "visited": [runtime._queue_identity(poll)],
+        "cia_news_poll_sequence": 1,
+        "frontier_repair_cia-ica_v1": True,
+    }
+    state = {"sites": {"cia-ica": site_state}, "articles": {}}
+
+    class PaginatedNewsCrawler:
+        site_attempts = 0
+        site_budget = 1
+
+        def begin_site(self, budget: int) -> None:
+            self.site_attempts = 0
+            self.site_budget = budget
+
+        def _request(self, requested_url: str, **_kwargs):
+            assert runtime._canonical_url(requested_url) == runtime._canonical_url(feed_url)
+            self.site_attempts += 1
+            return (
+                b"[]",
+                {"content-type": "application/json", "x-wp-totalpages": "2"},
+                requested_url,
+            )
+
+    result = runtime._capture(
+        site,
+        state,
+        PaginatedNewsCrawler(),
+        tmp_path / "data",
+        site_state,
+        request_limit=1,
+    )
+
+    assert result["request_count"] == 1 and result["budget_exhausted"]
+    assert site_state["queue"][0] == prefix
+    assert site_state["cursor"] == 2
+    assert site_state["queue"][1]["poll_id"] == 2
+    assert sum(item.get("page") == 2 for item in site_state["queue"]) == 1
+    assert any(
+        runtime._queue_identity(item) == runtime._queue_identity(page_two)
+        for item in site_state["queue"]
+    )
+    assert site_state["queue"][site_state["cursor"]]["url"].endswith("older-story-one/")
+
+
+def test_cia_failed_news_poll_retry_runs_before_large_story_backlog(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(runtime, "_ACTIVE_STATE_PATH", tmp_path / "state.json")
+    monkeypatch.setattr(capacity, "ensure_capacity", lambda **_kwargs: None)
+    site = runtime.SITES["cia-ica"]
+    feed_url = "https://www.cia-ica.ca/wp-json/wp/v2/news?per_page=100&page=1&_fields=id,link,title,content,date"
+    first_poll = {
+        "url": feed_url,
+        "kind": "json_rest",
+        "page": 1,
+        "collection": "news",
+        "poll_id": 1,
+        "referrer": "https://www.cia-ica.ca/news/",
+    }
+    backlog: list[dict] = []
+    runtime._enqueue_wordpress_results(
+        site,
+        first_poll,
+        json.dumps(
+            [
+                {
+                    "id": number,
+                    "link": f"https://www.cia-ica.ca/news/old-story-{number}/",
+                    "title": {"rendered": f"Old story {number}"},
+                    "content": {"rendered": "<p>Old story excerpt.</p>"},
+                }
+                for number in range(35)
+            ]
+        ).encode(),
+        {"x-wp-totalpages": "2"},
+        feed_url,
+        backlog,
+        set(),
+    )
+    [page_two] = [item for item in backlog if item.get("page") == 2]
+    stories = [item for item in backlog if item.get("kind") == "page"]
+    assert len(stories) == 35
+
+    failed_poll = {
+        **first_poll,
+        "poll_id": 2,
+        "outcome": "failed",
+        "attempts": 1,
+        "last_error": "temporary feed error",
+    }
+    site_state = {
+        "queue": [first_poll, failed_poll, *backlog],
+        "cursor": 2,
+        "visited": [runtime._queue_identity(first_poll)],
+        "retry_queue": [dict(failed_poll)],
+        "cia_news_poll_sequence": 2,
+        "frontier_repair_cia-ica_v1": True,
+    }
+    state = {"sites": {"cia-ica": site_state}, "articles": {}}
+
+    class NewsRetryCrawler:
+        site_attempts = 0
+        site_budget = runtime.MAX_SITE_REQUESTS
+
+        def __init__(self) -> None:
+            self.requests: list[str] = []
+
+        def begin_site(self, budget: int) -> None:
+            self.site_attempts = 0
+            self.site_budget = budget
+
+        def _request(self, requested_url: str, **_kwargs):
+            self.site_attempts += 1
+            self.requests.append(requested_url)
+            if runtime._canonical_url(requested_url) == runtime._canonical_url(feed_url):
+                return (
+                    b"[]",
+                    {"content-type": "application/json", "x-wp-totalpages": "2"},
+                    requested_url,
+                )
+            return (
+                b"<html><body><main><h1>Old story</h1></main></body></html>",
+                {"content-type": "text/html"},
+                requested_url,
+            )
+
+    crawler = NewsRetryCrawler()
+    result = runtime._capture(
+        site,
+        state,
+        crawler,
+        tmp_path / "data",
+        site_state,
+        request_limit=runtime.MAX_SITE_REQUESTS,
+    )
+
+    assert result["request_count"] == runtime.MAX_SITE_REQUESTS
+    assert result["budget_exhausted"]
+    assert runtime._canonical_url(crawler.requests[0]) == runtime._canonical_url(feed_url)
+    assert site_state["queue"][:2] == [first_poll, failed_poll]
+    assert site_state["queue"][1]["attempts"] == 1
+    assert site_state["queue"][1]["last_error"] == "temporary feed error"
+    page_one_polls = [
+        item
+        for item in site_state["queue"]
+        if item.get("collection") == "news" and item.get("page", 1) == 1
+    ]
+    assert {item.get("poll_id") for item in page_one_polls} == {1, 2}
+    assert sum(item.get("page") == 2 for item in site_state["queue"]) == 1
+    assert (
+        len(
+            [
+                item
+                for item in site_state["queue"][site_state["cursor"] :]
+                if item.get("kind") == "page" and item.get("discovery_metadata", {}).get("cia_news")
+            ]
+        )
+        == 6
+    )
+    assert runtime._queue_identity(page_two) == next(
+        runtime._queue_identity(item) for item in site_state["queue"] if item.get("page") == 2
+    )
+    assert not site_state.get("retry_queue")
 
 
 def test_swiss_sixty_request_budget_stops_at_limit_and_resumes_at_saved_cursor(
