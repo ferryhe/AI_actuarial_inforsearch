@@ -1524,7 +1524,7 @@
     ],
     "note": "V1 is a local source/UI/role check; local build identity is unknown and is reported as unknown. Controller V3 used a real full create_app Uvicorn process and isolated PostgreSQL 16.15; temporary docs/config modifications were fully restored."
   },
-  "acceptance_receipt_updated_at_utc": "2026-11-06T05:42:45.035559+00:00",
+  "acceptance_receipt_updated_at_utc": "2026-11-06T06:06:54.251298+00:00",
   "ci_gate_repair": {
     "implementation_commit": "a871e22236edb01f590a04e6d7f14c0db54af3ec",
     "initial_pr_head": "5c173b11b0c748fab9eb62bf14b7e2aa222da59a",
@@ -1577,5 +1577,69 @@
     "post_repair_pr_head_before_receipt_commit": "2ebe221862ffc2e10a0bedffd1ae888cf76f1128",
     "post_repair_github_ci": "PENDING until the next branch push; this receipt does not claim the fix passed GitHub CI.",
     "historical_v1_v2_v3_note": "V1, V2, V3, source hashes, HTTP responses and tests remain attached to implementation commit a871e22236edb01f590a04e6d7f14c0db54af3ec. The CI repair only changes Vulture references and status text; historical HTTP checks are not re-labelled as reruns on the CI repair commit."
+  },
+  "remote_feedback_fix": {
+    "comment_id": 4489402804,
+    "review_thread_id": "PRRT_kwDORCVWS860ZGI7",
+    "copilot_review_id": 5796200511,
+    "feedback_snapshot": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-462\\remote-feedback-snapshot-468.json",
+    "disposition": "accepted and repaired",
+    "criterion": "AC2",
+    "finding": "English function words were the only overlap for two unsupported SMTP questions, producing unrelated sections instead of no results.",
+    "reproductions": [
+      {
+        "query": "Where can I configure SMTP mail delivery relay?",
+        "pre_fix_only_overlap": "can",
+        "pre_fix_sections": [
+          "account-quota",
+          "categories-sources",
+          "file-details"
+        ],
+        "expected": []
+      },
+      {
+        "query": "What is SMTP mail delivery?",
+        "pre_fix_only_overlap": "is",
+        "pre_fix_sections": [
+          "categories-sources",
+          "common-failures",
+          "feedback-entry",
+          "file-details",
+          "knowledge-chat"
+        ],
+        "expected": []
+      }
+    ],
+    "review_adjudication": {
+      "worker_classification": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-462\\remote-review-worker-classification-468.md",
+      "remote_typesafe_assessment": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-462\\typesafe-remote-review-468-v2.json",
+      "typesafe_judge_request": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-462\\typesafe-judge-remote-468-input.json",
+      "typesafe_judge_result": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-462\\typesafe-judge-remote-468.json",
+      "judge_choice": "accept_r1_minimal_fix",
+      "judge_confidence": 0.88,
+      "judge_accept_probability": 0.92,
+      "cumulative_completed_reviews_requiring_changes": 2,
+      "formal_local_failed_review_cycles": 1
+    },
+    "fix": {
+      "commit": "9c238dad2f4415149cebd4d7f09e452a3b1bb51e",
+      "implementation": "Subtract a bounded English function-word set from query tokens before overlap scoring.",
+      "test_changes": "Added two separate empty-result regressions; the fixed 18-question fixture is unchanged.",
+      "worker_report": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-462\\remote-fix-468.md"
+    },
+    "validation": {
+      "pre_fix_command": "python -m pytest tests/test_assistant_help.py -q -k unmatched_natural_language --tb=short -o addopts=",
+      "pre_fix_result": "2 failed; both exact SMTP queries returned unrelated sections.",
+      "post_fix_command": "python -m pytest tests/test_assistant_help.py tests/test_fastapi_assistant_help_endpoints.py -q -o addopts=",
+      "post_fix_result": "15 passed; includes all fixed fixture questions and Chinese and heading-only positive cases.",
+      "format_and_lint": "Black, isort, Ruff, and git diff --check passed.",
+      "historical_v1_v2_v3_note": "Prior V1, V2, V3, content hashes, HTTP evidence and implementation_commit remain bound to a871e22236edb01f590a04e6d7f14c0db54af3ec. This section records only the later AC2 retrieval correction."
+    },
+    "final_delivery_gates": {
+      "fresh_local_review_report": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-462\\review-round-3.md",
+      "fresh_local_review": "required on the material remote fix",
+      "current_pr_head_ci": "pending; must pass on the final pushed HEAD",
+      "production_deployment": "not performed"
+    }
   }
 }
