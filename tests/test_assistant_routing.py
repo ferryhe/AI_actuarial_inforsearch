@@ -132,6 +132,30 @@ def test_feedback_draft_is_original_and_independent_flag(runtime):
     assert runtime.run(message).error_code == "FEEDBACK_DISABLED"
 
 
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Please add a help page explaining how to send feedback",
+        "建议增加说明，告诉用户如何提交反馈。",
+        "How about adding a feedback button?",
+    ],
+)
+def test_feedback_proposal_about_help_preserves_original_draft(runtime, message):
+    runtime.outputs = ['{"intent":"feedback"}', '{"steps":[]}']
+    result = runtime.run(message)
+    assert result.intent == "feedback"
+    assert result.feedback_draft == message
+    assert result.generation_attempts == 1
+
+
+@pytest.mark.parametrize("message", ["How do I send feedback?", "怎样提交建议", "建议按钮在哪里"])
+def test_genuine_feedback_how_to_corrects_forced_feedback_classification(runtime, message):
+    runtime.outputs = ['{"intent":"feedback"}', '{"steps":[]}']
+    result = runtime.run(message)
+    assert result.intent == "usage"
+    assert result.feedback_draft is None
+
+
 def test_mixed_feedback_help_request_keeps_clarification(runtime):
     runtime.outputs = ['{"intent":"clarify"}']
     result = runtime.run("How do I send feedback and what does mortality improvement mean?")

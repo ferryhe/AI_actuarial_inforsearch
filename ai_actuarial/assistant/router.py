@@ -41,7 +41,7 @@ async def api_assistant_query(
         )
         apply_session_update(response, request, session_update)
         return result
-    except TimeoutError:
+    except asyncio.TimeoutError:
         return unavailable(
             "usage" if payload.mode == "usage" else "clarify",
             "ASSISTANT_TIMEOUT",

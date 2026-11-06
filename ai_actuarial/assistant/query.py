@@ -128,11 +128,14 @@ def unavailable(intent: Intent, code: str, *, zh: bool, attempts: int = 0) -> Qu
 def _feedback_help_question(message: str) -> bool:
     """The feedback how-to counterexamples must never become feedback drafts."""
     return bool(
-        re.search(
-            r"(怎么|怎样|如何|哪里|在哪|何处).*(建议|反馈)|(?:建议|反馈).*(怎么|怎样|如何|哪里|在哪|何处)",
-            message,
+        re.match(
+            r"(?:怎么|怎样|如何|哪里|在哪|何处).*(?:建议|反馈)|"
+            r"(?:建议|反馈)(?:的)?(?:按钮|入口)?(?:在哪里|在哪|哪里|何处|怎么|怎样|如何)",
+            message.strip(),
         )
-        or re.search(r"\b(?:how|where)\b.*\b(?:feedback|suggestion|suggestions)\b", message, re.I)
+        or re.match(
+            r"(?:how(?!\s+about\b)|where)\b.*\b(?:feedback|suggestions?)\b", message.strip(), re.I
+        )
     )
 
 

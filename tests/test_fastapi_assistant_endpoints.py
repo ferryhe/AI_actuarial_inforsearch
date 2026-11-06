@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from types import SimpleNamespace
 
 import pytest
 from fastapi import FastAPI
@@ -98,3 +99,30 @@ def test_total_deadline_bounds_response(client, monkeypatch):
     response = client.post("/api/assistant/query", json={"message": "hello"})
     assert response.json()["error_code"] == "ASSISTANT_TIMEOUT"
     assert response.json()["generation_attempts"] == 1
+
+
+def test_python310_asyncio_timeout_returns_stable_response(client, monkeypatch):
+    class LegacyAsyncioTimeoutError(Exception):
+        pass
+
+    async def legacy_wait_for(awaitable, timeout):
+        awaitable.close()
+        raise LegacyAsyncioTimeoutError()
+
+    monkeypatch.setattr(
+        assistant_router,
+        "asyncio",
+        SimpleNamespace(
+            wait_for=legacy_wait_for,
+            to_thread=assistant_router.asyncio.to_thread,
+            TimeoutError=LegacyAsyncioTimeoutError,
+        ),
+    )
+    response = client.post("/api/assistant/query", json={"message": "hello", "mode": "usage"})
+    assert response.status_code == 200
+    assert response.json()["intent"] == "usage"
+    assert response.json()["availability"] == "error"
+    assert response.json()["error_code"] == "ASSISTANT_TIMEOUT"
+    assert response.json()["generation_attempts"] == 0
+    assert response.json()["embedding_attempts"] == 0
+    assert not client.assistant_calls
