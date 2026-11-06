@@ -1501,7 +1501,22 @@
       "typesafe": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-462\\typesafe-review-round-2.json",
       "typesafe_coverage": 0.96
     },
-    "failed_review_cycles": 1
+    "failed_review_cycles": 2,
+    "round_3": {
+      "outcome": "CHANGES_REQUIRED",
+      "reviewer_model": "gpt-6-sol/high",
+      "report": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-462\\review-round-3.md",
+      "typesafe": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-462\\typesafe-review-round-3.json",
+      "typesafe_coverage": 0.92,
+      "accepted_finding": "AC1: both guides said Download was hidden without permission although File Detail shows a disabled button.",
+      "judge": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-462\\typesafe-judge-local-review-3.json",
+      "judge_choice": "accept_bilingual_wording_fix",
+      "fix_commit": "188c9483cb64ae7007fe9e82259807eac891856d",
+      "fix_report": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-462\\remote-fix-ac1-docs-468.md",
+      "post_fix_real_http_v2": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-462\\remote-fix-ac1-docs-v2-http-468.json",
+      "post_fix_real_http_result": "20/20 passed: 14 positive and 6 negative; max 3 candidates and 280-character snippets; generation calls 0; both AI keys absent from service environment."
+    },
+    "cumulative_completed_reviews_requiring_changes": 3
   },
   "limitations_and_boundary": {
     "not_run": [
@@ -1524,7 +1539,7 @@
     ],
     "note": "V1 is a local source/UI/role check; local build identity is unknown and is reported as unknown. Controller V3 used a real full create_app Uvicorn process and isolated PostgreSQL 16.15; temporary docs/config modifications were fully restored."
   },
-  "acceptance_receipt_updated_at_utc": "2026-11-06T06:06:54.251298+00:00",
+  "acceptance_receipt_updated_at_utc": "2026-11-06T06:24:21.258855+00:00",
   "ci_gate_repair": {
     "implementation_commit": "a871e22236edb01f590a04e6d7f14c0db54af3ec",
     "initial_pr_head": "5c173b11b0c748fab9eb62bf14b7e2aa222da59a",
@@ -1636,10 +1651,35 @@
       "historical_v1_v2_v3_note": "Prior V1, V2, V3, content hashes, HTTP evidence and implementation_commit remain bound to a871e22236edb01f590a04e6d7f14c0db54af3ec. This section records only the later AC2 retrieval correction."
     },
     "final_delivery_gates": {
-      "fresh_local_review_report": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-462\\review-round-3.md",
-      "fresh_local_review": "required on the material remote fix",
-      "current_pr_head_ci": "pending; must pass on the final pushed HEAD",
+      "fresh_local_review_report": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-462\\review-round-4.md",
+      "fresh_local_review": "Round 3 returned changes; its accepted AC1 wording correction is recorded separately. Fresh round 4 is required before merge.",
+      "current_pr_head_ci": "Pending on the final pushed HEAD after the documentation correction and receipt commit.",
       "production_deployment": "not performed"
     }
+  },
+  "followup_documentation_fix": {
+    "criterion": "AC1",
+    "disposition": "accepted by TypeSafe Judge",
+    "judge_result": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-462\\typesafe-judge-local-review-3.json",
+    "judge_choice": "accept_bilingual_wording_fix",
+    "fix_commit": "188c9483cb64ae7007fe9e82259807eac891856d",
+    "files": [
+      "docs/help/user-guide.en.md",
+      "docs/help/user-guide.zh.md"
+    ],
+    "worker_report": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-462\\remote-fix-ac1-docs-468.md",
+    "validation": {
+      "focused_test_suite": "15 passed",
+      "diff_check": "passed",
+      "real_http_v2_report": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-462\\remote-fix-ac1-docs-v2-http-468.json",
+      "real_http_v2": "20/20 passed; 14 positive; 6 negative; maximum 3 candidates; maximum snippet length 280; generation calls 0; OPENAI_API_KEY and TYPESAFE_API_KEY absent in service environment."
+    },
+    "historical_evidence_note": "Original V1/V2/V3 and real HTTP lifecycle records remain bound to implementation commit a871e22236edb01f590a04e6d7f14c0db54af3ec. The stopword remote fix and the later wording correction have separate validation records.",
+    "cumulative_completed_reviews_requiring_changes": 3,
+    "formal_local_failed_review_cycles": 2,
+    "next_review_report": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-462\\review-round-4.md",
+    "next_review": "required on the final pushed HEAD before merge",
+    "current_head_ci": "pending on the final pushed HEAD",
+    "production_deployment": "not performed"
   }
 }
