@@ -28,6 +28,8 @@ async def api_assistant_query(
 ) -> QueryResponse:
     _require_enabled(request)
     request.state.assistant_attempts = 0
+    request.state.assistant_embeddings = 0
+    request.state.assistant_routing_attempts = 0
     try:
         result, session_update = await asyncio.wait_for(
             asyncio.to_thread(
@@ -43,8 +45,10 @@ async def api_assistant_query(
         return result
     except asyncio.TimeoutError:
         return unavailable(
-            "usage" if payload.mode == "usage" else "clarify",
+            payload.mode if payload.mode != "auto" else "clarify",
             "ASSISTANT_TIMEOUT",
             zh=payload.locale.startswith("zh"),
             attempts=request.state.assistant_attempts,
+            embeddings=request.state.assistant_embeddings,
+            routing=request.state.assistant_routing_attempts,
         )

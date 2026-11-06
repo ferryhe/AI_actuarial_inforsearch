@@ -3000,6 +3000,72 @@ class Storage:
         """True when the current categories.yaml differs from the last applied hash."""
         return self.current_taxonomy_hash() != self.get_applied_taxonomy_hash()
 
+    def search_catalog_projection(self, terms: list[str], *, limit: int = 5) -> list[dict]:
+        """Search only public catalog fields; never inspect document Markdown."""
+        source_join = ""
+        organization_en = organization_zh = "f.source_site"
+        source_search_fields = ["f.source_site"]
+        if not self._schema_only:
+            source_join = f"LEFT JOIN canonical_sources s ON s.source_key = {source_sql()}"
+            organization_en = "COALESCE(s.name_en, 'Source pending confirmation')"
+            organization_zh = "COALESCE(s.name_zh, '来源待确认')"
+            source_search_fields = ["s.source_key", organization_en, organization_zh]
+        bilingual = [
+            (
+                f"json_extract(c.bilingual_metadata_json, '$.{lang}.{field}')"
+                if self._schema_only
+                else f"NULLIF(c.bilingual_metadata_json, '')::jsonb #>> '{{{lang},{field}}}'"
+            )
+            for lang in ("en", "zh")
+            for field in ("title", "summary")
+        ]
+        fields = [
+            "f.title",
+            "f.original_filename",
+            "c.summary",
+            "c.category",
+            *source_search_fields,
+            *bilingual,
+        ]
+        searchable = " || ' ' || ".join(f"COALESCE({field}, '')" for field in fields)
+        conditions = " OR ".join(f"LOWER({searchable}) LIKE ? ESCAPE '\\'" for _ in terms) or "1=1"
+        params = [
+            "%" + term.lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+            for term in terms
+        ]
+        rows = self._conn.execute(
+            f"""SELECT f.url, f.title, f.original_filename, {organization_en}, f.published_time,
+                       c.category, c.summary, c.bilingual_metadata_json, c.catalog_version,
+                       c.updated_at, {organization_zh}
+                FROM files f LEFT JOIN catalog_items c ON c.file_url = f.url
+                {source_join}
+                WHERE f.deleted_at IS NULL AND f.local_path IS NOT NULL AND f.local_path != ''
+                  AND ({conditions})
+                ORDER BY f.last_seen DESC, f.url LIMIT ?""",
+            (*params, min(5, max(1, limit))),
+        ).fetchall()
+        return [
+            dict(
+                zip(
+                    (
+                        "file_url",
+                        "title",
+                        "filename",
+                        "organization",
+                        "date",
+                        "category",
+                        "summary",
+                        "bilingual_metadata",
+                        "version",
+                        "updated_at",
+                        "organization_zh",
+                    ),
+                    row,
+                )
+            )
+            for row in rows
+        ]
+
     def query_files_with_catalog(
         self,
         *,

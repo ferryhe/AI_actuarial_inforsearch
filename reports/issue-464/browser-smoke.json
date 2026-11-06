@@ -1,0 +1,129 @@
+{
+  "schema_version": 1,
+  "issue": 464,
+  "source_sha256": "d48e176fdd90777df6c7aa6b849719f17094d6247f458ecbbd00cc3f2a3b9a52",
+  "environment": {
+    "browser": "Chrome",
+    "frontend": "http://127.0.0.1:4173",
+    "api": "http://127.0.0.1:8000",
+    "postgres": "isolated Issue #464 PostgreSQL 16",
+    "production_or_public_sites": false,
+    "scheduler": "disabled"
+  },
+  "flows": [
+    {
+      "id": "assistant-classifies-original-suggestion-confirmed",
+      "result": "observed",
+      "route": "/chat",
+      "locale": "en",
+      "steps": [
+        "Opened the floating Open help and feedback control; Website assistant appeared with Auto selected.",
+        "Entered: Please add the publication date next to each search result so readers can tell how current a document is.",
+        "The first click showed the daily quota error. The isolated test ledger was at 9 for 2026-11-06; a new acceptance phase reset only the task-owned 127.0.0.1 ledger from 9 to 0. The product limit and provider configuration were unchanged.",
+        "Retried the same UI request through the normal provider. The assistant opened the Help and feedback form with the exact original sentence in Your feedback. The client opens this form only for an available feedback intent with a non-null draft; the transition therefore demonstrates assistant classification and original-text draft preservation.",
+        "Clicked Send feedback. The UI displayed Recorded with receipt 81974bf9-dc11-4acd-af76-ac02971136cb."
+      ],
+      "ui_evidence": {
+        "page": "http://127.0.0.1:4173/chat",
+        "controls": [
+          "Open help and feedback",
+          "Website assistant",
+          "Your question",
+          "Ask / retry",
+          "Your feedback",
+          "Send feedback"
+        ],
+        "accessibility_item_ids": {
+          "question_field": 83,
+          "ask_button": 85,
+          "draft_field": 79,
+          "confirm_button": 83,
+          "receipt": 84
+        },
+        "draft_text_exact": true,
+        "receipt_visible": true,
+        "screenshot_file": null
+      },
+      "provider": {
+        "provider_and_model": "OpenAI gpt-5.4-mini via the repository's normal ChatbotConfig/LLMClient factory",
+        "real_provider_call": true,
+        "generation_attempts": 1,
+        "embedding_attempts": 0,
+        "prompt_source_ids": [],
+        "prompt_message_sha256": "729d8ec75387c3ea0d07ecd9d9b5ddd36b252a8431877afbf0022738aa938fec",
+        "trace": "reports/issue-459-464-20261105/issue-464/api-observations-current-r6-feedback.jsonl"
+      },
+      "database_readback": {
+        "database": "ai_actuarial_issue464",
+        "feedback_rows": 3,
+        "unique_client_request_ids": 3,
+        "id": 3,
+        "feedback_id": "81974bf9-dc11-4acd-af76-ac02971136cb",
+        "client_request_id": "ac45e50a-f8bb-4ad5-828c-942902e85f1b",
+        "content": "Please add the publication date next to each search result so readers can tell how current a document is.",
+        "kind": "suggestion",
+        "origin": "widget",
+        "user_id": null,
+        "page_path": "/chat",
+        "locale_in_database": "en",
+        "status": "new",
+        "readback": "reports/issue-459-464-20261105/issue-464/feedback-pg-readback-r6.json"
+      },
+      "issue_461_local_inbox": {
+        "pull_result_after_submit": "updated; new_count=1",
+        "later_pull_while_feedback_disabled": "no_new_data; success=true",
+        "list_contains_same_feedback_id_and_exact_content": true,
+        "readback_files": [
+          "reports/issue-459-464-20261105/issue-464/feedback-pull-r6-final.json",
+          "reports/issue-459-464-20261105/issue-464/feedback-list-r6-final.json"
+        ]
+      }
+    },
+    {
+      "id": "quota-error-then-manual-feedback",
+      "result": "observed-in-earlier-issue-464-browser-run",
+      "route": "/chat",
+      "steps": [
+        "The earlier Chrome UI run displayed the actual AI quota error.",
+        "The user then opened the manual suggestion form and submitted without depending on another AI answer.",
+        "The UI returned receipt 83620296-199f-4563-9fa6-55e40d3ad6c8; the exact row remained readable in the #461 local inbox after feature switches were toggled off and on."
+      ],
+      "submitted_content": "Issue #464 local acceptance suggestion: keep the directory list accessible from the help and feedback panel.",
+      "server_row_evidence": "reports/issue-459-464-20261105/issue-464/controller-pg-feedback-readonly.json",
+      "switch_preservation_evidence": "reports/issue-459-464-20261105/issue-464/live-current-feedback-preservation.json",
+      "quota_error_evidence": "reports/issue-459-464-20261105/issue-464/live-traced-access.json",
+      "screenshot_or_ax_ids_saved": false
+    },
+    {
+      "id": "off-off-old-page-and-refresh",
+      "result": "observed",
+      "steps": [
+        "Loaded /chat with both switches enabled, opened Website assistant, and prepared a valid manual suggestion without submitting it.",
+        "Disabled assistant and feedback through the isolated backend settings endpoint while the old page remained open.",
+        "Submitted from the stale feedback form and asked from the stale assistant panel. The request observer recorded POST /api/feedback = 404 and POST /api/assistant/query = 404. The UI showed its retryable feedback and assistant errors.",
+        "Refreshed /chat. The Help and feedback entry was absent from the accessibility tree. Between the observer count of 9 and 11, the only new records were two GET /api/support/capabilities = 200; there were zero new assistant, help, or feedback business requests.",
+        "Pulled and listed the local #461 inbox with both intake switches off; the existing receipts and exact content remained readable. Restored both switches to true and verified the entry returned after refresh."
+      ],
+      "rejected_synthetic_feedback_content": "Please add an export button to the results list.",
+      "rejected_rows_written": 0,
+      "generation_attempts_after_disable": 0,
+      "trace": "reports/issue-459-464-20261105/issue-464/api-observations-switch-gates-r6.jsonl",
+      "browser_event_note": "The CUA Playwright surface did not support ordinary request subscriptions; a task-local server observer recorded only method, path and status, without request bodies or headers."
+    }
+  ],
+  "quota_phase": {
+    "before_count": 9,
+    "reset_count": 0,
+    "after_real_retry_count": 1,
+    "scope": "one row in the isolated Issue #464 PostgreSQL database for IP 127.0.0.1 and quota date 2026-11-06",
+    "limit_or_provider_configuration_changed": false
+  },
+  "final_switch_state": {
+    "feedback_enabled": true,
+    "assistant_enabled": true
+  },
+  "limitations": [
+    "A screenshot file was not retained; replay steps, route, control labels, CUA accessibility IDs and server traces are recorded here.",
+    "The earlier manual-after-quota UI sequence did not retain screenshot or AX IDs; its receipt, exact content and quota error are independently present in the named Issue #464 evidence files."
+  ]
+}

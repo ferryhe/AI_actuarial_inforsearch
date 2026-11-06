@@ -6,8 +6,9 @@ from knowledge bases, generate citations, and handle multi-KB queries.
 """
 
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Union
 
 import numpy as np
 
@@ -35,7 +36,14 @@ class RAGRetriever:
     and supports multi-KB queries with result ranking and deduplication.
     """
 
-    def __init__(self, storage: Storage, config: Optional[ChatbotConfig] = None):
+    def __init__(
+        self,
+        storage: Storage,
+        config: Optional[ChatbotConfig] = None,
+        *,
+        embedding_deadline: float | None = None,
+        embedding_attempt: Callable[[], None] | None = None,
+    ):
         """
         Initialize RAG retriever.
 
@@ -48,10 +56,14 @@ class RAGRetriever:
 
         # Initialize RAG components
         self.kb_manager = KnowledgeBaseManager(storage)
-        self.embedding_generator = EmbeddingGenerator(storage=self.storage)
+        embedding_options = {}
+        if embedding_deadline is not None:
+            embedding_options = {"deadline": embedding_deadline, "on_attempt": embedding_attempt}
+        self.embedding_generator = EmbeddingGenerator(storage=self.storage, **embedding_options)
 
         # Cache for loaded vector stores
         self._vector_store_cache: Dict[str, VectorStore] = {}
+        self._index_source_cache: Dict[str, Dict[str, Any]] = {}
         self.last_effective_threshold: float | None = None
 
     def get_current_embedding_metadata(self) -> Dict[str, Any]:
@@ -72,6 +84,7 @@ class RAGRetriever:
         kb_ids: Optional[Union[str, List[str]]] = None,
         top_k: Optional[int] = None,
         threshold: Optional[float] = None,
+        file_urls: set[str] | None = None,
     ) -> List[Dict[str, Any]]:
         """
         Retrieve relevant chunks for a query.
@@ -81,6 +94,7 @@ class RAGRetriever:
             kb_ids: Single KB ID, list of KB IDs, or None for all KBs
             top_k: Number of results to return (default: config.top_k)
             threshold: Similarity threshold (default: config.similarity_threshold)
+            file_urls: Optional current membership, filtered before the result budget
 
         Returns:
             List of retrieved chunks with metadata and citations
@@ -125,14 +139,17 @@ class RAGRetriever:
             logger.info("Generating embedding for retrieval query")
             query_embedding = self.embedding_generator.generate_single(query)
             query_vector = np.array(query_embedding)
+            scope = {"file_urls": file_urls} if file_urls is not None else {}
 
             # Retrieve from each KB
             if len(kb_ids) == 1:
                 # Single KB query
-                results = self._retrieve_from_kb(kb_ids[0], query_vector, top_k, threshold)
+                results = self._retrieve_from_kb(kb_ids[0], query_vector, top_k, threshold, **scope)
             else:
                 # Multi-KB query with diversity enforcement
-                results = self._retrieve_from_multiple_kbs(kb_ids, query_vector, top_k, threshold)
+                results = self._retrieve_from_multiple_kbs(
+                    kb_ids, query_vector, top_k, threshold, **scope
+                )
 
             if not results:
                 raise NoResultsException(f"No results found above similarity threshold {threshold}")
@@ -150,7 +167,12 @@ class RAGRetriever:
             raise RetrievalException("Knowledge retrieval failed") from e
 
     def _retrieve_from_kb(
-        self, kb_id: str, query_vector: np.ndarray, top_k: int, threshold: float
+        self,
+        kb_id: str,
+        query_vector: np.ndarray,
+        top_k: int,
+        threshold: float,
+        file_urls: set[str] | None = None,
     ) -> List[Dict[str, Any]]:
         """Retrieve chunks from a single KB."""
         # Get KB info
@@ -161,8 +183,21 @@ class RAGRetriever:
         # Load vector store
         vector_store = self._get_vector_store(kb_id)
 
-        # Search
-        search_results = vector_store.search(query_vector, k=top_k, similarity_threshold=threshold)
+        # Expand the loaded index search, not the query embedding, to fill the member budget.
+        search_k = top_k
+        while True:
+            search_results = vector_store.search(
+                query_vector, k=search_k, similarity_threshold=threshold
+            )
+            if file_urls is None:
+                break
+            search_results = [
+                row for row in search_results if row["metadata"].get("file_url") in file_urls
+            ]
+            if len(search_results) >= top_k or search_k >= len(vector_store.metadata):
+                search_results = search_results[:top_k]
+                break
+            search_k = min(len(vector_store.metadata), search_k * 2)
 
         # Format results with citations
         formatted_results = []
@@ -183,6 +218,7 @@ class RAGRetriever:
                         "similarity_score": result["score"],
                         "chunk_id": metadata.get("chunk_id", ""),
                         "file_url": metadata.get("file_url", ""),
+                        **self._index_source_cache[kb_id],
                     },
                 }
             )
@@ -190,7 +226,12 @@ class RAGRetriever:
         return formatted_results
 
     def _retrieve_from_multiple_kbs(
-        self, kb_ids: List[str], query_vector: np.ndarray, top_k: int, threshold: float
+        self,
+        kb_ids: List[str],
+        query_vector: np.ndarray,
+        top_k: int,
+        threshold: float,
+        file_urls: set[str] | None = None,
     ) -> List[Dict[str, Any]]:
         """
         Retrieve chunks from multiple KBs with diversity enforcement.
@@ -209,7 +250,8 @@ class RAGRetriever:
 
         for kb_id in kb_ids:
             try:
-                results = self._retrieve_from_kb(kb_id, query_vector, per_kb_k, threshold)
+                scope = {"file_urls": file_urls} if file_urls is not None else {}
+                results = self._retrieve_from_kb(kb_id, query_vector, per_kb_k, threshold, **scope)
                 successful_reads += 1
                 if results:
                     all_results[kb_id] = results
@@ -385,50 +427,50 @@ class RAGRetriever:
         return balanced_chunks
 
     def _get_vector_store(self, kb_id: str) -> VectorStore:
-        """Get or load vector store for a KB."""
+        """Load a store and pin its source metadata for this retriever's lifetime."""
         if kb_id in self._vector_store_cache:
             return self._vector_store_cache[kb_id]
-
-        # Get KB info
         kb = self.kb_manager.get_kb(kb_id)
         if not kb:
             raise InvalidKBException(f"Knowledge base '{kb_id}' not found")
-
-        # Get index path from database
-        cursor = self.storage._conn.execute(
-            """
-            SELECT index_path FROM rag_knowledge_bases WHERE kb_id = ?
-        """,
-            (kb_id,),
-        )
-        row = cursor.fetchone()
-
-        if not row or not row[0]:
-            raise RetrievalException(f"No index found for KB '{kb_id}'")
-
-        index_path = Path(row[0])
-
-        if not index_path.exists():
-            raise RetrievalException(f"Index file not found for KB '{kb_id}': {index_path}")
-
-        # Load vector store
-        composition = self.storage.get_kb_composition_status(kb_id)
-        latest_index = composition.get("latest_index") if isinstance(composition, dict) else None
-        dimension = None
-        if isinstance(latest_index, dict):
-            dimension = latest_index.get("embedding_dimension")
-        if dimension in (None, ""):
-            dimension = getattr(kb, "embedding_dimension", None) or infer_embedding_dimension(
-                kb.embedding_model
+        with self.storage.transaction(read_snapshot=True):
+            row = self.storage._conn.execute(
+                "SELECT index_path FROM rag_knowledge_bases WHERE kb_id = ?", (kb_id,)
+            ).fetchone()
+            if not row or not row[0]:
+                raise RetrievalException(f"No index found for KB '{kb_id}'")
+            index_path = Path(row[0])
+            if not index_path.exists():
+                raise RetrievalException(f"Index file not found for KB '{kb_id}': {index_path}")
+            version = self.storage._conn.execute(
+                """SELECT index_version_id, COALESCE(built_at, created_at), embedding_dimension
+                   FROM kb_index_versions WHERE kb_id = ? AND artifact_path = ? AND status = 'ready'
+                   ORDER BY COALESCE(built_at, created_at) DESC LIMIT 1""",
+                (kb_id, str(index_path)),
+            ).fetchone()
+            composition = self.storage.get_kb_composition_status(kb_id)
+            dimension = (
+                (version[2] if version else None)
+                or (composition.get("latest_index") or {}).get("embedding_dimension")
+                or getattr(kb, "embedding_dimension", None)
+                or infer_embedding_dimension(kb.embedding_model)
             )
-        if dimension in (None, ""):
-            raise RetrievalException(f"Unable to determine index dimension for KB '{kb_id}'")
-
-        vector_store = VectorStore(dimension=int(dimension), index_path=str(index_path))
-
-        # Cache for future use
+            if dimension in (None, ""):
+                raise RetrievalException(f"Unable to determine index dimension for KB '{kb_id}'")
+            vector_store = VectorStore(dimension=int(dimension), index_path=str(index_path))
+            source = {
+                "index_version_id": str(version[0]) if version else None,
+                "index_built_at": (
+                    str(version[1])
+                    if version
+                    else datetime.fromtimestamp(
+                        index_path.stat().st_mtime, timezone.utc
+                    ).isoformat()
+                ),
+                "index_stale": bool(composition.get("needs_reindex")),
+            }
         self._vector_store_cache[kb_id] = vector_store
-
+        self._index_source_cache[kb_id] = source
         return vector_store
 
     def _ensure_kb_embedding_compatibility(

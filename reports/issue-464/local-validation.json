@@ -1,0 +1,122 @@
+{
+  "schema_version": 1,
+  "base_head": "5a101347503c98124a4ff560b28499130ff4e2c6",
+  "current_source": "uncommitted remote-feedback repairs; no implementation commit yet",
+  "focused_backend": {
+    "command": "python -m pytest tests/test_assistant_knowledge.py tests/test_assistant_feature_matrix.py tests/test_source_registry.py tests/agentic_rag/test_ready_data_tools.py tests/test_rag_runtime.py tests/test_fastapi_chat_endpoints.py -q --no-cov",
+    "result": "191 passed,3 warnings; exit0",
+    "environment": "Windows Python3.11; task-only PostgreSQL16; synthetic per-test schemas",
+    "source_log_sha256": "2895524b42da2ba488ca337f6a53f5724ad3097cf264167232c5099a04510456",
+    "phase": "Earlier remote-repair phase before Standard C4 completion; not final Standard-path proof"
+  },
+  "pre_fix_regressions": {
+    "result": "7 expected failures in code-finding regressions",
+    "source_log_sha256": "1c7d274d73d935378d5f372cff18fdf29b2d34c08cf6cfd5c3938a9a0b42f68c"
+  },
+  "historical_checks": [
+    {
+      "command": "python -m pytest tests/test_assistant_knowledge.py tests/test_assistant_feature_matrix.py tests/test_fastapi_assistant_endpoints.py tests/test_fastapi_chat_endpoints.py tests/test_fastapi_agentic_rag_endpoints.py tests/test_rag_runtime.py tests/test_assistant_routing.py tests/test_assistant_help.py tests/test_fastapi_assistant_help_endpoints.py tests/unit/test_permissions.py tests/agentic_rag/test_ready_data_tools.py tests/test_source_registry.py tests/test_fastapi_ops_write_endpoints.py -q --no-cov",
+      "result": "364 passed, 4 warnings in 189.36s; exit code 0",
+      "phase": "fresh current-source backend/API/RAG replay on implementation_sha",
+      "implementation_sha": "bc1fdab375b7db748a9c6a8f5df406be021cc3b8"
+    },
+    {
+      "command": "npx vitest run --config vitest.config.ts client/src/features/assistant client/src/features/feedback client/src/components/support-widget",
+      "result": "PASS, 26 tests",
+      "phase": "earlier frontend check, before the later backend repair iterations",
+      "reuse_basis": "The subsequent backend fixes did not change client files; the client blobs in the implementation commit match this earlier check. This does not assert that the whole repository was unchanged.",
+      "reused_scope": "client files only"
+    },
+    {
+      "command": "npm run typecheck",
+      "result": "PASS",
+      "phase": "earlier frontend check, before the later backend repair iterations",
+      "reuse_basis": "The subsequent backend fixes did not change client files; the client blobs in the implementation commit match this earlier check. This does not assert that the whole repository was unchanged.",
+      "reused_scope": "client files only"
+    },
+    {
+      "command": "npm run build",
+      "result": "PASS; existing large-chunk advisory",
+      "phase": "earlier frontend check, before the later backend repair iterations",
+      "reuse_basis": "The subsequent backend fixes did not change client files; the client blobs in the implementation commit match this earlier check. This does not assert that the whole repository was unchanged.",
+      "reused_scope": "client files only"
+    },
+    {
+      "command": "npm run test:a11y",
+      "result": "PASS, 96 tests",
+      "phase": "earlier frontend check, before the later backend repair iterations",
+      "reuse_basis": "The subsequent backend fixes did not change client files; the client blobs in the implementation commit match this earlier check. This does not assert that the whole repository was unchanged.",
+      "reused_scope": "client files only"
+    },
+    {
+      "command": "npm run dead-code:check",
+      "result": "PASS (historical only; not current-source proof)",
+      "phase": "earlier whole-repository dead-code check",
+      "reuse_basis": "This scanner included Python files; later backend changes mean this earlier result does not establish the current Python dead-code gate."
+    },
+    {
+      "command": "Black, isort, Ruff, Pylint errors-only, Python file/symbol gates, git diff --check",
+      "result": "PASS",
+      "phase": "final R6 Python static checks before the implementation commit",
+      "reuse_basis": "The final R6 worker report records Black, isort, Ruff, Pylint errors-only, Python file/symbol gates and diff check; implementation commit contains the same source bytes."
+    }
+  ],
+  "current_real_provider_acceptance": "PASS_TARGETED_CURRENT_SOURCE",
+  "current_independent_review": "PASS; fresh reviewer found no actionable AC-mapped findings and did not rerun tests.",
+  "final_focused_backend": {
+    "command": "python -m pytest tests/test_assistant_knowledge.py tests/test_assistant_feature_matrix.py tests/test_rag_runtime.py tests/test_fastapi_ops_write_endpoints.py::test_backend_settings_write_roundtrip_is_native_fastapi -q --no-cov",
+    "result": "60 passed,3 warnings; exit0",
+    "source_log_sha256": "6733235dcab431420163a58652befac8187191861f431860542f69a93df71677",
+    "phase": "Earlier remote-repair phase before Standard C4 completion"
+  },
+  "static_checks": {
+    "black_check": "PASS",
+    "isort_check": "PASS",
+    "ruff": "PASS",
+    "pylint_errors_only": "PASS",
+    "python_symbols": "PASS",
+    "diff_check": "PASS"
+  },
+  "sanitized_evidence_self_check": {
+    "prompt_sources_subset_of_supplied_and_permitted_evidence": true,
+    "pg_cli_receipt_request_content_hashes_equal": true,
+    "matching_feedback_rows": 1,
+    "current_source_real_acceptance_pending": true,
+    "current_source_real_provider_cases": 7,
+    "current_source_actual_generation_attempts": 3,
+    "current_source_unauthorized_generation_attempts": 0,
+    "raw_response_or_credential_persisted": false,
+    "ip_addresses_or_process_ids_persisted": false
+  },
+  "source_fingerprints": {
+    "ai_actuarial/agentic_rag/ready_data_tools.py": "12f986fb22f79bfb75ef4d0e218e5c75b1d924f6e4898493e12507d325418378",
+    "ai_actuarial/api/services/ops_write.py": "4b905083de0383834397aa2b61c3c00555092973fc18c18ba6044fca76c80cbf",
+    "ai_actuarial/assistant/knowledge.py": "d74fd05fdf382ca8363bbef97fab8c4ee126154e205988511ab145f0e4d58f57",
+    "ai_actuarial/chatbot/retrieval.py": "e9603f8e2704172481d7c3222239c63d071a7abd7e3be17a8d0609b43821049d",
+    "tests/test_assistant_feature_matrix.py": "902a698eb26a9d7ba4dd147534a02e8d031df592b70bd6683c1e5694bc7bb6e8",
+    "tests/test_assistant_knowledge.py": "a99af9044198631fb3894241815c6ae0fe2c5f3c8eff51502c5ecc5d8c0be0cc",
+    "tests/test_source_registry.py": "0eb24aa68eff4e4f7806795672c894d2225f4abfe20c4673acc575d8608cde7b"
+  },
+  "standard_membership_completion": {
+    "command": "python -m pytest tests/test_assistant_knowledge.py tests/test_rag_runtime.py tests/test_fastapi_chat_endpoints.py -q --no-cov",
+    "result": "104 passed,3 warnings; exit0",
+    "source_log_sha256": "f287f4f2277265ab8dc922a489912a6cbd6134814ab7467d3916fdb446ecd4f8",
+    "pre_fix_result": "2 expected failures through actual FAISS/Standard adapter/retrieval",
+    "pre_fix_log_sha256": "c7c1725eff5bed2f01b3426e961e8621e85706929dae6f0a47a581eb31b51118",
+    "assertions": [
+      "Five removed vectors occupy raw ranks1-5",
+      "Current rank6 remains retrievable",
+      "Current-only output capped5",
+      "One query embedding generation",
+      "Pinned served-c4 source version retained"
+    ]
+  },
+  "current_source_real_runtime": {
+    "operation": "Seed the task-only PostgreSQL 16 database; start the current task-worktree API; execute the existing seven-case live identity matrix with raw output intercepted in memory; then run the live CAS catalog query with raw output intercepted in memory.",
+    "source_phase": "Uncommitted current repair source based on base_head 5a101347503c98124a4ff560b28499130ff4e2c6; exact product-file hashes are in runtime-evidence-current-source.json.",
+    "result": "PASS targeted: API health 200; seven identity/scope cases; operator and admin each returned the configured staff KB source with one answer-generation attempt; anonymous, registered, unlisted and forged-client-scope cases returned no answer generation; CAS catalog query returned one catalog citation with one generation attempt. Total actual answer-generation attempts across these current-source probes: 3. Embedding attempts in query responses: 0.",
+    "scope_limit": "This is targeted repair-source runtime evidence. Full browser, feedback-to-PostgreSQL/#461 and stale-state matrices remain documented as historical acceptance on implementation_sha; client files and feedback persistence path were not changed by the repairs. Current-source regression tests cover C1-C5.",
+    "evidence": "reports/issue-464/runtime-evidence-current-source.json",
+    "api_lifecycle": "Task API ran on loopback port 8000 and was stopped after the probes; disposable PostgreSQL 16 is loopback-only with no persistent volume."
+  }
+}

@@ -723,6 +723,8 @@ def test_openai_provider_response_order_is_validated() -> None:
             return type("Response", (), {"data": [Item(1), Item(0)]})()
 
     generator = object.__new__(EmbeddingGenerator)
+    generator.deadline = None
+    generator.on_attempt = None
     generator.config = RAGConfig(
         embedding_provider="openai",
         embedding_model="test-model",
@@ -751,6 +753,8 @@ def test_openai_provider_requires_explicit_exact_integer_indices(
     from ai_actuarial.rag.embeddings import EmbeddingGenerator
 
     generator = EmbeddingGenerator.__new__(EmbeddingGenerator)
+    generator.deadline = None
+    generator.on_attempt = None
     generator.config = SimpleNamespace(
         embedding_model="test-model",
         openai_max_retries=1,

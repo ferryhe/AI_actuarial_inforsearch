@@ -1,5 +1,9 @@
 """Reviewed symbol references for framework-discovered Python entry points."""
 
+from ai_actuarial.api import __getattr__ as _api_export_loader
+
+_api_export_loader  # reason: Python invokes this module hook for the two lazy public API exports.
+
 from ai_actuarial.api.routers.assistant_help import (
     api_get_help_section,
     api_search_help,
@@ -11,6 +15,7 @@ from ai_actuarial.api.routers.feedback import (
     api_update_feedback,
 )
 from ai_actuarial.api.routers.support import api_support_capabilities
+from ai_actuarial.assistant.knowledge import SourceCitation
 from ai_actuarial.assistant.query import QueryRequest
 from ai_actuarial.assistant.router import api_assistant_query
 from ai_actuarial.feedback.store import FeedbackRequest
@@ -26,6 +31,13 @@ FeedbackRequest.trim_content  # reason: Pydantic invokes this decorated field va
 FeedbackRequest.local_path  # reason: Pydantic invokes this decorated field validator.
 QueryRequest.valid_message  # reason: Pydantic invokes this decorated field validator.
 api_assistant_query  # reason: FastAPI registers this decorated route.
+SourceCitation.source_date  # reason: Pydantic serializes the citation source date by name.
+
+from tests.test_assistant_feature_matrix import pytest_plugins as _assistant_matrix_plugins
+from tests.test_assistant_knowledge import pytest_plugins as _assistant_knowledge_plugins
+
+_assistant_knowledge_plugins  # reason: Pytest discovers shared routing fixtures through this module variable.
+_assistant_matrix_plugins  # reason: Pytest discovers shared feedback fixtures through this module variable.
 
 from ai_actuarial.api.routers.agentic_rag import (
     api_agentic_rag_chat,

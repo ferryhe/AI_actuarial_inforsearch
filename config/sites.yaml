@@ -726,6 +726,8 @@ rag_config:
 features:
   feedback_enabled: false
   assistant_enabled: false
+  assistant_public_kb_ids: []
+  assistant_staff_kb_ids: []
   feedback_site_key: local
   feedback_rate_limit: 5 per minute, 30 per hour
   enable_file_deletion: true

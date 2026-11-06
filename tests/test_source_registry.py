@@ -123,6 +123,44 @@ def test_pending_filter_matches_visible_source_count_before_registry_bootstrap(t
         store.close()
 
 
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://www.casact.org/assistant-publisher.pdf",
+        "https://cdn.example/assistant-publisher.pdf",
+    ],
+)
+def test_assistant_catalog_search_uses_current_publisher_not_collection_label(storage, url):
+    from ai_actuarial.assistant.knowledge import catalog_evidence
+
+    _upsert(storage, url)
+    if "cdn.example" in url:
+        with storage.transaction():
+            _apply_reviewed(storage._conn, [_record(url, old="pending", new="cas")], hub=False)
+    current = storage.get_file_with_catalog(url)
+    assert current["source_key"] == "cas" and current["source_site"] == "local_docling"
+    rows = storage.search_catalog_projection(["cas"])
+    assert len(rows) == 1 and rows[0]["organization"] == current["source_name_en"]
+    for index in range(6):
+        unrelated = f"https://unrelated.example/{index}.pdf"
+        _upsert(storage, unrelated)
+        storage._conn.execute(
+            "UPDATE files SET title = ?, last_seen = ? WHERE url = ?",
+            ("Notes from another publisher", "2099-01-01", unrelated),
+        )
+    storage._conn.commit()
+    for zh, field, question in (
+        (False, "source_name_en", "What materials from CAS?"),
+        (True, "source_name_zh", "有哪些 CAS 资料？"),
+    ):
+        result = catalog_evidence(storage, question, zh=zh)
+        assert len(result) == 1
+        context = json.loads(result[0].content)
+        assert context["organization"] == current[field]
+        assert "local_docling" not in result[0].content
+        assert result[0].citation.file_id == url
+
+
 def test_app_correction_serializes_with_import_after_old_source_key_read(storage, monkeypatch):
     url = "https://cdn.example/concurrent-source-correction.pdf"
     _upsert(storage, url)

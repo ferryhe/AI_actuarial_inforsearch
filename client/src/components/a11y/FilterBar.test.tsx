@@ -1,8 +1,10 @@
 import axe from "axe-core";
 import "@testing-library/jest-dom/vitest";
 import { render, screen } from "@testing-library/react";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { FilterBar } from "@/pages/tasks/FilterBar";
+
+vi.mock("@/components/Layout", () => ({ useTranslation: () => ({ t: (key: string) => ({ "tasks.col.status": "Status", "tasks.col.type": "Type" }[key] ?? key) }) }));
 
 it("labels task filters, gives them mobile-size targets, and has no axe violations", async () => {
   const { container } = render(<FilterBar searchQuery="" onSearchChange={() => {}} statusFilter="" onStatusChange={() => {}} typeFilter="" onTypeChange={() => {}} />);

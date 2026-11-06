@@ -118,6 +118,8 @@ def _default_session_cookie_secure(require_auth: bool, config_data: dict[str, ob
 def _apply_runtime_feature_state(app: FastAPI, features: dict[str, object]) -> None:
     app.state.feedback_enabled = bool(features.get("feedback_enabled"))
     app.state.assistant_enabled = bool(features.get("assistant_enabled"))
+    app.state.assistant_public_kb_ids = list(features.get("assistant_public_kb_ids") or [])
+    app.state.assistant_staff_kb_ids = list(features.get("assistant_staff_kb_ids") or [])
     app.state.feedback_site_key = str(features.get("feedback_site_key") or "")
     app.state.feedback_rate_limit = str(features.get("feedback_rate_limit") or "")
     if app.state.feedback_enabled and not re.fullmatch(

@@ -103,6 +103,16 @@ it("reads the static guide without AI and reports stale references", async () =>
   expect(apiPost).not.toHaveBeenCalled();
 });
 
+it("renders catalog and body citations as internal links with versions and nonzero embedding counts", async () => {
+  const source = { file_id: "source", section_id: "section-1", kb_id: "public", title: "Body document", link: "/file-detail?url=source", source_version: "publication-1", source_date: "2026-11-06", stale: true };
+  apiPost.mockResolvedValue({ ...reply("knowledge"), embedding_attempts: 2, citations: [{ ...source, source_type: "kb" }, { ...source, source_type: "catalog", title: "Directory document", section_id: "", kb_id: null }] });
+  show(); question("Body question");
+  expect(await screen.findByRole("link", { name: /Body document.*assistant.source_kb/ })).toHaveAttribute("href", "/file-detail?url=source");
+  expect(screen.getByRole("link", { name: /Directory document.*assistant.source_catalog/ })).toHaveTextContent("publication-1");
+  expect(screen.getByRole("link", { name: /Body document/ })).toHaveTextContent("assistant.stale");
+  expect(apiGet).not.toHaveBeenCalled();
+});
+
 it("unmount clears history and ignores a late response", async () => {
   let resolve!: (value: unknown) => void;
   apiPost.mockImplementation(() => new Promise((done) => { resolve = done; }));

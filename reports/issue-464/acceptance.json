@@ -1,0 +1,674 @@
+{
+  "schema_version": 1,
+  "issue": 464,
+  "overall_status": "local_acceptance_repair_validation_and_fresh_review_passed_current_head_ci_and_remote_thread_resolution_pending",
+  "task_close": null,
+  "branch": "codex/issue-464-assistant-knowledge",
+  "base_sha": "f40da1a065c314db6b2239d52e82525ca04949cc",
+  "implementation_sha": "bc1fdab375b7db748a9c6a8f5df406be021cc3b8",
+  "implementation_source_sha256": "d74fd05fdf382ca8363bbef97fab8c4ee126154e205988511ab145f0e4d58f57",
+  "changed_files": [
+    {
+      "path": ".hermes/project-status.md",
+      "working_sha256": "3c19f91f5bdafb559364ee7993643a428a86f4f8b144a4e3adea95ee97beba44",
+      "git_blob_oid": "43bb5a0c3e15966c9a9db3322f9332def78f5f23"
+    },
+    {
+      "path": "ai_actuarial/agentic_rag/ready_data_tools.py",
+      "working_sha256": "12f986fb22f79bfb75ef4d0e218e5c75b1d924f6e4898493e12507d325418378",
+      "git_blob_oid": "60836a824c7d6f7dddd00d20a0b28d8ae985cb61"
+    },
+    {
+      "path": "ai_actuarial/api/__init__.py",
+      "working_sha256": "4813a1735061731f5b3d36d594fb401525e691ba75ed401cf131a35277b38aa5",
+      "git_blob_oid": "4de28af62752a3d1e05c751daf8a412325e8e837"
+    },
+    {
+      "path": "ai_actuarial/api/app.py",
+      "working_sha256": "6701fba47891d8e6064cac46dc05cb6cf3e2061908d796b783c3b1cd60554e48",
+      "git_blob_oid": "5a092f2e31265d8372a7be8f468002dacd56bb11"
+    },
+    {
+      "path": "ai_actuarial/api/services/ops_write.py",
+      "working_sha256": "4b905083de0383834397aa2b61c3c00555092973fc18c18ba6044fca76c80cbf",
+      "git_blob_oid": "d53f4026d7ba3a25808d7f6b3779811edd3cc9ba"
+    },
+    {
+      "path": "ai_actuarial/assistant/knowledge.py",
+      "working_sha256": "d74fd05fdf382ca8363bbef97fab8c4ee126154e205988511ab145f0e4d58f57",
+      "git_blob_oid": "556c6f1eb160af06a44591a79a7ae5ef965bf001"
+    },
+    {
+      "path": "ai_actuarial/assistant/query.py",
+      "working_sha256": "8a33e488d94cb6c5a297af06335c1deed2513cf7c4fe80b5336017bc9828f97e",
+      "git_blob_oid": "bcc11ea47793489e2c4ebb986da5c212a47d5bf2"
+    },
+    {
+      "path": "ai_actuarial/assistant/router.py",
+      "working_sha256": "30a226eb0050d03627356406fc39a65cd40591a2145bb56e552910851acd4e16",
+      "git_blob_oid": "37629660603a977a371d0b9bd5983be80deebd23"
+    },
+    {
+      "path": "ai_actuarial/chatbot/retrieval.py",
+      "working_sha256": "e9603f8e2704172481d7c3222239c63d071a7abd7e3be17a8d0609b43821049d",
+      "git_blob_oid": "6d03dd962426bcf29dbb841027a9cc0f55e75d66"
+    },
+    {
+      "path": "ai_actuarial/rag/embeddings.py",
+      "working_sha256": "7e799170cb437636fec804a39153990febbde99ba71646ed6eac8aa14f6982c7",
+      "git_blob_oid": "768f42574407acdf9c74b563ef9573ecca922bb3"
+    },
+    {
+      "path": "ai_actuarial/shared_auth.py",
+      "working_sha256": "ba8190e438a730a0cf0eb47f4fdf4502039633b28239b507db7ebe1a2084e56d",
+      "git_blob_oid": "98bc41542546c4ff1f79aca0b9feee54063575de"
+    },
+    {
+      "path": "ai_actuarial/shared_runtime.py",
+      "working_sha256": "19d6433ed079fe573717b24312b8570485372eee19a058f8424c1bc1a7e5df04",
+      "git_blob_oid": "5201051f0209f813122709260cc704bcb4020290"
+    },
+    {
+      "path": "ai_actuarial/storage.py",
+      "working_sha256": "892587920f8fea24b095f1fec9342ec44e52a55376a22337eb94bb98c02c2dca",
+      "git_blob_oid": "90ea3f0b158bd3fddba457bbd938fe453acf524e"
+    },
+    {
+      "path": "client/src/components/a11y/FileImportForm.test.tsx",
+      "working_sha256": "897af13e55f95d6afaab094fcfffee661ce7ac14931f1d3e78d1b187dc065dbc",
+      "git_blob_oid": "b1bfdf68620c33cc49b3decd917cd0eb88dbf201"
+    },
+    {
+      "path": "client/src/components/a11y/FilterBar.test.tsx",
+      "working_sha256": "d95ed094510c5d4ed64dda9306ccb79617b76b17e0ae549193840af9c788f339",
+      "git_blob_oid": "fdda928be4bd30953c1c7453002fa14f6204927c"
+    },
+    {
+      "path": "client/src/components/a11y/WebListeningForm.test.tsx",
+      "working_sha256": "d4a3bd961536884afb75e4eaefd6d6d171514751ce79ae764877c04c056273f3",
+      "git_blob_oid": "a8c5772c429acfd704865cb34d091a1065be63a2"
+    },
+    {
+      "path": "client/src/features/assistant/AssistantPanel.test.tsx",
+      "working_sha256": "57210f49b9849c8fa79bff1210d6564d80d863fa431d2820fc43bf4a9e528d5c",
+      "git_blob_oid": "e13ce26342349c0b29b1744eabfd8e032821071f"
+    },
+    {
+      "path": "client/src/features/assistant/AssistantPanel.tsx",
+      "working_sha256": "3c83b987571f6d5d01983c7147756695e9dcda05912ca95439b5f6604984c1e0",
+      "git_blob_oid": "347b1af8c9fe6456f105a9d1ce23eef48c955734"
+    },
+    {
+      "path": "client/src/hooks/use-i18n.ts",
+      "working_sha256": "a145f73260ec14186fa9e58a3480604833cd2271624a57a4f46a70c3bd797db5",
+      "git_blob_oid": "c63da852b54d6bbef5311aea4c2f740f0d13c59c"
+    },
+    {
+      "path": "config/dead_code_whitelist.py",
+      "working_sha256": "f9f7110131144e8823ffde85155cc8e90d49cbc6d076a9b6cc1f985391afe727",
+      "git_blob_oid": "2daba6ed6677b25fd21302a3d023b24203b7973a"
+    },
+    {
+      "path": "config/sites.yaml",
+      "working_sha256": "0861220bcc40ba2ebb02865ac74cdf0b2f704ea70615a6edf9468b0fda6a804d",
+      "git_blob_oid": "d2b3019e646c6645293e0508f462cb10c12ca4ce"
+    },
+    {
+      "path": "docs/assistant-knowledge.md",
+      "working_sha256": "2f5bb309f1d0a40d7acb9d5506db865e9bf3846bd7e160e32dc0f2a76b53410a",
+      "git_blob_oid": "954bdce2b16935c6926839cd349d195d63afa664"
+    },
+    {
+      "path": "docs/help/user-guide.en.md",
+      "working_sha256": "e4b2659df97407f31a31450a5b257128ea5be0b7b6411a47f6ea56a2bec9a2aa",
+      "git_blob_oid": "e5e3ff89b5f6b1d24d2da55257c1d03c9f323981"
+    },
+    {
+      "path": "docs/help/user-guide.zh.md",
+      "working_sha256": "2cd398e297c6fa594e3a1793292f4871094fdef514aeedff0939800902382ef3",
+      "git_blob_oid": "e05f302519e3c5c92b099b1889925270a050ac98"
+    },
+    {
+      "path": "reports/issue-464/browser-smoke.json",
+      "working_sha256": "7bfeff69d8f372d2a3ba7d22fc5759956c431a638c0c53929960a2e75fd3e2d6",
+      "git_blob_oid": "24441a1e01107c2dafbec30bc6735e55e399d7a0"
+    },
+    {
+      "path": "tests/test_assistant_feature_matrix.py",
+      "working_sha256": "902a698eb26a9d7ba4dd147534a02e8d031df592b70bd6683c1e5694bc7bb6e8",
+      "git_blob_oid": "8efcd0db2c395a555d0c32ca475e03cfaec493ef"
+    },
+    {
+      "path": "tests/test_assistant_knowledge.py",
+      "working_sha256": "a99af9044198631fb3894241815c6ae0fe2c5f3c8eff51502c5ecc5d8c0be0cc",
+      "git_blob_oid": "35e59a7a4e90fe249e1fc4ad0c21b4bf802c131b"
+    },
+    {
+      "path": "tests/test_assistant_routing.py",
+      "working_sha256": "9ef79bb510e8f352036cec5610da9ce11d38897a3efc789855df8066bcf16908",
+      "git_blob_oid": "3b34c310ea49f430f5edf4734255a03f8adce497"
+    },
+    {
+      "path": "tests/test_fastapi_assistant_endpoints.py",
+      "working_sha256": "5d90a5d1f8811cd4e5122db3aa4038e93856ef4b3768a27f1b6267a01ca279bc",
+      "git_blob_oid": "0884220bee6f64d7fc44168feedce7ee0245bdc1"
+    },
+    {
+      "path": "tests/test_source_registry.py",
+      "working_sha256": "0eb24aa68eff4e4f7806795672c894d2225f4abfe20c4673acc575d8608cde7b",
+      "git_blob_oid": "4fad7f324fa4ef11039a56e68ae0a7b4aab13867"
+    }
+  ],
+  "environment": {
+    "repository": "ferryhe/AI_actuarial_inforsearch",
+    "runtime": "isolated local acceptance only",
+    "postgres_container": "codex-issue464-pg16-20261106",
+    "postgres_version": "16",
+    "api_port": 8000,
+    "api_pid": 77416,
+    "api_source_root": "C:/Project/AI_actuarial_inforsearch/.codex-worktrees/issue-464",
+    "vite_port": 4173,
+    "vite_pid": 47580,
+    "scheduler_disabled": true,
+    "configured_sites": 0,
+    "public_production_used": false,
+    "provider": "OpenAI gpt-5.4-mini through existing ChatbotConfig/LLMClient and env binding",
+    "credential_values_recorded": false
+  },
+  "local_review": {
+    "current_status": "PASS",
+    "reviewer_profile": "fresh gpt-6-sol/high",
+    "finding_count": 0,
+    "note": "Current diff reviewed against AC1-AC6 with no actionable findings. Detailed reviewer report remains in controller evidence outside the PR bundle."
+  },
+  "local_validation": [
+    {
+      "command": "python -m pytest tests/test_assistant_knowledge.py tests/test_rag_runtime.py tests/test_fastapi_chat_endpoints.py -q --no-cov",
+      "result": "104 passed,3 warnings; exit0",
+      "evidence": "reports/issue-464/local-validation.json",
+      "phase": "Current uncommitted Standard C4 completion"
+    },
+    {
+      "command": "python -m pytest tests/test_assistant_knowledge.py tests/test_assistant_feature_matrix.py tests/test_source_registry.py tests/agentic_rag/test_ready_data_tools.py tests/test_rag_runtime.py tests/test_fastapi_chat_endpoints.py -q --no-cov",
+      "result": "191 passed,3 warnings; exit0",
+      "evidence": "reports/issue-464/local-validation.json",
+      "phase": "Earlier remote repair phase before Standard membership completion; exact scope in local-validation.json"
+    },
+    {
+      "command": "Real provider/restricted-KB/browser replay",
+      "result": "PENDING",
+      "evidence": "reports/issue-464/runtime-evidence.json",
+      "phase": "Historical observations retained; current-source replay not performed by worker"
+    }
+  ],
+  "v1_v5": [
+    {
+      "id": "V1",
+      "result": "PASS_WITH_PHASED_EVIDENCE",
+      "actual": "Historical catalog/KB/help/suggestion acceptance remains PASS on the implementation source. Current repair-source API checks returned a CAS catalog citation and an authorized staff-KB citation with the expected source types; catalog and retrieval regressions pass.",
+      "evidence": [
+        "reports/issue-464/runtime-evidence.json",
+        "reports/issue-464/runtime-evidence-current-source.json",
+        "reports/issue-464/local-validation.json"
+      ],
+      "expected": "Catalog questions use metadata only; body answers use retrieved body evidence. Citations match the served source/version and open to the in-site source.",
+      "historical_result": "PASS",
+      "historical_actual": "Catalog and KB-body paths both returned their proper citation types. The catalog run preserved one real-provider INVALID_MODEL_RESPONSE and a successful manual retry with five catalog citations. The real-provider KB-body answer cited a permitted Ready Data source; soft-stale serving kept the active version and hard-stale fell back only within the same KB.",
+      "repair_validation_scope": "Full V1–V5 baseline acceptance was recorded on implementation bc1fdab375b7db748a9c6a8f5df406be021cc3b8. The subsequent backend repairs were validated with focused current-source regressions/static checks and targeted current-source real-provider API probes. Full browser, feedback→PostgreSQL/#461 and stale-state matrices are historical baseline evidence; those flows were not rerun after the backend-only repair because the relevant client/feedback persistence paths were unchanged."
+    },
+    {
+      "id": "V2",
+      "result": "PASS_WITH_PHASED_EVIDENCE",
+      "actual": "Historical identity/config/prompt-source matrix remains PASS. Current repair-source seven-case API matrix returned the configured staff KB only for authorized operator/admin; anonymous, registered, unlisted and client-scope-spoof cases performed zero answer generation.",
+      "evidence": [
+        "reports/issue-464/runtime-evidence.json",
+        "reports/issue-464/runtime-evidence-current-source.json",
+        "reports/issue-464/local-validation.json"
+      ],
+      "expected": "Retrieval is limited to the intersection of caller identity and server configuration. Unauthorized or empty scope is rejected before retrieval/answer generation with zero generation and embedding calls; prompts contain only permitted source IDs.",
+      "historical_result": "PASS",
+      "historical_actual": "The identity × server configuration × selected KB matrix used actual retrieval/prompt evidence and generation/embedding counters. Authorized staff used its configured KB; unauthorized identities and spoofed client kb_id/kb_ids were denied; empty, unavailable and mismatched scopes failed before answer generation.",
+      "repair_validation_scope": "Full V1–V5 baseline acceptance was recorded on implementation bc1fdab375b7db748a9c6a8f5df406be021cc3b8. The subsequent backend repairs were validated with focused current-source regressions/static checks and targeted current-source real-provider API probes. Full browser, feedback→PostgreSQL/#461 and stale-state matrices are historical baseline evidence; those flows were not rerun after the backend-only repair because the relevant client/feedback persistence paths were unchanged."
+    },
+    {
+      "id": "V3",
+      "result": "PASS_WITH_PHASED_EVIDENCE",
+      "actual": "Historical live stale/mismatch/unavailable cases remain PASS. Current repair regressions cover per-KB Standard errors, Ready Data and Standard membership filtering, and served-index citation metadata; a current authorized KB response returned its serving version.",
+      "evidence": [
+        "reports/issue-464/runtime-evidence.json",
+        "reports/issue-464/runtime-evidence-current-source.json",
+        "reports/issue-464/local-validation.json"
+      ],
+      "expected": "Without usable evidence the request returns a deterministic no-result/error and performs no later answer generation. Any earlier routing/embedding calls are counted separately. Valid stale evidence follows the active serving-version rule.",
+      "historical_result": "PASS",
+      "historical_actual": "Live evidence covered catalog/body citations, soft-stale and hard-stale serving, index mismatch, unavailable index and empty scope. Summary-only and no-result edge cases are covered by the focused fixture tests; they are not claimed as separate live-provider runs.",
+      "repair_validation_scope": "Full V1–V5 baseline acceptance was recorded on implementation bc1fdab375b7db748a9c6a8f5df406be021cc3b8. The subsequent backend repairs were validated with focused current-source regressions/static checks and targeted current-source real-provider API probes. Full browser, feedback→PostgreSQL/#461 and stale-state matrices are historical baseline evidence; those flows were not rerun after the backend-only repair because the relevant client/feedback persistence paths were unchanged."
+    },
+    {
+      "id": "V4",
+      "result": "PASS_WITH_PHASED_EVIDENCE",
+      "actual": "Historical four-switch/browser/feedback-isolation matrix remains PASS. Current repair regression verifies invalid feedback hot-enable configuration is rejected before persistence; frontend and feedback persistence code were unchanged.",
+      "evidence": [
+        "reports/issue-464/runtime-evidence.json",
+        "reports/issue-464/runtime-evidence-current-source.json",
+        "reports/issue-464/local-validation.json"
+      ],
+      "expected": "All four flag combinations behave independently; stale old-page requests are rejected; assistant failure does not block feedback submission or history reads.",
+      "historical_result": "PASS",
+      "historical_actual": "The four feature-flag combinations were exercised. While off/off, stale-page feedback and assistant POSTs returned 404; refresh hid the entry and yielded no assistant/help/feedback business requests. The actual quota-error→manual-feedback path and assistant-provider format failure are preserved; feedback history remained readable and both flags were restored on.",
+      "repair_validation_scope": "Full V1–V5 baseline acceptance was recorded on implementation bc1fdab375b7db748a9c6a8f5df406be021cc3b8. The subsequent backend repairs were validated with focused current-source regressions/static checks and targeted current-source real-provider API probes. Full browser, feedback→PostgreSQL/#461 and stale-state matrices are historical baseline evidence; those flows were not rerun after the backend-only repair because the relevant client/feedback persistence paths were unchanged."
+    },
+    {
+      "id": "V5",
+      "result": "PASS_WITH_PHASED_EVIDENCE",
+      "actual": "Historical help/catalog/KB/suggestion-to-PostgreSQL/#461 flow remains PASS and is now represented by the sanitized durable bundle. Current repair-source catalog and restricted-KB provider queries also passed; feedback and browser paths were unchanged.",
+      "evidence": [
+        "reports/issue-464/runtime-evidence.json",
+        "reports/issue-464/runtime-evidence-current-source.json",
+        "reports/issue-464/local-validation.json"
+      ],
+      "expected": "Help, catalog, KB-body and suggestion requests route to the correct source. Suggestions remain editable until confirmed; PostgreSQL and the #461 inbox show the same ID and original text, and saved history survives switch changes.",
+      "historical_result": "PASS",
+      "historical_actual": "Across separate real-browser/API paths, help returned a help citation, catalog returned metadata citations, and KB-body answers cited permitted KB evidence. Auto-classified suggestion text became an editable draft, then persisted after confirmation to isolated PostgreSQL and the existing #461 local inbox. A distinct earlier browser path recorded quota error followed by manual suggestion submit. Desktop and mobile captures are recorded below.",
+      "repair_validation_scope": "Full V1–V5 baseline acceptance was recorded on implementation bc1fdab375b7db748a9c6a8f5df406be021cc3b8. The subsequent backend repairs were validated with focused current-source regressions/static checks and targeted current-source real-provider API probes. Full browser, feedback→PostgreSQL/#461 and stale-state matrices are historical baseline evidence; those flows were not rerun after the backend-only repair because the relevant client/feedback persistence paths were unchanged."
+    }
+  ],
+  "feedback_paths": [
+    {
+      "path": "assistant classify -> original draft -> user confirm -> PostgreSQL -> #461 inbox",
+      "result": "observed",
+      "generation_attempts": 1,
+      "embedding_attempts": 0,
+      "pg_rows": 3,
+      "unique_client_request_ids": 3,
+      "inbox_readback": true,
+      "feedback_id_sha256": "ef6ca2aca0bdae5537328462a0134ac03d72063a21015999a84f0d6160bb4c31",
+      "client_request_id_sha256": "4b388f6b3b7ec1edd965532b371f47ebd9b23d45861d9726709efc0082d118fa",
+      "content_sha256": "729d8ec75387c3ea0d07ecd9d9b5ddd36b252a8431877afbf0022738aa938fec",
+      "evidence": [
+        "reports/issue-464/runtime-evidence.json"
+      ],
+      "phase": "historical pre-repair observation"
+    },
+    {
+      "path": "quota error -> manual feedback submit",
+      "result": "observed in earlier Issue #464 Chrome run",
+      "evidence": [
+        "reports/issue-464/runtime-evidence.json"
+      ],
+      "feedback_id_sha256": "66256c56f7f456765a33b20008c86c113ca39271f74c7797e70fdebee2aeb031",
+      "content_sha256": "4fadc0ec55519ea340eef4493c5c51a0308b3b65384f17901e536d350a303fa1",
+      "phase": "historical pre-repair observation"
+    }
+  ],
+  "quota_phase": {
+    "first_ui_outcome": "QUOTA_EXCEEDED; no provider generation",
+    "isolated_ip_date_count_before_reset": 9,
+    "isolated_ip_date_count_after_reset": 0,
+    "successful_real_provider_retry_generation_count": 1,
+    "final_ip_date_count": 1,
+    "reset_scope": "Only the task-owned PostgreSQL user_quotas row for 127.0.0.1 / 2026-11-06; app quota limit, provider binding and feedback rows unchanged.",
+    "evidence": "reports/issue-464/browser-smoke.json"
+  },
+  "remote_gates": {
+    "status": "pending_at_receipt_creation",
+    "current_head_ci": "pending after repair commit/push",
+    "github_review_threads": "Six Copilot threads have been accepted and fixed; resolve after updated commit is pushed and verified.",
+    "copilot": "auto; one initial request only after PR publication",
+    "merge": "pending current-head required checks and resolved threads",
+    "task_close": null
+  },
+  "browser_evidence_limitations": {
+    "current_r6_run": "Two completed native CUA screenshot+emitImage calls are retained inline in the task thread and identified by native tool-call item IDs. No separate image attachment ID or filesystem PNG was exposed.",
+    "earlier_manual_after_error": "The earlier /chat CUA sequence is recorded in the issue task history and its receipt is independently read from the database and #461 inbox; no screenshot or AX IDs were saved.",
+    "prior_viewports": "Earlier bilingual desktop/mobile observations remain historical; the current run separately captured 1280x900 English and 390x844 Chinese screenshots."
+  },
+  "browser_screenshots": [
+    {
+      "viewport": "1280x900",
+      "locale": "en",
+      "route": "/chat",
+      "visible_state": "Website assistant open; current reviewed Issue #464 build",
+      "implementation_sha": "bc1fdab375b7db748a9c6a8f5df406be021cc3b8",
+      "tab_id": "1829210998",
+      "capture_method": "tab.screenshot({fullPage:false}) followed by nodeRepl.emitImage",
+      "capture_origin": "Completed native CUA screenshot+emitImage call; title: Saving desktop acceptance view; thread 01a1b0bc-c101-7333-abb7-15b7d8c6e82e",
+      "native_attachment_item_id": null,
+      "native_tool_call_item_id": "call_1dbb2c42c08a4920a2e25099db1a6448",
+      "separate_attachment_id_exposed": false
+    },
+    {
+      "viewport": "390x844",
+      "locale": "zh",
+      "route": "/chat",
+      "visible_state": "Website assistant open; current reviewed Issue #464 build",
+      "implementation_sha": "bc1fdab375b7db748a9c6a8f5df406be021cc3b8",
+      "tab_id": "1829210998",
+      "capture_method": "tab.screenshot({fullPage:false}) followed by nodeRepl.emitImage",
+      "capture_origin": "Completed native CUA screenshot+emitImage call; title: Capturing mobile view; thread 01a1b0bc-c101-7333-abb7-15b7d8c6e82e",
+      "native_attachment_item_id": null,
+      "native_tool_call_item_id": "call_4021d1398a03465384680d4da75d5ab1",
+      "separate_attachment_id_exposed": false
+    }
+  ],
+  "coverage": {
+    "deliverables": [
+      {
+        "id": "D1",
+        "status": "PASS_WITH_PHASED_EVIDENCE",
+        "coverage": "Read-only catalog projection and configured Standard RAG/Ready Data retrieval with server-side public/staff authorization.",
+        "evidence": [
+          "ai_actuarial/assistant/knowledge.py",
+          "ai_actuarial/assistant/query.py",
+          "ai_actuarial/storage.py",
+          "config/sites.yaml",
+          "reports/issue-464/runtime-evidence.json",
+          "reports/issue-464/runtime-evidence.json",
+          "reports/issue-464/runtime-evidence-current-source.json",
+          "reports/issue-464/local-validation.json"
+        ],
+        "historical_status": "PASS",
+        "repair_validation_scope": "Full V1–V5 baseline acceptance was recorded on implementation bc1fdab375b7db748a9c6a8f5df406be021cc3b8. The subsequent backend repairs were validated with focused current-source regressions/static checks and targeted current-source real-provider API probes. Full browser, feedback→PostgreSQL/#461 and stale-state matrices are historical baseline evidence; those flows were not rerun after the backend-only repair because the relevant client/feedback persistence paths were unchanged."
+      },
+      {
+        "id": "D2",
+        "status": "PASS_WITH_PHASED_EVIDENCE",
+        "coverage": "Typed source citations and body/summary-only/no-result/mismatch/unavailable/stale handling; summary-only and no-result are fixture-tested, live outcomes are listed in V3.",
+        "evidence": [
+          "ai_actuarial/assistant/knowledge.py",
+          "docs/assistant-knowledge.md",
+          "reports/issue-464/runtime-evidence.json",
+          "reports/issue-464/runtime-evidence.json",
+          "reports/issue-464/runtime-evidence.json",
+          "reports/issue-464/runtime-evidence.json",
+          "reports/issue-464/runtime-evidence.json",
+          "tests/test_assistant_knowledge.py",
+          "reports/issue-464/runtime-evidence-current-source.json",
+          "reports/issue-464/local-validation.json"
+        ],
+        "historical_status": "PASS",
+        "repair_validation_scope": "Full V1–V5 baseline acceptance was recorded on implementation bc1fdab375b7db748a9c6a8f5df406be021cc3b8. The subsequent backend repairs were validated with focused current-source regressions/static checks and targeted current-source real-provider API probes. Full browser, feedback→PostgreSQL/#461 and stale-state matrices are historical baseline evidence; those flows were not rerun after the backend-only repair because the relevant client/feedback persistence paths were unchanged."
+      },
+      {
+        "id": "D3",
+        "status": "PASS_WITH_PHASED_EVIDENCE",
+        "coverage": "Four combinations, stale-page/API gates, independent loading and prior Chat/RAG regressions.",
+        "evidence": [
+          "tests/test_assistant_feature_matrix.py",
+          "reports/issue-464/runtime-evidence.json",
+          "reports/issue-464/runtime-evidence.json",
+          "reports/issue-464/runtime-evidence-current-source.json",
+          "reports/issue-464/local-validation.json"
+        ],
+        "historical_status": "PASS",
+        "repair_validation_scope": "Full V1–V5 baseline acceptance was recorded on implementation bc1fdab375b7db748a9c6a8f5df406be021cc3b8. The subsequent backend repairs were validated with focused current-source regressions/static checks and targeted current-source real-provider API probes. Full browser, feedback→PostgreSQL/#461 and stale-state matrices are historical baseline evidence; those flows were not rerun after the backend-only repair because the relevant client/feedback persistence paths were unchanged."
+      },
+      {
+        "id": "D4",
+        "status": "PASS_WITH_PHASED_EVIDENCE",
+        "coverage": "Three intent routes, real provider and restricted KB, editable suggestion confirmation, PostgreSQL→#461 readback, and this canonical receipt.",
+        "evidence": [
+          "reports/issue-464/acceptance.json",
+          "reports/issue-464/browser-smoke.json",
+          "reports/issue-464/runtime-evidence.json",
+          "reports/issue-464/runtime-evidence.json",
+          "reports/issue-464/runtime-evidence.json",
+          "reports/issue-464/runtime-evidence.json",
+          "reports/issue-464/runtime-evidence-current-source.json",
+          "reports/issue-464/local-validation.json"
+        ],
+        "historical_status": "PASS",
+        "repair_validation_scope": "Full V1–V5 baseline acceptance was recorded on implementation bc1fdab375b7db748a9c6a8f5df406be021cc3b8. The subsequent backend repairs were validated with focused current-source regressions/static checks and targeted current-source real-provider API probes. Full browser, feedback→PostgreSQL/#461 and stale-state matrices are historical baseline evidence; those flows were not rerun after the backend-only repair because the relevant client/feedback persistence paths were unchanged."
+      }
+    ],
+    "acceptance_criteria": [
+      {
+        "id": "AC1",
+        "status": "PASS_WITH_PHASED_EVIDENCE",
+        "coverage": "Catalog, KB body and help used the corresponding source types; suggestions were confirmed and read back through #461.",
+        "evidence": [
+          "reports/issue-464/runtime-evidence.json",
+          "reports/issue-464/runtime-evidence.json",
+          "reports/issue-464/runtime-evidence.json",
+          "reports/issue-464/runtime-evidence.json",
+          "reports/issue-464/runtime-evidence.json",
+          "reports/issue-464/runtime-evidence-current-source.json",
+          "reports/issue-464/local-validation.json"
+        ],
+        "historical_status": "PASS",
+        "repair_validation_scope": "Full V1–V5 baseline acceptance was recorded on implementation bc1fdab375b7db748a9c6a8f5df406be021cc3b8. The subsequent backend repairs were validated with focused current-source regressions/static checks and targeted current-source real-provider API probes. Full browser, feedback→PostgreSQL/#461 and stale-state matrices are historical baseline evidence; those flows were not rerun after the backend-only repair because the relevant client/feedback persistence paths were unchanged."
+      },
+      {
+        "id": "AC2",
+        "status": "PASS_WITH_PHASED_EVIDENCE",
+        "coverage": "Identity/config/retrieval matrix, forged client scope rejection, empty/unavailable/mismatched scope and counters.",
+        "evidence": [
+          "reports/issue-464/runtime-evidence.json",
+          "reports/issue-464/runtime-evidence.json",
+          "reports/issue-464/runtime-evidence.json",
+          "reports/issue-464/runtime-evidence.json",
+          "reports/issue-464/runtime-evidence.json",
+          "reports/issue-464/runtime-evidence-current-source.json",
+          "reports/issue-464/local-validation.json"
+        ],
+        "historical_status": "PASS",
+        "repair_validation_scope": "Full V1–V5 baseline acceptance was recorded on implementation bc1fdab375b7db748a9c6a8f5df406be021cc3b8. The subsequent backend repairs were validated with focused current-source regressions/static checks and targeted current-source real-provider API probes. Full browser, feedback→PostgreSQL/#461 and stale-state matrices are historical baseline evidence; those flows were not rerun after the backend-only repair because the relevant client/feedback persistence paths were unchanged."
+      },
+      {
+        "id": "AC3",
+        "status": "PASS_WITH_PHASED_EVIDENCE",
+        "coverage": "Fixture coverage for summary-only/no-result; live catalog/body citations, stale rules, mismatch, unavailable and empty scope.",
+        "evidence": [
+          "tests/test_assistant_knowledge.py",
+          "reports/issue-464/runtime-evidence.json",
+          "reports/issue-464/runtime-evidence.json",
+          "reports/issue-464/runtime-evidence.json",
+          "reports/issue-464/runtime-evidence.json",
+          "reports/issue-464/runtime-evidence.json",
+          "reports/issue-464/runtime-evidence.json",
+          "reports/issue-464/runtime-evidence-current-source.json",
+          "reports/issue-464/local-validation.json"
+        ],
+        "historical_status": "PASS",
+        "repair_validation_scope": "Full V1–V5 baseline acceptance was recorded on implementation bc1fdab375b7db748a9c6a8f5df406be021cc3b8. The subsequent backend repairs were validated with focused current-source regressions/static checks and targeted current-source real-provider API probes. Full browser, feedback→PostgreSQL/#461 and stale-state matrices are historical baseline evidence; those flows were not rerun after the backend-only repair because the relevant client/feedback persistence paths were unchanged."
+      },
+      {
+        "id": "AC4",
+        "status": "PASS_WITH_PHASED_EVIDENCE",
+        "coverage": "Four flags, disabled stale requests, refresh behavior, manual feedback during AI/quota error, row preservation and restored flags.",
+        "evidence": [
+          "reports/issue-464/runtime-evidence.json",
+          "reports/issue-464/runtime-evidence.json",
+          "reports/issue-464/runtime-evidence.json",
+          "reports/issue-464/browser-smoke.json",
+          "reports/issue-464/runtime-evidence-current-source.json",
+          "reports/issue-464/local-validation.json"
+        ],
+        "historical_status": "PASS",
+        "repair_validation_scope": "Full V1–V5 baseline acceptance was recorded on implementation bc1fdab375b7db748a9c6a8f5df406be021cc3b8. The subsequent backend repairs were validated with focused current-source regressions/static checks and targeted current-source real-provider API probes. Full browser, feedback→PostgreSQL/#461 and stale-state matrices are historical baseline evidence; those flows were not rerun after the backend-only repair because the relevant client/feedback persistence paths were unchanged."
+      },
+      {
+        "id": "AC5",
+        "status": "PASS_WITH_PHASED_EVIDENCE",
+        "coverage": "Old-page disabled API requests failed; refreshed UI had no business requests; existing #461 inbox history remained readable. No separate deployment or module coupling was added.",
+        "evidence": [
+          "reports/issue-464/runtime-evidence.json",
+          "reports/issue-464/runtime-evidence.json",
+          "reports/issue-464/runtime-evidence.json",
+          "tests/test_assistant_feature_matrix.py",
+          "reports/issue-464/runtime-evidence-current-source.json",
+          "reports/issue-464/local-validation.json"
+        ],
+        "historical_status": "PASS",
+        "repair_validation_scope": "Full V1–V5 baseline acceptance was recorded on implementation bc1fdab375b7db748a9c6a8f5df406be021cc3b8. The subsequent backend repairs were validated with focused current-source regressions/static checks and targeted current-source real-provider API probes. Full browser, feedback→PostgreSQL/#461 and stale-state matrices are historical baseline evidence; those flows were not rerun after the backend-only repair because the relevant client/feedback persistence paths were unchanged."
+      },
+      {
+        "id": "AC6",
+        "status": "PASS_WITH_PHASED_EVIDENCE",
+        "coverage": "Fresh 364-test backend/API/RAG replay on the implementation SHA; final R6 Python static gates from worker-report.json; earlier frontend checks reused only for unchanged client blobs. The earlier whole-repo dead-code check is historical-only. Current-head GitHub CI remains pending.",
+        "evidence": [
+          "browser_screenshots",
+          "reports/issue-464/runtime-evidence-current-source.json",
+          "reports/issue-464/local-validation.json"
+        ],
+        "historical_status": "PASS",
+        "repair_validation_scope": "Full V1–V5 baseline acceptance was recorded on implementation bc1fdab375b7db748a9c6a8f5df406be021cc3b8. The subsequent backend repairs were validated with focused current-source regressions/static checks and targeted current-source real-provider API probes. Full browser, feedback→PostgreSQL/#461 and stale-state matrices are historical baseline evidence; those flows were not rerun after the backend-only repair because the relevant client/feedback persistence paths were unchanged."
+      }
+    ],
+    "requirements": [
+      {
+        "id": "R1",
+        "status": "PASS_WITH_PHASED_EVIDENCE",
+        "coverage": "Website feedback entry and suggestion submission.",
+        "evidence": [
+          "reports/issue-464/browser-smoke.json",
+          "browser_screenshots",
+          "reports/issue-464/runtime-evidence-current-source.json",
+          "reports/issue-464/local-validation.json"
+        ],
+        "historical_status": "PASS",
+        "repair_validation_scope": "Full V1–V5 baseline acceptance was recorded on implementation bc1fdab375b7db748a9c6a8f5df406be021cc3b8. The subsequent backend repairs were validated with focused current-source regressions/static checks and targeted current-source real-provider API probes. Full browser, feedback→PostgreSQL/#461 and stale-state matrices are historical baseline evidence; those flows were not rerun after the backend-only repair because the relevant client/feedback persistence paths were unchanged."
+      },
+      {
+        "id": "R2",
+        "status": "PASS_WITH_PHASED_EVIDENCE",
+        "coverage": "Original suggestion persisted under the same receipt and was manageable/readable in the local inbox.",
+        "evidence": [
+          "reports/issue-464/runtime-evidence.json",
+          "reports/issue-464/runtime-evidence.json",
+          "reports/issue-464/runtime-evidence.json",
+          "reports/issue-464/runtime-evidence-current-source.json",
+          "reports/issue-464/local-validation.json"
+        ],
+        "historical_status": "PASS",
+        "repair_validation_scope": "Full V1–V5 baseline acceptance was recorded on implementation bc1fdab375b7db748a9c6a8f5df406be021cc3b8. The subsequent backend repairs were validated with focused current-source regressions/static checks and targeted current-source real-provider API probes. Full browser, feedback→PostgreSQL/#461 and stale-state matrices are historical baseline evidence; those flows were not rerun after the backend-only repair because the relevant client/feedback persistence paths were unchanged."
+      },
+      {
+        "id": "R3",
+        "status": "PASS_WITH_PHASED_EVIDENCE",
+        "coverage": "Existing #461 local scheduled-task path was demonstrated end-to-end and reused without changing its CLI or scheduler code in Issue #464.",
+        "evidence": [
+          "reports/issue-459-464-20261105/issue-461/acceptance-run/postfix-v4/repaired-v4-first-run-evidence.json",
+          "reports/issue-459-464-20261105/issue-461/acceptance-run/postfix-v4/scheduled-cli-output.json",
+          "reports/issue-459-464-20261105/issue-461/acceptance-run/postfix-v4/cli-data/feedback/inbox.json",
+          "reports/issue-464/runtime-evidence-current-source.json",
+          "reports/issue-464/local-validation.json"
+        ],
+        "historical_status": "PASS_REUSED_ISSUE_461",
+        "repair_validation_scope": "Full V1–V5 baseline acceptance was recorded on implementation bc1fdab375b7db748a9c6a8f5df406be021cc3b8. The subsequent backend repairs were validated with focused current-source regressions/static checks and targeted current-source real-provider API probes. Full browser, feedback→PostgreSQL/#461 and stale-state matrices are historical baseline evidence; those flows were not rerun after the backend-only repair because the relevant client/feedback persistence paths were unchanged."
+      },
+      {
+        "id": "R4",
+        "status": "PASS_WITH_PHASED_EVIDENCE",
+        "coverage": "Usage help answer cites the bilingual user guide section.",
+        "evidence": [
+          "reports/issue-464/runtime-evidence.json",
+          "docs/help/user-guide.en.md",
+          "docs/help/user-guide.zh.md",
+          "reports/issue-464/runtime-evidence-current-source.json",
+          "reports/issue-464/local-validation.json"
+        ],
+        "historical_status": "PASS",
+        "repair_validation_scope": "Full V1–V5 baseline acceptance was recorded on implementation bc1fdab375b7db748a9c6a8f5df406be021cc3b8. The subsequent backend repairs were validated with focused current-source regressions/static checks and targeted current-source real-provider API probes. Full browser, feedback→PostgreSQL/#461 and stale-state matrices are historical baseline evidence; those flows were not rerun after the backend-only repair because the relevant client/feedback persistence paths were unchanged."
+      },
+      {
+        "id": "R5",
+        "status": "PASS_WITH_PHASED_EVIDENCE",
+        "coverage": "Intent routing to suggestion, help and catalog/KB paths.",
+        "evidence": [
+          "reports/issue-464/runtime-evidence.json",
+          "reports/issue-464/runtime-evidence.json",
+          "reports/issue-464/runtime-evidence.json",
+          "reports/issue-464/runtime-evidence.json",
+          "reports/issue-464/runtime-evidence-current-source.json",
+          "reports/issue-464/local-validation.json"
+        ],
+        "historical_status": "PASS",
+        "repair_validation_scope": "Full V1–V5 baseline acceptance was recorded on implementation bc1fdab375b7db748a9c6a8f5df406be021cc3b8. The subsequent backend repairs were validated with focused current-source regressions/static checks and targeted current-source real-provider API probes. Full browser, feedback→PostgreSQL/#461 and stale-state matrices are historical baseline evidence; those flows were not rerun after the backend-only repair because the relevant client/feedback persistence paths were unchanged."
+      },
+      {
+        "id": "R6",
+        "status": "PASS_WITH_PHASED_EVIDENCE",
+        "coverage": "Catalog metadata and permitted KB body answer with actual citations and current serving/stale behavior.",
+        "evidence": [
+          "reports/issue-464/runtime-evidence.json",
+          "reports/issue-464/runtime-evidence.json",
+          "reports/issue-464/runtime-evidence.json",
+          "reports/issue-464/runtime-evidence-current-source.json",
+          "reports/issue-464/local-validation.json"
+        ],
+        "historical_status": "PASS",
+        "repair_validation_scope": "Full V1–V5 baseline acceptance was recorded on implementation bc1fdab375b7db748a9c6a8f5df406be021cc3b8. The subsequent backend repairs were validated with focused current-source regressions/static checks and targeted current-source real-provider API probes. Full browser, feedback→PostgreSQL/#461 and stale-state matrices are historical baseline evidence; those flows were not rerun after the backend-only repair because the relevant client/feedback persistence paths were unchanged."
+      },
+      {
+        "id": "R7",
+        "status": "PASS_WITH_PHASED_EVIDENCE",
+        "coverage": "Feedback and assistant directories, routes and switches remain independent; four switch states and stale requests were exercised.",
+        "evidence": [
+          "tests/test_assistant_feature_matrix.py",
+          "reports/issue-464/runtime-evidence.json",
+          "reports/issue-464/runtime-evidence.json",
+          "reports/issue-464/runtime-evidence-current-source.json",
+          "reports/issue-464/local-validation.json"
+        ],
+        "historical_status": "PASS",
+        "repair_validation_scope": "Full V1–V5 baseline acceptance was recorded on implementation bc1fdab375b7db748a9c6a8f5df406be021cc3b8. The subsequent backend repairs were validated with focused current-source regressions/static checks and targeted current-source real-provider API probes. Full browser, feedback→PostgreSQL/#461 and stale-state matrices are historical baseline evidence; those flows were not rerun after the backend-only repair because the relevant client/feedback persistence paths were unchanged."
+      }
+    ]
+  },
+  "browser_screenshots_observation": "reports/issue-464/runtime-evidence.json",
+  "status_record": "Original full acceptance passed on implementation SHA bc1fdab. Post-review backend repairs passed focused current-source regression/static checks and targeted current-source real-provider/restricted-KB API validation. Fresh independent review PASS. Sanitized historical evidence is in this PR checkout. Current-head CI, Copilot thread resolution, merge and task closure remain pending.",
+  "historical_validation": [
+    {
+      "command": "python -m pytest tests/test_assistant_knowledge.py tests/test_assistant_feature_matrix.py tests/test_fastapi_assistant_endpoints.py tests/test_fastapi_chat_endpoints.py tests/test_fastapi_agentic_rag_endpoints.py tests/test_rag_runtime.py tests/test_assistant_routing.py tests/test_assistant_help.py tests/test_fastapi_assistant_help_endpoints.py tests/unit/test_permissions.py -q --no-cov",
+      "result": "PASS, 242 tests",
+      "evidence": "reports/issue-464/local-validation.json",
+      "phase": "initial pre-review working diff from the worker's first delivery, before the R1–R6 repair iterations",
+      "disposition": "superseded_by_new364",
+      "superseded_by": "local_validation[0]",
+      "reuse_basis": "Superseded by the fresh recorded 364-module run on the implementation commit; this initial subset is retained only as history.",
+      "phase_evidence": [
+        "reports/issue-464/local-validation.json",
+        "reports/issue-464/runtime-evidence.json"
+      ]
+    }
+  ],
+  "historical_implementation": {
+    "implementation_sha": "bc1fdab375b7db748a9c6a8f5df406be021cc3b8",
+    "archived_head": "5a101347503c98124a4ff560b28499130ff4e2c6",
+    "assistant_source_sha256": "d48e176fdd90777df6c7aa6b849719f17094d6247f458ecbbd00cc3f2a3b9a52",
+    "runtime_evidence": "reports/issue-464/runtime-evidence.json"
+  },
+  "durable_evidence": {
+    "runtime": "reports/issue-464/runtime-evidence.json",
+    "local_validation": "reports/issue-464/local-validation.json",
+    "provenance": "runtime-evidence.json contains sanitized original acceptance observations on implementation SHA bc1fdab375b7db748a9c6a8f5df406be021cc3b8 (archived PR head 5a101347); runtime-evidence-current-source.json contains targeted real-provider identity/catalog queries on the current repair source. local-validation.json separates pre-fix reproductions, pre-C4 repair phase and final 104-test Standard completion. No credentials or raw private logs are included.",
+    "current_runtime": "reports/issue-464/runtime-evidence-current-source.json"
+  },
+  "repair_base_head": "5a101347503c98124a4ff560b28499130ff4e2c6",
+  "repair_changed_files": [
+    ".hermes/project-status.md",
+    "ai_actuarial/agentic_rag/ready_data_tools.py",
+    "ai_actuarial/api/services/ops_write.py",
+    "ai_actuarial/assistant/knowledge.py",
+    "ai_actuarial/chatbot/retrieval.py",
+    "reports/issue-464/acceptance.json",
+    "reports/issue-464/local-validation.json",
+    "reports/issue-464/runtime-evidence.json",
+    "reports/issue-464/runtime-evidence-current-source.json",
+    "tests/test_assistant_feature_matrix.py",
+    "tests/test_assistant_knowledge.py",
+    "tests/test_source_registry.py"
+  ],
+  "current_repair_validation": {
+    "base_head": "5a101347503c98124a4ff560b28499130ff4e2c6",
+    "source_phase": "Current repair source based on the recorded PR head; exact file hashes and test phases are in local-validation.json and runtime-evidence-current-source.json.",
+    "focused_standard_completion": "104 passed, 3 warnings; actual FAISS→RAGRetriever→body_evidence rank-six regression; no extra query embedding; served version retained.",
+    "targeted_real_provider": "PASS: current source seven-case identity matrix plus CAS catalog query; 3 answer-generation attempts total; unauthorized queries generated no answer; evidence has raw content and credentials omitted.",
+    "scope_limit": "Full browser and feedback→PostgreSQL/#461 flows remain accurately labeled historical implementation evidence; those paths were unchanged by the backend repairs.",
+    "evidence": [
+      "reports/issue-464/runtime-evidence-current-source.json",
+      "reports/issue-464/local-validation.json"
+    ]
+  }
+}
