@@ -216,7 +216,7 @@
           "sha256": "f094ce0bf8c38d0ef05c69e1ce03c0290f5cce5d453e3279907e7d3e473de029"
         }
       ],
-      "status_file_note": "The project-status.md file was extended after the V4 run to record acceptance and review. The source fingerprint retains its original status-file bytes; all CLI, implementation, configuration, test and documentation hashes remained unchanged.",
+      "status_file_note": "V4 is bound to the source_hashes_at_run listed above. At that run, the CLI, inbox implementation, configuration, tests, and documentation matched the captured fingerprint. Subsequent project-status-only updates are separately recorded; later remote-feedback repairs changed inbox.py, its tests, and docs and are not covered by this V4 result. The later source is bound under remote_review_fixes.",
       "environment": "Local browser on 127.0.0.1:15161; isolated PostgreSQL 16.15 container on loopback 127.0.0.1:55461; isolated FastAPI on 127.0.0.1:8000; Windows Task Scheduler under current non-elevated user, Limited/Interactive, separate temporary task AIActuarial-FeedbackInbox-postfix-v4-41ca041a.",
       "operations": [
         "Submitted synthetic feedback through the browser after the temporary task was registered disabled.",
@@ -338,5 +338,72 @@
     ],
     "scheduler_operational_log_changed": false,
     "evidence": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-461\\acceptance-run\\postfix-v4\\cleanup-verification.json"
+  },
+  "remote_review_fixes": {
+    "source_commit_sha": "00b1f53daa5ce213387899da988cd7c8a7091431",
+    "source_files": {
+      "ai_actuarial/feedback/inbox.py": "2bc50ef40a7efe7d523a78e1fc6391867d93e8e41f6d97556881d1586e714c48",
+      "tests/test_feedback_cli.py": "65f3ec4cff3b21504e5a5df6cbd9eabb838949d227a19955dd720f54b5ce4ae0",
+      "docs/feedback-inbox.md": "01c153c51d74cbaf8261edd9f75877c9234d54fcb11b360290bc9862bae55ec9"
+    },
+    "scope": "One-time PR #467 Copilot review of prior PR HEAD 07d35a11e421368410ef01d02c4b4696c98e8a76; four findings were directly mapped to the configured credential boundary, AC2/AC4, and D2/V2. This evidence is distinct from V1/V3/V4.",
+    "comment_ids": [
+      4488504564,
+      4488504600,
+      4488504633,
+      4488504660
+    ],
+    "source_findings_reproduced_on_prior_head": {
+      "command": "python -m pytest tests/test_feedback_cli.py --no-cov -q -k 'actual_cross_origin or malformed_http_response or invalid_sync_values or sync_write_failure'",
+      "actual": "20 failed, 46 deselected",
+      "result": "RED",
+      "evidence": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-461\\worker-remote-red.log"
+    },
+    "fixed_source_checks": [
+      {
+        "command": "python -m pytest tests/test_feedback_cli.py",
+        "actual": "66 passed; 3 existing SWIG deprecation warnings",
+        "result": "PASS",
+        "evidence": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-461\\worker-remote-feedback-focused.log"
+      },
+      {
+        "command": "python -m pytest tests/test_feedback_cli.py tests/test_pipeline_baton_cli.py --no-cov -q",
+        "actual": "70 passed",
+        "result": "PASS",
+        "evidence": "Worker tool output; source hash above"
+      },
+      {
+        "command": "Black; isort; Pylint errors-only; Ruff; Python file/symbol dead-code gates; git diff --check",
+        "actual": "All passed",
+        "result": "PASS",
+        "evidence": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-461\\worker-remote-static.json"
+      }
+    ],
+    "review_assessment": {
+      "copilot_review_id": 5795095508,
+      "result": "COMMENTED; four issues fixed",
+      "snapshot": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-461\\remote-feedback-snapshot-1.json",
+      "manager_disposition": "All four accepted within scope based on exact acceptance mapping and reproducible old-head failures.",
+      "typesafe_judge": {
+        "choice": "accept_all_four",
+        "probability": 0.63,
+        "confidence": 0.51,
+        "model": "jev-1.14.0",
+        "report": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-461\\copilot-scope-result.json"
+      },
+      "typesafe_remote_review_assessment": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-461\\remote-review-typesafe.json",
+      "independent_supplemental_code_audit": {
+        "reviewer": "/root/issue461_remote_review",
+        "result": "PASS",
+        "source_sha256": "2bc50ef40a7efe7d523a78e1fc6391867d93e8e41f6d97556881d1586e714c48",
+        "formal_lifecycle_round": false,
+        "evidence": "C:\\Project\\AI_actuarial_inforsearch\\reports\\issue-459-464-20261105\\issue-461\\controller-remote-review-native.json"
+      },
+      "formal_fresh_local_review_after_published_fix": "Pending on final PR HEAD; see Issue manager state and final review evidence."
+    },
+    "limitations": [
+      "No PostgreSQL/browser/V4 Task Scheduler rerun for these local CLI error-handling changes. Earlier V1/V3/V4 results remain historical and are not relabeled as this source.",
+      "At the one-time remote-feedback snapshot, five CI jobs passed and quality-gate was still in progress. Final merge requires checks on the final PR HEAD."
+    ]
   }
 }
