@@ -1253,6 +1253,11 @@ def update_backend_settings(
         if not system_cfg:
             config_data.pop("system", None)
 
+    features = resolve_runtime_features(config_data)
+    if features["feedback_enabled"] and not re.fullmatch(
+        r"[a-z0-9][a-z0-9_-]{0,63}", features["feedback_site_key"]
+    ):
+        raise OpsWriteError("Enabled feedback requires a valid deployment feedback_site_key")
     _write_config_data(config_data)
     _notify_site_config_updated(bridge, config_data)
     _notify_runtime_features_updated(bridge, config_data)

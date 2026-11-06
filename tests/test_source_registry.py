@@ -141,6 +141,14 @@ def test_assistant_catalog_search_uses_current_publisher_not_collection_label(st
     assert current["source_key"] == "cas" and current["source_site"] == "local_docling"
     rows = storage.search_catalog_projection(["cas"])
     assert len(rows) == 1 and rows[0]["organization"] == current["source_name_en"]
+    for index in range(6):
+        unrelated = f"https://unrelated.example/{index}.pdf"
+        _upsert(storage, unrelated)
+        storage._conn.execute(
+            "UPDATE files SET title = ?, last_seen = ? WHERE url = ?",
+            ("Notes from another publisher", "2099-01-01", unrelated),
+        )
+    storage._conn.commit()
     for zh, field, question in (
         (False, "source_name_en", "What materials from CAS?"),
         (True, "source_name_zh", "有哪些 CAS 资料？"),

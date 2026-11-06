@@ -1,0 +1,161 @@
+{
+  "schema_version": 1,
+  "recorded_at_utc": "2026-11-06T16:24:12.397965+00:00",
+  "scope": "Current uncommitted repair-source API identity and real-provider/restricted-KB revalidation; synthetic task database only.",
+  "source": {
+    "base_head": "5a101347503c98124a4ff560b28499130ff4e2c6",
+    "implementation_sha": "bc1fdab375b7db748a9c6a8f5df406be021cc3b8",
+    "source_sha256": {
+      "ai_actuarial/agentic_rag/ready_data_tools.py": "12f986fb22f79bfb75ef4d0e218e5c75b1d924f6e4898493e12507d325418378",
+      "ai_actuarial/api/services/ops_write.py": "4b905083de0383834397aa2b61c3c00555092973fc18c18ba6044fca76c80cbf",
+      "ai_actuarial/assistant/knowledge.py": "d74fd05fdf382ca8363bbef97fab8c4ee126154e205988511ab145f0e4d58f57",
+      "ai_actuarial/chatbot/retrieval.py": "e9603f8e2704172481d7c3222239c63d071a7abd7e3be17a8d0609b43821049d",
+      "ai_actuarial/storage.py": "892587920f8fea24b095f1fec9342ec44e52a55376a22337eb94bb98c02c2dca"
+    }
+  },
+  "environment": {
+    "api_health_status": 200,
+    "database": "task-isolated PostgreSQL 16",
+    "persistent_volume": false,
+    "provider": "openai",
+    "model": "gpt-5.4-mini",
+    "embedding_provider": "openai",
+    "embedding_model": "text-embedding-3-large",
+    "binding": "loopback-only"
+  },
+  "identity_cases": [
+    {
+      "case": "anonymous_staff_question",
+      "identity_class": "anonymous",
+      "status_code": 200,
+      "intent": "knowledge",
+      "availability": "unavailable",
+      "error_code": "KNOWLEDGE_NOT_FOUND",
+      "generation_attempts": 0,
+      "answer_generation_attempts": 0,
+      "embedding_attempts": 0,
+      "citations": []
+    },
+    {
+      "case": "registered_staff_question",
+      "identity_class": "registered",
+      "status_code": 200,
+      "intent": "knowledge",
+      "availability": "unavailable",
+      "error_code": "KNOWLEDGE_NOT_FOUND",
+      "generation_attempts": 0,
+      "answer_generation_attempts": 0,
+      "embedding_attempts": 0,
+      "citations": []
+    },
+    {
+      "case": "operator_staff_question",
+      "identity_class": "operator",
+      "status_code": 200,
+      "intent": "knowledge",
+      "availability": "available",
+      "error_code": null,
+      "generation_attempts": 1,
+      "answer_generation_attempts": 1,
+      "embedding_attempts": 0,
+      "citations": [
+        {
+          "source_type": "kb",
+          "kb_id": "kb-staff-464",
+          "source_version": "idxv_120d2aebfa4346db95442b407499a5f7",
+          "source_date": "2026-11-06T16:19:12.403723+00:00",
+          "stale": false,
+          "file_id_sha256": "e931941674c7691ecd5f6043e85273c05ab6bf27f1faf030f3f701b8301e3648",
+          "section_id_sha256": "bd5304e91f8c448094c6e36c360d7c17ea30a1b00e3b60473ee18fbd6aea1107"
+        }
+      ]
+    },
+    {
+      "case": "admin_staff_question",
+      "identity_class": "admin",
+      "status_code": 200,
+      "intent": "knowledge",
+      "availability": "available",
+      "error_code": null,
+      "generation_attempts": 1,
+      "answer_generation_attempts": 1,
+      "embedding_attempts": 0,
+      "citations": [
+        {
+          "source_type": "kb",
+          "kb_id": "kb-staff-464",
+          "source_version": "idxv_120d2aebfa4346db95442b407499a5f7",
+          "source_date": "2026-11-06T16:19:12.403723+00:00",
+          "stale": false,
+          "file_id_sha256": "e931941674c7691ecd5f6043e85273c05ab6bf27f1faf030f3f701b8301e3648",
+          "section_id_sha256": "bd5304e91f8c448094c6e36c360d7c17ea30a1b00e3b60473ee18fbd6aea1107"
+        }
+      ]
+    },
+    {
+      "case": "anonymous_unlisted_question",
+      "identity_class": "anonymous",
+      "status_code": 200,
+      "intent": "knowledge",
+      "availability": "error",
+      "error_code": "QUOTA_EXCEEDED",
+      "generation_attempts": 0,
+      "answer_generation_attempts": 0,
+      "embedding_attempts": 0,
+      "citations": []
+    },
+    {
+      "case": "client_kb_ids_spoof",
+      "identity_class": "operator",
+      "status_code": 422,
+      "intent": null,
+      "availability": null,
+      "error_code": null,
+      "generation_attempts": null,
+      "answer_generation_attempts": null,
+      "embedding_attempts": null,
+      "citations": []
+    },
+    {
+      "case": "client_kb_id_spoof",
+      "identity_class": "operator",
+      "status_code": 422,
+      "intent": null,
+      "availability": null,
+      "error_code": null,
+      "generation_attempts": null,
+      "answer_generation_attempts": null,
+      "embedding_attempts": null,
+      "citations": []
+    }
+  ],
+  "totals": {
+    "cases": 7,
+    "generation_attempts": 2,
+    "embedding_attempts": 0,
+    "valid_citation_count": 2
+  },
+  "prompt_source_evidence": "Current responses expose citations only; their source type, permitted KB ID, source version/stale flag, and one-way file/section hashes are recorded. Direct prompt-source events from the original acceptance remain in runtime-evidence.json and are explicitly bound to the implementation baseline; no raw prompt or answer is included here.",
+  "privacy": "No auth tokens, user IDs, raw questions, prompt bodies, answers, URLs, titles, IP addresses, process IDs, full file/section IDs or provider credentials are included.",
+  "catalog_case": {
+    "scenario": "current-source real-provider CAS catalog query",
+    "identity_class": "admin",
+    "status_code": 200,
+    "intent": "catalog",
+    "availability": "available",
+    "error_code": null,
+    "generation_attempts": 1,
+    "embedding_attempts": 0,
+    "canonical_publisher": "CAS",
+    "citations": [
+      {
+        "source_type": "catalog",
+        "source_version": null,
+        "stale": false,
+        "file_id_sha256": "2ecfba9b5464536fe2490c5aea5e21ab6275ed21f89e6e81d3d8d8b7b052d74a"
+      }
+    ],
+    "raw_query_answer_url_title_and_catalog_row_id_omitted": true
+  },
+  "catalog_observed_at_utc": "2026-11-06T16:25:54.392142+00:00"
+}

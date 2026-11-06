@@ -148,3 +148,29 @@ def test_allowlists_default_empty_and_reject_non_list_configuration(monkeypatch)
     assert config["assistant_public_kb_ids"] == config["assistant_staff_kb_ids"] == []
     with pytest.raises(ValueError, match="assistant_public_kb_ids"):
         resolve_runtime_features({"features": {"assistant_public_kb_ids": "all"}})
+
+
+@pytest.mark.parametrize("site_key", ["", "BAD KEY"])
+def test_feedback_enable_rejects_invalid_site_key_before_write_or_activation(
+    feedback_client, monkeypatch, site_key
+):
+    import os
+    from pathlib import Path
+
+    import yaml
+
+    client, app, _, _ = feedback_client
+    path = Path(os.environ["CONFIG_PATH"])
+    config = yaml.safe_load(path.read_text(encoding="utf-8"))
+    config["features"].update(feedback_enabled=False, feedback_site_key=site_key)
+    path.write_text(yaml.safe_dump(config), encoding="utf-8")
+    before = path.read_bytes()
+    app.state.feedback_enabled = False
+    response = client.post(
+        "/api/config/backend-settings",
+        json={"features": {"feedback_enabled": True}},
+        headers={"Authorization": "Bearer feedback-admin"},
+    )
+    assert response.status_code == 400
+    assert path.read_bytes() == before
+    assert app.state.feedback_enabled is False

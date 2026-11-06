@@ -62,7 +62,7 @@ def _citation(row: dict, *, source_type: str, **metadata) -> SourceCitation:
 def catalog_evidence(storage, message: str, *, zh: bool) -> list[Evidence]:
     # Only subject terms search the fixed public projection, never Markdown.
     stop = set(
-        "a all an and are about available can could do does document documents file files find for have how i in is list materials me of on or please related show tell the there to we what which with would you".split()
+        "a all an and are about available can could do does document documents file files find for from have how i in is list materials me of on or please related show tell the there to we what which with would you".split()
     )
     terms = [word for word in re.findall(r"[a-z0-9]+", message.lower()) if word not in stop]
     subject = re.sub(r"有哪些|什么|资料|文件|可用|列出|显示|相关|关于|请|的", " ", message)
@@ -146,6 +146,7 @@ def body_evidence(
                     output_dir=manifest["output_dir"],
                     limit=min(5, max(1, config.top_k)),
                     excerpt_terms=_tokens(message) - _EN_STOPWORDS,
+                    file_urls=set(files),
                 )
                 for row in rows:
                     file_url = row.get("file_url") or row.get("doc_id")
@@ -176,15 +177,18 @@ def body_evidence(
             if not kb[1]:
                 failure = "KNOWLEDGE_UNAVAILABLE"
                 continue
-            if retriever is None:
-                retriever = RAGRetriever(
-                    storage, config, embedding_deadline=deadline, embedding_attempt=on_embedding
-                )
             try:
+                if retriever is None:
+                    retriever = RAGRetriever(
+                        storage, config, embedding_deadline=deadline, embedding_attempt=on_embedding
+                    )
                 # Missing or corrupt indexes fail before a query embedding is sent.
                 retriever._get_vector_store(kb_id)
                 rows = retriever.retrieve(
-                    message, kb_ids=[kb_id], top_k=min(5, max(1, config.top_k))
+                    message,
+                    kb_ids=[kb_id],
+                    top_k=min(5, max(1, config.top_k)),
+                    file_urls=set(files),
                 )
             except EmbeddingConfigurationMismatchException:
                 failure = "INDEX_MISMATCH"
@@ -198,8 +202,6 @@ def body_evidence(
                     raise TimeoutError() from exc
                 failure = "KNOWLEDGE_UNAVAILABLE"
                 continue
-            composition = storage.get_kb_composition_status(kb_id)
-            latest = composition.get("latest_index") or {}
             for row in rows:
                 metadata = row["metadata"]
                 file_url = metadata.get("file_url")
@@ -210,10 +212,10 @@ def body_evidence(
                     source_type="kb",
                     kb_id=kb_id,
                     section_id=str(metadata["chunk_id"]),
-                    source_version=str(latest.get("built_at") or "") or None,
-                    source_date=str(latest.get("built_at") or files[file_url]["date"] or "")
+                    source_version=metadata.get("index_version_id"),
+                    source_date=str(metadata.get("index_built_at") or files[file_url]["date"] or "")
                     or None,
-                    stale=bool(composition.get("needs_reindex")),
+                    stale=bool(metadata.get("index_stale")),
                 )
                 evidence.append(Evidence(citation, row["content"][:4000]))
         by_kb: dict[str | None, list[Evidence]] = {}

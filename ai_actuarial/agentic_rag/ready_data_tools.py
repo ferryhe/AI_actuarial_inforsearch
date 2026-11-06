@@ -482,7 +482,12 @@ def search_titles(query: str, *, output_dir: str | Path, limit: int = 10) -> lis
 
 
 def search_sections(
-    query: str, *, output_dir: str | Path, limit: int = 10, excerpt_terms: set[str] | None = None
+    query: str,
+    *,
+    output_dir: str | Path,
+    limit: int = 10,
+    excerpt_terms: set[str] | None = None,
+    file_urls: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Search L1 structured sections, falling back to L0 sections when needed."""
     query_text = _norm(query)
@@ -503,6 +508,9 @@ def search_sections(
         if not doc_id:
             continue
         doc = catalog.get(doc_id, {})
+        file_url = _norm(section.get("file_url")) or _norm(doc.get("file_url")) or doc_id
+        if file_urls is not None and file_url not in file_urls:
+            continue
         heading_path = _list_text(section.get("heading_path"))
         heading = _norm(section.get("heading")) or _first_text(heading_path)
         text = _norm(section.get("text"))
@@ -522,7 +530,6 @@ def search_sections(
             score += 3.0
         if score <= 0:
             continue
-        file_url = _norm(section.get("file_url")) or _norm(doc.get("file_url")) or doc_id
         scored.append(
             _with_retrieval_indicators(
                 {

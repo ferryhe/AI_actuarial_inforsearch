@@ -250,6 +250,257 @@ def test_hard_stale_falls_back_only_same_kb_and_current_membership(monkeypatch):
     assert len(result) == 1 and result[0].citation.file_id == "member" and failure is None
 
 
+def test_standard_constructor_failure_does_not_discard_other_ready_evidence(monkeypatch):
+    from ai_actuarial.agentic_rag import ready_data_tools
+    from ai_actuarial.api.services import ready_data_publication
+    from ai_actuarial.chatbot import retrieval
+
+    monkeypatch.setattr(
+        ready_data_publication,
+        "read_public_ready_data_snapshot",
+        lambda storage, *, kb_id, **kwargs: {
+            "manifest": {"usable": kb_id == "ready", "output_dir": "active", "publication_id": "v1"}
+        },
+    )
+    monkeypatch.setattr(
+        ready_data_tools,
+        "search_sections",
+        lambda *args, **kwargs: [
+            {"doc_id": "member", "section_id": "ready-section", "text_snippet": "Available body"}
+        ],
+    )
+    monkeypatch.setattr(
+        retrieval,
+        "RAGRetriever",
+        lambda *args, **kwargs: (_ for _ in ()).throw(ValueError("missing embedding key")),
+    )
+    result, failure = knowledge.body_evidence(
+        BodyStorage(),
+        "body",
+        ["ready", "broken-standard"],
+        config=ChatbotConfig(),
+        deadline=time.monotonic() + 30,
+        on_embedding=lambda: pytest.fail("No provider attempt"),
+    )
+    assert len(result) == 1 and result[0].citation.kb_id == "ready"
+    assert failure == "KNOWLEDGE_UNAVAILABLE"
+
+
+def test_ready_membership_filter_precedes_result_budget(monkeypatch, tmp_path):
+    from ai_actuarial.api.services import ready_data_publication
+
+    (tmp_path / "ready_data_manifest.json").write_text('{"profile":"general"}', encoding="utf-8")
+    docs = [{"doc_id": f"removed-{i}", "title": "reserve reserve"} for i in range(5)] + [
+        {"doc_id": "member", "title": "Current report"}
+    ]
+    sections = [
+        {
+            "doc_id": row["doc_id"],
+            "section_id": f"section-{i}",
+            "text": "reserve reserve" if i < 5 else "The reserve is 37.",
+        }
+        for i, row in enumerate(docs)
+    ]
+    for name, rows in (("doc_catalog.jsonl", docs), ("sections.jsonl", sections)):
+        (tmp_path / name).write_text(
+            "\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8"
+        )
+    monkeypatch.setattr(
+        ready_data_publication,
+        "read_public_ready_data_snapshot",
+        lambda *args, **kwargs: {
+            "manifest": {"usable": True, "output_dir": str(tmp_path), "publication_id": "active"}
+        },
+    )
+    result, _ = knowledge.body_evidence(
+        BodyStorage(),
+        "reserve",
+        ["allowed"],
+        config=ChatbotConfig(),
+        deadline=time.monotonic() + 30,
+        on_embedding=lambda: pytest.fail("No embedding"),
+    )
+    assert len(result) == 1 and result[0].citation.file_id == "member"
+
+
+@pytest.mark.parametrize("current_vectors", [1, 6])
+def test_standard_membership_filter_fills_budget_from_rank_six(monkeypatch, current_vectors):
+    import numpy as np
+
+    from ai_actuarial.api.services import ready_data_publication
+    from ai_actuarial.chatbot import retrieval
+    from ai_actuarial.rag.vector_store import VectorStore
+
+    vector_store = VectorStore(
+        2, config=RAGConfig(embedding_provider="local", embedding_cache_enabled=False)
+    )
+    vectors = np.array(
+        [[1.0, 0.0]] * 5
+        + [[np.cos(0.1 + i * 0.01), np.sin(0.1 + i * 0.01)] for i in range(current_vectors)]
+    )
+    metadata = [
+        {"file_url": f"removed-{i}", "chunk_id": f"removed-{i}", "content": "Removed body"}
+        for i in range(5)
+    ] + [
+        {"file_url": "member", "chunk_id": f"current-{i}", "content": f"Current reserve body {i}"}
+        for i in range(current_vectors)
+    ]
+    vector_store.add_vectors(vectors, metadata)
+    first_five = vector_store.search(np.array([1.0, 0.0]), k=5, similarity_threshold=0.5)
+    assert len(first_five) == 5 and all(
+        row["metadata"]["file_url"].startswith("removed-") for row in first_five
+    )
+    retriever = retrieval.RAGRetriever.__new__(retrieval.RAGRetriever)
+    retriever.storage = BodyStorage()
+    retriever.config = ChatbotConfig(top_k=5, similarity_threshold=0.5)
+    kb = SimpleNamespace(
+        kb_id="allowed",
+        name="KB",
+        embedding_provider="local",
+        embedding_model="custom",
+        embedding_dimension=2,
+    )
+    retriever.kb_manager = SimpleNamespace(get_kb=lambda kb_id: kb)
+    retriever._vector_store_cache = {"allowed": vector_store}
+    retriever._index_source_cache = {
+        "allowed": {
+            "index_version_id": "served-c4",
+            "index_built_at": "2026-01-01",
+            "index_stale": False,
+        }
+    }
+    attempts = []
+
+    def generate(text):
+        attempts.append(text)
+        return [1.0, 0.0]
+
+    retriever.embedding_generator = SimpleNamespace(
+        provider="local",
+        config=SimpleNamespace(embedding_model="custom"),
+        get_embedding_dimension=lambda: 2,
+        generate_single=generate,
+        openai_client=None,
+    )
+    monkeypatch.setattr(retrieval, "RAGRetriever", lambda *args, **kwargs: retriever)
+    monkeypatch.setattr(
+        ready_data_publication,
+        "read_public_ready_data_snapshot",
+        lambda *args, **kwargs: {"manifest": {"usable": False}},
+    )
+    result, _ = knowledge.body_evidence(
+        BodyStorage(),
+        "reserve",
+        ["allowed"],
+        config=retriever.config,
+        deadline=time.monotonic() + 30,
+        on_embedding=lambda: None,
+    )
+    assert len(result) == min(5, current_vectors)
+    assert all(
+        item.citation.file_id == "member" and item.citation.source_version == "served-c4"
+        for item in result
+    )
+    assert all("Removed" not in item.content for item in result)
+    assert attempts == ["reserve"]
+
+
+def test_standard_citation_uses_served_index_snapshot(monkeypatch):
+    from ai_actuarial.api.services import ready_data_publication
+    from ai_actuarial.chatbot import retrieval
+
+    monkeypatch.setattr(
+        ready_data_publication,
+        "read_public_ready_data_snapshot",
+        lambda *args, **kwargs: {"manifest": {"usable": False}},
+    )
+
+    class Retriever:
+        embedding_generator = SimpleNamespace(openai_client=None)
+
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def _get_vector_store(self, kb_id):
+            pass
+
+        def retrieve(self, *args, **kwargs):
+            return [
+                {
+                    "content": "Served body",
+                    "metadata": {
+                        "file_url": "member",
+                        "chunk_id": "chunk-A",
+                        "index_version_id": "served-A",
+                        "index_built_at": "2026-01-01",
+                        "index_stale": False,
+                    },
+                }
+            ]
+
+    monkeypatch.setattr(retrieval, "RAGRetriever", Retriever)
+    result, _ = knowledge.body_evidence(
+        BodyStorage(),
+        "body",
+        ["allowed"],
+        config=ChatbotConfig(),
+        deadline=time.monotonic() + 30,
+        on_embedding=lambda: None,
+    )
+    assert result[0].citation.source_version == "served-A"
+    assert result[0].citation.source_date == "2026-01-01"
+    assert result[0].citation.stale is False
+
+
+def test_loaded_standard_store_keeps_its_version_when_new_index_is_committed(monkeypatch, tmp_path):
+    from contextlib import nullcontext
+
+    from ai_actuarial.chatbot import retrieval
+
+    path = tmp_path / "served.faiss"
+    path.write_bytes(b"synthetic-index")
+    current = {"version": "A"}
+
+    class Connection:
+        def execute(self, sql, params):
+            self.version_query = "FROM kb_index_versions" in sql
+            return self
+
+        def fetchone(self):
+            return (current["version"], "2026-01-01", 2) if self.version_query else (str(path),)
+
+    class Store:
+        def __init__(self, **kwargs):
+            pass
+
+        def search(self, *args, **kwargs):
+            return [
+                {
+                    "score": 0.9,
+                    "metadata": {"content": "body-A", "file_url": "member", "chunk_id": "chunk-A"},
+                }
+            ]
+
+    monkeypatch.setattr(retrieval, "VectorStore", Store)
+    retriever = retrieval.RAGRetriever.__new__(retrieval.RAGRetriever)
+    retriever.storage = SimpleNamespace(
+        _conn=Connection(),
+        transaction=lambda **kwargs: nullcontext(),
+        get_kb_composition_status=lambda kb: {"needs_reindex": current["version"] != "A"},
+    )
+    retriever.kb_manager = SimpleNamespace(
+        get_kb=lambda kb: SimpleNamespace(name="KB", embedding_dimension=2, embedding_model="test")
+    )
+    retriever._vector_store_cache = {}
+    retriever._index_source_cache = {}
+    retriever._get_vector_store("allowed")
+    current["version"] = "B"
+    result = retriever._retrieve_from_kb("allowed", [0.1, 0.2], 5, 0.5)
+    assert result[0]["content"] == "body-A"
+    assert result[0]["metadata"]["index_version_id"] == "A"
+    assert result[0]["metadata"]["index_stale"] is False
+
+
 @pytest.mark.parametrize("background_repeats", [0, 1200])
 def test_ready_answer_excerpt_follows_match_in_same_publication(
     runtime, monkeypatch, tmp_path, background_repeats
