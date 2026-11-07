@@ -1,3 +1,12 @@
+## 2026-11-07 Issue #474 — PR #481 status update
+
+- Branch `codex/issue-474-mobile-assistant`, PR #481, baseline `33198dd87b413bdec5d9a60a4a60f9e857bd831b`. The assistant uses one freeform question input with automatic routing; mobile panel geometry and delayed-answer visibility are fixed while the independent older-history reading path is preserved.
+- Six completed local review rounds are retained; Review 6 and its TypeSafe assessment passed with no findings. The Review 5 Judge outcome remains unresolved and is not recorded as PASS. The accepted in-scope work continued under the controller's recorded decision.
+- Focused validation: AssistantPanel 23/23; PostgreSQL routing 48/48; feature matrix 11/11; typecheck, build, changed-file ESLint (0 errors, 4 existing warnings), Python style checks, and `git diff --check` passed. Current-source mocked Chromium covered both routes, eight viewport cases, feature flags, resize/composer growth, feedback cancellation, preserved older reading, and bilingual clarification.
+- GitHub run 844 passed its 3,559-test suite (1 skipped) but failed only the final Black gate for a newly changed long tuple in `tests/test_assistant_routing.py`. The format-only correction in `f842b90` passed Black and 47 routing tests; the PostgreSQL-only case was deselected because no endpoint was configured. GitHub run 845 then passed all six jobs on `f842b90`.
+- PR #481 is Ready. GitHub did not register the single Copilot review request; the request list was empty, so Copilot is recorded unavailable with no retry. The one feedback snapshot on `f842b90` contained zero comments, reviews, and review threads; the worker's clean assessment report is pending.
+- This status-only refresh will create a new PR head and require a new current-head CI run before merge. Live-provider/API checks on this branch and physical iOS/soft-keyboard validation were not run. No production deployment or configuration write occurred.
+
 ## 2026-11-07 Issue #474 — local review passed
 
 - Branch: `codex/issue-474-mobile-assistant`, baseline/head `33198dd87b413bdec5d9a60a4a60f9e857bd831b`. The assistant now uses one freeform question input with automatic routing; clarification asks users to add detail or rephrase in English and Chinese while legacy backend mode handling remains intact. The panel shares available host geometry with the Chat footer, and assistant history scrolls independently from its composer.
