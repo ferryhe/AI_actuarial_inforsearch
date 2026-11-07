@@ -1,0 +1,20 @@
+{
+  "skill_id": "test_lookup",
+  "version": "1.0",
+  "description": "Look up a local test item for runtime contract checks.",
+  "enabled": true,
+  "tools": [
+    {
+      "tool_id": "test_lookup.search",
+      "description": "Find local test item IDs by term.",
+      "executor": "test_lookup.search",
+      "arguments_model": "SearchArgs"
+    },
+    {
+      "tool_id": "test_lookup.detail",
+      "description": "Get an exact local test item by ID.",
+      "executor": "test_lookup.detail",
+      "arguments_model": "DetailArgs"
+    }
+  ]
+}

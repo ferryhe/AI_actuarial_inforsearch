@@ -64,6 +64,13 @@ class QueryResponse(BaseModel):
     answer_generation_attempts: int = 0
 
 
+class FeatureResponse(QueryResponse):
+    intent: Intent | Literal["answer"]
+    schema_version: Literal["1.0"] = "1.0"
+    stop_reason: Literal["finish", "clarify", "error"]
+    evidence_ids: list[str] = Field(default_factory=list)
+
+
 class Classification(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     intent: Intent

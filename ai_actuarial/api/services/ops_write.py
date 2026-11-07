@@ -365,7 +365,14 @@ def _notify_runtime_features_updated(
         return
     features = resolve_runtime_features(config_data)
     bridge.app_state.feedback_enabled = bool(features.get("feedback_enabled"))
-    bridge.app_state.assistant_enabled = bool(features.get("assistant_enabled"))
+    assistant_enabled = bool(features.get("assistant_enabled"))
+    if assistant_enabled and not getattr(bridge.app_state, "assistant_feature", None):
+        from ai_actuarial.features.assistant import AssistantFeature
+
+        bridge.app_state.assistant_feature = AssistantFeature()
+    bridge.app_state.assistant_enabled = assistant_enabled
+    if not assistant_enabled and hasattr(bridge.app_state, "assistant_feature"):
+        del bridge.app_state.assistant_feature
     bridge.app_state.require_auth = bool(features.get("require_auth"))
     bridge.app_state.enable_global_logs_api = bool(features.get("enable_global_logs_api"))
     bridge.app_state.enable_rate_limiting = bool(features.get("enable_rate_limiting"))

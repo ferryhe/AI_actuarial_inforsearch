@@ -100,6 +100,18 @@ it("uses automatic routing with one freeform question input", async () => {
   expect(apiPost).toHaveBeenCalledWith("/api/assistant/query", { message: "怎样提交建议", mode: "auto", locale: "zh" });
 });
 
+it("shows a finished answer and its evidence without a clarification prompt", async () => {
+  apiPost.mockResolvedValueOnce({ ...reply("answer"), answer: "Sample found", schema_version: "1.0", stop_reason: "finish", evidence_ids: ["test_lookup:sample"] })
+    .mockResolvedValueOnce({ ...reply("clarify"), answer: "Which item?", schema_version: "1.0", stop_reason: "clarify", evidence_ids: [] });
+  show(false); question("sample");
+  await screen.findByText("Sample found");
+  expect(screen.getByText("[1] test_lookup:sample")).toBeInTheDocument();
+  expect(screen.queryByText("assistant.choose")).not.toBeInTheDocument();
+  question("unknown");
+  await screen.findByText("Which item?");
+  expect(screen.getByText("assistant.choose")).toBeInTheDocument();
+});
+
 it.each([
   ["en", "Help", "Please add more detail or rephrase your question."],
   ["zh", "帮助", "请补充更多细节或换一种方式提问。"],
