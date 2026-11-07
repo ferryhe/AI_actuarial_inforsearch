@@ -58,6 +58,8 @@ async def api_assistant_runtime_query(
         )
     except asyncio.TimeoutError:
         cancelled.set()
+        context = getattr(request.state, "assistant_runtime_context", None)
+        attempts = context.model_attempts if context is not None else 0
         return FeatureResponse(
             intent="clarify",
             answer=(
@@ -67,6 +69,10 @@ async def api_assistant_runtime_query(
             ),
             availability="error",
             error_code="ASSISTANT_TIMEOUT",
+            generation_attempts=attempts,
+            routing_generation_attempts=1 if attempts else 0,
+            answer_generation_attempts=attempts - (1 if attempts else 0),
+            embedding_attempts=context.embedding_attempts if context is not None else 0,
             stop_reason="error",
         )
     except asyncio.CancelledError:

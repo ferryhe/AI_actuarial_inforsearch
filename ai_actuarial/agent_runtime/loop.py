@@ -173,6 +173,8 @@ def run(
     except json.JSONDecodeError:
         return result("", "error", "INVALID_MODEL_RESPONSE")
     except Exception as exc:
+        if getattr(exc, "classification", None) == "timeout":
+            return result("", "error", "ASSISTANT_TIMEOUT")
         code = (
             "PROVIDER_RATE_LIMITED"
             if getattr(exc.__cause__, "status_code", None) == 429

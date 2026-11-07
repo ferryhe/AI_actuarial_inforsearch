@@ -424,6 +424,24 @@ def test_timeout_cancel_and_tool_failure_are_bounded():
     assert result.error_code == "ASSISTANT_TIMEOUT" and not calls
 
 
+def test_provider_adapter_timeout_is_assistant_timeout():
+    from ai_actuarial.chatbot.exceptions import LLMTimeoutError
+
+    def model(_prompt, _remaining):
+        raise LLMTimeoutError()
+
+    result = run(
+        message="sample",
+        locale="en",
+        registry=registry(),
+        context=RunContext(principal="anon", scopes=frozenset()),
+        model=model,
+        execute=lambda *args: pytest.fail("tool executed"),
+    )
+    assert result.error_code == "ASSISTANT_TIMEOUT"
+    assert (result.model_attempts, result.tool_attempts) == (1, 0)
+
+
 @pytest.fixture
 def host_fixture(monkeypatch):
     quota = []
@@ -527,6 +545,42 @@ def test_host_revalidates_before_every_tool_and_rejects_revocation(host_fixture)
     assert outcome.runtime.error_code == "SCOPE_REVOKED"
     assert outcome.runtime.model_attempts == 2 and not state.executed
     assert len(state.quota) == 1
+
+
+@pytest.mark.parametrize("expire_deadline", [False, True])
+def test_host_cancel_or_deadline_during_auth_lookup_prevents_tool_start(
+    host_fixture, expire_deadline
+):
+    state = host_fixture
+    cancelled = Event()
+    auth = AuthContext({"subject": "user"}, frozenset({"chat.query"}))
+
+    def recheck(request):
+        if expire_deadline:
+            request.state.assistant_runtime_context.deadline = time.monotonic() - 1
+        else:
+            cancelled.set()
+        return auth
+
+    state.monkeypatch.setattr(host.deps, "get_auth_context", recheck)
+    model, _calls = scripted(
+        action(
+            action="call",
+            skill_id="test_lookup",
+            tool_id="test_lookup.detail",
+            args={"item_id": "sample"},
+        )
+    )
+    outcome = state.feature.query(
+        request=state.request, auth=auth, message="sample", model=model, cancelled=cancelled
+    )
+    assert outcome.runtime.error_code == "ASSISTANT_TIMEOUT"
+    assert (outcome.runtime.model_attempts, outcome.runtime.tool_attempts) == (1, 1)
+    assert not state.executed
+    assert [(item.tool_id, item.status) for item in outcome.runtime.trace] == [
+        ("test_lookup.detail", "timeout")
+    ]
+    assert state.request.state.assistant_runtime_context.model_attempts == 1
 
 
 def test_host_quota_rejection_stops_before_model(host_fixture):
@@ -643,6 +697,48 @@ def test_admin_api_mount_calls_public_feature_and_denies_normal_users(monkeypatc
             == 404
         )
     assert len(called) == 1
+
+
+def test_admin_api_deadline_reports_started_work(monkeypatch):
+    from ai_actuarial.api.routers import assistant_runtime
+
+    app = FastAPI()
+    app.state.assistant_enabled = True
+    app.include_router(feature_router, prefix="/api")
+    auth = AuthContext({"subject": "admin"}, frozenset({"config.write", "chat.query"}))
+    monkeypatch.setattr(deps, "_load_auth_context", lambda request: auth)
+    monkeypatch.setattr(assistant_runtime, "REQUEST_SECONDS", 0.1)
+    started = Event()
+    release = Event()
+
+    def query(**kwargs):
+        context = RunContext(principal="admin", scopes=auth.permissions)
+        kwargs["request"].state.assistant_runtime_context = context
+        context.take_model()
+        context.take_embedding()
+        started.set()
+        release.wait(2)
+        return None
+
+    app.state.assistant_feature = SimpleNamespace(query=query)
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                "/api/assistant/runtime/query",
+                json={"message": "sample"},
+                headers={"X-Auth-Token": "test"},
+            )
+        assert started.is_set()
+        assert response.status_code == 200
+        body = response.json()
+        assert body["error_code"] == "ASSISTANT_TIMEOUT"
+        assert (body["generation_attempts"], body["embedding_attempts"]) == (1, 1)
+        assert (body["routing_generation_attempts"], body["answer_generation_attempts"]) == (
+            1,
+            0,
+        )
+    finally:
+        release.set()
 
 
 def test_settings_notifier_installs_and_removes_feature(monkeypatch):

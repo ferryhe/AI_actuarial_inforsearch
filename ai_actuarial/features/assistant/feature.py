@@ -70,6 +70,7 @@ class AssistantFeature:
         context = RunContext(
             principal=principal, scopes=initial_scopes, cancelled=cancelled, deadline=deadline
         )
+        request.state.assistant_runtime_context = context
         database = getattr(request.app.state, "database", None) or request.app.state.db_path
         storage = chat.Storage(database)
         client = None
@@ -136,6 +137,7 @@ class AssistantFeature:
                     raise PermissionError("identity or scope changed")
                 if "kb_id" in args and args["kb_id"] not in permitted_kbs(request, current):
                     raise PermissionError("KB target is outside current scope")
+                run_context.remaining()
                 return self.executors[tool.executor](args)
 
             runtime = run(
