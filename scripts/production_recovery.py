@@ -32,7 +32,7 @@ BACKUP_FORMAT_VERSION = 2
 # from full snapshots. Its metadata lives in the ``files`` table and is still
 # captured by the online database backup, so a restore reports missing file
 # paths as an expected, re-crawlable omission rather than snapshot loss.
-SNAPSHOT_DIRECTORIES = ("agentic_ready_data", "rag")
+SNAPSHOT_DIRECTORIES = ("agentic_ready_data", "rag", "agent_artifacts")
 # Format-v1 snapshots included ``files``; keep those manifests verifiable so a
 # still-retained recovery point can be restored after the exclusion.
 VERIFIABLE_SNAPSHOT_DIRECTORIES = SNAPSHOT_DIRECTORIES + ("files",)
@@ -135,6 +135,51 @@ def _directory_stats(path: Path) -> dict[str, Any]:
     return {"files": files, "bytes": total_bytes, "sha256": digest.hexdigest()}
 
 
+def _agent_artifact_index(database_url: DatabaseConfig | str) -> list[dict[str, Any]]:
+    from ai_actuarial.postgres import PostgresConnection
+
+    connection = PostgresConnection(database_url, read_only=True)
+    try:
+        if not connection.table_exists("agent_skill_releases"):
+            return []
+        entries: dict[str, int] = {}
+        for (artifacts,) in connection.execute("SELECT artifacts_jsonb FROM agent_skill_releases"):
+            for artifact in artifacts:
+                if "storage_key" not in artifact:
+                    continue
+                digest = artifact["sha256"]
+                size = artifact["size"]
+                if (
+                    not isinstance(digest, str)
+                    or not re.fullmatch(r"[0-9a-f]{64}", digest)
+                    or artifact["storage_key"] != f"sha256/{digest}"
+                    or not isinstance(size, int)
+                    or size < 0
+                    or (digest in entries and entries[digest] != size)
+                ):
+                    raise RuntimeError("Invalid skill artifact reference in PostgreSQL")
+                entries[digest] = size
+        return [{"sha256": digest, "size": size} for digest, size in sorted(entries.items())]
+    finally:
+        connection.close()
+
+
+def _verify_agent_artifacts(data_root: Path, index: list[dict[str, Any]]) -> None:
+    for item in index:
+        digest = item["sha256"]
+        size = item["size"]
+        if (
+            not isinstance(digest, str)
+            or not re.fullmatch(r"[0-9a-f]{64}", digest)
+            or not isinstance(size, int)
+            or size < 0
+        ):
+            raise RuntimeError("Invalid skill artifact backup index")
+        path = data_root / "agent_artifacts" / "sha256" / digest
+        if not path.is_file() or path.stat().st_size != size or _sha256(path) != digest:
+            raise RuntimeError(f"Skill artifact missing or corrupt: {digest}")
+
+
 def _restored_file_path(data_root: Path, raw_path: Any) -> Path:
     candidate = Path(str(raw_path))
     if candidate.is_absolute():
@@ -193,6 +238,29 @@ def _database_report(
                     if not candidate.exists():
                         missing_paths += 1
             report["missing_file_paths"] = missing_paths
+            if connection.table_exists("agent_skill_releases"):
+                releases = int(
+                    connection.execute("SELECT COUNT(*) FROM agent_skill_releases").fetchone()[0]
+                )
+                if releases:
+                    report["counts"]["agent_skill_releases"] = releases
+                    report["counts"]["agent_skill_slots"] = int(
+                        connection.execute("SELECT COUNT(*) FROM agent_skill_slots").fetchone()[0]
+                    )
+                for (artifacts,) in connection.execute(
+                    "SELECT artifacts_jsonb FROM agent_skill_releases"
+                ):
+                    for artifact in artifacts:
+                        if "storage_key" not in artifact:
+                            continue
+                        digest = artifact["sha256"]
+                        if not re.fullmatch(r"[0-9a-f]{64}", digest):
+                            raise RuntimeError("Restored skill artifact has invalid digest")
+                        path = (data_root or Path.cwd()) / "agent_artifacts" / "sha256" / digest
+                        if not path.is_file() or _sha256(path) != digest:
+                            raise RuntimeError(
+                                f"Restored skill artifact missing or corrupt: {digest}"
+                            )
         return report
     finally:
         connection.close()
@@ -292,9 +360,16 @@ def create_backup(
 
         included_directories: list[str] = []
         source_stats: dict[str, dict[str, Any]] = {}
+        skill_artifacts: list[dict[str, Any]] = []
         if include_data:
+            skill_artifacts = _agent_artifact_index(database)
+            _verify_agent_artifacts(data_dir, skill_artifacts)
             for name in SNAPSHOT_DIRECTORIES:
-                source = _require_directory(data_dir / name, f"snapshot directory {name}")
+                source = data_dir / name
+                if name == "agent_artifacts" and not source.exists():
+                    # The verified index is empty for inline-only releases.
+                    continue
+                source = _require_directory(source, f"snapshot directory {name}")
                 source_stats[name] = _directory_stats(source)
 
         staging.mkdir(mode=0o700)
@@ -320,7 +395,7 @@ def create_backup(
 
         directory_stats: dict[str, dict[str, Any]] = {}
         if include_data:
-            for name in SNAPSHOT_DIRECTORIES:
+            for name in source_stats:
                 destination = staging / "data" / name
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copytree(data_dir / name, destination)
@@ -329,6 +404,7 @@ def create_backup(
                     raise RuntimeError(f"Snapshot size changed while copying {name}")
                 included_directories.append(name)
                 directory_stats[name] = copied_stats
+            _verify_agent_artifacts(staging / "data", skill_artifacts)
 
         finished = now()
         manifest = {
@@ -347,6 +423,8 @@ def create_backup(
             "included_data_directories": sorted(included_directories),
             "data_directories": directory_stats,
         }
+        if include_data:
+            manifest["agent_artifacts"] = skill_artifacts
         _write_json(staging / "manifest.json", manifest)
         staging.replace(published)
         _append_event(
@@ -456,6 +534,12 @@ def verify_backup(backup_dir: Path) -> dict[str, Any]:
         directory = _require_directory(backup_dir / "data" / name, f"backup data directory {name}")
         if _directory_stats(directory) != manifest["data_directories"][name]:
             raise ValueError(f"Backup data directory stats do not match manifest: {name}")
+    if "agent_artifacts" in manifest:
+        if manifest.get("scope") != "database-and-data" or not isinstance(
+            manifest["agent_artifacts"], list
+        ):
+            raise ValueError("Invalid skill artifact backup index")
+        _verify_agent_artifacts(backup_dir / "data", manifest["agent_artifacts"])
 
     return {
         "status": "ok",

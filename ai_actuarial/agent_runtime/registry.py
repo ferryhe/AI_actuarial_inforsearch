@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from importlib.resources import files
-from typing import Mapping
+from typing import Literal, Mapping
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -20,6 +20,7 @@ class _ToolManifest(BaseModel):
 
 class _SkillManifest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
+    schema_version: Literal[1] = 1
     skill_id: str
     version: str
     description: str

@@ -1611,6 +1611,7 @@ def test_schema_cli_plans_all_migrations_for_an_empty_postgresql_schema(tmp_path
         "0005_article_interpretations.sql",
         "0006_source_portals.sql",
         "0007_feedback.sql",
+        "0008_agent_skill_releases.sql",
     ][:POSTGRES_SCHEMA_VERSION]
     assert database_url not in plan_result.stdout
 

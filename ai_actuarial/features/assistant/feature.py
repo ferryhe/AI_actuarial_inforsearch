@@ -9,12 +9,15 @@ from threading import Event
 from typing import Callable
 
 from ai_actuarial.agent_runtime import Registry, RunContext, RunResult, ToolResult, run
+from ai_actuarial.agent_runtime.artifacts import ArtifactError, ArtifactStore
 from ai_actuarial.api import deps
 from ai_actuarial.api.deps import AuthContext, public_permissions_for_request
 from ai_actuarial.api.services import chat
 from ai_actuarial.assistant.knowledge import permitted_kbs
 from ai_actuarial.assistant.query import FeatureResponse
+from ai_actuarial.postgres import DatabaseConfig, resolve_data_root
 from ai_actuarial.skills.test_lookup import executors as test_executors
+from ai_actuarial.skills.test_lookup.manifest import ARGUMENT_MODELS
 from ai_actuarial.skills.test_lookup.manifest import MANIFEST as TEST_MANIFEST
 
 
@@ -75,6 +78,25 @@ class AssistantFeature:
         storage = chat.Storage(database)
         client = None
         try:
+            registry = self.registry
+            if isinstance(database, DatabaseConfig) or str(database).startswith(
+                ("postgres://", "postgresql://")
+            ):
+                store = ArtifactStore(
+                    database,
+                    getattr(request.app.state, "data_root", None) or resolve_data_root(),
+                    executors=frozenset(self.executors),
+                    argument_models=ARGUMENT_MODELS,
+                    registered_tools=TEST_MANIFEST.tools,
+                )
+                try:
+                    registry, pinned = store.resolve_active(
+                        feature_key="assistant", site_key="default"
+                    )
+                    request.state.assistant_release_ids = pinned
+                except ArtifactError:
+                    runtime = RunResult("", "error", "INVALID_SKILL_RELEASE", (), 0, 0, 0, ())
+                    return Outcome(self._response(runtime, locale), runtime, session_update)
             try:
                 chat._enforce_chat_quota(storage=storage, request=request, auth=auth)
             except chat.ChatApiError as exc:
@@ -143,7 +165,7 @@ class AssistantFeature:
             runtime = run(
                 message=message,
                 locale=locale,
-                registry=self.registry,
+                registry=registry,
                 context=context,
                 model=model,
                 execute=execute,
