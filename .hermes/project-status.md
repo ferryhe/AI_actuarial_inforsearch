@@ -6729,3 +6729,44 @@ Current branch head 4f030be has uncommitted small catalog/Storage variable defau
 - Live qualification ran the current local Runtime/Feature adapter with the servers’ existing read-only Chat configurations; both containers remain at revision `bec94c5d523296dcd1f1d7d42eb770b1b940437b`. It did not exercise the new HTTP route, Host authorization/scope, or quota path; those are covered by backend tests. No deployment, production data/config write, or quota write occurred.
 - The reserved R3 reviewer inspected the earlier source snapshot, paused, then became stale after further source changes. Its attempt was officially aborted through `review_cycle.py`; it produced no report and consumed no round. State remains 2 completed reviews / 2 failed cycles. A fresh R3 reviewer is pending final snapshot binding; the inspected reviewer will not be reused.
 - Source remains uncommitted on `codex/issue-475-assistant-runtime`; no unrelated changes were noticed. GitHub CI is pending Draft PR publication.
+## 2026-11-07 Issue #476 — worker implementation checkpoint
+
+- Branch `codex/issue-476-skill-artifacts`, baseline `fd2f4e5d203e923c42e2c65a557f799d59d9d3e3`. PostgreSQL migration 0008 adds immutable skill releases and revisioned slots. The Assistant Feature resolves a per-run published snapshot from the durable artifact store; import validates registered code, content hashes and UAT provenance before publication. Recovery includes `agent_artifacts` and verifies restored release bytes.
+- Isolated PostgreSQL 16 container `issue476-pg16-20261107`: 61 focused tests passed; Black, isort, Ruff and diff check passed. An isolated full backup/verify/restore smoke passed with container-native PostgreSQL clients and read the same published release afterward. The six existing recovery tests requiring local Windows `pg_dump`/`pg_restore` could not pass on this host because those binaries are absent; their first-run failures and the successful container-native smoke are recorded externally in `reports/issue-473-480-20261107/issue-476/worker-logs/`.
+- No model/provider, production database, Chat/credential binding or deployment was exercised. Source is uncommitted for manager review. Full evidence: `reports/issue-473-480-20261107/issue-476/worker-report.md`.
+
+## 2026-11-07 Issue #476 — accepted review repairs
+
+- Same worker addressed reviewer F1–F3: UAT receipt must match skill/version, every artifact digest, code SHA, data/KB and model and cannot carry rejected or unknown fields; activation and runtime resolve validate every declared artifact; full backup and verification cross-check PG artifact references against saved bytes. An isolated v7→v8 upgrade retained representative Chat, RAG and feedback rows, and a legacy backup manifest without an artifact index verified.
+- Before the repairs, the new F1/F2/F3 negative suites failed 8/2/2 cases respectively. After repair, 75 related tests passed; Black, isort, Ruff and diff checks passed. Container-native full backup→verify→restore of a two-artifact release passed and read both artifacts after restore. The six existing Windows-native recovery tests remain blocked by missing local PostgreSQL client binaries. Evidence: `reports/issue-473-480-20261107/issue-476/worker-fix-report.md`. Source remains uncommitted for fresh review; no production or real-model run.
+
+## 2026-11-07 Issue #476 — inline-only recovery correction
+
+- A published release containing only inline text now permits full backup when `DATA_DIR/agent_artifacts` does not exist; the already-validated external artifact index continues to reject missing or corrupt file-backed content. The new regression failed before the correction and passed after it. The container-native recovery smoke restored both a two-file release and an inline-only release, then read their published content from PostgreSQL.
+- Current focused suite: 76 passed; Black, isort, Ruff and diff checks passed. The six existing Windows-native recovery tests remain blocked by absent local PostgreSQL client binaries; no model, production or deployment run occurred. Source remains uncommitted. Evidence: `reports/issue-473-480-20261107/issue-476/worker-r2-fix-report.md`.
+
+## 2026-11-07 Issue #476 — draft lifecycle correction
+
+- `ArtifactStore.import_source(..., draft=True, uat=None)` now stores a non-activatable draft with fixed code/data/model provenance. `validate_draft` locks that row, rechecks the immutable package digest, registered skill and all artifact bytes, then applies the same strict UAT contract before moving it to validated. Existing direct validated import remains supported; activation still requires validated/published. A failed UAT or corrupt artifact leaves the row draft.
+- New red-before/green-after draft regression and 77 related tests passed. Black, isort, Ruff and diff checks passed. Container-native external and inline full recovery smokes both passed; six Windows-native recovery tests remain blocked by missing local client binaries. No real model, production or deployment run. Source remains uncommitted; evidence: `reports/issue-473-480-20261107/issue-476/worker-r3-fix-report.md`.
+
+## 2026-11-07 Issue #476 — registered tool contract correction
+
+- `ArtifactStore` now receives the code package's registered Tool objects and requires every declared `tool_id`/executor/arguments model triple to match before source import, draft promotion, activation or active resolution. Three wrong-contract tests failed before and passed after the change. Existing direct and draft valid paths remain accepted.
+- Related suite: 80 passed. Black, isort, Ruff and diff checks passed after a format-only correction. Container-native external and inline full recovery smokes passed. Windows-native recovery tests remain blocked by missing local PostgreSQL 16 clients; no real model, production or deployment run. Source remains uncommitted; evidence: `reports/issue-473-480-20261107/issue-476/worker-r4-fix-report.md`.
+
+## 2026-11-07 Issue #476 — empty PostgreSQL release set correction
+
+- PostgreSQL AssistantFeature now uses one `resolve_active()` result unconditionally, including an empty Registry and empty pinned release ID map. A new isolated PostgreSQL regression confirmed the former no-slot path invoked the bundled executor; after correction it cannot invoke that tool. Non-PostgreSQL legacy and published snapshot paths remain covered.
+- Focused suite: 81 passed. Black, isort, Ruff and diff checks passed. Windows-native recovery tests remain blocked by missing local PostgreSQL 16 clients; no real model, production or deployment run. Source remains uncommitted; evidence: `reports/issue-473-480-20261107/issue-476/worker-r5-fix-report.md`.
+
+## 2026-11-07 Issue #476 — tool scopes and repeat activation
+
+- ArtifactStore now rejects a candidate tool whose required scopes omit any scope required by its code-registered Tool. Repeating activation of the current release retains the previous release while still incrementing the CAS revision, so A→B→B can roll back to A. Both focused regressions failed before and passed after the fix.
+- Related suite: 83 passed; Black, isort, Ruff and diff checks passed. Windows-native recovery tests remain blocked by missing local PostgreSQL 16 clients; no real model, production or deployment run. Source remains uncommitted; evidence: `reports/issue-473-480-20261107/issue-476/worker-r6-fix-report.md`.
+
+## 2026-11-07 Issue #476 — R7 review and current-source recovery validation
+
+- Fresh independent Sol/high R7 review passed all six product files against AC1–AC10; TypeSafe review-summary coverage was 0.93 with no findings. Formal state: 7 reviews completed, 6 requiring changes; R5's separate blocked Judge record remains preserved.
+- On the final source at HEAD `fd2f4e5d203e923c42e2c65a557f799d59d9d3e3` and frozen product patch SHA256 `551fdd0bd2733697938be3fba6b035f8a0e9c7f2b8152338390860cc3d592519`, a current-code container-native full backup→verify→restore→readback smoke passed for both file-backed and inline-only releases. Restored release metadata and artifact contents were readable. Source file digests and raw outputs are in `reports/issue-473-480-20261107/issue-476/manager-r7-recovery-smoke-final.json` and `worker-logs/manager-r7-recovery-smoke-final.txt`; the exact task-owned PG16 container is stopped.
+- Two earlier smoke attempts did not reach product assertions: one used a Python interpreter without `psycopg2`, and one omitted `PYTHONPATH`; both raw execution reports are retained. The six Windows-native recovery tests still cannot run because local PostgreSQL 16 `pg_dump`/`pg_restore` binaries are absent. No real-model or production run occurred. Source is uncommitted pending the authorized PR lifecycle.
