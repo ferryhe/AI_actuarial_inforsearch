@@ -663,7 +663,7 @@ def test_removed_assistant_feature_preserves_startup_legacy_and_feedback(monkeyp
 
     assert app.state.assistant_enabled and app.state.feedback_enabled
     assert not hasattr(app.state, "assistant_feature")
-    paths = {route.path for route in app.routes}
+    paths = set(app.openapi()["paths"])
     assert {"/api/assistant/query", "/api/assistant/runtime/query", "/api/feedback"} <= paths
     admin = AuthContext({"subject": "admin"}, frozenset({"config.write", "chat.query"}))
     monkeypatch.setattr(deps, "_load_auth_context", lambda request: admin)
