@@ -96,7 +96,7 @@ export default function FeedbackForm({ t, lang, open = true, onClose, initialCon
   }
 
   return (
-    <section id="feedback-panel" aria-labelledby="feedback-title" className="flex max-h-[min(38rem,calc(100dvh-6rem))] max-[1279px]:max-h-[min(calc(50dvh-18px),calc(100dvh-7rem))] w-[min(22.5rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-xl border border-border bg-card text-card-foreground shadow-2xl">
+    <section id="feedback-panel" aria-labelledby="feedback-title" className="flex w-[min(22.5rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-xl border border-border bg-card text-card-foreground shadow-2xl">
       <header className="flex items-center justify-between border-b border-border px-4 py-2">
         <h2 id="feedback-title" className="text-base font-semibold">{t("feedback.title")}</h2>
         <IconButton label={t("a11y.close_feedback")} onClick={onClose}>

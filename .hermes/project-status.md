@@ -1,3 +1,10 @@
+## 2026-11-07 Issue #474 — local review passed
+
+- Branch: `codex/issue-474-mobile-assistant`, baseline/head `33198dd87b413bdec5d9a60a4a60f9e857bd831b`. The assistant now uses one freeform question input with automatic routing; clarification asks users to add detail or rephrase in English and Chinese while legacy backend mode handling remains intact. The panel shares available host geometry with the Chat footer, and assistant history scrolls independently from its composer.
+- Delayed reply after manual feedback cancellation is revealed once inside the history pane. The separate case where a user keeps reading older history without opening feedback retains its scroll position. Current-source mocked browser coverage includes `/` and `/chat`, short viewports, all feature-flag combinations, composer growth/resize, these two scroll paths, and bilingual clarification.
+- Focused checks passed: AssistantPanel 23/23; Issue PostgreSQL routing 48/48 and feature matrix 11/11; typecheck; changed-file ESLint (0 errors, 4 existing warnings); build; Python style checks; `git diff --check`. A fresh native gpt-6-sol/high review and its TypeSafe assessment are recorded. A controller-authorized handoff preserved the selected worker tier and all review history; the R5 Judge result remains unresolved, not a PASS.
+- Current-head GitHub CI and current-branch live-provider/API checks have not run; physical iOS/soft-keyboard validation was not run. No production deployment/config write occurred. Source changes remain uncommitted; the Draft PR/current-head CI and remote-feedback gates are next.
+
 ## 2026-11-06 CIA news — final reviewed recovery/exclusion fixes
 
 - Current source passed fresh independent Sol/high review 4, zero findings. Controlled four-module suite: 287 passed; frozen-runtime-v2 QA: 227 passed. Black/Ruff/whitespace checks passed. Source-byte hashes were checked before publication.

@@ -134,8 +134,8 @@ def unavailable(
             "AI is unavailable. Retry or read the guide. You can still send feedback manually.",
         ),
         "INVALID_MODEL_RESPONSE": (
-            "无法确定请求，请选择提建议、问用法或问知识后重试。",
-            "I could not determine the request. Choose feedback, usage or knowledge and retry.",
+            "无法确定请求，请补充更多细节或换一种方式提问。",
+            "I could not determine the request. Please add more detail or rephrase your question.",
         ),
     }
     pair = messages[code]
@@ -221,10 +221,16 @@ def query_assistant(
                 routing = 1
                 request.state.assistant_routing_attempts = routing
             request.state.assistant_attempts = attempts
+            extra_body = (
+                {"thinking": {"type": "disabled"}}
+                if config.llm_provider == "deepseek" and config.model == "deepseek-flash"
+                else None
+            )
             return client.generate(
                 messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
                 temperature=0,
                 response_format={"type": "json_object"},
+                extra_body=extra_body,
             )
 
         if payload.mode == "auto":
@@ -344,9 +350,9 @@ def query_assistant(
             result = QueryResponse(
                 intent=intent,
                 answer=(
-                    "请选择提建议、问用法或问知识。"
+                    "请补充更多细节或换一种方式提问。"
                     if zh
-                    else "Please choose feedback, usage or knowledge."
+                    else "Please add more detail or rephrase your question."
                 ),
                 generation_attempts=attempts,
             )

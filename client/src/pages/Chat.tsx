@@ -1556,7 +1556,7 @@ export default function Chat() {
           </div>
         )}
 
-        <div className="relative group-data-[feedback-open=true]/support-widget:z-[60] group-data-[feedback-open=true]/support-widget:pointer-events-none group-data-[feedback-open=true]/support-widget:border-transparent group-data-[feedback-open=true]/support-widget:bg-transparent group-data-[feedback-open=true]/support-widget:backdrop-blur-none border-t border-border bg-card/80 backdrop-blur-sm px-4 sm:px-6 py-3">
+        <div data-chat-composer className="relative group-data-[feedback-open=true]/support-widget:z-[60] group-data-[feedback-open=true]/support-widget:pointer-events-none group-data-[feedback-open=true]/support-widget:border-transparent group-data-[feedback-open=true]/support-widget:bg-transparent group-data-[feedback-open=true]/support-widget:backdrop-blur-none border-t border-border bg-card/80 backdrop-blur-sm px-4 sm:px-6 py-3">
           <div className="flex items-center gap-2 mb-2 flex-wrap">
             <div className="relative group-data-[feedback-open=true]/support-widget:pointer-events-auto">
               <button
