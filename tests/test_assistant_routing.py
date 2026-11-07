@@ -162,6 +162,38 @@ def test_mixed_feedback_help_request_keeps_clarification(runtime):
     assert result.intent == "clarify" and result.feedback_draft is None
 
 
+@pytest.mark.parametrize(
+    ("locale", "expected"),
+    [
+        ("en", "Please add more detail or rephrase your question."),
+        ("zh", "请补充更多细节或换一种方式提问。"),
+    ],
+)
+def test_auto_clarification_requests_a_clearer_question(locale, expected, runtime):
+    runtime.outputs = ['{"intent":"clarify"}']
+    result = runtime.run("Help", locale=locale)
+    assert result.answer == expected
+    assert result.intent == "clarify" and result.feedback_draft is None
+    assert len(runtime.calls) <= 2
+
+
+@pytest.mark.parametrize(
+    ("locale", "expected"),
+    [
+        (
+            "en",
+            "I could not determine the request. Please add more detail or rephrase your question.",
+        ),
+        ("zh", "无法确定请求，请补充更多细节或换一种方式提问。"),
+    ],
+)
+def test_invalid_model_response_requests_a_clearer_question(locale, expected, runtime):
+    runtime.outputs = ["not json"]
+    result = runtime.run("Help", locale=locale)
+    assert result.answer == expected
+    assert result.error_code == "INVALID_MODEL_RESPONSE"
+
+
 def test_explicit_knowledge_skips_quota_and_provider(runtime):
     result = runtime.run("How do I send feedback?", mode="knowledge")
     assert result.intent == "knowledge" and result.error_code == "KNOWLEDGE_SCOPE_EMPTY"
@@ -190,6 +222,44 @@ def test_explicit_usage_has_one_raw_attempt_and_exact_reference(runtime):
     assert len(runtime.calls) == result.generation_attempts == 1
     assert runtime.config.max_retries == 3 and runtime.config.length_recovery_enabled
     assert runtime.options[0]["max_retries"] == 0
+
+
+@pytest.mark.parametrize(
+    ("provider", "model", "expected_extra_body"),
+    [
+        ("deepseek", "deepseek-flash", {"thinking": {"type": "disabled"}}),
+        ("deepseek", "deepseek-chat", None),
+        ("openai", "gpt-5.4-mini", None),
+    ],
+)
+def test_auto_structured_calls_disable_thinking_only_for_deepseek_flash(
+    runtime, provider, model, expected_extra_body
+):
+    runtime.config.llm_provider = provider
+    runtime.config.model = model
+    message = "How can I preview a file?"
+    refs = search_help(message, language="en", limit=3)
+    sections = load_help_sections()
+    source = next(
+        section
+        for ref in refs
+        for section in sections
+        if section.reference() == {key: value for key, value in ref.items() if key != "snippet"}
+    )
+    runtime.outputs = [
+        '{"intent":"usage"}',
+        json.dumps({"steps": [{"source": 0, "quote": source.content[:80]}]}),
+    ]
+
+    result = runtime.run(message)
+
+    assert result.intent == "usage" and result.citations[0].source_type == "help"
+    assert len(runtime.calls) == result.generation_attempts == 2
+    for call in runtime.calls:
+        if expected_extra_body is None:
+            assert "extra_body" not in call
+        else:
+            assert call["extra_body"] == expected_extra_body
 
 
 def test_auto_usage_two_raw_attempts_and_no_extra_retry(runtime):

@@ -16,6 +16,11 @@ html {
   }
 }
 
+#support-panel > *,
+#support-panel #feedback-panel {
+  max-height: var(--support-panel-max-height, 0px);
+}
+
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {

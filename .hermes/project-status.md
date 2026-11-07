@@ -1,3 +1,25 @@
+## 2026-11-07 PR #481 — supplemental late inline threads
+
+- On supplied HEAD `fd8f935709e25beb657708a90db18183685c6bd8`, the 07:22:09Z visual-viewport keyboard comment reproduced: the fixed trigger remained below the shortened visual viewport while the panel lift was 0px. This maps to AC6. `SupportWidget` now measures lift from `triggerBounds.top - gap` to the constrained panel bottom; a focused visualViewport regression covers the geometry.
+- The 07:22:10Z failed-follow-up alert comment also reproduced: after a long answer, a rejected next request placed the alert inside the history scroller while the composer remained visible. This is not directly required by AC2, AC3, or AC6, which cover successful answer placement/feedback cancellation, preserving older-history reading, and the freeform/mobile UI. No product change was made for it; the temporary reproducer and scope rationale are preserved in `reports/issue-473-480-20261107/issue-474/remote-ci/supplemental-late-thread-assessment-fd8f935.json`.
+- Focused assistant regression: 24 passed. Changed-file ESLint: zero errors; two existing React Hook dependency warnings. No Git/GitHub operation was performed; physical iOS keyboard behavior remains untested.
+
+## 2026-11-07 Issue #474 — PR #481 status update
+
+- Branch `codex/issue-474-mobile-assistant`, PR #481, baseline `33198dd87b413bdec5d9a60a4a60f9e857bd831b`. The assistant uses one freeform question input with automatic routing; mobile panel geometry and delayed-answer visibility are fixed while the independent older-history reading path is preserved.
+- Six completed local review rounds are retained; Review 6 and its TypeSafe assessment passed with no findings. The Review 5 Judge outcome remains unresolved and is not recorded as PASS. The accepted in-scope work continued under the controller's recorded decision.
+- Focused validation: AssistantPanel 23/23; PostgreSQL routing 48/48; feature matrix 11/11; typecheck, build, changed-file ESLint (0 errors, 4 existing warnings), Python style checks, and `git diff --check` passed. Current-source mocked Chromium covered both routes, eight viewport cases, feature flags, resize/composer growth, feedback cancellation, preserved older reading, and bilingual clarification.
+- GitHub run 844 passed its 3,559-test suite (1 skipped) but failed only the final Black gate for a newly changed long tuple in `tests/test_assistant_routing.py`. The format-only correction in `f842b90` passed Black and 47 routing tests; the PostgreSQL-only case was deselected because no endpoint was configured. GitHub run 845 then passed all six jobs on `f842b90`.
+- PR #481 is Ready. GitHub did not register the single Copilot review request; the request list was empty, so Copilot is recorded unavailable with no retry. The one feedback snapshot on `f842b90` contained zero comments, reviews, and review threads; the worker's clean assessment report is pending.
+- This status-only refresh will create a new PR head and require a new current-head CI run before merge. Live-provider/API checks on this branch and physical iOS/soft-keyboard validation were not run. No production deployment or configuration write occurred.
+
+## 2026-11-07 Issue #474 — local review passed
+
+- Branch: `codex/issue-474-mobile-assistant`, baseline/head `33198dd87b413bdec5d9a60a4a60f9e857bd831b`. The assistant now uses one freeform question input with automatic routing; clarification asks users to add detail or rephrase in English and Chinese while legacy backend mode handling remains intact. The panel shares available host geometry with the Chat footer, and assistant history scrolls independently from its composer.
+- Delayed reply after manual feedback cancellation is revealed once inside the history pane. The separate case where a user keeps reading older history without opening feedback retains its scroll position. Current-source mocked browser coverage includes `/` and `/chat`, short viewports, all feature-flag combinations, composer growth/resize, these two scroll paths, and bilingual clarification.
+- Focused checks passed: AssistantPanel 23/23; Issue PostgreSQL routing 48/48 and feature matrix 11/11; typecheck; changed-file ESLint (0 errors, 4 existing warnings); build; Python style checks; `git diff --check`. A fresh native gpt-6-sol/high review and its TypeSafe assessment are recorded. A controller-authorized handoff preserved the selected worker tier and all review history; the R5 Judge result remains unresolved, not a PASS.
+- Current-head GitHub CI and current-branch live-provider/API checks have not run; physical iOS/soft-keyboard validation was not run. No production deployment/config write occurred. Source changes remain uncommitted; the Draft PR/current-head CI and remote-feedback gates are next.
+
 ## 2026-11-06 CIA news — final reviewed recovery/exclusion fixes
 
 - Current source passed fresh independent Sol/high review 4, zero findings. Controlled four-module suite: 287 passed; frozen-runtime-v2 QA: 227 passed. Black/Ruff/whitespace checks passed. Source-byte hashes were checked before publication.
