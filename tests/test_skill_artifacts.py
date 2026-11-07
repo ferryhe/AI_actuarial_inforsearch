@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import shutil
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -137,6 +138,91 @@ def _import(store: ArtifactStore, package: Path) -> str:
         data_version="kb:fixture",
         model="stub",
     )
+
+
+def test_import_accepts_full_git_sha1_code_identity(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    package = _package(tmp_path)
+    receipt = _receipt(package)
+    receipt["code_sha"] = "b" * 40
+    release = store.import_source(
+        package,
+        feature_key="assistant",
+        source_ref="git:fixture",
+        uat=receipt,
+        code_sha="b" * 40,
+        data_version="kb:fixture",
+        model="stub",
+    )
+    db = PostgresConnection(store.database_url, read_only=True)
+    try:
+        assert (
+            db.execute(
+                "SELECT validation_jsonb FROM agent_skill_releases WHERE release_id=?", (release,)
+            ).fetchone()[0]["code_sha"]
+            == "b" * 40
+        )
+    finally:
+        db.close()
+
+
+def test_concurrent_different_skill_activations_keep_compatible_set(
+    tmp_path: Path, monkeypatch
+) -> None:
+    store = _store(tmp_path)
+    first = _import(store, _package(tmp_path))
+    package = _package(tmp_path, "1.1")
+    manifest = json.loads((package / "skill.json").read_text("utf-8"))
+    manifest["skill_id"] = "second"
+    (package / "skill.json").write_text(json.dumps(manifest), encoding="utf-8")
+    second = _import(store, package)
+    ready = threading.Event()
+    second_at_lock = threading.Event()
+    release_first = threading.Event()
+    original_commit = PostgresConnection.commit
+    original_execute = PostgresConnection.execute
+
+    def delayed_commit(db):
+        if threading.current_thread().name == "first":
+            ready.set()
+            assert release_first.wait(10)
+        return original_commit(db)
+
+    def observed_execute(db, sql, parameters=None):
+        if threading.current_thread().name == "second" and "pg_advisory_xact_lock" in sql:
+            assert not release_first.is_set()
+            second_at_lock.set()
+        return original_execute(db, sql, parameters)
+
+    monkeypatch.setattr(PostgresConnection, "commit", delayed_commit)
+    monkeypatch.setattr(PostgresConnection, "execute", observed_execute)
+    successes = []
+    failures = []
+
+    def publish(skill, release):
+        try:
+            store.activate(
+                feature_key="assistant", site_key="default", changes={skill: (release, 0)}
+            )
+            successes.append(skill)
+        except Exception as exc:
+            failures.append(exc)
+
+    first_thread = threading.Thread(target=publish, name="first", args=("test_lookup", first))
+    second_thread = threading.Thread(target=publish, name="second", args=("second", second))
+    first_thread.start()
+    assert ready.wait(10)
+    second_thread.start()
+    try:
+        assert second_at_lock.wait(10)
+    finally:
+        release_first.set()
+    first_thread.join(10)
+    second_thread.join(10)
+    assert not first_thread.is_alive() and not second_thread.is_alive()
+    assert len(successes) == 1 and len(failures) == 1
+    assert "Duplicate tool ID" in str(failures[0])
+    assert len(store.resolve_active(feature_key="assistant", site_key="default")[1]) == 1
 
 
 def _with_eval(package: Path) -> Path:

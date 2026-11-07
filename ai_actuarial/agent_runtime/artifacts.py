@@ -17,6 +17,7 @@ from ai_actuarial.postgres import PostgresConnection
 from .registry import Registry, Skill, Tool, _SkillManifest
 
 _DIGEST = re.compile(r"[0-9a-f]{64}\Z")
+_GIT_SHA = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})\Z")
 _KEY = re.compile(r"[a-zA-Z0-9_.-]+\Z")
 
 
@@ -278,7 +279,7 @@ class ArtifactStore:
                 spec["storage_key"] = f"sha256/{digest}"
                 pending.append((content, digest))
             artifacts.append(spec)
-        if not _DIGEST.fullmatch(code_sha) or not all((source_ref, data_version, model)):
+        if not _GIT_SHA.fullmatch(code_sha) or not all((source_ref, data_version, model)):
             raise ArtifactError("Incomplete source or UAT provenance")
         receipt = (
             {"code_sha": code_sha, "data_version": data_version, "model": model}
@@ -414,6 +415,11 @@ class ArtifactStore:
         """Switch all requested slots or none, with per-slot expected revisions."""
         db = PostgresConnection(self.database_url, autocommit=False)
         try:
+            db.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended(current_database() || ':' || "
+                "current_schema() || ':agent_skill_slots:' || ? || ':' || ?, 0))",
+                (feature_key, site_key),
+            )
             for skill_key in sorted(changes):
                 release_id, expected = changes[skill_key]
                 db.execute(
