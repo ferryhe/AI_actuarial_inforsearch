@@ -35,6 +35,7 @@ from .route_inventory import (
 from .routers.agentic_rag import router as agentic_rag_router
 from .routers.article_interpretations import router as article_interpretations_router
 from .routers.assistant_help import router as assistant_help_router
+from .routers.assistant_runtime import router as assistant_runtime_router
 from .routers.auth import router as auth_router
 from .routers.chat import router as chat_router
 from .routers.feedback import feedback_disabled_response
@@ -126,6 +127,14 @@ def _apply_runtime_feature_state(app: FastAPI, features: dict[str, object]) -> N
         r"[a-z0-9][a-z0-9_-]{0,63}", app.state.feedback_site_key
     ):
         raise ValueError("Enabled feedback requires a valid deployment feedback_site_key")
+    if app.state.assistant_enabled:
+        try:
+            from ai_actuarial.features.assistant import install as install_assistant_feature
+        except ModuleNotFoundError as exc:
+            if exc.name != "ai_actuarial.features.assistant":
+                raise
+        else:
+            install_assistant_feature(app)
     app.state.require_auth = bool(features.get("require_auth"))
     app.state.enable_global_logs_api = bool(features.get("enable_global_logs_api"))
     app.state.enable_rate_limiting = bool(features.get("enable_rate_limiting"))
@@ -273,6 +282,7 @@ def create_app() -> FastAPI:
     app.include_router(meta_router, prefix="/api", tags=["meta"])
     app.include_router(support_router, prefix="/api", tags=["support"])
     app.include_router(assistant_help_router, prefix="/api", tags=["assistant-help"])
+    app.include_router(assistant_runtime_router, prefix="/api", tags=["assistant-runtime"])
     app.include_router(assistant_router, prefix="/api", tags=["assistant"])
     app.include_router(feedback_router, prefix="/api", tags=["feedback"])
     app.include_router(metrics_router, prefix="/api", tags=["metrics"])

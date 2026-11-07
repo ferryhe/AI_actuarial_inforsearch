@@ -1,0 +1,1 @@
+"""Independently registered assistant skills."""
