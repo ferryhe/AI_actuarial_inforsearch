@@ -68,7 +68,7 @@ export default function SupportWidget({ onOpenChange }: { onOpenChange?: (open: 
       const bottom = chatTop === undefined ? normalBottom : Math.min(normalBottom, chatTop - gap);
       const next = {
         maxHeight: Math.max(0, Math.floor(bottom - viewportTop - safeTop) - 1),
-        lift: Math.max(0, Math.round(normalBottom - bottom)),
+        lift: Math.max(0, Math.round(triggerBounds.top - gap - bottom)),
       };
       setPanelSpace((previous) => previous.maxHeight === next.maxHeight && previous.lift === next.lift ? previous : next);
     };

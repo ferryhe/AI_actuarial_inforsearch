@@ -1,3 +1,9 @@
+## 2026-11-07 PR #481 — supplemental late inline threads
+
+- On supplied HEAD `fd8f935709e25beb657708a90db18183685c6bd8`, the 07:22:09Z visual-viewport keyboard comment reproduced: the fixed trigger remained below the shortened visual viewport while the panel lift was 0px. This maps to AC6. `SupportWidget` now measures lift from `triggerBounds.top - gap` to the constrained panel bottom; a focused visualViewport regression covers the geometry.
+- The 07:22:10Z failed-follow-up alert comment also reproduced: after a long answer, a rejected next request placed the alert inside the history scroller while the composer remained visible. This is not directly required by AC2, AC3, or AC6, which cover successful answer placement/feedback cancellation, preserving older-history reading, and the freeform/mobile UI. No product change was made for it; the temporary reproducer and scope rationale are preserved in `reports/issue-473-480-20261107/issue-474/remote-ci/supplemental-late-thread-assessment-fd8f935.json`.
+- Focused assistant regression: 24 passed. Changed-file ESLint: zero errors; two existing React Hook dependency warnings. No Git/GitHub operation was performed; physical iOS keyboard behavior remains untested.
+
 ## 2026-11-07 Issue #474 — PR #481 status update
 
 - Branch `codex/issue-474-mobile-assistant`, PR #481, baseline `33198dd87b413bdec5d9a60a4a60f9e857bd831b`. The assistant uses one freeform question input with automatic routing; mobile panel geometry and delayed-answer visibility are fixed while the independent older-history reading path is preserved.

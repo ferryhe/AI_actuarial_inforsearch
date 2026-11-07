@@ -75,6 +75,22 @@ it("independent assistant-only flag exposes questions without a submit action", 
   expect(screen.queryByTestId("feedback-submit")).not.toBeInTheDocument();
 });
 
+it("lifts the support panel above a software keyboard that shrinks only the visual viewport", async () => {
+  apiGet.mockResolvedValue({ feedback_enabled: true, assistant_enabled: true });
+  vi.stubGlobal("visualViewport", {
+    height: 400,
+    offsetTop: 0,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+  });
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+    return this.dataset.testid === "support-widget-trigger" ? { top: 750, bottom: 794, height: 44 } as DOMRect : { top: 0, bottom: 0, height: 0 } as DOMRect;
+  });
+  render(<SupportWidget />);
+  fireEvent.click(await screen.findByTestId("support-widget-trigger"));
+  await waitFor(() => expect(document.querySelector("#support-panel")).toHaveStyle({ marginBottom: "394px" }));
+});
+
 it("uses automatic routing with one freeform question input", async () => {
   apiPost.mockResolvedValue(reply("usage")); show(true, "zh");
   expect(screen.queryByLabelText("assistant.mode")).not.toBeInTheDocument();
