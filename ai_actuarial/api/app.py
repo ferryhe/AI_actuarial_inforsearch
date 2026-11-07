@@ -128,9 +128,13 @@ def _apply_runtime_feature_state(app: FastAPI, features: dict[str, object]) -> N
     ):
         raise ValueError("Enabled feedback requires a valid deployment feedback_site_key")
     if app.state.assistant_enabled:
-        from ai_actuarial.features.assistant import install as install_assistant_feature
-
-        install_assistant_feature(app)
+        try:
+            from ai_actuarial.features.assistant import install as install_assistant_feature
+        except ModuleNotFoundError as exc:
+            if exc.name != "ai_actuarial.features.assistant":
+                raise
+        else:
+            install_assistant_feature(app)
     app.state.require_auth = bool(features.get("require_auth"))
     app.state.enable_global_logs_api = bool(features.get("enable_global_logs_api"))
     app.state.enable_rate_limiting = bool(features.get("enable_rate_limiting"))

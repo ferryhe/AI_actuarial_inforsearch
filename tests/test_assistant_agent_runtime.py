@@ -13,9 +13,9 @@ from threading import Event
 from types import SimpleNamespace
 
 import pytest
-from pydantic import BaseModel, ConfigDict
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from pydantic import BaseModel, ConfigDict
 
 from ai_actuarial.agent_runtime import Registry, RunContext, RunResult, Tool, run
 from ai_actuarial.api import deps
@@ -42,6 +42,19 @@ def scripted(*outputs):
         return remaining.pop(0)
 
     return model, calls
+
+
+def block_assistant_feature_import(monkeypatch, missing_name):
+    import builtins
+
+    original_import = builtins.__import__
+
+    def blocked(name, *args, **kwargs):
+        if name == "ai_actuarial.features.assistant":
+            raise ModuleNotFoundError(f"No module named '{missing_name}'", name=missing_name)
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", blocked)
 
 
 def registry(enabled=True):
@@ -619,6 +632,69 @@ def test_feature_install_preserves_independent_feedback_switch(assistant, feedba
     assert app.state.assistant_enabled == assistant
     assert app.state.feedback_enabled == feedback
     assert hasattr(app.state, "assistant_feature") == assistant
+
+
+def test_removed_assistant_feature_preserves_startup_legacy_and_feedback(monkeypatch):
+    from unittest.mock import MagicMock
+
+    from ai_actuarial.api import app as app_module
+    from ai_actuarial.api.services import ops_write
+
+    flags = {
+        "assistant_enabled": True,
+        "feedback_enabled": True,
+        "feedback_site_key": "test-site",
+        "require_auth": False,
+        "enable_csrf": False,
+        "enable_rate_limiting": False,
+    }
+    monkeypatch.setattr(app_module, "validate_proxy_config", lambda: None)
+    monkeypatch.setattr(app_module, "load_sites_config", lambda **kwargs: {})
+    monkeypatch.setattr(app_module, "resolve_runtime_features", lambda config: flags)
+    monkeypatch.setattr(app_module, "_resolve_database", lambda: "test-db")
+    monkeypatch.setattr(app_module, "resolve_data_root", lambda config: "test-root")
+    monkeypatch.setattr(app_module, "_bootstrap_admin_token", lambda database: None)
+    monkeypatch.setattr(app_module, "NativeTaskRuntime", lambda **kwargs: MagicMock())
+    monkeypatch.setattr(ops_write, "resolve_runtime_features", lambda config: flags)
+    with monkeypatch.context() as imports:
+        block_assistant_feature_import(imports, "ai_actuarial.features.assistant")
+        app = app_module.create_app()
+        ops_write._notify_runtime_features_updated(SimpleNamespace(app_state=app.state), {})
+
+    assert app.state.assistant_enabled and app.state.feedback_enabled
+    assert not hasattr(app.state, "assistant_feature")
+    paths = {route.path for route in app.routes}
+    assert {"/api/assistant/query", "/api/assistant/runtime/query", "/api/feedback"} <= paths
+    admin = AuthContext({"subject": "admin"}, frozenset({"config.write", "chat.query"}))
+    monkeypatch.setattr(deps, "_load_auth_context", lambda request: admin)
+    with TestClient(app) as client:
+        assert client.get("/api/health").status_code == 200
+        assert client.post("/api/feedback", json={}).status_code == 422
+        unavailable = client.post(
+            "/api/assistant/runtime/query",
+            json={"message": "sample"},
+            headers={"X-Auth-Token": "test"},
+        )
+    assert unavailable.status_code == 503
+    assert unavailable.json()["detail"] == "Assistant Feature is unavailable"
+
+
+def test_feature_internal_missing_dependency_still_fails(monkeypatch):
+    from ai_actuarial.api.app import _apply_runtime_feature_state
+    from ai_actuarial.api.services import ops_write
+
+    flags = {"assistant_enabled": True, "feedback_enabled": True, "feedback_site_key": "test-site"}
+    monkeypatch.setattr(ops_write, "resolve_runtime_features", lambda config: flags)
+    missing = "ai_actuarial.features.assistant.internal_dependency"
+    with monkeypatch.context() as imports:
+        block_assistant_feature_import(imports, missing)
+        with pytest.raises(ModuleNotFoundError) as startup:
+            _apply_runtime_feature_state(FastAPI(), flags)
+        with pytest.raises(ModuleNotFoundError) as settings:
+            ops_write._notify_runtime_features_updated(
+                SimpleNamespace(app_state=SimpleNamespace()), {}
+            )
+    assert startup.value.name == settings.value.name == missing
 
 
 def test_feature_response_distinguishes_finish_and_clarify():

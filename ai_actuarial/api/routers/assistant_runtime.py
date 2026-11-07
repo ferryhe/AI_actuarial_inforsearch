@@ -13,7 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from ai_actuarial.api.deps import AuthContext, require_permissions
 from ai_actuarial.api.routers.assistant_help import _require_enabled
 from ai_actuarial.api.services.chat import apply_session_update
-from ai_actuarial.assistant.query import FeatureResponse, REQUEST_SECONDS
+from ai_actuarial.assistant.query import REQUEST_SECONDS, FeatureResponse
 
 router = APIRouter()
 

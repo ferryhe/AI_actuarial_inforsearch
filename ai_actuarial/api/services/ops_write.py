@@ -367,9 +367,13 @@ def _notify_runtime_features_updated(
     bridge.app_state.feedback_enabled = bool(features.get("feedback_enabled"))
     assistant_enabled = bool(features.get("assistant_enabled"))
     if assistant_enabled and not getattr(bridge.app_state, "assistant_feature", None):
-        from ai_actuarial.features.assistant import AssistantFeature
-
-        bridge.app_state.assistant_feature = AssistantFeature()
+        try:
+            from ai_actuarial.features.assistant import AssistantFeature
+        except ModuleNotFoundError as exc:
+            if exc.name != "ai_actuarial.features.assistant":
+                raise
+        else:
+            bridge.app_state.assistant_feature = AssistantFeature()
     bridge.app_state.assistant_enabled = assistant_enabled
     if not assistant_enabled and hasattr(bridge.app_state, "assistant_feature"):
         del bridge.app_state.assistant_feature
