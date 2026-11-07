@@ -180,7 +180,10 @@ def test_auto_clarification_requests_a_clearer_question(locale, expected, runtim
 @pytest.mark.parametrize(
     ("locale", "expected"),
     [
-        ("en", "I could not determine the request. Please add more detail or rephrase your question."),
+        (
+            "en",
+            "I could not determine the request. Please add more detail or rephrase your question.",
+        ),
         ("zh", "无法确定请求，请补充更多细节或换一种方式提问。"),
     ],
 )
