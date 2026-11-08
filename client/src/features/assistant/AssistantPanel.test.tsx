@@ -394,6 +394,40 @@ it("keeps source-portal navigation and its follow-up in the same mounted convers
   expect(apiPost.mock.calls[1][1].recent_questions).toEqual(["Which sources are available?"]);
 });
 
+it("uses the second verified file card as the target after navigation and a follow-up", async () => {
+  const cards = ["first", "second"].map((name, index) => ({
+    source_type: "catalog", file_id: `https://example.org/${name}.pdf`, section_id: "", kb_id: index ? "other" : "public", title: `${name} report`,
+    link: `/file-detail?url=${encodeURIComponent(`https://example.org/${name}.pdf`)}`, source_version: null, source_date: null, stale: false,
+  }));
+  apiGet.mockResolvedValue({ assistant_enabled: true, feedback_enabled: false });
+  apiPost.mockResolvedValueOnce({ ...reply("answer"), citations: cards, selected_target: null }).mockResolvedValue(reply("answer"));
+  const { rerender } = render(<SupportWidget />);
+  fireEvent.click(await screen.findByTestId("support-widget-trigger"));
+  await screen.findByLabelText("assistant.message");
+  question("Show recent reports");
+  fireEvent.click(await screen.findByRole("link", { name: /second report/ }));
+  expect(navigate).toHaveBeenCalledWith(cards[1].link);
+  route.current = cards[1].link;
+  rerender(<SupportWidget />);
+  expect(screen.getByText("Show recent reports", { selector: "article p" })).toBeInTheDocument();
+  question("What does this report say?");
+  expect(apiPost.mock.calls[1][1]).toMatchObject({
+    selected_target: { kb_id: "other", file_id: cards[1].file_id }, recent_questions: ["Show recent reports"],
+  });
+});
+
+it("does not carry an older target through an unassigned catalog card", async () => {
+  const old = { kb_id: "public", file_id: "https://example.org/old.pdf" };
+  const unassigned = { source_type: "catalog", file_id: "https://example.org/new.pdf", section_id: "", kb_id: null, title: "unassigned report", link: "/file-detail?url=https%3A%2F%2Fexample.org%2Fnew.pdf", source_version: null, source_date: null, stale: false };
+  apiPost.mockResolvedValueOnce({ ...reply("answer"), citations: [unassigned], selected_target: old }).mockResolvedValue(reply("answer"));
+  show(false);
+  question("Find the report");
+  fireEvent.click(await screen.findByRole("link", { name: /unassigned report/ }));
+  expect(navigate).toHaveBeenCalledWith(unassigned.link);
+  question("What about this one?");
+  expect(apiPost.mock.calls[1][1].selected_target).toBeNull();
+});
+
 it("unmount clears history and ignores a late response", async () => {
   let resolve!: (value: unknown) => void;
   apiPost.mockImplementation(() => new Promise((done) => { resolve = done; }));

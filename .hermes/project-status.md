@@ -1,3 +1,9 @@
+## 2026-11-08 Issue #479 — R3 clicked-card target repair ready for fresh review
+
+- On `codex/issue-479-assistant-ui`, clicking a verified catalog/body file card now carries that exact KB/file hint into the next Assistant turn across in-app file-detail navigation. Clicking an unassigned catalog card clears an older hint. The server still rechecks current scope and KB membership before any document read or citation.
+- The two UI regressions failed before the product fix and passed afterward. Final focused backend target/reauthorization tests: 13 passed; frontend assistant/feedback suite: 50 passed. Typecheck, build, ESLint, diff check, and stubbed Chromium conversation smoke passed. Raw logs are in `reports/issue-473-480-20261107/issue-479/r3-worker-fix/`.
+- R3 changes await fresh independent review; the exact candidate SHA is in the external review receipt. No push, PR edit, merge, live provider/model, production, or physical iOS call.
+
 ## 2026-11-08 Issue #479 — R2 F1/F2 repair ready for fresh review
 
 - On `codex/issue-479-assistant-ui`, the accepted AC5 catalog-card gap and AC3/AC7 post-Clear help-result race are repaired. Authorized catalog files without KB membership now get an in-site catalog card without a KB target; late guide and citation results from a cleared session are ignored.
