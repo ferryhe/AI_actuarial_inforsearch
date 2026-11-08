@@ -75,7 +75,26 @@ try {
   assert.equal(weeklyRequests[2].locale, "zh");
   await weekly.screenshot({ path: process.env.WEEKLY_SCREENSHOT_PATH || "weekly-conversation.png" });
 
-  const evidence = { transport: "/api/assistant/v1/query", provider: "stub", device: "Chromium 390x844 and desktop; not physical iOS", soa: { requests: soaRequests, path: new URL(soa.url()).pathname, sourceLink: source.link }, weekly: { requests: weeklyRequests, path: new URL(weekly.url()).pathname } };
+  const portals = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  const portalRequests = await setup(portals, "en", [
+    answer("Showing 12 of 13 sources; open [Source Portals](/source-portals)."),
+    answer("Recent SOA report.", { citations: [source], selected_target: target, evidence_ids: ["resource:recent"] }),
+    answer("The same report remains selected.", { selected_target: target }),
+  ]);
+  await ask(portals, "Which sources are available?", 1);
+  await portals.locator("#assistant-panel article").first().getByRole("link", { name: "Source Portals" }).click();
+  await portals.waitForURL("**/source-portals");
+  await portals.getByTestId("source-portals-title").waitFor();
+  assert.equal(await portals.locator("#assistant-panel article").count(), 1);
+  await ask(portals, "Show recent SOA material", 2);
+  await portals.locator("#assistant-panel article").nth(1).getByRole("link", { name: /Current SOA report/ }).click();
+  await portals.waitForURL("**/file-detail?url=*");
+  assert.equal(await portals.locator("#assistant-panel article").count(), 2);
+  await ask(portals, "Where did that report come from?", 3);
+  assert.deepEqual(portalRequests[2].selected_target, target);
+  assert.deepEqual(portalRequests[2].recent_questions, ["Which sources are available?", "Show recent SOA material"]);
+
+  const evidence = { transport: "/api/assistant/v1/query", provider: "stub", device: "Chromium 390x844 and desktop; not physical iOS", soa: { requests: soaRequests, path: new URL(soa.url()).pathname, sourceLink: source.link }, weekly: { requests: weeklyRequests, path: new URL(weekly.url()).pathname }, sourcePortals: { requests: portalRequests, path: new URL(portals.url()).pathname } };
   await writeFile(process.env.SMOKE_EVIDENCE_PATH || "issue479-conversation.json", `${JSON.stringify(evidence, null, 2)}\n`);
   console.log("Issue #479 browser conversation flows passed");
 } finally {

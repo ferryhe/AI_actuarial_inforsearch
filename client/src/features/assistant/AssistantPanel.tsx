@@ -106,7 +106,7 @@ export default function AssistantPanel({ t, lang, open, feedbackEnabled, onClose
     if (event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     const link = (event.target as Element).closest("a[href]");
     const path = link?.getAttribute("href");
-    if (path === "/weekly" || path?.startsWith("/file-detail?url=")) {
+    if (path === "/weekly" || path === "/source-portals" || path?.startsWith("/file-detail?url=")) {
       event.preventDefault();
       navigate(path);
     }

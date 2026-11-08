@@ -223,6 +223,8 @@ class AssistantFeature:
             body_read_targets: set[tuple[str, str]] = set()
             help_citations: dict[str, HelpCitation] = {}
             source_citations: dict[str, SourceCitation] = {}
+            resource_file_citations: dict[str, list[SourceCitation]] = {}
+            resource_file_targets: dict[str, SelectedTarget | None] = {}
             help_answers: dict[str, str] = {}
             weekly_actions: set[str] = set()
             weekly_guide_ids: set[str] = set()
@@ -311,6 +313,49 @@ class AssistantFeature:
                         )
                         if answer:
                             resource_answers.update({item: answer for item in result.evidence_ids})
+                    if result.status == "ok" and tool.executor in {
+                        "resources_updates.recent",
+                        "resources_updates.catalog_search",
+                    }:
+                        files = result.data.get("files", [])
+                        cards: list[SourceCitation] = []
+                        single_target = None
+                        for item in files:
+                            url = item.get("source_url") if isinstance(item, dict) else None
+                            if not isinstance(url, str) or not url or len(url) > 1024:
+                                continue
+                            documents = [
+                                document
+                                for kb_id in permitted_kbs(request, current)
+                                if (
+                                    document := facade._document(
+                                        SelectedTarget(kb_id=kb_id, file_id=url)
+                                    )
+                                )
+                                is not None
+                                and document.source_url == url
+                            ]
+                            if not documents:
+                                continue
+                            document = documents[0]
+                            cards.append(
+                                SourceCitation(
+                                    source_type="catalog",
+                                    file_id=url,
+                                    kb_id=document.target.kb_id if len(documents) == 1 else None,
+                                    title=document.title,
+                                    link=document.internal_link,
+                                    source_date=document.publication_date,
+                                )
+                            )
+                            found_targets.update(
+                                (member.target.kb_id, member.target.file_id) for member in documents
+                            )
+                            if len(files) == 1 and len(documents) == 1:
+                                single_target = document.target
+                        for evidence_id in result.evidence_ids:
+                            resource_file_citations[evidence_id] = cards
+                            resource_file_targets[evidence_id] = single_target
                     if tool.executor == "resources_updates.weekly" and result.status == "ok":
                         weekly_actions.update(result.evidence_ids)
                         if result.data.get("snapshot") is None:
@@ -463,6 +508,11 @@ class AssistantFeature:
                     for item in runtime.evidence_ids
                     if item in source_citations
                 )
+                response.citations.extend(
+                    citation
+                    for item in runtime.evidence_ids
+                    for citation in resource_file_citations.get(item, [])
+                )
             weekly_used = runtime.kind == "finish" and bool(
                 weekly_actions.intersection(runtime.evidence_ids)
             )
@@ -601,9 +651,11 @@ class AssistantFeature:
             if runtime.error_code == "SCOPE_REVOKED":
                 verified_target = None
             elif runtime.kind == "finish" and len(runtime.evidence_ids) == 1:
-                verified_target = found_evidence_targets.get(
-                    runtime.evidence_ids[0], verified_target
-                )
+                evidence_id = runtime.evidence_ids[0]
+                if evidence_id in resource_file_targets:
+                    verified_target = resource_file_targets[evidence_id]
+                else:
+                    verified_target = found_evidence_targets.get(evidence_id, verified_target)
             response.selected_target = verified_target.model_dump() if verified_target else None
             return Outcome(response, runtime, session_update)
         finally:

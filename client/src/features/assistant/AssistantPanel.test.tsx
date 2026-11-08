@@ -356,6 +356,22 @@ it("opens an allowed Weekly action without reloading the assistant", async () =>
   expect(screen.getByText("How do weekly updates work?", { selector: "article p" })).toBeInTheDocument();
 });
 
+it("keeps source-portal navigation and its follow-up in the same mounted conversation", async () => {
+  apiGet.mockResolvedValue({ assistant_enabled: true, feedback_enabled: false });
+  apiPost.mockResolvedValueOnce({ ...reply("answer"), answer: "Showing 12 of 13 sources; open [Source Portals](/source-portals)." }).mockResolvedValue(reply("answer"));
+  const { rerender } = render(<SupportWidget />);
+  fireEvent.click(await screen.findByTestId("support-widget-trigger"));
+  await screen.findByLabelText("assistant.message");
+  question("Which sources are available?");
+  fireEvent.click(await screen.findByRole("link", { name: "Source Portals" }));
+  expect(navigate).toHaveBeenCalledWith("/source-portals");
+  route.current = "/source-portals";
+  rerender(<SupportWidget />);
+  expect(screen.getByText("Which sources are available?", { selector: "article p" })).toBeInTheDocument();
+  question("Which source has SOA material?");
+  expect(apiPost.mock.calls[1][1].recent_questions).toEqual(["Which sources are available?"]);
+});
+
 it("unmount clears history and ignores a late response", async () => {
   let resolve!: (value: unknown) => void;
   apiPost.mockImplementation(() => new Promise((done) => { resolve = done; }));

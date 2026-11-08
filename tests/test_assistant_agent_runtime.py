@@ -1824,6 +1824,84 @@ def test_resource_facts_are_grounded_despite_contradictory_model_claim(host_fixt
         assert "revision history is not recorded" in outcome.response.answer
 
 
+@pytest.mark.parametrize(
+    "tool_id", ["resources_updates.recent", "resources_updates.catalog_search"]
+)
+@pytest.mark.parametrize("membership", ["one", "two_files", "missing", "two_kbs"])
+def test_resource_file_cards_require_current_membership_and_unique_target(
+    host_fixture, tool_id, membership
+):
+    from ai_actuarial.assistant.document_research import Document
+
+    state = host_fixture
+    state.request.app.state.assistant_public_kb_ids = ["public", "other"]
+    auth = AuthContext({"subject": "user"}, frozenset({"chat.query", "catalog.read", "files.read"}))
+    state.monkeypatch.setattr(host.deps, "get_auth_context", lambda request: auth)
+    files = [
+        {
+            "title": "CAS report",
+            "source_url": "https://cas.example/report",
+            "link": "/file-detail?url=https%3A%2F%2Fcas.example%2Freport",
+            "published_time": "2026-09-01",
+            "first_seen": "2026-10-01",
+        }
+    ]
+    if membership == "two_files":
+        files.append(
+            {
+                "title": "Second report",
+                "source_url": "https://cas.example/second",
+                "link": "/file-detail?url=https%3A%2F%2Fcas.example%2Fsecond",
+                "first_seen": "2026-10-02",
+            }
+        )
+
+    class Facade:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def _document(self, target):
+            if membership == "missing" or target.file_id not in {
+                row["source_url"] for row in files
+            }:
+                return None
+            if target.kb_id != "public" and membership != "two_kbs":
+                return None
+            return Document(
+                target=target,
+                title=next(row["title"] for row in files if row["source_url"] == target.file_id),
+                source_url=target.file_id,
+                internal_link=next(
+                    row["link"] for row in files if row["source_url"] == target.file_id
+                ),
+                publication_date="2026-09-01",
+            )
+
+    state.monkeypatch.setattr(host, "DocumentResearch", Facade)
+    state.feature.executors[tool_id] = lambda facade, args: ToolResult(
+        "ok", {"files": files, "total": len(files)}, ("resource:current-files",)
+    )
+    args = {"query": "CAS"} if tool_id.endswith("catalog_search") else {}
+    model, _ = scripted(
+        action(action="call", skill_id="resources_updates", tool_id=tool_id, args=args),
+        action(
+            action="finish", answer="Catalog summary only", evidence_ids=["resource:current-files"]
+        ),
+    )
+    outcome = state.feature.query(
+        request=state.request, auth=auth, message="Find CAS reports", model=model
+    )
+    cards = outcome.response.citations
+    assert len(cards) == (0 if membership == "missing" else len(files))
+    if cards:
+        assert all(card.source_type == "catalog" for card in cards)
+        assert [card.link for card in cards] == [row["link"] for row in files]
+    assert outcome.response.selected_target == (
+        {"kb_id": "public", "file_id": files[0]["source_url"]} if membership == "one" else None
+    )
+    assert "body evidence" in outcome.response.answer or tool_id.endswith("recent")
+
+
 def test_weekly_plain_path_is_replaced_by_clickable_action(host_fixture):
     from ai_actuarial.skills.usage_navigation.executors import guide
 
