@@ -16,7 +16,7 @@ const citation = { doc_id: "user-guide-en", section_id: "file-details", language
 const browser = await chromium.launch({ executablePath: chromePath, headless: true });
 
 function assistantReply(overrides = {}) {
-  return { intent: "knowledge", answer: longAnswer, citations: [citation], feedback_draft: null, availability: "available", error_code: null, generation_attempts: 1, embedding_attempts: 0, ...overrides };
+  return { schema_version: "1.0", stop_reason: overrides.intent === "clarify" ? "clarify" : "finish", intent: "knowledge", answer: longAnswer, citations: [citation], evidence_ids: [], selected_target: null, feedback_draft: null, availability: "available", error_code: null, generation_attempts: 1, embedding_attempts: 0, ...overrides };
 }
 
 async function installMocks(page, flags = { assistant_enabled: true, feedback_enabled: false }, plans = [], lang = "en") {
@@ -36,7 +36,7 @@ async function installMocks(page, flags = { assistant_enabled: true, feedback_en
       chatRequests.push(request.postDataJSON());
       return route.fulfill({ json: { success: true, data: { conversation_id: "smoke-chat", response: "Synthetic Chat response", citations: [] } } });
     }
-    if (url.pathname === "/api/assistant/query" && request.method() === "POST") {
+    if (url.pathname === "/api/assistant/v1/query" && request.method() === "POST") {
       assistantRequests.push(request.postDataJSON());
       const plan = plans.shift() || {};
       if (plan.delay) await new Promise((resolve) => setTimeout(resolve, plan.delay));
@@ -262,13 +262,7 @@ async function runFlagCase(assistantEnabled, feedbackEnabled) {
     const history = panel.locator(":scope > div.overflow-y-auto");
     const historyBox = await history.boundingBox();
     assert.ok(historyBox, "assistant history should have a scrollport while the first request is pending");
-    for (let attempt = 0; attempt < 4; attempt += 1) {
-      const actionBox = await manualFeedback.boundingBox();
-      if (actionBox && actionBox.y >= historyBox.y && actionBox.y + actionBox.height <= historyBox.y + historyBox.height) break;
-      await page.mouse.move(historyBox.x + historyBox.width / 2, historyBox.y + historyBox.height / 2);
-      await page.mouse.wheel(0, 180);
-      await page.waitForTimeout(30);
-    }
+    await manualFeedback.scrollIntoViewIfNeeded();
     await nativeClick(page, manualFeedback, "manual feedback action while reply is pending");
     await page.locator("#feedback-panel").waitFor({ state: "visible" });
     const cancel = page.locator("#feedback-panel button").filter({ hasText: "Cancel" });
@@ -305,7 +299,7 @@ async function runFlagCase(assistantEnabled, feedbackEnabled) {
     await page.waitForFunction(() => Boolean(document.querySelector('#feedback-panel [role="status"]')), null, { timeout: 5000 });
     assert.equal(requests.assistantRequests.length, 2);
     assert.equal(requests.feedbackRequests.length, 1);
-    assert.ok(requests.assistantRequests.every((body) => body.mode === "auto"), "assistant frontend always uses automatic routing");
+    assert.ok(requests.assistantRequests.every((body) => !("mode" in body) && body.selected_target === null), "assistant frontend uses the versioned freeform transport");
     const result = { flags, pendingManualFeedbackCancel: true, answerVisibleAfterCancel: true, helpCitationOpened: true, automaticDraft: await page.locator("#feedback-content").count() === 1, assistantPosts: requests.assistantRequests.length, feedbackPosts: requests.feedbackRequests.length };
     await page.close();
     return result;

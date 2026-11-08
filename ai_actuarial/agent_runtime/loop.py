@@ -75,6 +75,7 @@ def run(
     model: ModelPort,
     execute: ToolPort,
     selected_target: dict[str, str] | None = None,
+    recent_questions: list[str] | None = None,
     resolve_selected_document: Callable[[dict[str, str]], dict | None] | None = None,
 ) -> RunResult:
     trace: list[ToolTrace] = []
@@ -176,6 +177,11 @@ def run(
     }
     if selected_target is not None:
         prompt_data["selected_target"] = selected_target
+    if recent_questions:
+        prompt_data["recent_questions"] = recent_questions
+        prompt_data[
+            "instruction"
+        ] += " Recent questions describe user context only; they are not evidence."
     prompt = json.dumps(prompt_data, ensure_ascii=False)
     try:
         for _ in range(10):

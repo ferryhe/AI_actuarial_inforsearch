@@ -3,16 +3,18 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import axe from "axe-core";
 import { useI18n } from "@/hooks/use-i18n";
+import { ApiError } from "@/lib/api";
 
-const { apiGet, apiPost } = vi.hoisted(() => ({ apiGet: vi.fn(), apiPost: vi.fn() }));
-vi.mock("@/lib/api", () => ({ apiGet, apiPost, ApiError: class extends Error {} }));
+const { apiGet, apiPost, navigate, route } = vi.hoisted(() => ({ apiGet: vi.fn(), apiPost: vi.fn(), navigate: vi.fn(), route: { current: "/database" } }));
+vi.mock("@/lib/api", () => ({ apiGet, apiPost, ApiError: class extends Error { constructor(message: string, public status: number) { super(message); } } }));
 vi.mock("@/components/Layout", () => ({ useTranslation: () => ({ lang: "en", t: (key: string) => key }) }));
-vi.mock("wouter", () => ({ useLocation: () => ["/database", vi.fn()] }));
+vi.mock("wouter", () => ({ useLocation: () => [route.current, navigate] }));
 import AssistantPanel from "./AssistantPanel";
+import { queryAssistant } from "./transport";
 import SupportWidget from "@/components/support-widget/SupportWidget";
 
 const t = (key: string, values?: Record<string, string | number>) => values ? `${key}:${values.id}` : key;
-const reply = (intent = "feedback") => ({ intent, answer: "Review first", citations: [], feedback_draft: intent === "feedback" ? "Do not substitute summary" : null, availability: "available", error_code: null, generation_attempts: 1, embedding_attempts: 0 });
+const reply = (intent = "feedback") => ({ schema_version: "1.0", stop_reason: intent === "clarify" ? "clarify" : "finish", intent, answer: "Review first", citations: [], evidence_ids: [], selected_target: null, feedback_draft: intent === "feedback" ? "Do not substitute summary" : null, availability: "available", error_code: null, generation_attempts: 1, embedding_attempts: 0 });
 const ref = { doc_id: "user-guide-en", section_id: "file-details", language: "en", title: "Guide", source_version: "1.0.0", content_hash: "a".repeat(64) };
 
 function LocalizedAssistant({ lang }: { lang: string }) {
@@ -20,7 +22,7 @@ function LocalizedAssistant({ lang }: { lang: string }) {
   return <AssistantPanel t={t} lang={lang} open feedbackEnabled onClose={vi.fn()} />;
 }
 
-beforeEach(() => { apiGet.mockReset(); apiPost.mockReset(); vi.stubGlobal("crypto", { randomUUID: vi.fn(() => "one-request") }); });
+beforeEach(() => { route.current = "/database"; navigate.mockReset(); apiGet.mockReset(); apiPost.mockReset(); vi.stubGlobal("crypto", { randomUUID: vi.fn(() => "one-request") }); });
 afterEach(() => { cleanup(); localStorage.removeItem("lang"); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 function show(feedbackEnabled = true, lang = "en") { return render(<AssistantPanel t={t} lang={lang} open feedbackEnabled={feedbackEnabled} onClose={vi.fn()} />); }
@@ -51,7 +53,7 @@ it("forced feedback classification remains an editable original draft until conf
   fireEvent.click(screen.getByRole("button", { name: "feedback.submit" }));
   expect(await screen.findByRole("status")).toHaveTextContent("db-receipt");
   expect(apiPost.mock.calls[2][1]).toEqual(submitted);
-  expect(apiPost.mock.calls.map((call) => call[0])).toEqual(["/api/assistant/query", "/api/feedback", "/api/feedback"]);
+  expect(apiPost.mock.calls.map((call) => call[0])).toEqual(["/api/assistant/v1/query", "/api/feedback", "/api/feedback"]);
 });
 
 it("cancel and Q&A never call feedback", async () => {
@@ -61,7 +63,7 @@ it("cancel and Q&A never call feedback", async () => {
   fireEvent.click(screen.getByRole("button", { name: "assistant.cancel" }));
   question("Subject question");
   await screen.findByText("Subject question", { selector: "article p" });
-  expect(apiPost.mock.calls.every((call) => call[0] === "/api/assistant/query")).toBe(true);
+  expect(apiPost.mock.calls.every((call) => call[0] === "/api/assistant/v1/query")).toBe(true);
 });
 
 it("independent assistant-only flag exposes questions without a submit action", async () => {
@@ -97,7 +99,7 @@ it("uses automatic routing with one freeform question input", async () => {
   expect(screen.getByLabelText("assistant.message")).toBeVisible();
   question("怎样提交建议");
   await screen.findByText("Review first");
-  expect(apiPost).toHaveBeenCalledWith("/api/assistant/query", { message: "怎样提交建议", mode: "auto", locale: "zh" });
+  expect(apiPost).toHaveBeenCalledWith("/api/assistant/v1/query", { message: "怎样提交建议", locale: "zh", selected_target: null, recent_questions: [] }, { signal: expect.any(AbortSignal) });
 });
 
 it("shows a finished answer and its evidence without a clarification prompt", async () => {
@@ -126,7 +128,7 @@ it.each([
   const article = document.querySelector("#assistant-panel article")!;
   expect(article.textContent).not.toMatch(/choose|type below|feedback, usage|选择类型|下方选择|点击提建议/i);
   expect(document.querySelectorAll("#assistant-panel select, #assistant-panel [role=combobox], #assistant-panel [role=radiogroup]")).toHaveLength(0);
-  expect(apiPost).toHaveBeenCalledWith("/api/assistant/query", { message: questionText, mode: "auto", locale: lang });
+  expect(apiPost).toHaveBeenCalledWith("/api/assistant/v1/query", { message: questionText, locale: lang, selected_target: null, recent_questions: [] }, { signal: expect.any(AbortSignal) });
 });
 
 it("blurs a submitted question and reveals its answer inside the assistant scroll pane", async () => {
@@ -312,7 +314,7 @@ it("errors and malformed responses can be retried without feedback", async () =>
   apiPost.mockResolvedValueOnce({ intent: "unexpected" }).mockResolvedValueOnce(reply("clarify"));
   show(); question(); await screen.findByRole("alert");
   question(); await screen.findByText("assistant.choose");
-  expect(apiPost.mock.calls.every((call) => call[0] === "/api/assistant/query")).toBe(true);
+  expect(apiPost.mock.calls.every((call) => call[0] === "/api/assistant/v1/query")).toBe(true);
 });
 
 it("renders safe Markdown and opens the exact help reference", async () => {
@@ -341,7 +343,17 @@ it("renders catalog and body citations as internal links with versions and nonze
   expect(await screen.findByRole("link", { name: /Body document.*assistant.source_kb/ })).toHaveAttribute("href", "/file-detail?url=source");
   expect(screen.getByRole("link", { name: /Directory document.*assistant.source_catalog/ })).toHaveTextContent("publication-1");
   expect(screen.getByRole("link", { name: /Body document/ })).toHaveTextContent("assistant.stale");
+  fireEvent.click(screen.getByRole("link", { name: /Body document/ }));
+  expect(navigate).toHaveBeenCalledWith("/file-detail?url=source");
   expect(apiGet).not.toHaveBeenCalled();
+});
+
+it("opens an allowed Weekly action without reloading the assistant", async () => {
+  apiPost.mockResolvedValue({ ...reply("answer"), answer: "Open [Weekly](/weekly)." });
+  show(false); question("How do weekly updates work?");
+  fireEvent.click(await screen.findByRole("link", { name: "Weekly" }));
+  expect(navigate).toHaveBeenCalledWith("/weekly");
+  expect(screen.getByText("How do weekly updates work?", { selector: "article p" })).toBeInTheDocument();
 });
 
 it("unmount clears history and ignores a late response", async () => {
@@ -351,6 +363,81 @@ it("unmount clears history and ignores a late response", async () => {
   resolve(reply());
   await waitFor(() => expect(screen.queryByText("Review first")).not.toBeInTheDocument());
   expect(screen.queryByLabelText("feedback.content")).not.toBeInTheDocument();
+});
+
+it("keeps bounded question context and the selected target across site navigation, then clears both", async () => {
+  const target = { kb_id: "public", file_id: "soa-report" };
+  apiPost.mockResolvedValueOnce({ ...reply("answer"), selected_target: target }).mockResolvedValueOnce({ ...reply("answer"), selected_target: target }).mockResolvedValue(reply("answer"));
+  const { rerender } = show(false);
+  question("Latest SOA report");
+  await screen.findByText("Latest SOA report", { selector: "article p" });
+  rerender(<AssistantPanel t={t} lang="en" open feedbackEnabled={false} onClose={vi.fn()} />);
+  question("What does it say?");
+  await screen.findByText("What does it say?", { selector: "article p" });
+  expect(apiPost.mock.calls[1][1]).toMatchObject({ selected_target: target, recent_questions: ["Latest SOA report"] });
+  fireEvent.click(screen.getByRole("button", { name: "assistant.clear" }));
+  expect(screen.queryByText("Latest SOA report")).not.toBeInTheDocument();
+  question("This week?");
+  expect(apiPost.mock.calls[2][1]).toMatchObject({ selected_target: null, recent_questions: [] });
+});
+
+it("keeps the mounted assistant history when the host navigates to Weekly", async () => {
+  apiGet.mockResolvedValue({ assistant_enabled: true, feedback_enabled: false });
+  apiPost.mockResolvedValue(reply("answer"));
+  const { rerender } = render(<SupportWidget />);
+  fireEvent.click(await screen.findByTestId("support-widget-trigger"));
+  await screen.findByLabelText("assistant.message");
+  question("Weekly guide");
+  await screen.findByText("Weekly guide", { selector: "article p" });
+  route.current = "/weekly";
+  rerender(<SupportWidget />);
+  expect(screen.getByText("Weekly guide", { selector: "article p" })).toBeInTheDocument();
+  question("What's new?");
+  expect(apiPost.mock.calls[1][1].recent_questions).toEqual(["Weekly guide"]);
+});
+
+it("cancels the real request and ignores a response that arrives late", async () => {
+  let resolve!: (value: unknown) => void;
+  apiPost.mockImplementationOnce(() => new Promise((done) => { resolve = done; })).mockResolvedValueOnce(reply("answer"));
+  show(false); question("Slow question");
+  const signal = apiPost.mock.calls[0][2].signal as AbortSignal;
+  fireEvent.click(screen.getByRole("button", { name: "assistant.cancel_request" }));
+  expect(signal.aborted).toBe(true);
+  resolve({ ...reply("answer"), answer: "Outdated answer" });
+  question("New question");
+  await screen.findByText("New question", { selector: "article p" });
+  expect(screen.queryByText("Outdated answer")).not.toBeInTheDocument();
+});
+
+it("clears prior answers on identity change", async () => {
+  apiPost.mockResolvedValue(reply("answer"));
+  const { rerender } = render(<AssistantPanel t={t} lang="en" open feedbackEnabled={false} onClose={vi.fn()} identity="reader-1" />);
+  question("Private question");
+  await screen.findByText("Private question", { selector: "article p" });
+  rerender(<AssistantPanel t={t} lang="en" open feedbackEnabled={false} onClose={vi.fn()} identity="reader-2" />);
+  await waitFor(() => expect(screen.queryByText("Private question")).not.toBeInTheDocument());
+});
+
+it("drops prior evidence after the server rejects changed permissions", async () => {
+  const target = { kb_id: "private", file_id: "report" };
+  apiPost.mockResolvedValueOnce({ ...reply("answer"), selected_target: target }).mockRejectedValueOnce(new ApiError("Forbidden", 403)).mockResolvedValueOnce(reply("answer"));
+  show(false); question("Private report");
+  await screen.findByText("Private report", { selector: "article p" });
+  question("Read it again");
+  await screen.findByRole("alert");
+  expect(screen.queryByText("Private report")).not.toBeInTheDocument();
+  question("Try after sign-in");
+  expect(apiPost.mock.calls[2][1]).toMatchObject({ selected_target: null, recent_questions: [] });
+});
+
+it("allows a separate consumer to use the versioned transport contract", async () => {
+  apiPost.mockResolvedValue(reply("answer"));
+  const controller = new AbortController();
+  const result = await queryAssistant({ message: "Overview", locale: "en", selected_target: null, recent_questions: [] }, controller.signal);
+  expect(result.schema_version).toBe("1.0");
+  expect(apiPost).toHaveBeenCalledWith("/api/assistant/v1/query", { message: "Overview", locale: "en", selected_target: null, recent_questions: [] }, { signal: controller.signal });
+  apiPost.mockResolvedValue({ ...reply("answer"), schema_version: "2.0" });
+  await expect(queryAssistant({ message: "Overview", locale: "en", selected_target: null, recent_questions: [] }, controller.signal)).rejects.toThrow();
 });
 
 it("a late automatic draft cannot replace a manually opened feedback form", async () => {

@@ -906,6 +906,250 @@ def test_admin_api_mount_calls_public_feature_and_denies_normal_users(monkeypatc
     assert len(called) == 1
 
 
+def test_versioned_user_api_requires_chat_query_and_keeps_admin_gate(monkeypatch):
+    app = FastAPI()
+    app.state.assistant_enabled = True
+    app.include_router(feature_router, prefix="/api")
+    called = []
+    current = AuthContext({"subject": "reader"}, frozenset({"chat.query"}))
+    monkeypatch.setattr(deps, "_load_auth_context", lambda request: current)
+
+    def query(**kwargs):
+        called.append(kwargs)
+        runtime = RunResult(
+            "Current answer", "available", None, ("test_lookup:sample",), 1, 0, 0, (), "finish"
+        )
+        return host.Outcome(AssistantFeature._response(runtime, "en"), runtime, None)
+
+    app.state.assistant_feature = SimpleNamespace(query=query)
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/assistant/v1/query",
+            json={"message": "sample", "locale": "en", "recent_questions": ["Earlier question"]},
+            headers={"X-Auth-Token": "test"},
+        )
+        assert response.status_code == 200
+        assert response.json()["schema_version"] == "1.0"
+        assert called[-1]["auth"].permissions == frozenset({"chat.query"})
+        assert called[-1]["recent_questions"] == ["Earlier question"]
+        assert (
+            client.post(
+                "/api/assistant/v1/query",
+                json={"message": "sample", "recent_questions": ["x" * 501]},
+                headers={"X-Auth-Token": "test"},
+            ).status_code
+            == 422
+        )
+        assert (
+            client.post(
+                "/api/assistant/runtime/query",
+                json={"message": "sample"},
+                headers={"X-Auth-Token": "test"},
+            ).status_code
+            == 403
+        )
+        current = AuthContext({"subject": "reader"}, frozenset())
+        assert (
+            client.post(
+                "/api/assistant/v1/query",
+                json={"message": "sample"},
+                headers={"X-Auth-Token": "test"},
+            ).status_code
+            == 403
+        )
+        current = AuthContext({"subject": "reader"}, frozenset({"chat.query"}))
+        app.state.assistant_enabled = False
+        assert (
+            client.post(
+                "/api/assistant/v1/query",
+                json={"message": "sample"},
+                headers={"X-Auth-Token": "test"},
+            ).status_code
+            == 404
+        )
+    assert len(called) == 1
+
+
+def test_recent_questions_are_prompt_context_not_evidence():
+    model, calls = scripted(action(action="clarify", question="Which report?"))
+    result = run(
+        message="Tell me more",
+        locale="en",
+        registry=registry(),
+        context=RunContext(principal="reader", scopes=frozenset({"chat.query"})),
+        model=model,
+        execute=execute,
+        recent_questions=["Find the latest SOA report"],
+    )
+    prompt = json.loads(calls[0][0]["prompt"])
+    assert prompt["recent_questions"] == ["Find the latest SOA report"]
+    assert "not evidence" in prompt["instruction"]
+    assert result.evidence_ids == ()
+
+
+def test_browser_disconnect_stops_runtime_work():
+    import asyncio
+
+    from ai_actuarial.api.routers.assistant_runtime import _watch_disconnection
+
+    class Disconnected:
+        async def is_disconnected(self):
+            return True
+
+    cancelled = Event()
+    asyncio.run(_watch_disconnection(Disconnected(), cancelled))
+    assert cancelled.is_set()
+
+
+def test_finished_document_discovery_exposes_only_current_used_source_card(host_fixture):
+    from ai_actuarial.assistant.document_research import Document, SelectedTarget
+
+    state = host_fixture
+    state.request.app.state.assistant_public_kb_ids = ["public"]
+    auth = AuthContext(
+        {"subject": "reader"}, frozenset({"chat.query", "catalog.read", "files.read"})
+    )
+    state.monkeypatch.setattr(host.deps, "get_auth_context", lambda request: auth)
+    document = Document(
+        target=SelectedTarget(kb_id="public", file_id="soa-report"),
+        title="Latest SOA report",
+        source_url="https://example.org/soa.pdf",
+        internal_link="/file-detail?url=https%3A%2F%2Fexample.org%2Fsoa.pdf",
+        publication_date="2026-11-01",
+    )
+
+    class Facade:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def _document(self, target):
+            return document if target == document.target else None
+
+    state.monkeypatch.setattr(host, "DocumentResearch", Facade)
+    state.feature.executors["document_research.find_documents"] = lambda facade, args: ToolResult(
+        "ok", {"documents": [document.model_dump()]}, ("document:soa",)
+    )
+    model, _calls = scripted(
+        action(
+            action="call",
+            skill_id="document_research",
+            tool_id="document_research.find_documents",
+            args={"query": "SOA"},
+        ),
+        action(action="finish", answer="Latest report", evidence_ids=["document:soa"]),
+    )
+    result = state.feature.query(
+        request=state.request, auth=auth, message="Latest SOA report", model=model
+    )
+    assert result.runtime.kind == "finish", result.runtime
+    assert result.runtime.evidence_ids == ("document:soa",), result.runtime
+    assert result.runtime.availability == "unavailable", result.runtime
+    assert result.response.citations[0].link == document.internal_link
+    assert result.response.citations[0].title == document.title
+    assert result.response.selected_target == document.target.model_dump()
+
+
+def test_user_api_runs_four_published_skill_families_without_admin_scope(host_fixture, monkeypatch):
+    from ai_actuarial.assistant.document_research import Document, SelectedTarget
+    from ai_actuarial.skills.feedback.executors import draft
+    from ai_actuarial.skills.usage_navigation.executors import guide
+
+    state = host_fixture
+    state.request.app.state.assistant_public_kb_ids = ["public"]
+    auth = AuthContext(
+        {"subject": "reader"},
+        frozenset({"chat.query", "catalog.read", "files.read", "markdown.read"}),
+    )
+    monkeypatch.setattr(deps, "_load_auth_context", lambda request: auth)
+    document = Document(
+        target=SelectedTarget(kb_id="public", file_id="soa-report"),
+        title="SOA report",
+        source_url="https://example.org/soa.pdf",
+        internal_link="/file-detail?url=https%3A%2F%2Fexample.org%2Fsoa.pdf",
+    )
+
+    class Facade:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def _document(self, target):
+            return document if target == document.target else None
+
+    monkeypatch.setattr(host, "DocumentResearch", Facade)
+    state.feature.executors["document_research.find_documents"] = lambda facade, args: ToolResult(
+        "ok", {"documents": [document.model_dump()]}, ("document:soa",)
+    )
+    state.feature.executors["resources_updates.weekly"] = lambda facade, args: ToolResult(
+        "ok", {"snapshot": None, "total": 0}, ("weekly:empty",)
+    )
+    cases = [
+        (
+            "What features are available?",
+            "usage_navigation",
+            "usage_navigation.guide",
+            {"query": "What features are available?", "language": "en"},
+            guide({"query": "What features are available?", "language": "en"}).evidence_ids[0],
+        ),
+        (
+            "What is new this week?",
+            "resources_updates",
+            "resources_updates.weekly",
+            {},
+            "weekly:empty",
+        ),
+        (
+            "Find the SOA report",
+            "document_research",
+            "document_research.find_documents",
+            {"query": "SOA"},
+            "document:soa",
+        ),
+        (
+            "Please add dark mode",
+            "feedback",
+            "feedback.draft",
+            {"text": "Please add dark mode"},
+            draft({"text": "Please add dark mode"}).evidence_ids[0],
+        ),
+    ]
+    models = [
+        scripted(
+            action(action="call", skill_id=skill, tool_id=tool, args=args),
+            action(action="finish", answer="Current result", evidence_ids=[evidence_id]),
+        )[0]
+        for _, skill, tool, args, evidence_id in cases
+    ]
+    original = state.feature.query
+    app = FastAPI()
+    app.state.assistant_enabled = True
+    app.state.feedback_enabled = True
+    app.state.db_path = "test-db"
+    app.state.assistant_public_kb_ids = ["public"]
+    app.state.assistant_staff_kb_ids = []
+    app.state.assistant_feature = SimpleNamespace(
+        query=lambda **kwargs: original(**kwargs, model=models.pop(0))
+    )
+    app.include_router(feature_router, prefix="/api")
+    with TestClient(app) as client:
+        for message, *_ in cases:
+            response = client.post(
+                "/api/assistant/v1/query",
+                json={"message": message},
+                headers={"X-Auth-Token": "test"},
+            )
+            assert response.status_code == 200, response.text
+            assert response.json()["schema_version"] == "1.0"
+        assert (
+            client.post(
+                "/api/assistant/runtime/query",
+                json={"message": "admin"},
+                headers={"X-Auth-Token": "test"},
+            ).status_code
+            == 403
+        )
+    assert not models
+
+
 def test_admin_api_deadline_reports_started_work(monkeypatch):
     from ai_actuarial.agent_runtime.contracts import AgentBudget
     from ai_actuarial.api.routers import assistant_runtime

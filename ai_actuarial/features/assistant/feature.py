@@ -17,7 +17,7 @@ from ai_actuarial.api.deps import AuthContext, public_permissions_for_request
 from ai_actuarial.api.services import chat
 from ai_actuarial.assistant.agent_budget import load_agent_budget
 from ai_actuarial.assistant.document_research import DocumentResearch, SelectedTarget
-from ai_actuarial.assistant.knowledge import permitted_kbs
+from ai_actuarial.assistant.knowledge import SourceCitation, permitted_kbs
 from ai_actuarial.assistant.query import FeatureResponse, HelpCitation
 from ai_actuarial.postgres import DatabaseConfig, resolve_data_root
 from ai_actuarial.skills.document_research import executors as research_executors
@@ -107,6 +107,7 @@ class AssistantFeature:
         cancelled: Event | None = None,
         deadline: float | None = None,
         selected_target: SelectedTarget | None = None,
+        recent_questions: list[str] | None = None,
         budget: AgentBudget | None = None,
     ) -> Outcome:
         initial_identity = _identity(auth)
@@ -221,6 +222,7 @@ class AssistantFeature:
             found_evidence_targets: dict[str, SelectedTarget] = {}
             body_read_targets: set[tuple[str, str]] = set()
             help_citations: dict[str, HelpCitation] = {}
+            source_citations: dict[str, SourceCitation] = {}
             help_answers: dict[str, str] = {}
             weekly_actions: set[str] = set()
             weekly_guide_ids: set[str] = set()
@@ -335,12 +337,53 @@ class AssistantFeature:
                             (evidence_id, SelectedTarget.model_validate(item["target"]))
                             for evidence_id, item in zip(result.evidence_ids, documents)
                         )
+                        source_citations.update(
+                            (
+                                evidence_id,
+                                SourceCitation(
+                                    source_type="catalog",
+                                    file_id=item["target"]["file_id"],
+                                    kb_id=item["target"]["kb_id"],
+                                    title=item["title"],
+                                    link=item["internal_link"],
+                                    source_date=item.get("publication_date"),
+                                ),
+                            )
+                            for evidence_id, item in zip(result.evidence_ids, documents)
+                        )
                         if len(documents) == 1:
                             verified_target = SelectedTarget.model_validate(documents[0]["target"])
                     if result.status == "ok" and tool.executor in {
                         "document_research.read_document_sections",
                         "document_research.search_knowledge",
                     }:
+                        document = facade._document(
+                            SelectedTarget(kb_id=args["kb_id"], file_id=args["file_id"])
+                        )
+                        if document:
+                            source_citations.update(
+                                (
+                                    evidence_id,
+                                    SourceCitation(
+                                        source_type=(
+                                            "kb" if section.get("section_id") else "catalog"
+                                        ),
+                                        file_id=document.target.file_id,
+                                        kb_id=document.target.kb_id,
+                                        section_id=section.get("section_id", ""),
+                                        title=document.title,
+                                        link=document.internal_link,
+                                        source_version=section.get("source_version"),
+                                        source_date=document.publication_date,
+                                        stale=section.get("serving_stale", False),
+                                    ),
+                                )
+                                for evidence_id, section in zip(
+                                    result.evidence_ids,
+                                    result.data.get("sections")
+                                    or [result.data.get("document", {})],
+                                )
+                            )
                         body_read_targets.add((args["kb_id"], args["file_id"]))
                         verified_target = SelectedTarget(
                             kb_id=args["kb_id"], file_id=args["file_id"]
@@ -407,12 +450,19 @@ class AssistantFeature:
                 model=model,
                 execute=execute,
                 selected_target=verified_target.model_dump() if verified_target else None,
+                recent_questions=recent_questions or [],
                 resolve_selected_document=resolve_selected_document,
             )
             response = self._response(runtime, locale)
             response.citations = [
                 help_citations[item] for item in runtime.evidence_ids if item in help_citations
             ]
+            if runtime.kind == "finish" and runtime.error_code != "SCOPE_REVOKED":
+                response.citations.extend(
+                    source_citations[item]
+                    for item in runtime.evidence_ids
+                    if item in source_citations
+                )
             weekly_used = runtime.kind == "finish" and bool(
                 weekly_actions.intersection(runtime.evidence_ids)
             )
