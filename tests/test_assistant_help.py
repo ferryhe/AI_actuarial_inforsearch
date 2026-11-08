@@ -21,8 +21,8 @@ def _write_doc(root: Path, filename: str, doc_id: str, sections: str) -> Path:
 
 def test_fixed_bilingual_questions_map_exact_section_within_top_three():
     questions = json.loads(_FIXTURE.read_text(encoding="utf-8"))["questions"]
-    assert len(questions) == 18
-    assert sum(item["expected"] is not None for item in questions) == 14
+    assert len(questions) == 22
+    assert sum(item["expected"] is not None for item in questions) == 18
     assert sum(item["expected"] is None for item in questions) == 4
     for item in questions:
         results = search_help(item["question"], language=item["language"], limit=3)
@@ -33,6 +33,32 @@ def test_fixed_bilingual_questions_map_exact_section_within_top_three():
                 item["expected"] == {"doc_id": result["doc_id"], "section_id": result["section_id"]}
                 for result in results
             ), item["id"]
+
+
+def test_chinese_weekly_question_ranks_its_section_before_overview():
+    assert search_help("怎么查看周报", language="zh", limit=3)[0]["section_id"] == "weekly-reports"
+    assert (
+        search_help("有哪些功能怎么用", language="zh", limit=3)[0]["section_id"]
+        == "features-dashboard"
+    )
+
+
+@pytest.mark.parametrize(
+    "language,required,obsolete,feedback",
+    [
+        ("en", "ask your question directly", "select Auto", "Send a suggestion"),
+        ("zh", "直接输入问题", "可选择自动判断", "提建议"),
+    ],
+)
+def test_feedback_guide_describes_single_question_input(language, required, obsolete, feedback):
+    section = next(
+        item
+        for item in load_help_sections()
+        if item.language == language and item.section_id == "feedback-entry"
+    )
+    assert required in section.content
+    assert obsolete not in section.content
+    assert feedback in section.content
 
 
 @pytest.mark.parametrize(

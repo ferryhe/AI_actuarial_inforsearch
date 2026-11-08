@@ -17,7 +17,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import BaseModel, ConfigDict
 
-from ai_actuarial.agent_runtime import Registry, RunContext, RunResult, Tool, run
+from ai_actuarial.agent_runtime import Registry, RunContext, RunResult, Tool, ToolResult, run
 from ai_actuarial.api import deps
 from ai_actuarial.api.deps import AuthContext
 from ai_actuarial.api.routers.assistant_runtime import router as feature_router
@@ -215,6 +215,48 @@ def test_invalid_or_unsupported_action_never_executes_tool(output, code):
         execute=lambda *args: invoked.append(args),
     )
     assert result.error_code == code and not invoked
+
+
+@pytest.mark.parametrize(
+    "documents",
+    [
+        [],
+        [
+            {
+                "target": {"kb_id": "public", "file_id": "https://example.org/report"},
+                "source_url": "https://example.org/report",
+            }
+        ],
+    ],
+)
+def test_catalog_discovery_contract_rejects_mismatched_target_evidence(documents):
+    class FindArgs(BaseModel):
+        model_config = ConfigDict(extra="forbid", strict=True)
+        query: str
+
+    tool = Tool(
+        "third.locate",
+        "Test-only finder",
+        "third.locate",
+        FindArgs,
+        frozenset({"chat.query"}),
+        "catalog_discovery",
+    )
+    test_skill = replace(MANIFEST, skill_id="third", tools=(tool,))
+    catalog = Registry((test_skill,), frozenset({"third.locate"}))
+    model, _calls = scripted(
+        action(action="call", skill_id="third", tool_id="third.locate", args={"query": "x"})
+    )
+    result = run(
+        message="x",
+        locale="en",
+        registry=catalog,
+        context=RunContext(principal="test", scopes=frozenset({"chat.query"})),
+        model=model,
+        execute=lambda *_: ToolResult("ok", {"documents": documents}, ("catalog:orphan",)),
+    )
+    assert result.error_code == "TOOL_UNAVAILABLE"
+    assert result.trace[0].status == "error" and not result.evidence_ids
 
 
 def test_no_match_and_ambiguous_target_clarify_without_mode():
@@ -1211,3 +1253,577 @@ def test_provider_json_object_label_is_the_only_normalized_extra(
     assert [item.tool_id for item in outcome.runtime.trace] == (
         ["test_lookup.search"] if expected_tools else []
     )
+
+
+def test_feedback_skill_preserves_original_and_never_submits(host_fixture):
+    state = host_fixture
+    state.request.app.state.feedback_enabled = True
+    auth = AuthContext({"subject": "user"}, frozenset({"chat.query"}))
+    state.monkeypatch.setattr(host.deps, "get_auth_context", lambda request: auth)
+    message = "Please add dark charts 中文"
+    from ai_actuarial.skills.feedback.executors import draft
+
+    evidence_id = draft({"text": message}).evidence_ids[0]
+    model, _calls = scripted(
+        action(
+            action="call",
+            skill_id="feedback",
+            tool_id="feedback.draft",
+            args={"text": "altered by model"},
+        ),
+        action(action="finish", answer="Already submitted", evidence_ids=[evidence_id]),
+    )
+    outcome = state.feature.query(request=state.request, auth=auth, message=message, model=model)
+    assert outcome.response.intent == "feedback"
+    assert outcome.response.feedback_draft == message
+    assert "nothing is recorded yet" in outcome.response.answer
+    assert outcome.runtime.kind == "finish"
+    assert outcome.runtime.trace[0].evidence_ids == (evidence_id,)
+    assert len(state.quota) == 1
+
+
+def test_usage_to_weekly_follow_up_keeps_exact_guide_citation_and_open_action(host_fixture):
+    from ai_actuarial.skills.usage_navigation.executors import guide
+
+    state = host_fixture
+    auth = AuthContext({"subject": "user"}, frozenset({"chat.query", "files.read"}))
+    state.monkeypatch.setattr(host.deps, "get_auth_context", lambda request: auth)
+    feature_hit = guide({"query": "What features are available?", "language": "en"})
+    weekly_hit = guide({"query": "How do I use the weekly report?", "language": "en"})
+    contexts = []
+    guide_executor = state.feature.executors["usage_navigation.guide"]
+
+    def tracked_guide(args):
+        contexts.append(state.request.state.assistant_runtime_context)
+        return guide_executor(args)
+
+    def tracked_weekly(facade, args):
+        contexts.append(state.request.state.assistant_runtime_context)
+        return ToolResult(
+            "ok",
+            {"snapshot": {"id": "current", "file_count": 1}, "total": 1, "action": "/weekly"},
+            ("weekly:current",),
+        )
+
+    state.feature.executors["usage_navigation.guide"] = tracked_guide
+    state.feature.executors["resources_updates.weekly"] = tracked_weekly
+    feature_model, feature_calls = scripted(
+        action(
+            action="call",
+            skill_id="usage_navigation",
+            tool_id="usage_navigation.guide",
+            args={"query": "What features are available?", "language": "en"},
+        ),
+        action(
+            action="finish", answer="Read the guide", evidence_ids=[feature_hit.evidence_ids[0]]
+        ),
+    )
+    features = state.feature.query(
+        request=state.request,
+        auth=auth,
+        message="What features are available?",
+        model=feature_model,
+    )
+    assert features.runtime.kind == "finish"
+    assert (
+        features.response.citations[0].content_hash
+        == feature_hit.data["sections"][0]["reference"]["content_hash"]
+    )
+
+    weekly_model, weekly_calls = scripted(
+        action(
+            action="call",
+            skill_id="usage_navigation",
+            tool_id="usage_navigation.guide",
+            args={"query": "How do I use the weekly report?", "language": "en"},
+        ),
+        action(
+            action="call", skill_id="resources_updates", tool_id="resources_updates.weekly", args={}
+        ),
+        action(
+            action="finish",
+            answer="Read the weekly guide and one new file",
+            evidence_ids=[weekly_hit.evidence_ids[0], "weekly:current"],
+        ),
+    )
+    weekly = state.feature.query(
+        request=state.request,
+        auth=auth,
+        message="How do I use the weekly report?",
+        model=weekly_model,
+    )
+    assert weekly.runtime.kind == "finish"
+    assert weekly.runtime.tool_attempts == 2 and weekly.runtime.model_attempts == 3
+    assert set(weekly.runtime.evidence_ids) == {weekly_hit.evidence_ids[0], "weekly:current"}
+    assert {item.tool_id for item in weekly.runtime.trace} == {
+        "usage_navigation.guide",
+        "resources_updates.weekly",
+    }
+    assert {item.content_hash for item in weekly.response.citations} == {
+        weekly_hit.data["sections"][0]["reference"]["content_hash"]
+    }
+    assert "/weekly" in weekly.response.answer
+    assert contexts[1] is contexts[2]
+    assert contexts[1].principal == contexts[2].principal == "test"
+    assert contexts[1].scopes == auth.permissions
+    assert contexts[1].tool_attempts == 2 and contexts[1].model_attempts == 3
+
+    follow_model, follow_calls = scripted(
+        action(
+            action="call", skill_id="resources_updates", tool_id="resources_updates.weekly", args={}
+        ),
+        action(action="finish", answer="One newly collected file", evidence_ids=["weekly:current"]),
+    )
+    follow = state.feature.query(
+        request=state.request, auth=auth, message="What was new this week?", model=follow_model
+    )
+    assert follow.runtime.kind == "finish" and "/weekly" in follow.response.answer
+    assert "1 newly first-collected files" in follow.response.answer
+    assert "older published period" not in follow.response.answer
+    assert follow.runtime.tool_attempts == 1 and follow.runtime.model_attempts == 2
+    assert follow.runtime.evidence_ids == ("weekly:current",)
+    assert contexts[0] is not contexts[1] and contexts[3] is not contexts[2]
+    assert contexts[3].principal == "test" and contexts[3].scopes == auth.permissions
+    assert all(
+        json.loads(calls[0][0]["prompt"])["question"] == question
+        for calls, question in (
+            (feature_calls, "What features are available?"),
+            (weekly_calls, "How do I use the weekly report?"),
+            (follow_calls, "What was new this week?"),
+        )
+    )
+    assert follow_calls[0][0]["observations"] == []
+    assert len(state.quota) == 3
+
+
+@pytest.mark.parametrize(
+    "locale,question", [("en", "How do I view weekly updates?"), ("zh", "怎么查看周报")]
+)
+@pytest.mark.parametrize("snapshot_state", ["published", "none", "no_new"])
+def test_combined_weekly_guide_and_snapshot_keeps_steps_and_current_state(
+    host_fixture, locale, question, snapshot_state
+):
+    from ai_actuarial.skills.usage_navigation.executors import guide
+
+    state = host_fixture
+    auth = AuthContext({"subject": "user"}, frozenset({"chat.query", "files.read"}))
+    state.monkeypatch.setattr(host.deps, "get_auth_context", lambda request: auth)
+    hit = guide({"query": question, "language": locale})
+    weekly_id = next(
+        evidence_id
+        for evidence_id, item in zip(hit.evidence_ids, hit.data["sections"])
+        if item["reference"]["section_id"] == "weekly-reports"
+    )
+    snapshot = (
+        None
+        if snapshot_state == "none"
+        else {
+            "id": "current",
+            "period_start": "2026-10-26",
+            "period_end": "2026-11-02",
+            "file_count": 0 if snapshot_state == "no_new" else 1,
+        }
+    )
+    total = 1 if snapshot_state == "published" else 0
+    state.feature.executors["resources_updates.weekly"] = lambda facade, args: ToolResult(
+        "ok", {"snapshot": snapshot, "total": total, "action": "/weekly"}, ("weekly:current",)
+    )
+    model, _ = scripted(
+        action(
+            action="call",
+            skill_id="usage_navigation",
+            tool_id="usage_navigation.guide",
+            args={"query": question, "language": locale},
+        ),
+        action(
+            action="call", skill_id="resources_updates", tool_id="resources_updates.weekly", args={}
+        ),
+        action(action="finish", answer="model prose", evidence_ids=[weekly_id, "weekly:current"]),
+    )
+    outcome = state.feature.query(
+        request=state.request, auth=auth, message=question, locale=locale, model=model
+    )
+    answer = outcome.response.answer
+    assert outcome.runtime.kind == "finish"
+    assert outcome.response.citations[0].section_id == "weekly-reports"
+    assert ("查看全部" if locale == "zh" else "View all") in answer
+    assert ("较早的已发布周期" if locale == "zh" else "older published period") in answer
+    assert ("资料阅读详情" if locale == "zh" else "file to read its details") in answer
+    assert ("原文链接" if locale == "zh" else "source link") in answer
+    assert "Markdown" in answer
+    assert ("[周报](/weekly)" if locale == "zh" else "[Weekly](/weekly)") in answer
+    statuses = {
+        "published": "2026-10-26",
+        "none": (
+            "目前没有完整已发布的周报快照"
+            if locale == "zh"
+            else "No complete published weekly snapshot"
+        ),
+        "no_new": "没有新增资料" if locale == "zh" else "no newly first-collected files",
+    }
+    assert answer.count(statuses[snapshot_state]) == 1
+    if snapshot_state != "published":
+        assert "2026-10-26" not in answer
+
+
+@pytest.mark.parametrize(
+    "empty,expected",
+    [("no_snapshot", "No complete published"), ("no_new", "no newly first-collected")],
+)
+def test_weekly_empty_states_override_unsupported_model_claims(host_fixture, empty, expected):
+    state = host_fixture
+    auth = AuthContext({"subject": "user"}, frozenset({"chat.query", "files.read"}))
+    state.monkeypatch.setattr(host.deps, "get_auth_context", lambda request: auth)
+    snapshot = None if empty == "no_snapshot" else {"id": "week", "file_count": 0}
+    state.feature.executors["resources_updates.weekly"] = lambda facade, args: ToolResult(
+        "ok", {"snapshot": snapshot, "total": 0, "action": "/weekly"}, ("weekly:empty",)
+    )
+    model, calls = scripted(
+        action(
+            action="call", skill_id="resources_updates", tool_id="resources_updates.weekly", args={}
+        ),
+        action(
+            action="finish",
+            answer="Five changed documents were added",
+            evidence_ids=["weekly:empty"],
+        ),
+    )
+    outcome = state.feature.query(
+        request=state.request, auth=auth, message="What is new this week?", model=model
+    )
+    assert outcome.runtime.kind == "finish"
+    assert expected in outcome.response.answer and "/weekly" in outcome.response.answer
+    assert "Five changed" not in outcome.response.answer
+    assert "feedback" not in {
+        item["skill_id"] for item in json.loads(calls[0][0]["prompt"])["skills"]
+    }
+
+
+@pytest.mark.parametrize(
+    "tool_id,data",
+    [
+        (
+            "resources_updates.sources",
+            {"sources": [{"source_name_en": "CAS", "count": 1}], "total": 1},
+        ),
+        (
+            "resources_updates.recent",
+            {
+                "files": [
+                    {
+                        "title": "CAS report",
+                        "source": "CAS",
+                        "source_url": "https://cas.example/report",
+                        "first_seen": "2026-10-01",
+                    }
+                ],
+                "total": 1,
+            },
+        ),
+        (
+            "resources_updates.catalog_search",
+            {
+                "files": [
+                    {
+                        "title": "CAS report",
+                        "source": "CAS",
+                        "source_url": "https://cas.example/report",
+                        "publication_date": "2026-09-01",
+                        "system_first_seen": "2026-10-01",
+                    }
+                ],
+                "total": 1,
+            },
+        ),
+        (
+            "resources_updates.weekly",
+            {
+                "snapshot": {
+                    "id": "w1",
+                    "period_start": "2026-09-28",
+                    "period_end": "2026-10-05",
+                    "file_count": 1,
+                },
+                "files": [{"title": "CAS report", "first_seen": "2026-10-01"}],
+                "total": 1,
+                "action": "/weekly",
+            },
+        ),
+    ],
+)
+def test_resource_facts_are_grounded_despite_contradictory_model_claim(host_fixture, tool_id, data):
+    state = host_fixture
+    auth = AuthContext({"subject": "user"}, frozenset({"chat.query", "catalog.read", "files.read"}))
+    state.monkeypatch.setattr(host.deps, "get_auth_context", lambda request: auth)
+    state.feature.executors[tool_id] = lambda facade, args: ToolResult(
+        "ok", data, ("resource:cas",)
+    )
+    args = {"query": "CAS"} if tool_id.endswith("catalog_search") else {}
+    model, _ = scripted(
+        action(action="call", skill_id="resources_updates", tool_id=tool_id, args=args),
+        action(
+            action="finish",
+            answer="SOA published five revised reports today.",
+            evidence_ids=["resource:cas"],
+        ),
+    )
+    outcome = state.feature.query(
+        request=state.request, auth=auth, message="What changed?", model=model
+    )
+    assert outcome.runtime.kind == "finish"
+    assert "SOA" not in outcome.response.answer
+    assert "five revised" not in outcome.response.answer
+    assert "CAS" in outcome.response.answer
+    assert str(data["total"]) in outcome.response.answer
+    if tool_id != "resources_updates.sources":
+        assert "2026-10-01" in outcome.response.answer
+        assert "revision history is not recorded" in outcome.response.answer
+
+
+def test_weekly_plain_path_is_replaced_by_clickable_action(host_fixture):
+    from ai_actuarial.skills.usage_navigation.executors import guide
+
+    state = host_fixture
+    auth = AuthContext({"subject": "user"}, frozenset({"chat.query", "files.read"}))
+    state.monkeypatch.setattr(host.deps, "get_auth_context", lambda request: auth)
+    hit = guide({"query": "How do I use the weekly report?", "language": "en"})
+    model, _ = scripted(
+        action(
+            action="call",
+            skill_id="usage_navigation",
+            tool_id="usage_navigation.guide",
+            args={"query": "How do I use the weekly report?", "language": "en"},
+        ),
+        action(
+            action="finish",
+            answer="Open /weekly to view the report.",
+            evidence_ids=[hit.evidence_ids[0]],
+        ),
+    )
+    outcome = state.feature.query(
+        request=state.request, auth=auth, message="How do I use weekly reports?", model=model
+    )
+    assert outcome.runtime.kind == "finish"
+    assert "[Weekly](/weekly)" in outcome.response.answer
+
+
+@pytest.mark.parametrize("files_read", [True, False])
+def test_chinese_weekly_question_first_guide_evidence_keeps_action_and_access(
+    host_fixture, files_read
+):
+    from ai_actuarial.skills.usage_navigation.executors import guide
+
+    state = host_fixture
+    scopes = {"chat.query", "files.read"} if files_read else {"chat.query"}
+    auth = AuthContext({"subject": "user"}, frozenset(scopes))
+    state.monkeypatch.setattr(host.deps, "get_auth_context", lambda request: auth)
+    hit = guide({"query": "怎么查看周报", "language": "zh"})
+    assert hit.data["sections"][0]["reference"]["section_id"] == "weekly-reports"
+    model, _ = scripted(
+        action(
+            action="call",
+            skill_id="usage_navigation",
+            tool_id="usage_navigation.guide",
+            args={"query": "怎么查看周报", "language": "zh"},
+        ),
+        action(action="finish", answer="请看第一条指南。", evidence_ids=[hit.evidence_ids[0]]),
+    )
+    outcome = state.feature.query(
+        request=state.request, auth=auth, message="怎么查看周报", locale="zh", model=model
+    )
+    assert outcome.runtime.kind == "finish"
+    assert outcome.response.citations[0].section_id == "weekly-reports"
+    if files_read:
+        assert "[周报](/weekly)" in outcome.response.answer
+    else:
+        assert "](/weekly)" not in outcome.response.answer
+        assert "无法打开周报页" in outcome.response.answer
+
+
+@pytest.mark.parametrize(
+    "locale,query,unsupported",
+    [
+        ("en", "What features are available?", "All users can manage accounts and delete files."),
+        ("zh", "有哪些功能怎么用？", "所有用户都可以管理账户和删除文件。"),
+    ],
+)
+def test_guide_only_feature_answer_cannot_contradict_current_section(
+    host_fixture, locale, query, unsupported
+):
+    from ai_actuarial.skills.usage_navigation.executors import guide
+
+    state = host_fixture
+    auth = AuthContext({"subject": "user"}, frozenset({"chat.query"}))
+    state.monkeypatch.setattr(host.deps, "get_auth_context", lambda request: auth)
+    hit = guide({"query": query, "language": locale})
+    evidence_id, section = next(
+        (evidence_id, item)
+        for evidence_id, item in zip(hit.evidence_ids, hit.data["sections"])
+        if item["reference"]["section_id"] == "features-dashboard"
+    )
+    model, _ = scripted(
+        action(
+            action="call",
+            skill_id="usage_navigation",
+            tool_id="usage_navigation.guide",
+            args={"query": query, "language": locale},
+        ),
+        action(action="finish", answer=unsupported, evidence_ids=[evidence_id]),
+    )
+    outcome = state.feature.query(
+        request=state.request, auth=auth, message=query, locale=locale, model=model
+    )
+    assert outcome.runtime.kind == "finish"
+    assert unsupported not in outcome.response.answer
+    assert section["content"][:30] in outcome.response.answer
+    assert outcome.response.citations[0].content_hash == section["reference"]["content_hash"]
+
+
+@pytest.mark.parametrize("path", ["guide", "resource"])
+def test_weekly_action_is_not_clickable_after_files_read_is_denied(host_fixture, path):
+    from ai_actuarial.skills.usage_navigation.executors import guide
+
+    state = host_fixture
+    denied = AuthContext({"subject": "user"}, frozenset({"chat.query"}))
+    allowed = AuthContext({"subject": "user"}, frozenset({"chat.query", "files.read"}))
+    if path == "guide":
+        auth = denied
+        state.monkeypatch.setattr(host.deps, "get_auth_context", lambda request: denied)
+        hit = guide({"query": "How do I view weekly updates?", "language": "en"})
+        evidence_id = next(
+            evidence_id
+            for evidence_id, item in zip(hit.evidence_ids, hit.data["sections"])
+            if item["reference"]["section_id"] == "weekly-reports"
+        )
+        tool_id, args = "usage_navigation.guide", {
+            "query": "How do I view weekly updates?",
+            "language": "en",
+        }
+        skill_id = "usage_navigation"
+    else:
+        auth = allowed
+        calls = []
+
+        def current_auth(request):
+            calls.append(None)
+            return allowed if len(calls) == 1 else denied
+
+        state.monkeypatch.setattr(host.deps, "get_auth_context", current_auth)
+        state.feature.executors["resources_updates.weekly"] = lambda facade, args: ToolResult(
+            "ok", {"snapshot": None, "total": 0, "action": "/weekly"}, ("weekly:revoked",)
+        )
+        evidence_id = "weekly:revoked"
+        tool_id, args, skill_id = "resources_updates.weekly", {}, "resources_updates"
+    model, _ = scripted(
+        action(action="call", skill_id=skill_id, tool_id=tool_id, args=args),
+        action(action="finish", answer="Open /weekly", evidence_ids=[evidence_id]),
+    )
+    outcome = state.feature.query(
+        request=state.request, auth=auth, message="How do I view weekly updates?", model=model
+    )
+    assert outcome.runtime.kind == "finish"
+    assert "](/weekly)" not in outcome.response.answer
+    assert "cannot open" in outcome.response.answer.lower()
+    assert "sign in" in outcome.response.answer.lower()
+    if path == "guide":
+        assert outcome.response.citations[0].section_id == "weekly-reports"
+
+
+@pytest.mark.parametrize("snapshot_state", ["none", "published", "denied", "error"])
+@pytest.mark.parametrize(
+    "locale,question",
+    [("en", "How do I view weekly updates?"), ("zh", "怎么查看周报")],
+)
+def test_weekly_guide_only_answer_uses_current_published_state(
+    host_fixture, snapshot_state, locale, question
+):
+    from ai_actuarial.skills.usage_navigation.executors import guide
+
+    state = host_fixture
+    base_storage = host.chat.Storage
+    reads = []
+
+    class WeeklyStorage(base_storage):
+        def get_latest_weekly_snapshot(self, *, now):
+            reads.append(now)
+            if snapshot_state == "error":
+                raise RuntimeError("snapshot unavailable")
+            if snapshot_state == "published":
+                return {"period_start": "2026-10-26", "period_end": "2026-11-02", "file_count": 2}
+            return None
+
+    state.monkeypatch.setattr(host.chat, "Storage", WeeklyStorage)
+    scopes = {"chat.query"} if snapshot_state == "denied" else {"chat.query", "files.read"}
+    auth = AuthContext({"subject": "user"}, frozenset(scopes))
+    state.monkeypatch.setattr(host.deps, "get_auth_context", lambda request: auth)
+    hit = guide({"query": question, "language": locale})
+    weekly_id = next(
+        evidence_id
+        for evidence_id, item in zip(hit.evidence_ids, hit.data["sections"])
+        if item["reference"]["section_id"] == "weekly-reports"
+    )
+    model, _ = scripted(
+        action(
+            action="call",
+            skill_id="usage_navigation",
+            tool_id="usage_navigation.guide",
+            args={"query": question, "language": locale},
+        ),
+        action(
+            action="finish",
+            answer="Weekly reports are only in admin settings; the current week is already published.",
+            evidence_ids=[weekly_id],
+        ),
+    )
+    outcome = state.feature.query(
+        request=state.request,
+        auth=auth,
+        message=question,
+        locale=locale,
+        model=model,
+    )
+    assert outcome.runtime.kind == "finish"
+    assert "admin settings" not in outcome.response.answer
+    assert "current week is already published" not in outcome.response.answer
+    assert (
+        "资料阅读详情" if locale == "zh" else "file to read its details"
+    ) in outcome.response.answer
+    assert ("原文链接" if locale == "zh" else "source link") in outcome.response.answer
+    assert "Markdown" in outcome.response.answer
+    if snapshot_state == "denied":
+        assert "](/weekly)" not in outcome.response.answer
+        assert (
+            "无法打开周报页" if locale == "zh" else "cannot open"
+        ) in outcome.response.answer.lower()
+    else:
+        assert (
+            "[周报](/weekly)" if locale == "zh" else "[Weekly](/weekly)"
+        ) in outcome.response.answer
+    if snapshot_state == "none":
+        assert (
+            "目前没有完整已发布的周报快照"
+            if locale == "zh"
+            else "No complete published weekly snapshot"
+        ) in outcome.response.answer
+    elif snapshot_state == "published":
+        assert "2026-10-26" in outcome.response.answer
+        assert "2026-11-02" in outcome.response.answer
+    else:
+        assert "No complete published weekly snapshot" not in outcome.response.answer
+        assert "目前没有完整已发布的周报快照" not in outcome.response.answer
+        assert "2026-10-26" not in outcome.response.answer
+    assert len(reads) == (0 if snapshot_state == "denied" else 1)
+
+
+@pytest.mark.parametrize(
+    "code,fragment",
+    [
+        ("QUOTA_EXCEEDED", "quota"),
+        ("SCOPE_REVOKED", "access"),
+        ("PROVIDER_UNAVAILABLE", "model"),
+        ("NO_EVIDENCE", "evidence"),
+    ],
+)
+def test_runtime_error_messages_are_actionable(code, fragment):
+    response = AssistantFeature._response(RunResult("", "error", code, (), 0, 0, 0, ()), "en")
+    assert fragment in response.answer.lower()

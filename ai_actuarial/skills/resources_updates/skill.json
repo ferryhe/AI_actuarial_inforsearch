@@ -1,0 +1,74 @@
+{
+  "skill_id": "resources_updates",
+  "version": "1.0",
+  "description": "Inspect current source directory, newly collected files, weekly snapshots, and locate permitted research documents.",
+  "enabled": true,
+  "tools": [
+    {
+      "tool_id": "resources_updates.sources",
+      "description": "List canonical source organizations and current file counts.",
+      "executor": "resources_updates.sources",
+      "arguments_model": "EmptyArgs",
+      "required_scopes": [
+        "chat.query",
+        "catalog.read",
+        "files.read"
+      ]
+    },
+    {
+      "tool_id": "resources_updates.recent",
+      "description": "List recently first-collected public files, optionally filtered by source organization, sorted by system first_seen. This is not content revision.",
+      "executor": "resources_updates.recent",
+      "arguments_model": "RecentArgs",
+      "required_scopes": [
+        "chat.query",
+        "catalog.read",
+        "files.read"
+      ]
+    },
+    {
+      "tool_id": "resources_updates.catalog_search",
+      "description": "Search current public file titles, filenames, URL and catalog text; metadata does not prove body findings.",
+      "executor": "resources_updates.catalog_search",
+      "arguments_model": "CatalogArgs",
+      "required_scopes": [
+        "chat.query",
+        "catalog.read",
+        "files.read"
+      ]
+    },
+    {
+      "tool_id": "resources_updates.weekly",
+      "description": "Read latest complete published weekly snapshot and its first-seen members; no snapshot is explicit.",
+      "executor": "resources_updates.weekly",
+      "arguments_model": "EmptyArgs",
+      "required_scopes": [
+        "chat.query",
+        "files.read"
+      ]
+    },
+    {
+      "tool_id": "resources_updates.find_documents",
+      "description": "Locate a permitted KB report by title, organization, alias or summary; can be followed by document_research body read.",
+      "executor": "resources_updates.find_documents",
+      "arguments_model": "FindArgs",
+      "required_scopes": [
+        "chat.query",
+        "catalog.read",
+        "files.read"
+      ],
+      "result_kind": "catalog_discovery"
+    },
+    {
+      "tool_id": "resources_updates.document_dates",
+      "description": "Read distinct publication, system first-seen and KB-added dates for a current permitted report; revision history unavailable.",
+      "executor": "resources_updates.document_dates",
+      "arguments_model": "TargetArgs",
+      "required_scopes": [
+        "chat.query",
+        "catalog.read",
+        "files.read"
+      ]
+    }
+  ]
+}

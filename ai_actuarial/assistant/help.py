@@ -18,7 +18,7 @@ _CJK = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]+")
 _EN_STOPWORDS = frozenset(
     "a an and are as at be by can cannot could did do does for from how i in is it may of on or "
     "the to was were what when where which with you your about after another but has have if its "
-    "not one only s some that their then those while yet".split()
+    "not one only s some that their then those this while yet tell something system".split()
 )
 
 
@@ -140,19 +140,19 @@ def search_help(
     query_tokens = _tokens(query) - _EN_STOPWORDS
     if not query_tokens:
         return []
-    ranked: list[tuple[int, HelpSection]] = []
+    ranked: list[tuple[int, int, HelpSection]] = []
     for section in load_help_sections(root):
         if language and section.language != language:
             continue
         tokens = _tokens(f"{section.title} {section.section_title} {section.content}")
         score = len(query_tokens & tokens)
         if score:
-            ranked.append((score, section))
-    ranked.sort(key=lambda item: (-item[0], item[1].doc_id, item[1].section_id))
+            ranked.append((score, len(query_tokens & _tokens(section.section_title)), section))
+    ranked.sort(key=lambda item: (-item[0], -item[1], item[2].doc_id, item[2].section_id))
     return [
         {
             **section.reference(),
             "snippet": section.content[:MAX_SNIPPET_LENGTH],
         }
-        for _score, section in ranked[: max(1, min(limit, MAX_RESULTS))]
+        for _score, _heading_score, section in ranked[: max(1, min(limit, MAX_RESULTS))]
     ]

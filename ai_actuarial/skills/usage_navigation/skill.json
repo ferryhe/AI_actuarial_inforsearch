@@ -1,0 +1,17 @@
+{
+  "skill_id": "usage_navigation",
+  "version": "1.0",
+  "description": "Answer website feature and how-to questions from the current bilingual user guide.",
+  "enabled": true,
+  "tools": [
+    {
+      "tool_id": "usage_navigation.guide",
+      "description": "Search the current user guide for feature, navigation, weekly report, account or feedback instructions.",
+      "executor": "usage_navigation.guide",
+      "arguments_model": "GuideArgs",
+      "required_scopes": [
+        "chat.query"
+      ]
+    }
+  ]
+}

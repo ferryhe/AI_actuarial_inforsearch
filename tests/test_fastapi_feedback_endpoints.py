@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from uuid import uuid4
 
 import psycopg2
@@ -11,10 +12,14 @@ from fastapi.testclient import TestClient
 from itsdangerous import URLSafeSerializer
 
 from ai_actuarial.api.app import create_app
+from ai_actuarial.api.deps import AuthContext
 from ai_actuarial.api.middleware import rate_limit
+from ai_actuarial.features.assistant import feature as host
+from ai_actuarial.feedback import inbox
 from ai_actuarial.feedback.store import list_feedback
 from ai_actuarial.shared_auth import hash_token, permissions_for_group
 from ai_actuarial.shared_runtime import resolve_runtime_features
+from ai_actuarial.skills.feedback.executors import draft
 from ai_actuarial.storage import Storage
 from tests.postgres_helpers import postgres_url_for_path
 
@@ -461,4 +466,133 @@ def test_fixed_consumer_request_and_error_fixtures(feedback_client):
     assert (
         client.post("/api/feedback", json=fixtures["submission"]["request"]).json()
         == fixtures["errors"]["feature_disabled"]
+    )
+
+
+def test_issue478_host_draft_edit_confirm_receipt_local_pull_and_review(
+    feedback_client, tmp_path, monkeypatch
+):
+    client, _app, database, _user_id = feedback_client
+    original = "Please show source dates 中文"
+
+    class HostStorage:
+        def __init__(self, database):
+            assert database == "host-feedback-fixture"
+
+        def close(self):
+            pass
+
+    with monkeypatch.context() as isolated:
+        isolated.setattr(host.chat, "Storage", HostStorage)
+        isolated.setattr(host.chat, "_resolve_chat_user", lambda *_: ("test", None))
+        isolated.setattr(host.chat, "_enforce_chat_quota", lambda **_: None)
+        auth = AuthContext({"subject": "user"}, frozenset({"chat.query"}))
+        isolated.setattr(host.deps, "get_auth_context", lambda request: auth)
+        request = SimpleNamespace(
+            app=SimpleNamespace(
+                state=SimpleNamespace(db_path="host-feedback-fixture", feedback_enabled=True)
+            ),
+            state=SimpleNamespace(),
+        )
+        evidence_id = draft({"text": original}).evidence_ids[0]
+        outputs = iter(
+            [
+                json.dumps(
+                    {
+                        "action": "call",
+                        "skill_id": "feedback",
+                        "tool_id": "feedback.draft",
+                        "args": {"text": "model rewrite"},
+                    }
+                ),
+                json.dumps(
+                    {"action": "finish", "answer": "Already sent", "evidence_ids": [evidence_id]}
+                ),
+            ]
+        )
+        outcome = host.AssistantFeature().query(
+            request=request, auth=auth, message=original, model=lambda *_: next(outputs)
+        )
+    assert outcome.runtime.kind == "finish"
+    assert outcome.response.intent == "feedback"
+    assert outcome.response.feedback_draft == original
+    assert "nothing is recorded yet" in outcome.response.answer
+    assert list_feedback(database)["items"] == []
+
+    edited = original + " — please include source names"
+
+    def submit(confirmed):
+        return (
+            client.post(
+                "/api/feedback",
+                json=_request(content=edited, origin="widget", page_path="/weekly"),
+            )
+            if confirmed
+            else None
+        )
+
+    assert submit(False) is None
+    assert list_feedback(database)["items"] == []
+    response = submit(True)
+    assert response.status_code == 201 and response.json()["status"] == "recorded"
+    feedback_id = response.json()["feedback_id"]
+    recorded = list_feedback(database)["items"][0]
+    assert (
+        recorded["feedback_id"],
+        recorded["content"],
+        recorded["site_key"],
+        recorded["origin"],
+    ) == (feedback_id, edited, "site-test", "widget")
+    site = {"site_key": "site-test", "url": "http://local.test", "token_env": "TASK_TOKEN"}
+
+    def api_request(_site, *, cursor=None, feedback_id=None, status=None):
+        if feedback_id is not None:
+            reply = client.patch(
+                f"/api/admin/feedback/{feedback_id}", json={"status": status}, headers=_admin()
+            )
+        else:
+            reply = client.get(
+                "/api/admin/feedback",
+                params={"status": "new", "site_key": "site-test", "cursor": cursor},
+                headers=_admin(),
+            )
+        assert reply.status_code == 200
+        return reply.json()
+
+    monkeypatch.setattr(inbox, "api_request", api_request)
+    root = tmp_path / "local-feedback"
+    first = {"sites": [], "items": [], "outcome": "listed"}
+    assert inbox._pull(root, [site], first) == 0
+    assert first["sites"][0]["new_count"] == 1
+    second = {"sites": [], "items": [], "outcome": "listed"}
+    assert inbox._pull(root, [site], second) == 0
+    assert second["outcome"] == "no_new_data"
+    before = next(iter(inbox._load(root).values()))
+    assert (before["feedback_id"], before["site_key"], before["content"], before["origin"]) == (
+        feedback_id,
+        "site-test",
+        edited,
+        "widget",
+    )
+    marked = {"sites": [], "items": [], "outcome": "listed"}
+    assert (
+        inbox._mark(
+            root,
+            [site],
+            SimpleNamespace(feedback_id=feedback_id, status="reviewed", site_key="site-test"),
+            marked,
+        )
+        == 0
+    )
+    after = next(iter(inbox._load(root).values()))
+    assert after["status"] == "reviewed"
+    assert (after["feedback_id"], after["site_key"], after["content"], after["origin"]) == (
+        feedback_id,
+        "site-test",
+        edited,
+        "widget",
+    )
+    assert (
+        list_feedback(database, status="reviewed", site_key="site-test")["items"][0]["feedback_id"]
+        == feedback_id
     )

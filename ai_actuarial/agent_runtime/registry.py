@@ -16,6 +16,7 @@ class _ToolManifest(BaseModel):
     executor: str
     arguments_model: str
     required_scopes: list[str] = Field(default_factory=lambda: ["chat.query"])
+    result_kind: Literal["generic", "catalog_discovery"] = "generic"
 
 
 class _SkillManifest(BaseModel):
@@ -35,6 +36,7 @@ class Tool:
     executor: str
     arguments: type[BaseModel]
     required_scopes: frozenset[str] = frozenset({"chat.query"})
+    result_kind: Literal["generic", "catalog_discovery"] = "generic"
 
 
 @dataclass(frozen=True)
@@ -62,6 +64,7 @@ class Registry:
                     item.executor,
                     argument_models[item.arguments_model],
                     frozenset(item.required_scopes),
+                    item.result_kind,
                 )
                 for item in data.tools
             )

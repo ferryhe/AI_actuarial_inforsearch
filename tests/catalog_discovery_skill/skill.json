@@ -1,0 +1,20 @@
+{
+  "skill_id": "test_catalog_alias",
+  "version": "1.0",
+  "description": "Test-only alternate catalog finder.",
+  "enabled": true,
+  "tools": [
+    {
+      "tool_id": "test_catalog_alias.locate",
+      "description": "Locate a permitted report.",
+      "executor": "test_catalog_alias.locate",
+      "arguments_model": "FindArgs",
+      "required_scopes": [
+        "chat.query",
+        "catalog.read",
+        "files.read"
+      ],
+      "result_kind": "catalog_discovery"
+    }
+  ]
+}

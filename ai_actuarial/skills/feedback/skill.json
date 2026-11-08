@@ -1,0 +1,17 @@
+{
+  "skill_id": "feedback",
+  "version": "1.0",
+  "description": "Prepare a suggestion as an editable draft; submission requires the existing user-confirmed feedback form.",
+  "enabled": true,
+  "tools": [
+    {
+      "tool_id": "feedback.draft",
+      "description": "Keep the user original wording as an editable draft; never submit it.",
+      "executor": "feedback.draft",
+      "arguments_model": "DraftArgs",
+      "required_scopes": [
+        "chat.query"
+      ]
+    }
+  ]
+}
