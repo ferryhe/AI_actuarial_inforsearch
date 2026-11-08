@@ -691,6 +691,181 @@ def test_host_revalidates_before_every_tool_and_rejects_revocation(host_fixture)
     assert len(state.quota) == 1
 
 
+@pytest.mark.parametrize("revoke", [False, True])
+def test_host_rechecks_identity_after_final_resource_model_callback(host_fixture, revoke):
+    from ai_actuarial.assistant.document_research import Document, SelectedTarget
+
+    state = host_fixture
+    auth = AuthContext(
+        {"subject": "reader"}, frozenset({"chat.query", "catalog.read", "files.read"})
+    )
+    current = [auth]
+
+    def current_auth(request):
+        if not hasattr(request.state, "auth_context"):
+            request.state.auth_context = current[0]
+        return request.state.auth_context
+
+    state.monkeypatch.setattr(host.deps, "get_auth_context", current_auth)
+    state.monkeypatch.setattr(host, "permitted_kbs", lambda *_: ["public"])
+
+    class Facade:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def _document(self, target):
+            return Document(
+                target=target,
+                title="Sensitive report",
+                source_url=target.file_id,
+                internal_link="/file-detail?url=https%3A%2F%2Fexample.test%2Freport.pdf",
+            )
+
+    state.monkeypatch.setattr(host, "DocumentResearch", Facade)
+    target = SelectedTarget(kb_id="public", file_id="https://example.test/report.pdf")
+    state.feature.executors["resources_updates.recent"] = lambda *_: ToolResult(
+        "ok",
+        {
+            "files": [
+                {
+                    "title": "Sensitive report",
+                    "source": "Agency",
+                    "source_url": target.file_id,
+                    "first_seen": "2026-11-01",
+                }
+            ],
+            "total": 1,
+        },
+        ("resource:current",),
+    )
+    outputs = [
+        action(
+            action="call", skill_id="resources_updates", tool_id="resources_updates.recent", args={}
+        ),
+        action(
+            action="finish",
+            answer="Sensitive report is available.",
+            evidence_ids=["resource:current"],
+        ),
+    ]
+
+    def model(_prompt, _remaining):
+        output = outputs.pop(0)
+        if revoke and not outputs:
+            current[0] = AuthContext({"subject": "other-reader"}, auth.permissions)
+        return output
+
+    outcome = state.feature.query(
+        request=state.request, auth=auth, message="Find the latest report", model=model
+    )
+    if revoke:
+        assert outcome.runtime.error_code == "SCOPE_REVOKED"
+        assert outcome.runtime.answer == "" and outcome.runtime.evidence_ids == ()
+        assert outcome.response.evidence_ids == [] and outcome.response.citations == []
+        assert outcome.response.selected_target is None
+        assert "Sensitive report" not in outcome.response.answer
+    else:
+        assert outcome.runtime.error_code is None
+        assert "Sensitive report" in outcome.response.answer
+        assert outcome.response.evidence_ids == ["resource:current"]
+        assert (
+            outcome.response.citations and outcome.response.selected_target == target.model_dump()
+        )
+
+
+@pytest.mark.parametrize("revoke", [False, True])
+def test_host_rechecks_body_permission_after_summary_verifier_callback(host_fixture, revoke):
+    from ai_actuarial.assistant.document_research import Document, SelectedTarget
+
+    state = host_fixture
+    auth = AuthContext({"subject": "reader"}, frozenset({"chat.query", "markdown.read"}))
+    current = [auth]
+
+    def current_auth(request):
+        if not hasattr(request.state, "auth_context"):
+            request.state.auth_context = current[0]
+        return request.state.auth_context
+
+    state.monkeypatch.setattr(host.deps, "get_auth_context", current_auth)
+    state.monkeypatch.setattr(host, "permitted_kbs", lambda *_: ["public"])
+    target = SelectedTarget(kb_id="public", file_id="https://example.test/report.pdf")
+
+    class Facade:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def _document(self, selected):
+            return Document(
+                target=selected,
+                title="Sensitive report",
+                source_url=selected.file_id,
+                internal_link="/file-detail?url=https%3A%2F%2Fexample.test%2Freport.pdf",
+            )
+
+    state.monkeypatch.setattr(host, "DocumentResearch", Facade)
+    quote = "The report states that the figure is 42%."
+    state.feature.executors["document_research.read_document_sections"] = lambda *_: ToolResult(
+        "ok",
+        {
+            "status": "available",
+            "sections": [
+                {
+                    "target": target.model_dump(),
+                    "section_id": "section-1",
+                    "excerpt": quote,
+                    "source_url": target.file_id,
+                }
+            ],
+        },
+        ("body:current",),
+    )
+    outputs = [
+        action(
+            action="call",
+            skill_id="document_research",
+            tool_id="document_research.read_document_sections",
+            args={**target.model_dump(), "query": "figure"},
+        ),
+        action(
+            action="finish",
+            answer="The report states 42%.",
+            evidence_ids=["body:current"],
+            findings=[
+                {"evidence_id": "body:current", "quote": quote, "summary": "The report states 42%."}
+            ],
+        ),
+        action(supported=[True]),
+    ]
+
+    def model(_prompt, _remaining):
+        output = outputs.pop(0)
+        if revoke and not outputs:
+            current[0] = AuthContext({"subject": "reader"}, frozenset({"chat.query"}))
+        return output
+
+    outcome = state.feature.query(
+        request=state.request,
+        auth=auth,
+        message="Read the current figure",
+        selected_target=target,
+        model=model,
+    )
+    assert outcome.runtime.model_attempts == 3
+    if revoke:
+        assert outcome.runtime.error_code == "SCOPE_REVOKED"
+        assert outcome.runtime.answer == "" and outcome.runtime.evidence_ids == ()
+        assert outcome.response.evidence_ids == [] and outcome.response.citations == []
+        assert outcome.response.selected_target is None
+        assert quote not in outcome.response.answer
+    else:
+        assert outcome.runtime.error_code is None
+        assert quote in outcome.response.answer
+        assert outcome.response.evidence_ids == ["body:current"]
+        assert (
+            outcome.response.citations and outcome.response.selected_target == target.model_dump()
+        )
+
+
 @pytest.mark.parametrize("expire_deadline", [False, True])
 def test_host_cancel_or_deadline_during_auth_lookup_prevents_tool_start(
     host_fixture, expire_deadline
@@ -2046,6 +2221,13 @@ def test_weekly_action_is_not_clickable_after_files_read_is_denied(host_fixture,
     outcome = state.feature.query(
         request=state.request, auth=auth, message="How do I view weekly updates?", model=model
     )
+    if path == "resource":
+        assert outcome.runtime.error_code == "SCOPE_REVOKED"
+        assert outcome.response.evidence_ids == [] and outcome.response.citations == []
+        assert outcome.response.selected_target is None
+        assert "sign in" in outcome.response.answer.lower()
+        assert "](/weekly)" not in outcome.response.answer
+        return
     assert outcome.runtime.kind == "finish"
     assert "](/weekly)" not in outcome.response.answer
     assert "cannot open" in outcome.response.answer.lower()

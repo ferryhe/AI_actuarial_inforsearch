@@ -518,6 +518,35 @@ class AssistantFeature:
                 recent_questions=recent_questions or [],
                 resolve_selected_document=resolve_selected_document,
             )
+            if runtime.kind == "finish":
+                try:
+                    required_scopes = {"chat.query"}
+                    for item in runtime.trace:
+                        required_scopes.update(
+                            registry.tool(item.skill_id, item.tool_id).required_scopes
+                        )
+                    if hasattr(request.state, "auth_context"):
+                        del request.state.auth_context
+                    current = deps.get_auth_context(request)
+                    current_scopes = (
+                        current.permissions
+                        if current.token
+                        else public_permissions_for_request(request)
+                    )
+                    still_authorized = (
+                        _identity(current) == initial_identity and required_scopes <= current_scopes
+                    )
+                except Exception:
+                    still_authorized = False
+                if not still_authorized:
+                    runtime = replace(
+                        runtime,
+                        answer="",
+                        availability="unavailable",
+                        error_code="SCOPE_REVOKED",
+                        evidence_ids=(),
+                        kind="error",
+                    )
             response = self._response(runtime, locale)
             response.citations = [
                 help_citations[item] for item in runtime.evidence_ids if item in help_citations

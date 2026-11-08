@@ -1,3 +1,9 @@
+## 2026-11-08 Issue #479 — R5 final-answer authorization repair ready for fresh review
+
+- On `codex/issue-479-assistant-ui`, the Host now refreshes identity and the scopes required by tools used in a finished answer after the final model callback. This also covers the body-summary verifier callback. If access changed, it returns the existing `SCOPE_REVOKED` response with no factual answer, evidence IDs, citations, or selected target; per-tool checks and authorized answers remain intact.
+- Two new revocation cases failed before the product fix while two authorized controls passed; all four pass after the fix. The unfiltered four-file backend suite passed 229 tests with 4 warnings against an Issue-owned ephemeral PostgreSQL database; no cases were deselected. Black, isort, Ruff and diff checks passed. Raw logs and database ownership/cleanup evidence: `reports/issue-473-480-20261107/issue-479/r5-worker-fix/`.
+- This scoped repair is committed and awaits fresh independent review. The earlier ce5-bound real-UAT harness is stale after this source change and was not run. No live provider/model, remote API server, browser, physical iOS, push, PR edit, or merge occurred in this phase.
+
 ## 2026-11-08 Issue #479 — R4 help request ordering repair ready for fresh review
 
 - On `codex/issue-479-assistant-ui`, each guide browse or citation read now invalidates earlier in-flight help requests. A late older success cannot replace the newer section, and a late older error cannot appear after the newer section succeeds. Clear and identity-change invalidation remain in place.
