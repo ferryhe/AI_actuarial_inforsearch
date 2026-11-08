@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from ai_actuarial.api.deps import AuthContext, require_permissions
 from ai_actuarial.api.routers.assistant_help import _require_enabled
 from ai_actuarial.api.services.chat import apply_session_update
+from ai_actuarial.assistant.document_research import SelectedTarget
 from ai_actuarial.assistant.query import REQUEST_SECONDS, FeatureResponse
 
 router = APIRouter()
@@ -22,6 +23,7 @@ class RuntimePayload(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     message: str = Field(min_length=1, max_length=4000)
     locale: Literal["en", "zh", "zh-CN"] = "en"
+    selected_target: SelectedTarget | None = None
 
     @field_validator("message")
     @classmethod
@@ -53,6 +55,7 @@ async def api_assistant_runtime_query(
                 locale=payload.locale,
                 cancelled=cancelled,
                 deadline=time.monotonic() + REQUEST_SECONDS,
+                selected_target=payload.selected_target,
             ),
             timeout=REQUEST_SECONDS,
         )

@@ -1,3 +1,48 @@
+## 2026-11-07 R9 两项 AC 缺口已裁定并交同一 worker
+
+- R9 独立审查报告 5bc3d931...d48b 已经 root 审计为合格；TypeSafe Review 两项 preliminary valid（mapping .95/.93、repro .85/.82），Jev Judge 选 accept_both（p .63，confidence .54）。经理独立复现后 append-recorded 两项：AC5 target-specific Ready 未确认；AC8 目标从 KB 移除后，旧目录 evidence ID 仍可生成链接。第二条也在 find/read 两个普通 tool call 之间撤销 membership 后复现，不依赖并发删除。
+- 生命周期当前 fixing，R9 / 9 failed cycles；两项已交回同一持久 worker。修复要求分别覆盖目标 Ready URL、成员撤销后的 not_found 以及失败回退释放目录证据；保持 AC6 对仍授权目录条目的来源链接行为。
+- R9 当前源码 patch SHA-256 6ee478c84aab6d760b166b9a0ae9d6eb633fe926ae5c6c3e6d7359186601a2b1；修后会重冻完整 current-source 包。R10 唯一 fresh reviewer 由 root 派发，本经理只准备包和请求；不得自行创建或复用被中断的 collab reviewer。
+- 未运行 live provider、生产索引、部署或远程操作；没有 commit、push、PR。hermes 和 graphify-out 不属于产品 patch。
+
+## 2026-11-07 R9 独立源码评审已正式开始
+
+- 当前评审为唯一 native reviewer 01a1b8ca-c399-78e3-9aa0-ea629dea48d2（local），probe 与实质 turn 均为 gpt-6-sol/high；实质 turn 01a1b8cd-0d05-7d22-b8b4-8ecc024bcf03 已开始。第 9 轮 official lifecycle 已 start-review，计数仍 8/8，尚未消费报告。
+- 已只派发 R9 中立 brief、完整 13 路径 manifest/patch、当前 244 passed 与 style 原始日志，以及 Issue worktree 当前源与调用方/测试；报告唯一目标 r9/reviewer-round-9.md。最终独立性审计回执仍 pending，完成前不读取报告正文、不finish、不派修复。
+- 派发收据和实际路线记录位于 reports/issue-473-480-20261107/issue-477/r9/controller-dispatch-receipt.json 与 manager-round9-route-observation.json。先前已中断的 collab 尝试单独保留，不计 review 轮次。
+
+## 2026-11-07 R9 快照冻结，等待控制器派发独立评审
+
+- R8 两项修复已由经理核实并正式记为 worker fix：旧 Bulletin 明确纠正排序、Ready soft-stale 状态回答；244 项相关隔离 PG 测试通过，4 条警告，Black/isort/Ruff/临时索引 diff 检查全过。
+- 当前 R9 完整 13 路径快照已从 HEAD 重建并独立反向重放，全部源码哈希与补丁一致；patch SHA-256 6ee478c84aab6d760b166b9a0ae9d6eb633fe926ae5c6c3e6d7359186601a2b1。当前 lifecycle awaiting_review，已完成 8/8，未启动第 9 轮。
+- 唯一有效 R9 派发须由控制器按既有门执行。一个误启动的子代理在开始读源前即被停止；偏离记录在 reports/issue-473-480-20261107/issue-477/r9/review-dispatch-request.json。没有生成评审报告或完成评审。
+- 无生产/远程操作、提交或 PR；.hermes 与 graphify-out 排除产品补丁。
+
+## 2026-11-07 R8 两项修复已交回同一 worker
+
+- Issue #477 当前 worktree codex/issue-477-document-research。R8 已正式记录为第 8 轮 changes，累计 8/8；TypeSafe Review 两项均 preliminary valid（mapping .92、repro .89/.88），TypeSafe Judge 选 accept_both（p .71，confidence .64），经理独立复现并接受两项窄修复。
+- 修复项：显式纠正为旧 SOA Bulletin 时必须将该报告排在新 Survey 前；显式问 Ready/过期状态时保留并回答 usable Ready 与 soft-stale 元数据。已交同一持久 worker，在本地 worktree 加回归测试；待最终 handoff 与验证，未动远程/生产，未提交或建 PR。
+- 当前产品基线仍是 R8 冻结 HEAD df2fea2acdd9a61c7ccc58ef2f0b590bc5f08851；历史 R8 的 241 tests 与 style 检查通过不代表本轮修复验证。hermes 和 graphify-out 排除产品 patch。
+### 2026-11-08 Issue #477 — R7 follow-up read-error repair ready for fresh Review 8
+
+- Fresh R7 review found a reproducible AC6/AC7 gap: a validated follow-up target lost its report title and source link when body reading raised. TypeSafe Judge chose a narrow same-worker repair (0.79 probability; confidence 0.68), independently confirmed against current source and the isolated reproduction.
+- The same worker now rechecks current identity, `chat.query` / `markdown.read`, permitted KB membership, and non-deleted file state before returning the current title and source URL. A five-case regression covers a valid target plus membership removal, deletion, permission revocation, and identity change.
+- Final isolated PostgreSQL focused suite: 241 passed, 4 warnings. Black, isort, Ruff, and the temporary-index whitespace check across all 13 product paths passed. Handoff and raw logs are under `reports/issue-473-480-20261107/issue-477/r7/`; a fresh full-patch Review 8 is next.
+- No live provider or production index was tested. No commit, push, PR, or merge was performed.
+
+### 2026-11-08 Issue #477 — R6 Standard section repair (included in R7 review)
+
+- The Standard findings fallback now requires a real Markdown heading boundary, returns only that section slice, and applies the same predicate before the five-result candidate cap. The optional retriever filter is used only by document research; ordinary RAG calls keep their default path.
+- The scoped repair adds mixed-section, false-mention, and rank-six regressions. Worker handoff and evidence are under `reports/issue-473-480-20261107/issue-477/r6/`; the frozen 13-path source snapshot and neutral Review 7 brief are under `r7/`.
+- Worker-reported isolated PostgreSQL focused suite: 236 passed, 4 existing warnings. Black, isort, Ruff, and temporary-index whitespace checks passed. Review 7 later completed with one AC6/AC7 finding; that follow-up error path was fixed by the same worker in the R7 update; no production index, live provider, commit, push, PR, or merge was performed.
+- Standard chunks without a verifiable Markdown heading remain unavailable for Key Findings evidence. Production index coverage and real vector ranking were not checked.
+
+### 2026-11-07 Issue #477 — R5 repair ready for fresh review
+
+- R5 Judge disposition is resolved. The current 12-path patch addresses scoped catalog candidate selection/relevance before its cap and findings routing within the existing independent-verification budget. The optional scoped Storage filter preserves the general assistant's unscoped query behavior; readiness remains available for explicit status questions.
+- Final isolated PostgreSQL focused suite: 213 passed, 4 warnings. Black, isort, Ruff, and the temporary-index 12-path whitespace check passed. R6 patch SHA-256: `cda9f9c59f144929953aa40cd0d4634c96e2a5e90eb37ca96996a061ebd22e4a`; source manifest and raw logs are under `reports/issue-473-480-20261107/issue-477/r6/` and `worker-logs/`.
+- Same-KB regression covers an older exact target against 50 newer but less-relevant current members; cross-KB regression covers 50 newer non-member matches. No live model or production check, commit, push, PR, merge, or cleanup was performed. Fresh native Review 6 is active on the frozen 12-path source manifest; no source changes were made after dispatch.
+- The model may still spend a call on a redundant readiness step; the fixed budget then fails closed with `SUMMARY_UNVERIFIED`. No limit or validation was weakened.
 ## 2026-11-07 PR #481 — supplemental late inline threads
 
 - On supplied HEAD `fd8f935709e25beb657708a90db18183685c6bd8`, the 07:22:09Z visual-viewport keyboard comment reproduced: the fixed trigger remained below the shortened visual viewport while the panel lift was 0px. This maps to AC6. `SupportWidget` now measures lift from `triggerBounds.top - gap` to the constrained panel bottom; a focused visualViewport regression covers the geometry.
@@ -6787,3 +6832,118 @@ Current branch head 4f030be has uncommitted small catalog/Storage variable defau
 - Fresh R8 独立审查核对冻结的六文件产品补丁（SHA256 `8e3eca16ee34a9c8f8dfbd65b7ba36c027f8acf4652512971e9f861e2f4058db`），按 AC1–AC10 未发现可复现范围内问题；实际审查与探测 turn 均为 gpt-6-sol/high。TypeSafe Jev-latest 无发现，摘要覆盖率 0.83。正式状态为 8 轮完成、6 轮需修改；路由证据、审查报告与 TypeSafe 结果在 Issue 报告目录。
 - PR #483 旧 HEAD `bd20e57315d78ae061e4856712a076dc4ba23e49` 的质量检查仅因测试静态迁移清单未含 `0008_agent_skill_releases.sql` 失败。原错误只在测试夹具；同一 worker 增加这一项后，目标测试 1 passed、`tests/test_sqlite_schema_runner.py` 52 passed，Black/isort/Ruff/diff 检查通过。该改动只修正预期清单，没有产品语义变化。证据：`worker-check-repair-report.md` 与 `worker-logs/ci-schema-*.txt`。
 - 远端反馈接受的两项产品修正仍在当前隔离工作树中；待分开记录 CI 夹具修复和远端反馈修正后提交推送。最终 PR HEAD 必须通过全部必需检查；不重请 Copilot，不刷新一次性远端反馈快照。Windows 原生恢复测试仍受缺少 PostgreSQL 16 `pg_dump`/`pg_restore` 限制；R7 容器恢复 smoke 早于 R8 产品补丁，不代表当前精确代码重跑。未运行真实模型、生产或部署。
+
+## 2026-11-07 Issue #477 — manager preimplementation assessment
+
+- Active repository/worktree: `AI_actuarial_inforsearch`, branch `codex/issue-477-document-research`, baseline `df2fea2acdd9a61c7ccc58ef2f0b590bc5f08851`. Sibling repositories remain out of scope. Product source has not been edited.
+- Source-backed tier: **complex**. The scope crosses KB catalog, Ready publication, Standard RAG, live membership/deletion, skill manifests/executors, and current source/date contracts. Validation will cover the exact SOA target, bilingual location, excerpts/citations, fallback gates, date semantics, follow-up re-evidence, and per-tool scope changes.
+- AC7 is unresolved at the boundary: the current Feature endpoint is one-turn and has no conversation ID/context store. A read-only Architect is assessing the smallest compatible context contract; TypeSafe adjudication is required before fixing the implementation worker route.
+
+- AC7 decision: use caller-carried `selected_target` with `kb_id` and `file_id`; each turn revalidates all current access/membership and retrieves fresh excerpts. TypeSafe selected this option (probability 0.71, confidence 0.56, low confidence retained); the manager chose it as the smallest contract within the explicit scope, which does not require server-side continuity or a broader conversation rewrite.
+
+## 2026-11-07 Issue #477 — manager pre-review evidence
+
+- Current worktree remains `codex/issue-477-document-research`; the 12 product/test paths are frozen at source snapshot `6d25c8b88fc2cb4a646658dca0088cd2a2c71fe25476e79e73e48a3d70955e25`. The live SOA probe’s source digest was reconciled to raw file bytes and matches the isolated activation smoke. A narrow regression excludes a real Ready `Acknowledgements` child beneath `Key Findings`.
+- Post-fix focused PostgreSQL suite: 130 passed, 4 existing warnings. Black, isort, Ruff, and `git diff --check` passed. Isolated PostgreSQL Skill import/activation and current Host smoke passed; real `search_sections` ran over isolated Ready fixture artifacts, with a deterministic model and no production data.
+- Live read-only Host probe against the two existing Chat bindings: China PASS for one SOA query, three model calls, two tools, Ready Key Findings, exact quote verified against the live excerpt, Chinese summary/source link; overseas located and read the same Ready section but final model call returned provider unavailable, so FAIL. Both production `published_time` values are NULL; their `first_seen` values are kept separate. No production database/config/artifact/quota/session/index write occurred. The official route’s live artifact is PARTIAL, not a two-site acceptance PASS.
+- Public web Chat remains signed out; deployed production code is an earlier revision. Production artifact activation, HTTP `config.write` route, Standard fallback, dynamic revocation, and production deployment have not been exercised. Fresh independent local review is pending; no commit or PR has been created.
+
+## 2026-11-07 Issue #477 — overseas provider diagnosis correction
+
+- The initial overseas run’s `PROVIDER_UNAVAILABLE` status was traced to the probe’s 700-token override: the third call consumed exactly 700 completion tokens and stopped with `finish_reason=length`; no HTTP status or upstream API error code/type was observed. This is not evidence of a provider outage.
+- One bounded retry used the existing configured 1000-token limit without changing the 30-second, four-model-call, or six-tool-call Host budgets. Live find and Ready read succeeded, but the final model output was rejected by the Host as `NO_EVIDENCE` after 814 completion tokens. Raw output was discarded, so the specific invalid evidence ID/shape versus quote mismatch is unknown. No further retry was run; overseas remains FAIL. China’s separate live PASS remains valid. Evidence: `reports/issue-473-480-20261107/issue-477/manager-live-soa-probe-overseas-700-token-diagnostic.json` and `manager-live-soa-probe-overseas-diagnostic.json`.
+
+
+## 2026-11-07 Issue #477 — R1 fixes recorded, R2 review pending
+
+- The existing Issue worker completed the review-requested fixes; the manager recorded them with the quick-mode lifecycle. Current product/test snapshot is frozen for R2: 12 paths, patch SHA-256 `1a22331332dc36005930fac5f11a843ae9f667c3fd08c8cda91a48cafb53d804`; external manifest: `reports/issue-473-480-20261107/issue-477/r2/source-manifest.json`.
+- Focused isolated PostgreSQL regression: 139 passed, 4 warnings. Final targeted Black/isort/Ruff/diff check passed on the four latest-edited files; an earlier style run covered ten files before those edits. Raw logs are retained outside the checkout. No redundant full-suite rerun was made.
+- The prior two-site live observation used source snapshot `6d25c8b88fc2cb4a646658dca0088cd2a2c71fe25476e79e73e48a3d70955e25`, before the current fixes. China completed one read-only query; overseas returned `NO_EVIDENCE` after locating and reading the target. The original model payload was not retained. Overall live evidence remains partial and does not validate the current source or establish a provider defect. No production write, configuration change, retry, or deployment occurred.
+- A unique R2 dispatch request is frozen at `reports/issue-473-480-20261107/issue-477/r2/review-dispatch-request.json`; awaiting root-controller fresh Sol/high reviewer receipt. No commit, push, or PR yet.
+
+
+## 2026-11-07 Issue #477 — R2 adjudicated, same worker fixing
+
+- Fresh independent R2 review of the frozen 12-file patch completed with three reproducible AC3/AC7 findings. Native reviewer route and all 21 tool calls were independently audited; no prior review/Judge/worker conclusion or `.hermes` contents were read. Full report and audit remain in the external Issue evidence directory.
+- The manager independently reproduced all three findings. The required TypeSafe assessment marked each preliminary valid/in-scope; the actual Jev Judge selected `accept_all_three` (0.67 probability, 0.59 confidence). The existing Issue worker is continuing the fixes; no new worker or reviewer was created for implementation.
+- Product source is unchanged since the R2 snapshot. The existing current-source focused result remains 139 passed, 4 warnings; it is not post-R2-fix validation. The old live observation still predates current code and remains partial. No new provider call, production write, or deployment occurred.
+- The manager will re-run focused regressions and final formatting/lint checks on the resulting current source, record the fix, then request the next fresh independent local review as required by quick mode.
+
+
+## 2026-11-07 Issue #477 — R2 accepted fixes, R3 review pending
+
+- The existing Issue worker completed all three accepted R2 fixes for AC3 grounding/citation completeness and AC7 explicit target correction. Official lifecycle recorded the same-worker repair; state is `awaiting_review`, with two completed review rounds and two failed cycles.
+- Current 12-file product/test snapshot is frozen against HEAD `df2fea2acdd9a61c7ccc58ef2f0b590bc5f08851`; normalized patch SHA-256 `ffeec36e624058e30845c300fec2c83ed1d1fff8ad5e9dd28cc3460863e6f84f`. Complete file/base manifest and neutral review package are under `reports/issue-473-480-20261107/issue-477/r3/`.
+- Final isolated PostgreSQL regression: 143 passed, 4 warnings. Black 26.3.1, isort 8.0.1, Ruff 0.15.12, and 12-path temporary-index diff check passed. No new provider call, production write, deployment, commit, push, or PR occurred.
+- Historical live observation predates this source snapshot, is partial, and retained no raw model payload; it is not current-source UAT. `graphify-out/` remains pre-existing/untracked and outside the review. A fresh independent R3 Sol/high review is pending controller dispatch.
+
+
+## 2026-11-07 Issue #477 — R3 local review active
+
+- Fresh reviewer thread `01a1b80e-fbca-7ec0-87cc-7cbf922350f5` was registered as Sol/high in the official lifecycle; review round 3 is active against the frozen 12-file patch SHA-256 `ffeec36e624058e30845c300fec2c83ed1d1fff8ad5e9dd28cc3460863e6f84f`.
+- Reviewer received the controller-neutral AC1–AC8 brief, current source manifest/full patch/current source, and only the permitted three raw evidence files. It was instructed not to read `.hermes`, prior review/Judge/worker/Architect/Copilot/remote conclusions, dispatch/fix-validation metadata, or sibling repositories.
+- No source edits, broad test rerun, provider call, production write, deployment, commit, push, or PR occurred during dispatch.
+
+
+## 2026-11-07 Issue #477 — R3 AC6 finding adjudicated, same worker fixing
+
+- R3 fresh Sol/high review found one realistic AC6 error-path defect: after a unique document catalog hit, a body-read tool exception returned an empty answer and discarded the known source URL. The manager reproduced the exact current `run()` result (`TOOL_UNAVAILABLE`, empty answer; find succeeds/read errors).
+- TypeSafe review preliminarily classified the finding valid/in-scope. The required fresh Jev Judge chose `accept_ac6_finding` (0.91 probability, 0.86 confidence); lifecycle disposition is accepted. Evidence is external under `reports/issue-473-480-20261107/issue-477/r3/`.
+- The existing Issue worker is repairing this one AC6 path. A fresh local review will follow because the fix changes user-visible error handling. No additional review/Judge outcome, worker, provider retry, production write, commit, push, or PR has been made since R3.
+
+
+## 2026-11-07 Issue #477 — R3 fix recorded, R4 review pending
+
+- The same Issue worker repaired the AC6 body-read failure path in `loop.py` and added focused regressions. On a matching unique current-turn catalog result, the response now retains the report title and actual source link with an explicit unavailable status; ambiguous and mismatched targets retain the prior error behavior.
+- Final isolated PostgreSQL suite: 147 passed, 4 warnings. Black 26.3.1, isort 8.0.1, Ruff 0.15.12, and 12-path temporary-index diff check passed. A current-source stub smoke also returned the located title, source URL, and unavailable status within the same 2 model/2 tool attempts.
+- Official lifecycle recorded this material same-worker fix; state is `awaiting_review`, with three completed local review rounds / three changes outcomes. R4 current patch SHA-256: `3e8934ab19061db47e2e276a1a1ce0c047c7227d56f605cbbfc3f120f550eb0c`; the complete neutral brief and source manifest are under `reports/issue-473-480-20261107/issue-477/r4/`.
+- No current live-provider/production validation, deployment, commit, push, or PR occurred. The historical live record remains pre-current-source and partial. `.hermes/project-status.md` remains manager-owned; `graphify-out/` remains excluded.
+
+
+## 2026-11-07 Issue #477 — R4 local review active
+
+- Fresh independent reviewer thread `01a1b823-48d8-7670-8232-b7d2d8b94fb7` is registered as gpt-6-sol/high in the official lifecycle; round 4 reviews the frozen 12-file patch SHA-256 `3e8934ab19061db47e2e276a1a1ce0c047c7227d56f605cbbfc3f120f550eb0c`.
+- The reviewer received the controller-neutral current-source brief, manifest/full patch/current files and only the three permitted raw validation records. It must mark each AC1–AC8 inspected or not assessed. Startup exclusions include `.hermes`, prior conclusions, controller metadata and sibling repositories.
+- Current-source focused validation is 147 passed with four warnings; pinned style and diff checks passed. No provider/production operation or remote GitHub action was performed.
+
+
+## 2026-11-07 Issue #477 — R4 findings adjudicated, same worker fixing
+
+- Fresh R4 Sol/high review documented coverage for AC1–AC8 and found two reproducible items: AC6 loses the matched report/link on body-read failure when unrelated catalog candidates were also returned; AC7 ranks rejected SOA reports ahead of the requested ASHK target for the Chinese correction `不是SOA，是ASHK问卷`.
+- The manager independently reproduced both on current source. TypeSafe assessed both preliminary valid/in-scope; the required fresh Jev Judge selected `accept_both` (0.60 probability, 0.50 confidence). Official lifecycle records the two accept dispositions and the resolved adjudication.
+- The same Issue worker is repairing these two bounded paths and their regressions; a fresh R5 review will follow because behavior and target ranking change. No reviewer PASS, source validation, live-provider call, production write, deployment, commit, push, or PR has occurred since R4.
+
+
+## 2026-11-07 Issue #477 — R4 fixes recorded, R5 review pending
+
+- The same worker fixed both AC6 and AC7 paths in `loop.py`, `document_research.py`, and focused tests. A body-read failure now uses the unique observed catalog row matching the exact failed target even when unrelated candidates were returned; Chinese `不是…是…` / `不是…而是…` correction phrasing ranks only the corrected target terms.
+- Final isolated PostgreSQL suite: 148 passed, 4 warnings. Black 26.3.1, isort 8.0.1, Ruff 0.15.12 and 12-path temporary-index diff check passed. Current-source deterministic smoke verifies the Chinese ASHK correction ranks first and the two-candidate body-read failure returns the matched Survey title/link with an honest unavailable status.
+- Official lifecycle recorded the material same-worker fix; state is `awaiting_review`, with four completed local review rounds / four changes outcomes. R5 current patch SHA-256: `e6e12067a988dfd4c0aa0323bef441f6f9ce747e3e79b8ba221f8efb6ba3db83`; full neutral package is under `reports/issue-473-480-20261107/issue-477/r5/`.
+- No live-provider/production validation, deployment, commit, push or PR occurred. `.hermes/project-status.md` remains manager-owned and `graphify-out/` remains excluded.
+
+
+## 2026-11-07 Issue #477 — R5 local review active
+
+- Fresh independent reviewer thread `01a1b833-a312-7892-9085-69a98ef6eb4b` is officially registered as gpt-6-sol/high; round 5 reviews the exact 12-file patch SHA-256 `e6e12067a988dfd4c0aa0323bef441f6f9ce747e3e79b8ba221f8efb6ba3db83`.
+- The reviewer received the controller-neutral brief, source manifest/full patch/current source and the three permitted raw evidence files. It must mark AC1–AC8 individually inspected or not assessed. The startup boundary excludes `.hermes`, prior conclusions, controller metadata, and sibling repositories.
+- Current-source focused validation is 148 passed with four warnings; pinned style/diff checks passed. No provider/production operation or remote GitHub action occurred during dispatch.
+
+
+
+
+
+## 2026-11-07 Issue #477 — R9 修复已记录，R10 审查待 controller 派发
+
+- R9 同一 worker 完成 AC5/AC8 修复；经理追加核对发现 Ready 发布后文件标题变化会误报正文不可用，按 AC5 交回同一 worker修正为按已发布章节的目标 URL 判定。最终完整隔离 PostgreSQL 相关测试 249 passed/4 warnings，标题回归 5 passed；Black、isort、Ruff 与 13 路径临时索引 diff check 均通过。原始日志与 SHA 核验见 `reports/issue-473-480-20261107/issue-477/r9/`。
+- 官方 lifecycle 已 `record-fix`：stage=awaiting_review，review_count=9/15，failed_review_cycles=9，R9 fixes 影响用户可见状态/来源输出，必须独立复审。交接与经理核验记录为 `r9/worker-r9-fix.md`、`r9/worker-r9-ready-target-followup.md`、`r9/manager-r9-final-fix-verification.json`。
+- 本地完整 R10 当前源包待冻结并提交 controller；fresh Sol/high 独立审查须通过 controller 唯一派发及资格回执。没有 reviewer PASS；未提交、推送、创建 PR、部署或写生产数据。`graphify-out/` 保持排除。
+## 2026-11-07 Issue #477 — R10 当前源包已交 controller
+
+- R10 neutral packet 已冻结于 `reports/issue-473-480-20261107/issue-477/r10/`，request id `64411f99-8e9d-4613-9175-73f32a0b8e36`；完整 13 路径 patch SHA-256 `71bd4eacaf7a10fe8ecf012200645c5da07ec15d34957f050748861915beecc3`，manifest SHA-256 `9e25142dd649d4cd2cf15a3e6e6bf0bb3361a051eb1bee2770cfea334e044f40`。逐文件 SHA 全匹配，临时索引 patch 重建和diff检查通过，真实 Git index 未变。
+- 官方 lifecycle 当前 `awaiting_review`、9/15，R9 material fixes 已记录。已向 controller 发唯一 reviewer request；等待 fresh gpt-6-sol/high reviewer 及匹配的最终独立性凭据，当前不开始或消费 R10。无 reviewer PASS；无 commit、push、PR、部署或生产写入。
+## 2026-11-08 Issue #477 — R10 PASS and current-source UAT complete
+
+- Official R10 lifecycle is `local_review_complete`: fresh gpt-6-sol/high review PASS for the exact 13-path patch `71bd4eacaf7a10fe8ecf012200645c5da07ec15d34957f050748861915beecc3`; review_count=10/15, failed_review_cycles=9, no pending fix. TypeSafe Review returned no findings. Authorization-continuity correction and the separate UAT Judge disposition are append-recorded; historical counts and R10 PASS are unchanged.
+- Current source Artifact/FeatureHost smoke PASS using an isolated PostgreSQL schema and temp Ready fixtures. `document_research` and `test_lookup` were imported and activated; the Host used real `search_sections`, made two tool calls, and returned the target Survey, exact quote, Chinese answer and soft-stale status. Model was a deterministic stub; production data was not used. Evidence: `reports/issue-473-480-20261107/issue-477/manager-artifact-activation-current-source-stub-aligned.txt`; combined source fingerprint `363e13b129ccdcb41536d19fffecf3d3f1880b027f08753151b838e4eb675348`.
+- One bounded, read-only current-source provider qualification ran on each server’s own existing Chat binding. China/DeepSeek passed with a verified target Key Findings quote and Chinese answer (4 model calls, 2 tool calls). Overseas/OpenAI had the same target membership and usable Ready data; after two successful tools, model call 3 exhausted its configured 1000 completion tokens on reasoning and returned `PROVIDER_UNAVAILABLE` (27.95s); recorded as FAIL, not PASS. TypeSafe Judge preferred retaining this as an existing binding limit (0.57 probability, confidence 0.35); manager accepted no code/config change because current evidence does not show that a shorter output contract would avoid provider reasoning truncation. No server binding or production setting was changed. Full report: `reports/issue-473-480-20261107/issue-477/manager-live-soa-current-source-r10-20261108T025133Z.json`.
+- All 13 current product/test hashes still match the R10 manifest; current base commit remains `df2fea2acdd9a61c7ccc58ef2f0b590bc5f08851`. No product code changed after review. Next: scoped commit, authorized Draft PR, current-HEAD required CI/remote feedback, then merge/closure/cleanup only through existing gates. No production deployment or data/config/session/quota/index writes.

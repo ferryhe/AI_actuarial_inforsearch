@@ -3000,8 +3000,12 @@ class Storage:
         """True when the current categories.yaml differs from the last applied hash."""
         return self.current_taxonomy_hash() != self.get_applied_taxonomy_hash()
 
-    def search_catalog_projection(self, terms: list[str], *, limit: int = 5) -> list[dict]:
+    def search_catalog_projection(
+        self, terms: list[str], *, limit: int = 5, kb_ids: list[str] | None = None
+    ) -> list[dict]:
         """Search only public catalog fields; never inspect document Markdown."""
+        if kb_ids is not None and not kb_ids:
+            return []
         source_join = ""
         organization_en = organization_zh = "f.source_site"
         source_search_fields = ["f.source_site"]
@@ -3033,16 +3037,34 @@ class Storage:
             "%" + term.lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
             for term in terms
         ]
+        membership = (
+            "AND EXISTS (SELECT 1 FROM rag_kb_files k WHERE k.file_url = f.url "
+            f"AND k.kb_id IN ({', '.join('?' for _ in kb_ids)}))"
+            if kb_ids is not None
+            else ""
+        )
+        order_by = "f.last_seen DESC, f.url"
+        rank_params = []
+        if kb_ids is not None and terms:
+            rank_fields = (("f.title", 6), (organization_en, 2), ("c.summary", 1))
+            rank_parts = [
+                f"CASE WHEN LOWER(COALESCE({field}, '')) LIKE ? ESCAPE '\\' "
+                f"THEN {weight} ELSE 0 END"
+                for _ in terms
+                for field, weight in rank_fields
+            ]
+            order_by = f"({' + '.join(rank_parts)}) DESC, {order_by}"
+            rank_params = [pattern for pattern in params for _ in rank_fields]
         rows = self._conn.execute(
             f"""SELECT f.url, f.title, f.original_filename, {organization_en}, f.published_time,
                        c.category, c.summary, c.bilingual_metadata_json, c.catalog_version,
-                       c.updated_at, {organization_zh}
+                       c.updated_at, {organization_zh}, f.first_seen
                 FROM files f LEFT JOIN catalog_items c ON c.file_url = f.url
                 {source_join}
                 WHERE f.deleted_at IS NULL AND f.local_path IS NOT NULL AND f.local_path != ''
-                  AND ({conditions})
-                ORDER BY f.last_seen DESC, f.url LIMIT ?""",
-            (*params, min(5, max(1, limit))),
+                  AND ({conditions}) {membership}
+                ORDER BY {order_by} LIMIT ?""",
+            (*params, *(kb_ids or []), *rank_params, min(50, max(1, limit))),
         ).fetchall()
         return [
             dict(
@@ -3059,6 +3081,7 @@ class Storage:
                         "version",
                         "updated_at",
                         "organization_zh",
+                        "first_seen",
                     ),
                     row,
                 )
