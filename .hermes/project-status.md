@@ -1,3 +1,10 @@
+## 2026-11-08 R11 候选修复完成本地验证，等待独立评审
+
+- Issue #477 仍在 Draft PR #484：`codex/issue-477-document-research`。本轮候选源码增加单一当前 Ready Key Findings 片段的受限中文摘要路径，并保留原有第四次摘要核验、引文校验、权限复查与预算；同时修复静态符号门禁发现的序列化引用。
+- 相关隔离 PostgreSQL 测试 332 通过、4 条警告；Black/isort/Ruff、Python 与 TypeScript dead-code symbols、`git diff --check` 通过。证据见 `reports/issue-473-480-20261107/issue-477/guarded-experiment/`。
+- 候选仍未独立评审，未在新源码上运行 Provider/UAT。原海外站结果继续记为失败，不能用本地脚本化测试代替。远端 CI 尚未针对此候选源码出结果。
+- 本轮未改生产配置、索引或权限，也未触碰 `graphify-out/` 或兄弟仓库。下一步是固定完整源码快照，进行独立评审，再按原问题每站最多一次做新源码 UAT。
+
 ## 2026-11-07 R9 两项 AC 缺口已裁定并交同一 worker
 
 - R9 独立审查报告 5bc3d931...d48b 已经 root 审计为合格；TypeSafe Review 两项 preliminary valid（mapping .95/.93、repro .85/.82），Jev Judge 选 accept_both（p .63，confidence .54）。经理独立复现后 append-recorded 两项：AC5 target-specific Ready 未确认；AC8 目标从 KB 移除后，旧目录 evidence ID 仍可生成链接。第二条也在 find/read 两个普通 tool call 之间撤销 membership 后复现，不依赖并发删除。

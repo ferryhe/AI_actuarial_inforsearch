@@ -156,6 +156,7 @@ class AssistantFeature:
             verified_target = selected_target
             found_targets: set[tuple[str, str]] = set()
             found_evidence_targets: dict[str, SelectedTarget] = {}
+            body_read_targets: set[tuple[str, str]] = set()
             if verified_target is not None:
                 current_facade = DocumentResearch(
                     storage, authorized_kbs=lambda: permitted_kbs(request, auth)
@@ -227,6 +228,7 @@ class AssistantFeature:
                         "document_research.read_document_sections",
                         "document_research.search_knowledge",
                     }:
+                        body_read_targets.add((args["kb_id"], args["file_id"]))
                         verified_target = SelectedTarget(
                             kb_id=args["kb_id"], file_id=args["file_id"]
                         )
@@ -262,6 +264,8 @@ class AssistantFeature:
                         if key in found_targets
                         else {"chat.query", "markdown.read"}
                     )
+                    if key in body_read_targets:
+                        required.add("markdown.read")
                     if _identity(current) != initial_identity or not required <= scopes:
                         return None
                     facade = DocumentResearch(

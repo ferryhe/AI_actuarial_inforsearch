@@ -801,6 +801,419 @@ def test_findings_route_reserves_fourth_model_call_for_verification(research, wi
         assert SURVEY in result.answer
 
 
+@pytest.mark.parametrize("finding_count", [1, 2])
+def test_guarded_single_ready_finding_uses_current_quote_and_host_source(research, finding_count):
+    facade, _, _, _ = research
+    registry = Registry((MANIFEST,), frozenset(tool.executor for tool in MANIFEST.tools))
+    calls = []
+
+    def model(prompt, remaining):
+        data = json.loads(prompt)
+        calls.append(data)
+        if len(calls) == 1:
+            return json.dumps(
+                {
+                    "action": "call",
+                    "skill_id": "document_research",
+                    "tool_id": "document_research.find_documents",
+                    "args": {"query": "SOA Member AI Survey: Spring 2026"},
+                }
+            )
+        if len(calls) == 2:
+            return json.dumps(
+                {
+                    "action": "call",
+                    "skill_id": "document_research",
+                    "tool_id": "document_research.read_document_sections",
+                    "args": {"kb_id": "public", "file_id": SURVEY, "query": "Key Findings"},
+                }
+            )
+        if len(calls) == 3:
+            assert set(data) == {"instruction", "question", "locale", "excerpt"}
+            assert data["excerpt"] == KEY_FINDINGS and data["locale"] == "zh"
+            assert "skills" not in prompt and BULLETIN not in prompt
+            findings = [
+                {
+                    "quote": "Members are using AI in actuarial work",
+                    "summary": "会员正在精算工作中使用人工智能。",
+                }
+            ]
+            if finding_count == 2:
+                findings.append(
+                    {
+                        "quote": "many organizations are still developing governance and training",
+                        "summary": "许多机构仍在发展治理与培训。",
+                    }
+                )
+            return json.dumps({"findings": findings})
+        assert [item["excerpt"] for item in data["items"]] == [
+            "Members are using AI in actuarial work",
+            *(
+                ["many organizations are still developing governance and training"]
+                if finding_count == 2
+                else []
+            ),
+        ]
+        return json.dumps({"supported": [True] * finding_count})
+
+    def resolve(target):
+        document = facade._document(SelectedTarget.model_validate(target))
+        return document.model_dump() if document else None
+
+    result = run(
+        message="请简要总结SOA会员人工智能调查的主要发现",
+        locale="zh",
+        registry=registry,
+        context=RunContext(
+            principal="test",
+            scopes=frozenset({"chat.query", "catalog.read", "files.read", "markdown.read"}),
+        ),
+        model=model,
+        execute=lambda tool, args, context, remaining: getattr(
+            executors, tool.executor.split(".")[1]
+        )(facade, args),
+        resolve_selected_document=resolve,
+    )
+    assert result.kind == "finish" and result.availability == "available", (result, calls)
+    assert result.model_attempts == 4 and result.tool_attempts == 2
+    assert len(result.evidence_ids) == 1
+    assert "会员正在精算工作中使用人工智能" in result.answer
+    assert "Members are using AI in actuarial work" in result.answer
+    assert SURVEY in result.answer and BULLETIN not in result.answer
+    if finding_count == 2:
+        assert "许多机构仍在发展治理与培训" in result.answer
+
+
+@pytest.mark.parametrize(
+    "mode,expected_code,expected_calls",
+    [
+        ("old_quote", "NO_EVIDENCE", 3),
+        ("wrong_id", "NO_EVIDENCE", 3),
+        ("wrong_url", "NO_EVIDENCE", 3),
+        ("summary_url", "NO_EVIDENCE", 3),
+        ("empty_summary", "NO_EVIDENCE", 3),
+        ("long_summary", "NO_EVIDENCE", 3),
+        ("three_findings", "NO_EVIDENCE", 3),
+        ("removed", "NO_EVIDENCE", 3),
+        ("numeric_claim", "SUMMARY_UNVERIFIED", 4),
+        ("verification_false", "SUMMARY_UNVERIFIED", 4),
+        ("verification_error", "SUMMARY_UNVERIFIED", 4),
+        ("empty_output", "INVALID_MODEL_RESPONSE", 3),
+        ("provider_length", "PROVIDER_UNAVAILABLE", 3),
+    ],
+)
+def test_guarded_finding_never_promotes_invalid_or_unverified_content(
+    research, mode, expected_code, expected_calls
+):
+    facade, storage, _, _ = research
+    registry = Registry((MANIFEST,), frozenset(tool.executor for tool in MANIFEST.tools))
+    calls = []
+    quote = "Members are using AI in actuarial work"
+    summary = "会员正在精算工作中使用人工智能。"
+
+    def model(prompt, remaining):
+        data = json.loads(prompt)
+        calls.append(data)
+        if len(calls) == 1:
+            return json.dumps(
+                {
+                    "action": "call",
+                    "skill_id": "document_research",
+                    "tool_id": "document_research.find_documents",
+                    "args": {"query": "SOA Member AI Survey: Spring 2026"},
+                }
+            )
+        if len(calls) == 2:
+            return json.dumps(
+                {
+                    "action": "call",
+                    "skill_id": "document_research",
+                    "tool_id": "document_research.read_document_sections",
+                    "args": {"kb_id": "public", "file_id": SURVEY, "query": "Key Findings"},
+                }
+            )
+        if len(calls) == 3:
+            assert set(data) == {"instruction", "question", "locale", "excerpt"}
+            if mode == "empty_output":
+                return ""
+            if mode == "provider_length":
+                raise RuntimeError("length with no visible content")
+            if mode == "removed":
+                storage._conn.execute("DELETE FROM rag_kb_files WHERE file_url = ?", (SURVEY,))
+            finding = {"quote": quote, "summary": summary}
+            if mode == "old_quote":
+                finding["quote"] = "SOA Bulletin: Old AI Survey"
+            elif mode == "wrong_id":
+                finding["evidence_id"] = "old-catalog-id"
+            elif mode == "empty_summary":
+                finding["summary"] = ""
+            elif mode == "long_summary":
+                finding["summary"] = "字" * 301
+            elif mode == "numeric_claim":
+                finding["summary"] = "共有12,345名受访者。"
+            elif mode == "summary_url":
+                finding["summary"] = f"会员正在使用人工智能。来源：{BULLETIN}"
+            output = {"findings": [finding] * (3 if mode == "three_findings" else 1)}
+            if mode == "wrong_url":
+                output["source_url"] = BULLETIN
+            return json.dumps(output)
+        assert data["items"][0]["excerpt"] == quote
+        if mode == "verification_error":
+            raise RuntimeError("verification failed")
+        return json.dumps({"supported": [mode != "verification_false"]})
+
+    def resolve(target):
+        document = facade._document(SelectedTarget.model_validate(target))
+        return document.model_dump() if document else None
+
+    result = run(
+        message="请简要总结SOA会员人工智能调查的主要发现",
+        locale="zh",
+        registry=registry,
+        context=RunContext(
+            principal="test",
+            scopes=frozenset({"chat.query", "catalog.read", "files.read", "markdown.read"}),
+        ),
+        model=model,
+        execute=lambda tool, args, context, remaining: getattr(
+            executors, tool.executor.split(".")[1]
+        )(facade, args),
+        resolve_selected_document=resolve,
+    )
+    assert result.error_code == expected_code
+    assert result.availability != "available" and summary not in result.answer
+    assert result.model_attempts == expected_calls and result.tool_attempts == 2
+    if expected_code == "SUMMARY_UNVERIFIED":
+        assert quote in result.answer and SURVEY in result.answer
+    else:
+        assert result.answer == ""
+
+
+@pytest.mark.parametrize(
+    "mode",
+    [
+        "two_sections",
+        "non_key_findings",
+        "standard",
+        "stale",
+        "hard_gate",
+        "wrong_target",
+        "wrong_source",
+        "comparison",
+        "sample",
+        "date",
+        "source_link",
+        "status",
+        "no_resolver",
+    ],
+)
+def test_guarded_route_leaves_other_questions_and_evidence_on_existing_path(research, mode):
+    facade, storage, _, state = research
+    registry = Registry((MANIFEST,), frozenset(tool.executor for tool in MANIFEST.tools))
+    if mode == "two_sections":
+        state["sections"].append(
+            {
+                "file_url": SURVEY,
+                "section_id": "another-finding",
+                "heading": "Key Findings",
+                "text_snippet": "Organizations are developing training.",
+            }
+        )
+    if mode == "stale":
+        state.update(stale=True, severity="soft_stale")
+    if mode == "hard_gate":
+        state["ready"] = False
+        storage._conn.execute("UPDATE rag_knowledge_bases SET index_path = NULL")
+    message = {
+        "comparison": "请总结主要发现并比较ASHK问卷",
+        "sample": "请总结主要发现和样本数",
+        "date": "请总结主要发现和发布日期",
+        "source_link": "请总结主要发现并给原文链接",
+        "status": "请总结主要发现和Ready状态",
+    }.get(mode, "请简要总结SOA会员人工智能调查的主要发现")
+    calls = []
+
+    def model(prompt, remaining):
+        data = json.loads(prompt)
+        calls.append(data)
+        if len(calls) <= 2:
+            return json.dumps(
+                {
+                    "action": "call",
+                    "skill_id": "document_research",
+                    "tool_id": (
+                        "document_research.find_documents"
+                        if len(calls) == 1
+                        else "document_research.read_document_sections"
+                    ),
+                    "args": (
+                        {"query": "SOA Member AI Survey: Spring 2026"}
+                        if len(calls) == 1
+                        else {"kb_id": "public", "file_id": SURVEY, "query": "Key Findings"}
+                    ),
+                }
+            )
+        assert set(data) == {"prompt", "observations"}
+        assert "skills" in data["prompt"]
+        return json.dumps({"action": "clarify", "question": "legacy route"})
+
+    def execute(tool, args, context, remaining):
+        observed = getattr(executors, tool.executor.split(".")[1])(facade, args)
+        if tool.tool_id == "document_research.read_document_sections" and mode in {
+            "non_key_findings",
+            "standard",
+            "wrong_target",
+            "wrong_source",
+        }:
+            section = dict(observed.data["sections"][0])
+            if mode == "non_key_findings":
+                section["heading"] = "Limitations"
+            elif mode == "standard":
+                section["retrieval"] = "standard"
+            elif mode == "wrong_target":
+                section["target"] = {"kb_id": "public", "file_id": BULLETIN}
+            else:
+                section["source_url"] = BULLETIN
+            return ToolResult("ok", {**observed.data, "sections": [section]}, observed.evidence_ids)
+        return observed
+
+    def resolve(target):
+        document = facade._document(SelectedTarget.model_validate(target))
+        return document.model_dump() if document else None
+
+    result = run(
+        message=message,
+        locale="zh",
+        registry=registry,
+        context=RunContext(
+            principal="test",
+            scopes=frozenset({"chat.query", "catalog.read", "files.read", "markdown.read"}),
+        ),
+        model=model,
+        execute=execute,
+        resolve_selected_document=None if mode == "no_resolver" else resolve,
+    )
+    assert result.kind == "clarify" and result.answer == "legacy route"
+    assert result.model_attempts == 3 and result.tool_attempts == 2
+
+
+def test_catalog_candidates_without_a_selected_read_keep_general_prompt(research):
+    facade, _, _, _ = research
+    registry = Registry((MANIFEST,), frozenset(tool.executor for tool in MANIFEST.tools))
+    prompts = []
+
+    def model(prompt, remaining):
+        data = json.loads(prompt)
+        prompts.append(data)
+        return json.dumps(
+            {
+                "action": "call",
+                "skill_id": "document_research",
+                "tool_id": "document_research.find_documents",
+                "args": {"query": "SOA Member AI Survey: Spring 2026"},
+            }
+            if len(prompts) == 1
+            else {"action": "clarify", "question": "choose a report"}
+        )
+
+    result = run(
+        message="请简要总结主要发现",
+        locale="zh",
+        registry=registry,
+        context=RunContext(
+            principal="test", scopes=frozenset({"chat.query", "catalog.read", "files.read"})
+        ),
+        model=model,
+        execute=lambda tool, args, context, remaining: executors.find_documents(facade, args),
+    )
+    assert result.kind == "clarify" and result.tool_attempts == 1
+    assert set(prompts[1]) == {"prompt", "observations"}
+
+
+@pytest.mark.parametrize("revoke", [False, True])
+def test_guarded_feature_rechecks_body_scope_before_releasing_summary(
+    research, monkeypatch, revoke
+):
+    from ai_actuarial.features.assistant import feature as host
+
+    _, storage, _, _ = research
+    auth = AuthContext(
+        {"id": 7, "group_name": "registered"},
+        frozenset({"chat.query", "catalog.read", "files.read", "markdown.read"}),
+    )
+    current_auth = [auth]
+    request = SimpleNamespace(
+        app=SimpleNamespace(
+            state=SimpleNamespace(
+                db_path="isolated", assistant_public_kb_ids=["public"], assistant_staff_kb_ids=[]
+            )
+        ),
+        state=SimpleNamespace(),
+    )
+    monkeypatch.setattr(host.chat, "Storage", lambda database: storage)
+    monkeypatch.setattr(host.chat, "_resolve_chat_user", lambda request, auth: ("test", None))
+    monkeypatch.setattr(host.chat, "_enforce_chat_quota", lambda **kwargs: None)
+    monkeypatch.setattr(host.deps, "get_auth_context", lambda request: current_auth[0])
+    monkeypatch.setattr(storage, "close", lambda: None)
+    calls = []
+
+    def model(prompt, remaining):
+        data = json.loads(prompt)
+        calls.append(data)
+        if len(calls) <= 2:
+            return json.dumps(
+                {
+                    "action": "call",
+                    "skill_id": "document_research",
+                    "tool_id": (
+                        "document_research.find_documents"
+                        if len(calls) == 1
+                        else "document_research.read_document_sections"
+                    ),
+                    "args": (
+                        {"query": "SOA Member AI Survey: Spring 2026"}
+                        if len(calls) == 1
+                        else {"kb_id": "public", "file_id": SURVEY, "query": "Key Findings"}
+                    ),
+                }
+            )
+        if len(calls) == 3:
+            assert set(data) == {"instruction", "question", "locale", "excerpt"}
+            if revoke:
+                current_auth[0] = AuthContext(
+                    auth.token, frozenset({"chat.query", "catalog.read", "files.read"})
+                )
+            return json.dumps(
+                {
+                    "findings": [
+                        {
+                            "quote": "Members are using AI in actuarial work",
+                            "summary": "会员正在精算工作中使用人工智能。",
+                        }
+                    ]
+                }
+            )
+        assert data["items"][0]["excerpt"] == "Members are using AI in actuarial work"
+        return json.dumps({"supported": [True]})
+
+    outcome = host.AssistantFeature().query(
+        request=request,
+        auth=auth,
+        message="请简要总结SOA会员人工智能调查的主要发现",
+        locale="zh",
+        model=model,
+    )
+    if revoke:
+        assert outcome.runtime.error_code == "NO_EVIDENCE"
+        assert outcome.runtime.answer == "" and outcome.runtime.model_attempts == 3
+    else:
+        assert outcome.runtime.availability == "available"
+        assert outcome.runtime.model_attempts == 4
+        assert "会员正在精算工作中使用人工智能" in outcome.runtime.answer
+        assert SURVEY in outcome.runtime.answer and BULLETIN not in outcome.runtime.answer
+    assert outcome.runtime.tool_attempts == 2
+
+
 def test_findings_and_readiness_descriptions_keep_separate_routes(research):
     facade, _, _, _ = research
     registry = Registry((MANIFEST,), frozenset(tool.executor for tool in MANIFEST.tools))

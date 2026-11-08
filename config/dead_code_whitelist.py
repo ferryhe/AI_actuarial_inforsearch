@@ -16,6 +16,7 @@ from ai_actuarial.api.routers.feedback import (
     api_update_feedback,
 )
 from ai_actuarial.api.routers.support import api_support_capabilities
+from ai_actuarial.assistant.document_research import Document, SectionEvidence
 from ai_actuarial.assistant.knowledge import SourceCitation
 from ai_actuarial.assistant.query import QueryRequest
 from ai_actuarial.assistant.router import api_assistant_query
@@ -34,6 +35,9 @@ QueryRequest.valid_message  # reason: Pydantic invokes this decorated field vali
 api_assistant_query  # reason: FastAPI registers this decorated route.
 api_assistant_runtime_query  # reason: FastAPI registers this decorated route.
 SourceCitation.source_date  # reason: Pydantic serializes the citation source date by name.
+Document.internal_link  # reason: Pydantic includes the file-detail link in document tool JSON.
+SectionEvidence.index_version  # reason: Pydantic includes the Ready/Standard index version in section tool JSON.
+SectionEvidence.index_stale  # reason: Pydantic includes Standard index freshness in section tool JSON.
 
 from tests.test_assistant_feature_matrix import pytest_plugins as _assistant_matrix_plugins
 from tests.test_assistant_knowledge import pytest_plugins as _assistant_knowledge_plugins

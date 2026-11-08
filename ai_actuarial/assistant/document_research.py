@@ -162,9 +162,6 @@ class DocumentResearch:
             internal_link="/file-detail?" + urlencode({"url": member[0]}),
         )
 
-    def list_documents(self, *, kb_id: str | None = None) -> list[Document]:
-        return self.find_documents("", kb_id=kb_id)
-
     def find_documents(self, query: str, *, kb_id: str | None = None) -> list[Document]:
         self._check()
         allowed = self.authorized_kbs()
