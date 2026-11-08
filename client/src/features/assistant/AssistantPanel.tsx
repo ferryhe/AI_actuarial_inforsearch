@@ -149,7 +149,7 @@ export default function AssistantPanel({ t, lang, open, feedbackEnabled, onClose
   }
 
   async function readCitation(reference: HelpCitation) {
-    const generation = helpGeneration.current;
+    const generation = ++helpGeneration.current;
     setError("");
     try {
       const exact = helpSchema.parse(reference);
@@ -159,7 +159,7 @@ export default function AssistantPanel({ t, lang, open, feedbackEnabled, onClose
   }
 
   async function browseHelp() {
-    const generation = helpGeneration.current;
+    const generation = ++helpGeneration.current;
     setError("");
     try {
       const value = z.object({ results: z.array(helpSchema) }).parse(await apiGet(`/api/assistant/help?${new URLSearchParams({ q: lang === "zh" ? "指南" : "guide", language: lang === "zh" ? "zh" : "en", limit: "10" })}`));

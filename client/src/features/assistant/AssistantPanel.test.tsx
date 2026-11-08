@@ -358,6 +358,41 @@ it("keeps a help citation cleared when its earlier request finishes late", async
   expect(screen.queryByTestId("assistant-help-section")).not.toBeInTheDocument();
 });
 
+it("keeps the newer help citation when an older citation succeeds late", async () => {
+  const newer = { ...ref, section_id: "weekly" };
+  let resolveOlder!: (value: unknown) => void;
+  let resolveNewer!: (value: unknown) => void;
+  apiPost.mockResolvedValue({ ...reply("usage"), citations: [ref, newer] });
+  apiGet.mockImplementationOnce(() => new Promise((done) => { resolveOlder = done; }))
+    .mockImplementationOnce(() => new Promise((done) => { resolveNewer = done; }));
+  show(false);
+  question("Show both guide sections");
+  fireEvent.click(await screen.findByRole("button", { name: /Guide \/ file-details/ }));
+  fireEvent.click(screen.getByRole("button", { name: /Guide \/ weekly/ }));
+  await act(async () => resolveNewer({ ...newer, content: "Current weekly section" }));
+  expect(screen.getByTestId("assistant-help-section")).toHaveTextContent("Current weekly section");
+  await act(async () => resolveOlder({ ...ref, content: "Older file section" }));
+  expect(screen.getByTestId("assistant-help-section")).toHaveTextContent("Current weekly section");
+  expect(screen.getByTestId("assistant-help-section")).not.toHaveTextContent("Older file section");
+});
+
+it("ignores an older guide error after a newer help citation succeeds", async () => {
+  let rejectOlder!: (reason: Error) => void;
+  let resolveNewer!: (value: unknown) => void;
+  apiPost.mockResolvedValue({ ...reply("usage"), citations: [ref] });
+  apiGet.mockImplementationOnce(() => new Promise((_, reject) => { rejectOlder = reject; }))
+    .mockImplementationOnce(() => new Promise((done) => { resolveNewer = done; }));
+  show(false);
+  question("Show the guide section");
+  fireEvent.click(screen.getByRole("button", { name: "assistant.guide" }));
+  fireEvent.click(await screen.findByRole("button", { name: /Guide \/ file-details/ }));
+  await act(async () => resolveNewer({ ...ref, content: "Current file section" }));
+  expect(screen.getByTestId("assistant-help-section")).toHaveTextContent("Current file section");
+  await act(async () => rejectOlder(new Error("Old guide failed")));
+  expect(screen.getByTestId("assistant-help-section")).toHaveTextContent("Current file section");
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+
 it("renders catalog and body citations as internal links with versions and nonzero embedding counts", async () => {
   const source = { file_id: "source", section_id: "section-1", kb_id: "public", title: "Body document", link: "/file-detail?url=source", source_version: "publication-1", source_date: "2026-11-06", stale: true };
   apiPost.mockResolvedValue({ ...reply("knowledge"), embedding_attempts: 2, citations: [{ ...source, source_type: "kb" }, { ...source, source_type: "catalog", title: "Directory document", section_id: "", kb_id: null }] });

@@ -1,3 +1,9 @@
+## 2026-11-08 Issue #479 — R4 help request ordering repair ready for fresh review
+
+- On `codex/issue-479-assistant-ui`, each guide browse or citation read now invalidates earlier in-flight help requests. A late older success cannot replace the newer section, and a late older error cannot appear after the newer section succeeds. Clear and identity-change invalidation remain in place.
+- Two regression tests failed before the product fix and passed afterward. The AssistantPanel suite passed 39/39; typecheck, build, changed-file ESLint, diff check, and stubbed Chromium conversation smoke passed. Raw evidence is in `reports/issue-473-480-20261107/issue-479/r4-worker-fix/`.
+- Local worker repair awaits fresh independent review. The previous a43-bound real-UAT harness was not run after this change. No live provider/model call, remote server call, commit, push, PR edit, or merge occurred in this worker stage.
+
 ## 2026-11-08 Issue #479 — R3 clicked-card target repair ready for fresh review
 
 - On `codex/issue-479-assistant-ui`, clicking a verified catalog/body file card now carries that exact KB/file hint into the next Assistant turn across in-app file-detail navigation. Clicking an unassigned catalog card clears an older hint. The server still rechecks current scope and KB membership before any document read or citation.
