@@ -13,7 +13,9 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from ai_actuarial.api.deps import AuthContext, require_permissions
 from ai_actuarial.api.routers.assistant_help import _require_enabled
 from ai_actuarial.api.services.chat import apply_session_update
-from ai_actuarial.assistant.query import REQUEST_SECONDS, FeatureResponse
+from ai_actuarial.assistant.agent_budget import load_agent_budget
+from ai_actuarial.assistant.document_research import SelectedTarget
+from ai_actuarial.assistant.query import FeatureResponse
 
 router = APIRouter()
 
@@ -22,6 +24,7 @@ class RuntimePayload(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     message: str = Field(min_length=1, max_length=4000)
     locale: Literal["en", "zh", "zh-CN"] = "en"
+    selected_target: SelectedTarget | None = None
 
     @field_validator("message")
     @classmethod
@@ -42,6 +45,7 @@ async def api_assistant_runtime_query(
     feature = getattr(request.app.state, "assistant_feature", None)
     if feature is None:
         raise HTTPException(status_code=503, detail="Assistant Feature is unavailable")
+    budget = load_agent_budget()
     cancelled = Event()
     try:
         outcome = await asyncio.wait_for(
@@ -52,9 +56,11 @@ async def api_assistant_runtime_query(
                 message=payload.message,
                 locale=payload.locale,
                 cancelled=cancelled,
-                deadline=time.monotonic() + REQUEST_SECONDS,
+                deadline=time.monotonic() + budget.total_seconds,
+                budget=budget,
+                selected_target=payload.selected_target,
             ),
-            timeout=REQUEST_SECONDS,
+            timeout=budget.total_seconds,
         )
     except asyncio.TimeoutError:
         cancelled.set()

@@ -69,6 +69,7 @@ class FeatureResponse(QueryResponse):
     schema_version: Literal["1.0"] = "1.0"
     stop_reason: Literal["finish", "clarify", "error"]
     evidence_ids: list[str] = Field(default_factory=list)
+    selected_target: dict[str, str] | None = None
 
 
 class Classification(BaseModel):

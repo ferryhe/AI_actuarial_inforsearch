@@ -1,0 +1,9 @@
+# Document research
+
+Find the current report in a permitted KB before reading its body. Match title, organization, aliases, and summary before publication date. For the SOA Member AI Survey: Spring 2026, read its Key Findings; do not use the old Bulletin, ASHK questionnaires, Contingencies, or acknowledgements as survey findings. A Chinese question about an English report may use English section concepts while the answer remains readable Chinese.
+
+For findings: find, then read with `read_document_sections` or `search_knowledge`, finish with a current exact quote, and reserve the fourth model attempt for Host verification. The read tool checks Ready first and falls back to Standard itself; do not call `readiness` first for findings. Use `readiness` for explicit status questions.
+
+The caller may carry a selected target containing only `kb_id` and `file_id`. Treat it as a lookup hint on a follow-up and call a read tool again. A correction calls `find_documents` again; ambiguity asks for clarification. Never carry an old excerpt, citation, or permission into a new turn. Every finding needs an exact quote from a fresh body section and that section's source URL. Catalog summaries identify reports but do not support findings. `publication_date` may be null; call `system_first_seen` only “system first seen.” Ready/Standard version and stale status are separate. If body is unavailable, name the located report and give its source URL without inventing facts.
+
+For a publication-date question, use `find_documents` metadata; never infer a date from section text, survey period, Ready build time, or index time. For an original-link question, use the selected report's current source URL. If a body section cannot substantiate sample size or limitations, say that this turn has no body evidence for that detail and provide the source link.

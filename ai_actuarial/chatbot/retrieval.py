@@ -85,6 +85,7 @@ class RAGRetriever:
         top_k: Optional[int] = None,
         threshold: Optional[float] = None,
         file_urls: set[str] | None = None,
+        candidate_filter: Callable[[dict], bool] | None = None,
     ) -> List[Dict[str, Any]]:
         """
         Retrieve relevant chunks for a query.
@@ -95,6 +96,7 @@ class RAGRetriever:
             top_k: Number of results to return (default: config.top_k)
             threshold: Similarity threshold (default: config.similarity_threshold)
             file_urls: Optional current membership, filtered before the result budget
+            candidate_filter: Optional caller-owned candidate check before the result budget
 
         Returns:
             List of retrieved chunks with metadata and citations
@@ -140,6 +142,8 @@ class RAGRetriever:
             query_embedding = self.embedding_generator.generate_single(query)
             query_vector = np.array(query_embedding)
             scope = {"file_urls": file_urls} if file_urls is not None else {}
+            if candidate_filter is not None:
+                scope["candidate_filter"] = candidate_filter
 
             # Retrieve from each KB
             if len(kb_ids) == 1:
@@ -173,6 +177,7 @@ class RAGRetriever:
         top_k: int,
         threshold: float,
         file_urls: set[str] | None = None,
+        candidate_filter: Callable[[dict], bool] | None = None,
     ) -> List[Dict[str, Any]]:
         """Retrieve chunks from a single KB."""
         # Get KB info
@@ -189,10 +194,13 @@ class RAGRetriever:
             search_results = vector_store.search(
                 query_vector, k=search_k, similarity_threshold=threshold
             )
-            if file_urls is None:
+            if file_urls is None and candidate_filter is None:
                 break
             search_results = [
-                row for row in search_results if row["metadata"].get("file_url") in file_urls
+                row
+                for row in search_results
+                if (file_urls is None or row["metadata"].get("file_url") in file_urls)
+                and (candidate_filter is None or candidate_filter(row["metadata"]))
             ]
             if len(search_results) >= top_k or search_k >= len(vector_store.metadata):
                 search_results = search_results[:top_k]
@@ -232,6 +240,7 @@ class RAGRetriever:
         top_k: int,
         threshold: float,
         file_urls: set[str] | None = None,
+        candidate_filter: Callable[[dict], bool] | None = None,
     ) -> List[Dict[str, Any]]:
         """
         Retrieve chunks from multiple KBs with diversity enforcement.
@@ -251,6 +260,8 @@ class RAGRetriever:
         for kb_id in kb_ids:
             try:
                 scope = {"file_urls": file_urls} if file_urls is not None else {}
+                if candidate_filter is not None:
+                    scope["candidate_filter"] = candidate_filter
                 results = self._retrieve_from_kb(kb_id, query_vector, per_kb_k, threshold, **scope)
                 successful_reads += 1
                 if results:

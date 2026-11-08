@@ -1,0 +1,12 @@
+{
+  "skill_id": "document_research",
+  "version": "1.0",
+  "description": "Find a permitted report and read current, source-linked body sections.",
+  "enabled": true,
+  "tools": [
+    {"tool_id": "document_research.find_documents", "description": "Find reports by title, organization, aliases and summary before recency.", "executor": "document_research.find_documents", "arguments_model": "FindArgs", "required_scopes": ["chat.query", "catalog.read", "files.read"]},
+    {"tool_id": "document_research.read_document_sections", "description": "For findings, read current exact sections of one permitted report with Ready-first/Standard fallback, without a separate readiness call.", "executor": "document_research.read_document_sections", "arguments_model": "ReadArgs", "required_scopes": ["chat.query", "markdown.read"]},
+    {"tool_id": "document_research.search_knowledge", "description": "Search body evidence only within one selected report.", "executor": "document_research.search_knowledge", "arguments_model": "ReadArgs", "required_scopes": ["chat.query", "markdown.read"]},
+    {"tool_id": "document_research.readiness", "description": "For explicit status questions, check current Ready and Standard body availability for one report.", "executor": "document_research.readiness", "arguments_model": "TargetArgs", "required_scopes": ["chat.query", "markdown.read"]}
+  ]
+}

@@ -313,7 +313,7 @@ def test_fixed_model_and_embedding_attempt_budgets():
                 tool_id="test_lookup.search",
                 args={"term": "sample"},
             )
-            for _ in range(4)
+            for _ in range(6)
         ]
     )
     context = RunContext(principal="anon", scopes=frozenset())
@@ -326,11 +326,100 @@ def test_fixed_model_and_embedding_attempt_budgets():
         execute=execute,
     )
     assert result.error_code == "ASSISTANT_TIMEOUT"
-    assert result.model_attempts == len(calls) == 4 and result.tool_attempts == 4
+    assert result.model_attempts == len(calls) == 6 and result.tool_attempts == 6
     assert result.tool_attempts <= 6
     assert context.take_embedding() > 0 and context.take_embedding() > 0
     with pytest.raises(TimeoutError, match="embedding budget"):
         context.take_embedding()
+
+
+def test_agent_provider_ledger_counts_create_not_unissued_model_slot():
+    context = RunContext(principal="anon", scopes=frozenset())
+    assert 179 < context.deadline - time.monotonic() <= 180
+    context.take_model()
+    assert context.model_attempts == 1 and context.provider_requests == 0
+    assert 0 < context.take_provider_request(prepaid=True) <= 60
+    assert context.model_attempts == context.provider_requests == 1
+    context.reserve_verifier = True
+    for _ in range(4):
+        assert 0 < context.take_provider_request() <= 60
+    assert context.model_attempts == context.provider_requests == 5
+    with pytest.raises(TimeoutError, match="model budget"):
+        context.take_provider_request()
+    assert context.provider_requests == 5
+    context.reserve_verifier = False
+    context.take_model()
+    assert context.take_provider_request(prepaid=True) <= 60
+    assert context.provider_requests == 6
+    with pytest.raises(TimeoutError, match="model budget"):
+        context.take_provider_request()
+
+
+def test_agent_request_deadline_does_not_change_legacy_assistant_deadline():
+    from ai_actuarial.agent_runtime.contracts import AgentBudget
+    from ai_actuarial.assistant import query
+
+    assert AgentBudget.from_config({}).total_seconds == 180
+    assert query.REQUEST_SECONDS == 30
+
+
+@pytest.mark.parametrize(
+    "section",
+    [
+        {"model_requests": 0},
+        {"total_seconds": -1},
+        {"initial_tokens": 0},
+        {"recovery_tokens": 2000},
+        {"request_seconds": float("nan")},
+        {"max_retries": 1.5},
+    ],
+)
+def test_agent_budget_config_rejects_invalid_values(section):
+    from ai_actuarial.agent_runtime.contracts import AgentBudget
+
+    with pytest.raises(ValueError, match="assistant_agent"):
+        AgentBudget.from_config(section)
+
+
+def test_agent_budget_config_allows_an_explicit_upward_override():
+    from ai_actuarial.agent_runtime.contracts import AgentBudget
+
+    budget = AgentBudget.from_config(
+        {
+            "initial_tokens": 3500,
+            "recovery_tokens": 4500,
+            "max_retries": 4,
+            "model_requests": 8,
+            "total_seconds": 240,
+            "request_seconds": 75,
+        }
+    )
+    context = RunContext(principal="test", scopes=frozenset(), budget=budget)
+    assert 239 < context.deadline - time.monotonic() <= 240
+    assert context.take_model() <= 240
+    assert context.take_provider_request(prepaid=True) <= 75
+    assert (budget.initial_tokens, budget.recovery_tokens, budget.max_retries) == (
+        3500,
+        4500,
+        4,
+    )
+
+
+def test_agent_provider_preflight_respects_cancel_and_deadline():
+    cancelled = Event()
+    context = RunContext(principal="anon", scopes=frozenset(), cancelled=cancelled)
+    context.take_model()
+    cancelled.set()
+    with pytest.raises(TimeoutError, match="cancelled"):
+        context.take_provider_request(prepaid=True)
+    assert context.model_attempts == 1 and context.provider_requests == 0
+    cancelled.clear()
+    context.deadline = time.monotonic() + 0.1
+    assert 0 < context.take_provider_request(prepaid=True) <= 0.1
+    context.deadline = time.monotonic() - 1
+    with pytest.raises(TimeoutError, match="deadline"):
+        context.take_provider_request()
+    assert context.provider_requests == 1
 
 
 def test_timeout_cancel_and_tool_failure_are_bounded():
@@ -776,6 +865,7 @@ def test_admin_api_mount_calls_public_feature_and_denies_normal_users(monkeypatc
 
 
 def test_admin_api_deadline_reports_started_work(monkeypatch):
+    from ai_actuarial.agent_runtime.contracts import AgentBudget
     from ai_actuarial.api.routers import assistant_runtime
 
     app = FastAPI()
@@ -783,11 +873,17 @@ def test_admin_api_deadline_reports_started_work(monkeypatch):
     app.include_router(feature_router, prefix="/api")
     auth = AuthContext({"subject": "admin"}, frozenset({"config.write", "chat.query"}))
     monkeypatch.setattr(deps, "_load_auth_context", lambda request: auth)
-    monkeypatch.setattr(assistant_runtime, "REQUEST_SECONDS", 0.1)
+    monkeypatch.setattr(
+        assistant_runtime,
+        "load_agent_budget",
+        lambda: AgentBudget(total_seconds=0.1, request_seconds=0.1),
+    )
     started = Event()
     release = Event()
 
     def query(**kwargs):
+        assert kwargs["budget"].total_seconds == 0.1
+        assert 0 < kwargs["deadline"] - time.monotonic() <= 0.1
         context = RunContext(principal="admin", scopes=auth.permissions)
         kwargs["request"].state.assistant_runtime_context = context
         context.take_model()
@@ -885,7 +981,7 @@ def test_host_rechecks_target_and_initial_scope(host_fixture):
         ("deepseek", "deepseek-flash", {"thinking": {"type": "disabled"}}),
     ],
 )
-def test_host_uses_chat_config_with_one_bounded_sdk_attempt(
+def test_host_uses_same_agent_budget_with_bounded_sdk_attempts(
     host_fixture, provider, model_name, expected_body
 ):
     from ai_actuarial.chatbot import config as config_module
@@ -928,12 +1024,119 @@ def test_host_uses_chat_config_with_one_bounded_sdk_attempt(
     outcome = state.feature.query(request=state.request, auth=auth, message="sample")
     assert outcome.response.answer == "Which sample?"
     assert observed["from_config"]["storage"] is observed["storage"]
-    assert observed["config"].max_retries == 1
-    assert observed["config"].length_recovery_enabled is False
+    assert observed["config"].max_tokens == 3000
+    assert observed["config"].max_retries == 3
+    assert observed["config"].length_recovery_enabled is True
+    assert observed["config"].length_recovery_max_tokens == 4000
+    assert observed["config"].llm_provider == provider
+    assert observed["config"].model == model_name
+    assert observed["config"].api_key == config.api_key
     assert observed["options"]["max_retries"] == 0
-    assert 0 < observed["options"]["timeout"] <= 30
+    assert "timeout" not in observed["options"]
+    assert callable(observed["generate"]["before_request"])
     assert observed["generate"]["extra_body"] == expected_body
     assert observed["closed"]
+
+
+@pytest.mark.parametrize(
+    "provider,model_name,chat_tokens,token_key,budget_section,initial,recovery,request_seconds",
+    [
+        ("openai", "gpt-6-luna", 1000, "max_completion_tokens", {}, 3000, 4000, 60),
+        ("deepseek", "deepseek-flash", 3000, "max_tokens", {}, 3000, 4000, 60),
+        (
+            "openai",
+            "gpt-6-luna",
+            1000,
+            "max_completion_tokens",
+            {
+                "initial_tokens": 2500,
+                "recovery_tokens": 3500,
+                "max_retries": 2,
+                "model_requests": 5,
+                "total_seconds": 90,
+                "request_seconds": 7,
+            },
+            2500,
+            3500,
+            7,
+        ),
+    ],
+)
+def test_host_agent_recovery_counts_real_creates_and_refreshes_timeout(
+    host_fixture,
+    provider,
+    model_name,
+    chat_tokens,
+    token_key,
+    budget_section,
+    initial,
+    recovery,
+    request_seconds,
+):
+    from ai_actuarial.assistant import agent_budget
+    from ai_actuarial.chatbot import config as config_module
+    from ai_actuarial.chatbot import llm as llm_module
+
+    state = host_fixture
+    state.monkeypatch.setattr(
+        agent_budget, "load_ai_config", lambda: {"assistant_agent": budget_section}
+    )
+    requests = []
+    options = []
+
+    class SDK:
+        def __init__(self):
+            self.chat = SimpleNamespace(completions=SimpleNamespace(create=self.create))
+
+        def with_options(self, **kwargs):
+            options.append(kwargs)
+            return self
+
+        def create(self, **kwargs):
+            requests.append(kwargs)
+            if len(requests) == 1:
+                state.request.state.assistant_runtime_context.deadline = time.monotonic() + 10
+                content, finish_reason = "", "length"
+            else:
+                content, finish_reason = action(action="clarify", question="Which report?"), "stop"
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        finish_reason=finish_reason,
+                        message=SimpleNamespace(content=content),
+                    )
+                ]
+            )
+
+        def close(self):
+            pass
+
+    chat_config = config_module.ChatbotConfig(
+        api_key="test-only",
+        llm_provider=provider,
+        model=model_name,
+        max_tokens=chat_tokens,
+        retry_delay=0,
+        _apply_env_defaults=False,
+    )
+    state.monkeypatch.setattr(
+        config_module.ChatbotConfig, "from_config", lambda **kwargs: chat_config
+    )
+    state.monkeypatch.setattr(llm_module.openai, "OpenAI", lambda **kwargs: SDK())
+    outcome = state.feature.query(
+        request=state.request, auth=AuthContext(None, frozenset()), message="Which report?"
+    )
+    context = state.request.state.assistant_runtime_context
+    assert outcome.response.answer == "Which report?"
+    assert chat_config.max_tokens == chat_tokens
+    assert options == [{"max_retries": 0}]
+    assert context.provider_requests == context.model_attempts == 2
+    assert [request[token_key] for request in requests] == [initial, recovery]
+    assert 0 < requests[0]["timeout"] <= request_seconds
+    assert 0 < requests[1]["timeout"] <= min(10, request_seconds)
+    assert context.budget.initial_tokens == initial
+    assert context.budget.recovery_tokens == recovery
+    assert all("reasoning_effort" not in request for request in requests)
 
 
 @pytest.mark.parametrize(

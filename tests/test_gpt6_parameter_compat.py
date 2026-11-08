@@ -8,6 +8,7 @@ import httpx
 import openai
 import pytest
 
+from ai_actuarial.agent_runtime import RunContext
 from ai_actuarial.ai_runtime import AIFunctionRuntime
 from ai_actuarial.api.services.weekly_explanations import ChatRuntimeWeeklyExplanationGenerator
 from ai_actuarial.catalog_llm import catalog_with_openai, confirm_category_for_summary
@@ -69,6 +70,7 @@ def test_chat_generate_gpt6_parameter_matrix(
 
     kwargs = client.chat.completions.create.call_args.kwargs
     assert kwargs[token_key] == 321
+    assert "timeout" not in kwargs
     if temperature is None:
         assert "temperature" not in kwargs
     else:
@@ -276,3 +278,128 @@ def test_gpt6_recovery_bad_request_does_not_retry_or_fall_back_to_legacy_paramet
         assert "temperature" not in request
     assert initial_request["max_completion_tokens"] == 321
     assert recovery_request["max_completion_tokens"] == 654
+
+
+@pytest.mark.parametrize("first_failure", ["empty", "rate_limit"])
+def test_agent_before_request_runs_for_retry_and_length_recovery(first_failure) -> None:
+    client = _completion_client("")
+    first = (
+        SimpleNamespace(
+            choices=[SimpleNamespace(finish_reason="stop", message=SimpleNamespace(content=""))]
+        )
+        if first_failure == "empty"
+        else openai.RateLimitError(
+            "bounded retry",
+            response=httpx.Response(
+                429,
+                request=httpx.Request("POST", "https://api.openai.test/v1/chat/completions"),
+            ),
+            body={"error": {"code": "rate_limit_exceeded"}},
+        )
+    )
+    client.chat.completions.create.side_effect = [
+        first,
+        SimpleNamespace(
+            choices=[SimpleNamespace(finish_reason="length", message=SimpleNamespace(content=""))]
+        ),
+        SimpleNamespace(
+            choices=[SimpleNamespace(finish_reason="stop", message=SimpleNamespace(content="done"))]
+        ),
+    ]
+    with patch("openai.OpenAI", return_value=client):
+        llm = LLMClient(
+            ChatbotConfig(
+                llm_provider="openai",
+                model="gpt-6-luna",
+                api_key="test-key",
+                max_tokens=3000,
+                max_retries=3,
+                retry_delay=0,
+                length_recovery_enabled=True,
+                length_recovery_max_tokens=4000,
+                _apply_env_defaults=False,
+            )
+        )
+        checked = []
+
+        def before_request():
+            checked.append(len(checked) + 1)
+            return 61 - len(checked)
+
+        assert (
+            llm.generate([{"role": "user", "content": "test"}], before_request=before_request)
+            == "done"
+        )
+
+    assert checked == [1, 2, 3]
+    requests = [call.kwargs for call in client.chat.completions.create.call_args_list]
+    assert [request["timeout"] for request in requests] == [60, 59, 58]
+    assert [request["max_completion_tokens"] for request in requests] == [3000, 3000, 4000]
+    assert all("reasoning_effort" not in request for request in requests)
+
+
+def test_agent_cancelled_before_first_create_keeps_provider_count_zero() -> None:
+    client = _completion_client()
+    with patch("openai.OpenAI", return_value=client):
+        llm = LLMClient(
+            ChatbotConfig(
+                llm_provider="openai",
+                model="gpt-6-luna",
+                api_key="test-key",
+                max_tokens=3000,
+                length_recovery_max_tokens=4000,
+                _apply_env_defaults=False,
+            )
+        )
+        context = RunContext(principal="test", scopes=frozenset())
+        context.take_model()
+        context.cancelled.set()
+        with pytest.raises(TimeoutError, match="cancelled"):
+            llm.generate(
+                [{"role": "user", "content": "test"}],
+                before_request=lambda: context.take_provider_request(prepaid=True),
+            )
+    assert client.chat.completions.create.call_count == 0
+    assert context.model_attempts == 1 and context.provider_requests == 0
+
+
+def test_agent_sixth_create_can_start_but_seventh_cannot() -> None:
+    client = _completion_client("")
+    client.chat.completions.create.side_effect = [
+        SimpleNamespace(
+            choices=[SimpleNamespace(finish_reason="stop", message=SimpleNamespace(content=""))]
+        ),
+        SimpleNamespace(
+            choices=[SimpleNamespace(finish_reason="stop", message=SimpleNamespace(content="late"))]
+        ),
+    ]
+    with patch("openai.OpenAI", return_value=client):
+        llm = LLMClient(
+            ChatbotConfig(
+                llm_provider="openai",
+                model="gpt-6-luna",
+                api_key="test-key",
+                max_tokens=3000,
+                max_retries=3,
+                retry_delay=0,
+                length_recovery_max_tokens=4000,
+                _apply_env_defaults=False,
+            )
+        )
+        context = RunContext(principal="test", scopes=frozenset())
+        for _ in range(5):
+            context.take_model()
+            context.take_provider_request(prepaid=True)
+        context.take_model()
+        first = True
+
+        def before_request():
+            nonlocal first
+            timeout = context.take_provider_request(prepaid=first)
+            first = False
+            return timeout
+
+        with pytest.raises(TimeoutError, match="model budget"):
+            llm.generate([{"role": "user", "content": "test"}], before_request=before_request)
+    assert client.chat.completions.create.call_count == 1
+    assert context.model_attempts == context.provider_requests == 6
