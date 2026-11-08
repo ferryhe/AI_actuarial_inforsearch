@@ -1,5 +1,5 @@
 {
-  "source_version": "1.0.0",
+  "source_version": "1.1.2",
   "questions": [
     {"id": "en-browse", "language": "en", "question": "Database search by title filename and source", "expected": {"doc_id": "user-guide-en", "section_id": "browse-search"}},
     {"id": "zh-browse", "language": "zh", "question": "数据库搜索标题文件名来源", "expected": {"doc_id": "user-guide-zh", "section_id": "browse-search"}},
@@ -18,6 +18,10 @@
     {"id": "en-negative-mail", "language": "en", "question": "Configure SMTP mail delivery relay", "expected": null},
     {"id": "en-negative-physics", "language": "en", "question": "Quantum chromodynamics particle collider", "expected": null},
     {"id": "zh-negative-mail", "language": "zh", "question": "象棋棋谱残局开局", "expected": null},
-    {"id": "zh-negative-physics", "language": "zh", "question": "量子色动力学粒子对撞机", "expected": null}
+    {"id": "zh-negative-physics", "language": "zh", "question": "量子色动力学粒子对撞机", "expected": null},
+    {"id": "en-features", "language": "en", "question": "What features are available and how do I use this site?", "expected": {"doc_id": "user-guide-en", "section_id": "features-dashboard"}},
+    {"id": "zh-features", "language": "zh", "question": "有哪些功能怎么用操作手册", "expected": {"doc_id": "user-guide-zh", "section_id": "features-dashboard"}},
+    {"id": "en-weekly", "language": "en", "question": "How do I use the weekly report to see new files?", "expected": {"doc_id": "user-guide-en", "section_id": "weekly-reports"}},
+    {"id": "zh-weekly", "language": "zh", "question": "周报怎么用查看本周新增资料", "expected": {"doc_id": "user-guide-zh", "section_id": "weekly-reports"}}
   ]
 }

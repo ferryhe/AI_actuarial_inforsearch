@@ -2,12 +2,16 @@
 doc_id: user-guide-en
 language: en
 title: AI Actuarial Info Search — User Guide
-source_version: 1.0.0
+source_version: 1.1.2
 ---
 
 # User Guide
 
 This guide describes the current browsing, file, knowledge base, Chat, account, and feedback features. Available actions depend on your account permissions and deployment settings.
+
+## Features and Dashboard {#features-dashboard}
+
+What features are available? The Dashboard at **/** shows current file, catalog and source counts, active tasks, and the latest published weekly additions when available. Use **Database** for search, **Source Portals** for source information, **Categories** for topics, **Knowledge Bases** for index status, **Chat** for questions, **Weekly** for the published update reader, **Profile** for your account and quota, and **Help and feedback** for help or suggestions. The navigation shows only entries your account can use. The Dashboard's **View all** weekly link opens **/weekly**.
 
 ## Browsing and search {#browse-search}
 
@@ -16,6 +20,16 @@ Open **Database** to browse collected files. Use text search to find files; the 
 ## Categories and sources {#categories-sources}
 
 Open **Categories** to browse categories currently used by files. Open **Source Portals** to browse reviewed source entries, their overviews, and recent updates. Some entries are historical or on hold. A category view can link to matching files. Some deployments show an **Ask AI** link when a ready knowledge base is available for that category and your account can use Chat.
+
+## Weekly reports {#weekly-reports}
+
+How do I view weekly updates?
+
+How do I use the weekly report or find this week's new files? From the Dashboard's weekly **View all** link, open **/weekly**. It opens the latest complete **published** snapshot, not an unfinished current week. Select an older published period in the reader to inspect its historical list; open an included file to read its detail, source link, preview, or Markdown when available. The snapshot counts files first collected by this system during its period (`first_seen`); an empty published period has no new files by that definition. If no complete published snapshot exists, the reader says so. **/weekly** is the direct action.
+
+## Dates and updates {#dates-updates}
+
+A file's publication date (`files.published_time`) is different from the system's first collection date (`files.first_seen`) and the date it joined a knowledge base (`rag_kb_files.added_at`). Source Portal update entries describe source activity. Content revision lineage is currently not recorded, so this site cannot tell when a document's content changed from `last_seen`, a scheduled refresh, an HTTP status, or one current hash. Ask for a publication date, newly collected files, or weekly additions separately.
 
 ## File details and reading {#file-details}
 
@@ -31,7 +45,7 @@ Sign in or register when the deployment offers those options. Open **Profile** w
 
 ## Feedback entry {#feedback-entry}
 
-Feedback and assistant are independent switches, both off by default. The floating **Help and feedback** entry appears when either is enabled. If only feedback is enabled, the entry opens the ordinary editable form. When the assistant is also enabled, choose **Send a suggestion** to open that form without calling AI. Submit only after reviewing the text; success requires a server receipt. With the assistant enabled, select Auto, Website usage, Directory / summaries, or KB body evidence. Usage answers cite the current guide; open a citation to read that exact section/version. Directory and KB citations link to the source file details. Missing help is reported rather than invented. Auto feedback only prepares your original text as an editable draft: canceling does not submit it. If feedback is disabled, no submission action is shown. Each question is independent; history stays on the current page, clears on navigation or refresh, and is not saved to Chat. **Read user guide (no AI)** and manual feedback remain available when the model fails.
+Feedback and assistant are independent switches, both off by default. The floating **Help and feedback** entry appears when either is enabled. If only feedback is enabled, the entry opens the ordinary editable form. When the assistant is also enabled, choose **Send a suggestion** to open that form without calling AI. Submit only after reviewing the text; success requires a server receipt. With the assistant enabled, ask your question directly in the single input; the assistant chooses which tools to use. Usage answers cite the current guide; open a citation to read that exact section/version. Directory and KB citations link to the source file details. Missing help is reported rather than invented. If the assistant treats your question as feedback, it only prepares your original text as an editable draft: canceling does not submit it. If feedback is disabled, no submission action is shown. Each question is independent; history stays on the current page, clears on navigation or refresh, and is not saved to Chat. **Read user guide (no AI)** and manual feedback remain available when the model fails.
 
 ## Common failures {#common-failures}
 

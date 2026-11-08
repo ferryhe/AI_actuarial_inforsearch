@@ -71,7 +71,7 @@ def test_exact_reference_rejects_bad_and_missing_references(help_client):
         "section_id": "browse-search",
         "language": "en",
         "title": "AI Actuarial Info Search — User Guide",
-        "source_version": "1.0.0",
+        "source_version": "1.1.2",
         "content_hash": "0" * 64,
     }
     bad = help_client.get("/api/assistant/help/section", params={**base, "language": "fr"})

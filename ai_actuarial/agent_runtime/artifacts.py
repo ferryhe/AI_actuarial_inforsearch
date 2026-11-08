@@ -92,11 +92,12 @@ class ArtifactStore:
                 r"1\.[0-9]+(?:\.[0-9]+)?", parsed.version
             ):
                 raise ArtifactError("Unknown skill or ABI version")
-            for item in parsed.tools:
+            for raw_item, item in zip(manifest["tools"], parsed.tools):
                 registered = self.registered_tools.get(item.tool_id)
                 if (
                     registered is None
                     or item.executor != registered.executor
+                    or ("result_kind" in raw_item and item.result_kind != registered.result_kind)
                     or self.argument_models[item.arguments_model] is not registered.arguments
                 ):
                     raise ArtifactError(
@@ -106,6 +107,7 @@ class ArtifactStore:
                     raise ArtifactError(
                         f"Tool scope is weaker than registered contract: {item.tool_id}"
                     )
+            # Older published manifests inherit the registered result contract.
             tools = tuple(
                 Tool(
                     item.tool_id,
@@ -113,6 +115,7 @@ class ArtifactStore:
                     item.executor,
                     self.argument_models[item.arguments_model],
                     frozenset(item.required_scopes),
+                    self.registered_tools[item.tool_id].result_kind,
                 )
                 for item in parsed.tools
             )

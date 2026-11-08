@@ -50,6 +50,7 @@ def _store(tmp_path: Path) -> ArtifactStore:
         ("arguments_model", "DetailArgs"),
         ("executor", "test_lookup.detail"),
         ("tool_id", "test_lookup.unregistered"),
+        ("result_kind", "catalog_discovery"),
     ],
 )
 def test_candidate_requires_registered_tool_contract(
@@ -848,3 +849,70 @@ def test_v7_to_v8_preserves_chat_rag_and_feedback_rows(tmp_path: Path, monkeypat
         )
     finally:
         db.close()
+
+
+def test_issue478_four_packages_publish_and_disable_independently(tmp_path: Path) -> None:
+    from ai_actuarial.skills.document_research.manifest import ARGUMENT_MODELS as research_args
+    from ai_actuarial.skills.document_research.manifest import MANIFEST as research_manifest
+    from ai_actuarial.skills.feedback.manifest import ARGUMENT_MODELS as feedback_args
+    from ai_actuarial.skills.feedback.manifest import MANIFEST as feedback_manifest
+    from ai_actuarial.skills.resources_updates.manifest import ARGUMENT_MODELS as resource_args
+    from ai_actuarial.skills.resources_updates.manifest import MANIFEST as resource_manifest
+    from ai_actuarial.skills.usage_navigation.manifest import ARGUMENT_MODELS as usage_args
+    from ai_actuarial.skills.usage_navigation.manifest import MANIFEST as usage_manifest
+
+    manifests = (usage_manifest, resource_manifest, research_manifest, feedback_manifest)
+    store = ArtifactStore(
+        postgres_url_for_path(tmp_path / "db"),
+        tmp_path / "data",
+        executors=frozenset(tool.executor for item in manifests for tool in item.tools),
+        argument_models=usage_args | resource_args | research_args | feedback_args,
+        registered_tools=tuple(tool for item in manifests for tool in item.tools),
+    )
+    releases = {
+        item.skill_id: _import(store, Path("ai_actuarial/skills") / item.skill_id)
+        for item in manifests
+    }
+    store.activate(
+        feature_key="assistant",
+        site_key="default",
+        changes={key: (release, 0) for key, release in releases.items()},
+    )
+    registry, pinned = store.resolve_active(feature_key="assistant", site_key="default")
+    assert set(pinned) == set(releases)
+    assert {item["skill_id"] for item in registry.descriptions()} == set(releases)
+
+    legacy = tmp_path / "legacy-research"
+    shutil.copytree(Path("ai_actuarial/skills/document_research"), legacy)
+    legacy_manifest = json.loads((legacy / "skill.json").read_text(encoding="utf-8"))
+    legacy_manifest["version"] = "1.0"
+    legacy_manifest["tools"][0].pop("result_kind")
+    (legacy / "skill.json").write_text(json.dumps(legacy_manifest), encoding="utf-8")
+    legacy_release = _import(store, legacy)
+    store.activate(
+        feature_key="assistant",
+        site_key="default",
+        changes={"document_research": (legacy_release, 1)},
+    )
+    legacy_registry, _ = store.resolve_active(feature_key="assistant", site_key="default")
+    assert (
+        legacy_registry.tool("document_research", "document_research.find_documents").result_kind
+        == "catalog_discovery"
+    )
+
+    disabled = tmp_path / "disabled"
+    shutil.copytree(Path("ai_actuarial/skills/feedback"), disabled)
+    manifest = json.loads((disabled / "skill.json").read_text(encoding="utf-8"))
+    manifest["enabled"] = False
+    manifest["version"] = "1.1"
+    (disabled / "skill.json").write_text(json.dumps(manifest), encoding="utf-8")
+    disabled_release = _import(store, disabled)
+    store.activate(
+        feature_key="assistant",
+        site_key="default",
+        changes={"feedback": (disabled_release, 1)},
+    )
+    registry, pinned = store.resolve_active(feature_key="assistant", site_key="default")
+    assert pinned["feedback"] == disabled_release
+    assert {item["skill_id"] for item in registry.descriptions()} == set(releases) - {"feedback"}
+    assert registry.tool("document_research", "document_research.find_documents")

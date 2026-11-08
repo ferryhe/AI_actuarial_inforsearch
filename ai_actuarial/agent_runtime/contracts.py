@@ -62,6 +62,31 @@ class ToolResult:
     evidence_ids: tuple[str, ...] = ()
     error_code: str | None = None
 
+    def discovery_documents(self) -> list[dict[str, Any]]:
+        documents = self.data.get("documents")
+        if (
+            self.status != "ok"
+            or not isinstance(documents, list)
+            or not documents
+            or len(documents) != len(self.evidence_ids)
+            or len(set(self.evidence_ids)) != len(self.evidence_ids)
+            or any(
+                not isinstance(document, dict)
+                or not isinstance(document.get("target"), dict)
+                or not all(
+                    isinstance(document["target"].get(key), str) and document["target"][key]
+                    for key in ("kb_id", "file_id")
+                )
+                or not isinstance(document.get("title"), str)
+                or not document["title"]
+                or not isinstance(document.get("source_url"), str)
+                or not document["source_url"]
+                for document in documents
+            )
+        ):
+            raise ValueError("Invalid catalog discovery result")
+        return documents
+
 
 @dataclass(frozen=True)
 class ToolTrace:

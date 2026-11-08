@@ -15,7 +15,7 @@ from ai_actuarial.assistant.document_research import (
     SelectedTarget,
 )
 from ai_actuarial.skills.document_research import executors
-from ai_actuarial.skills.document_research.manifest import MANIFEST
+from ai_actuarial.skills.document_research.manifest import MANIFEST, FindArgs
 
 SURVEY = "https://www.soa.org/resources/research-reports/soa-member-ai-survey/"
 BULLETIN = "https://www.soa.org/resources/bulletin/old-ai-survey/"
@@ -888,6 +888,117 @@ def test_guarded_single_ready_finding_uses_current_quote_and_host_source(
     assert SURVEY in result.answer and BULLETIN not in result.answer
     if finding_count == 2:
         assert "许多机构仍在发展治理与培训" in result.answer
+
+
+def test_explicit_original_quote_request_uses_current_guarded_excerpt(research):
+    facade, _, _, state = research
+    state["sections"][0]["section_id"] = SURVEY + "#cs_fixture:1"
+    registry = Registry((MANIFEST,), frozenset(tool.executor for tool in MANIFEST.tools))
+    calls = []
+    observed_ids = []
+
+    def execute(tool, args, context, remaining):
+        observed = getattr(executors, tool.executor.split(".")[1])(facade, args)
+        if tool.tool_id == "document_research.read_document_sections":
+            observed_ids.extend(observed.evidence_ids)
+        return observed
+
+    def model(prompt, remaining):
+        data = json.loads(prompt)
+        calls.append(data)
+        if len(calls) == 1:
+            return json.dumps(
+                {
+                    "action": "call",
+                    "skill_id": "document_research",
+                    "tool_id": "document_research.find_documents",
+                    "args": {"query": "SOA Member AI Survey: Spring 2026"},
+                }
+            )
+        if len(calls) == 2:
+            return json.dumps(
+                {
+                    "action": "call",
+                    "skill_id": "document_research",
+                    "tool_id": "document_research.read_document_sections",
+                    "args": {
+                        "kb_id": "public",
+                        "file_id": SURVEY,
+                        "query": "Key Findings",
+                        "section": "Key Findings",
+                    },
+                }
+            )
+        if len(calls) == 3:
+            if "excerpt" in data:
+                assert data["excerpt"] == KEY_FINDINGS
+                return json.dumps(
+                    {
+                        "findings": [
+                            {
+                                "quote": "Members are using AI in actuarial work",
+                                "summary": "会员正在精算工作中使用人工智能。",
+                            }
+                        ]
+                    }
+                )
+            section_id = data["observations"][-1]["data"]["sections"][0]["section_id"]
+            return json.dumps(
+                {
+                    "action": "finish",
+                    "answer": "model prose",
+                    "evidence_ids": [section_id],
+                    "findings": [
+                        {
+                            "evidence_id": section_id,
+                            "quote": "Members have fully automated all actuarial work.",
+                            "summary": "所有精算工作已经自动化。",
+                        }
+                    ],
+                }
+            )
+        return json.dumps({"supported": [True]})
+
+    def resolve(target):
+        document = facade._document(SelectedTarget.model_validate(target))
+        return document.model_dump() if document else None
+
+    result = run(
+        message="请查找《SOA Member AI Survey: Spring 2026》，并读取章节“Key Findings”，引用其中一句原文并用中文说明。",
+        locale="zh",
+        registry=registry,
+        context=RunContext(
+            principal="test",
+            scopes=frozenset({"chat.query", "catalog.read", "files.read", "markdown.read"}),
+        ),
+        model=model,
+        execute=execute,
+        resolve_selected_document=resolve,
+    )
+    assert result.kind == "finish" and result.availability == "available", result
+    assert result.evidence_ids == tuple(observed_ids)
+    assert len(calls) == 4
+    assert "Members are using AI in actuarial work" in result.answer
+    assert SURVEY in result.answer
+
+
+def test_body_findings_prompt_distinguishes_evidence_id_from_section_id(research):
+    prompt_seen = []
+
+    def model(prompt, remaining):
+        prompt_seen.append(json.loads(json.loads(prompt)["prompt"])["instruction"])
+        return json.dumps({"action": "clarify", "question": "Which report?"})
+
+    run(
+        message="请引用 Key Findings 原文并用中文说明。",
+        locale="zh",
+        registry=Registry((MANIFEST,), frozenset(tool.executor for tool in MANIFEST.tools)),
+        context=RunContext(principal="test", scopes=frozenset({"chat.query"})),
+        model=model,
+        execute=lambda *_: pytest.fail("clarify must not call a tool"),
+    )
+    assert "observations[].evidence_ids" in prompt_seen[0]
+    assert "sections[].section_id" in prompt_seen[0]
 
 
 @pytest.mark.parametrize(
@@ -2174,3 +2285,148 @@ def test_feature_target_roundtrip_refresh_and_correction(research, monkeypatch):
     assert next_turn.response.selected_target == {"kb_id": "public", "file_id": ASHK}
     assert "Fresh ASHK findings" in next_turn.response.answer
     assert ASHK in next_turn.response.answer and SURVEY not in next_turn.response.answer
+
+
+@pytest.mark.parametrize(
+    "skill_id,tool_id,executor_id",
+    [
+        (
+            "resources_updates",
+            "resources_updates.find_documents",
+            "resources_updates.find_documents",
+        ),
+        ("test_catalog_alias", "test_catalog_alias.locate", "test_catalog_alias.locate"),
+    ],
+)
+def test_discovery_contract_read_and_follow_up_share_host_provenance(
+    research, monkeypatch, skill_id, tool_id, executor_id
+):
+    from ai_actuarial.features.assistant import AssistantFeature
+    from ai_actuarial.features.assistant import feature as host
+    from ai_actuarial.skills.document_research import executors as research_executors
+
+    _facade, storage, _allowed, _state = research
+    storage.close = lambda: None  # Keep the task fixture alive across two request turns.
+    auth = AuthContext(
+        {"subject": "operator"},
+        frozenset({"chat.query", "catalog.read", "files.read", "markdown.read"}),
+    )
+    monkeypatch.setattr(host.chat, "Storage", lambda _database: storage)
+    monkeypatch.setattr(host.chat, "_resolve_chat_user", lambda request, auth: ("operator", None))
+    monkeypatch.setattr(host.chat, "_enforce_chat_quota", lambda **kwargs: None)
+    monkeypatch.setattr(host.deps, "get_auth_context", lambda request: auth)
+    monkeypatch.setattr(host, "permitted_kbs", lambda request, auth: ["public"])
+    request = SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(db_path="test-db")),
+        state=SimpleNamespace(),
+    )
+    feature = AssistantFeature()
+    if skill_id == "test_catalog_alias":
+        feature.executors[executor_id] = research_executors.find_documents
+        test_skill = Registry.load_skill("tests.catalog_discovery_skill", {"FindArgs": FindArgs})
+        feature.registry = Registry(
+            (*feature.registry.skills.values(), test_skill), frozenset(feature.executors)
+        )
+
+    contexts = []
+    locator = feature.executors[executor_id]
+    reader = feature.executors["document_research.read_document_sections"]
+
+    def track(executor):
+        def call(facade, args):
+            contexts.append(request.state.assistant_runtime_context)
+            return executor(facade, args)
+
+        return call
+
+    feature.executors[executor_id] = track(locator)
+    feature.executors["document_research.read_document_sections"] = track(reader)
+
+    def scripted_model(actions, prompts):
+        def model(prompt, _remaining):
+            data = json.loads(prompt)
+            if "items" in data:
+                return json.dumps({"supported": [True]})
+            prompts.append(data)
+            if actions:
+                return json.dumps(actions.pop(0))
+            evidence_id = data["observations"][-1]["evidence_ids"][0]
+            return json.dumps(
+                {
+                    "action": "finish",
+                    "answer": "unused",
+                    "evidence_ids": [evidence_id],
+                    "findings": [
+                        {
+                            "evidence_id": evidence_id,
+                            "quote": "Members are using AI in actuarial work",
+                            "summary": "Members are using AI in actuarial work.",
+                        }
+                    ],
+                }
+            )
+
+        return model
+
+    first_prompts = []
+    first_actions = [
+        {
+            "action": "call",
+            "skill_id": skill_id,
+            "tool_id": tool_id,
+            "args": {"query": "SOA Member AI Survey: Spring 2026"},
+        },
+        {
+            "action": "call",
+            "skill_id": "document_research",
+            "tool_id": "document_research.read_document_sections",
+            "args": {"kb_id": "public", "file_id": SURVEY, "query": "Key Findings"},
+        },
+    ]
+    first = feature.query(
+        request=request,
+        auth=auth,
+        message="What did the latest SOA member AI survey find?",
+        model=scripted_model(first_actions, first_prompts),
+    )
+    assert first.runtime.kind == "finish" and first.runtime.error_code is None
+    assert [item.tool_id for item in first.runtime.trace] == [
+        tool_id,
+        "document_research.read_document_sections",
+    ]
+    assert first.response.selected_target == {"kb_id": "public", "file_id": SURVEY}
+    assert "Members are using AI in actuarial work" in first.response.answer
+    assert SURVEY in first.response.answer
+    assert first.runtime.tool_attempts == 2 and first.runtime.model_attempts == 4
+    assert contexts[0] is contexts[1]
+    assert contexts[0].principal == "operator"
+    assert contexts[0].scopes == auth.permissions
+
+    follow_prompts = []
+    follow_actions = [
+        {
+            "action": "call",
+            "skill_id": "document_research",
+            "tool_id": "document_research.read_document_sections",
+            "args": {"kb_id": "public", "file_id": SURVEY, "query": "Key Findings"},
+        }
+    ]
+    follow = feature.query(
+        request=request,
+        auth=auth,
+        message="Quote that report and give its original link.",
+        selected_target=SelectedTarget.model_validate(first.response.selected_target),
+        model=scripted_model(follow_actions, follow_prompts),
+    )
+    assert follow.runtime.kind == "finish" and follow.runtime.error_code is None
+    assert follow.response.selected_target == first.response.selected_target
+    assert "Members are using AI in actuarial work" in follow.response.answer
+    assert SURVEY in follow.response.answer
+    assert follow.runtime.tool_attempts == 1 and follow.runtime.model_attempts == 3
+    assert contexts[2] is request.state.assistant_runtime_context
+    assert contexts[2] is not contexts[0]
+    assert follow_prompts[0]["observations"] == []
+    assert (
+        json.loads(follow_prompts[0]["prompt"])["selected_target"] == first.response.selected_target
+    )
+    assert follow.runtime.evidence_ids != ()

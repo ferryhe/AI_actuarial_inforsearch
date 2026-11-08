@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, replace
+from datetime import datetime, timezone
 from threading import Event
 from typing import Callable
 
@@ -16,16 +18,27 @@ from ai_actuarial.api.services import chat
 from ai_actuarial.assistant.agent_budget import load_agent_budget
 from ai_actuarial.assistant.document_research import DocumentResearch, SelectedTarget
 from ai_actuarial.assistant.knowledge import permitted_kbs
-from ai_actuarial.assistant.query import FeatureResponse
+from ai_actuarial.assistant.query import FeatureResponse, HelpCitation
 from ai_actuarial.postgres import DatabaseConfig, resolve_data_root
 from ai_actuarial.skills.document_research import executors as research_executors
 from ai_actuarial.skills.document_research.manifest import (
     ARGUMENT_MODELS as RESEARCH_ARGUMENT_MODELS,
 )
 from ai_actuarial.skills.document_research.manifest import MANIFEST as RESEARCH_MANIFEST
+from ai_actuarial.skills.feedback import executors as feedback_executors
+from ai_actuarial.skills.feedback.manifest import ARGUMENT_MODELS as FEEDBACK_ARGUMENT_MODELS
+from ai_actuarial.skills.feedback.manifest import MANIFEST as FEEDBACK_MANIFEST
+from ai_actuarial.skills.resources_updates import executors as resources_executors
+from ai_actuarial.skills.resources_updates.manifest import (
+    ARGUMENT_MODELS as RESOURCES_ARGUMENT_MODELS,
+)
+from ai_actuarial.skills.resources_updates.manifest import MANIFEST as RESOURCES_MANIFEST
 from ai_actuarial.skills.test_lookup import executors as test_executors
 from ai_actuarial.skills.test_lookup.manifest import ARGUMENT_MODELS
 from ai_actuarial.skills.test_lookup.manifest import MANIFEST as TEST_MANIFEST
+from ai_actuarial.skills.usage_navigation import executors as usage_executors
+from ai_actuarial.skills.usage_navigation.manifest import ARGUMENT_MODELS as USAGE_ARGUMENT_MODELS
+from ai_actuarial.skills.usage_navigation.manifest import MANIFEST as USAGE_MANIFEST
 
 
 @dataclass(frozen=True)
@@ -60,9 +73,26 @@ class AssistantFeature:
             "document_research.read_document_sections": research_executors.read_document_sections,
             "document_research.search_knowledge": research_executors.search_knowledge,
             "document_research.readiness": research_executors.readiness,
+            "usage_navigation.guide": usage_executors.guide,
+            "resources_updates.sources": resources_executors.sources,
+            "resources_updates.recent": resources_executors.recent,
+            "resources_updates.catalog_search": resources_executors.catalog_search,
+            "resources_updates.weekly": resources_executors.weekly,
+            "resources_updates.find_documents": resources_executors.find_documents,
+            "resources_updates.document_dates": resources_executors.document_dates,
+            "feedback.draft": feedback_executors.draft,
         }
         self.registry = Registry(
-            (replace(TEST_MANIFEST, enabled=enabled), replace(RESEARCH_MANIFEST, enabled=enabled)),
+            tuple(
+                replace(item, enabled=enabled)
+                for item in (
+                    TEST_MANIFEST,
+                    RESEARCH_MANIFEST,
+                    USAGE_MANIFEST,
+                    RESOURCES_MANIFEST,
+                    FEEDBACK_MANIFEST,
+                )
+            ),
             frozenset(self.executors),
         )
 
@@ -105,8 +135,20 @@ class AssistantFeature:
                     database,
                     getattr(request.app.state, "data_root", None) or resolve_data_root(),
                     executors=frozenset(self.executors),
-                    argument_models=ARGUMENT_MODELS | RESEARCH_ARGUMENT_MODELS,
-                    registered_tools=TEST_MANIFEST.tools + RESEARCH_MANIFEST.tools,
+                    argument_models=(
+                        ARGUMENT_MODELS
+                        | RESEARCH_ARGUMENT_MODELS
+                        | USAGE_ARGUMENT_MODELS
+                        | RESOURCES_ARGUMENT_MODELS
+                        | FEEDBACK_ARGUMENT_MODELS
+                    ),
+                    registered_tools=(
+                        TEST_MANIFEST.tools
+                        + RESEARCH_MANIFEST.tools
+                        + USAGE_MANIFEST.tools
+                        + RESOURCES_MANIFEST.tools
+                        + FEEDBACK_MANIFEST.tools
+                    ),
                 )
                 try:
                     registry, pinned = store.resolve_active(
@@ -116,6 +158,17 @@ class AssistantFeature:
                 except ArtifactError:
                     runtime = RunResult("", "error", "INVALID_SKILL_RELEASE", (), 0, 0, 0, ())
                     return Outcome(self._response(runtime, locale), runtime, session_update)
+            if (
+                not getattr(request.app.state, "feedback_enabled", False)
+                and "feedback" in registry.skills
+            ):
+                registry = Registry(
+                    tuple(
+                        replace(skill, enabled=False) if skill.skill_id == "feedback" else skill
+                        for skill in registry.skills.values()
+                    ),
+                    frozenset(self.executors),
+                )
             try:
                 chat._enforce_chat_quota(storage=storage, request=request, auth=auth)
             except chat.ChatApiError as exc:
@@ -167,6 +220,12 @@ class AssistantFeature:
             found_targets: set[tuple[str, str]] = set()
             found_evidence_targets: dict[str, SelectedTarget] = {}
             body_read_targets: set[tuple[str, str]] = set()
+            help_citations: dict[str, HelpCitation] = {}
+            help_answers: dict[str, str] = {}
+            weekly_actions: set[str] = set()
+            weekly_guide_ids: set[str] = set()
+            weekly_empty: dict[str, str] = {}
+            resource_answers: dict[str, str] = {}
             if verified_target is not None:
                 current_facade = DocumentResearch(
                     storage, authorized_kbs=lambda: permitted_kbs(request, auth)
@@ -199,7 +258,32 @@ class AssistantFeature:
                 ):
                     raise PermissionError("KB target is outside current scope")
                 run_context.remaining()
-                if tool.executor.startswith("document_research."):
+                if tool.executor == "feedback.draft":
+                    if not getattr(request.app.state, "feedback_enabled", False):
+                        return ToolResult("unavailable", {"message": "Feedback is disabled."})
+                    return self.executors[tool.executor]({"text": message})
+                if tool.executor == "usage_navigation.guide":
+                    result = self.executors[tool.executor](
+                        {**args, "language": "zh" if locale.startswith("zh") else "en"}
+                    )
+                    for evidence_id, item in zip(
+                        result.evidence_ids, result.data.get("sections", [])
+                    ):
+                        help_citations[evidence_id] = HelpCitation(
+                            **item["reference"],
+                            title=item["document_title"],
+                            source_type="help",
+                            link=item["link"],
+                        )
+                        help_answers[evidence_id] = item["content"]
+                        if item.get("action") == "/weekly":
+                            weekly_actions.add(evidence_id)
+                            weekly_guide_ids.add(evidence_id)
+                    return result
+                if (
+                    tool.executor.startswith(("document_research.", "resources_updates."))
+                    or tool.result_kind == "catalog_discovery"
+                ):
                     if tool.executor in {
                         "document_research.read_document_sections",
                         "document_research.search_knowledge",
@@ -219,11 +303,30 @@ class AssistantFeature:
                         on_embedding=run_context.take_embedding,
                     )
                     result = self.executors[tool.executor](facade, args)
-                    if (
-                        result.status == "ok"
-                        and tool.executor == "document_research.find_documents"
-                    ):
-                        documents = result.data.get("documents", [])
+                    if result.status == "ok" and tool.executor.startswith("resources_updates."):
+                        answer = resources_executors.grounded_answer(
+                            tool.executor, result.data, locale
+                        )
+                        if answer:
+                            resource_answers.update({item: answer for item in result.evidence_ids})
+                    if tool.executor == "resources_updates.weekly" and result.status == "ok":
+                        weekly_actions.update(result.evidence_ids)
+                        if result.data.get("snapshot") is None:
+                            weekly_empty.update(
+                                {item: "no_snapshot" for item in result.evidence_ids}
+                            )
+                        elif result.data.get("total") == 0:
+                            weekly_empty.update({item: "no_new" for item in result.evidence_ids})
+                    if result.status == "ok" and tool.result_kind == "catalog_discovery":
+                        documents = result.discovery_documents()
+                        for item in documents:
+                            target = SelectedTarget.model_validate(item["target"])
+                            current_document = facade._document(target)
+                            if (
+                                current_document is None
+                                or current_document.source_url != item["source_url"]
+                            ):
+                                raise ValueError("Catalog target is no longer current")
                         found_targets.update(
                             (item["target"]["kb_id"], item["target"]["file_id"])
                             for item in documents
@@ -307,6 +410,144 @@ class AssistantFeature:
                 resolve_selected_document=resolve_selected_document,
             )
             response = self._response(runtime, locale)
+            response.citations = [
+                help_citations[item] for item in runtime.evidence_ids if item in help_citations
+            ]
+            weekly_used = runtime.kind == "finish" and bool(
+                weekly_actions.intersection(runtime.evidence_ids)
+            )
+            weekly_guide_used = bool(weekly_guide_ids.intersection(runtime.evidence_ids))
+            weekly_access: bool | None = None
+            if weekly_used:
+                try:
+                    if hasattr(request.state, "auth_context"):
+                        del request.state.auth_context
+                    current = deps.get_auth_context(request)
+                    current_scopes = (
+                        current.permissions
+                        if current.token
+                        else public_permissions_for_request(request)
+                    )
+                    weekly_access = (
+                        _identity(current) == initial_identity
+                        and {
+                            "chat.query",
+                            "files.read",
+                        }
+                        <= current_scopes
+                    )
+                except Exception:
+                    pass
+            if runtime.kind == "finish":
+                weekly_guide_answer = (
+                    (
+                        "首页周报卡片的‘查看全部’通往周报页。有快照时，页面展示最近一期完整已发布的周期，未结束的本周不在其中；也可选择较早的已发布周期。有权访问周报清单时，可打开其中资料阅读详情、原文链接，以及可用的预览或 Markdown。"
+                        if locale.startswith("zh")
+                        else "The Dashboard's weekly View all leads to the Weekly page. When available, it shows the latest complete published period, not an unfinished current week; you can select an older published period. When you can access a weekly list, open a listed file to read its details, source link, and a preview or Markdown when available."
+                    )
+                    if weekly_guide_used
+                    else ""
+                )
+                grounded = [
+                    resource_answers[item]
+                    for item in runtime.evidence_ids
+                    if item in resource_answers
+                ]
+                if grounded:
+                    response.answer = "\n\n".join(dict.fromkeys(grounded))
+                    if weekly_guide_used:
+                        response.answer = weekly_guide_answer + "\n\n" + response.answer
+                elif weekly_guide_used:
+                    response.answer = weekly_guide_answer
+                    if weekly_access:
+                        try:
+                            context.remaining()
+                            snapshot = storage.get_latest_weekly_snapshot(
+                                now=datetime.now(timezone.utc).isoformat()
+                            )
+                            if snapshot is None:
+                                response.answer += (
+                                    " 目前没有完整已发布的周报快照。"
+                                    if locale.startswith("zh")
+                                    else " No complete published weekly snapshot is available yet."
+                                )
+                            elif snapshot.get("period_start") and snapshot.get("period_end"):
+                                response.answer += (
+                                    f" 最近已发布周期：{snapshot['period_start']} 至 {snapshot['period_end']}。"
+                                    if locale.startswith("zh")
+                                    else f" Latest published period: {snapshot['period_start']} to {snapshot['period_end']}."
+                                )
+                        except Exception:
+                            pass
+                else:
+                    guide_answers = [
+                        help_answers[item] for item in runtime.evidence_ids if item in help_answers
+                    ]
+                    if guide_answers:
+                        response.answer = "\n\n".join(dict.fromkeys(guide_answers))
+            if weekly_used:
+                if weekly_access is not True:
+                    if weekly_access is False:
+                        notice = (
+                            "当前账户无法打开周报页。请登录有资料读取权限的账户，或联系管理员开通权限。"
+                            if locale.startswith("zh")
+                            else "You cannot open the Weekly page with your current access. Sign in with a permitted account or ask an administrator for access."
+                        )
+                    else:
+                        notice = (
+                            "无法核实当前周报访问权限；请重新登录或联系管理员。"
+                            if locale.startswith("zh")
+                            else "Current Weekly access could not be verified; sign in again or ask an administrator."
+                        )
+                    response.answer = (response.answer + " " if weekly_guide_used else "") + notice
+                else:
+                    empty = next(
+                        (
+                            weekly_empty[item]
+                            for item in runtime.evidence_ids
+                            if item in weekly_empty
+                        ),
+                        None,
+                    )
+                    if empty == "no_snapshot":
+                        status = (
+                            "目前没有完整已发布的周报快照。"
+                            if locale.startswith("zh")
+                            else "No complete published weekly snapshot is available yet."
+                        )
+                        response.answer = (
+                            weekly_guide_answer + " " if weekly_guide_used else ""
+                        ) + status
+                    elif empty == "no_new":
+                        status = (
+                            "最近一期已发布周报按系统首次收录时间统计，没有新增资料。"
+                            if locale.startswith("zh")
+                            else "The latest published weekly period has no newly first-collected files."
+                        )
+                        response.answer = (
+                            weekly_guide_answer + " " if weekly_guide_used else ""
+                        ) + status
+                    if not re.search(r"\[[^\]]+\]\(/weekly\)", response.answer):
+                        response.answer += (
+                            "\n\n打开[周报](/weekly)。"
+                            if locale.startswith("zh")
+                            else "\n\nOpen [Weekly](/weekly)."
+                        )
+            if (
+                runtime.kind == "finish"
+                and getattr(request.app.state, "feedback_enabled", False)
+                and any(
+                    item.tool_id == "feedback.draft" and item.status == "ok"
+                    for item in runtime.trace
+                )
+            ):
+                response.intent = "feedback"
+                response.feedback_draft = message
+                response.answer = (
+                    "这只是草稿。请检查、编辑后确认提交；尚未记录。"
+                    if locale.startswith("zh")
+                    else "This is only a draft. Review, edit and confirm to submit; nothing is recorded yet."
+                )
             if runtime.error_code == "SCOPE_REVOKED":
                 verified_target = None
             elif runtime.kind == "finish" and len(runtime.evidence_ids) == 1:
@@ -323,8 +564,36 @@ class AssistantFeature:
     @staticmethod
     def _response(runtime: RunResult, locale: str) -> FeatureResponse:
         zh = locale.startswith("zh")
+        errors = {
+            "QUOTA_EXCEEDED": (
+                "每日 AI 额度已用完；可免 AI 查阅使用指南，或在 UTC 日期重置后重试。",
+                "Daily AI quota reached. Open the guide without AI or retry after the UTC reset.",
+            ),
+            "SCOPE_REVOKED": (
+                "当前身份或权限已变化；请重新登录，或联系管理员确认权限。",
+                "Your identity or access changed. Sign in again or ask an administrator to check access.",
+            ),
+            "ASSISTANT_TIMEOUT": (
+                "助手超时；请稍后重试，或免 AI 查阅使用指南。",
+                "The assistant timed out. Retry or open the guide without AI.",
+            ),
+            "PROVIDER_UNAVAILABLE": (
+                "模型暂不可用；请稍后重试，或免 AI 查阅使用指南。",
+                "The model is unavailable. Retry later or open the guide without AI.",
+            ),
+            "PROVIDER_RATE_LIMITED": (
+                "模型请求过于频繁；请稍后重试，或免 AI 查阅使用指南。",
+                "The model is rate limited. Retry later or open the guide without AI.",
+            ),
+            "NO_EVIDENCE": (
+                "没有可核验的当前证据；请缩小问题范围或打开资料原文。",
+                "No current evidence was found. Narrow the question or open the source file.",
+            ),
+        }
         answer = runtime.answer or (
-            "请补充更多细节或稍后重试。" if zh else "Please add more detail or retry later."
+            errors[runtime.error_code][int(not zh)]
+            if runtime.error_code in errors
+            else "请补充更多细节或稍后重试。" if zh else "Please add more detail or retry later."
         )
         routing = 1 if runtime.model_attempts else 0
         return FeatureResponse(

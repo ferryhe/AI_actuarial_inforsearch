@@ -1,3 +1,22 @@
+## 2026-11-08 Issue #478 — R2 F2/F3 repair ready for fresh review
+
+- Same senior worker fixed only the accepted R2 weekly guide answer and bilingual feedback-guide text. A guide-only weekly answer now follows current guide steps, reads the latest published snapshot only with current `chat.query`/`files.read` authorization, states no snapshot or the published period when verified, and leaves status unasserted on denial/read failure. The guide now describes the actual single question input and automatic tool selection; both guide versions are 1.1.2.
+- Six new cases failed before product edits and passed after. Final isolated PostgreSQL focused suite: 361 passed, 4 warnings; Black, isort, Ruff and `git diff --check` passed. Raw evidence and the 35-file current-source package are under `reports/issue-473-480-20261107/issue-478/r2/fix-f2-f3/`; source fingerprint `c571938a6319c5bc931ca24660856b37dff2cc08fbdbd5de09343b420678b00f`.
+- HEAD remains `977083471cb2ba7c37195bceba16133d06f361ad`. No commit, push, PR, provider run, browser-continuous run or production write by this worker. Fresh independent review is next.
+
+## 2026-11-08 Issue #478 — generic catalog discovery and multi-turn tests ready for review
+
+- Follow-up correction removed per-skill finder names from the agent loop. A registered `catalog_discovery` manifest result contract now drives loop evidence and Host current-member validation; a third test-only packaged finder succeeds without another loop edit. Previously published manifests that omit the field inherit the registered contract.
+- SOA resource or alternate finder → exact body quote/source → selected-target follow-up is covered. Usage overview → weekly guide plus snapshot in one RunContext → `/weekly` → additions follow-up is covered; each new turn has a fresh budget and evidence set. Ordinary widget remains on the legacy route and browser-continuous flow is reserved for #479; the `config.write` admin gate is unchanged.
+- Task-isolated PostgreSQL focused suite: 348 passed, 4 warnings. Black, isort, Ruff and whitespace checks passed. Evidence: `reports/issue-473-480-20261107/issue-478/worker-implementation.md`. No live provider, production write, commit, push or PR by this worker. Independent review is next.
+
+## 2026-11-08 Issue #478 — built-in skill implementation ready for independent review
+
+- Branch `codex/issue-478-builtin-skills`, baseline `977083471cb2ba7c37195bceba16133d06f361ad`; code remains uncommitted in the isolated Issue worktree.
+- Four packaged skill contracts are registered: usage_navigation, resources_updates, document_research and feedback. Current guide sections, canonical source/catalog data and published weekly snapshots are used; resource lookup now supplies Host-verified provenance for a later document body read. Feedback remains an editable draft until the existing form is explicitly submitted.
+- Task-isolated PostgreSQL focused suite: 344 passed, 4 warnings. Black, isort, Ruff and whitespace checks passed. One end-to-end isolated feedback case checked API receipt, local pull deduplication, reviewed status and exact text/ID/source/origin. Evidence: `reports/issue-473-480-20261107/issue-478/worker-implementation.md`.
+- No live model, browser smoke, production data/config, commit, push or PR was attempted by the worker. Fresh independent review is next; manager owns publication and CI gates.
+
 ## 2026-11-08 R11 候选修复完成本地验证，等待独立评审
 
 - Issue #477 仍在 Draft PR #484：`codex/issue-477-document-research`。本轮候选源码增加单一当前 Ready Key Findings 片段的受限中文摘要路径，并保留原有第四次摘要核验、引文校验、权限复查与预算；同时修复静态符号门禁发现的序列化引用。
@@ -6961,3 +6980,176 @@ Current branch head 4f030be has uncommitted small catalog/Storage variable defau
 - Copilot review was requested once at initial PR publication. GitHub returned insufficient remaining quota; Copilot is disabled for the rest of this Issue per the queue policy. No retry was made.
 - Initial current-HEAD CI run `42440969115` was in progress at the first status snapshot; combined commit status had not yet reported checks. The R10 independent local PASS covers the exact 13 product/test files; no product source changed after that review. Overseas live-provider generation remains the documented 1000-reasoning-token limitation; no production writes or deployment occurred.
 - Next: wait for current-HEAD CI and the single remote-feedback window, resolve only confirmed AC-scoped feedback, then complete merge/closure/cleanup gates.
+## 2026-11-08 Issue #478 — R1 F1–F4 repair ready for fresh review
+
+- The same worker corrected all four accepted review findings: source-filtered recent files, Host-grounded resource answers for cited evidence, the exact weekly-updates guide query, and a clickable Weekly link when model prose only names `/weekly`.
+- Seven new regression cases failed before the fix and passed after it. The final task-isolated PostgreSQL focused suite passed 355/355 with four existing warnings; Black, isort, Ruff and `git diff --check` passed on the current source.
+- Current HEAD remains `977083471cb2ba7c37195bceba16133d06f361ad`; the 35-file source snapshot SHA-256 is `62633a54da3e8a7ccc54296e95a674987a0f8dc5691e88bc42a48cf341e449d7`. No commit, push, PR, deployment or production write by this worker. Evidence and the fixed-source package are in `reports/issue-473-480-20261107/issue-478/`. Fresh independent review is next.
+
+## 2026-11-08 Issue #478 — R3 findings accepted; same-worker repair active
+
+- R3 used a fresh native reviewer thread `01a1bb05-b7eb-75e3-a9f8-ee6c993096cb`, verified gpt-6-sol/high; the controller audited the final route, all actual tool inputs, source hashes and report provenance. Current report SHA-256: `02d39402ddd04e89bc33ef67bf708ce8800711f89ecc29c8d0f2b78817504e5c`. The one-shot reviewer was archived after consumption.
+- Current-source manager reproductions confirmed: (1) a false account/delete claim is returned with the current feature-guide citation, (2) a `chat.query`-only identity receives a clickable `/weekly` action despite the route requiring `files.read`, and (3) a 13-source result says total 13 but emits 12 with no truncation notice or complete-source action. Evidence: `reports/issue-473-480-20261107/issue-478/r3/current-review-attempt-1/controller-r3-reproduction.json`.
+- TypeSafe local review Jev 1.14 classified all three as preliminary `valid/in_scope` (F1 mapping 0.92/reproduction 0.87; F2 0.93/0.87; F3 0.64/0.85). The separate actual Judge selected `accept_all` (probability 0.57, confidence 0.43) using only the current R3 evidence. The manager independently verified source behavior and accepted all three under AC2/AC3/AC6. Formal lifecycle: review_count=3/15, failed_review_cycles=3, R3 TypeSafe/Judge recorded, stage=`fixing`, no pending adjudication.
+- The same selected gpt-6-sol/high worker `01a1ba98-6fac-7673-b9b0-a4ddbd546946` is assigned to fix all three findings. It must ground all guide completion paths, match weekly actions to current permission, reuse source `truncated/action` metadata, inspect same-shaped call sites, and add one isolated AC5 backend test chaining Host draft → simulated edit/explicit confirm → API/PostgreSQL receipt → CLI pull/dedup → reviewed. The confirmation UI and ordinary browser workflows remain #479.
+- Current pre-fix source fingerprint is `c571938a6319c5bc931ca24660856b37dff2cc08fbdbd5de09343b420678b00f` at base HEAD `977083471cb2ba7c37195bceba16133d06f361ad`. No current-source live-provider, ordinary UI/browser, real-site production, full-repository suite, commit, push, PR, deployment or production write was performed.
+
+## 2026-11-08 Issue #478 — R3 fixes recorded, R4 review pending controller dispatch
+
+- The same gpt-6-sol/high worker completed accepted R3 fixes for AC2/AC3/AC6 and added the isolated AC5 backend contract test. Guide answers now use exact current section content, weekly actions recheck current identity/scopes before exposing `/weekly`, and truncated source results report shown/total with the full Source Portals action. The AC5 test exercises Host draft → simulated user edit/explicit confirmation → existing feedback API/PostgreSQL receipt → local CLI pull/dedup → reviewed status.
+- Official lifecycle recorded the material same-worker repair: `stage=awaiting_review`, `review_count=3/15`, `failed_review_cycles=3`. Current source manifest fingerprint is `0fae32fdf31816196ca0c12351328ba58bfc14cbeca41d646ad28d7778d985bb`; exact changed product/test paths and per-file hashes are in `reports/issue-473-480-20261107/issue-478/r3/fix-f1-f3/source-manifest.json`.
+- Pre-fix regressions showed six expected failures; post-fix regressions passed 7/7. Focused isolated PostgreSQL suite passed 368 tests with four warnings; the AC5 integration case passed 1 test with three warnings. Black, isort, Ruff and `git diff --check` passed on current source. Raw logs and hashes, plus independent source/ZIP manifest verification, are retained in `reports/issue-473-480-20261107/issue-478/r3/fix-f1-f3/`.
+- No fresh R4 reviewer has been dispatched yet; the current-source neutral packet and route/provenance must be frozen by the root controller before dispatch. No live-provider, ordinary UI/browser, production, full-repository suite, commit, push, PR, deployment, or production write was performed.
+
+## 2026-11-08 Issue #478 — R4 packet frozen; controller route receipt pending
+
+- Fresh R4 review packet is frozen at `reports/issue-473-480-20261107/issue-478/r4/current-review-attempt-1/`. It contains the complete current #478 body, the neutral #479 handoff boundary, current 35-file source manifest/ZIP/patch, and bounded current validation evidence. Source fingerprint `0fae32fdf31816196ca0c12351328ba58bfc14cbeca41d646ad28d7778d985bb`; patch SHA-256 `5a2389bcfdccde703b023691c4b1a8b137726400fbf5749e3f6bee9ab143e265`.
+- Unique fresh-review request `f90414ea-d2d3-4a02-ba84-dec80e3d00a4` is in `review-dispatch-request-current.json`. The three Markdown files were mechanically decoded and verified as UTF-8. A fresh reviewer has not been created/started by this manager; wait for controller's exact route and first-input audit receipt, then run official `start-review` and send only the neutral brief.
+- Lifecycle remains `awaiting_review`, review_count=3/15, failed_review_cycles=3. No product/test source changed, no tests rerun, and no commit, push, PR, live-provider call, ordinary UI/browser test, production write or deployment occurred during packet preparation.
+
+## 2026-11-08 Issue #478 — R4 local review started; first-input audit pending
+
+- Official lifecycle now records local review round 4 as active for fresh reviewer `01a1bb33-5b17-77e3-9494-7f15ea169b8f`, gpt-6-sol/high. The controller's route probe verified the required model/effort, zero probe tool calls, and idle readiness; the formal task was sent only after that probe.
+- The reviewer was instructed to make the brief its first repository tool call and write only `reviewer-round-4.md`. The controller is auditing the actual first input and full source/route provenance now. Until that receipt passes, no review outcome is consumed and no fix is dispatched.
+- Candidate remains the same frozen 35-file uncommitted snapshot. No product/test edits, new tests, provider calls, browser/UI checks, production reads/writes, commit, push or PR occurred during review dispatch.
+
+- 主控已完成 R4 reviewer 首批实际工具输入审计：探测阶段 0 次工具调用；实质任务首个工具只读了中立 brief，之后才读 AGENTS、当前 worktree 状态和许可的当前源包材料；实际上下文为 gpt-6-sol/high。首输入凭据保存在 `reports/issue-473-480-20261107/issue-478/r4/current-review-attempt-1/controller-initial-tool-inputs.json`。此为初始审计，不代表最终独立性/报告哈希核验或 PASS；唯一审查者继续审查中。
+
+- R4 独立审查者已完成只读报告，初步结论为 `CHANGES_REQUIRED`，提到一项周报导航结果偏差。主控尚需完成最终来源/工具输入/源码包/报告哈希审计；在此之前不消费报告、不登记 finding、不启动 TypeSafe，也不派同一 worker 修复。
+
+## 2026-11-08 Issue #478 — R4 AC2 finding adjudicated; same worker fixing
+
+- Manager independently reproduced the R4 weekly-query ranking failure in the current Host: `怎么查看周报` returns `features-dashboard` first; a deterministic finish citing only that evidence returns no `/weekly` action despite `chat.query` and `files.read`. This is directly within AC2's Host/backend help-and-action contract; ordinary browser transport remains #479.
+- TypeSafe Review 1.14 returned preliminary `valid/in_scope` for F1 (criterion mapping 0.94, reproduction evidence 0.87). The required new TypeSafe Judge for failed cycle 4 chose `accept_ac2_finding` (probability 0.90, confidence 0.85). Both reports and packets are under `reports/issue-473-480-20261107/issue-478/r4/`.
+- Official lifecycle is `fixing`, review_count=4/15 and failed_review_cycles=4; R4 report is consumed and the one-shot reviewer was archived. The original implementation worker is fixing only the AC2 guide/Host path and a focused regression; another fresh review will follow because behavior changes.
+- R4 also identified distinct validation gaps: no actual local CLI command, live-provider/current-site data run, all-four-switches run, ordinary browser flow or full-repository suite. These remain explicitly unclaimed and are tracked separately from the code finding.
+
+## 2026-11-08 Issue #478 — R5 AC2 fix recorded; live qualification before fresh review
+
+- The same worker changed shared help ranking so exact section-title overlap breaks body-score ties, and added Chinese weekly-query help/Host regressions for authorized and denied users. Ordinary feature-overview ordering remains covered. Only three product/test paths differ from the previous 35-file source snapshot.
+- Official material fix validation is recorded (`stage=awaiting_review`, review_count=4/15, failed_review_cycles=4). Current 35-file source fingerprint is `77e753b7d01f1c4c80c22334da3070dee9467fd8186b7071edbe5d06a2c5fdd2`; patch SHA-256 `dcd4875587a736b869bbf449607107d46a54b45df31fb0ddfac71d7d0b29b465`. Manager independently verified the manifest/ZIP/patch and reran the affected isolated PostgreSQL suite: 182 passed, 4 warnings; Black/isort/Ruff and diff check passed.
+- No R5 reviewer has been dispatched yet. Before freezing the fresh neutral review packet, the manager will run the AC-required actual local feedback CLI chain, four-switch combination checks, and bounded read-only current-source/current-site model qualification on each server's existing Chat binding. Browser/UI remains #479; no production write/deployment is planned.
+
+
+## 2026-11-08 Issue #478 — R5 R11 现场验收；AC4 文档引用失败复现
+
+- 当前候选源仍为冻结的 35 文件 R5 指纹 `77e753b7d01f1c4c80c22334da3070dee9467fd8186b7071edbe5d06a2c5fdd2`，现场验证期间未修改产品源码。两站零模型调用预检均通过：当前 `ai-api` 容器、公开 Ready SOA 文档、只读数据库快照及站点 `assistant_agent` 预算均符合预期（3000 初始 token、4000 恢复 token、3 次重试策略、每问 6 次模型请求、180 秒总预算、单请求 60 秒）。
+- 正确 R11 raw-SDK 验证记录：`reports/issue-473-480-20261107/issue-478/r5/pre-review-validation/current-live-qualification-r11-20261108T140550Z.json`（SHA-256 `C70A4C57A9D0BE02867F1BC4FDCF1663BE32CA944A22021D9A609BAACD5D33E8`）。中国站 6/6 路径通过、14 次请求（本次上限 18；此前 harness 中断可能已发出最多 6 次）；海外站 5/6 路径通过、13 次请求（上限 24）。原始 SDK create hook、Agent 计数与站点事件对账一致；SDK 重试为 0；每次请求不超过 60 秒；只读快照、容器和源指纹在运行前后未变化。
+- 海外站 `document_research` 查找 SOA Member AI Survey 和读取当前 Ready `Key Findings` 均成功，但最终动作以章节 `section_id` 作为 `evidence_id`，Host 要求的是独立生成的工具证据 ID，故两次模型执行均以 `NO_EVIDENCE` 安全拒绝；最终引文也未通过当前摘要的逐字校验。模型均为当前 `gpt-6-luna`，请求使用 3000 `max_completion_tokens`、`finish_reason=stop`，不是 token 截断或超时。
+- 同一文档路径的有界复测报告：`reports/issue-473-480-20261107/issue-478/r5/pre-review-validation/current-live-document-research-r11-retry-20261108T141153Z.json`（SHA-256 `83E3E5860F7E3D5B06167D0259470302D0571705A20350B4D42A7A9A3287E9BA`，3 次请求）。两次模型动作中错误证据 ID 指纹均为 `5fc082d1a701`，恰为已返回 `section_id` 的 SHA-256 前缀；两次引用 hash 相同且不是当前 excerpt 的精确子串。此为 AC4“读报告→原文”路径的可复现失败，主控已收到证据并应交给同一持久 worker 修复及添加回归验证；R5 reviewer 尚未派发。
+- 另有一次 R11 runner 本地 `query_records` 未初始化，导致首条中国站路径结果未保存。该次只读预检已通过，provider 精确调用数不可恢复、上界 6；记录在 `current-live-qualification-r11.json`（`PRECHECK_PASS_RUN_INCOMPLETE`）。后续中国站上限降至 18 以保证该 R11 批次累计不超过 24。没有生产写入、反馈提交、部署、提交或 PR。
+## 2026-11-08 Issue #478 — post-live document quote repair ready for review
+
+- Same worker traced two read-only live `NO_EVIDENCE` answers to an explicit Chinese quote request bypassing the guarded current Ready excerpt path, plus a prompt that confused content-bound evidence IDs with section locators. The Host correctly rejected the nonexact quote and wrong ID.
+- Two new regressions failed before the product edit and passed afterward. Final isolated PostgreSQL affected suite: 208 passed, 4 existing warnings; Black, isort, Ruff, and whitespace checks passed. Only the agent loop and document research tests differ from the prior R5 source snapshot.
+- Exact 35-file source package and validation logs: `reports/issue-473-480-20261107/issue-478/r5/post-live-document-quote-fix/`; fingerprint `fd8da0f97b915c977a7e99e07c0b22ed6ac47a0de1e27e6b20e14514e7dd7454`. HEAD remains `977083471cb2ba7c37195bceba16133d06f361ad`; no live retry, commit, push, PR, or production operation. Fresh independent review is next.
+
+
+## 2026-11-08 Issue #478 — post-fix R11 document flow passes both sites
+
+- On source fingerprint `fd8da0f97b915c977a7e99e07c0b22ed6ac47a0de1e27e6b20e14514e7dd7454`, the manager ran one bounded R11 `document_research` check per site: overseas 4 provider calls, China 4, 8 total within the controller-selected 12-call cap. Both passed with exact quote validation; `find_documents` and `read_document_sections` succeeded on the current Ready SOA source. Current source/containers, read-only database snapshots, Host/runtime counters and provider event reconciliation passed; no production writes, feedback submission, quota/session/artifact writes or deployment occurred.
+- Reports and hashes: overseas report `current-live-document-research-r11-post-fix-20261108T143003Z.json` SHA-256 `4536cf41ffba27446ec1a6b9998087b4739748c58d27d8a231f93e4ae2eda9cd`; China report `current-live-document-research-r11-post-fix-china-20261108T143304Z.json` SHA-256 `43ffacc56e298101241e8925bf756b2c1e55a9bc044b52833c2687afcaa86efc`. Call journals are stored beside them. These checks cover only `document_research` on the fixed source; the earlier 6-path R11 results remain tied to source fingerprint `77e753…` and are not presented as a full rerun of all six paths.
+- The 35-file patch/package and focused validation remain frozen and verified: patch SHA-256 `7fe8b670a3684030a4358f3eb7796621738c803d33049023f4053b921f8f0116`; focused PostgreSQL suite 208 passed, 4 existing warnings; two new regressions failed before and passed after. Current source is ready for a fresh independent R5 review. No commit, push, PR or production action occurred.
+
+## 2026-11-08 Issue #478 — R5 packet ready; verified reviewer route needed
+
+- The neutral current-source R5 packet is frozen at `reports/issue-473-480-20261107/issue-478/r5/current-review-attempt-1/`; it contains the complete product patch, the 35-file source package, Issue/AGENTS materials, worker/test evidence and both current-source site reports. It excludes prior reviewer and Judge reports.
+- The configured independent reviewer must be gpt-6-sol/high. The Issue runtime audit records that `collaboration.spawn_agent` did not honor requested model/effort overrides; a route-only probe returned both values unverified and read no repository material. No review was started or counted; lifecycle remains `awaiting_review`, `review_count=4/15`, `active_review=false`.
+- The Codex app route can set and verify the required model but creates a separate visible task. Waiting for the user to explicitly authorize that task before dispatch. Evidence: `reports/issue-473-480-20261107/issue-478/r5/controller-r5-reviewer-route-readiness.json`.
+
+## 2026-11-08 Issue #478 — R5 dispatch packet finalized
+
+- Updated the packet’s `issue.json` from the current GitHub fetch (`updated_at=2026-11-08T11:46:37Z`; full 1,868-character body includes the authorization update, phased #478/#479 boundary and AC1–AC6). The packet now contains only the neutral brief, AGENTS, current Issue, complete patch/source package, 208-pass focused log, neutral current-candidate validation summary, and the two current-source site reports/journals.
+- The review brief sets the first-input rule and blocks `.hermes`, `graphify-out`, earlier review/fix/worker/manager history, Judge/dispatch artifacts and broad reports browsing. It allows only the enumerated current packet plus source files listed in the current manifest.
+- A unique dispatch request and manifest hash are now ready for the main controller. This preparation did not start or count a review; lifecycle remains `awaiting_review`, count 4/15. No source, test, or live-provider changes were made during packet correction.
+
+## 2026-11-08 Issue #478 — R5 packet handed off for controller dispatch
+
+- The request is `reports/issue-473-480-20261107/issue-478/r5/review-dispatch-request-r5.json`, request ID `ab193fe4-6c94-474e-aed2-b1073e44bc62`. Packet is `reports/issue-473-480-20261107/issue-478/r5/current-review-attempt-1/`; its 12-file manifest SHA-256 is `f61698ffa021c131e2fd934ca0bff6ef891c0668ec762486fd0685151e97734f`. All listed file hashes and the current GitHub Issue snapshot were verified.
+- Per the latest steering, dispatch belongs to the main controller. This packet-preparation step did not start/count a review or create a reviewer. Lifecycle remains `awaiting_review`, review_count `4/15`, active review false.
+
+- Correction to the earlier route note: latest steering assigns dispatch to the main controller; the packet request is ready at `reports/issue-473-480-20261107/issue-478/r5/review-dispatch-request-r5.json`. No reviewer has been dispatched and the local review count remains 4/15.
+
+## 2026-11-08 Issue #478 — reviewer route correction
+
+- The prior note requesting a new user authorization is superseded: the user already authorized the quick Issue workflow and fresh reviewer delegation. Do not ask again.
+- `/root/r5_reviewer_route_probe` was a completed route-only probe, not a reviewer. Model/reasoning stayed unverified; it read no repository files, made no substantive tool calls, and produced no review report. Its result is preserved but not consumed.
+- Main controller alone creates the native fresh gpt-6-sol/high reviewer. This manager will reserve the official review only after receiving the exact reviewer UUID and initial-input receipt. No review has started; count remains 4/15.
+
+## 2026-11-08 Issue #478 — R5 review officially started
+
+- After the main controller supplied the exact native reviewer UUID and initial route receipt, official `start-review` reserved R5 for `01a1bbae-3380-7a33-9ec2-dcec3442dee3` on `local`, gpt-6-sol/high. Initial probe was 0 tool calls. State is `local_review`, active round 5; completed `review_count` remains 4/15 until a qualified report is consumed.
+- The read-only assignment was sent to that exact thread. Its first substantive tool call is required to read only the absolute `review-brief.md`; it must inspect the full 128,521-byte patch in segments and write only `reviewer-round-5.md`. Main controller has been asked to audit the actual first tool input. The initial dispatch receipt remains `qualified_independent_review=false`, `final_independence_audit_pending=true` until the final actual-input/source/route/report SHA audit completes.
+- Same persistent implementation worker remains selected. No product source changed; no provider/service/production operation, test run, commit, push, PR, or merge occurred during dispatch.
+
+## 2026-11-08 Issue #478 — R5 first-input gate passed; final audit pending
+
+- Main controller’s `r5/controller-initial-tool-inputs.json` confirms both actual turns used gpt-6-sol/high. The first substantive tool call read only the absolute `review-brief.md`; subsequent calls read packet AGENTS/worktree status, only the current whitelist, and verified the complete patch byte/line/hash and HEAD. It found no access to `.hermes`, graphify, prior history or dispatch history.
+- This passes only the first-input gate. The reviewer is still inspecting the candidate; final current-source/route/report SHA qualification remains pending. Do not consume a reviewer report or finish the round until that full receipt arrives.
+
+## 2026-11-08 Issue #478 — R5 report returned; final qualification pending
+
+- The sole R5 reviewer has completed and reported its result. Report path: `reports/issue-473-480-20261107/issue-478/r5/current-review-attempt-1/reviewer-round-5.md`; reviewer-reported SHA-256 `7a56088193b145ac6469df33f3fef76677fa44fb229391330e5cc88f746b0bdb`.
+- Main controller has been asked to verify all actual inputs, current source, route and report hash and send the final qualification receipt. The report body/finding has not been consumed; no review was finished and no fix was dispatched. Official R5 remains active, completed count 4/15.
+
+## 2026-11-08 Issue #478 — R5 AC2 finding accepted; same worker fixing
+
+- R5 report passed the main controller’s final route/source/input/report-hash audit and was formally consumed. Outcome `changes`; review_count=5/15, failed_review_cycles=5, `needs_fix=true`.
+- Manager independently replayed exact English and Chinese weekly questions through the current Host. Both retained the `weekly-reports` citation and clickable action while omitting the file-reading instruction present in the current guides and Issue AC2 usage requirement.
+- TypeSafe Review Jev 1.14 classified F1 valid/in_scope (criterion mapping 0.96, reproduction evidence 0.88). Because this is the fifth failed review cycle, TypeSafe Judge Jev 1.14 selected `accept_ac2_finding` (confidence 0.92); lifecycle recorded the adjudication as resolved. Both result packets are under `reports/issue-473-480-20261107/issue-478/r5/`.
+- The one-shot R5 reviewer is archived. The confirmed AC2 Host answer omission is going to the same persistent senior worker for a minimal English/Chinese Host regression and repair. AC5 observations remain coverage notes, not a second finding; manager will verify the existing isolated feedback-chain evidence and any needed final-candidate rerun separately. No code edit or production action occurred during adjudication.
+## 2026-11-08 Issue #478 — R5 AC2 file-reading fix ready for controller check
+
+- Same persistent worker fixed the sole accepted R5 AC2 finding: the Host's English and Chinese weekly-guide answer now tells users with access to open a listed file for its details, source link, and available preview or Markdown. No #479 UI flow or AC5 coverage note was changed.
+- The exact English and Chinese questions across four snapshot states failed 8/8 before the Host edit and passed 8/8 afterward. Final isolated PostgreSQL affected suite: 186 passed, 4 existing warnings; Black, isort, Ruff, and whitespace checks passed.
+- Report and verified 35-file source package: `reports/issue-473-480-20261107/issue-478/r5/fix-ac2-file-reading/`; fingerprint `c88b79438a6d8b9c06e7a2a95907b7ff9194340283fc1298e9df01b3f565e257`. Only `ai_actuarial/features/assistant/feature.py` and `tests/test_assistant_agent_runtime.py` differ from the prior source manifest. HEAD remains `977083471cb2ba7c37195bceba16133d06f361ad`; no provider/production operation, commit, push, PR, or lifecycle change. Controller check and fresh R6 review are next.
+
+## 2026-11-08 Issue #478 — AC2 weekly reading step validated; R6 packet ready
+
+- The same senior worker added the missing conditional listed-file reading step to the English and Chinese Host weekly guide answer and extended the existing weekly state test across both languages and all four snapshot states. Only `ai_actuarial/features/assistant/feature.py` and `tests/test_assistant_agent_runtime.py` differ from the preceding 35-file current-source snapshot.
+- The eight regressions failed before the answer change for the expected missing instruction and passed after. The manager independently reran the eight cases and the related isolated-PostgreSQL suite (186 passed, 4 existing warnings); Black, isort, Ruff, whitespace checks and all four assistant/feedback switch combinations passed on the frozen current candidate. The source archive/manifest hashes and reverse-applicable full patch were independently verified.
+- Current source fingerprint: `c88b79438a6d8b9c06e7a2a95907b7ff9194340283fc1298e9df01b3f565e257`; full patch SHA-256 `fe4805c0d0cab3913d227a7c09d5a4f99e7f9c69737db06995172351075d92c9`. Manager validation: `reports/issue-473-480-20261107/issue-478/r6/manager-fix-validation.json`.
+- AC5 actual subprocess feedback CLI evidence and current-candidate feature-switch results are preserved in the neutral packet. China and overseas `document_research` live checks each passed with four calls on fingerprint `fd8da0f97b915c977a7e99e07c0b22ed6ac47a0de1e27e6b20e14514e7dd7454`; this is not represented as a full live rerun on the exact current fingerprint. No new live model call or production operation was made for the localized Host text change.
+- Official lifecycle recorded the material same-worker fix and is `awaiting_review`, completed review count `5/15`, no fix pending. R6 packet is `reports/issue-473-480-20261107/issue-478/r6/current-review-attempt-1/`, packet manifest SHA-256 `05ef005a3cbf9352ba73d8396d0e30c627aa8809a6b160750dc5647bab67c410`, request ID `ee3f94dc-5998-462c-8850-6cafa22f91cb`. It contains 20 hashed evidence files, the current Issue snapshot and complete patch/archive, while excluding `.hermes`, prior reviewer/Judge reports and prior history.
+- Next: main controller creates one fresh read-only gpt-6-sol/high reviewer, audits its first actual tool input and final source/report route, then formally consumes the qualified R6 result. No commit, push, PR, or merge has occurred.
+
+## 2026-11-08 Issue #478 — R6 independent review started
+
+- The main controller created fresh read-only reviewer `01a1bbd0-e1e8-72d2-90b4-c486f70141ad` on `local` with gpt-6-sol/high. The initial route probe made no repository tool calls. Official lifecycle reserved R6; `review_count` remains 5/15 until a qualified report is consumed.
+- The first substantive repository tool call read only the absolute `review-brief.md`. The next calls read only the packet AGENTS, current Issue snapshot, current candidate summary, packet manifest, source manifest, and complete patch. The reviewer is reading the frozen archive/patch and has been instructed to write only `reviewer-round-6.md`; final source/route/report qualification remains pending.
+- Packet request `ee3f94dc-5998-462c-8850-6cafa22f91cb`, manifest SHA-256 `05ef005a3cbf9352ba73d8396d0e30c627aa8809a6b160750dc5647bab67c410`; source fingerprint `c88b79438a6d8b9c06e7a2a95907b7ff9194340283fc1298e9df01b3f565e257`. No product source changed while dispatching.
+
+## 2026-11-08 Issue #478 — R6 AC2/AC4 finding confirmed; same worker fixing
+
+- The qualified R6 gpt-6-sol/high reviewer found that a same-turn `usage_navigation.guide` + `resources_updates.weekly` answer replaces the weekly guide instructions with the data summary. The manager independently replayed the exact English and Chinese paths on source `c88b79438a6d8b9c06e7a2a95907b7ff9194340283fc1298e9df01b3f565e257`: both retained the current-period summary and clickable `/weekly` action but lost older-period selection and listed-file reading instructions. Reproduction: `r6/manager-r6-finding-reproduction.json`; qualified review SHA-256 `8555b62c88282a7d32e73ce39c7a15e0db43ab24c8af727fbcca253b9316c726`.
+- TypeSafe Review Jev 1.14 assessed F1 valid/in_scope (criterion mapping 0.95, reproduction 0.87, in-scope probability 0.84). Required Judge adjudication for the repeated failed cycle selected `accept_ac2_ac4_finding` (probability 0.97, confidence 0.96). Inputs/results are in `r6/typesafe-review-r6-*` and `r6/typesafe-judge-r6-*`; official state is `fixing`, review_count 6/15, failed cycles 6, no adjudication pending.
+- The same persistent worker is fixing only the AC2/AC4 Host path and a bilingual paired-tool regression for published/no-snapshot cases. Weekly-only answer behavior, current access checks, and the `/weekly` link gate must remain intact. R6 reviewer is completed and archived. No live call, commit, push, PR, merge, or production operation occurred.
+## 2026-11-08 Issue #478 — R6 AC2/AC4 combined weekly fix ready for controller check
+
+- The same persistent worker repaired the accepted R6 finding in the Host's guide + weekly-data answer. The combined answer now retains View all, historical selection and listed-file reading steps alongside the Host-verified published/no-snapshot/no-new state. Guide-only and resource-only behavior and the existing access gate remain intact.
+- Six English/Chinese combined-path regressions failed before the product edit and passed afterward. The related isolated PostgreSQL suite passed 192 tests with 4 existing warnings; Black, isort, Ruff and whitespace checks passed. Six exact local Host answers were captured without a Provider call.
+- Report and verified 35-file source package: `reports/issue-473-480-20261107/issue-478/r6/fix-ac2-combined-weekly/`; fingerprint `cca2e56eb6663cb25a52413ae453ef449b6fa7115102d1ade0645111ccb3dd69`, full patch SHA-256 `3cb0c4b2f6ea636df4d3355a23c5db72d4cd928e4a3e8275fa4dd09753b7030a`. Only Host feature and Host test differ from the prior snapshot. HEAD is still `977083471cb2ba7c37195bceba16133d06f361ad`; no production/live Provider operation, lifecycle change, commit, push or PR. Controller check and R7 neutral packet preparation are next.
+
+## 2026-11-08 Issue #478 — material fix recorded; R7 request prepared
+
+- The official `record-fix` entry uses the same `gpt-6-sol` / `senior_worker` / high worker. It records a material behavior change and moves the Issue to `awaiting_review`; the review count remains 6/15, failed cycles remain 6, and no adjudication is pending.
+- The manager independently reran the six bilingual weekly-guide/data cases (6 passed) and Black, isort, Ruff, and `git diff --check`. The R7 request includes the complete current GitHub body, frozen 35-file source, full candidate patch, current green logs and historical validation by its original source fingerprint.
+- R7 request `issue-478-r7-20261108-cca2e56e` is at `reports/issue-473-480-20261107/issue-478/r7/review-request.json`; packet manifest SHA-256 `f1115e1dccf0bd523833f06f7dbdff8c3d5c4d766cead290cecfa12ae6b67e20`. The review packet contains no `.hermes`, prior reviewer report, Judge result, or manager fix report. The program controller must verify and dispatch the fresh reviewer.
+- Current-source evidence is fixture Host tests plus the isolated PostgreSQL suite; no current-source Provider, production, or browser run was made. Earlier dual-site Provider results use `fd8da0f...`; earlier R11 partial results and actual feedback CLI use `77e753b...`; neither is represented as validation of current source `cca2e56e...`. No commit, push, PR, merge, or production operation occurred.
+
+## 2026-11-08 Issue #478 — R7 independent review underway
+
+- Official `start-review` is recorded for review round 7, reviewer `01a1bbfa-3184-7d22-a8c5-769dfa4d0a4d` (`gpt-6-sol`, reviewer, high). The controller's initial route receipt is qualified for this request; it has not yet completed the final actual-input/source/report audit.
+- One substantive read-only task was sent, with the first-tool requirement limited to the absolute R7 `review-brief.md`. No reviewer conclusion has been consumed and no TypeSafe review has been run for R7.
+- Candidate source and packet remain unchanged. Wait for the exact report and controller final audit before consuming the review or taking the next workflow step. Review count remains 6/15 until formal completion; #479 remains unstarted.
+
+
+## 2026-11-08 Issue #478 — R7 passed; current-source acceptance coverage reviewed
+
+- Official lifecycle is `local_review_complete`: 7 completed local reviews and 6 failed review cycles. **Only R7 passed**; R1–R6 findings and failures remain unchanged. The qualified fresh Sol/high reviewer is archived. TypeSafe Jev 1.14 returned no findings and Noul coverage 0.51; keep that value as uncertain support, not an acceptance PASS or a fixed block threshold. No repeat Judge was needed.
+- Frozen candidate remains source fingerprint `cca2e56eb6663cb25a52413ae453ef449b6fa7115102d1ade0645111ccb3dd69`, all 35 file hashes unchanged. R7 report SHA-256 is `efb0350a4814132c83081302a1e59202f6e4dd5c571abdd8fa22208fbfc62757`.
+- Independent AC1–AC6 coverage check found no additional acceptance-mapped source issue. AC1 discovery uses the generic manifest `catalog_discovery` result contract; the independent registry and third-name catalog tests cover loop-free extension, body read and follow-up. The earlier architecture note about finder-name allowlists does not apply to this candidate. AC2/AC6 are covered by current help/Host/access/failure tests, six bilingual R6 regressions, four switch combinations, and current source focused tests.
+- AC3 actual-site resource paths were exercised on source `77e753b7d01f1c4c80c22334da3070dee9467fd8186b7071edbe5d06a2c5fdd2`; those results remain historical. Resource skill manifests/executors are unchanged in the current candidate; current Host grounding, date distinctions and empty states have current-source tests. No exact-`cca2` live-provider result is claimed.
+- AC4's repeated overseas quote failure on `77e` preceded the targeted loop/prompt repair. The `fd8da0f97b915c977a7e99e07c0b22ed6ac47a0de1e27e6b20e14514e7dd7454` post-repair validation passed exact quote checks with four read-only model requests on each site. From `fd8` through `cca2`, `loop.py`, the document-research executor and focused document tests are unchanged; current-source tests cover the two-turn discovery/read/follow-up link and the bilingual guide+weekly follow-up path. These live outcomes are not relabeled as exact-`cca2` runs. Ordinary Chat/browser continuation remains #479.
+- AC5 has a current-source Host draft → simulated edit/confirm → PostgreSQL receipt → local pull/dedupe → reviewed contract test, plus a separate actual CLI subprocess run against loopback FastAPI and isolated PostgreSQL. Current-source focused suites passed 167 tests with 3 warnings; the CLI check, four switch combinations, six weekly regressions, related 192-test PostgreSQL suite, and static checks passed. Detailed evidence and source-boundary decision: `reports/issue-473-480-20261107/issue-478/r7/current-source-ac-coverage.json` and `r7/post-review-verification/`.
+- No current-source real Provider call, ordinary browser test, production write or deployment was performed. The unchanged affected-path evidence plus current-source regressions is sufficient for this Host/backend boundary; proceed with the authorized commit, Draft PR and normal CI/feedback/merge gates.
