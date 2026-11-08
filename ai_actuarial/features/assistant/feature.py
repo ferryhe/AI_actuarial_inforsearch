@@ -8,6 +8,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from threading import Event
 from typing import Callable
+from urllib.parse import urlencode
 
 from ai_actuarial.agent_runtime import Registry, RunContext, RunResult, ToolResult, run
 from ai_actuarial.agent_runtime.artifacts import ArtifactError, ArtifactStore
@@ -335,17 +336,36 @@ class AssistantFeature:
                                 is not None
                                 and document.source_url == url
                             ]
-                            if not documents:
-                                continue
-                            document = documents[0]
+                            document = documents[0] if documents else None
                             cards.append(
                                 SourceCitation(
                                     source_type="catalog",
                                     file_id=url,
-                                    kb_id=document.target.kb_id if len(documents) == 1 else None,
-                                    title=document.title,
-                                    link=document.internal_link,
-                                    source_date=document.publication_date,
+                                    kb_id=(
+                                        document.target.kb_id
+                                        if document and len(documents) == 1
+                                        else None
+                                    ),
+                                    title=(
+                                        document.title
+                                        if document
+                                        else str(item.get("title") or url)
+                                    ),
+                                    link=(
+                                        document.internal_link
+                                        if document
+                                        else "/file-detail?" + urlencode({"url": url})
+                                    ),
+                                    source_date=(
+                                        document.publication_date
+                                        if document
+                                        else str(
+                                            item.get("publication_date")
+                                            or item.get("published_time")
+                                            or ""
+                                        )
+                                        or None
+                                    ),
                                 )
                             )
                             found_targets.update(

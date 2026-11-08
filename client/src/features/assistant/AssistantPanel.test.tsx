@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import axe from "axe-core";
 import { useI18n } from "@/hooks/use-i18n";
@@ -334,6 +334,28 @@ it("reads the static guide without AI and reports stale references", async () =>
   fireEvent.click(await screen.findByRole("button", { name: "file-details (1.0.0)" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("assistant.help_error");
   expect(apiPost).not.toHaveBeenCalled();
+});
+
+it("keeps the guide cleared when its earlier request finishes late", async () => {
+  let resolve!: (value: unknown) => void;
+  apiGet.mockImplementationOnce(() => new Promise((done) => { resolve = done; }));
+  show(false);
+  fireEvent.click(screen.getByRole("button", { name: "assistant.guide" }));
+  fireEvent.click(screen.getByRole("button", { name: "assistant.clear" }));
+  await act(async () => resolve({ results: [ref] }));
+  expect(screen.queryByRole("button", { name: "file-details (1.0.0)" })).not.toBeInTheDocument();
+});
+
+it("keeps a help citation cleared when its earlier request finishes late", async () => {
+  let resolve!: (value: unknown) => void;
+  apiPost.mockResolvedValue({ ...reply("usage"), citations: [ref] });
+  apiGet.mockImplementationOnce(() => new Promise((done) => { resolve = done; }));
+  show(false);
+  question("Show the guide section");
+  fireEvent.click(await screen.findByRole("button", { name: /Guide \/ file-details/ }));
+  fireEvent.click(screen.getByRole("button", { name: "assistant.clear" }));
+  await act(async () => resolve({ ...ref, content: "Cleared section" }));
+  expect(screen.queryByTestId("assistant-help-section")).not.toBeInTheDocument();
 });
 
 it("renders catalog and body citations as internal links with versions and nonzero embedding counts", async () => {

@@ -1828,7 +1828,7 @@ def test_resource_facts_are_grounded_despite_contradictory_model_claim(host_fixt
     "tool_id", ["resources_updates.recent", "resources_updates.catalog_search"]
 )
 @pytest.mark.parametrize("membership", ["one", "two_files", "missing", "two_kbs"])
-def test_resource_file_cards_require_current_membership_and_unique_target(
+def test_resource_file_cards_keep_catalog_rows_and_require_membership_for_target(
     host_fixture, tool_id, membership
 ):
     from ai_actuarial.assistant.document_research import Document
@@ -1892,10 +1892,13 @@ def test_resource_file_cards_require_current_membership_and_unique_target(
         request=state.request, auth=auth, message="Find CAS reports", model=model
     )
     cards = outcome.response.citations
-    assert len(cards) == (0 if membership == "missing" else len(files))
+    assert len(cards) == len(files)
     if cards:
         assert all(card.source_type == "catalog" for card in cards)
         assert [card.link for card in cards] == [row["link"] for row in files]
+    if membership == "missing":
+        assert cards[0].title == files[0]["title"]
+        assert cards[0].kb_id is None
     assert outcome.response.selected_target == (
         {"kb_id": "public", "file_id": files[0]["source_url"]} if membership == "one" else None
     )

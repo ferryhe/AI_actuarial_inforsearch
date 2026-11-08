@@ -30,6 +30,7 @@ export default function AssistantPanel({ t, lang, open, feedbackEnabled, onClose
   const userScrolledDuringRequest = useRef(false);
   const inFlight = useRef(false);
   const feedbackGeneration = useRef(0);
+  const helpGeneration = useRef(0);
   const request = useRef<AbortController | null>(null);
   const requestGeneration = useRef(0);
   const currentIdentity = useRef(identity);
@@ -43,6 +44,7 @@ export default function AssistantPanel({ t, lang, open, feedbackEnabled, onClose
   const clear = useCallback(() => {
     cancelRequest();
     feedbackGeneration.current += 1;
+    helpGeneration.current += 1;
     setHistory([]);
     setSelectedTarget(null);
     setDraft(null);
@@ -147,20 +149,22 @@ export default function AssistantPanel({ t, lang, open, feedbackEnabled, onClose
   }
 
   async function readCitation(reference: HelpCitation) {
+    const generation = helpGeneration.current;
     setError("");
     try {
       const exact = helpSchema.parse(reference);
       const value = z.object({ ...helpSchema.shape, content: z.string() }).parse(await apiGet(`/api/assistant/help/section?${new URLSearchParams(exact)}`));
-      if (mounted.current) setSection(value.content);
-    } catch { if (mounted.current) setError(t("assistant.help_error")); }
+      if (mounted.current && generation === helpGeneration.current) setSection(value.content);
+    } catch { if (mounted.current && generation === helpGeneration.current) setError(t("assistant.help_error")); }
   }
 
   async function browseHelp() {
+    const generation = helpGeneration.current;
     setError("");
     try {
       const value = z.object({ results: z.array(helpSchema) }).parse(await apiGet(`/api/assistant/help?${new URLSearchParams({ q: lang === "zh" ? "指南" : "guide", language: lang === "zh" ? "zh" : "en", limit: "10" })}`));
-      if (mounted.current) setHelp(value.results);
-    } catch { if (mounted.current) setError(t("assistant.help_error")); }
+      if (mounted.current && generation === helpGeneration.current) setHelp(value.results);
+    } catch { if (mounted.current && generation === helpGeneration.current) setError(t("assistant.help_error")); }
   }
 
   return <>
