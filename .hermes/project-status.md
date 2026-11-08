@@ -2,7 +2,7 @@
 
 - On `codex/issue-479-assistant-ui`, the accepted AC5 catalog-card gap and AC3/AC7 post-Clear help-result race are repaired. Authorized catalog files without KB membership now get an in-site catalog card without a KB target; late guide and citation results from a cleared session are ignored.
 - Red regressions: 2 backend cases failed and 2 frontend cases failed before the fix. After the fix, the focused backend 8/8 and frontend 2/2 passed. Final isolated PostgreSQL backend suite: 262 passed, 4 warnings; frontend: 48 passed. Typecheck, build, Black, isort, Ruff, ESLint, diff check, and stubbed Chromium conversation/viewport smoke passed. Raw evidence is in `reports/issue-473-480-20261107/issue-479/r2-worker-fix/`.
-- HEAD remains `d62c79b4b80d4839c34f0aa4cd8df0a4fca9fdf5`; worker changes are uncommitted. No push, PR edit, merge, production write, live provider run, or physical iOS check. Fresh independent review is next.
+- Candidate is frozen on this branch for fresh independent review. No push, PR edit, merge, production write, current-source live provider UAT, or physical iOS check has occurred.
 
 ## 2026-11-08 Issue #478 — R2 F2/F3 repair ready for fresh review
 
