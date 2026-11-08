@@ -721,7 +721,7 @@ def test_skill_host_builds_chinese_answer_from_current_exact_quote(research):
 
 
 @pytest.mark.parametrize("with_readiness", [False, True])
-def test_findings_route_reserves_fourth_model_call_for_verification(research, with_readiness):
+def test_findings_route_verifies_after_optional_readiness(research, with_readiness):
     facade, _, _, _ = research
     registry = Registry((MANIFEST,), frozenset(tool.executor for tool in MANIFEST.tools))
     actions = [
@@ -788,28 +788,32 @@ def test_findings_route_reserves_fourth_model_call_for_verification(research, wi
             executors, tool.executor.split(".")[1]
         )(facade, args),
     )
-    assert result.model_attempts == 4
+    assert result.model_attempts == (5 if with_readiness else 4)
     assert result.tool_attempts == (3 if with_readiness else 2)
-    if with_readiness:
-        assert result.error_code == "SUMMARY_UNVERIFIED"
-        assert not verified and "会员正在精算工作中使用人工智能" not in result.answer
-    else:
-        assert result.availability == "available" and result.error_code is None
-        assert len(verified) == 1
-        assert "会员正在精算工作中使用人工智能" in result.answer
-        assert "Members are using AI in actuarial work" in result.answer
-        assert SURVEY in result.answer
+    assert result.availability == "available" and result.error_code is None
+    assert len(verified) == 1
+    assert "会员正在精算工作中使用人工智能" in result.answer
+    assert "Members are using AI in actuarial work" in result.answer
+    assert SURVEY in result.answer
 
 
 @pytest.mark.parametrize("finding_count", [1, 2])
-def test_guarded_single_ready_finding_uses_current_quote_and_host_source(research, finding_count):
+@pytest.mark.parametrize("recover", [False, True])
+def test_guarded_single_ready_finding_uses_current_quote_and_host_source(
+    research, finding_count, recover
+):
     facade, _, _, _ = research
     registry = Registry((MANIFEST,), frozenset(tool.executor for tool in MANIFEST.tools))
     calls = []
+    context = RunContext(
+        principal="test",
+        scopes=frozenset({"chat.query", "catalog.read", "files.read", "markdown.read"}),
+    )
 
     def model(prompt, remaining):
         data = json.loads(prompt)
         calls.append(data)
+        context.take_provider_request(prepaid=True)
         if len(calls) == 1:
             return json.dumps(
                 {
@@ -829,6 +833,9 @@ def test_guarded_single_ready_finding_uses_current_quote_and_host_source(researc
                 }
             )
         if len(calls) == 3:
+            assert context.reserve_verifier
+            if recover:
+                context.take_provider_request()
             assert set(data) == {"instruction", "question", "locale", "excerpt"}
             assert data["excerpt"] == KEY_FINDINGS and data["locale"] == "zh"
             assert "skills" not in prompt and BULLETIN not in prompt
@@ -846,6 +853,7 @@ def test_guarded_single_ready_finding_uses_current_quote_and_host_source(researc
                     }
                 )
             return json.dumps({"findings": findings})
+        assert not context.reserve_verifier
         assert [item["excerpt"] for item in data["items"]] == [
             "Members are using AI in actuarial work",
             *(
@@ -864,10 +872,7 @@ def test_guarded_single_ready_finding_uses_current_quote_and_host_source(researc
         message="请简要总结SOA会员人工智能调查的主要发现",
         locale="zh",
         registry=registry,
-        context=RunContext(
-            principal="test",
-            scopes=frozenset({"chat.query", "catalog.read", "files.read", "markdown.read"}),
-        ),
+        context=context,
         model=model,
         execute=lambda tool, args, context, remaining: getattr(
             executors, tool.executor.split(".")[1]
@@ -875,7 +880,8 @@ def test_guarded_single_ready_finding_uses_current_quote_and_host_source(researc
         resolve_selected_document=resolve,
     )
     assert result.kind == "finish" and result.availability == "available", (result, calls)
-    assert result.model_attempts == 4 and result.tool_attempts == 2
+    assert result.model_attempts == 4 + int(recover) and result.tool_attempts == 2
+    assert context.provider_requests == result.model_attempts
     assert len(result.evidence_ids) == 1
     assert "会员正在精算工作中使用人工智能" in result.answer
     assert "Members are using AI in actuarial work" in result.answer
@@ -1471,7 +1477,7 @@ def test_host_keeps_only_complete_cited_findings_near_answer_limit(research):
         ("所有受访者都反对人工智能。", '{"supported":[false]}', 0),
         ("该调查共有12,345名受访者。", "malformed", 0),
         ("该调查共有12,345名受访者。", "provider_error", 0),
-        ("该调查共有12,345名受访者。", "budget_exhausted", 2),
+        ("该调查共有12,345名受访者。", "budget_exhausted", 4),
     ],
 )
 def test_host_omits_unverified_summary_but_keeps_exact_excerpt(

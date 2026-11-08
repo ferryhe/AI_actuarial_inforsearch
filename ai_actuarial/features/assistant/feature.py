@@ -3,16 +3,17 @@
 from __future__ import annotations
 
 import json
-import time
 from dataclasses import dataclass, replace
 from threading import Event
 from typing import Callable
 
 from ai_actuarial.agent_runtime import Registry, RunContext, RunResult, ToolResult, run
 from ai_actuarial.agent_runtime.artifacts import ArtifactError, ArtifactStore
+from ai_actuarial.agent_runtime.contracts import AgentBudget
 from ai_actuarial.api import deps
 from ai_actuarial.api.deps import AuthContext, public_permissions_for_request
 from ai_actuarial.api.services import chat
+from ai_actuarial.assistant.agent_budget import load_agent_budget
 from ai_actuarial.assistant.document_research import DocumentResearch, SelectedTarget
 from ai_actuarial.assistant.knowledge import permitted_kbs
 from ai_actuarial.assistant.query import FeatureResponse
@@ -76,14 +77,20 @@ class AssistantFeature:
         cancelled: Event | None = None,
         deadline: float | None = None,
         selected_target: SelectedTarget | None = None,
+        budget: AgentBudget | None = None,
     ) -> Outcome:
         initial_identity = _identity(auth)
         initial_scopes = auth.permissions if auth.token else public_permissions_for_request(request)
         if "chat.query" not in initial_scopes:
             raise PermissionError("chat.query required")
         principal, session_update = chat._resolve_chat_user(request, auth)
+        budget = budget or load_agent_budget()
         context = RunContext(
-            principal=principal, scopes=initial_scopes, cancelled=cancelled, deadline=deadline
+            principal=principal,
+            scopes=initial_scopes,
+            cancelled=cancelled,
+            deadline=deadline,
+            budget=budget,
         )
         request.state.assistant_runtime_context = context
         database = getattr(request.app.state, "database", None) or request.app.state.db_path
@@ -122,21 +129,23 @@ class AssistantFeature:
 
                 config = replace(
                     ChatbotConfig.from_config(storage=storage),
-                    max_retries=1,
-                    length_recovery_enabled=False,
+                    max_tokens=budget.initial_tokens,
+                    max_retries=budget.max_retries,
+                    length_recovery_enabled=True,
+                    length_recovery_max_tokens=budget.recovery_tokens,
                 )
                 client = LLMClient(config, storage=storage)
+                client.client = client.client.with_options(max_retries=0)
 
-                def model(prompt: str, remaining: float) -> str:
-                    wait = max(
-                        0.0,
-                        client._min_request_interval - (time.time() - client._last_request_time),
-                    )
-                    if remaining <= wait:
-                        raise TimeoutError("provider wait exceeds deadline")
-                    client.client = client.client.with_options(
-                        max_retries=0, timeout=remaining - wait
-                    )
+                def model(prompt: str, _remaining: float) -> str:
+                    first_request = True
+
+                    def before_request() -> float:
+                        nonlocal first_request
+                        timeout = context.take_provider_request(prepaid=first_request)
+                        first_request = False
+                        return timeout
+
                     extra_body = (
                         {"thinking": {"type": "disabled"}}
                         if config.llm_provider == "deepseek" and config.model == "deepseek-flash"
@@ -150,6 +159,7 @@ class AssistantFeature:
                         temperature=0,
                         response_format={"type": "json_object"},
                         extra_body=extra_body,
+                        before_request=before_request,
                     )
                     return _normalize_json_object_label(raw)
 

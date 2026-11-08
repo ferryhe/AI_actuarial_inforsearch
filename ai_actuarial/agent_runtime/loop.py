@@ -189,7 +189,9 @@ def run(
                 model_prompt = json.dumps(
                     {"prompt": prompt, "observations": observations}, ensure_ascii=False
                 )
-            raw = model(model_prompt, context.take_model())
+            remaining = context.take_model()
+            context.reserve_verifier = guarded_excerpt is not None
+            raw = model(model_prompt, remaining)
             # shortcut: an in-flight synchronous call is not interrupted; use an interruptible worker if hard cancellation is required.
             context.remaining()  # Discard a result returned after cancellation or deadline.
             if not isinstance(raw, str):
@@ -297,6 +299,7 @@ def run(
                         )
 
                     try:
+                        context.reserve_verifier = False
                         checked = model(
                             json.dumps(
                                 {

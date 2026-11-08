@@ -2,10 +2,57 @@
 
 from __future__ import annotations
 
+import math
 import time
 from dataclasses import dataclass, field
 from threading import Event
-from typing import Any, Literal
+from typing import Any, Literal, Mapping
+
+
+@dataclass(frozen=True)
+class AgentBudget:
+    initial_tokens: int = 3000
+    recovery_tokens: int = 4000
+    max_retries: int = 3
+    model_requests: int = 6
+    total_seconds: float = 180.0
+    request_seconds: float = 60.0
+
+    @classmethod
+    def from_config(cls, section: Mapping[str, Any]) -> "AgentBudget":
+        defaults = cls()
+        names = (
+            "initial_tokens",
+            "recovery_tokens",
+            "max_retries",
+            "model_requests",
+            "total_seconds",
+            "request_seconds",
+        )
+        unknown = set(section) - set(names)
+        if unknown:
+            raise ValueError(f"Unknown assistant_agent budget keys: {sorted(unknown)}")
+        values = {}
+        for name in names:
+            raw = section.get(name, getattr(defaults, name))
+            if isinstance(raw, bool):
+                raise ValueError(f"assistant_agent.{name} must be numeric")
+            try:
+                values[name] = (float if name.endswith("seconds") else int)(raw)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"assistant_agent.{name} must be numeric") from exc
+            if (name.endswith("seconds") and not math.isfinite(values[name])) or (
+                not name.endswith("seconds") and isinstance(raw, float) and not raw.is_integer()
+            ):
+                raise ValueError(f"assistant_agent.{name} must be finite and whole where required")
+        budget = cls(**values)
+        for name in names:
+            value = getattr(budget, name)
+            if value <= 0:
+                raise ValueError(f"assistant_agent.{name} must be positive")
+        if budget.recovery_tokens <= budget.initial_tokens:
+            raise ValueError("assistant_agent.recovery_tokens must exceed initial_tokens")
+        return budget
 
 
 @dataclass(frozen=True)
@@ -47,14 +94,19 @@ class RunContext:
         scopes: frozenset[str],
         cancelled: Event | None = None,
         deadline: float | None = None,
+        budget: AgentBudget | None = None,
     ):
         self.principal = principal
         self.scopes = scopes
         self.cancelled = cancelled or Event()
+        self.budget = budget or AgentBudget()
         self.deadline = min(
-            deadline if deadline is not None else time.monotonic() + 30, time.monotonic() + 30
+            deadline if deadline is not None else time.monotonic() + self.budget.total_seconds,
+            time.monotonic() + self.budget.total_seconds,
         )
         self.model_attempts = 0
+        self.provider_requests = 0
+        self.reserve_verifier = False
         self.tool_attempts = 0
         self.embedding_attempts = 0
 
@@ -68,10 +120,24 @@ class RunContext:
 
     def take_model(self) -> float:
         remaining = self.remaining()
-        if self.model_attempts >= 4:
+        if self.model_attempts >= self.budget.model_requests:
             raise TimeoutError("model budget")
         self.model_attempts += 1
         return remaining
+
+    def take_provider_request(self, *, prepaid: bool = False) -> float:
+        remaining = self.remaining()
+        limit = self.budget.model_requests - int(self.reserve_verifier)
+        if self.model_attempts > limit or (
+            prepaid and self.model_attempts <= self.provider_requests
+        ):
+            raise TimeoutError("model budget")
+        if not prepaid:
+            if self.model_attempts >= limit:
+                raise TimeoutError("model budget")
+            self.model_attempts += 1
+        self.provider_requests += 1
+        return min(self.budget.request_seconds, remaining)
 
     def take_tool(self) -> float:
         remaining = self.remaining()

@@ -7,7 +7,7 @@ and error handling.
 
 import logging
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import openai
 
@@ -302,6 +302,7 @@ class LLMClient:
         stream: bool = False,
         response_format: Optional[Dict[str, str]] = None,
         extra_body: Optional[Dict[str, Any]] = None,
+        before_request: Callable[[], float] | None = None,
     ) -> str:
         """
         Generate response from LLM.
@@ -340,6 +341,11 @@ class LLMClient:
         last_error = None
         recovery_used = False
 
+        def create_request(**kwargs):
+            if before_request is not None:
+                kwargs["timeout"] = before_request()
+            return self.client.chat.completions.create(**kwargs)
+
         while attempt < self.config.max_retries:
             try:
                 attempt += 1
@@ -349,7 +355,7 @@ class LLMClient:
                     f"attempt={attempt}"
                 )
 
-                response = self.client.chat.completions.create(
+                response = create_request(
                     **self._completion_request_kwargs(
                         messages=messages,
                         model=model,
@@ -392,7 +398,7 @@ class LLMClient:
                         is_recovery = True
                         attempt += 1
                         try:
-                            response = self.client.chat.completions.create(
+                            response = create_request(
                                 **self._completion_request_kwargs(
                                     messages=messages,
                                     model=model,
@@ -440,6 +446,9 @@ class LLMClient:
                     )
 
             except LLMException:
+                raise
+
+            except TimeoutError:
                 raise
 
             except openai.AuthenticationError as e:
