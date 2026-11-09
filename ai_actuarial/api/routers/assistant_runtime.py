@@ -119,6 +119,7 @@ async def _query(
         cancelled.set()
         raise
     finally:
+        cancelled.set()
         disconnect.cancel()
         await asyncio.gather(disconnect, return_exceptions=True)
     apply_session_update(response, request, outcome.session_update)

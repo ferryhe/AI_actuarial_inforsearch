@@ -1447,6 +1447,129 @@ def test_versioned_user_api_requires_chat_query_and_keeps_admin_gate(monkeypatch
     assert len(called) == 1
 
 
+def test_versioned_user_api_completes_when_disconnect_check_overlaps_query(monkeypatch):
+    import asyncio
+
+    from ai_actuarial.api.routers import assistant_runtime
+
+    original_asyncio = assistant_runtime.asyncio
+    app = FastAPI()
+    app.state.assistant_enabled = True
+    app.include_router(feature_router, prefix="/api")
+    monkeypatch.setattr(
+        deps,
+        "_load_auth_context",
+        lambda request: AuthContext({"subject": "reader"}, frozenset({"chat.query"})),
+    )
+    monkeypatch.setattr(
+        assistant_runtime,
+        "load_agent_budget",
+        lambda: SimpleNamespace(total_seconds=3.0),
+    )
+
+    async def exercise():
+        query_finished = asyncio.Event()
+        overlap = asyncio.Event()
+        never = asyncio.Event()
+        state = {"body_read": False, "feature_done": False}
+        sent = []
+        body = json.dumps({"message": "sample"}).encode()
+
+        def query(**kwargs):
+            state["cancelled"] = kwargs["cancelled"]
+            state["feature_done"] = True
+            return SimpleNamespace(
+                response=FeatureResponse(
+                    intent="clarify",
+                    answer="Complete answer",
+                    availability="available",
+                    stop_reason="finish",
+                ),
+                session_update=None,
+            )
+
+        app.state.assistant_feature = SimpleNamespace(query=query)
+
+        async def receive():
+            if not state["body_read"]:
+                state["body_read"] = True
+                return {"type": "http.request", "body": body, "more_body": False}
+            if query_finished.is_set():
+                overlap.set()
+            await never.wait()
+            return {"type": "http.disconnect"}
+
+        async def send(message):
+            sent.append(message)
+
+        async def wait_for_query(awaitable, timeout):
+            result = await original_asyncio.wait_for(awaitable, timeout=timeout)
+            query_finished.set()
+            await overlap.wait()
+            return result
+
+        def create_watcher(coro):
+            state["watcher"] = original_asyncio.create_task(coro)
+            return state["watcher"]
+
+        monkeypatch.setattr(
+            assistant_runtime,
+            "asyncio",
+            SimpleNamespace(
+                create_task=create_watcher,
+                wait_for=wait_for_query,
+                to_thread=original_asyncio.to_thread,
+                gather=original_asyncio.gather,
+                sleep=original_asyncio.sleep,
+                TimeoutError=original_asyncio.TimeoutError,
+                CancelledError=original_asyncio.CancelledError,
+            ),
+        )
+        path = "/api/assistant/v1/query"
+        scope = {
+            "type": "http",
+            "asgi": {"version": "3.0"},
+            "http_version": "1.1",
+            "scheme": "http",
+            "method": "POST",
+            "path": path,
+            "raw_path": path.encode(),
+            "root_path": "",
+            "query_string": b"",
+            "headers": [
+                (b"content-type", b"application/json"),
+                (b"content-length", str(len(body)).encode()),
+            ],
+            "server": ("127.0.0.1", 8000),
+            "client": ("127.0.0.1", 12345),
+        }
+        task = original_asyncio.create_task(app(scope, receive, send))
+        try:
+            await original_asyncio.wait({task}, timeout=1)
+            assert state["feature_done"] and overlap.is_set()
+            assert task.done(), f"completed feature stalled before the HTTP response: {sent!r}"
+            task.result()
+            assert [item["status"] for item in sent if item["type"] == "http.response.start"] == [
+                200
+            ]
+            bodies = [item for item in sent if item["type"] == "http.response.body"]
+            assert len(bodies) == 1 and not bodies[0].get("more_body", False)
+            assert json.loads(bodies[0]["body"])["answer"] == "Complete answer"
+        finally:
+            if "cancelled" in state:
+                state["cancelled"].set()
+            if not task.done():
+                task.cancel()
+            watcher = state.get("watcher")
+            if watcher is not None and not watcher.done():
+                watcher.cancel()
+            await original_asyncio.gather(
+                task, *([watcher] if watcher is not None else []), return_exceptions=True
+            )
+
+    asyncio.run(exercise())
+
+
 def test_recent_questions_are_prompt_context_not_evidence():
     model, calls = scripted(action(action="clarify", question="Which report?"))
     result = run(
