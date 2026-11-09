@@ -630,18 +630,23 @@ class AssistantFeature:
                     if weekly_guide_used
                     else ""
                 )
+                guide_answers = [
+                    help_answers[item]
+                    for item in runtime.evidence_ids
+                    if item in help_answers and item not in weekly_guide_ids
+                ]
+                if weekly_guide_used:
+                    guide_answers.append(weekly_guide_answer)
                 grounded = [
                     resource_answers[item]
                     for item in runtime.evidence_ids
                     if item in resource_answers
                 ]
                 if grounded:
-                    response.answer = "\n\n".join(dict.fromkeys(grounded))
-                    if weekly_guide_used:
-                        response.answer = weekly_guide_answer + "\n\n" + response.answer
-                elif weekly_guide_used:
-                    response.answer = weekly_guide_answer
-                    if weekly_access:
+                    response.answer = "\n\n".join(dict.fromkeys([*guide_answers, *grounded]))
+                elif guide_answers:
+                    response.answer = "\n\n".join(dict.fromkeys(guide_answers))
+                    if weekly_guide_used and weekly_access:
                         try:
                             context.remaining()
                             snapshot = storage.get_latest_weekly_snapshot(
@@ -661,12 +666,6 @@ class AssistantFeature:
                                 )
                         except Exception:
                             pass
-                else:
-                    guide_answers = [
-                        help_answers[item] for item in runtime.evidence_ids if item in help_answers
-                    ]
-                    if guide_answers:
-                        response.answer = "\n\n".join(dict.fromkeys(guide_answers))
             if weekly_used:
                 if weekly_access is not True:
                     if weekly_access is False:
@@ -697,24 +696,43 @@ class AssistantFeature:
                             if locale.startswith("zh")
                             else "No complete published weekly snapshot is available yet."
                         )
-                        response.answer = (
-                            weekly_guide_answer + " " if weekly_guide_used else ""
-                        ) + status
+                        response.answer = "\n\n".join(dict.fromkeys([*guide_answers, status]))
                     elif empty == "no_new":
                         status = (
                             "最近一期已发布周报按系统首次收录时间统计，没有新增资料。"
                             if locale.startswith("zh")
                             else "The latest published weekly period has no newly first-collected files."
                         )
-                        response.answer = (
-                            weekly_guide_answer + " " if weekly_guide_used else ""
-                        ) + status
+                        response.answer = "\n\n".join(dict.fromkeys([*guide_answers, status]))
                     if not re.search(r"\[[^\]]+\]\(/weekly\)", response.answer):
                         response.answer += (
                             "\n\n打开[周报](/weekly)。"
                             if locale.startswith("zh")
                             else "\n\nOpen [Weekly](/weekly)."
                         )
+            if runtime.kind == "finish":
+                dated_documents = set()
+                for evidence_id in runtime.evidence_ids:
+                    if evidence_id not in body_evidence_kbs or evidence_id not in source_citations:
+                        continue
+                    citation = source_citations[evidence_id]
+                    document_key = (citation.kb_id, citation.file_id)
+                    if document_key in dated_documents:
+                        continue
+                    dated_documents.add(document_key)
+                    if locale.startswith("zh"):
+                        date_text = (
+                            f"发布日期：{citation.source_date}。"
+                            if citation.source_date
+                            else "发布日期未记录。"
+                        )
+                    else:
+                        date_text = (
+                            f"Publication date: {citation.source_date}."
+                            if citation.source_date
+                            else "Publication date not recorded."
+                        )
+                    response.answer += f"\n\n{citation.title}：{date_text}"
             if (
                 runtime.kind == "finish"
                 and getattr(request.app.state, "feedback_enabled", False)

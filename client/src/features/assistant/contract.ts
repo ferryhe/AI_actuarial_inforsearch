@@ -19,5 +19,5 @@ export const responseSchema = z.object({
 
 export type HelpCitation = z.infer<typeof helpSchema>;
 export type Reply = z.infer<typeof responseSchema>;
-export type Query = { message: string; locale: "en" | "zh"; selected_target: Reply["selected_target"]; recent_questions: string[] };
+type Query = { message: string; locale: "en" | "zh"; selected_target: Reply["selected_target"]; recent_questions: string[] };
 export type QueryTransport = (query: Query, signal: AbortSignal) => Promise<Reply>;

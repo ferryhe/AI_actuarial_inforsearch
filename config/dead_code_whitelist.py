@@ -8,7 +8,11 @@ from ai_actuarial.api.routers.assistant_help import (
     api_get_help_section,
     api_search_help,
 )
-from ai_actuarial.api.routers.assistant_runtime import api_assistant_runtime_query
+from ai_actuarial.api.routers.assistant_runtime import (
+    RuntimePayload,
+    api_assistant_runtime_query,
+    api_assistant_user_query,
+)
 from ai_actuarial.api.routers.feedback import (
     StatusUpdate,
     api_list_feedback,
@@ -34,6 +38,8 @@ FeedbackRequest.local_path  # reason: Pydantic invokes this decorated field vali
 QueryRequest.valid_message  # reason: Pydantic invokes this decorated field validator.
 api_assistant_query  # reason: FastAPI registers this decorated route.
 api_assistant_runtime_query  # reason: FastAPI registers this decorated route.
+api_assistant_user_query  # reason: FastAPI registers this decorated public route.
+RuntimePayload.valid_recent_questions  # reason: Pydantic invokes this decorated field validator.
 SourceCitation.source_date  # reason: Pydantic serializes the citation source date by name.
 Document.internal_link  # reason: Pydantic includes the file-detail link in document tool JSON.
 SectionEvidence.index_version  # reason: Pydantic includes the Ready/Standard index version in section tool JSON.
