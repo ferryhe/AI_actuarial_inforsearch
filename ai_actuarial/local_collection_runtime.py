@@ -2186,26 +2186,36 @@ def _model_schema() -> dict[str, Any]:
 
 
 def _build_evidence_span_catalog(markdown: str) -> list[dict[str, Any]]:
-    """Create stable IDs for overlapping, verbatim source spans covering the Markdown."""
+    """Create stable IDs for overlapping, verbatim non-NUL Markdown spans."""
     if not isinstance(markdown, str) or not markdown:
         raise RuntimeErrorSafe("model evidence source Markdown is empty")
     spans: list[dict[str, Any]] = []
-    start = 0
-    while start < len(markdown):
-        end = min(start + MAX_EVIDENCE_SPAN_CHARS, len(markdown))
-        text = markdown[start:end]
-        identity = hashlib.sha256(f"{start}\0{end}\0{text}".encode("utf-8")).hexdigest()[:16]
-        spans.append(
-            {
-                "id": f"span-{identity}",
-                "text": text,
-                "start": start,
-                "end": end,
-            }
-        )
-        if end == len(markdown):
+    region_start = 0
+    while region_start <= len(markdown):
+        region_end = markdown.find("\x00", region_start)
+        if region_end < 0:
+            region_end = len(markdown)
+        start = region_start
+        while start < region_end:
+            end = min(start + MAX_EVIDENCE_SPAN_CHARS, region_end)
+            text = markdown[start:end]
+            identity = hashlib.sha256(f"{start}\0{end}\0{text}".encode("utf-8")).hexdigest()[:16]
+            spans.append(
+                {
+                    "id": f"span-{identity}",
+                    "text": text,
+                    "start": start,
+                    "end": end,
+                }
+            )
+            if end == region_end:
+                break
+            start = end - EVIDENCE_SPAN_OVERLAP_CHARS
+        if region_end == len(markdown):
             break
-        start = end - EVIDENCE_SPAN_OVERLAP_CHARS
+        region_start = region_end + 1
+    if not spans:
+        raise RuntimeErrorSafe("model evidence source Markdown has no non-NUL text")
     return spans
 
 
@@ -2366,13 +2376,14 @@ def _run_model(
     )
     schema_path.write_text(json.dumps(_model_schema(), ensure_ascii=False), encoding="utf-8")
     prompt = (
-        "Enrich this source-bound actuarial article using the complete source span catalog below. "
+        "Enrich this source-bound actuarial article using the source span catalog below. "
         "Return only JSON matching the supplied schema. Use only the approved canonical categories. "
         "Set the same primary category in zh/en. Categories are ordered, unique, and limited to four. "
         "For every category evidence array, choose one to three span IDs. For each non-null date fact and "
         "each unresolved-date entry, choose one span ID. The IDs map to exact, non-empty, contiguous "
-        f"original Markdown substrings no longer than {MAX_EVIDENCE_QUOTE_CHARS} characters. The catalog "
-        "uses overlapping spans and covers the full original Markdown. Return IDs only in evidence fields; "
+        f"original Markdown substrings without NUL characters and no longer than "
+        f"{MAX_EVIDENCE_QUOTE_CHARS} characters. The catalog uses overlapping spans and preserves "
+        "original Markdown offsets; NUL characters are omitted from evidence spans. Return IDs only in evidence fields; "
         "never copy, normalize, paraphrase, or invent quote text or IDs. Use the span text and nearby spans "
         "as source context when deciding which evidence supports each field. Preserve all three date "
         "semantics separately, with ISO value and year/month/day precision; do not treat HTTP Last-Modified "
