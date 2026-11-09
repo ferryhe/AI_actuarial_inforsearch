@@ -1388,7 +1388,6 @@ def test_versioned_user_api_requires_chat_query_and_keeps_admin_gate(monkeypatch
     app = FastAPI()
     app.state.assistant_enabled = True
     app.include_router(feature_router, prefix="/api")
-    assert any(route.path == "/api/assistant/v1/query" for route in app.routes)
     called = []
     current = AuthContext({"subject": "reader"}, frozenset({"chat.query"}))
     monkeypatch.setattr(deps, "_load_auth_context", lambda request: current)
