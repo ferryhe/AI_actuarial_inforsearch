@@ -1,18 +1,20 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import axe from "axe-core";
 import { useI18n } from "@/hooks/use-i18n";
+import { ApiError } from "@/lib/api";
 
-const { apiGet, apiPost } = vi.hoisted(() => ({ apiGet: vi.fn(), apiPost: vi.fn() }));
-vi.mock("@/lib/api", () => ({ apiGet, apiPost, ApiError: class extends Error {} }));
+const { apiGet, apiPost, navigate, route } = vi.hoisted(() => ({ apiGet: vi.fn(), apiPost: vi.fn(), navigate: vi.fn(), route: { current: "/database" } }));
+vi.mock("@/lib/api", () => ({ apiGet, apiPost, ApiError: class extends Error { constructor(message: string, public status: number) { super(message); } } }));
 vi.mock("@/components/Layout", () => ({ useTranslation: () => ({ lang: "en", t: (key: string) => key }) }));
-vi.mock("wouter", () => ({ useLocation: () => ["/database", vi.fn()] }));
+vi.mock("wouter", () => ({ useLocation: () => [route.current, navigate] }));
 import AssistantPanel from "./AssistantPanel";
+import { queryAssistant } from "./transport";
 import SupportWidget from "@/components/support-widget/SupportWidget";
 
 const t = (key: string, values?: Record<string, string | number>) => values ? `${key}:${values.id}` : key;
-const reply = (intent = "feedback") => ({ intent, answer: "Review first", citations: [], feedback_draft: intent === "feedback" ? "Do not substitute summary" : null, availability: "available", error_code: null, generation_attempts: 1, embedding_attempts: 0 });
+const reply = (intent = "feedback") => ({ schema_version: "1.0", stop_reason: intent === "clarify" ? "clarify" : "finish", intent, answer: "Review first", citations: [], evidence_ids: [], selected_target: null, feedback_draft: intent === "feedback" ? "Do not substitute summary" : null, availability: "available", error_code: null, generation_attempts: 1, embedding_attempts: 0 });
 const ref = { doc_id: "user-guide-en", section_id: "file-details", language: "en", title: "Guide", source_version: "1.0.0", content_hash: "a".repeat(64) };
 
 function LocalizedAssistant({ lang }: { lang: string }) {
@@ -20,7 +22,7 @@ function LocalizedAssistant({ lang }: { lang: string }) {
   return <AssistantPanel t={t} lang={lang} open feedbackEnabled onClose={vi.fn()} />;
 }
 
-beforeEach(() => { apiGet.mockReset(); apiPost.mockReset(); vi.stubGlobal("crypto", { randomUUID: vi.fn(() => "one-request") }); });
+beforeEach(() => { route.current = "/database"; navigate.mockReset(); apiGet.mockReset(); apiPost.mockReset(); vi.stubGlobal("crypto", { randomUUID: vi.fn(() => "one-request") }); });
 afterEach(() => { cleanup(); localStorage.removeItem("lang"); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 function show(feedbackEnabled = true, lang = "en") { return render(<AssistantPanel t={t} lang={lang} open feedbackEnabled={feedbackEnabled} onClose={vi.fn()} />); }
@@ -34,6 +36,21 @@ it("manual feedback uses the ordinary form without any assistant request", async
   expect(apiPost).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole("button", { name: "assistant.cancel" }));
   expect(screen.getByLabelText("assistant.message")).toBeVisible();
+  expect(apiPost).not.toHaveBeenCalled();
+});
+
+it("reopens canceled manual feedback with the original composer text", async () => {
+  show();
+  fireEvent.change(screen.getByLabelText("assistant.message"), { target: { value: "Original user text" } });
+  fireEvent.click(screen.getByRole("button", { name: "assistant.feedback" }));
+  const draft = await screen.findByLabelText("feedback.content");
+  expect(draft).toHaveValue("Original user text");
+  fireEvent.change(draft, { target: { value: "Canceled edit" } });
+  fireEvent.click(screen.getByRole("button", { name: "assistant.cancel" }));
+  expect(apiPost).not.toHaveBeenCalled();
+
+  fireEvent.click(screen.getByRole("button", { name: "assistant.feedback" }));
+  expect(await screen.findByLabelText("feedback.content")).toHaveValue("Original user text");
   expect(apiPost).not.toHaveBeenCalled();
 });
 
@@ -51,7 +68,7 @@ it("forced feedback classification remains an editable original draft until conf
   fireEvent.click(screen.getByRole("button", { name: "feedback.submit" }));
   expect(await screen.findByRole("status")).toHaveTextContent("db-receipt");
   expect(apiPost.mock.calls[2][1]).toEqual(submitted);
-  expect(apiPost.mock.calls.map((call) => call[0])).toEqual(["/api/assistant/query", "/api/feedback", "/api/feedback"]);
+  expect(apiPost.mock.calls.map((call) => call[0])).toEqual(["/api/assistant/v1/query", "/api/feedback", "/api/feedback"]);
 });
 
 it("cancel and Q&A never call feedback", async () => {
@@ -61,7 +78,7 @@ it("cancel and Q&A never call feedback", async () => {
   fireEvent.click(screen.getByRole("button", { name: "assistant.cancel" }));
   question("Subject question");
   await screen.findByText("Subject question", { selector: "article p" });
-  expect(apiPost.mock.calls.every((call) => call[0] === "/api/assistant/query")).toBe(true);
+  expect(apiPost.mock.calls.every((call) => call[0] === "/api/assistant/v1/query")).toBe(true);
 });
 
 it("independent assistant-only flag exposes questions without a submit action", async () => {
@@ -97,7 +114,7 @@ it("uses automatic routing with one freeform question input", async () => {
   expect(screen.getByLabelText("assistant.message")).toBeVisible();
   question("怎样提交建议");
   await screen.findByText("Review first");
-  expect(apiPost).toHaveBeenCalledWith("/api/assistant/query", { message: "怎样提交建议", mode: "auto", locale: "zh" });
+  expect(apiPost).toHaveBeenCalledWith("/api/assistant/v1/query", { message: "怎样提交建议", locale: "zh", selected_target: null, recent_questions: [] }, { signal: expect.any(AbortSignal) });
 });
 
 it("shows a finished answer and its evidence without a clarification prompt", async () => {
@@ -126,7 +143,7 @@ it.each([
   const article = document.querySelector("#assistant-panel article")!;
   expect(article.textContent).not.toMatch(/choose|type below|feedback, usage|选择类型|下方选择|点击提建议/i);
   expect(document.querySelectorAll("#assistant-panel select, #assistant-panel [role=combobox], #assistant-panel [role=radiogroup]")).toHaveLength(0);
-  expect(apiPost).toHaveBeenCalledWith("/api/assistant/query", { message: questionText, mode: "auto", locale: lang });
+  expect(apiPost).toHaveBeenCalledWith("/api/assistant/v1/query", { message: questionText, locale: lang, selected_target: null, recent_questions: [] }, { signal: expect.any(AbortSignal) });
 });
 
 it("blurs a submitted question and reveals its answer inside the assistant scroll pane", async () => {
@@ -151,6 +168,43 @@ it("blurs a submitted question and reveals its answer inside the assistant scrol
   expect(input).toBeVisible();
   expect(form.querySelector('button[type="submit"]')).toBeVisible();
   expect(windowScroll).not.toHaveBeenCalled();
+});
+
+it("reveals long replies after the twelve-entry cap without taking over manual scrolling", async () => {
+  let finishFifteenth!: (value: unknown) => void;
+  const answer = (number: number) => ({ ...reply("knowledge"), answer: `Answer ${number}\n\n${"Long paragraph. ".repeat(40)}` });
+  apiPost.mockImplementation(() => {
+    const number = apiPost.mock.calls.length;
+    return number === 15 ? new Promise((done) => { finishFifteenth = done; }) : Promise.resolve(answer(number));
+  });
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+    return { top: this.classList.contains("assistant-answer") ? 260 : this.classList.contains("overflow-y-auto") ? 100 : 0 } as DOMRect;
+  });
+  show(false);
+  const container = document.querySelector("#assistant-panel .overflow-y-auto") as HTMLDivElement;
+
+  for (let number = 1; number <= 14; number += 1) {
+    question(`Question ${number}`);
+    await screen.findByText(`Answer ${number}`);
+    await waitFor(() => expect(container.scrollTop).toBe(number * 160));
+    expect(container.querySelectorAll("article")).toHaveLength(Math.min(number, 12));
+  }
+  expect(screen.queryByText("Question 1")).not.toBeInTheDocument();
+
+  question("Question 15");
+  fireEvent.wheel(container);
+  container.scrollTop = 500;
+  finishFifteenth(answer(15));
+  await screen.findByText("Answer 15");
+  await waitFor(() => expect(container.scrollTop).toBe(500));
+  expect(container.querySelectorAll("article")).toHaveLength(12);
+
+  fireEvent.click(screen.getByRole("button", { name: "assistant.clear" }));
+  container.scrollTop = 0;
+  question("Question 16");
+  await screen.findByText("Answer 16");
+  await waitFor(() => expect(container.scrollTop).toBe(160));
+  expect(container.querySelectorAll("article")).toHaveLength(1);
 });
 
 it("reveals a delayed answer after manual feedback cancellation without refocusing the composer", async () => {
@@ -312,7 +366,7 @@ it("errors and malformed responses can be retried without feedback", async () =>
   apiPost.mockResolvedValueOnce({ intent: "unexpected" }).mockResolvedValueOnce(reply("clarify"));
   show(); question(); await screen.findByRole("alert");
   question(); await screen.findByText("assistant.choose");
-  expect(apiPost.mock.calls.every((call) => call[0] === "/api/assistant/query")).toBe(true);
+  expect(apiPost.mock.calls.every((call) => call[0] === "/api/assistant/v1/query")).toBe(true);
 });
 
 it("renders safe Markdown and opens the exact help reference", async () => {
@@ -334,6 +388,63 @@ it("reads the static guide without AI and reports stale references", async () =>
   expect(apiPost).not.toHaveBeenCalled();
 });
 
+it("keeps the guide cleared when its earlier request finishes late", async () => {
+  let resolve!: (value: unknown) => void;
+  apiGet.mockImplementationOnce(() => new Promise((done) => { resolve = done; }));
+  show(false);
+  fireEvent.click(screen.getByRole("button", { name: "assistant.guide" }));
+  fireEvent.click(screen.getByRole("button", { name: "assistant.clear" }));
+  await act(async () => resolve({ results: [ref] }));
+  expect(screen.queryByRole("button", { name: "file-details (1.0.0)" })).not.toBeInTheDocument();
+});
+
+it("keeps a help citation cleared when its earlier request finishes late", async () => {
+  let resolve!: (value: unknown) => void;
+  apiPost.mockResolvedValue({ ...reply("usage"), citations: [ref] });
+  apiGet.mockImplementationOnce(() => new Promise((done) => { resolve = done; }));
+  show(false);
+  question("Show the guide section");
+  fireEvent.click(await screen.findByRole("button", { name: /Guide \/ file-details/ }));
+  fireEvent.click(screen.getByRole("button", { name: "assistant.clear" }));
+  await act(async () => resolve({ ...ref, content: "Cleared section" }));
+  expect(screen.queryByTestId("assistant-help-section")).not.toBeInTheDocument();
+});
+
+it("keeps the newer help citation when an older citation succeeds late", async () => {
+  const newer = { ...ref, section_id: "weekly" };
+  let resolveOlder!: (value: unknown) => void;
+  let resolveNewer!: (value: unknown) => void;
+  apiPost.mockResolvedValue({ ...reply("usage"), citations: [ref, newer] });
+  apiGet.mockImplementationOnce(() => new Promise((done) => { resolveOlder = done; }))
+    .mockImplementationOnce(() => new Promise((done) => { resolveNewer = done; }));
+  show(false);
+  question("Show both guide sections");
+  fireEvent.click(await screen.findByRole("button", { name: /Guide \/ file-details/ }));
+  fireEvent.click(screen.getByRole("button", { name: /Guide \/ weekly/ }));
+  await act(async () => resolveNewer({ ...newer, content: "Current weekly section" }));
+  expect(screen.getByTestId("assistant-help-section")).toHaveTextContent("Current weekly section");
+  await act(async () => resolveOlder({ ...ref, content: "Older file section" }));
+  expect(screen.getByTestId("assistant-help-section")).toHaveTextContent("Current weekly section");
+  expect(screen.getByTestId("assistant-help-section")).not.toHaveTextContent("Older file section");
+});
+
+it("ignores an older guide error after a newer help citation succeeds", async () => {
+  let rejectOlder!: (reason: Error) => void;
+  let resolveNewer!: (value: unknown) => void;
+  apiPost.mockResolvedValue({ ...reply("usage"), citations: [ref] });
+  apiGet.mockImplementationOnce(() => new Promise((_, reject) => { rejectOlder = reject; }))
+    .mockImplementationOnce(() => new Promise((done) => { resolveNewer = done; }));
+  show(false);
+  question("Show the guide section");
+  fireEvent.click(screen.getByRole("button", { name: "assistant.guide" }));
+  fireEvent.click(await screen.findByRole("button", { name: /Guide \/ file-details/ }));
+  await act(async () => resolveNewer({ ...ref, content: "Current file section" }));
+  expect(screen.getByTestId("assistant-help-section")).toHaveTextContent("Current file section");
+  await act(async () => rejectOlder(new Error("Old guide failed")));
+  expect(screen.getByTestId("assistant-help-section")).toHaveTextContent("Current file section");
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+
 it("renders catalog and body citations as internal links with versions and nonzero embedding counts", async () => {
   const source = { file_id: "source", section_id: "section-1", kb_id: "public", title: "Body document", link: "/file-detail?url=source", source_version: "publication-1", source_date: "2026-11-06", stale: true };
   apiPost.mockResolvedValue({ ...reply("knowledge"), embedding_attempts: 2, citations: [{ ...source, source_type: "kb" }, { ...source, source_type: "catalog", title: "Directory document", section_id: "", kb_id: null }] });
@@ -341,7 +452,90 @@ it("renders catalog and body citations as internal links with versions and nonze
   expect(await screen.findByRole("link", { name: /Body document.*assistant.source_kb/ })).toHaveAttribute("href", "/file-detail?url=source");
   expect(screen.getByRole("link", { name: /Directory document.*assistant.source_catalog/ })).toHaveTextContent("publication-1");
   expect(screen.getByRole("link", { name: /Body document/ })).toHaveTextContent("assistant.stale");
+  fireEvent.click(screen.getByRole("link", { name: /Body document/ }));
+  expect(navigate).toHaveBeenCalledWith("/file-detail?url=source");
   expect(apiGet).not.toHaveBeenCalled();
+});
+
+it("opens an allowed Weekly action without reloading the assistant", async () => {
+  apiPost.mockResolvedValue({ ...reply("answer"), answer: "Open [Weekly](/weekly)." });
+  show(false); question("How do weekly updates work?");
+  fireEvent.click(await screen.findByRole("link", { name: "Weekly" }));
+  expect(navigate).toHaveBeenCalledWith("/weekly");
+  expect(screen.getByText("How do weekly updates work?", { selector: "article p" })).toBeInTheDocument();
+});
+
+it("keeps source-portal navigation and its follow-up in the same mounted conversation", async () => {
+  apiGet.mockResolvedValue({ assistant_enabled: true, feedback_enabled: false });
+  apiPost.mockResolvedValueOnce({ ...reply("answer"), answer: "Showing 12 of 13 sources; open [Source Portals](/source-portals)." }).mockResolvedValue(reply("answer"));
+  const { rerender } = render(<SupportWidget />);
+  fireEvent.click(await screen.findByTestId("support-widget-trigger"));
+  await screen.findByLabelText("assistant.message");
+  question("Which sources are available?");
+  fireEvent.click(await screen.findByRole("link", { name: "Source Portals" }));
+  expect(navigate).toHaveBeenCalledWith("/source-portals");
+  route.current = "/source-portals";
+  rerender(<SupportWidget />);
+  expect(screen.getByText("Which sources are available?", { selector: "article p" })).toBeInTheDocument();
+  question("Which source has SOA material?");
+  expect(apiPost.mock.calls[1][1].recent_questions).toEqual(["Which sources are available?"]);
+});
+
+it("uses the second verified file card as the target after navigation and a follow-up", async () => {
+  const cards = ["first", "second"].map((name, index) => ({
+    source_type: "catalog", file_id: `https://example.org/${name}.pdf`, section_id: "", kb_id: index ? "other" : "public", title: `${name} report`,
+    link: `/file-detail?url=${encodeURIComponent(`https://example.org/${name}.pdf`)}`, source_version: null, source_date: null, stale: false,
+  }));
+  apiGet.mockResolvedValue({ assistant_enabled: true, feedback_enabled: false });
+  apiPost.mockResolvedValueOnce({ ...reply("answer"), citations: cards, selected_target: null }).mockResolvedValue(reply("answer"));
+  const { rerender } = render(<SupportWidget />);
+  fireEvent.click(await screen.findByTestId("support-widget-trigger"));
+  await screen.findByLabelText("assistant.message");
+  question("Show recent reports");
+  fireEvent.click(await screen.findByRole("link", { name: /second report/ }));
+  expect(navigate).toHaveBeenCalledWith(cards[1].link);
+  route.current = cards[1].link;
+  rerender(<SupportWidget />);
+  expect(screen.getByText("Show recent reports", { selector: "article p" })).toBeInTheDocument();
+  question("What does this report say?");
+  expect(apiPost.mock.calls[1][1]).toMatchObject({
+    selected_target: { kb_id: "other", file_id: cards[1].file_id }, recent_questions: ["Show recent reports"],
+  });
+});
+
+it("does not carry an older target through an unassigned catalog card", async () => {
+  const old = { kb_id: "public", file_id: "https://example.org/old.pdf" };
+  const unassigned = { source_type: "catalog", file_id: "https://example.org/new.pdf", section_id: "", kb_id: null, title: "unassigned report", link: "/file-detail?url=https%3A%2F%2Fexample.org%2Fnew.pdf", source_version: null, source_date: null, stale: false };
+  apiGet.mockResolvedValue({ assistant_enabled: true, feedback_enabled: false });
+  apiPost.mockResolvedValueOnce({ ...reply("answer"), citations: [unassigned], selected_target: old }).mockResolvedValue(reply("answer"));
+  const { rerender } = render(<SupportWidget />);
+  fireEvent.click(await screen.findByTestId("support-widget-trigger"));
+  await screen.findByLabelText("assistant.message");
+  question("Find the report");
+  fireEvent.click(await screen.findByRole("link", { name: /unassigned report/ }));
+  expect(navigate).toHaveBeenCalledWith(unassigned.link);
+  route.current = unassigned.link;
+  rerender(<SupportWidget />);
+  question("What about this one?");
+  expect(apiPost.mock.calls[1][1]).toMatchObject({ selected_target: null, opened_file_url: unassigned.file_id, recent_questions: ["Find the report"] });
+  fireEvent.click(screen.getByRole("button", { name: "assistant.clear" }));
+  question("What else?");
+  expect(apiPost.mock.calls[2][1].opened_file_url).toBeUndefined();
+});
+
+it("does not replace this session's file context on a modified card click", async () => {
+  const old = { kb_id: "public", file_id: "https://example.org/old.pdf" };
+  const card = { source_type: "catalog", file_id: "https://example.org/new.pdf", section_id: "", kb_id: null, title: "new report", link: "/file-detail?url=https%3A%2F%2Fexample.org%2Fnew.pdf", source_version: null, source_date: null, stale: false };
+  apiPost.mockResolvedValueOnce({ ...reply("answer"), citations: [card], selected_target: old }).mockResolvedValue(reply("answer"));
+  show(false);
+  question("Find the report");
+  const link = await screen.findByRole("link", { name: /new report/ });
+  link.addEventListener("click", (event) => event.preventDefault());
+  fireEvent.click(link, { ctrlKey: true });
+  question("Continue here");
+  expect(apiPost.mock.calls[1][1]).toMatchObject({ selected_target: old, recent_questions: ["Find the report"] });
+  expect(apiPost.mock.calls[1][1].opened_file_url).toBeUndefined();
+  expect(navigate).not.toHaveBeenCalled();
 });
 
 it("unmount clears history and ignores a late response", async () => {
@@ -351,6 +545,103 @@ it("unmount clears history and ignores a late response", async () => {
   resolve(reply());
   await waitFor(() => expect(screen.queryByText("Review first")).not.toBeInTheDocument());
   expect(screen.queryByLabelText("feedback.content")).not.toBeInTheDocument();
+});
+
+it("keeps bounded question context and the selected target across site navigation, then clears both", async () => {
+  const target = { kb_id: "public", file_id: "soa-report" };
+  apiPost.mockResolvedValueOnce({ ...reply("answer"), selected_target: target }).mockResolvedValueOnce({ ...reply("answer"), selected_target: target }).mockResolvedValue(reply("answer"));
+  const { rerender } = show(false);
+  question("Latest SOA report");
+  await screen.findByText("Latest SOA report", { selector: "article p" });
+  rerender(<AssistantPanel t={t} lang="en" open feedbackEnabled={false} onClose={vi.fn()} />);
+  question("What does it say?");
+  await screen.findByText("What does it say?", { selector: "article p" });
+  expect(apiPost.mock.calls[1][1]).toMatchObject({ selected_target: target, recent_questions: ["Latest SOA report"] });
+  fireEvent.click(screen.getByRole("button", { name: "assistant.clear" }));
+  expect(screen.queryByText("Latest SOA report")).not.toBeInTheDocument();
+  question("This week?");
+  expect(apiPost.mock.calls[2][1]).toMatchObject({ selected_target: null, recent_questions: [] });
+});
+
+it("keeps the mounted assistant history when the host navigates to Weekly", async () => {
+  apiGet.mockResolvedValue({ assistant_enabled: true, feedback_enabled: false });
+  apiPost.mockResolvedValue(reply("answer"));
+  const { rerender } = render(<SupportWidget />);
+  fireEvent.click(await screen.findByTestId("support-widget-trigger"));
+  await screen.findByLabelText("assistant.message");
+  question("Weekly guide");
+  await screen.findByText("Weekly guide", { selector: "article p" });
+  route.current = "/weekly";
+  rerender(<SupportWidget />);
+  expect(screen.getByText("Weekly guide", { selector: "article p" })).toBeInTheDocument();
+  question("What's new?");
+  expect(apiPost.mock.calls[1][1].recent_questions).toEqual(["Weekly guide"]);
+});
+
+it("cancels the real request and ignores a response that arrives late", async () => {
+  let resolve!: (value: unknown) => void;
+  apiPost.mockImplementationOnce(() => new Promise((done) => { resolve = done; })).mockResolvedValueOnce(reply("answer"));
+  show(false); question("Slow question");
+  const signal = apiPost.mock.calls[0][2].signal as AbortSignal;
+  fireEvent.click(screen.getByRole("button", { name: "assistant.cancel_request" }));
+  expect(signal.aborted).toBe(true);
+  resolve({ ...reply("answer"), answer: "Outdated answer" });
+  question("New question");
+  await screen.findByText("New question", { selector: "article p" });
+  expect(screen.queryByText("Outdated answer")).not.toBeInTheDocument();
+});
+
+it("clears prior answers on identity change", async () => {
+  apiPost.mockResolvedValue(reply("answer"));
+  const { rerender } = render(<AssistantPanel t={t} lang="en" open feedbackEnabled={false} onClose={vi.fn()} identity="reader-1" />);
+  question("Private question");
+  await screen.findByText("Private question", { selector: "article p" });
+  rerender(<AssistantPanel t={t} lang="en" open feedbackEnabled={false} onClose={vi.fn()} identity="reader-2" />);
+  await waitFor(() => expect(screen.queryByText("Private question")).not.toBeInTheDocument());
+});
+
+it.each([401, 403])("drops prior evidence and refocuses after a %i permission error", async (status) => {
+  const target = { kb_id: "private", file_id: "report" };
+  apiPost.mockResolvedValueOnce({ ...reply("answer"), selected_target: target }).mockRejectedValueOnce(new ApiError("Forbidden", status)).mockResolvedValueOnce(reply("answer"));
+  show(false); question("Private report");
+  await screen.findByText("Private report", { selector: "article p" });
+  const input = screen.getByLabelText("assistant.message");
+  question("Read it again");
+  expect(input).not.toHaveFocus();
+  await screen.findByRole("alert");
+  expect(screen.queryByText("Private report")).not.toBeInTheDocument();
+  await waitFor(() => expect(input).toHaveFocus());
+  question("Try after sign-in");
+  expect(apiPost.mock.calls[2][1]).toMatchObject({ selected_target: null, recent_questions: [] });
+});
+
+it.each([401, 403])("keeps manually edited feedback after a pending query returns %i", async (status) => {
+  let rejectQuery!: (reason: unknown) => void;
+  apiPost.mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectQuery = reject; }));
+  const { rerender } = render(<AssistantPanel t={t} lang="en" open feedbackEnabled onClose={vi.fn()} identity="reader-1" />);
+  question("Pending question");
+  fireEvent.click(screen.getByRole("button", { name: "assistant.feedback" }));
+  const draft = await screen.findByLabelText("feedback.content");
+  fireEvent.change(draft, { target: { value: "Edited ordinary feedback draft" } });
+
+  await act(async () => { rejectQuery(new ApiError("Permission changed", status)); });
+  expect(screen.getByText("assistant.error", { selector: "[role=alert]" })).toBeInTheDocument();
+  expect(screen.getByLabelText("feedback.content")).toBeVisible();
+  expect(screen.getByLabelText("feedback.content")).toHaveValue("Edited ordinary feedback draft");
+  expect(apiPost.mock.calls.map(([path]) => path)).toEqual(["/api/assistant/v1/query"]);
+
+  rerender(<AssistantPanel t={t} lang="en" open feedbackEnabled onClose={vi.fn()} identity="reader-2" />);
+  await waitFor(() => expect(screen.queryByLabelText("feedback.content")).not.toBeInTheDocument());
+});
+
+it("allows a separate consumer to use the versioned transport contract", async () => {
+  apiPost.mockResolvedValue(reply("answer"));
+  const controller = new AbortController();
+  const result = await queryAssistant({ message: "Overview", locale: "en", selected_target: null, recent_questions: [] }, controller.signal);
+  expect(result.schema_version).toBe("1.0");
+  expect(apiPost).toHaveBeenCalledWith("/api/assistant/v1/query", { message: "Overview", locale: "en", selected_target: null, recent_questions: [] }, { signal: controller.signal });
+  apiPost.mockResolvedValue({ ...reply("answer"), schema_version: "2.0" });
+  await expect(queryAssistant({ message: "Overview", locale: "en", selected_target: null, recent_questions: [] }, controller.signal)).rejects.toThrow();
 });
 
 it("a late automatic draft cannot replace a manually opened feedback form", async () => {

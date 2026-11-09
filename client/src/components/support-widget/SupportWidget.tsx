@@ -3,6 +3,8 @@ import { MessageSquare, X } from "lucide-react";
 import { IconButton } from "@/components/a11y/IconButton";
 import { useTranslation } from "@/components/Layout";
 import { apiGet } from "@/lib/api";
+import { useAuth } from "@/context/AuthContext";
+import { queryAssistant } from "@/features/assistant/transport";
 import { useLocation } from "wouter";
 
 class FeedbackLoadErrorBoundary extends Component<{ children: ReactNode; fallback: ReactNode }, { failed: boolean }> {
@@ -20,6 +22,7 @@ type Capabilities = { feedback_enabled: boolean; assistant_enabled: boolean };
 
 export default function SupportWidget({ onOpenChange }: { onOpenChange?: (open: boolean) => void }) {
   const { t, lang } = useTranslation();
+  const { user, permissions } = useAuth();
   const [location] = useLocation();
   const isChat = location.split("?")[0] === "/chat";
   const [enabled, setEnabled] = useState(false);
@@ -124,7 +127,7 @@ export default function SupportWidget({ onOpenChange }: { onOpenChange?: (open: 
             )}
           >
             <Suspense fallback={<div role="status" className="w-[min(22.5rem,calc(100vw-2rem))] overflow-y-auto rounded-xl border border-border bg-card p-4 text-sm shadow-xl">{t("feedback.title")}</div>}>
-              {assistantEnabled ? <AssistantPanel key={location} t={t} lang={lang} open={open} onClose={close} feedbackEnabled={feedbackEnabled} /> : <FeedbackForm t={t} lang={lang} open={open} onClose={close} />}
+              {assistantEnabled ? <AssistantPanel t={t} lang={lang} open={open} onClose={close} feedbackEnabled={feedbackEnabled} identity={JSON.stringify([user?.id, user?.email, permissions])} query={queryAssistant} /> : <FeedbackForm t={t} lang={lang} open={open} onClose={close} />}
             </Suspense>
           </FeedbackLoadErrorBoundary>
         </div>

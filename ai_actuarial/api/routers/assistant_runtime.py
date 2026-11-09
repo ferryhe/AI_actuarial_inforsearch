@@ -1,4 +1,4 @@
-"""Admin-only contract path for the independently installed Assistant Feature."""
+"""Versioned user transport and admin path for the installed Assistant Feature."""
 
 from __future__ import annotations
 
@@ -20,17 +20,41 @@ from ai_actuarial.assistant.query import FeatureResponse
 router = APIRouter()
 
 
+async def _watch_disconnection(request: Request, cancelled: Event) -> None:
+    while not cancelled.is_set():
+        if await request.is_disconnected():
+            cancelled.set()
+            return
+        await asyncio.sleep(0.2)
+
+
 class RuntimePayload(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     message: str = Field(min_length=1, max_length=4000)
     locale: Literal["en", "zh", "zh-CN"] = "en"
     selected_target: SelectedTarget | None = None
+    opened_file_url: str | None = Field(default=None, min_length=1, max_length=1024)
+    recent_questions: list[str] = Field(default_factory=list, max_length=3)
 
     @field_validator("message")
     @classmethod
     def valid_message(cls, value: str) -> str:
         if not value.strip() or "\0" in value:
             raise ValueError("A nonempty message without NUL is required")
+        return value
+
+    @field_validator("recent_questions")
+    @classmethod
+    def valid_recent_questions(cls, values: list[str]) -> list[str]:
+        if any(not value.strip() or len(value) > 500 or "\0" in value for value in values):
+            raise ValueError("Recent questions must be nonempty and at most 500 characters")
+        return values
+
+    @field_validator("opened_file_url")
+    @classmethod
+    def valid_opened_file_url(cls, value: str | None) -> str | None:
+        if value is not None and (not value.strip() or "\0" in value):
+            raise ValueError("Opened file URL must be nonempty and contain no NUL")
         return value
 
 
@@ -41,12 +65,29 @@ async def api_assistant_runtime_query(
     response: Response,
     auth: AuthContext = Depends(require_permissions("config.write")),
 ) -> FeatureResponse:
+    return await _query(payload, request, response, auth)
+
+
+@router.post("/assistant/v1/query", response_model=FeatureResponse)
+async def api_assistant_user_query(
+    payload: RuntimePayload,
+    request: Request,
+    response: Response,
+    auth: AuthContext = Depends(require_permissions("chat.query")),
+) -> FeatureResponse:
+    return await _query(payload, request, response, auth)
+
+
+async def _query(
+    payload: RuntimePayload, request: Request, response: Response, auth: AuthContext
+) -> FeatureResponse:
     _require_enabled(request)
     feature = getattr(request.app.state, "assistant_feature", None)
     if feature is None:
         raise HTTPException(status_code=503, detail="Assistant Feature is unavailable")
     budget = load_agent_budget()
     cancelled = Event()
+    disconnect = asyncio.create_task(_watch_disconnection(request, cancelled))
     try:
         outcome = await asyncio.wait_for(
             asyncio.to_thread(
@@ -59,6 +100,8 @@ async def api_assistant_runtime_query(
                 deadline=time.monotonic() + budget.total_seconds,
                 budget=budget,
                 selected_target=payload.selected_target,
+                opened_file_url=payload.opened_file_url,
+                recent_questions=payload.recent_questions,
             ),
             timeout=budget.total_seconds,
         )
@@ -84,5 +127,9 @@ async def api_assistant_runtime_query(
     except asyncio.CancelledError:
         cancelled.set()
         raise
+    finally:
+        cancelled.set()
+        disconnect.cancel()
+        await asyncio.gather(disconnect, return_exceptions=True)
     apply_session_update(response, request, outcome.session_update)
     return outcome.response

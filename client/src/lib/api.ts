@@ -97,8 +97,9 @@ export function apiGetBlob(url: string): Promise<Blob> {
   return apiFetch<Blob>(url, undefined, "blob");
 }
 
-export function apiPost<T = unknown>(url: string, body?: unknown): Promise<T> {
+export function apiPost<T = unknown>(url: string, body?: unknown, options?: RequestInit): Promise<T> {
   return apiFetch<T>(url, {
+    ...options,
     method: "POST",
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });

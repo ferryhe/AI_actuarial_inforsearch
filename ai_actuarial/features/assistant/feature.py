@@ -8,6 +8,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from threading import Event
 from typing import Callable
+from urllib.parse import urlencode
 
 from ai_actuarial.agent_runtime import Registry, RunContext, RunResult, ToolResult, run
 from ai_actuarial.agent_runtime.artifacts import ArtifactError, ArtifactStore
@@ -17,7 +18,7 @@ from ai_actuarial.api.deps import AuthContext, public_permissions_for_request
 from ai_actuarial.api.services import chat
 from ai_actuarial.assistant.agent_budget import load_agent_budget
 from ai_actuarial.assistant.document_research import DocumentResearch, SelectedTarget
-from ai_actuarial.assistant.knowledge import permitted_kbs
+from ai_actuarial.assistant.knowledge import SourceCitation, permitted_kbs
 from ai_actuarial.assistant.query import FeatureResponse, HelpCitation
 from ai_actuarial.postgres import DatabaseConfig, resolve_data_root
 from ai_actuarial.skills.document_research import executors as research_executors
@@ -107,6 +108,8 @@ class AssistantFeature:
         cancelled: Event | None = None,
         deadline: float | None = None,
         selected_target: SelectedTarget | None = None,
+        opened_file_url: str | None = None,
+        recent_questions: list[str] | None = None,
         budget: AgentBudget | None = None,
     ) -> Outcome:
         initial_identity = _identity(auth)
@@ -176,6 +179,40 @@ class AssistantFeature:
                     raise
                 runtime = RunResult("", "error", "QUOTA_EXCEEDED", (), 0, 0, 0, ())
                 return Outcome(self._response(runtime, locale), runtime, session_update)
+            opened_target = None
+            file_row = None
+            if opened_file_url is not None:
+                if hasattr(request.state, "auth_context"):
+                    del request.state.auth_context
+                current = deps.get_auth_context(request)
+                current_scopes = (
+                    current.permissions
+                    if current.token
+                    else public_permissions_for_request(request)
+                )
+                if (
+                    _identity(current) == initial_identity
+                    and {"chat.query", "catalog.read", "files.read"}
+                    <= initial_scopes & current_scopes
+                ):
+                    file_row = storage._conn.execute(
+                        "SELECT url FROM files WHERE url = ? AND deleted_at IS NULL",
+                        (opened_file_url,),
+                    ).fetchone()
+                    if file_row and "markdown.read" in initial_scopes & current_scopes:
+                        facade = DocumentResearch(
+                            storage, authorized_kbs=lambda: permitted_kbs(request, current)
+                        )
+                        matches = [
+                            target
+                            for kb_id in permitted_kbs(request, current)
+                            if facade._document(
+                                target := SelectedTarget(kb_id=kb_id, file_id=opened_file_url)
+                            )
+                            is not None
+                        ]
+                        if len(matches) == 1:
+                            opened_target = matches[0]
             if model is None:
                 from ai_actuarial.chatbot.config import ChatbotConfig
                 from ai_actuarial.chatbot.llm import LLMClient
@@ -216,16 +253,21 @@ class AssistantFeature:
                     )
                     return _normalize_json_object_label(raw)
 
-            verified_target = selected_target
+            verified_target = opened_target if opened_file_url is not None else selected_target
             found_targets: set[tuple[str, str]] = set()
             found_evidence_targets: dict[str, SelectedTarget] = {}
             body_read_targets: set[tuple[str, str]] = set()
+            body_evidence_kbs: dict[str, str] = {}
             help_citations: dict[str, HelpCitation] = {}
+            source_citations: dict[str, SourceCitation] = {}
+            resource_file_citations: dict[str, list[SourceCitation]] = {}
+            resource_file_targets: dict[str, SelectedTarget | None] = {}
             help_answers: dict[str, str] = {}
             weekly_actions: set[str] = set()
             weekly_guide_ids: set[str] = set()
             weekly_empty: dict[str, str] = {}
             resource_answers: dict[str, str] = {}
+            attempted_opened_body = False
             if verified_target is not None:
                 current_facade = DocumentResearch(
                     storage, authorized_kbs=lambda: permitted_kbs(request, auth)
@@ -237,7 +279,20 @@ class AssistantFeature:
                     verified_target = None
 
             def execute(tool, args: dict, run_context: RunContext, _remaining: float) -> ToolResult:
-                nonlocal verified_target
+                nonlocal verified_target, attempted_opened_body
+                if (
+                    opened_target is None
+                    and opened_file_url is not None
+                    and tool.executor
+                    in {
+                        "document_research.read_document_sections",
+                        "document_research.search_knowledge",
+                        "document_research.readiness",
+                    }
+                    and args.get("file_id") == opened_file_url
+                    and (args.get("kb_id"), args.get("file_id")) not in found_targets
+                ):
+                    attempted_opened_body = True
                 # The dependency cache is request-scoped, so force a fresh lookup per action.
                 if hasattr(request.state, "auth_context"):
                     del request.state.auth_context
@@ -251,6 +306,10 @@ class AssistantFeature:
                     _identity(current) != initial_identity
                     or not tool.required_scopes <= run_context.scopes
                     or not tool.required_scopes <= current_scopes
+                    or (
+                        opened_target is not None
+                        and not {"catalog.read", "files.read"} <= current_scopes
+                    )
                 ):
                     raise PermissionError("identity or scope changed")
                 if args.get("kb_id") is not None and args["kb_id"] not in permitted_kbs(
@@ -258,6 +317,15 @@ class AssistantFeature:
                 ):
                     raise PermissionError("KB target is outside current scope")
                 run_context.remaining()
+                if (
+                    attempted_opened_body
+                    and opened_target is None
+                    and args.get("file_id") == opened_file_url
+                    and (args.get("kb_id"), args.get("file_id")) not in found_targets
+                ):
+                    return ToolResult(
+                        "unavailable", {"message": "Opened report body is unavailable."}
+                    )
                 if tool.executor == "feedback.draft":
                     if not getattr(request.app.state, "feedback_enabled", False):
                         return ToolResult("unavailable", {"message": "Feedback is disabled."})
@@ -309,6 +377,68 @@ class AssistantFeature:
                         )
                         if answer:
                             resource_answers.update({item: answer for item in result.evidence_ids})
+                    if result.status == "ok" and tool.executor in {
+                        "resources_updates.recent",
+                        "resources_updates.catalog_search",
+                    }:
+                        files = result.data.get("files", [])
+                        cards: list[SourceCitation] = []
+                        single_target = None
+                        for item in files:
+                            url = item.get("source_url") if isinstance(item, dict) else None
+                            if not isinstance(url, str) or not url or len(url) > 1024:
+                                continue
+                            documents = [
+                                document
+                                for kb_id in permitted_kbs(request, current)
+                                if (
+                                    document := facade._document(
+                                        SelectedTarget(kb_id=kb_id, file_id=url)
+                                    )
+                                )
+                                is not None
+                                and document.source_url == url
+                            ]
+                            document = documents[0] if documents else None
+                            cards.append(
+                                SourceCitation(
+                                    source_type="catalog",
+                                    file_id=url,
+                                    kb_id=(
+                                        document.target.kb_id
+                                        if document and len(documents) == 1
+                                        else None
+                                    ),
+                                    title=(
+                                        document.title
+                                        if document
+                                        else str(item.get("title") or url)
+                                    ),
+                                    link=(
+                                        document.internal_link
+                                        if document
+                                        else "/file-detail?" + urlencode({"url": url})
+                                    ),
+                                    source_date=(
+                                        document.publication_date
+                                        if document
+                                        else str(
+                                            item.get("publication_date")
+                                            or item.get("published_time")
+                                            or ""
+                                        )
+                                        or None
+                                    ),
+                                )
+                            )
+                            found_targets.update(
+                                (member.target.kb_id, member.target.file_id) for member in documents
+                            )
+                            if len(files) == 1 and len(documents) == 1:
+                                single_target = document.target
+                        for evidence_id in result.evidence_ids:
+                            resource_file_citations[evidence_id] = cards
+                            resource_file_targets[evidence_id] = single_target
                     if tool.executor == "resources_updates.weekly" and result.status == "ok":
                         weekly_actions.update(result.evidence_ids)
                         if result.data.get("snapshot") is None:
@@ -335,12 +465,56 @@ class AssistantFeature:
                             (evidence_id, SelectedTarget.model_validate(item["target"]))
                             for evidence_id, item in zip(result.evidence_ids, documents)
                         )
+                        source_citations.update(
+                            (
+                                evidence_id,
+                                SourceCitation(
+                                    source_type="catalog",
+                                    file_id=item["target"]["file_id"],
+                                    kb_id=item["target"]["kb_id"],
+                                    title=item["title"],
+                                    link=item["internal_link"],
+                                    source_date=item.get("publication_date"),
+                                ),
+                            )
+                            for evidence_id, item in zip(result.evidence_ids, documents)
+                        )
                         if len(documents) == 1:
                             verified_target = SelectedTarget.model_validate(documents[0]["target"])
                     if result.status == "ok" and tool.executor in {
                         "document_research.read_document_sections",
                         "document_research.search_knowledge",
                     }:
+                        body_evidence_kbs.update(
+                            (evidence_id, args["kb_id"]) for evidence_id in result.evidence_ids
+                        )
+                        document = facade._document(
+                            SelectedTarget(kb_id=args["kb_id"], file_id=args["file_id"])
+                        )
+                        if document:
+                            source_citations.update(
+                                (
+                                    evidence_id,
+                                    SourceCitation(
+                                        source_type=(
+                                            "kb" if section.get("section_id") else "catalog"
+                                        ),
+                                        file_id=document.target.file_id,
+                                        kb_id=document.target.kb_id,
+                                        section_id=section.get("section_id", ""),
+                                        title=document.title,
+                                        link=document.internal_link,
+                                        source_version=section.get("source_version"),
+                                        source_date=document.publication_date,
+                                        stale=section.get("serving_stale", False),
+                                    ),
+                                )
+                                for evidence_id, section in zip(
+                                    result.evidence_ids,
+                                    result.data.get("sections")
+                                    or [result.data.get("document", {})],
+                                )
+                            )
                         body_read_targets.add((args["kb_id"], args["file_id"]))
                         verified_target = SelectedTarget(
                             kb_id=args["kb_id"], file_id=args["file_id"]
@@ -407,12 +581,212 @@ class AssistantFeature:
                 model=model,
                 execute=execute,
                 selected_target=verified_target.model_dump() if verified_target else None,
+                opened_file=(
+                    {
+                        "url": opened_file_url,
+                        "detail_link": "/file-detail?" + urlencode({"url": opened_file_url}),
+                        "body_access": "available" if opened_target else "unavailable",
+                    }
+                    if file_row
+                    else None
+                ),
+                recent_questions=recent_questions or [],
                 resolve_selected_document=resolve_selected_document,
+                source_options=lambda: storage.get_source_options(),
             )
+            if runtime.verified_quote is not None:
+                evidence_id = runtime.evidence_ids[0]
+                quote, source_url = runtime.verified_quote
+                current_document = (
+                    resolve_selected_document(verified_target.model_dump())
+                    if verified_target is not None
+                    else None
+                )
+                citation = source_citations.get(evidence_id)
+                if (
+                    not isinstance(current_document, dict)
+                    or verified_target is None
+                    or current_document.get("target") != verified_target.model_dump()
+                    or current_document.get("source_url") != source_url
+                    or citation is None
+                    or citation.kb_id != verified_target.kb_id
+                    or citation.file_id != verified_target.file_id
+                    or evidence_id not in body_evidence_kbs
+                    or not isinstance(current_document.get("title"), str)
+                    or not current_document["title"]
+                    or not isinstance(current_document.get("internal_link"), str)
+                    or not current_document["internal_link"]
+                    or not isinstance(current_document.get("publication_date"), (str, type(None)))
+                ):
+                    verified_target = None
+                    runtime = replace(
+                        runtime,
+                        answer="",
+                        availability="unavailable",
+                        error_code="SCOPE_REVOKED",
+                        evidence_ids=(),
+                        kind="error",
+                        verified_quote=None,
+                    )
+                else:
+                    publication_date = current_document.get("publication_date")
+                    runtime = replace(
+                        runtime,
+                        answer=(
+                            f"原文：“{quote}”\n来源：《{current_document['title']}》 {source_url}"
+                            f"\n发布日期：{publication_date or '未知'}。"
+                            if locale.startswith("zh")
+                            else f"Exact quote: “{quote}”\nSource: {current_document['title']} {source_url}"
+                            f"\nPublication date: {publication_date or 'unknown'}."
+                        ),
+                    )
+                    source_citations[evidence_id] = citation.model_copy(
+                        update={
+                            "title": current_document["title"],
+                            "link": current_document["internal_link"],
+                            "source_date": publication_date,
+                        }
+                    )
+            if runtime.error_code == "SCOPE_REVOKED":
+                verified_target = None
+            elif runtime.kind == "finish" and len(runtime.evidence_ids) == 1:
+                evidence_id = runtime.evidence_ids[0]
+                if evidence_id in resource_file_targets:
+                    verified_target = resource_file_targets[evidence_id]
+                else:
+                    verified_target = found_evidence_targets.get(evidence_id, verified_target)
+            if runtime.kind == "finish":
+                try:
+                    required_scopes = {"chat.query"}
+                    for item in runtime.trace:
+                        required_scopes.update(
+                            registry.tool(item.skill_id, item.tool_id).required_scopes
+                        )
+                    required_kbs = {
+                        body_evidence_kbs[item]
+                        for item in runtime.evidence_ids
+                        if item in body_evidence_kbs
+                    }
+                    required_kbs.update(
+                        source_citations[item].kb_id
+                        for item in runtime.evidence_ids
+                        if item in source_citations and source_citations[item].kb_id
+                    )
+                    required_kbs.update(
+                        citation.kb_id
+                        for item in runtime.evidence_ids
+                        for citation in resource_file_citations.get(item, ())
+                        if citation.kb_id
+                    )
+                    if verified_target is not None:
+                        required_kbs.add(verified_target.kb_id)
+                    if hasattr(request.state, "auth_context"):
+                        del request.state.auth_context
+                    current = deps.get_auth_context(request)
+                    current_scopes = (
+                        current.permissions
+                        if current.token
+                        else public_permissions_for_request(request)
+                    )
+                    still_authorized = (
+                        _identity(current) == initial_identity
+                        and required_scopes <= current_scopes
+                        and required_kbs <= set(permitted_kbs(request, current))
+                        and (
+                            opened_target is None
+                            or {"catalog.read", "files.read"} <= current_scopes
+                        )
+                    )
+                except Exception:
+                    still_authorized = False
+                if not still_authorized:
+                    verified_target = None
+                    runtime = replace(
+                        runtime,
+                        answer="",
+                        availability="unavailable",
+                        error_code="SCOPE_REVOKED",
+                        evidence_ids=(),
+                        kind="error",
+                    )
+            if (
+                attempted_opened_body
+                and opened_target is None
+                and not any(file_id == opened_file_url for _, file_id in body_read_targets)
+            ):
+                try:
+                    if hasattr(request.state, "auth_context"):
+                        del request.state.auth_context
+                    current = deps.get_auth_context(request)
+                    current_scopes = (
+                        current.permissions
+                        if current.token
+                        else public_permissions_for_request(request)
+                    )
+                    can_reference = (
+                        _identity(current) == initial_identity
+                        and {"chat.query", "catalog.read", "files.read"}
+                        <= initial_scopes & current_scopes
+                    )
+                    current_file = (
+                        storage._conn.execute(
+                            "SELECT url FROM files WHERE url = ? AND deleted_at IS NULL",
+                            (opened_file_url,),
+                        ).fetchone()
+                        if can_reference
+                        else None
+                    )
+                except Exception:
+                    can_reference = False
+                    current_file = None
+                if can_reference:
+                    answer = (
+                        "当前权限下无法读取这份资料的正文，不能说明其内容。"
+                        if locale.startswith("zh")
+                        else "The report body is unavailable with your current access, so I cannot say what it contains."
+                    )
+                    if current_file:
+                        link = "/file-detail?" + urlencode({"url": opened_file_url})
+                        answer += (
+                            f"\n\n[打开的资料]({link})"
+                            if locale.startswith("zh")
+                            else f"\n\n[Opened report]({link})"
+                        )
+                    runtime = replace(
+                        runtime,
+                        answer=answer,
+                        availability="unavailable",
+                        error_code="KNOWLEDGE_UNAVAILABLE",
+                        evidence_ids=(),
+                        kind="finish",
+                        verified_quote=None,
+                    )
+                else:
+                    verified_target = None
+                    runtime = replace(
+                        runtime,
+                        answer="",
+                        availability="unavailable",
+                        error_code="SCOPE_REVOKED",
+                        evidence_ids=(),
+                        kind="error",
+                        verified_quote=None,
+                    )
             response = self._response(runtime, locale)
             response.citations = [
                 help_citations[item] for item in runtime.evidence_ids if item in help_citations
             ]
+            if runtime.kind == "finish" and runtime.error_code != "SCOPE_REVOKED":
+                response.citations.extend(
+                    source_citations[item]
+                    for item in runtime.evidence_ids
+                    if item in source_citations
+                )
+                response.citations.extend(
+                    citation
+                    for item in runtime.evidence_ids
+                    for citation in resource_file_citations.get(item, [])
+                )
             weekly_used = runtime.kind == "finish" and bool(
                 weekly_actions.intersection(runtime.evidence_ids)
             )
@@ -448,18 +822,23 @@ class AssistantFeature:
                     if weekly_guide_used
                     else ""
                 )
+                guide_answers = [
+                    help_answers[item]
+                    for item in runtime.evidence_ids
+                    if item in help_answers and item not in weekly_guide_ids
+                ]
+                if weekly_guide_used:
+                    guide_answers.append(weekly_guide_answer)
                 grounded = [
                     resource_answers[item]
                     for item in runtime.evidence_ids
                     if item in resource_answers
                 ]
                 if grounded:
-                    response.answer = "\n\n".join(dict.fromkeys(grounded))
-                    if weekly_guide_used:
-                        response.answer = weekly_guide_answer + "\n\n" + response.answer
-                elif weekly_guide_used:
-                    response.answer = weekly_guide_answer
-                    if weekly_access:
+                    response.answer = "\n\n".join(dict.fromkeys([*guide_answers, *grounded]))
+                elif guide_answers:
+                    response.answer = "\n\n".join(dict.fromkeys(guide_answers))
+                    if weekly_guide_used and weekly_access:
                         try:
                             context.remaining()
                             snapshot = storage.get_latest_weekly_snapshot(
@@ -479,12 +858,6 @@ class AssistantFeature:
                                 )
                         except Exception:
                             pass
-                else:
-                    guide_answers = [
-                        help_answers[item] for item in runtime.evidence_ids if item in help_answers
-                    ]
-                    if guide_answers:
-                        response.answer = "\n\n".join(dict.fromkeys(guide_answers))
             if weekly_used:
                 if weekly_access is not True:
                     if weekly_access is False:
@@ -515,24 +888,43 @@ class AssistantFeature:
                             if locale.startswith("zh")
                             else "No complete published weekly snapshot is available yet."
                         )
-                        response.answer = (
-                            weekly_guide_answer + " " if weekly_guide_used else ""
-                        ) + status
+                        response.answer = "\n\n".join(dict.fromkeys([*guide_answers, status]))
                     elif empty == "no_new":
                         status = (
                             "最近一期已发布周报按系统首次收录时间统计，没有新增资料。"
                             if locale.startswith("zh")
                             else "The latest published weekly period has no newly first-collected files."
                         )
-                        response.answer = (
-                            weekly_guide_answer + " " if weekly_guide_used else ""
-                        ) + status
+                        response.answer = "\n\n".join(dict.fromkeys([*guide_answers, status]))
                     if not re.search(r"\[[^\]]+\]\(/weekly\)", response.answer):
                         response.answer += (
                             "\n\n打开[周报](/weekly)。"
                             if locale.startswith("zh")
                             else "\n\nOpen [Weekly](/weekly)."
                         )
+            if runtime.kind == "finish" and runtime.verified_quote is None:
+                dated_documents = set()
+                for evidence_id in runtime.evidence_ids:
+                    if evidence_id not in body_evidence_kbs or evidence_id not in source_citations:
+                        continue
+                    citation = source_citations[evidence_id]
+                    document_key = (citation.kb_id, citation.file_id)
+                    if document_key in dated_documents:
+                        continue
+                    dated_documents.add(document_key)
+                    if locale.startswith("zh"):
+                        date_text = (
+                            f"发布日期：{citation.source_date}。"
+                            if citation.source_date
+                            else "发布日期未记录。"
+                        )
+                    else:
+                        date_text = (
+                            f"Publication date: {citation.source_date}."
+                            if citation.source_date
+                            else "Publication date not recorded."
+                        )
+                    response.answer += f"\n\n{citation.title}：{date_text}"
             if (
                 runtime.kind == "finish"
                 and getattr(request.app.state, "feedback_enabled", False)
@@ -547,12 +939,6 @@ class AssistantFeature:
                     "这只是草稿。请检查、编辑后确认提交；尚未记录。"
                     if locale.startswith("zh")
                     else "This is only a draft. Review, edit and confirm to submit; nothing is recorded yet."
-                )
-            if runtime.error_code == "SCOPE_REVOKED":
-                verified_target = None
-            elif runtime.kind == "finish" and len(runtime.evidence_ids) == 1:
-                verified_target = found_evidence_targets.get(
-                    runtime.evidence_ids[0], verified_target
                 )
             response.selected_target = verified_target.model_dump() if verified_target else None
             return Outcome(response, runtime, session_update)
