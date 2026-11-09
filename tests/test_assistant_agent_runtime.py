@@ -1674,11 +1674,24 @@ def test_finished_document_discovery_exposes_only_current_used_source_card(host_
 
 
 @pytest.mark.parametrize(
-    "source,model_query",
-    [("CAS", "CAS"), ("SOA", "SOA"), ("SOA", "SOA research reports")],
+    "source,model_query,tool_id",
+    [
+        ("CAS", "CAS", "document_research.find_documents"),
+        ("SOA", "SOA", "document_research.find_documents"),
+        ("SOA", "SOA research reports", "document_research.find_documents"),
+        ("SOA", "SOA", "resources_updates.catalog_search"),
+        ("SOA", "SOA research reports", "resources_updates.catalog_search"),
+        ("SOA", "latest SOA research reports", "resources_updates.catalog_search"),
+        ("SOA", "SOA 最新收录研究报告", "resources_updates.catalog_search"),
+        ("SOA", "latest newly collected SOA research reports", "resources_updates.catalog_search"),
+        ("SOA", "most recently collected SOA research reports", "resources_updates.catalog_search"),
+        ("SOA", "recently added SOA research reports", "resources_updates.catalog_search"),
+        ("SOA", "latest added SOA research reports", "resources_updates.catalog_search"),
+        ("SOA", "newly ingested SOA research reports", "resources_updates.catalog_search"),
+    ],
 )
-def test_latest_first_collected_source_uses_recent_catalog_when_model_finds_document(
-    host_fixture, source, model_query
+def test_latest_source_uses_recent_catalog_from_finder_or_catalog_search(
+    host_fixture, source, model_query, tool_id
 ):
     from ai_actuarial.assistant.document_research import Document, SelectedTarget
     from ai_actuarial.skills.resources_updates import executors as resource_executors
@@ -1700,23 +1713,29 @@ def test_latest_first_collected_source_uses_recent_catalog_when_model_finds_docu
 
     def query_files_with_catalog(**kwargs):
         calls.append(("catalog", kwargs))
-        return (
-            [
+        rows = [
+            {
+                "url": target.file_id,
+                "title": document.title,
+                "source_name_en": source,
+                "first_seen": "2026-11-05",
+                "last_seen": "2026-11-05",
+            },
+            *[
                 {
-                    "url": target.file_id,
-                    "title": document.title,
+                    "url": f"https://example.test/{source.lower()}-older-{day}.pdf",
+                    "title": f"Older {source} report {day}",
                     "source_name_en": source,
-                    "first_seen": "2026-11-05",
-                },
-                {
-                    "url": f"https://example.test/{source.lower()}-older.pdf",
-                    "title": f"Older {source} report",
-                    "source_name_en": source,
-                    "first_seen": "2026-10-01",
-                },
+                    "first_seen": f"2026-10-0{day}",
+                    "last_seen": f"2026-11-0{day + 5}",
+                }
+                for day in range(1, 4)
             ],
-            2,
+        ]
+        ordered = sorted(
+            rows, key=lambda row: row[kwargs.get("order_by", "last_seen")], reverse=True
         )
+        return ordered[: kwargs.get("limit", 3)], len(rows)
 
     class Facade:
         def __init__(self, *_args, **_kwargs):
@@ -1743,8 +1762,8 @@ def test_latest_first_collected_source_uses_recent_catalog_when_model_finds_docu
         if len(prompts) == 1:
             return action(
                 action="call",
-                skill_id="document_research",
-                tool_id="document_research.find_documents",
+                skill_id=tool_id.split(".")[0],
+                tool_id=tool_id,
                 args={"query": model_query},
             )
         return action(
@@ -1755,9 +1774,24 @@ def test_latest_first_collected_source_uses_recent_catalog_when_model_finds_docu
 
     question = (
         "请找出当前最新收录的 SOA 研究报告，说明标题、来源和系统首次收录时间，并给出可打开的资料卡。"
-        if model_query == "SOA research reports"
+        if model_query == "SOA research reports" and tool_id.endswith("find_documents")
         else f"请找出当前最新收录的 {source} 研究报告，说明来源与系统首次收录时间。"
     )
+    if tool_id == "resources_updates.catalog_search" and model_query in {
+        "latest SOA research reports",
+        "SOA 最新收录研究报告",
+    }:
+        question = "请找出当前最新收录的 SOA 研究报告，说明标题、来源和系统首次收录时间，并给出可打开的资料卡。"
+    elif model_query in {
+        "latest newly collected SOA research reports",
+        "most recently collected SOA research reports",
+        "recently added SOA research reports",
+        "latest added SOA research reports",
+        "newly ingested SOA research reports",
+    }:
+        question = f"Find {model_query} with the source and first collection date."
+    elif tool_id == "resources_updates.catalog_search" and model_query != source:
+        question = f"请找出最新的 {source} 研究报告，说明来源并给出资料卡。"
     outcome = state.feature.query(
         request=state.request,
         auth=auth,
@@ -1775,6 +1809,120 @@ def test_latest_first_collected_source_uses_recent_catalog_when_model_finds_docu
     assert outcome.response.citations[0].file_id == target.file_id
 
 
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Find SOA research reports",
+        "请找出最新发布的 SOA 报告。",
+        "请找出最新收录的 SOA 和 CAS 资料。",
+    ],
+)
+def test_catalog_search_keeps_keyword_route_without_one_latest_collected_source(message):
+    from ai_actuarial.skills.resources_updates.manifest import MANIFEST as resources_manifest
+
+    model, _ = scripted(
+        action(
+            action="call",
+            skill_id="resources_updates",
+            tool_id="resources_updates.catalog_search",
+            args={"query": "SOA"},
+        ),
+        action(action="finish", answer="Catalog hit", evidence_ids=["catalog:item"]),
+    )
+    used = []
+
+    def execute_tool(tool, args, *_):
+        used.append((tool.tool_id, args))
+        return ToolResult("ok", {"files": [{"title": "SOA report"}]}, ("catalog:item",))
+
+    outcome = run(
+        message=message,
+        locale="zh",
+        registry=Registry(
+            (resources_manifest,), frozenset(tool.executor for tool in resources_manifest.tools)
+        ),
+        context=RunContext(
+            principal="reader", scopes=frozenset({"chat.query", "catalog.read", "files.read"})
+        ),
+        model=model,
+        execute=execute_tool,
+        source_options=lambda: [
+            {"source_key": source, "aliases": [source]} for source in ("SOA", "CAS")
+        ],
+    )
+    assert used == [("resources_updates.catalog_search", {"query": "SOA"})]
+    assert outcome.kind == "finish"
+
+
+def test_latest_source_topic_keeps_catalog_search_query(host_fixture):
+    from ai_actuarial.skills.resources_updates import executors as resource_executors
+
+    state = host_fixture
+    auth = AuthContext(
+        {"subject": "reader"}, frozenset({"chat.query", "catalog.read", "files.read"})
+    )
+    state.monkeypatch.setattr(host.deps, "get_auth_context", lambda request: auth)
+    calls = []
+
+    def query_files_with_catalog(**kwargs):
+        calls.append(kwargs)
+        rows = [
+            {
+                "url": f"https://example.test/soa-{index}.pdf",
+                "title": title,
+                "source_name_en": "SOA",
+                "first_seen": f"2026-11-0{8 - index}",
+            }
+            for index, title in enumerate(
+                [
+                    "SOA pension funding",
+                    "SOA mortality data",
+                    "SOA asset modelling",
+                    "SOA climate risk study",
+                ]
+            )
+        ]
+        if kwargs.get("query"):
+            rows = [row for row in rows if "climate risk" in row["title"].lower()]
+        return rows[: kwargs.get("limit", 3)], len(rows)
+
+    class Facade:
+        def __init__(self, *_args, **_kwargs):
+            self.storage = SimpleNamespace(query_files_with_catalog=query_files_with_catalog)
+
+    state.monkeypatch.setattr(host, "DocumentResearch", Facade)
+    state.feature.executors["resources_updates.catalog_search"] = resource_executors.catalog_search
+    state.feature.executors["resources_updates.recent"] = resource_executors.recent
+    prompts = []
+
+    def model(prompt, _remaining):
+        prompts.append(json.loads(prompt))
+        if len(prompts) == 1:
+            return action(
+                action="call",
+                skill_id="resources_updates",
+                tool_id="resources_updates.catalog_search",
+                args={"query": "SOA climate risk"},
+            )
+        return action(
+            action="finish",
+            answer="found",
+            evidence_ids=prompts[-1]["observations"][0]["evidence_ids"],
+        )
+
+    outcome = state.feature.query(
+        request=state.request,
+        auth=auth,
+        message="请搜索 SOA 最近关于气候风险的研究报告。",
+        locale="zh",
+        model=model,
+    )
+    assert calls[0]["query"] == "SOA climate risk"
+    assert "SOA climate risk study" in outcome.response.answer
+    assert "SOA pension funding" not in outcome.response.answer
+    assert outcome.response.citations[0].file_id == "https://example.test/soa-3.pdf"
+
+
 @pytest.mark.parametrize("publication_date", ["2026-09-03", None])
 @pytest.mark.parametrize(
     "message,locale,available",
@@ -1785,7 +1933,10 @@ def test_latest_first_collected_source_uses_recent_catalog_when_model_finds_docu
             True,
         ),
         ("请引用一段原文，给出来源和发布日期。", "zh", True),
+        ("请引用这篇报告的一句话，并提供来源和发布日期。", "zh", True),
         ("请摘录一句原文，并列出来源及出版日期。", "zh", True),
+        ("请摘录该份报告的一段原文，注明出处与日期。", "zh", True),
+        ("请引用原文，给出来源和发布日期。", "zh", True),
         (
             "Please quote one sentence verbatim and give the source and publication date.",
             "en",
@@ -1796,7 +1947,18 @@ def test_latest_first_collected_source_uses_recent_catalog_when_model_finds_docu
             "en",
             True,
         ),
+        (
+            "Can you quote a sentence from this report and give its source and publication date?",
+            "en",
+            True,
+        ),
+        (
+            "Could you provide an exact quote from the report with its source and date?",
+            "en",
+            True,
+        ),
         ("请引用一句原文，说明来源和发布日期，并总结主要发现。", "zh", False),
+        ("请引用原文，给出来源和发布日期，并总结主要发现。", "zh", False),
         ("请引用一句原文，说明来源、发布日期和样本量。", "zh", False),
         (
             "根据这份报告当前正文，再引用一句原文，说明来源和发布日期；若发布日期未记录，请明确说未知。并说明这项调查适用哪些公司。",

@@ -21,7 +21,16 @@ def _numeric_literals(text: str) -> set[str]:
 
 def _latest_first_collected(message: str) -> bool:
     query = message.casefold()
-    return (any(term in query for term in ("最新", "最近")) and "收录" in query) or any(
+    return (
+        any(term in query for term in ("最新", "最近"))
+        and (
+            "收录" in query
+            or (
+                any(term in query for term in ("资料", "报告", "文件"))
+                and not any(term in query for term in ("发布", "出版", "更新", "修订"))
+            )
+        )
+    ) or any(
         term in query
         for term in (
             "latest newly collected",
@@ -55,20 +64,47 @@ def _named_source(message: str, options: list[dict]) -> str | None:
     return next(iter(matches)) if len(matches) == 1 else None
 
 
+def _source_only_query(query: str, source: str, options: list[dict]) -> bool:
+    remainder = query.casefold()
+    for option in options:
+        if option.get("source_key") != source:
+            continue
+        for name in (source, *(option.get("aliases") or ())):
+            if isinstance(name, str) and name.strip():
+                name = name.strip().casefold()
+                pattern = (
+                    re.escape(name)
+                    if not name.isascii()
+                    else rf"(?<![a-z0-9]){re.escape(name)}(?![a-z0-9])"
+                )
+                remainder = re.sub(pattern, " ", remainder)
+    return not re.sub(
+        r"\b(?:latest|newest|recent|most|recently|newly|collected|added|ingested|research|reports?|studies|study)\b"
+        r"|最新|最近|收录|资料|报告|文件|研究|\W",
+        "",
+        remainder,
+    )
+
+
 def _exact_quote_source_date_only(message: str) -> bool:
     query = message.strip().casefold()
     return bool(
         re.fullmatch(
             r"(?:根据(?:这份|该份)?报告(?:当前)?正文[，,]\s*)?"
-            r"(?:请)?(?:再)?(?:引用|摘录)(?:一句|一段|一条)?原文[，,]\s*"
-            r"(?:并)?(?:请)?(?:说明|给出|列出)来源(?:和|及|、|与)(?:发布日期|出版日期)"
+            r"(?:请)?(?:再)?(?:引用|摘录|给出|提供)(?:(?:这篇|该篇|这份|该份)报告的)?"
+            r"(?:一句话|一(?:句|段|条)原文|原文)[，,]\s*"
+            r"(?:并)?(?:请)?(?:说明|给出|列出|提供|注明)(?:来源|出处)"
+            r"(?:和|及|、|与)(?:发布日期|出版日期|日期)"
             r"(?:[；;]若(?:发布日期|出版日期)未记录[，,]请明确说未知)?[。.!?]?",
             query,
         )
         or re.fullmatch(
-            r"(?:please )?quote (?:one|a|an) (?:sentence|passage|excerpt) "
-            r"(?:verbatim|exactly)(?:,? and (?:give|provide|include) |, )"
-            r"(?:the )?source(?: and |, (?:and )?)(?:the )?publication date[.!?]?",
+            r"(?:can you |could you |please )?"
+            r"(?:quote (?:one|a|an) (?:sentence|passage|excerpt)(?: (?:verbatim|exactly))?"
+            r"|provide an exact quote)(?: from (?:this|the|that) report)?"
+            r"(?:,? and (?:give|provide|include) |, | with )"
+            r"(?:its |the )?source(?: and |, (?:and )?)(?:its |the )?"
+            r"(?:publication date|date)[.!?]?",
             query,
         )
         or re.fullmatch(
@@ -569,20 +605,30 @@ def run(
             if (
                 _latest_first_collected(message)
                 and action["tool_id"]
-                in {"document_research.find_documents", "resources_updates.find_documents"}
+                in {
+                    "document_research.find_documents",
+                    "resources_updates.find_documents",
+                    "resources_updates.catalog_search",
+                }
                 and action["skill_id"] == action["tool_id"].split(".")[0]
                 and isinstance(action["args"], dict)
-                and set(action["args"]) <= {"query", "kb_id"}
+                and set(action["args"])
+                <= (
+                    {"query"}
+                    if action["tool_id"] == "resources_updates.catalog_search"
+                    else {"query", "kb_id"}
+                )
                 and isinstance(action["args"].get("query"), str)
                 and 1 <= len(action["args"]["query"]) <= 4000
                 and action["args"]["query"].strip()
                 and not action["args"].get("kb_id")
             ):
                 try:
-                    source = _named_source(message, source_options() if source_options else [])
+                    options = source_options() if source_options else []
+                    source = _named_source(message, options)
                 except Exception:
                     source = None
-                if source:
+                if source and _source_only_query(action["args"]["query"], source, options):
                     action = {
                         "action": "call",
                         "skill_id": "resources_updates",
