@@ -222,6 +222,7 @@ class AssistantFeature:
             found_targets: set[tuple[str, str]] = set()
             found_evidence_targets: dict[str, SelectedTarget] = {}
             body_read_targets: set[tuple[str, str]] = set()
+            body_evidence_kbs: dict[str, str] = {}
             help_citations: dict[str, HelpCitation] = {}
             source_citations: dict[str, SourceCitation] = {}
             resource_file_citations: dict[str, list[SourceCitation]] = {}
@@ -422,6 +423,9 @@ class AssistantFeature:
                         "document_research.read_document_sections",
                         "document_research.search_knowledge",
                     }:
+                        body_evidence_kbs.update(
+                            (evidence_id, args["kb_id"]) for evidence_id in result.evidence_ids
+                        )
                         document = facade._document(
                             SelectedTarget(kb_id=args["kb_id"], file_id=args["file_id"])
                         )
@@ -518,6 +522,14 @@ class AssistantFeature:
                 recent_questions=recent_questions or [],
                 resolve_selected_document=resolve_selected_document,
             )
+            if runtime.error_code == "SCOPE_REVOKED":
+                verified_target = None
+            elif runtime.kind == "finish" and len(runtime.evidence_ids) == 1:
+                evidence_id = runtime.evidence_ids[0]
+                if evidence_id in resource_file_targets:
+                    verified_target = resource_file_targets[evidence_id]
+                else:
+                    verified_target = found_evidence_targets.get(evidence_id, verified_target)
             if runtime.kind == "finish":
                 try:
                     required_scopes = {"chat.query"}
@@ -525,6 +537,24 @@ class AssistantFeature:
                         required_scopes.update(
                             registry.tool(item.skill_id, item.tool_id).required_scopes
                         )
+                    required_kbs = {
+                        body_evidence_kbs[item]
+                        for item in runtime.evidence_ids
+                        if item in body_evidence_kbs
+                    }
+                    required_kbs.update(
+                        source_citations[item].kb_id
+                        for item in runtime.evidence_ids
+                        if item in source_citations and source_citations[item].kb_id
+                    )
+                    required_kbs.update(
+                        citation.kb_id
+                        for item in runtime.evidence_ids
+                        for citation in resource_file_citations.get(item, ())
+                        if citation.kb_id
+                    )
+                    if verified_target is not None:
+                        required_kbs.add(verified_target.kb_id)
                     if hasattr(request.state, "auth_context"):
                         del request.state.auth_context
                     current = deps.get_auth_context(request)
@@ -534,11 +564,14 @@ class AssistantFeature:
                         else public_permissions_for_request(request)
                     )
                     still_authorized = (
-                        _identity(current) == initial_identity and required_scopes <= current_scopes
+                        _identity(current) == initial_identity
+                        and required_scopes <= current_scopes
+                        and required_kbs <= set(permitted_kbs(request, current))
                     )
                 except Exception:
                     still_authorized = False
                 if not still_authorized:
+                    verified_target = None
                     runtime = replace(
                         runtime,
                         answer="",
@@ -697,14 +730,6 @@ class AssistantFeature:
                     if locale.startswith("zh")
                     else "This is only a draft. Review, edit and confirm to submit; nothing is recorded yet."
                 )
-            if runtime.error_code == "SCOPE_REVOKED":
-                verified_target = None
-            elif runtime.kind == "finish" and len(runtime.evidence_ids) == 1:
-                evidence_id = runtime.evidence_ids[0]
-                if evidence_id in resource_file_targets:
-                    verified_target = resource_file_targets[evidence_id]
-                else:
-                    verified_target = found_evidence_targets.get(evidence_id, verified_target)
             response.selected_target = verified_target.model_dump() if verified_target else None
             return Outcome(response, runtime, session_update)
         finally:

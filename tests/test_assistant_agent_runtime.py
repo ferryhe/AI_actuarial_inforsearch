@@ -866,6 +866,135 @@ def test_host_rechecks_body_permission_after_summary_verifier_callback(host_fixt
         )
 
 
+@pytest.mark.parametrize("kind", ["body", "resource"])
+@pytest.mark.parametrize("kb_id", ["staff", "public"])
+def test_host_rechecks_returned_kb_after_internal_access_revoked(host_fixture, kind, kb_id):
+    from ai_actuarial.assistant.document_research import Document, SelectedTarget
+
+    state = host_fixture
+    state.request.app.state.assistant_public_kb_ids = ["public"]
+    state.request.app.state.assistant_staff_kb_ids = ["staff"]
+    auth = AuthContext(
+        {"subject": "reader"},
+        frozenset(
+            {"chat.query", "catalog.read", "files.read", "markdown.read", "assistant.internal"}
+        ),
+    )
+    current = [auth]
+
+    def current_auth(request):
+        if not hasattr(request.state, "auth_context"):
+            request.state.auth_context = current[0]
+        return request.state.auth_context
+
+    state.monkeypatch.setattr(host.deps, "get_auth_context", current_auth)
+    target = SelectedTarget(kb_id=kb_id, file_id=f"https://example.test/{kb_id}.pdf")
+
+    class Facade:
+        def __init__(self, *_args, authorized_kbs, **_kwargs):
+            self.authorized_kbs = authorized_kbs
+
+        def _document(self, selected):
+            if selected != target or selected.kb_id not in self.authorized_kbs():
+                return None
+            return Document(
+                target=selected,
+                title=f"{kb_id} report",
+                source_url=selected.file_id,
+                internal_link=f"/file-detail?url={selected.file_id}",
+            )
+
+    state.monkeypatch.setattr(host, "DocumentResearch", Facade)
+    evidence_id = f"{kind}:{kb_id}:current"
+    if kind == "body":
+        quote = "The current report says 42%."
+        state.feature.executors["document_research.read_document_sections"] = lambda *_: ToolResult(
+            "ok",
+            {
+                "status": "available",
+                "sections": [
+                    {
+                        "target": target.model_dump(),
+                        "section_id": "section-1",
+                        "excerpt": quote,
+                        "source_url": target.file_id,
+                    }
+                ],
+            },
+            (evidence_id,),
+        )
+        outputs = [
+            action(
+                action="call",
+                skill_id="document_research",
+                tool_id="document_research.read_document_sections",
+                args={**target.model_dump(), "query": "figure"},
+            ),
+            action(
+                action="finish",
+                answer="The figure is 42%.",
+                evidence_ids=[evidence_id],
+                findings=[
+                    {"evidence_id": evidence_id, "quote": quote, "summary": "The figure is 42%."}
+                ],
+            ),
+            action(supported=[True]),
+        ]
+    else:
+        state.feature.executors["resources_updates.recent"] = lambda *_: ToolResult(
+            "ok",
+            {
+                "files": [
+                    {
+                        "title": f"{kb_id} report",
+                        "source": "Agency",
+                        "source_url": target.file_id,
+                        "first_seen": "2026-11-01",
+                    }
+                ],
+                "total": 1,
+            },
+            (evidence_id,),
+        )
+        outputs = [
+            action(
+                action="call",
+                skill_id="resources_updates",
+                tool_id="resources_updates.recent",
+                args={},
+            ),
+            action(action="finish", answer=f"{kb_id} report found.", evidence_ids=[evidence_id]),
+        ]
+
+    def model(_prompt, _remaining):
+        output = outputs.pop(0)
+        if not outputs:
+            current[0] = AuthContext(
+                {"subject": "reader"}, auth.permissions - {"assistant.internal"}
+            )
+        return output
+
+    outcome = state.feature.query(
+        request=state.request,
+        auth=auth,
+        message="Read the current figure" if kind == "body" else "Find the current report",
+        selected_target=target if kind == "body" else None,
+        model=model,
+    )
+    assert outcome.runtime.model_attempts == (3 if kind == "body" else 2)
+    if kb_id == "staff":
+        assert outcome.runtime.error_code == "SCOPE_REVOKED"
+        assert outcome.runtime.answer == "" and outcome.runtime.evidence_ids == ()
+        assert outcome.response.evidence_ids == [] and outcome.response.citations == []
+        assert outcome.response.selected_target is None
+        assert f"{kb_id} report" not in outcome.response.answer
+    else:
+        assert outcome.runtime.error_code is None
+        assert outcome.response.evidence_ids == [evidence_id]
+        assert outcome.response.citations[0].kb_id == kb_id
+        assert outcome.response.selected_target == target.model_dump()
+
+
 @pytest.mark.parametrize("expire_deadline", [False, True])
 def test_host_cancel_or_deadline_during_auth_lookup_prevents_tool_start(
     host_fixture, expire_deadline
