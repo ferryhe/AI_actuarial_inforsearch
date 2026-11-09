@@ -139,8 +139,6 @@ export default function AssistantPanel({ t, lang, open, feedbackEnabled, onClose
       if (reason instanceof ApiError && [401, 403].includes(reason.status)) {
         setHistory([]);
         setSelectedTarget(null);
-        setDraft(null);
-        setFeedbackOpen(false);
       }
       setError(t("assistant.error"));
     } finally {

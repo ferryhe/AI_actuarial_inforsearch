@@ -537,6 +537,25 @@ it("drops prior evidence after the server rejects changed permissions", async ()
   expect(apiPost.mock.calls[2][1]).toMatchObject({ selected_target: null, recent_questions: [] });
 });
 
+it.each([401, 403])("keeps manually edited feedback after a pending query returns %i", async (status) => {
+  let rejectQuery!: (reason: unknown) => void;
+  apiPost.mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectQuery = reject; }));
+  const { rerender } = render(<AssistantPanel t={t} lang="en" open feedbackEnabled onClose={vi.fn()} identity="reader-1" />);
+  question("Pending question");
+  fireEvent.click(screen.getByRole("button", { name: "assistant.feedback" }));
+  const draft = await screen.findByLabelText("feedback.content");
+  fireEvent.change(draft, { target: { value: "Edited ordinary feedback draft" } });
+
+  await act(async () => { rejectQuery(new ApiError("Permission changed", status)); });
+  expect(screen.getByText("assistant.error", { selector: "[role=alert]" })).toBeInTheDocument();
+  expect(screen.getByLabelText("feedback.content")).toBeVisible();
+  expect(screen.getByLabelText("feedback.content")).toHaveValue("Edited ordinary feedback draft");
+  expect(apiPost.mock.calls.map(([path]) => path)).toEqual(["/api/assistant/v1/query"]);
+
+  rerender(<AssistantPanel t={t} lang="en" open feedbackEnabled onClose={vi.fn()} identity="reader-2" />);
+  await waitFor(() => expect(screen.queryByLabelText("feedback.content")).not.toBeInTheDocument());
+});
+
 it("allows a separate consumer to use the versioned transport contract", async () => {
   apiPost.mockResolvedValue(reply("answer"));
   const controller = new AbortController();
