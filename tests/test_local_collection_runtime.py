@@ -642,6 +642,31 @@ def test_evidence_span_ids_map_to_exact_category_and_date_source_text() -> None:
     assert "revision date remains unresolved." in resolved["date_review_unresolved"][0]["evidence"]
     assert runtime._model_evidence_errors(markdown, resolved) == []
 
+    nul_markdown = "Exact AI evidence.\x00Publication date: September 2026."
+    nul_spans = runtime._build_evidence_span_catalog(nul_markdown)
+    nul_offset = nul_markdown.index("\x00")
+    assert all("\x00" not in row["text"] for row in nul_spans)
+    assert all(row["text"] == nul_markdown[row["start"] : row["end"]] for row in nul_spans)
+    assert not any(row["start"] < nul_offset < row["end"] for row in nul_spans)
+    nul_ids = {row["text"]: row["id"] for row in nul_spans}
+    nul_result = {
+        **raw_result,
+        "categories": [{"key": "AI", "evidence": [nul_ids["Exact AI evidence."]]}],
+        "date_facts": {
+            **raw_result["date_facts"],
+            "publication_date": {
+                **raw_result["date_facts"]["publication_date"],
+                "evidence": nul_ids["Publication date: September 2026."],
+            },
+        },
+        "date_review_unresolved": [],
+    }
+    nul_resolved, nul_errors = runtime._resolve_model_evidence_span_ids(nul_result, nul_spans)
+    assert nul_errors == []
+    assert runtime._model_evidence_errors(nul_markdown, nul_resolved) == []
+    assert "\x00" not in nul_resolved["categories"][0]["evidence"][0]
+    assert "\x00" not in nul_resolved["date_facts"]["publication_date"]["evidence"]
+
     unknown_id = "span-" + "f" * 16
     if unknown_id in {row["id"] for row in spans}:
         unknown_id = "span-" + "0" * 16
@@ -869,11 +894,12 @@ def test_raw_only_extraction_gap_retries_same_hub_version_without_fake_ai_or_rea
     assert "iaa" in json.loads(plan_process.stdout)["extra_retry_sites"]
 
     markdown = (
-        "The same original actuarial source is now available to a supported converter. "
+        "The same original actuarial source is now available\x00 to a supported converter. "
         "Its evidence remains bound to the original PDF or Office bytes."
     )
     monkeypatch.setattr(runtime, "_extract_markdown", lambda *_args: markdown)
-    span_id = runtime._build_evidence_span_catalog(markdown)[0]["id"]
+    evidence_spans = runtime._build_evidence_span_catalog(markdown)
+    span_id = evidence_spans[0]["id"]
     package = {
         "title": "AI actuarial source",
         "summary": "An AI research document for actuarial practice.",
@@ -912,9 +938,16 @@ def test_raw_only_extraction_gap_retries_same_hub_version_without_fake_ai_or_rea
     assert completed_counts == [(False, raw_only["content_version_id"])]
     final_readback = content_hub.content_hub_read_version(url, raw_sha, hub_url, schema=schema)
     assert final_readback["content_version_id"] == raw_only["content_version_id"]
+    assert final_readback["markdown_text_variant_id"] is not None
     assert final_readback["markdown"] == markdown
+    assert final_readback["markdown_sha256"] == hashlib.sha256(markdown.encode("utf-8")).hexdigest()
     assert final_readback["markdown_extraction_status"] == "available"
     assert final_readback["annotation"] is not None
+    assert all(
+        "\x00" not in quote
+        for category in final_readback["annotation"].get("categories", [])
+        for quote in category.get("evidence", [])
+    )
     final_status = content_hub.content_hub_status(hub_url, schema=schema)
     assert final_status["content_version_count"] == 1
     assert final_status["source_count"] == 2
