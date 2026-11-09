@@ -15,6 +15,7 @@ export default function AssistantPanel({ t, lang, open, feedbackEnabled, onClose
   const FeedbackForm = useMemo(() => lazy(() => import("@/features/feedback/FeedbackForm")), []);
   const [message, setMessage] = useState("");
   const [history, setHistory] = useState<{ question: string; reply: Reply }[]>([]);
+  const latestEntry = history[history.length - 1];
   const [selectedTarget, setSelectedTarget] = useState<Reply["selected_target"]>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
@@ -26,7 +27,7 @@ export default function AssistantPanel({ t, lang, open, feedbackEnabled, onClose
   const input = useRef<HTMLTextAreaElement>(null);
   const scrollContainer = useRef<HTMLDivElement>(null);
   const latestAnswer = useRef<HTMLDivElement>(null);
-  const revealedReplies = useRef(0);
+  const revealedReply = useRef<(typeof history)[number] | undefined>(undefined);
   const userScrolledDuringRequest = useRef(false);
   const inFlight = useRef(false);
   const feedbackGeneration = useRef(0);
@@ -53,7 +54,7 @@ export default function AssistantPanel({ t, lang, open, feedbackEnabled, onClose
     setSection("");
     setMessage("");
     setError("");
-    revealedReplies.current = 0;
+    revealedReply.current = undefined;
   }, [cancelRequest]);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; request.current?.abort(); requestGeneration.current += 1; }; }, []);
   useEffect(() => {
@@ -62,19 +63,19 @@ export default function AssistantPanel({ t, lang, open, feedbackEnabled, onClose
     clear();
   }, [identity, clear]);
   useEffect(() => {
-    if (!open || feedbackOpen || history.length > revealedReplies.current) return;
+    if (!open || feedbackOpen || latestEntry !== revealedReply.current) return;
     const frame = requestAnimationFrame(() => input.current?.focus());
     return () => cancelAnimationFrame(frame);
-  }, [history.length, open, feedbackOpen]);
+  }, [latestEntry, open, feedbackOpen]);
   useEffect(() => {
-    if (!open || feedbackOpen || history.length <= revealedReplies.current) return;
+    if (!open || feedbackOpen || !latestEntry || latestEntry === revealedReply.current) return;
     const container = scrollContainer.current;
     const answer = latestAnswer.current;
     if (container && answer && !userScrolledDuringRequest.current) {
       container.scrollTop += answer.getBoundingClientRect().top - container.getBoundingClientRect().top;
     }
-    revealedReplies.current = history.length;
-  }, [feedbackOpen, history.length, open]);
+    revealedReply.current = latestEntry;
+  }, [feedbackOpen, latestEntry, open]);
 
   function openFeedback(text: string) {
     if (!feedbackEnabled) return;
@@ -139,6 +140,7 @@ export default function AssistantPanel({ t, lang, open, feedbackEnabled, onClose
       if (reason instanceof ApiError && [401, 403].includes(reason.status)) {
         setHistory([]);
         setSelectedTarget(null);
+        revealedReply.current = undefined;
       }
       setError(t("assistant.error"));
     } finally {

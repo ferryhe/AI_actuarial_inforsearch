@@ -155,6 +155,43 @@ it("blurs a submitted question and reveals its answer inside the assistant scrol
   expect(windowScroll).not.toHaveBeenCalled();
 });
 
+it("reveals long replies after the twelve-entry cap without taking over manual scrolling", async () => {
+  let finishFifteenth!: (value: unknown) => void;
+  const answer = (number: number) => ({ ...reply("knowledge"), answer: `Answer ${number}\n\n${"Long paragraph. ".repeat(40)}` });
+  apiPost.mockImplementation(() => {
+    const number = apiPost.mock.calls.length;
+    return number === 15 ? new Promise((done) => { finishFifteenth = done; }) : Promise.resolve(answer(number));
+  });
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+    return { top: this.classList.contains("assistant-answer") ? 260 : this.classList.contains("overflow-y-auto") ? 100 : 0 } as DOMRect;
+  });
+  show(false);
+  const container = document.querySelector("#assistant-panel .overflow-y-auto") as HTMLDivElement;
+
+  for (let number = 1; number <= 14; number += 1) {
+    question(`Question ${number}`);
+    await screen.findByText(`Answer ${number}`);
+    await waitFor(() => expect(container.scrollTop).toBe(number * 160));
+    expect(container.querySelectorAll("article")).toHaveLength(Math.min(number, 12));
+  }
+  expect(screen.queryByText("Question 1")).not.toBeInTheDocument();
+
+  question("Question 15");
+  fireEvent.wheel(container);
+  container.scrollTop = 500;
+  finishFifteenth(answer(15));
+  await screen.findByText("Answer 15");
+  await waitFor(() => expect(container.scrollTop).toBe(500));
+  expect(container.querySelectorAll("article")).toHaveLength(12);
+
+  fireEvent.click(screen.getByRole("button", { name: "assistant.clear" }));
+  container.scrollTop = 0;
+  question("Question 16");
+  await screen.findByText("Answer 16");
+  await waitFor(() => expect(container.scrollTop).toBe(160));
+  expect(container.querySelectorAll("article")).toHaveLength(1);
+});
+
 it("reveals a delayed answer after manual feedback cancellation without refocusing the composer", async () => {
   let resolve!: (value: unknown) => void;
   apiPost.mockImplementation(() => new Promise((done) => { resolve = done; }));
@@ -525,14 +562,17 @@ it("clears prior answers on identity change", async () => {
   await waitFor(() => expect(screen.queryByText("Private question")).not.toBeInTheDocument());
 });
 
-it("drops prior evidence after the server rejects changed permissions", async () => {
+it.each([401, 403])("drops prior evidence and refocuses after a %i permission error", async (status) => {
   const target = { kb_id: "private", file_id: "report" };
-  apiPost.mockResolvedValueOnce({ ...reply("answer"), selected_target: target }).mockRejectedValueOnce(new ApiError("Forbidden", 403)).mockResolvedValueOnce(reply("answer"));
+  apiPost.mockResolvedValueOnce({ ...reply("answer"), selected_target: target }).mockRejectedValueOnce(new ApiError("Forbidden", status)).mockResolvedValueOnce(reply("answer"));
   show(false); question("Private report");
   await screen.findByText("Private report", { selector: "article p" });
+  const input = screen.getByLabelText("assistant.message");
   question("Read it again");
+  expect(input).not.toHaveFocus();
   await screen.findByRole("alert");
   expect(screen.queryByText("Private report")).not.toBeInTheDocument();
+  await waitFor(() => expect(input).toHaveFocus());
   question("Try after sign-in");
   expect(apiPost.mock.calls[2][1]).toMatchObject({ selected_target: null, recent_questions: [] });
 });
