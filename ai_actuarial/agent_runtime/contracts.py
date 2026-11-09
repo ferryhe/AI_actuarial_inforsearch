@@ -107,6 +107,7 @@ class RunResult:
     embedding_attempts: int
     trace: tuple[ToolTrace, ...]
     kind: Literal["finish", "clarify", "error"] = "error"
+    verified_quote: tuple[str, str] | None = None
 
 
 class RunContext:

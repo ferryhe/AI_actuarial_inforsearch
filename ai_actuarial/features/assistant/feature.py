@@ -521,7 +521,61 @@ class AssistantFeature:
                 selected_target=verified_target.model_dump() if verified_target else None,
                 recent_questions=recent_questions or [],
                 resolve_selected_document=resolve_selected_document,
+                source_options=lambda: storage.get_source_options(),
             )
+            if runtime.verified_quote is not None:
+                evidence_id = runtime.evidence_ids[0]
+                quote, source_url = runtime.verified_quote
+                current_document = (
+                    resolve_selected_document(verified_target.model_dump())
+                    if verified_target is not None
+                    else None
+                )
+                citation = source_citations.get(evidence_id)
+                if (
+                    not isinstance(current_document, dict)
+                    or verified_target is None
+                    or current_document.get("target") != verified_target.model_dump()
+                    or current_document.get("source_url") != source_url
+                    or citation is None
+                    or citation.kb_id != verified_target.kb_id
+                    or citation.file_id != verified_target.file_id
+                    or evidence_id not in body_evidence_kbs
+                    or not isinstance(current_document.get("title"), str)
+                    or not current_document["title"]
+                    or not isinstance(current_document.get("internal_link"), str)
+                    or not current_document["internal_link"]
+                    or not isinstance(current_document.get("publication_date"), (str, type(None)))
+                ):
+                    verified_target = None
+                    runtime = replace(
+                        runtime,
+                        answer="",
+                        availability="unavailable",
+                        error_code="SCOPE_REVOKED",
+                        evidence_ids=(),
+                        kind="error",
+                        verified_quote=None,
+                    )
+                else:
+                    publication_date = current_document.get("publication_date")
+                    runtime = replace(
+                        runtime,
+                        answer=(
+                            f"原文：“{quote}”\n来源：《{current_document['title']}》 {source_url}"
+                            f"\n发布日期：{publication_date or '未知'}。"
+                            if locale.startswith("zh")
+                            else f"Exact quote: “{quote}”\nSource: {current_document['title']} {source_url}"
+                            f"\nPublication date: {publication_date or 'unknown'}."
+                        ),
+                    )
+                    source_citations[evidence_id] = citation.model_copy(
+                        update={
+                            "title": current_document["title"],
+                            "link": current_document["internal_link"],
+                            "source_date": publication_date,
+                        }
+                    )
             if runtime.error_code == "SCOPE_REVOKED":
                 verified_target = None
             elif runtime.kind == "finish" and len(runtime.evidence_ids) == 1:
@@ -710,7 +764,7 @@ class AssistantFeature:
                             if locale.startswith("zh")
                             else "\n\nOpen [Weekly](/weekly)."
                         )
-            if runtime.kind == "finish":
+            if runtime.kind == "finish" and runtime.verified_quote is None:
                 dated_documents = set()
                 for evidence_id in runtime.evidence_ids:
                     if evidence_id not in body_evidence_kbs or evidence_id not in source_citations:

@@ -599,6 +599,20 @@ def host_fixture(monkeypatch):
             quota.append(identity)
             return True, len(quota)
 
+        def get_source_options(self, **_kwargs):
+            return [
+                {
+                    "source_key": key.lower(),
+                    "source_name_en": name,
+                    "source_name_zh": name,
+                    "aliases": [key.lower(), name.lower()],
+                }
+                for key, name in (
+                    ("SOA", "Society of Actuaries (SOA)"),
+                    ("CAS", "Casualty Actuarial Society (CAS)"),
+                )
+            ]
+
         def close(self):
             pass
 
@@ -774,7 +788,10 @@ def test_host_rechecks_identity_after_final_resource_model_callback(host_fixture
 
 
 @pytest.mark.parametrize("revoke", [False, True])
-def test_host_rechecks_body_permission_after_summary_verifier_callback(host_fixture, revoke):
+@pytest.mark.parametrize("quote_only", [False, True])
+def test_host_rechecks_body_permission_after_summary_verifier_callback(
+    host_fixture, revoke, quote_only
+):
     from ai_actuarial.assistant.document_research import Document, SelectedTarget
 
     state = host_fixture
@@ -815,6 +832,9 @@ def test_host_rechecks_body_permission_after_summary_verifier_callback(host_fixt
                     "section_id": "section-1",
                     "excerpt": quote,
                     "source_url": target.file_id,
+                    "serving_stale": False,
+                    "index_stale": False,
+                    "stale_severity": "none",
                 }
             ],
         },
@@ -835,7 +855,7 @@ def test_host_rechecks_body_permission_after_summary_verifier_callback(host_fixt
                 {"evidence_id": "body:current", "quote": quote, "summary": "The report states 42%."}
             ],
         ),
-        action(supported=[True]),
+        action(supported=[not quote_only]),
     ]
 
     def model(_prompt, _remaining):
@@ -847,7 +867,11 @@ def test_host_rechecks_body_permission_after_summary_verifier_callback(host_fixt
     outcome = state.feature.query(
         request=state.request,
         auth=auth,
-        message="Read the current figure",
+        message=(
+            "Quote the exact source and publication date"
+            if quote_only
+            else "Read the current figure"
+        ),
         selected_target=target,
         model=model,
     )
@@ -1647,6 +1671,319 @@ def test_finished_document_discovery_exposes_only_current_used_source_card(host_
     assert result.response.citations[0].link == document.internal_link
     assert result.response.citations[0].title == document.title
     assert result.response.selected_target == document.target.model_dump()
+
+
+@pytest.mark.parametrize(
+    "source,model_query",
+    [("CAS", "CAS"), ("SOA", "SOA"), ("SOA", "SOA research reports")],
+)
+def test_latest_first_collected_source_uses_recent_catalog_when_model_finds_document(
+    host_fixture, source, model_query
+):
+    from ai_actuarial.assistant.document_research import Document, SelectedTarget
+    from ai_actuarial.skills.resources_updates import executors as resource_executors
+
+    state = host_fixture
+    auth = AuthContext(
+        {"subject": "reader"}, frozenset({"chat.query", "catalog.read", "files.read"})
+    )
+    state.monkeypatch.setattr(host.deps, "get_auth_context", lambda request: auth)
+    target = SelectedTarget(kb_id="public", file_id=f"https://example.test/{source.lower()}.pdf")
+    document = Document(
+        target=target,
+        title=f"{source} report",
+        source_url=target.file_id,
+        internal_link=f"/file-detail?url={target.file_id}",
+    )
+
+    calls = []
+
+    def query_files_with_catalog(**kwargs):
+        calls.append(("catalog", kwargs))
+        return (
+            [
+                {
+                    "url": target.file_id,
+                    "title": document.title,
+                    "source_name_en": source,
+                    "first_seen": "2026-11-05",
+                },
+                {
+                    "url": f"https://example.test/{source.lower()}-older.pdf",
+                    "title": f"Older {source} report",
+                    "source_name_en": source,
+                    "first_seen": "2026-10-01",
+                },
+            ],
+            2,
+        )
+
+    class Facade:
+        def __init__(self, *_args, **_kwargs):
+            self.storage = SimpleNamespace(query_files_with_catalog=query_files_with_catalog)
+
+        def _document(self, selected):
+            return document if selected == target else None
+
+    state.monkeypatch.setattr(host, "DocumentResearch", Facade)
+
+    def recent(_facade, args):
+        calls.append(("recent", args))
+        return resource_executors.recent(_facade, args)
+
+    state.feature.executors["resources_updates.recent"] = recent
+    state.feature.executors["document_research.find_documents"] = lambda *_: (
+        calls.append(("find_documents", {}))
+        or ToolResult("ok", {"documents": [document.model_dump()]}, ("document:old",))
+    )
+    prompts = []
+
+    def model(prompt, _remaining):
+        prompts.append(json.loads(prompt))
+        if len(prompts) == 1:
+            return action(
+                action="call",
+                skill_id="document_research",
+                tool_id="document_research.find_documents",
+                args={"query": model_query},
+            )
+        return action(
+            action="finish",
+            answer="latest report",
+            evidence_ids=prompts[-1]["observations"][0]["evidence_ids"],
+        )
+
+    question = (
+        "请找出当前最新收录的 SOA 研究报告，说明标题、来源和系统首次收录时间，并给出可打开的资料卡。"
+        if model_query == "SOA research reports"
+        else f"请找出当前最新收录的 {source} 研究报告，说明来源与系统首次收录时间。"
+    )
+    outcome = state.feature.query(
+        request=state.request,
+        auth=auth,
+        message=question,
+        locale="zh",
+        model=model,
+    )
+    assert calls[0] == ("recent", {"source": source.lower()})
+    assert calls[1][0] == "catalog"
+    assert calls[1][1]["source"] == source.lower()
+    assert (calls[1][1]["order_by"], calls[1][1]["order_dir"]) == ("first_seen", "desc")
+    assert outcome.runtime.availability == "available"
+    assert f"— {source}" in outcome.response.answer
+    assert "2026-11-05" in outcome.response.answer
+    assert outcome.response.citations[0].file_id == target.file_id
+
+
+@pytest.mark.parametrize("publication_date", ["2026-09-03", None])
+@pytest.mark.parametrize(
+    "message,locale,available",
+    [
+        (
+            "根据这份报告当前正文，再引用一句原文，说明来源和发布日期；若发布日期未记录，请明确说未知。",
+            "zh",
+            True,
+        ),
+        ("请引用一段原文，给出来源和发布日期。", "zh", True),
+        ("请摘录一句原文，并列出来源及出版日期。", "zh", True),
+        (
+            "Please quote one sentence verbatim and give the source and publication date.",
+            "en",
+            True,
+        ),
+        (
+            "Please quote a passage verbatim and provide the source and publication date.",
+            "en",
+            True,
+        ),
+        ("请引用一句原文，说明来源和发布日期，并总结主要发现。", "zh", False),
+        ("请引用一句原文，说明来源、发布日期和样本量。", "zh", False),
+        (
+            "根据这份报告当前正文，再引用一句原文，说明来源和发布日期；若发布日期未记录，请明确说未知。并说明这项调查适用哪些公司。",
+            "zh",
+            False,
+        ),
+        (
+            "Please quote one sentence verbatim and give the source, publication date, and applicable companies.",
+            "en",
+            False,
+        ),
+    ],
+)
+def test_exact_quote_source_date_survives_rejected_paraphrase(
+    host_fixture, publication_date, message, locale, available
+):
+    from ai_actuarial.assistant.document_research import Document, SelectedTarget
+
+    state = host_fixture
+    auth = AuthContext({"subject": "reader"}, frozenset({"chat.query", "markdown.read"}))
+    state.monkeypatch.setattr(host.deps, "get_auth_context", lambda request: auth)
+    state.monkeypatch.setattr(host, "permitted_kbs", lambda *_: ["public"])
+    target = SelectedTarget(kb_id="public", file_id="https://example.test/report.pdf")
+    document = Document(
+        target=target,
+        title="Current report",
+        source_url=target.file_id,
+        publication_date="2026-08-01",
+        system_first_seen="2026-10-01",
+        internal_link="/file-detail?url=report",
+    )
+    current_date = ["2026-08-01" if available else publication_date]
+
+    class Facade:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def _document(self, selected):
+            return (
+                document.model_copy(update={"publication_date": current_date[0]})
+                if selected == target
+                else None
+            )
+
+    state.monkeypatch.setattr(host, "DocumentResearch", Facade)
+    quote = (
+        "The Spring 2026 survey findings suggest that the actuarial profession is "
+        "progressing from initial exploration toward more practical and structured AI adoption."
+    )
+    state.feature.executors["document_research.read_document_sections"] = lambda *_: ToolResult(
+        "ok",
+        {
+            "sections": [
+                {
+                    "target": target.model_dump(),
+                    "section_id": "finding",
+                    "excerpt": quote,
+                    "source_url": target.file_id,
+                    "serving_stale": False,
+                    "index_stale": False,
+                    "stale_severity": "none",
+                }
+            ]
+        },
+        ("body:current",),
+    )
+    scripted_model, _ = scripted(
+        action(
+            action="call",
+            skill_id="document_research",
+            tool_id="document_research.read_document_sections",
+            args={**target.model_dump(), "query": "current quote"},
+        ),
+        action(
+            action="finish",
+            answer="draft",
+            evidence_ids=["body:current"],
+            findings=[
+                {
+                    "evidence_id": "body:current",
+                    "quote": quote,
+                    "summary": "该句出自报告 Key Findings 一节，说明 2026 年春季调查显示精算行业正从初步探索转向更务实、更有结构的 AI 应用；来源为 SOA 报告页面，正文未记录发布日期，故发布日期未知。",
+                }
+            ],
+        ),
+        action(supported=[False]),
+    )
+
+    def model(prompt, remaining):
+        response = scripted_model(prompt, remaining)
+        if available and response == action(supported=[False]):
+            current_date[0] = publication_date
+        return response
+
+    outcome = state.feature.query(
+        request=state.request,
+        auth=auth,
+        message=message,
+        locale=locale,
+        selected_target=target,
+        model=model,
+    )
+    assert outcome.runtime.availability == ("available" if available else "unavailable")
+    assert outcome.runtime.error_code == (None if available else "SUMMARY_UNVERIFIED")
+    assert quote in outcome.response.answer
+    if available:
+        assert "Key Findings 一节" not in outcome.response.answer
+    assert outcome.response.citations[0].source_date == publication_date
+    missing_date = (
+        ("未知" if available else "未记录")
+        if locale == "zh"
+        else ("unknown" if available else "not recorded")
+    )
+    assert (publication_date or missing_date) in outcome.response.answer
+    if available:
+        assert "2026-08-01" not in outcome.response.answer
+    assert "2026-10-01" not in outcome.response.answer
+
+
+@pytest.mark.parametrize(
+    "failure",
+    ["wrong_target", "stale", "missing_evidence", "expired", "no_selected", "source_changed"],
+)
+def test_exact_quote_fallback_rejects_invalid_current_evidence(failure):
+    from ai_actuarial.skills.document_research.manifest import MANIFEST as research_manifest
+
+    target = {"kb_id": "public", "file_id": "https://example.test/report.pdf"}
+    quote = "Current evidence states 42 observations."
+    evidence_ids = () if failure == "missing_evidence" else ("body:current",)
+    section = {
+        "target": {**target, "file_id": "other"} if failure == "wrong_target" else target,
+        "section_id": "finding",
+        "excerpt": quote,
+        "source_url": target["file_id"],
+        "serving_stale": failure == "stale",
+        "index_stale": False,
+        "stale_severity": "soft_stale" if failure == "stale" else "none",
+    }
+    model, _ = scripted(
+        action(
+            action="call",
+            skill_id="document_research",
+            tool_id="document_research.read_document_sections",
+            args={**target, "query": "current quote"},
+        ),
+        action(
+            action="finish",
+            answer="draft",
+            evidence_ids=["body:current"],
+            findings=[
+                {
+                    "evidence_id": "body:current",
+                    "quote": quote,
+                    "summary": "Unsupported factual summary.",
+                }
+            ],
+        ),
+        action(supported=[False]),
+    )
+    result = run(
+        message="请引用一句原文，说明来源和发布日期。",
+        locale="zh",
+        registry=Registry(
+            (research_manifest,), frozenset(tool.executor for tool in research_manifest.tools)
+        ),
+        context=RunContext(principal="reader", scopes=frozenset({"chat.query", "markdown.read"})),
+        model=model,
+        execute=lambda *_: ToolResult("ok", {"sections": [section]}, evidence_ids),
+        selected_target=None if failure == "no_selected" else target,
+        resolve_selected_document=lambda _: (
+            None
+            if failure == "expired"
+            else {
+                "target": target,
+                "title": "Current report",
+                "source_url": (
+                    "https://example.test/other.pdf"
+                    if failure == "source_changed"
+                    else target["file_id"]
+                ),
+                "publication_date": None,
+            }
+        ),
+    )
+    assert result.availability == "unavailable"
+    assert result.verified_quote is None
+    assert result.error_code in {"NO_EVIDENCE", "SUMMARY_UNVERIFIED"}
 
 
 def test_user_api_runs_four_published_skill_families_without_admin_scope(host_fixture, monkeypatch):
