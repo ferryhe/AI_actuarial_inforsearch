@@ -40,6 +40,7 @@ api_assistant_query  # reason: FastAPI registers this decorated route.
 api_assistant_runtime_query  # reason: FastAPI registers this decorated route.
 api_assistant_user_query  # reason: FastAPI registers this decorated public route.
 RuntimePayload.valid_recent_questions  # reason: Pydantic invokes this decorated field validator.
+RuntimePayload.valid_opened_file_url  # reason: Pydantic invokes this decorated field validator.
 SourceCitation.source_date  # reason: Pydantic serializes the citation source date by name.
 Document.internal_link  # reason: Pydantic includes the file-detail link in document tool JSON.
 SectionEvidence.index_version  # reason: Pydantic includes the Ready/Standard index version in section tool JSON.
