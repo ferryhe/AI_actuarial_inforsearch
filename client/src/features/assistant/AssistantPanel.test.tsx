@@ -506,13 +506,36 @@ it("uses the second verified file card as the target after navigation and a foll
 it("does not carry an older target through an unassigned catalog card", async () => {
   const old = { kb_id: "public", file_id: "https://example.org/old.pdf" };
   const unassigned = { source_type: "catalog", file_id: "https://example.org/new.pdf", section_id: "", kb_id: null, title: "unassigned report", link: "/file-detail?url=https%3A%2F%2Fexample.org%2Fnew.pdf", source_version: null, source_date: null, stale: false };
+  apiGet.mockResolvedValue({ assistant_enabled: true, feedback_enabled: false });
   apiPost.mockResolvedValueOnce({ ...reply("answer"), citations: [unassigned], selected_target: old }).mockResolvedValue(reply("answer"));
-  show(false);
+  const { rerender } = render(<SupportWidget />);
+  fireEvent.click(await screen.findByTestId("support-widget-trigger"));
+  await screen.findByLabelText("assistant.message");
   question("Find the report");
   fireEvent.click(await screen.findByRole("link", { name: /unassigned report/ }));
   expect(navigate).toHaveBeenCalledWith(unassigned.link);
+  route.current = unassigned.link;
+  rerender(<SupportWidget />);
   question("What about this one?");
-  expect(apiPost.mock.calls[1][1].selected_target).toBeNull();
+  expect(apiPost.mock.calls[1][1]).toMatchObject({ selected_target: null, opened_file_url: unassigned.file_id, recent_questions: ["Find the report"] });
+  fireEvent.click(screen.getByRole("button", { name: "assistant.clear" }));
+  question("What else?");
+  expect(apiPost.mock.calls[2][1].opened_file_url).toBeUndefined();
+});
+
+it("does not replace this session's file context on a modified card click", async () => {
+  const old = { kb_id: "public", file_id: "https://example.org/old.pdf" };
+  const card = { source_type: "catalog", file_id: "https://example.org/new.pdf", section_id: "", kb_id: null, title: "new report", link: "/file-detail?url=https%3A%2F%2Fexample.org%2Fnew.pdf", source_version: null, source_date: null, stale: false };
+  apiPost.mockResolvedValueOnce({ ...reply("answer"), citations: [card], selected_target: old }).mockResolvedValue(reply("answer"));
+  show(false);
+  question("Find the report");
+  const link = await screen.findByRole("link", { name: /new report/ });
+  link.addEventListener("click", (event) => event.preventDefault());
+  fireEvent.click(link, { ctrlKey: true });
+  question("Continue here");
+  expect(apiPost.mock.calls[1][1]).toMatchObject({ selected_target: old, recent_questions: ["Find the report"] });
+  expect(apiPost.mock.calls[1][1].opened_file_url).toBeUndefined();
+  expect(navigate).not.toHaveBeenCalled();
 });
 
 it("unmount clears history and ignores a late response", async () => {

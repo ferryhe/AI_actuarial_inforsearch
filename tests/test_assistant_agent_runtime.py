@@ -641,6 +641,170 @@ def host_fixture(monkeypatch):
     )
 
 
+def test_opened_catalog_file_requires_current_body_permission_and_membership(host_fixture):
+    state = host_fixture
+    url = "https://example.test/report.pdf"
+    file_state = {"exists": True, "members": {"public"}}
+    permissions = {"chat.query", "catalog.read", "files.read"}
+
+    class Connection:
+        def execute(self, sql, params):
+            if sql.startswith("SELECT url FROM files"):
+                row = (url,) if file_state["exists"] and params == (url,) else None
+            elif "FROM rag_kb_files" in sql:
+                row = (
+                    (url, "Current report", None, None)
+                    if params[0] in file_state["members"] and params[1] == url
+                    else None
+                )
+            else:
+                raise AssertionError(sql)
+            return SimpleNamespace(fetchone=lambda: row)
+
+    class StorageWithFile(host.chat.Storage):
+        def __init__(self, database):
+            super().__init__(database)
+            self._conn = Connection()
+
+    state.monkeypatch.setattr(host.chat, "Storage", StorageWithFile)
+    state.request.app.state.assistant_public_kb_ids = ["public"]
+
+    def auth():
+        return AuthContext({"subject": "reader"}, frozenset(permissions))
+
+    state.monkeypatch.setattr(host.deps, "get_auth_context", lambda request: auth())
+
+    body_call = action(
+        action="call",
+        skill_id="document_research",
+        tool_id="document_research.read_document_sections",
+        args={"kb_id": "public", "file_id": url, "query": "report"},
+    )
+    denied_model, _ = scripted(body_call)
+    denied = state.feature.query(
+        request=state.request,
+        auth=auth(),
+        message="What does this report say?",
+        opened_file_url=url,
+        model=denied_model,
+    )
+    assert denied.response.availability == "unavailable"
+    assert denied.response.selected_target is None and not denied.response.citations
+    assert "42 observations" not in denied.response.answer
+    assert "/file-detail?url=https%3A%2F%2Fexample.test%2Freport.pdf" in denied.response.answer
+
+    permissions.add("markdown.read")
+    quote = "The report records 42 observations."
+    reads = []
+
+    def read(_facade, args):
+        reads.append(args)
+        return ToolResult(
+            "ok",
+            {
+                "sections": [
+                    {
+                        "target": {"kb_id": "public", "file_id": url},
+                        "section_id": "findings",
+                        "excerpt": quote,
+                        "source_url": url,
+                        "serving_stale": False,
+                        "index_stale": False,
+                    }
+                ]
+            },
+            ("body:current",),
+        )
+
+    state.feature.executors["document_research.read_document_sections"] = read
+    model, prompts = scripted(
+        body_call,
+        action(
+            action="finish",
+            answer="Current finding",
+            evidence_ids=["body:current"],
+            findings=[{"evidence_id": "body:current", "quote": quote, "summary": quote}],
+        ),
+        action(supported=[True]),
+    )
+    allowed = state.feature.query(
+        request=state.request,
+        auth=auth(),
+        message="What does this report say?",
+        opened_file_url=url,
+        model=model,
+    )
+    assert json.loads(prompts[0][0]["prompt"])["selected_target"] == {
+        "kb_id": "public",
+        "file_id": url,
+    }
+    assert reads and allowed.response.availability == "available"
+    assert quote in allowed.response.answer
+    assert allowed.response.selected_target == {"kb_id": "public", "file_id": url}
+
+    file_state["members"].clear()
+    revoked_model, _ = scripted(body_call)
+    revoked = state.feature.query(
+        request=state.request,
+        auth=auth(),
+        message="What does this report say now?",
+        opened_file_url=url,
+        model=revoked_model,
+    )
+    assert (
+        revoked.response.availability == "unavailable" and revoked.response.selected_target is None
+    )
+    assert quote not in revoked.response.answer and len(reads) == 1
+
+    from ai_actuarial.skills.usage_navigation.executors import guide
+
+    weekly = guide({"query": "weekly", "language": "en"})
+    help_model, help_prompts = scripted(
+        action(
+            action="call",
+            skill_id="usage_navigation",
+            tool_id="usage_navigation.guide",
+            args={"query": "weekly", "language": "en"},
+        ),
+        action(action="finish", answer="Open Weekly", evidence_ids=[weekly.evidence_ids[0]]),
+    )
+    unrelated = state.feature.query(
+        request=state.request,
+        auth=auth(),
+        message="How do I use Weekly?",
+        opened_file_url=url,
+        model=help_model,
+    )
+    assert len(help_prompts) == 2
+    assert unrelated.response.availability == "available"
+    assert "Weekly" in unrelated.response.answer
+
+    file_state["members"].update({"public", "other"})
+    state.request.app.state.assistant_public_kb_ids = ["public", "other"]
+    ambiguous_model, ambiguous_prompts = scripted(body_call)
+    ambiguous = state.feature.query(
+        request=state.request,
+        auth=auth(),
+        message="What does this report say?",
+        opened_file_url=url,
+        model=ambiguous_model,
+    )
+    assert "selected_target" not in json.loads(ambiguous_prompts[0][0]["prompt"])
+    assert ambiguous.response.availability == "unavailable" and len(reads) == 1
+
+    file_state["exists"] = False
+    deleted_model, _ = scripted(body_call)
+    deleted = state.feature.query(
+        request=state.request,
+        auth=auth(),
+        message="What does this report say?",
+        opened_file_url=url,
+        model=deleted_model,
+    )
+    assert deleted.response.availability == "unavailable" and len(reads) == 1
+    assert "/file-detail?url=" not in deleted.response.answer
+
+
 def test_host_quota_once_for_anonymous_and_registered_chains(host_fixture):
     state = host_fixture
     for auth in (
@@ -1434,6 +1598,16 @@ def test_versioned_user_api_requires_chat_query_and_keeps_admin_gate(monkeypatch
         assert response.json()["schema_version"] == "1.0"
         assert called[-1]["auth"].permissions == frozenset({"chat.query"})
         assert called[-1]["recent_questions"] == ["Earlier question"]
+        opened = client.post(
+            "/api/assistant/v1/query",
+            json={
+                "message": "What does this report say?",
+                "opened_file_url": "https://example.test/report.pdf",
+            },
+            headers={"X-Auth-Token": "test"},
+        )
+        assert opened.status_code == 200
+        assert called[-1]["opened_file_url"] == "https://example.test/report.pdf"
         invalid = client.post(
             "/api/assistant/v1/query",
             json={"message": "sample", "recent_questions": ["x" * 501]},
@@ -1441,6 +1615,14 @@ def test_versioned_user_api_requires_chat_query_and_keeps_admin_gate(monkeypatch
         )
         assert invalid.status_code == 422
         assert invalid.json()["detail"][0]["loc"] == ["body", "recent_questions"]
+        assert (
+            client.post(
+                "/api/assistant/v1/query",
+                json={"message": "sample", "opened_file_url": "x" * 1025},
+                headers={"X-Auth-Token": "test"},
+            ).status_code
+            == 422
+        )
         assert (
             client.post(
                 "/api/assistant/runtime/query",
@@ -1468,7 +1650,7 @@ def test_versioned_user_api_requires_chat_query_and_keeps_admin_gate(monkeypatch
             ).status_code
             == 404
         )
-    assert len(called) == 1
+    assert len(called) == 2
 
 
 def test_versioned_user_api_completes_when_disconnect_check_overlaps_query(monkeypatch):

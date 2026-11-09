@@ -33,6 +33,7 @@ class RuntimePayload(BaseModel):
     message: str = Field(min_length=1, max_length=4000)
     locale: Literal["en", "zh", "zh-CN"] = "en"
     selected_target: SelectedTarget | None = None
+    opened_file_url: str | None = Field(default=None, min_length=1, max_length=1024)
     recent_questions: list[str] = Field(default_factory=list, max_length=3)
 
     @field_validator("message")
@@ -48,6 +49,13 @@ class RuntimePayload(BaseModel):
         if any(not value.strip() or len(value) > 500 or "\0" in value for value in values):
             raise ValueError("Recent questions must be nonempty and at most 500 characters")
         return values
+
+    @field_validator("opened_file_url")
+    @classmethod
+    def valid_opened_file_url(cls, value: str | None) -> str | None:
+        if value is not None and (not value.strip() or "\0" in value):
+            raise ValueError("Opened file URL must be nonempty and contain no NUL")
+        return value
 
 
 @router.post("/assistant/runtime/query", response_model=FeatureResponse)
@@ -92,6 +100,7 @@ async def _query(
                 deadline=time.monotonic() + budget.total_seconds,
                 budget=budget,
                 selected_target=payload.selected_target,
+                opened_file_url=payload.opened_file_url,
                 recent_questions=payload.recent_questions,
             ),
             timeout=budget.total_seconds,

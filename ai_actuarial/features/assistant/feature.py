@@ -108,6 +108,7 @@ class AssistantFeature:
         cancelled: Event | None = None,
         deadline: float | None = None,
         selected_target: SelectedTarget | None = None,
+        opened_file_url: str | None = None,
         recent_questions: list[str] | None = None,
         budget: AgentBudget | None = None,
     ) -> Outcome:
@@ -178,6 +179,40 @@ class AssistantFeature:
                     raise
                 runtime = RunResult("", "error", "QUOTA_EXCEEDED", (), 0, 0, 0, ())
                 return Outcome(self._response(runtime, locale), runtime, session_update)
+            opened_target = None
+            file_row = None
+            if opened_file_url is not None:
+                if hasattr(request.state, "auth_context"):
+                    del request.state.auth_context
+                current = deps.get_auth_context(request)
+                current_scopes = (
+                    current.permissions
+                    if current.token
+                    else public_permissions_for_request(request)
+                )
+                if (
+                    _identity(current) == initial_identity
+                    and {"chat.query", "catalog.read", "files.read"}
+                    <= initial_scopes & current_scopes
+                ):
+                    file_row = storage._conn.execute(
+                        "SELECT url FROM files WHERE url = ? AND deleted_at IS NULL",
+                        (opened_file_url,),
+                    ).fetchone()
+                    if file_row and "markdown.read" in initial_scopes & current_scopes:
+                        facade = DocumentResearch(
+                            storage, authorized_kbs=lambda: permitted_kbs(request, current)
+                        )
+                        matches = [
+                            target
+                            for kb_id in permitted_kbs(request, current)
+                            if facade._document(
+                                target := SelectedTarget(kb_id=kb_id, file_id=opened_file_url)
+                            )
+                            is not None
+                        ]
+                        if len(matches) == 1:
+                            opened_target = matches[0]
             if model is None:
                 from ai_actuarial.chatbot.config import ChatbotConfig
                 from ai_actuarial.chatbot.llm import LLMClient
@@ -218,7 +253,7 @@ class AssistantFeature:
                     )
                     return _normalize_json_object_label(raw)
 
-            verified_target = selected_target
+            verified_target = opened_target if opened_file_url is not None else selected_target
             found_targets: set[tuple[str, str]] = set()
             found_evidence_targets: dict[str, SelectedTarget] = {}
             body_read_targets: set[tuple[str, str]] = set()
@@ -232,6 +267,7 @@ class AssistantFeature:
             weekly_guide_ids: set[str] = set()
             weekly_empty: dict[str, str] = {}
             resource_answers: dict[str, str] = {}
+            attempted_opened_body = False
             if verified_target is not None:
                 current_facade = DocumentResearch(
                     storage, authorized_kbs=lambda: permitted_kbs(request, auth)
@@ -243,7 +279,20 @@ class AssistantFeature:
                     verified_target = None
 
             def execute(tool, args: dict, run_context: RunContext, _remaining: float) -> ToolResult:
-                nonlocal verified_target
+                nonlocal verified_target, attempted_opened_body
+                if (
+                    opened_target is None
+                    and opened_file_url is not None
+                    and tool.executor
+                    in {
+                        "document_research.read_document_sections",
+                        "document_research.search_knowledge",
+                        "document_research.readiness",
+                    }
+                    and args.get("file_id") == opened_file_url
+                    and (args.get("kb_id"), args.get("file_id")) not in found_targets
+                ):
+                    attempted_opened_body = True
                 # The dependency cache is request-scoped, so force a fresh lookup per action.
                 if hasattr(request.state, "auth_context"):
                     del request.state.auth_context
@@ -257,6 +306,10 @@ class AssistantFeature:
                     _identity(current) != initial_identity
                     or not tool.required_scopes <= run_context.scopes
                     or not tool.required_scopes <= current_scopes
+                    or (
+                        opened_target is not None
+                        and not {"catalog.read", "files.read"} <= current_scopes
+                    )
                 ):
                     raise PermissionError("identity or scope changed")
                 if args.get("kb_id") is not None and args["kb_id"] not in permitted_kbs(
@@ -264,6 +317,15 @@ class AssistantFeature:
                 ):
                     raise PermissionError("KB target is outside current scope")
                 run_context.remaining()
+                if (
+                    attempted_opened_body
+                    and opened_target is None
+                    and args.get("file_id") == opened_file_url
+                    and (args.get("kb_id"), args.get("file_id")) not in found_targets
+                ):
+                    return ToolResult(
+                        "unavailable", {"message": "Opened report body is unavailable."}
+                    )
                 if tool.executor == "feedback.draft":
                     if not getattr(request.app.state, "feedback_enabled", False):
                         return ToolResult("unavailable", {"message": "Feedback is disabled."})
@@ -519,6 +581,15 @@ class AssistantFeature:
                 model=model,
                 execute=execute,
                 selected_target=verified_target.model_dump() if verified_target else None,
+                opened_file=(
+                    {
+                        "url": opened_file_url,
+                        "detail_link": "/file-detail?" + urlencode({"url": opened_file_url}),
+                        "body_access": "available" if opened_target else "unavailable",
+                    }
+                    if file_row
+                    else None
+                ),
                 recent_questions=recent_questions or [],
                 resolve_selected_document=resolve_selected_document,
                 source_options=lambda: storage.get_source_options(),
@@ -621,6 +692,10 @@ class AssistantFeature:
                         _identity(current) == initial_identity
                         and required_scopes <= current_scopes
                         and required_kbs <= set(permitted_kbs(request, current))
+                        and (
+                            opened_target is None
+                            or {"catalog.read", "files.read"} <= current_scopes
+                        )
                     )
                 except Exception:
                     still_authorized = False
@@ -633,6 +708,69 @@ class AssistantFeature:
                         error_code="SCOPE_REVOKED",
                         evidence_ids=(),
                         kind="error",
+                    )
+            if (
+                attempted_opened_body
+                and opened_target is None
+                and not any(file_id == opened_file_url for _, file_id in body_read_targets)
+            ):
+                try:
+                    if hasattr(request.state, "auth_context"):
+                        del request.state.auth_context
+                    current = deps.get_auth_context(request)
+                    current_scopes = (
+                        current.permissions
+                        if current.token
+                        else public_permissions_for_request(request)
+                    )
+                    can_reference = (
+                        _identity(current) == initial_identity
+                        and {"chat.query", "catalog.read", "files.read"}
+                        <= initial_scopes & current_scopes
+                    )
+                    current_file = (
+                        storage._conn.execute(
+                            "SELECT url FROM files WHERE url = ? AND deleted_at IS NULL",
+                            (opened_file_url,),
+                        ).fetchone()
+                        if can_reference
+                        else None
+                    )
+                except Exception:
+                    can_reference = False
+                    current_file = None
+                if can_reference:
+                    answer = (
+                        "当前权限下无法读取这份资料的正文，不能说明其内容。"
+                        if locale.startswith("zh")
+                        else "The report body is unavailable with your current access, so I cannot say what it contains."
+                    )
+                    if current_file:
+                        link = "/file-detail?" + urlencode({"url": opened_file_url})
+                        answer += (
+                            f"\n\n[打开的资料]({link})"
+                            if locale.startswith("zh")
+                            else f"\n\n[Opened report]({link})"
+                        )
+                    runtime = replace(
+                        runtime,
+                        answer=answer,
+                        availability="unavailable",
+                        error_code="KNOWLEDGE_UNAVAILABLE",
+                        evidence_ids=(),
+                        kind="finish",
+                        verified_quote=None,
+                    )
+                else:
+                    verified_target = None
+                    runtime = replace(
+                        runtime,
+                        answer="",
+                        availability="unavailable",
+                        error_code="SCOPE_REVOKED",
+                        evidence_ids=(),
+                        kind="error",
+                        verified_quote=None,
                     )
             response = self._response(runtime, locale)
             response.citations = [

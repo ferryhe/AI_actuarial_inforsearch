@@ -17,6 +17,7 @@ export default function AssistantPanel({ t, lang, open, feedbackEnabled, onClose
   const [history, setHistory] = useState<{ question: string; reply: Reply }[]>([]);
   const latestEntry = history[history.length - 1];
   const [selectedTarget, setSelectedTarget] = useState<Reply["selected_target"]>(null);
+  const [openedFileUrl, setOpenedFileUrl] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const [draft, setDraft] = useState<{ text: string; id: number } | null>(null);
@@ -48,6 +49,7 @@ export default function AssistantPanel({ t, lang, open, feedbackEnabled, onClose
     helpGeneration.current += 1;
     setHistory([]);
     setSelectedTarget(null);
+    setOpenedFileUrl(null);
     setDraft(null);
     setFeedbackOpen(false);
     setHelp([]);
@@ -129,17 +131,19 @@ export default function AssistantPanel({ t, lang, open, feedbackEnabled, onClose
     const controller = new AbortController();
     request.current = controller;
     try {
-      const reply = await query({ message: question, locale: lang === "zh" ? "zh" : "en", selected_target: selectedTarget, recent_questions: history.slice(-3).map((item) => item.question.slice(0, 500)) }, controller.signal);
+      const reply = await query({ message: question, locale: lang === "zh" ? "zh" : "en", selected_target: selectedTarget, recent_questions: history.slice(-3).map((item) => item.question.slice(0, 500)), ...(openedFileUrl && { opened_file_url: openedFileUrl }) }, controller.signal);
       if (!mounted.current || requestId !== requestGeneration.current) return;
       if (reply.error_code === "SCOPE_REVOKED") setHistory([]);
       setHistory((items) => [...items.slice(-11), { question, reply }]);
       setSelectedTarget(reply.selected_target);
+      if (reply.selected_target || reply.error_code === "SCOPE_REVOKED") setOpenedFileUrl(null);
       if (reply.intent === "feedback" && reply.availability === "available" && reply.feedback_draft !== null && generation === feedbackGeneration.current) openFeedback(question);
     } catch (reason) {
       if (!mounted.current || requestId !== requestGeneration.current) return;
       if (reason instanceof ApiError && [401, 403].includes(reason.status)) {
         setHistory([]);
         setSelectedTarget(null);
+        setOpenedFileUrl(null);
         revealedReply.current = undefined;
       }
       setError(t("assistant.error"));
@@ -174,7 +178,7 @@ export default function AssistantPanel({ t, lang, open, feedbackEnabled, onClose
       <div ref={scrollContainer} onWheel={preserveScrollPosition} onTouchMove={preserveScrollPosition} onMouseDown={preserveScrollbarScroll} onKeyDown={preserveKeyboardScroll} className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4 text-sm">
         <p className="text-xs text-muted-foreground">{t("assistant.scope")}</p>
         <div className="flex flex-wrap gap-2">{feedbackEnabled && <button type="button" className="min-h-[44px] rounded-md border border-border px-3" onClick={() => { userScrolledDuringRequest.current = false; openFeedback(message); }}>{t("assistant.feedback")}</button>}<button type="button" className="min-h-[44px] rounded-md border border-border px-3" onClick={browseHelp}>{t("assistant.guide")}</button><button type="button" className="min-h-[44px] rounded-md border border-border px-3" onClick={clear}>{t("assistant.clear")}</button></div>
-        {history.map(({ question, reply }, index) => <article key={index} className="space-y-2 border-t border-border pt-3"><p className="whitespace-pre-wrap break-words font-medium">{question}</p><div ref={index === history.length - 1 ? latestAnswer : undefined} className="assistant-answer"><MarkdownContent content={reply.answer} /></div>{reply.citations.map((ref, i) => ref.source_type === "help" ? <button type="button" key={`${ref.doc_id}-${ref.section_id}`} className="min-h-[44px] text-left text-primary underline" onClick={() => readCitation(ref)}>[{i + 1}] {ref.title} / {ref.section_id} ({ref.source_version}) — {t("assistant.source_help")}</button> : <a key={`${ref.kb_id}-${ref.file_id}-${ref.section_id}`} className="block min-h-[44px] break-words text-primary underline" href={ref.link} onClick={(event) => { if (!event.button && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) setSelectedTarget(ref.kb_id ? { kb_id: ref.kb_id, file_id: ref.file_id } : null); }}>[{i + 1}] {ref.title} — {t(`assistant.source_${ref.source_type}`)} {ref.section_id} {ref.source_version && `(${ref.source_version})`} {ref.source_date} {ref.stale && t("assistant.stale")}</a>)}{reply.evidence_ids.map((id, i) => <p key={id} className="break-all text-xs text-muted-foreground">[{i + 1}] {id}</p>)}{reply.intent === "clarify" && <p>{t("assistant.choose")}</p>}</article>)}
+        {history.map(({ question, reply }, index) => <article key={index} className="space-y-2 border-t border-border pt-3"><p className="whitespace-pre-wrap break-words font-medium">{question}</p><div ref={index === history.length - 1 ? latestAnswer : undefined} className="assistant-answer"><MarkdownContent content={reply.answer} /></div>{reply.citations.map((ref, i) => ref.source_type === "help" ? <button type="button" key={`${ref.doc_id}-${ref.section_id}`} className="min-h-[44px] text-left text-primary underline" onClick={() => readCitation(ref)}>[{i + 1}] {ref.title} / {ref.section_id} ({ref.source_version}) — {t("assistant.source_help")}</button> : <a key={`${ref.kb_id}-${ref.file_id}-${ref.section_id}`} className="block min-h-[44px] break-words text-primary underline" href={ref.link} onClick={(event) => { if (!event.button && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) { setSelectedTarget(ref.kb_id ? { kb_id: ref.kb_id, file_id: ref.file_id } : null); setOpenedFileUrl(ref.kb_id ? null : ref.file_id); } }}>[{i + 1}] {ref.title} — {t(`assistant.source_${ref.source_type}`)} {ref.section_id} {ref.source_version && `(${ref.source_version})`} {ref.source_date} {ref.stale && t("assistant.stale")}</a>)}{reply.evidence_ids.map((id, i) => <p key={id} className="break-all text-xs text-muted-foreground">[{i + 1}] {id}</p>)}{reply.intent === "clarify" && <p>{t("assistant.choose")}</p>}</article>)}
         {help.map((ref) => <button type="button" key={ref.section_id} className="block min-h-[44px] text-left text-primary underline" onClick={() => readCitation(ref)}>{ref.section_id} ({ref.source_version})</button>)}
         {section && <div className="border-t border-border pt-3" data-testid="assistant-help-section"><MarkdownContent content={section} /></div>}
         {pending && <p role="status">{t("assistant.wait")}</p>}

@@ -170,6 +170,7 @@ def run(
     model: ModelPort,
     execute: ToolPort,
     selected_target: dict[str, str] | None = None,
+    opened_file: dict[str, str] | None = None,
     recent_questions: list[str] | None = None,
     resolve_selected_document: Callable[[dict[str, str]], dict | None] | None = None,
     source_options: Callable[[], list[dict]] | None = None,
@@ -277,6 +278,14 @@ def run(
     }
     if selected_target is not None:
         prompt_data["selected_target"] = selected_target
+    if opened_file is not None:
+        prompt_data["opened_file"] = opened_file
+        prompt_data["instruction"] += (
+            " The opened file is conversation context, not body evidence. Route each new question "
+            "normally. If its body access is unavailable and the question asks for its contents, "
+            "explain that the body cannot be read and keep its detail link; do not claim to have read it. "
+            "Do not claim body findings without a permitted body tool result."
+        )
     if recent_questions:
         prompt_data["recent_questions"] = recent_questions
         prompt_data[
