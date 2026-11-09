@@ -39,6 +39,21 @@ it("manual feedback uses the ordinary form without any assistant request", async
   expect(apiPost).not.toHaveBeenCalled();
 });
 
+it("reopens canceled manual feedback with the original composer text", async () => {
+  show();
+  fireEvent.change(screen.getByLabelText("assistant.message"), { target: { value: "Original user text" } });
+  fireEvent.click(screen.getByRole("button", { name: "assistant.feedback" }));
+  const draft = await screen.findByLabelText("feedback.content");
+  expect(draft).toHaveValue("Original user text");
+  fireEvent.change(draft, { target: { value: "Canceled edit" } });
+  fireEvent.click(screen.getByRole("button", { name: "assistant.cancel" }));
+  expect(apiPost).not.toHaveBeenCalled();
+
+  fireEvent.click(screen.getByRole("button", { name: "assistant.feedback" }));
+  expect(await screen.findByLabelText("feedback.content")).toHaveValue("Original user text");
+  expect(apiPost).not.toHaveBeenCalled();
+});
+
 it("forced feedback classification remains an editable original draft until confirmation and reuses id on retry", async () => {
   apiPost.mockResolvedValueOnce(reply()).mockRejectedValueOnce(new Error("lost receipt")).mockResolvedValueOnce({ feedback_id: "db-receipt", status: "recorded", created_at: "now" });
   show(); question();

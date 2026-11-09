@@ -168,7 +168,7 @@ export default function AssistantPanel({ t, lang, open, feedbackEnabled, onClose
   }
 
   return <>
-    {draft && feedbackEnabled && <div hidden={!feedbackOpen}><Suspense fallback={<p role="status">{t("feedback.title")}</p>}><FeedbackForm key={draft.id} t={t} lang={lang} open={open && feedbackOpen} initialContent={draft.text} onClose={onClose} onCancel={() => setFeedbackOpen(false)} /></Suspense></div>}
+    {draft && feedbackEnabled && <div hidden={!feedbackOpen}><Suspense fallback={<p role="status">{t("feedback.title")}</p>}><FeedbackForm key={draft.id} t={t} lang={lang} open={open && feedbackOpen} initialContent={draft.text} onClose={onClose} onCancel={() => { setFeedbackOpen(false); setDraft(null); }} /></Suspense></div>}
     <section hidden={feedbackOpen} onClick={navigateWithin} id="assistant-panel" aria-labelledby="assistant-title" className="flex w-[min(22.5rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-xl border border-border bg-card text-card-foreground shadow-2xl">
       <header className="flex shrink-0 items-center justify-between border-b border-border px-4 py-2"><h2 id="assistant-title" className="text-base font-semibold">{t("assistant.title")}</h2><IconButton label={t("a11y.close_feedback")} onClick={onClose}><X className="h-4 w-4" /></IconButton></header>
       <div ref={scrollContainer} onWheel={preserveScrollPosition} onTouchMove={preserveScrollPosition} onMouseDown={preserveScrollbarScroll} onKeyDown={preserveKeyboardScroll} className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4 text-sm">
