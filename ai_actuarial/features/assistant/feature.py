@@ -886,20 +886,6 @@ class AssistantFeature:
                         )
                     response.answer = (response.answer + " " if weekly_guide_used else "") + notice
                 else:
-                    if empty == "no_snapshot":
-                        status = (
-                            "目前没有完整已发布的周报快照。"
-                            if locale.startswith("zh")
-                            else "No complete published weekly snapshot is available yet."
-                        )
-                        response.answer = "\n\n".join(dict.fromkeys([*guide_answers, status]))
-                    elif empty == "no_new":
-                        status = (
-                            "最近一期已发布周报按系统首次收录时间统计，没有新增资料。"
-                            if locale.startswith("zh")
-                            else "The latest published weekly period has no newly first-collected files."
-                        )
-                        response.answer = "\n\n".join(dict.fromkeys([*guide_answers, status]))
                     weekly_entry = (
                         "打开[周报](/weekly)。"
                         if locale.startswith("zh")
