@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import re
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from threading import Event
@@ -787,11 +786,11 @@ class AssistantFeature:
                     for item in runtime.evidence_ids
                     for citation in resource_file_citations.get(item, [])
                 )
-            weekly_used = runtime.kind == "finish" and bool(
-                weekly_actions.intersection(runtime.evidence_ids)
-            )
+            selected_weekly_actions = weekly_actions.intersection(runtime.evidence_ids)
+            weekly_used = runtime.kind == "finish" and bool(selected_weekly_actions)
             weekly_guide_used = bool(weekly_guide_ids.intersection(runtime.evidence_ids))
             weekly_access: bool | None = None
+            empty = None
             if weekly_used:
                 try:
                     if hasattr(request.state, "auth_context"):
@@ -812,52 +811,66 @@ class AssistantFeature:
                     )
                 except Exception:
                     pass
-            if runtime.kind == "finish":
-                weekly_guide_answer = (
-                    (
-                        "首页周报卡片的‘查看全部’通往周报页。有快照时，页面展示最近一期完整已发布的周期，未结束的本周不在其中；也可选择较早的已发布周期。有权访问周报清单时，可打开其中资料阅读详情、原文链接，以及可用的预览或 Markdown。"
-                        if locale.startswith("zh")
-                        else "The Dashboard's weekly View all leads to the Weekly page. When available, it shows the latest complete published period, not an unfinished current week; you can select an older published period. When you can access a weekly list, open a listed file to read its details, source link, and a preview or Markdown when available."
+                if weekly_access:
+                    empty = next(
+                        (
+                            weekly_empty[item]
+                            for item in runtime.evidence_ids
+                            if item in weekly_empty
+                        ),
+                        None,
                     )
-                    if weekly_guide_used
-                    else ""
-                )
+            if runtime.kind == "finish":
                 guide_answers = [
                     help_answers[item]
                     for item in runtime.evidence_ids
                     if item in help_answers and item not in weekly_guide_ids
                 ]
-                if weekly_guide_used:
-                    guide_answers.append(weekly_guide_answer)
                 grounded = [
                     resource_answers[item]
                     for item in runtime.evidence_ids
                     if item in resource_answers
                 ]
-                if grounded:
-                    response.answer = "\n\n".join(dict.fromkeys([*guide_answers, *grounded]))
-                elif guide_answers:
-                    response.answer = "\n\n".join(dict.fromkeys(guide_answers))
-                    if weekly_guide_used and weekly_access:
+                if weekly_guide_used:
+                    weekly_guide_answer = (
+                        "有快照时，周报页展示最近一期完整已发布的周期，未结束的本周不在其中；也可选择较早的已发布周期。有权访问周报清单时，可打开其中资料阅读详情、原文链接，以及可用的预览或 Markdown。"
+                        if locale.startswith("zh")
+                        else "When available, the Weekly page shows the latest complete published period. The current week appears once it is complete and published. You can select an older published period. When you can access a weekly list, open a listed file to read its details, source link, and a preview or Markdown when available."
+                    )
+                    has_snapshot = empty != "no_snapshot" and bool(
+                        selected_weekly_actions - weekly_guide_ids
+                    )
+                    if weekly_access and not grounded:
                         try:
                             context.remaining()
                             snapshot = storage.get_latest_weekly_snapshot(
                                 now=datetime.now(timezone.utc).isoformat()
                             )
+                            has_snapshot = snapshot is not None
                             if snapshot is None:
-                                response.answer += (
+                                weekly_guide_answer += (
                                     " 目前没有完整已发布的周报快照。"
                                     if locale.startswith("zh")
                                     else " No complete published weekly snapshot is available yet."
                                 )
                             elif snapshot.get("period_start") and snapshot.get("period_end"):
-                                response.answer += (
+                                weekly_guide_answer += (
                                     f" 最近已发布周期：{snapshot['period_start']} 至 {snapshot['period_end']}。"
                                     if locale.startswith("zh")
                                     else f" Latest published period: {snapshot['period_start']} to {snapshot['period_end']}."
                                 )
                         except Exception:
                             pass
+                    if weekly_access and has_snapshot:
+                        dashboard_entry = (
+                            "首页显示周报卡片时，也可点击‘查看全部’进入周报页。"
+                            if locale.startswith("zh")
+                            else "If the Dashboard shows the weekly card, its View all link also opens Weekly. "
+                        )
+                        weekly_guide_answer = dashboard_entry + weekly_guide_answer
+                    guide_answers.append(weekly_guide_answer)
+                if grounded or guide_answers:
+                    response.answer = "\n\n".join(dict.fromkeys([*guide_answers, *grounded]))
             if weekly_used:
                 if weekly_access is not True:
                     if weekly_access is False:
@@ -874,14 +887,6 @@ class AssistantFeature:
                         )
                     response.answer = (response.answer + " " if weekly_guide_used else "") + notice
                 else:
-                    empty = next(
-                        (
-                            weekly_empty[item]
-                            for item in runtime.evidence_ids
-                            if item in weekly_empty
-                        ),
-                        None,
-                    )
                     if empty == "no_snapshot":
                         status = (
                             "目前没有完整已发布的周报快照。"
@@ -896,12 +901,12 @@ class AssistantFeature:
                             else "The latest published weekly period has no newly first-collected files."
                         )
                         response.answer = "\n\n".join(dict.fromkeys([*guide_answers, status]))
-                    if not re.search(r"\[[^\]]+\]\(/weekly\)", response.answer):
-                        response.answer += (
-                            "\n\n打开[周报](/weekly)。"
-                            if locale.startswith("zh")
-                            else "\n\nOpen [Weekly](/weekly)."
-                        )
+                    weekly_entry = (
+                        "打开[周报](/weekly)。"
+                        if locale.startswith("zh")
+                        else "Open [Weekly](/weekly)."
+                    )
+                    response.answer = f"{weekly_entry}\n\n{response.answer}"
             if runtime.kind == "finish" and runtime.verified_quote is None:
                 dated_documents = set()
                 for evidence_id in runtime.evidence_ids:

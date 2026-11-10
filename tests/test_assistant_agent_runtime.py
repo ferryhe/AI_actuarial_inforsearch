@@ -2971,12 +2971,15 @@ def test_combined_weekly_guide_and_snapshot_keeps_steps_and_current_state(
     answer = outcome.response.answer
     assert outcome.runtime.kind == "finish"
     assert outcome.response.citations[0].section_id == "weekly-reports"
-    assert ("查看全部" if locale == "zh" else "View all") in answer
+    assert (("查看全部" if locale == "zh" else "View all") in answer) == (snapshot is not None)
     assert ("较早的已发布周期" if locale == "zh" else "older published period") in answer
     assert ("资料阅读详情" if locale == "zh" else "file to read its details") in answer
     assert ("原文链接" if locale == "zh" else "source link") in answer
     assert "Markdown" in answer
-    assert ("[周报](/weekly)" if locale == "zh" else "[Weekly](/weekly)") in answer
+    assert answer.split("\n\n", 1)[0] == (
+        "打开[周报](/weekly)。" if locale == "zh" else "Open [Weekly](/weekly)."
+    )
+    assert answer.count("](/weekly)") == 1
     statuses = {
         "published": "2026-10-26",
         "none": (
@@ -3017,7 +3020,8 @@ def test_weekly_empty_states_override_unsupported_model_claims(host_fixture, emp
         request=state.request, auth=auth, message="What is new this week?", model=model
     )
     assert outcome.runtime.kind == "finish"
-    assert expected in outcome.response.answer and "/weekly" in outcome.response.answer
+    assert expected in outcome.response.answer
+    assert outcome.response.answer.startswith("Open [Weekly](/weekly).\n\n")
     assert "Five changed" not in outcome.response.answer
     assert "feedback" not in {
         item["skill_id"] for item in json.loads(calls[0][0]["prompt"])["skills"]
@@ -3286,12 +3290,13 @@ def test_guide_only_feature_answer_cannot_contradict_current_section(
 
 
 @pytest.mark.parametrize("locale", ["en", "zh"])
-@pytest.mark.parametrize("mode", ["guide", "data", "denied"])
+@pytest.mark.parametrize("mode", ["guide", "data", "guide_empty", "data_empty", "denied"])
 def test_overview_keeps_all_selected_help_when_weekly_is_included(host_fixture, locale, mode):
     from ai_actuarial.skills.usage_navigation.executors import guide
 
     state = host_fixture
     files_read = mode != "denied"
+    has_snapshot = mode in {"guide", "data"}
     scopes = {"chat.query", "files.read"} if files_read else {"chat.query"}
     auth = AuthContext({"subject": "user"}, frozenset(scopes))
     state.monkeypatch.setattr(host.deps, "get_auth_context", lambda request: auth)
@@ -3300,7 +3305,9 @@ def test_overview_keeps_all_selected_help_when_weekly_is_included(host_fixture, 
     class WeeklyStorage(host.chat.Storage):
         def get_latest_weekly_snapshot(self, *, now):
             reads.append(now)
-            return {"period_start": "2026-10-26", "period_end": "2026-11-02"}
+            if has_snapshot:
+                return {"period_start": "2026-10-26", "period_end": "2026-11-02"}
+            return None
 
     state.monkeypatch.setattr(host.chat, "Storage", WeeklyStorage)
     sections = []
@@ -3329,17 +3336,22 @@ def test_overview_keeps_all_selected_help_when_weekly_is_included(host_fixture, 
     state.feature.executors["usage_navigation.guide"] = lambda args: ToolResult(
         "ok", {"sections": sections}, tuple(evidence_ids)
     )
-    if mode == "data":
+    uses_weekly_tool = mode.startswith("data")
+    if uses_weekly_tool:
         state.feature.executors["resources_updates.weekly"] = lambda facade, args: ToolResult(
             "ok",
             {
-                "snapshot": {
-                    "id": "published",
-                    "period_start": "2026-10-26",
-                    "period_end": "2026-11-02",
-                    "file_count": 3,
-                },
-                "total": 3,
+                "snapshot": (
+                    {
+                        "id": "published",
+                        "period_start": "2026-10-26",
+                        "period_end": "2026-11-02",
+                        "file_count": 3,
+                    }
+                    if has_snapshot
+                    else None
+                ),
+                "total": 3 if has_snapshot else 0,
                 "action": "/weekly",
             },
             ("weekly:published",),
@@ -3352,7 +3364,7 @@ def test_overview_keeps_all_selected_help_when_weekly_is_included(host_fixture, 
             args={"query": "overview", "language": locale},
         )
     ]
-    if mode == "data":
+    if uses_weekly_tool:
         steps.append(
             action(
                 action="call",
@@ -3365,7 +3377,7 @@ def test_overview_keeps_all_selected_help_when_weekly_is_included(host_fixture, 
         action(
             action="finish",
             answer="model overview",
-            evidence_ids=[*evidence_ids, *(["weekly:published"] if mode == "data" else [])],
+            evidence_ids=[*evidence_ids, *(["weekly:published"] if uses_weekly_tool else [])],
         )
     )
     model, _ = scripted(*steps)
@@ -3381,19 +3393,21 @@ def test_overview_keeps_all_selected_help_when_weekly_is_included(host_fixture, 
     ]
     assert sections[0]["content"][:30] in answer
     assert sections[1]["content"][:30] in answer
-    assert ("查看全部" if locale == "zh" else "View all") in answer
+    assert (("查看全部" if locale == "zh" else "View all") in answer) == has_snapshot
     assert ("](/weekly)" in answer) == files_read
-    assert ("2026-10-26" in answer) == files_read
-    assert len(reads) == int(mode == "guide")
+    assert ("2026-10-26" in answer) == has_snapshot
+    assert len(reads) == int(mode.startswith("guide"))
 
 
-@pytest.mark.parametrize("path", ["guide", "resource"])
+@pytest.mark.parametrize("path", ["guide", "resource", "identity_changed"])
 def test_weekly_action_is_not_clickable_after_files_read_is_denied(host_fixture, path):
     from ai_actuarial.skills.usage_navigation.executors import guide
 
     state = host_fixture
     denied = AuthContext({"subject": "user"}, frozenset({"chat.query"}))
     allowed = AuthContext({"subject": "user"}, frozenset({"chat.query", "files.read"}))
+    if path == "identity_changed":
+        denied = AuthContext({"subject": "other-user"}, allowed.permissions)
     if path == "guide":
         auth = denied
         state.monkeypatch.setattr(host.deps, "get_auth_context", lambda request: denied)
@@ -3424,12 +3438,12 @@ def test_weekly_action_is_not_clickable_after_files_read_is_denied(host_fixture,
         tool_id, args, skill_id = "resources_updates.weekly", {}, "resources_updates"
     model, _ = scripted(
         action(action="call", skill_id=skill_id, tool_id=tool_id, args=args),
-        action(action="finish", answer="Open /weekly", evidence_ids=[evidence_id]),
+        action(action="finish", answer="Open [Weekly](/weekly).", evidence_ids=[evidence_id]),
     )
     outcome = state.feature.query(
         request=state.request, auth=auth, message="How do I view weekly updates?", model=model
     )
-    if path == "resource":
+    if path != "guide":
         assert outcome.runtime.error_code == "SCOPE_REVOKED"
         assert outcome.response.evidence_ids == [] and outcome.response.citations == []
         assert outcome.response.selected_target is None
@@ -3505,15 +3519,19 @@ def test_weekly_guide_only_answer_uses_current_published_state(
     ) in outcome.response.answer
     assert ("原文链接" if locale == "zh" else "source link") in outcome.response.answer
     assert "Markdown" in outcome.response.answer
+    assert (("查看全部" if locale == "zh" else "View all") in outcome.response.answer) == (
+        snapshot_state == "published"
+    )
     if snapshot_state == "denied":
         assert "](/weekly)" not in outcome.response.answer
         assert (
             "无法打开周报页" if locale == "zh" else "cannot open"
         ) in outcome.response.answer.lower()
     else:
-        assert (
-            "[周报](/weekly)" if locale == "zh" else "[Weekly](/weekly)"
-        ) in outcome.response.answer
+        assert outcome.response.answer.split("\n\n", 1)[0] == (
+            "打开[周报](/weekly)。" if locale == "zh" else "Open [Weekly](/weekly)."
+        )
+        assert outcome.response.answer.count("](/weekly)") == 1
     if snapshot_state == "none":
         assert (
             "目前没有完整已发布的周报快照"
