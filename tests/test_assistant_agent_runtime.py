@@ -2924,14 +2924,23 @@ def test_usage_to_weekly_follow_up_keeps_exact_guide_citation_and_open_action(ho
 @pytest.mark.parametrize(
     "locale,question", [("en", "How do I view weekly updates?"), ("zh", "怎么查看周报")]
 )
-@pytest.mark.parametrize("snapshot_state", ["published", "none", "no_new"])
-def test_combined_weekly_guide_and_snapshot_keeps_steps_and_current_state(
-    host_fixture, locale, question, snapshot_state
+@pytest.mark.parametrize(
+    "resource, snapshot_state",
+    [
+        ("weekly", "published"),
+        ("weekly", "none"),
+        ("weekly", "no_new"),
+        ("sources", "published"),
+        ("sources", "none"),
+    ],
+)
+def test_combined_weekly_guide_and_resource_keeps_steps_and_current_state(
+    host_fixture, locale, question, resource, snapshot_state
 ):
     from ai_actuarial.skills.usage_navigation.executors import guide
 
     state = host_fixture
-    auth = AuthContext({"subject": "user"}, frozenset({"chat.query", "files.read"}))
+    auth = AuthContext({"subject": "user"}, frozenset({"chat.query", "catalog.read", "files.read"}))
     state.monkeypatch.setattr(host.deps, "get_auth_context", lambda request: auth)
     hit = guide({"query": question, "language": locale})
     weekly_id = next(
@@ -2949,10 +2958,23 @@ def test_combined_weekly_guide_and_snapshot_keeps_steps_and_current_state(
             "file_count": 0 if snapshot_state == "no_new" else 1,
         }
     )
-    total = 1 if snapshot_state == "published" else 0
-    state.feature.executors["resources_updates.weekly"] = lambda facade, args: ToolResult(
-        "ok", {"snapshot": snapshot, "total": total, "action": "/weekly"}, ("weekly:current",)
+    reads = []
+
+    def latest_snapshot(_storage, *, now):
+        reads.append(now)
+        return snapshot
+
+    state.monkeypatch.setattr(
+        host.chat.Storage, "get_latest_weekly_snapshot", latest_snapshot, raising=False
     )
+    tool_id = f"resources_updates.{resource}"
+    resource_id = f"{resource}:current"
+    data = (
+        {"snapshot": snapshot, "total": int(snapshot_state == "published"), "action": "/weekly"}
+        if resource == "weekly"
+        else {"sources": [{"source_name_en": "CAS", "count": 1}], "total": 1}
+    )
+    state.feature.executors[tool_id] = lambda facade, args: ToolResult("ok", data, (resource_id,))
     model, _ = scripted(
         action(
             action="call",
@@ -2960,10 +2982,8 @@ def test_combined_weekly_guide_and_snapshot_keeps_steps_and_current_state(
             tool_id="usage_navigation.guide",
             args={"query": question, "language": locale},
         ),
-        action(
-            action="call", skill_id="resources_updates", tool_id="resources_updates.weekly", args={}
-        ),
-        action(action="finish", answer="model prose", evidence_ids=[weekly_id, "weekly:current"]),
+        action(action="call", skill_id="resources_updates", tool_id=tool_id, args={}),
+        action(action="finish", answer="model prose", evidence_ids=[weekly_id, resource_id]),
     )
     outcome = state.feature.query(
         request=state.request, auth=auth, message=question, locale=locale, model=model
@@ -2971,6 +2991,8 @@ def test_combined_weekly_guide_and_snapshot_keeps_steps_and_current_state(
     answer = outcome.response.answer
     assert outcome.runtime.kind == "finish"
     assert outcome.response.citations[0].section_id == "weekly-reports"
+    if resource == "sources":
+        assert "CAS" in answer
     assert (("查看全部" if locale == "zh" else "View all") in answer) == (snapshot is not None)
     assert ("较早的已发布周期" if locale == "zh" else "older published period") in answer
     assert ("资料阅读详情" if locale == "zh" else "file to read its details") in answer
@@ -2992,6 +3014,7 @@ def test_combined_weekly_guide_and_snapshot_keeps_steps_and_current_state(
     assert answer.count(statuses[snapshot_state]) == 1
     if snapshot_state != "published":
         assert "2026-10-26" not in answer
+    assert len(reads) == int(resource == "sources")
 
 
 @pytest.mark.parametrize(

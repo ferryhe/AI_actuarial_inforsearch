@@ -837,10 +837,9 @@ class AssistantFeature:
                         if locale.startswith("zh")
                         else "When available, the Weekly page shows the latest complete published period. The current week appears once it is complete and published. You can select an older published period. When you can access a weekly list, open a listed file to read its details, source link, and a preview or Markdown when available."
                     )
-                    has_snapshot = empty != "no_snapshot" and bool(
-                        selected_weekly_actions - weekly_guide_ids
-                    )
-                    if weekly_access and not grounded:
+                    has_weekly_data = bool(selected_weekly_actions - weekly_guide_ids)
+                    has_snapshot = has_weekly_data and empty != "no_snapshot"
+                    if weekly_access and not has_weekly_data:
                         try:
                             context.remaining()
                             snapshot = storage.get_latest_weekly_snapshot(
