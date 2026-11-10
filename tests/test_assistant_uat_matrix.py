@@ -95,3 +95,28 @@ def test_assistant_uat_t12_user_retry_is_a_separate_task_turn():
     assert follow_up["user_requested_retry"] is True
     assert "Read user guide (no AI)" in follow_up["before"]
     assert "Send a suggestion and cancel" in follow_up["before"]
+
+
+def test_assistant_uat_soa_sources_distinguish_reachable_and_historical_urls():
+    matrix = json.loads((FIXTURES / "assistant_uat_questions.json").read_text(encoding="utf-8"))
+    spring = matrix["targets"]["soa_spring"]
+    report_root = "https://www.soa.org/resources/research-reports"
+    bulletin_path = (
+        "/globalassets/assets/files/resources/research-report/2026/2026-03-ait170-ai-bulletin.pdf"
+    )
+
+    assert spring["source_url"] == f"{report_root}/soa-member-ai-survey/"
+    assert (
+        spring["unreachable_suggested_citation_url"] == f"{report_root}/2026/soa-member-ai-survey/"
+    )
+    assert spring["recruitment_url"] == f"https://www.soa.org{bulletin_path}"
+    assert spring["unreachable_beta_recruitment_url"] == f"https://beta.soa.org{bulletin_path}"
+    assert "source_alias" not in spring
+    assert spring["publication_date"] == "2026-10-29"
+    assert spring["stored_publication_date"] is None
+
+    runbook = (ROOT / "docs" / "assistant-uat-gates.md").read_text(encoding="utf-8")
+    for field in ("source_url", "recruitment_url"):
+        assert f"]({spring[field]})" in runbook
+    for field in ("unreachable_suggested_citation_url", "unreachable_beta_recruitment_url"):
+        assert f"]({spring[field]})" not in runbook

@@ -10,11 +10,13 @@
   "targets": {
     "soa_spring": {
       "title": "SOA Member AI Survey: Spring 2026",
-      "source_url": "https://www.soa.org/resources/research-reports/2026/soa-member-ai-survey/",
-      "source_alias": "https://www.soa.org/resources/research-reports/soa-member-ai-survey/",
+      "source_url": "https://www.soa.org/resources/research-reports/soa-member-ai-survey/",
+      "unreachable_suggested_citation_url": "https://www.soa.org/resources/research-reports/2026/soa-member-ai-survey/",
       "section": "Key Findings",
       "publication_date": "2026-10-29",
-      "recruitment_url": "https://beta.soa.org/globalassets/assets/files/resources/research-report/2026/2026-03-ait170-ai-bulletin.pdf"
+      "stored_publication_date": null,
+      "recruitment_url": "https://www.soa.org/globalassets/assets/files/resources/research-report/2026/2026-03-ait170-ai-bulletin.pdf",
+      "unreachable_beta_recruitment_url": "https://beta.soa.org/globalassets/assets/files/resources/research-report/2026/2026-03-ait170-ai-bulletin.pdf"
     },
     "soa_2025": {
       "title": "SOA Member AI Survey - Summer 2025",
