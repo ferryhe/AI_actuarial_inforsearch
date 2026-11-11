@@ -2076,6 +2076,10 @@ def test_catalog_search_keeps_keyword_route_without_one_latest_collected_source(
         ("EN18", "catalog_search", "source_from"),
         ("ZH18", "catalog_search", "source_from"),
         ("EN18", "catalog_search", "topic_from"),
+        ("EN18", "recent", "collection_passive"),
+        ("EN18", "recent", "collection_relative"),
+        ("ZH18", "recent", "collection_topic_zh"),
+        ("EN18", "catalog_search", "publication_passive"),
     ],
 )
 def test_recent_first_collection_uses_the_requested_seven_day_window(
@@ -2092,7 +2096,16 @@ def test_recent_first_collection_uses_the_requested_seven_day_window(
     )["questions"]
     question = next(row for row in questions if row["id"] == question_id)
     message = question["question"]
-    if case == "near_week":
+    collection_variants = {
+        "collection_passive": "Which SOA reports were first collected by this site in the last seven days, with publication dates?",
+        "collection_relative": "Over the past seven days, which SOA reports that were published last month did this site first collect?",
+        "collection_topic_zh": "过去七天，已发布的 SOA 报告里，哪些是本站首次收录的？",
+    }
+    if case in collection_variants:
+        message = collection_variants[case]
+    elif case == "topic_from":
+        message = "Which SOA longevity risk reports were first collected in the past seven days?"
+    elif case == "near_week":
         message = "近一周首次收录了哪些 SOA 文件？"
     elif case == "collection_dates_en":
         message = "Which SOA reports did you first collect in the last seven days? Include publication dates."
@@ -2116,6 +2129,8 @@ def test_recent_first_collection_uses_the_requested_seven_day_window(
         message = "Over the past seven days, show me the published SOA reports that this site first collected."
     elif case == "publication_imperative":
         message = "Over the past seven days, list the SOA reports that were published, and when the site first collected each one."
+    elif case == "publication_passive":
+        message = "Which SOA reports were published by the SOA in the last seven days, with first collection dates?"
     elif case == "collect_zh":
         message = "过去七天本站首次收集的 SOA 报告有哪些？"
     elif case == "publication_comma":
@@ -2148,31 +2163,47 @@ def test_recent_first_collection_uses_the_requested_seven_day_window(
         "publication_zh_wrapper",
         "publication_fronted",
         "publication_imperative",
+        "publication_passive",
     }
-    collection_dates = case in {
-        "collection_dates_en",
-        "collection_dates_zh",
-        "collect_zh",
-        "collection_with_publication_display",
-        "collection_fronted",
-        "collection_imperative",
-    }
-    split_dates = case in {
-        "collection_with_publication_display",
-        "collection_fronted",
-        "collection_imperative",
-    }
+    collection_dates = (
+        case
+        in {
+            "collection_dates_en",
+            "collection_dates_zh",
+            "collect_zh",
+            "collection_with_publication_display",
+            "collection_fronted",
+            "collection_imperative",
+        }
+        or case in collection_variants
+    )
+    split_dates = (
+        case
+        in {
+            "collection_with_publication_display",
+            "collection_fronted",
+            "collection_imperative",
+        }
+        or case in collection_variants
+    )
     multiple_exclusions = case in {"exclude_many", "exclude_besides"}
     source_only = case in {"source_only", "source_generic", "source_files", "source_from"}
     include_longevity = collection_dates or source_only or case in {"topic", "topic_from"}
-    longevity_title = (
-        "Longevity Risk reports from SOA" if case == "topic_from" else "Longevity Risk Study"
-    )
+    longevity_title = "Longevity Risk Study"
+    pricing_url = "https://www.soa.org/pricing.pdf"
     cia_url = "https://www.cia-ica.ca/in-window.pdf"
     early_publication_url = "https://www.soa.org/early-publication.pdf"
     unknown_publication_url = "https://www.soa.org/unknown-publication.pdf"
     if case == "mixed":
         files = [(joint_url, "www.casact.org", "Joint CAS/SOA study", lower)]
+    elif case in collection_variants:
+        old_url = "https://www.soa.org/recent.pdf"
+        longevity_url = "https://www.soa.org/early.pdf"
+        files = [
+            (old_url, "www.soa.org", "Recent publication", "2026-10-30T12:00:00+00:00"),
+            (longevity_url, "www.soa.org", longevity_title, "2026-11-08T12:00:00+00:00"),
+            (pricing_url, "www.soa.org", "Pricing Study", "2026-11-08T12:00:00+00:00"),
+        ]
     elif split_dates:
         files = [
             (old_url, "www.soa.org", "Recent publication", "2026-10-30T12:00:00+00:00"),
@@ -2181,7 +2212,19 @@ def test_recent_first_collection_uses_the_requested_seven_day_window(
     elif include_longevity:
         files.append((longevity_url, "www.soa.org", longevity_title, lower))
         if case in {"topic", "topic_from"}:
-            files.append(("https://www.soa.org/pricing.pdf", "www.soa.org", "Pricing Study", lower))
+            files.append((pricing_url, "www.soa.org", "Pricing Study", lower))
+        if case == "topic_from":
+            files.extend(
+                [
+                    (joint_url, "www.casact.org", longevity_title, lower),
+                    (
+                        "https://www.soa.org/outside-window.pdf",
+                        "www.soa.org",
+                        longevity_title,
+                        "2026-10-27T12:00:00+00:00",
+                    ),
+                ]
+            )
     elif case == "exclude" or multiple_exclusions:
         files.extend(
             [
@@ -2275,6 +2318,7 @@ def test_recent_first_collection_uses_the_requested_seven_day_window(
                 "publication_zh_wrapper": "SOA的文件",
                 "publication_fronted": "SOA",
                 "publication_imperative": "SOA",
+                "publication_passive": "SOA",
                 "source_only": "Society of Actuaries",
                 "source_generic": "SOA research reports",
                 "source_files": "SOA files",
@@ -2328,7 +2372,9 @@ def test_recent_first_collection_uses_the_requested_seven_day_window(
         assert old_url in outcome.response.answer
         return
     expected_files = [] if named_source else list(reversed(soa_samples))
-    if include_longevity:
+    if case in collection_variants:
+        expected_files = [longevity_url, pricing_url]
+    elif include_longevity:
         expected_files = [longevity_url]
     elif case == "exclude":
         expected_files = [recent_url]
@@ -2344,7 +2390,11 @@ def test_recent_first_collection_uses_the_requested_seven_day_window(
     assert "published_time_from" not in observation
     if named_source:
         assert observation["source_filter"] == "soa"
-    assert [citation.file_id for citation in outcome.response.citations] == expected_files
+    cited_files = [citation.file_id for citation in outcome.response.citations]
+    if case in collection_variants:
+        assert sorted(cited_files) == sorted(expected_files)
+    else:
+        assert cited_files == expected_files
     if include_longevity:
         assert longevity_title in outcome.response.answer
     if collection_dates:

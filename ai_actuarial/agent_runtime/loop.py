@@ -119,11 +119,17 @@ def _window_date_field(clause: str) -> str | None:
         re.IGNORECASE,
     ):
         # After a fronted period, distinguish the report description from the date action.
+        after_period = clause[period.end() :]
         predicate = re.match(
-            r"\s*[,，]?\s*(?:(?:which|what)\b[^,，]*?\b(?:did|do|does|was|were|has|have|had)"
+            r"\s*[,，]?\s*(?:(?:which|what)\b[^,，]*?\b(?:that|which)\s+(?:was|were|has|have|had)"
+            r"\b[^,，]*?\b(?:did|do|does)"
+            r"|(?:which|what)\b[^,，]*?\b(?:did|do|does|was|were|has|have|had)"
             r"|(?:show|list|find)\b[^,，]*?\b(?:that|which))\b",
-            clause[period.end() :],
+            after_period,
             re.IGNORECASE,
+        ) or re.match(
+            r"\s*[,，]\s*(?:[^,，]+[,，]\s*)?有?(?:哪些|哪份|什么)",
+            after_period,
         )
         if predicate:
             predicate_start = period.end() + predicate.end()
@@ -143,6 +149,7 @@ def _window_date_field(clause: str) -> str | None:
             not (
                 word.end() <= period.start()
                 and re.fullmatch(
+                    r"(?:\s+by(?:\s+[\w'-]+){1,4})?"
                     r"\s+(?:in|over|during|within|throughout)\s+(?:the\s+)?",
                     clause[word.end() : period.start()],
                     re.IGNORECASE,
@@ -156,11 +163,13 @@ def _window_date_field(clause: str) -> str | None:
     return date_word.lastgroup if date_word else None
 
 
-def _source_only_query(
+def _catalog_topic(
     query: str, source: str, options: list[dict], *, require_source: bool = False
-) -> bool:
+) -> str | None:
     remainder = query.strip().casefold()
     named = False
+    topic = query
+    resource = r"(?:research\s+reports?|reports?|studies|study|files?|materials?|documents?)"
     for option in options:
         if option.get("source_key") != source:
             continue
@@ -173,13 +182,23 @@ def _source_only_query(
                     else rf"(?<![a-z0-9]){re.escape(name)}(?![a-z0-9])"
                 )
                 remainder, matches = re.subn(rf"(?:\bfrom\s+|来自\s*)?{pattern}", " ", remainder)
+                if matches:
+                    suffix = re.search(
+                        rf"\s+(?:\b{resource}\s+)?\bfrom\s+{pattern}\s*$", query, re.IGNORECASE
+                    )
+                    if suffix:
+                        topic = query[: suffix.start()].rstrip()
                 named = named or bool(matches)
-    return (named or not require_source) and not re.sub(
+    if require_source and not named:
+        return None
+    if not re.sub(
         r"\b(?:latest|newest|recent|most|recently|newly|collected|added|ingested|research|reports?|studies|study|files?|materials?|documents?)\b"
         r"|最新|最近|收录|(?:的\s*)?(?:资料|材料|报告|文件|文档)|研究|\W",
         "",
         remainder,
-    )
+    ):
+        return ""
+    return topic
 
 
 def _exact_quote_source_date_only(message: str) -> bool:
@@ -748,8 +767,12 @@ def run(
                     source, _ = _source_scope(message, options)
                 except Exception:
                     source = None
-                if source and _source_only_query(
-                    action["args"]["query"], source, options, require_source=dated_catalog
+                if (
+                    source
+                    and _catalog_topic(
+                        action["args"]["query"], source, options, require_source=dated_catalog
+                    )
+                    == ""
                 ):
                     action = {
                         "action": "call",
@@ -782,13 +805,13 @@ def run(
                     if source:
                         args["source"] = source
                         if (
-                            publication_window
-                            and tool.tool_id == "resources_updates.catalog_search"
-                        ):
-                            if _source_only_query(
+                            collection_window or publication_window
+                        ) and tool.tool_id == "resources_updates.catalog_search":
+                            topic = _catalog_topic(
                                 args["query"], source, options, require_source=True
-                            ):
-                                args["query"] = ""
+                            )
+                            if topic is not None:
+                                args["query"] = topic
             try:
                 observed = execute(tool, args, context, context.take_tool())
             except TimeoutError:
