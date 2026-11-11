@@ -149,6 +149,8 @@ async function checkLongAnswer(page, viewport, requestCounts) {
   const mainBefore = await main.evaluate((node) => node.scrollTop);
   const submit = panel.locator('form button[type="submit"]');
   const question = page.locator("#assistant-message");
+  const questionFontSize = await question.evaluate((element) => Number.parseFloat(getComputedStyle(element).fontSize));
+  assert.ok(questionFontSize >= 16, `Assistant input must stay at least 16px to avoid mobile browser zoom: ${questionFontSize}px`);
   await setTextarea(question, `Long viewport smoke ${viewport.width}x${viewport.height}`);
   const before = await page.evaluate(() => {
     const panel = document.querySelector("#assistant-panel");
@@ -198,6 +200,8 @@ async function checkChatFooter(page, requests) {
   const optionHit = await nativeClick(page, option, "Chat knowledge base option", { click: false });
   await page.mouse.click(4, 4);
   const input = page.getByTestId("input-chat-message");
+  const inputFontSize = await input.evaluate((element) => Number.parseFloat(getComputedStyle(element).fontSize));
+  assert.ok(inputFontSize >= 16, `Chat input must stay at least 16px to avoid mobile browser zoom: ${inputFontSize}px`);
   const inputHit = await nativeClick(page, input, "Chat input");
   await setTextarea(input, "Chat footer remains usable with assistant open");
   const send = page.getByTestId("button-send-message");

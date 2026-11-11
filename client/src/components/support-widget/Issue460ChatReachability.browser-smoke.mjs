@@ -125,7 +125,7 @@ try {
     return route.fulfill({ json: {} });
   });
   let failedFeedbackChunk = false;
-  await lazyFailurePage.route("**/src/features/feedback/FeedbackForm.tsx*", async (route) => {
+  await lazyFailurePage.route("**/assets/FeedbackForm-*.js", async (route) => {
     if (!failedFeedbackChunk) { failedFeedbackChunk = true; await route.abort("failed"); }
     else await route.continue();
   });
@@ -133,8 +133,13 @@ try {
   const lazyChatInput = lazyFailurePage.getByTestId("input-chat-message");
   await lazyChatInput.waitFor({ state: "visible" });
   const lazyChatSend = lazyFailurePage.getByTestId("button-send-message");
+  const recoveredReload = lazyFailurePage.waitForEvent("framenavigated", (frame) => frame === lazyFailurePage.mainFrame());
   await lazyFailurePage.getByTestId("support-widget-trigger").click();
-  await lazyFailurePage.getByRole("alert").waitFor({ state: "visible" });
+  await recoveredReload;
+  await lazyFailurePage.getByTestId("support-widget-trigger").click();
+  await lazyFailurePage.locator("#feedback-panel").waitFor({ state: "visible" });
+  assert.equal(failedFeedbackChunk, true, "the first lazy feedback request must fail to simulate a stale deployment chunk");
+  assert.equal(await lazyFailurePage.getByRole("alert").count(), 0, "a stale chunk should recover after one page reload");
   assert.equal(await lazyChatInput.isVisible(), true, "a failed feedback chunk must not remove Chat input");
   assert.equal(await lazyChatSend.isVisible(), true, "a failed feedback chunk must not remove Chat send");
   await lazyChatInput.fill("Chat remains usable after feedback chunk failure");
@@ -142,11 +147,8 @@ try {
   await lazyChatSend.click();
   assert.equal((await lazyChatResponse).status(), 200);
   assert.equal(lazyChatQueryPosts, 1);
-  await lazyFailurePage.screenshot({ path: path.join(evidenceDir, "feedback-lazy-chunk-failure-localized-390x844.png"), fullPage: false });
-  await lazyFailurePage.getByRole("button", { name: "Try again" }).click();
-  await lazyFailurePage.locator("#feedback-panel").waitFor({ state: "visible" });
-  assert.equal(await lazyChatInput.isVisible(), true, "Chat remains available after feedback module retry");
-  const lazyFailureRecovery = { failedChunkLocalized: true, chatInputRemainsVisible: true, chatSendRemainsVisible: true, mockedChatSendAfterFailure: true, mockedChatQueryPosts: lazyChatQueryPosts, retryReloadsModule: await lazyFailurePage.locator("#feedback-panel").isVisible(), providerCalls: 0, screenshot: "feedback-lazy-chunk-failure-localized-390x844.png" };
+  await lazyFailurePage.screenshot({ path: path.join(evidenceDir, "feedback-stale-chunk-recovered-390x844.png"), fullPage: false });
+  const lazyFailureRecovery = { staleChunkFailedOnce: failedFeedbackChunk, pageReloaded: true, feedbackFormRecovered: await lazyFailurePage.locator("#feedback-panel").isVisible(), chatInputRemainsVisible: true, chatSendRemainsVisible: true, mockedChatSendAfterRecovery: true, mockedChatQueryPosts: lazyChatQueryPosts, providerCalls: 0, screenshot: "feedback-stale-chunk-recovered-390x844.png" };
   await lazyFailurePage.close();
 
   for (const width of [390, 1024]) {

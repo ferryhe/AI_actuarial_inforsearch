@@ -70,7 +70,7 @@ export default function SupportWidget({ onOpenChange }: { onOpenChange?: (open: 
       const chatTop = chatComposer?.getBoundingClientRect().top;
       const bottom = chatTop === undefined ? normalBottom : Math.min(normalBottom, chatTop - gap);
       const next = {
-        maxHeight: Math.max(0, Math.floor(bottom - viewportTop - safeTop) - 1),
+        maxHeight: Math.max(0, Math.floor(bottom - viewportTop - safeTop) - 2),
         lift: Math.max(0, Math.round(triggerBounds.top - gap - bottom)),
       };
       setPanelSpace((previous) => previous.maxHeight === next.maxHeight && previous.lift === next.lift ? previous : next);
@@ -114,7 +114,7 @@ export default function SupportWidget({ onOpenChange }: { onOpenChange?: (open: 
   if (!enabled) return null;
 
   return (
-    <div ref={host} className="pointer-events-none fixed bottom-[max(1rem,env(safe-area-inset-bottom))] right-4 z-50 flex flex-col items-end gap-3" style={{ paddingTop: "env(safe-area-inset-top, 0px)" }} onKeyDown={handleKeyDown}>
+    <div ref={host} className="pointer-events-none fixed bottom-[max(1rem,env(safe-area-inset-bottom))] right-4 z-50 flex flex-col items-end gap-3" style={{ paddingTop: "max(1rem, env(safe-area-inset-top, 0px))" }} onKeyDown={handleKeyDown}>
       {hasOpened && (
         <div id="support-panel" hidden={!open} className="pointer-events-auto" style={panelStyle}>
           <FeedbackLoadErrorBoundary

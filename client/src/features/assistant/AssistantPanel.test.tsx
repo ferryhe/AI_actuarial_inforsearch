@@ -92,6 +92,11 @@ it("independent assistant-only flag exposes questions without a submit action", 
   expect(screen.queryByTestId("feedback-submit")).not.toBeInTheDocument();
 });
 
+it("does not show the assistant scope note", () => {
+  show();
+  expect(screen.queryByText("assistant.scope")).not.toBeInTheDocument();
+});
+
 it("lifts the support panel above a software keyboard that shrinks only the visual viewport", async () => {
   apiGet.mockResolvedValue({ feedback_enabled: true, assistant_enabled: true });
   vi.stubGlobal("visualViewport", {
