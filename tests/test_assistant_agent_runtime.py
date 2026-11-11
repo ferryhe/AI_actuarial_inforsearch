@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import subprocess
 import sys
 import time
@@ -458,7 +459,8 @@ def test_agent_provider_preflight_respects_cancel_and_deadline():
     assert context.model_attempts == 1 and context.provider_requests == 0
     cancelled.clear()
     context.deadline = time.monotonic() + 0.1
-    assert 0 < context.take_provider_request(prepaid=True) <= 0.1
+    # The absolute deadline can round up by one representable float increment.
+    assert 0 < context.take_provider_request(prepaid=True) <= 0.1 + math.ulp(context.deadline)
     context.deadline = time.monotonic() - 1
     with pytest.raises(TimeoutError, match="deadline"):
         context.take_provider_request()
@@ -2064,6 +2066,9 @@ def test_catalog_search_keeps_keyword_route_without_one_latest_collected_source(
         ("EN18", "catalog_search", "publication_comma"),
         ("EN18", "catalog_search", "source_files"),
         ("EN17", "recent", "exclude_many"),
+        ("EN18", "recent", "collection_with_publication_display"),
+        ("ZH18", "catalog_search", "publication_zh_wrapper"),
+        ("EN17", "recent", "exclude_besides"),
     ],
 )
 def test_recent_first_collection_uses_the_requested_seven_day_window(
@@ -2092,11 +2097,15 @@ def test_recent_first_collection_uses_the_requested_seven_day_window(
         message = "Which organizations other than SOA had material added to this site's collection in the last seven days?"
     elif case == "exclude_many":
         message = "Which organizations other than SOA and CAS had material added to this site's collection over the last seven days?"
+    elif case == "exclude_besides":
+        message = "Which organizations besides SOA and CAS had material added to this site's collection over the last seven days?"
+    elif case == "collection_with_publication_display":
+        message = "Which SOA reports did the site first collect over the last seven days, with publication dates?"
     elif case == "collect_zh":
         message = "过去七天本站首次收集的 SOA 报告有哪些？"
     elif case == "publication_comma":
         message = "Which SOA reports were published in the past seven days, and when did you first collect each one?"
-    elif case == "publication":
+    elif case in {"publication", "publication_zh_wrapper"}:
         message = (
             "近一周发布了哪些 SOA 文件？"
             if question["language"] == "zh"
@@ -2117,8 +2126,19 @@ def test_recent_first_collection_uses_the_requested_seven_day_window(
     soa_samples = [f"https://www.soa.org/in-window-{i}.pdf" for i in range(3)]
     joint_url = "https://www.casact.org/joint-study.pdf"
     longevity_url = "https://www.soa.org/longevity-risk.pdf"
-    publication_case = case in {"publication", "publication_with_collection", "publication_comma"}
-    collection_dates = case in {"collection_dates_en", "collection_dates_zh", "collect_zh"}
+    publication_case = case in {
+        "publication",
+        "publication_with_collection",
+        "publication_comma",
+        "publication_zh_wrapper",
+    }
+    collection_dates = case in {
+        "collection_dates_en",
+        "collection_dates_zh",
+        "collect_zh",
+        "collection_with_publication_display",
+    }
+    multiple_exclusions = case in {"exclude_many", "exclude_besides"}
     include_longevity = collection_dates or case in {
         "source_only",
         "source_generic",
@@ -2130,18 +2150,23 @@ def test_recent_first_collection_uses_the_requested_seven_day_window(
     unknown_publication_url = "https://www.soa.org/unknown-publication.pdf"
     if case == "mixed":
         files = [(joint_url, "www.casact.org", "Joint CAS/SOA study", lower)]
+    elif case == "collection_with_publication_display":
+        files = [
+            (old_url, "www.soa.org", "Recent publication", "2026-10-30T12:00:00+00:00"),
+            (longevity_url, "www.soa.org", "Longevity Risk Study", "2026-11-09T12:00:00+00:00"),
+        ]
     elif include_longevity:
         files.append((longevity_url, "www.soa.org", "Longevity Risk Study", lower))
         if case == "topic":
             files.append(("https://www.soa.org/pricing.pdf", "www.soa.org", "Pricing Study", lower))
-    elif case in {"exclude", "exclude_many"}:
+    elif case == "exclude" or multiple_exclusions:
         files.extend(
             [
                 (recent_url, "www.casact.org", "Included CAS report", lower),
                 (longevity_url, "www.soa.org", "Excluded SOA report", lower),
             ]
         )
-        if case == "exclude_many":
+        if multiple_exclusions:
             files.append((cia_url, "www.cia-ica.ca", "CIA only", lower))
     elif publication_case:
         files.extend(
@@ -2174,6 +2199,16 @@ def test_recent_first_collection_uses_the_requested_seven_day_window(
                 apply=True,
             )
         for url, source, title, first_seen in files:
+            published_time = "2026-10-01" if collection_dates else lower
+            if case == "collection_with_publication_display":
+                published_time = "2026-11-09" if url == old_url else "2026-10-30"
+            elif publication_case:
+                published_time = {
+                    longevity_url: "2026-11-09",
+                    early_publication_url: "2026-10-01",
+                    upper_url: upper,
+                    unknown_publication_url: None,
+                }.get(url, lower)
             filename = url.rsplit("/", 1)[-1]
             storage.insert_file(
                 url=url,
@@ -2188,21 +2223,7 @@ def test_recent_first_collection_uses_the_requested_seven_day_window(
             )
             storage._conn.execute(
                 "UPDATE files SET first_seen = ?, last_seen = ?, published_time = ? WHERE url = ?",
-                (
-                    first_seen,
-                    upper,
-                    (
-                        {
-                            longevity_url: "2026-11-09",
-                            early_publication_url: "2026-10-01",
-                            upper_url: upper,
-                            unknown_publication_url: None,
-                        }.get(url, lower)
-                        if publication_case
-                        else ("2026-10-01" if collection_dates else lower)
-                    ),
-                    url,
-                ),
+                (first_seen, upper, published_time, url),
             )
         storage._conn.commit()
     finally:
@@ -2225,6 +2246,7 @@ def test_recent_first_collection_uses_the_requested_seven_day_window(
                 "publication": "SOA",
                 "publication_with_collection": "SOA",
                 "publication_comma": "SOA",
+                "publication_zh_wrapper": "SOA的文件",
                 "source_only": "Society of Actuaries",
                 "source_generic": "SOA research reports",
                 "source_files": "SOA files",
@@ -2278,7 +2300,7 @@ def test_recent_first_collection_uses_the_requested_seven_day_window(
         expected_files = [longevity_url]
     elif case == "exclude":
         expected_files = [recent_url]
-    elif case == "exclude_many":
+    elif multiple_exclusions:
         expected_files = [cia_url]
     assert observation["total"] == (
         4 if case == "collection" and not named_source else len(expected_files)
@@ -2287,13 +2309,17 @@ def test_recent_first_collection_uses_the_requested_seven_day_window(
     assert trace_ids == [f"resources_updates.{expected_tool}"]
     assert observation["first_seen_from"] == lower
     assert observation["first_seen_before"] == upper
+    assert "published_time_from" not in observation
     if named_source:
         assert observation["source_filter"] == "soa"
     assert [citation.file_id for citation in outcome.response.citations] == expected_files
     if include_longevity:
         assert "Longevity Risk Study" in outcome.response.answer
     if collection_dates:
-        assert "2026-10-01" in outcome.response.answer
+        publication_date = (
+            "2026-10-30" if case == "collection_with_publication_display" else "2026-10-01"
+        )
+        assert publication_date in outcome.response.answer
     assert old_url not in outcome.response.answer
     assert joint_url not in outcome.response.answer
     assert upper_url not in outcome.response.answer
@@ -2303,7 +2329,7 @@ def test_recent_first_collection_uses_the_requested_seven_day_window(
         assert longevity_url not in outcome.response.answer
         assert observation["excluded_source"] == "soa"
         assert all("SOA" not in name for names in observation["source_names"] for name in names)
-    elif case == "exclude_many":
+    elif multiple_exclusions:
         assert observation["excluded_sources"] == ["cas", "soa"]
         assert observation["source_names"] == [
             [row["name_zh"], row["name_en"]]
@@ -2748,7 +2774,9 @@ def test_admin_api_deadline_reports_started_work(monkeypatch):
 
     def query(**kwargs):
         assert kwargs["budget"].total_seconds == 0.1
-        assert 0 < kwargs["deadline"] - time.monotonic() <= 0.1
+        deadline = kwargs["deadline"]
+        # Match the rounding precision of the absolute monotonic deadline.
+        assert 0 < deadline - time.monotonic() <= 0.1 + math.ulp(deadline)
         context = RunContext(principal="admin", scopes=auth.permissions)
         kwargs["request"].state.assistant_runtime_context = context
         context.take_model()

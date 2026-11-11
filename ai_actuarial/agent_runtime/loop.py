@@ -66,7 +66,7 @@ def _source_scope(message: str, options: list[dict]) -> tuple[str | None, tuple[
         if exclusion_end is not None and start < exclusion_end:
             continue
         if re.search(
-            r"(?:\b(?:other than|except(?: for)?|excluding)\s+(?:the\s+)?"
+            r"(?:\b(?:other than|except(?: for)?|excluding|besides)\s+(?:the\s+)?"
             r"|(?:除了?|除去|排除|不含|不包括)\s*)$",
             question[:start],
         ) or (
@@ -118,13 +118,23 @@ def _window_date_field(clause: str) -> str | None:
         clause,
         re.IGNORECASE,
     )
-    # Use the date phrase tied to the period, even if a second date is requested for display.
-    nearest = min(
+    # Prefer a date action linked directly to the period over a nearby display field.
+    date_word = min(
         date_words,
-        key=lambda word: max(period.start() - word.end(), word.start() - period.end(), 0),
+        key=lambda word: (
+            not (
+                word.end() <= period.start()
+                and re.fullmatch(
+                    r"\s+(?:in|over|during|within|throughout)\s+(?:the\s+)?",
+                    clause[word.end() : period.start()],
+                    re.IGNORECASE,
+                )
+            ),
+            max(period.start() - word.end(), word.start() - period.end(), 0),
+        ),
         default=None,
     )
-    return nearest.lastgroup if nearest else None
+    return date_word.lastgroup if date_word else None
 
 
 def _source_only_query(
@@ -147,7 +157,7 @@ def _source_only_query(
                 named = named or bool(matches)
     return (named or not require_source) and not re.sub(
         r"\b(?:latest|newest|recent|most|recently|newly|collected|added|ingested|research|reports?|studies|study|files?|materials?|documents?)\b"
-        r"|最新|最近|收录|资料|材料|报告|文件|文档|研究|\W",
+        r"|最新|最近|收录|(?:的\s*)?(?:资料|材料|报告|文件|文档)|研究|\W",
         "",
         remainder,
     )
