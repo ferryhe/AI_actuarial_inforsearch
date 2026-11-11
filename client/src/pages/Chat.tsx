@@ -475,20 +475,7 @@ export default function Chat() {
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([]);
   const [knowledgeBasesLoaded, setKnowledgeBasesLoaded] = useState(false);
   const [selectedKbs, setSelectedKbs] = useState<string[]>([]);
-  const [input, setInput] = useState(() => {
-    try {
-      return window.sessionStorage.getItem("vite:preload-error-chat-draft") ?? "";
-    } catch {
-      return "";
-    }
-  });
-  useEffect(() => {
-    try {
-      window.sessionStorage.removeItem("vite:preload-error-chat-draft");
-    } catch {
-      return;
-    }
-  }, []);
+  const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [clearingDocumentScope, setClearingDocumentScope] = useState(false);
   const [documentScopeClearPending, setDocumentScopeClearPending] = useState(false);

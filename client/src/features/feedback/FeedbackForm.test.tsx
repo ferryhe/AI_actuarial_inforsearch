@@ -40,19 +40,13 @@ describe("feedback support widget", () => {
     expect(apiPost).not.toHaveBeenCalled();
   });
 
-  it("contains a rejected lazy form import inside the widget", async () => {
-    vi.resetModules();
-    vi.doMock("@/features/feedback/FeedbackForm", () => { throw new Error("synthetic chunk failure"); });
+  it("opens the feedback form from the support widget", async () => {
     apiGet.mockResolvedValue({ feedback_enabled: true, assistant_enabled: false });
-    const { default: LazyWidget } = await import("@/components/support-widget/SupportWidget");
-    render(<LazyWidget />);
+    render(<SupportWidget />);
     const trigger = await screen.findByTestId("support-widget-trigger");
     fireEvent.click(trigger);
-    expect(await screen.findByRole("alert")).toHaveTextContent("feedback.load_error");
-    expect(trigger).toBeInTheDocument();
-    fireEvent.click(trigger);
-    await waitFor(() => expect(trigger).toHaveAttribute("aria-expanded", "false"));
-    vi.doUnmock("@/features/feedback/FeedbackForm");
+    expect(await screen.findByLabelText("feedback.content")).toBeVisible();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it("keeps the draft and request id when the mounted panel closes during an uncertain submission", async () => {

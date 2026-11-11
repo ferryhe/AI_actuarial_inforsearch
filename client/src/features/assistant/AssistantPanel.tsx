@@ -1,9 +1,10 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
 import { X } from "lucide-react";
 import { z } from "zod";
 import { useLocation } from "wouter";
 import { IconButton } from "@/components/a11y/IconButton";
 import { MarkdownContent } from "@/components/MarkdownContent";
+import FeedbackForm from "@/features/feedback/FeedbackForm";
 import { ApiError, apiGet } from "@/lib/api";
 import { helpSchema, type HelpCitation, type QueryTransport, type Reply } from "./contract";
 import { queryAssistant } from "./transport";
@@ -12,7 +13,6 @@ type Translate = (key: string, values?: Record<string, string | number>) => stri
 
 export default function AssistantPanel({ t, lang, open, feedbackEnabled, onClose, identity = "guest", query = queryAssistant }: { t: Translate; lang: string; open: boolean; feedbackEnabled: boolean; onClose: () => void; identity?: string; query?: QueryTransport }) {
   const [, navigate] = useLocation();
-  const FeedbackForm = useMemo(() => lazy(() => import("@/features/feedback/FeedbackForm")), []);
   const [message, setMessage] = useState("");
   const [history, setHistory] = useState<{ question: string; reply: Reply }[]>([]);
   const latestEntry = history[history.length - 1];
@@ -172,7 +172,7 @@ export default function AssistantPanel({ t, lang, open, feedbackEnabled, onClose
   }
 
   return <>
-    {draft && feedbackEnabled && <div hidden={!feedbackOpen}><Suspense fallback={<p role="status">{t("feedback.title")}</p>}><FeedbackForm key={draft.id} t={t} lang={lang} open={open && feedbackOpen} initialContent={draft.text} onClose={onClose} onCancel={() => { setFeedbackOpen(false); setDraft(null); }} /></Suspense></div>}
+    {draft && feedbackEnabled && <div hidden={!feedbackOpen}><FeedbackForm key={draft.id} t={t} lang={lang} open={open && feedbackOpen} initialContent={draft.text} onClose={onClose} onCancel={() => { setFeedbackOpen(false); setDraft(null); }} /></div>}
     <section hidden={feedbackOpen} onClick={navigateWithin} id="assistant-panel" aria-labelledby="assistant-title" className="flex min-h-0 w-[min(22.5rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-xl border border-border bg-card text-card-foreground shadow-2xl">
       <header className="flex shrink-0 items-center justify-between border-b border-border px-4 py-0"><h2 id="assistant-title" className="text-base font-semibold">{t("assistant.title")}</h2><IconButton label={t("a11y.close_feedback")} onClick={onClose}><X className="h-4 w-4" /></IconButton></header>
       <div ref={scrollContainer} onWheel={preserveScrollPosition} onTouchMove={preserveScrollPosition} onMouseDown={preserveScrollbarScroll} onKeyDown={preserveKeyboardScroll} className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4 text-sm">

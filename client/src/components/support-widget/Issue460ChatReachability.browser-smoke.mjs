@@ -110,50 +110,60 @@ async function installDialogApiMocks(page) {
 await mkdir(evidenceDir, { recursive: true });
 const browser = await chromium.launch({ executablePath, headless: true });
 try {
-  const lazyFailurePage = await browser.newPage({ viewport: { width: 390, height: 844 } });
-  await installDialogApiMocks(lazyFailurePage);
-  let lazyChatQueryPosts = 0;
-  await lazyFailurePage.route("**/api/chat/**", async (route) => {
+  const bundledSupportPage = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await installDialogApiMocks(bundledSupportPage);
+  let supportChatQueryPosts = 0;
+  const supportChatQueries = [];
+  await bundledSupportPage.route("**/api/chat/**", async (route) => {
     const request = route.request();
     const url = new URL(request.url());
-    if (url.pathname === "/api/chat/conversations" && request.method() === "POST") return route.fulfill({ json: { success: true, data: { conversation_id: "lazy-failure-chat-smoke" } } });
+    if (url.pathname === "/api/chat/knowledge-bases") return route.fulfill({ json: { success: true, data: { knowledge_bases: [kb] } } });
+    if (url.pathname === "/api/chat/conversations" && request.method() === "POST") return route.fulfill({ json: { success: true, data: { conversation_id: "bundled-support-smoke" } } });
     if (url.pathname === "/api/chat/conversations") return route.fulfill({ json: { success: true, data: { conversations: [] } } });
     if (url.pathname === "/api/chat/query" && request.method() === "POST") {
-      lazyChatQueryPosts += 1;
-      return route.fulfill({ json: { success: true, data: { conversation_id: "lazy-failure-chat-smoke", response: "Synthetic Chat survived feedback module failure", citations: [] } } });
+      supportChatQueryPosts += 1;
+      supportChatQueries.push(request.postDataJSON());
+      return route.fulfill({ json: { success: true, data: { conversation_id: "bundled-support-smoke", response: "Synthetic Chat response after opening feedback", citations: [] } } });
     }
     return route.fulfill({ json: {} });
   });
-  let failedFeedbackChunk = false;
-  await lazyFailurePage.route("**/assets/FeedbackForm-*.js", async (route) => {
-    if (!failedFeedbackChunk) { failedFeedbackChunk = true; await route.abort("failed"); }
-    else await route.continue();
+  const deferredSupportChunks = [];
+  bundledSupportPage.on("request", (request) => {
+    if (/\/assets\/(?:FeedbackForm|AssistantPanel)-[^/]+\.js(?:\?|$)/.test(request.url())) deferredSupportChunks.push(request.url());
   });
-  await lazyFailurePage.goto(`${baseUrl}/chat`, { waitUntil: "domcontentloaded" });
-  const lazyChatInput = lazyFailurePage.getByTestId("input-chat-message");
-  await lazyChatInput.waitFor({ state: "visible" });
-  const unsentChatDraft = "Unsent Chat draft survives feedback recovery";
-  await lazyChatInput.fill(unsentChatDraft);
-  const lazyChatSend = lazyFailurePage.getByTestId("button-send-message");
-  const recoveredReload = lazyFailurePage.waitForEvent("framenavigated", (frame) => frame === lazyFailurePage.mainFrame());
-  await lazyFailurePage.getByTestId("support-widget-trigger").click();
-  await recoveredReload;
-  await lazyChatInput.waitFor({ state: "visible" });
-  const unsentChatDraftPreserved = (await lazyChatInput.inputValue()) === unsentChatDraft;
-  assert.equal(unsentChatDraftPreserved, true, "the one-time stale chunk recovery must preserve the unsent Chat draft");
-  await lazyFailurePage.getByTestId("support-widget-trigger").click();
-  await lazyFailurePage.locator("#feedback-panel").waitFor({ state: "visible" });
-  assert.equal(failedFeedbackChunk, true, "the first lazy feedback request must fail to simulate a stale deployment chunk");
-  assert.equal(await lazyFailurePage.getByRole("alert").count(), 0, "a stale chunk should recover after one page reload");
-  assert.equal(await lazyChatInput.isVisible(), true, "a failed feedback chunk must not remove Chat input");
-  assert.equal(await lazyChatSend.isVisible(), true, "a failed feedback chunk must not remove Chat send");
-  const lazyChatResponse = lazyFailurePage.waitForResponse((response) => response.url().includes("/api/chat/query") && response.request().method() === "POST");
-  await lazyChatSend.click();
-  assert.equal((await lazyChatResponse).status(), 200);
-  assert.equal(lazyChatQueryPosts, 1);
-  await lazyFailurePage.screenshot({ path: path.join(evidenceDir, "feedback-stale-chunk-recovered-390x844.png"), fullPage: false });
-  const lazyFailureRecovery = { staleChunkFailedOnce: failedFeedbackChunk, pageReloaded: true, unsentChatDraftPreserved, feedbackFormRecovered: await lazyFailurePage.locator("#feedback-panel").isVisible(), chatInputRemainsVisible: true, chatSendRemainsVisible: true, mockedChatSendAfterRecovery: true, mockedChatQueryPosts: lazyChatQueryPosts, providerCalls: 0, screenshot: "feedback-stale-chunk-recovered-390x844.png" };
-  await lazyFailurePage.close();
+  const knowledgeBasesResponse = bundledSupportPage.waitForResponse((response) => response.url().includes("/api/chat/knowledge-bases"));
+  await bundledSupportPage.goto(`${baseUrl}/chat`, { waitUntil: "domcontentloaded" });
+  await knowledgeBasesResponse;
+  const chatInput = bundledSupportPage.getByTestId("input-chat-message");
+  await chatInput.waitFor({ state: "visible" });
+  const ragAgentic = bundledSupportPage.getByTestId("rag-mode-option-agentic");
+  await ragAgentic.click();
+  const kbSelector = bundledSupportPage.getByTestId("button-kb-selector");
+  await kbSelector.click();
+  await bundledSupportPage.getByTestId(`kb-option-${kb.kb_id}`).click();
+  assert.match(await kbSelector.innerText(), /^1 selected$/i);
+  const unsentChatDraft = "Unsent Chat draft survives opening feedback";
+  await chatInput.fill(unsentChatDraft);
+  let documentNavigations = 0;
+  bundledSupportPage.on("framenavigated", (frame) => { if (frame === bundledSupportPage.mainFrame()) documentNavigations += 1; });
+  await bundledSupportPage.getByTestId("support-widget-trigger").click();
+  await bundledSupportPage.locator("#feedback-panel").waitFor({ state: "visible" });
+  const supportFormLoadsWithoutReload = (await chatInput.inputValue()) === unsentChatDraft && documentNavigations === 0;
+  assert.equal(deferredSupportChunks.length, 0, "feedback and assistant panels must be included in the entry bundle");
+  assert.equal(supportFormLoadsWithoutReload, true, "opening feedback must preserve Chat state without a document reload");
+  assert.equal(await bundledSupportPage.getByRole("alert").count(), 0, "the support form must load without an error");
+  const chatSend = bundledSupportPage.getByTestId("button-send-message");
+  assert.equal(await chatInput.isVisible(), true, "opening feedback must leave Chat input visible");
+  assert.equal(await chatSend.isVisible(), true, "opening feedback must leave Chat send visible");
+  const chatResponse = bundledSupportPage.waitForResponse((response) => response.url().includes("/api/chat/query") && response.request().method() === "POST");
+  await chatSend.click();
+  assert.equal((await chatResponse).status(), 200);
+  assert.equal(supportChatQueryPosts, 1);
+  assert.equal(supportChatQueries[0].rag_mode, "agentic", "opening feedback must preserve the selected RAG mode");
+  assert.deepEqual(supportChatQueries[0].kb_ids, [kb.kb_id], "opening feedback must preserve the selected knowledge base");
+  await bundledSupportPage.screenshot({ path: path.join(evidenceDir, "feedback-form-bundled-390x844.png"), fullPage: false });
+  const bundledSupportRecovery = { deferredSupportChunks: deferredSupportChunks.length, documentNavigations, unsentChatDraftPreserved: supportFormLoadsWithoutReload, selectedRagMode: supportChatQueries[0].rag_mode, selectedKnowledgeBases: supportChatQueries[0].kb_ids, feedbackFormVisible: await bundledSupportPage.locator("#feedback-panel").isVisible(), chatInputRemainsVisible: true, chatSendRemainsVisible: true, mockedChatSendAfterOpeningFeedback: true, mockedChatQueryPosts: supportChatQueryPosts, providerCalls: 0, screenshot: "feedback-form-bundled-390x844.png" };
+  await bundledSupportPage.close();
 
   for (const width of [390, 1024]) {
     const page = await browser.newPage({ viewport: { width, height: 844 } });
@@ -592,7 +602,7 @@ try {
     modalFlows,
     fileDetailModalFlows,
     keyboardAvailableHeightCase: keyboardCase,
-    lazyFailureRecovery,
+    bundledSupportRecovery,
     actualChatSends: outcomes.length,
     realProviderCalls: 0,
   };

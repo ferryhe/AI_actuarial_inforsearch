@@ -1,9 +1,11 @@
-import { Component, Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
+import { Component, useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
 import { MessageSquare, X } from "lucide-react";
 import { IconButton } from "@/components/a11y/IconButton";
 import { useTranslation } from "@/components/Layout";
 import { apiGet } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
+import AssistantPanel from "@/features/assistant/AssistantPanel";
+import FeedbackForm from "@/features/feedback/FeedbackForm";
 import { queryAssistant } from "@/features/assistant/transport";
 import { useLocation } from "wouter";
 
@@ -34,9 +36,6 @@ export default function SupportWidget({ onOpenChange }: { onOpenChange?: (open: 
   const trigger = useRef<HTMLButtonElement>(null);
   const host = useRef<HTMLDivElement>(null);
   const [panelSpace, setPanelSpace] = useState({ maxHeight: 0, lift: 0 });
-  const FeedbackForm = useMemo(() => lazy(() => import("@/features/feedback/FeedbackForm")), [loadAttempt]);
-  const AssistantPanel = useMemo(() => lazy(() => import("@/features/assistant/AssistantPanel")), [loadAttempt]);
-
   useEffect(() => {
     let mounted = true;
     apiGet<Capabilities>("/api/support/capabilities")
@@ -126,9 +125,7 @@ export default function SupportWidget({ onOpenChange }: { onOpenChange?: (open: 
               </div>
             )}
           >
-            <Suspense fallback={<div role="status" className="w-[min(22.5rem,calc(100vw-2rem))] overflow-y-auto rounded-xl border border-border bg-card p-4 text-sm shadow-xl">{t("feedback.title")}</div>}>
-              {assistantEnabled ? <AssistantPanel t={t} lang={lang} open={open} onClose={close} feedbackEnabled={feedbackEnabled} identity={JSON.stringify([user?.id, user?.email, permissions])} query={queryAssistant} /> : <FeedbackForm t={t} lang={lang} open={open} onClose={close} />}
-            </Suspense>
+            {assistantEnabled ? <AssistantPanel t={t} lang={lang} open={open} onClose={close} feedbackEnabled={feedbackEnabled} identity={JSON.stringify([user?.id, user?.email, permissions])} query={queryAssistant} /> : <FeedbackForm t={t} lang={lang} open={open} onClose={close} />}
           </FeedbackLoadErrorBoundary>
         </div>
       )}

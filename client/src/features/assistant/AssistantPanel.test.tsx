@@ -667,28 +667,14 @@ it("has no axe violations in its accessible controls", async () => {
   expect(result.violations).toEqual([]);
 });
 
-it("retries a rejected feedback import after the outer widget remounts the assistant", async () => {
-  vi.resetModules();
-  let loadAttempts = 0;
-  vi.doMock("@/features/feedback/FeedbackForm", async () => {
-    loadAttempts += 1;
-    if (loadAttempts === 1) throw new Error("synthetic feedback chunk failure");
-    return vi.importActual("@/features/feedback/FeedbackForm");
-  });
-  try {
-    apiGet.mockResolvedValue({ feedback_enabled: true, assistant_enabled: true });
-    const { default: RetryWidget } = await import("@/components/support-widget/SupportWidget");
-    render(<RetryWidget />);
-    fireEvent.click(await screen.findByTestId("support-widget-trigger"));
-    fireEvent.click(await screen.findByRole("button", { name: "assistant.feedback" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("feedback.load_error");
-
-    fireEvent.click(screen.getByRole("button", { name: "feedback.retry" }));
-    fireEvent.click(await screen.findByRole("button", { name: "assistant.feedback" }));
-    expect(await screen.findByLabelText("feedback.content")).toBeVisible();
-    expect(loadAttempts).toBe(2);
-    expect(apiPost).not.toHaveBeenCalled();
-  } finally {
-    vi.doUnmock("@/features/feedback/FeedbackForm");
-  }
+it("opens a suggestion from the assistant in the bundled feedback form", async () => {
+  apiGet.mockResolvedValue({ feedback_enabled: true, assistant_enabled: true });
+  render(<SupportWidget />);
+  fireEvent.click(await screen.findByTestId("support-widget-trigger"));
+  const input = await screen.findByLabelText("assistant.message");
+  fireEvent.change(input, { target: { value: "Keep this suggestion" } });
+  fireEvent.click(screen.getByRole("button", { name: "assistant.feedback" }));
+  expect(await screen.findByLabelText("feedback.content")).toHaveValue("Keep this suggestion");
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(apiPost).not.toHaveBeenCalled();
 });
