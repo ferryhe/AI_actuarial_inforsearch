@@ -1,5 +1,5 @@
 # docker-compose.override.yml — Production overrides
-# Usage: docker compose -f docker-compose.yml -f docker-compose.override.yml up -d
+# Usage: see docs/deployment-runbook.md for network preparation and startup.
 #
 # Set required environment variables:
 #   export FASTAPI_SESSION_SECRET=<strong-random-key>

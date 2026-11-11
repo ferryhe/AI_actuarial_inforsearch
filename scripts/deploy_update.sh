@@ -101,8 +101,8 @@ if [[ "$(stat -c %d "$DATA_DIR")" == "$(stat -c %d "$BACKUP_ROOT")" ]]; then
   echo "Backup root must be on a different filesystem from the production data volume."
   exit 1
 fi
-if [[ -n "$COMPOSE_OVERRIDE_FILE" ]] && ! docker network inspect aiinforsearch-pg-net >/dev/null 2>&1; then
-  docker network create --driver bridge aiinforsearch-pg-net >/dev/null
+if [[ -n "$COMPOSE_OVERRIDE_FILE" ]]; then
+  bash scripts/ensure_postgres_network.sh
 fi
 api_container=$("${compose[@]}" ps -q "$APP_SERVICE_NAME")
 api_was_running=false

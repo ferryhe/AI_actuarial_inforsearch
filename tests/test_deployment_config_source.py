@@ -1,6 +1,7 @@
 import gzip
 import http.client
 import json
+import re
 import socket
 import subprocess
 import sys
@@ -29,6 +30,32 @@ TEST_CADDY_DEPLOYMENTS = (
         "CADDY_APP_REDIRECT_ORIGIN": "https://www.app-two.example.test",
     },
 )
+
+
+@pytest.mark.parametrize(
+    ("path", "count"),
+    [
+        ("docs/deployment-runbook.md", 2),
+        ("docs/guides/PRODUCTION_SECURITY_CONFIG.md", 1),
+        ("docs/guides/SERVICE_START_GUIDE.md", 1),
+        ("docs/runtime-config.md", 1),
+    ],
+)
+def test_documented_production_compose_start_prepares_postgres_network(path, count):
+    guide = (ROOT / path).read_text(encoding="utf-8")
+    starts = list(
+        re.finditer(
+            r"^[ \t]*docker compose -f docker-compose\.yml -f docker-compose\.override\.yml"
+            r"[ \t]+(?:\\\n[ \t]+)?up\b",
+            guide,
+            re.MULTILINE,
+        )
+    )
+    assert len(starts) == count
+    for start in starts:
+        assert guide[: start.start()].splitlines()[-1] == (
+            "bash scripts/ensure_postgres_network.sh &&"
+        )
 
 
 class _CaddyStaticUpstream(SimpleHTTPRequestHandler):

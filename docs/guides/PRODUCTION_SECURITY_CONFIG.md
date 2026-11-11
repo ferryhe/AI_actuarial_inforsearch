@@ -62,7 +62,8 @@ Agentic RAG does not require new production secrets. It does create and read Rea
 Use the production override after setting the server-local values:
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.override.yml up -d
+bash scripts/ensure_postgres_network.sh &&
+  docker compose -f docker-compose.yml -f docker-compose.override.yml up -d
 ```
 
 ## Shared host Caddy configuration

@@ -8,14 +8,13 @@ This document covers deployment, configuration, and operations for the AI Actuar
 
 ```bash
 # Development
-docker compose up
+docker compose -f docker-compose.yml up
 
 # Production
 export CONFIG_PATH=/var/lib/aiinforsearch/config/sites.yaml
 export RUNTIME_CONFIG_DIR=/var/lib/aiinforsearch/config
-docker network inspect aiinforsearch-pg-net >/dev/null 2>&1 ||
-  docker network create --driver bridge aiinforsearch-pg-net
-docker compose -f docker-compose.yml -f docker-compose.override.yml up -d
+bash scripts/ensure_postgres_network.sh &&
+  docker compose -f docker-compose.yml -f docker-compose.override.yml up -d
 ```
 
 Use the same network prerequisite on a fresh recovery host, including when
@@ -25,17 +24,17 @@ at the hostname in `DATABASE_URL` before starting the API.
 
 ## Docker Compose Commands
 
-### Start Services
+### Start Development Services
 
 ```bash
 # Start all services in detached mode
-docker compose up -d
+docker compose -f docker-compose.yml up -d
 
 # Start with logs streaming
-docker compose up
+docker compose -f docker-compose.yml up
 
 # Rebuild before starting (after code changes)
-docker compose up --build -d
+docker compose -f docker-compose.yml up --build -d
 ```
 
 ### Stop Services
@@ -339,6 +338,7 @@ CONFIG_PATH=/var/lib/aiinforsearch/config/sites.yaml
 COMPOSE="docker compose -f docker-compose.yml -f docker-compose.override.yml"
 # DATABASE_URL must be available from a private shell environment or secret store.
 
+bash scripts/ensure_postgres_network.sh || exit 1
 $COMPOSE stop api
 DATABASE_URL="$DATABASE_URL" sudo --preserve-env=DATABASE_URL python3 scripts/production_recovery.py backup \
   --data-dir "$DATA_DIR" \
@@ -473,8 +473,9 @@ DATABASE_URL="$DATABASE_URL" python3 scripts/production_recovery.py release-reco
   --config "$CONFIG_PATH" \
   --output /var/lib/aiinforsearch/releases/"$BUILD_RELEASE_ID".json
 export API_IMAGE_DIGEST=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["image_digest"].rsplit("@", 1)[-1])' /var/lib/aiinforsearch/releases/"$BUILD_RELEASE_ID".json)
-docker compose -f docker-compose.yml -f docker-compose.override.yml \
-  up -d --wait --wait-timeout 180 api frontend
+bash scripts/ensure_postgres_network.sh &&
+  docker compose -f docker-compose.yml -f docker-compose.override.yml \
+    up -d --wait --wait-timeout 180 api frontend
 ```
 
 The record rejects different frontend/API release IDs, SHAs, build timestamps,

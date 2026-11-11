@@ -1,7 +1,7 @@
 # docker-compose.yml - AI Actuarial Info Search
 # Usage:
-#   Development: docker compose up
-#   Production: docker compose -f docker-compose.yml -f docker-compose.override.yml up -d
+#   Development: docker compose -f docker-compose.yml up
+#   Production: see docs/deployment-runbook.md for network preparation and startup.
 
 services:
   api:

@@ -91,7 +91,7 @@ In the UI:
 Start the stack:
 
 ```bash
-docker compose up --build
+docker compose -f docker-compose.yml up --build
 ```
 
 Default ports:
@@ -103,7 +103,8 @@ Default ports:
 Production-style override:
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.override.yml up -d --build
+bash scripts/ensure_postgres_network.sh &&
+  docker compose -f docker-compose.yml -f docker-compose.override.yml up -d --build
 ```
 
 Set production secrets before using the override:
