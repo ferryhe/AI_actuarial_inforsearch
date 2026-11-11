@@ -2088,6 +2088,11 @@ def test_catalog_search_keeps_keyword_route_without_one_latest_collected_source(
         ("EN18", "recent", "collection_relative"),
         ("ZH18", "recent", "collection_topic_zh"),
         ("EN18", "catalog_search", "publication_passive"),
+        ("EN17", "recent", "added_en"),
+        ("ZH17", "recent", "added_zh"),
+        ("EN17", "recent", "added_publication_display"),
+        ("EN17", "recent", "added_no_period"),
+        ("EN17", "recent", "added_no_model_window"),
     ],
 )
 def test_recent_first_collection_uses_the_requested_seven_day_window(
@@ -2112,7 +2117,16 @@ def test_recent_first_collection_uses_the_requested_seven_day_window(
         "collection_topic_zh": "过去七天，已发布的 SOA 报告里，哪些是本站首次收录的？",
         "collection_implicit_relative": "Over the past seven days, list the published SOA reports this site first collected.",
     }
-    if case in collection_variants:
+    added_questions = {
+        "added_en": "What new files were added in the past week?",
+        "added_zh": "过去一周本站新增了哪些资料？",
+        "added_publication_display": "Which files did the site add in the past week, and when were they published?",
+        "added_no_period": "What new files were added?",
+        "added_no_model_window": "What new files were added in the past week?",
+    }
+    if case in added_questions:
+        message = added_questions[case]
+    elif case in collection_variants:
         message = collection_variants[case]
     elif source_topic:
         message = "Which SOA longevity risk reports were first collected in the past seven days?"
@@ -2213,7 +2227,17 @@ def test_recent_first_collection_uses_the_requested_seven_day_window(
     cia_url = "https://www.cia-ica.ca/in-window.pdf"
     early_publication_url = "https://www.soa.org/early-publication.pdf"
     unknown_publication_url = "https://www.soa.org/unknown-publication.pdf"
-    if case == "mixed":
+    if case in added_questions:
+        files = [
+            (old_url, "www.soa.org", "January SOA report", "2026-01-01T12:00:00+00:00"),
+            (
+                recent_url,
+                "www.casact.org",
+                "Recently added CAS report",
+                "2026-11-09T12:00:00+00:00",
+            ),
+        ]
+    elif case == "mixed":
         files = [(joint_url, "www.casact.org", "Joint CAS/SOA study", lower)]
     elif case in collection_variants:
         old_url = "https://www.soa.org/recent.pdf"
@@ -2308,6 +2332,8 @@ def test_recent_first_collection_uses_the_requested_seven_day_window(
                     upper_url: upper,
                     unknown_publication_url: None,
                 }.get(url, lower)
+            elif case == "added_publication_display":
+                published_time = "2026-11-09" if url == old_url else "2026-10-01"
             filename = url.rsplit("/", 1)[-1]
             storage.insert_file(
                 url=url,
@@ -2366,7 +2392,12 @@ def test_recent_first_collection_uses_the_requested_seven_day_window(
                 "study_prefix": "SOA Longevity Risk Study",
             }[case]
         }
-    elif publication_case or collection_dates or case == "near_week":
+    elif (
+        publication_case
+        or collection_dates
+        or case == "near_week"
+        or (case in added_questions and case != "added_no_model_window")
+    ):
         args["window_days"] = 7
 
     def model(prompt, _remaining):
@@ -2394,6 +2425,23 @@ def test_recent_first_collection_uses_the_requested_seven_day_window(
     assert outcome.runtime.kind == "finish"
     observation = prompts[-1]["observations"][0]["data"]
     trace_ids = [trace.tool_id for trace in outcome.runtime.trace]
+    if case in added_questions:
+        assert trace_ids == ["resources_updates.recent"]
+        assert "published_time_from" not in observation
+        cited = [citation.file_id for citation in outcome.response.citations]
+        if case in {"added_en", "added_zh", "added_publication_display"}:
+            assert observation["first_seen_from"] == lower
+            assert observation["first_seen_before"] == upper
+            assert observation["total"] == 1
+            assert cited == [recent_url]
+            assert old_url not in outcome.response.answer
+            if case == "added_publication_display":
+                assert "2026-10-01" in outcome.response.answer
+        else:
+            assert "first_seen_from" not in observation and "first_seen_before" not in observation
+            assert observation["total"] == 2
+            assert cited == [recent_url, old_url]
+        return
     if publication_case:
         assert trace_ids == [f"resources_updates.{tool}"]
         assert "first_seen_from" not in observation and "first_seen_before" not in observation

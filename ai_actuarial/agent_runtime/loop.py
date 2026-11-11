@@ -112,6 +112,9 @@ def _window_date_field(clause: str) -> str | None:
     period = _past_seven_days(clause)
     if period is None:
         return None
+    display_clause = re.search(r"[,，]\s*(?:and\s+)?when\b", clause[period.end() :], re.IGNORECASE)
+    if display_clause:
+        clause = clause[: period.end() + display_clause.start()]
     predicate_start = 0
     if re.fullmatch(
         r"\s*(?:(?:in|over|during|within|throughout)\s+(?:the\s+)?)?",
@@ -798,8 +801,12 @@ def run(
                 "resources_updates.recent",
                 "resources_updates.catalog_search",
             }:
-                if collection_window or tool.tool_id == "resources_updates.recent":
-                    args["window_days"] = 7 if collection_window else None
+                if collection_window:
+                    args["window_days"] = 7
+                elif tool.tool_id == "resources_updates.recent" and (
+                    not window_clause or publication_window
+                ):
+                    args["window_days"] = None
                 if publication_window:
                     args["publication_window_days"] = 7
                 if first_collection or publication_window:
