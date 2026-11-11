@@ -124,7 +124,8 @@ def _window_date_field(clause: str) -> str | None:
             r"\s*[,，]?\s*(?:(?:which|what)\b[^,，]*?\b(?:that|which)\s+(?:was|were|has|have|had)"
             r"\b[^,，]*?\b(?:did|do|does)"
             r"|(?:which|what)\b[^,，]*?\b(?:did|do|does|was|were|has|have|had)"
-            r"|(?:show|list|find)\b[^,，]*?\b(?:that|which))\b",
+            r"|(?:show|list|find)\b[^,，]*?\b(?:that|which|(?:this|the|our|your)\s+site"
+            r"(?=\s+(?:first|published|released)\b)))\b",
             after_period,
             re.IGNORECASE,
         ) or re.match(
@@ -169,7 +170,8 @@ def _catalog_topic(
     remainder = query.strip().casefold()
     named = False
     topic = query
-    resource = r"(?:research\s+reports?|reports?|studies|study|files?|materials?|documents?)"
+    resource = r"(?:research\s+reports?|reports?|files?|materials?|documents?)"
+    from_source = r"\bfrom\s+(?:the\s+)?"
     for option in options:
         if option.get("source_key") != source:
             continue
@@ -181,10 +183,12 @@ def _catalog_topic(
                     if not name.isascii()
                     else rf"(?<![a-z0-9]){re.escape(name)}(?![a-z0-9])"
                 )
-                remainder, matches = re.subn(rf"(?:\bfrom\s+|来自\s*)?{pattern}", " ", remainder)
+                remainder, matches = re.subn(
+                    rf"(?:{from_source}|来自\s*)?{pattern}", " ", remainder
+                )
                 if matches:
                     suffix = re.search(
-                        rf"\s+(?:\b{resource}\s+)?\bfrom\s+{pattern}\s*$", topic, re.IGNORECASE
+                        rf"\s+(?:\b{resource}\s+)?{from_source}{pattern}\s*$", topic, re.IGNORECASE
                     )
                     if suffix:
                         topic = topic[: suffix.start()].rstrip()
@@ -197,7 +201,7 @@ def _catalog_topic(
     if require_source and not named:
         return None
     if not re.sub(
-        r"\b(?:latest|newest|recent|most|recently|newly|collected|added|ingested|research|reports?|studies|study|files?|materials?|documents?)\b"
+        rf"^\s*the\s+|\b(?:latest|newest|recent|most|recently|newly|collected|added|ingested|research|{resource}|studies|study)\b"
         r"|最新|最近|收录|(?:的\s*)?(?:资料|材料|报告|文件|文档)|研究|\W",
         "",
         remainder,
