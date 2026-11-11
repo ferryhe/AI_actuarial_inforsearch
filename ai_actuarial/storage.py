@@ -2803,6 +2803,7 @@ class Storage:
         first_seen_from: str | None = None,
         first_seen_before: str | None = None,
         source: str = "",
+        exclude_source: str = "",
         include_empty: bool = False,
     ) -> list[dict]:
         if self._schema_only:
@@ -2817,6 +2818,11 @@ class Storage:
                 return []
             filters.append(f"{source_sql()} = ?")
             params.append(key)
+        if exclude_source:
+            excluded_key, _ = resolve_bookmark(self._conn, exclude_source)
+            if excluded_key:
+                filters.append(f"{source_sql()} <> ?")
+                params.append(excluded_key)
         if filters:
             where += " AND " + " AND ".join(filters)
         rows = self._conn.execute(
@@ -3133,6 +3139,7 @@ class Storage:
         order_dir: str = "desc",
         query: str = "",
         source: str = "",
+        exclude_source: str = "",
         category: str = "",
         include_deleted: bool = False,
         first_seen_from: str | None = None,
@@ -3149,6 +3156,7 @@ class Storage:
             order_dir: Order direction ('asc' or 'desc')
             query: Search term for title/filename/url
             source: Source site filter
+            exclude_source: Canonical source to omit
             category: Category filter
             include_deleted: Whether to include deleted files
             first_seen_from: Inclusive first-seen RFC3339 boundary
@@ -3250,6 +3258,15 @@ class Storage:
                 key, _ = resolve_bookmark(self._conn, source)
                 filters.append(f"{source_sql()} = ?")
                 params.append(key or "__unresolved_bookmark__")
+        if exclude_source:
+            if self._schema_only:
+                filters.append("lower(trim(COALESCE(f.source_site, ''))) <> ?")
+                params.append(exclude_source.strip().lower())
+            else:
+                excluded_key, _ = resolve_bookmark(self._conn, exclude_source)
+                if excluded_key:
+                    filters.append(f"{source_sql()} <> ?")
+                    params.append(excluded_key)
 
         if category:
             join_clause = catalog_join_clause

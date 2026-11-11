@@ -2055,6 +2055,11 @@ def test_catalog_search_keeps_keyword_route_without_one_latest_collected_source(
         ("ZH18", "recent", "near_week"),
         ("EN18", "catalog_search", "source_only"),
         ("EN18", "catalog_search", "topic"),
+        ("EN18", "recent", "collection_dates_en"),
+        ("ZH18", "recent", "collection_dates_zh"),
+        ("EN18", "catalog_search", "publication_with_collection"),
+        ("EN18", "catalog_search", "source_generic"),
+        ("EN17", "recent", "exclude"),
     ],
 )
 def test_recent_first_collection_uses_the_requested_seven_day_window(
@@ -2073,6 +2078,14 @@ def test_recent_first_collection_uses_the_requested_seven_day_window(
     message = question["question"]
     if case == "near_week":
         message = "近一周首次收录了哪些 SOA 文件？"
+    elif case == "collection_dates_en":
+        message = "Which SOA reports did you first collect in the last seven days? Include publication dates."
+    elif case == "collection_dates_zh":
+        message = "近一周收录的 SOA 报告有哪些？请附上各自的发布日期。"
+    elif case == "publication_with_collection":
+        message = "Which SOA reports were published in the last seven days? Show when you first collected each one"
+    elif case == "exclude":
+        message = "Which organizations other than SOA had material added to this site's collection in the last seven days?"
     elif case == "publication":
         message = (
             "近一周发布了哪些 SOA 文件？"
@@ -2094,12 +2107,22 @@ def test_recent_first_collection_uses_the_requested_seven_day_window(
     soa_samples = [f"https://www.soa.org/in-window-{i}.pdf" for i in range(3)]
     joint_url = "https://www.casact.org/joint-study.pdf"
     longevity_url = "https://www.soa.org/longevity-risk.pdf"
+    publication_case = case in {"publication", "publication_with_collection"}
+    collection_dates = case in {"collection_dates_en", "collection_dates_zh"}
+    include_longevity = collection_dates or case in {"source_only", "source_generic", "topic"}
     if case == "mixed":
         files = [(joint_url, "www.casact.org", "Joint CAS/SOA study", lower)]
-    elif case in {"source_only", "topic"}:
+    elif include_longevity:
         files.append((longevity_url, "www.soa.org", "Longevity Risk Study", lower))
         if case == "topic":
             files.append(("https://www.soa.org/pricing.pdf", "www.soa.org", "Pricing Study", lower))
+    elif case == "exclude":
+        files.extend(
+            [
+                (recent_url, "www.casact.org", "Included CAS report", lower),
+                (longevity_url, "www.soa.org", "Excluded SOA report", lower),
+            ]
+        )
     elif tool == "recent" and case == "collection":
         files.extend(
             [
@@ -2136,7 +2159,7 @@ def test_recent_first_collection_uses_the_requested_seven_day_window(
             )
             storage._conn.execute(
                 "UPDATE files SET first_seen = ?, last_seen = ?, published_time = ? WHERE url = ?",
-                (first_seen, upper, lower, url),
+                (first_seen, upper, "2026-10-01" if collection_dates else lower, url),
             )
         storage._conn.commit()
     finally:
@@ -2157,11 +2180,13 @@ def test_recent_first_collection_uses_the_requested_seven_day_window(
                 "collection": "Fourteen-day-old SOA",
                 "mixed": "Joint CAS/SOA",
                 "publication": "SOA",
+                "publication_with_collection": "SOA",
                 "source_only": "Society of Actuaries",
+                "source_generic": "SOA research reports",
                 "topic": "Longevity Risk",
             }[case]
         }
-    elif case in {"publication", "near_week"}:
+    elif publication_case or collection_dates or case == "near_week":
         args["window_days"] = 7
 
     def model(prompt, _remaining):
@@ -2189,31 +2214,43 @@ def test_recent_first_collection_uses_the_requested_seven_day_window(
     assert outcome.runtime.kind == "finish"
     observation = prompts[-1]["observations"][0]["data"]
     trace_ids = [trace.tool_id for trace in outcome.runtime.trace]
-    if case == "publication":
+    if publication_case:
         assert trace_ids == [f"resources_updates.{tool}"]
         assert "first_seen_from" not in observation and "first_seen_before" not in observation
         assert [citation.file_id for citation in outcome.response.citations] == [old_url]
         assert old_url in outcome.response.answer
         return
     expected_files = [] if named_source else list(reversed(soa_samples))
-    if case in {"source_only", "topic"}:
+    if include_longevity:
         expected_files = [longevity_url]
-    assert observation["total"] == (4 if not named_source else len(expected_files))
-    expected_tool = "recent" if case == "source_only" else tool
+    elif case == "exclude":
+        expected_files = [recent_url]
+    assert observation["total"] == (
+        4 if not named_source and case != "exclude" else len(expected_files)
+    )
+    expected_tool = "recent" if case in {"source_only", "source_generic"} else tool
     assert trace_ids == [f"resources_updates.{expected_tool}"]
     assert observation["first_seen_from"] == lower
     assert observation["first_seen_before"] == upper
     if named_source:
         assert observation["source_filter"] == "soa"
     assert [citation.file_id for citation in outcome.response.citations] == expected_files
-    if case in {"source_only", "topic"}:
+    if include_longevity:
         assert "Longevity Risk Study" in outcome.response.answer
+    if collection_dates:
+        assert "2026-10-01" in outcome.response.answer
     assert old_url not in outcome.response.answer
     assert joint_url not in outcome.response.answer
     assert upper_url not in outcome.response.answer
     assert lower in outcome.response.answer and upper in outcome.response.answer
-    assert recent_url not in outcome.response.answer
-    if not named_source:
+    if case == "exclude":
+        assert recent_url in outcome.response.answer
+        assert longevity_url not in outcome.response.answer
+        assert observation["excluded_source"] == "soa"
+        assert all("SOA" not in name for names in observation["source_names"] for name in names)
+    else:
+        assert recent_url not in outcome.response.answer
+    if not named_source and case != "exclude":
         names = {
             row[f"name_{question['language']}"]
             for row in registry_seed["sources"]

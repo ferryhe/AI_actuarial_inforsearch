@@ -42,7 +42,7 @@ def _latest_first_collected(message: str) -> bool:
     )
 
 
-def _named_source(message: str, options: list[dict]) -> str | None:
+def _named_source(message: str, options: list[dict], *, excluded: bool = False) -> str | None:
     question = message.casefold()
     matches = set()
     for option in options:
@@ -54,13 +54,19 @@ def _named_source(message: str, options: list[dict]) -> str | None:
             if not isinstance(name, str) or not name.strip():
                 continue
             name = name.strip().casefold()
-            if (
-                name in question
-                if not name.isascii()
-                else re.search(rf"(?<![a-z0-9]){re.escape(name)}(?![a-z0-9])", question)
-            ):
-                matches.add(key)
-                break
+            pattern = re.escape(name)
+            if name.isascii():
+                pattern = rf"(?<![a-z0-9]){pattern}(?![a-z0-9])"
+            for match in re.finditer(pattern, question):
+                negated = bool(
+                    re.search(
+                        r"(?:\b(?:other than|except(?: for)?|excluding)\s+(?:the\s+)?"
+                        r"|(?:除了?|除去|排除|不含|不包括)\s*)$",
+                        question[: match.start()],
+                    )
+                )
+                if negated == excluded:
+                    matches.add(key)
     return next(iter(matches)) if len(matches) == 1 else None
 
 
@@ -79,7 +85,7 @@ def _explicit_first_collection(message: str) -> bool:
     return bool(
         re.search(
             r"收进|首次收录|新收录|首次采集"
-            r"|\bfirst[- ](?:seen|collected|collection|picked up|ingested)\b"
+            r"|\bfirst[- ](?:seen|collect(?:ed|ion)?|pick(?:ed)? up|ingest(?:ed)?)\b"
             r"|\bnewly (?:collected|ingested)\b"
             r"|\badded (?:to|into) (?:this site's collection|(?:this|the|our|your) collection)\b",
             message,
@@ -90,26 +96,24 @@ def _explicit_first_collection(message: str) -> bool:
 
 
 def _source_only_query(
-    query: str, source: str, options: list[dict], *, exact: bool = False
+    query: str, source: str, options: list[dict], *, require_source: bool = False
 ) -> bool:
     remainder = query.strip().casefold()
+    named = False
     for option in options:
         if option.get("source_key") != source:
             continue
         for name in (source, *(option.get("aliases") or ())):
             if isinstance(name, str) and name.strip():
                 name = name.strip().casefold()
-                if exact:
-                    if remainder == name:
-                        return True
-                    continue
                 pattern = (
                     re.escape(name)
                     if not name.isascii()
                     else rf"(?<![a-z0-9]){re.escape(name)}(?![a-z0-9])"
                 )
-                remainder = re.sub(pattern, " ", remainder)
-    return not exact and not re.sub(
+                remainder, matches = re.subn(pattern, " ", remainder)
+                named = named or bool(matches)
+    return (named or not require_source) and not re.sub(
         r"\b(?:latest|newest|recent|most|recently|newly|collected|added|ingested|research|reports?|studies|study)\b"
         r"|最新|最近|收录|资料|报告|文件|研究|\W",
         "",
@@ -282,8 +286,13 @@ def run(
 
     if not message.strip() or "\0" in message or len(message) > 4000:
         return result("", "error", "INVALID_REQUEST")
-    first_collection = _explicit_first_collection(message)
-    collection_window = first_collection and _past_seven_days(message)
+    window_clause = next(
+        (clause for clause in re.split(r"[.!?。！？;；\n]", message) if _past_seven_days(clause)),
+        "",
+    )
+    date_query = window_clause or message
+    first_collection = _explicit_first_collection(date_query)
+    collection_window = bool(window_clause and first_collection)
     prompt_data = {
         "instruction": (
             "Choose an enabled skill from the question. Return exactly one JSON object with "
@@ -649,7 +658,7 @@ def run(
                 collection_window and action["tool_id"] == "resources_updates.catalog_search"
             )
             if (
-                (dated_catalog or _latest_first_collected(message))
+                (dated_catalog or _latest_first_collected(date_query))
                 and action["tool_id"]
                 in {
                     "document_research.find_documents",
@@ -672,10 +681,12 @@ def run(
                 try:
                     options = source_options() if source_options else []
                     source = _named_source(message, options)
+                    if source == _named_source(message, options, excluded=True):
+                        source = None
                 except Exception:
                     source = None
                 if source and _source_only_query(
-                    action["args"]["query"], source, options, exact=dated_catalog
+                    action["args"]["query"], source, options, require_source=dated_catalog
                 ):
                     action = {
                         "action": "call",
@@ -696,10 +707,15 @@ def run(
                     args["window_days"] = 7 if collection_window else None
                 if first_collection:
                     try:
-                        source = _named_source(message, source_options() if source_options else [])
+                        options = source_options() if source_options else []
+                        source = _named_source(message, options)
+                        excluded_source = _named_source(message, options, excluded=True)
                     except Exception:
                         return tool_unavailable(tool.tool_id, args)
-                    if source:
+                    if excluded_source:
+                        args.pop("source", None)
+                        args["exclude_source"] = excluded_source
+                    if source and source != excluded_source:
                         args["source"] = source
             try:
                 observed = execute(tool, args, context, context.take_tool())

@@ -1,6 +1,7 @@
 import gzip
 import http.client
 import json
+import os
 import re
 import socket
 import subprocess
@@ -86,6 +87,55 @@ def test_production_override_keeps_shared_app_and_caddy_network_settings():
     assert base["networks"]["ai-net"] == {"driver": "bridge"}
     assert base["services"]["caddy"]["networks"] == ["ai-net"]
     assert "ai-net" not in production["networks"]
+
+
+def test_development_frontend_proxy_and_production_ports(tmp_path):
+    env_file = tmp_path / "compose.env"
+    env_file.touch()
+    environment = {
+        **os.environ,
+        "DATABASE_URL": "postgresql://fixture:fixture@127.0.0.1:5432/fixture",
+        "FASTAPI_SESSION_SECRET": "fixture",
+        "TOKEN_ENCRYPTION_KEY": "fixture",
+        "CONFIG_WRITE_AUTH_TOKEN": "fixture",
+        "RUNTIME_CONFIG_DIR": tmp_path.as_posix(),
+        "FASTAPI_CORS_ORIGINS": "https://fixture.invalid",
+        "VITE_API_BASE_URL": "https://fixture.invalid/api",
+        "CADDY_APP_SITE_HOSTS": "fixture.invalid",
+        "CADDY_APP_REDIRECT_HOSTS": "www.fixture.invalid",
+        "CADDY_APP_REDIRECT_ORIGIN": "https://fixture.invalid",
+        "CADDY_HTTP_PORT": "80",
+        "CADDY_HTTPS_PORT": "443",
+    }
+
+    def render(*files):
+        command = ["docker", "compose", "--env-file", str(env_file)]
+        for path in files:
+            command.extend(["-f", path])
+        result = subprocess.run(
+            [*command, "config", "--format", "json"],
+            cwd=ROOT,
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return json.loads(result.stdout)["services"]
+
+    def ports(service):
+        return [
+            (item.get("host_ip"), int(item["published"]), item["target"])
+            for item in service.get("ports", [])
+        ]
+
+    dev = render("docker-compose.yml")
+    prod = render("docker-compose.yml", "docker-compose.override.yml")
+    assert ports(dev["frontend"]) == ports(prod["frontend"]) == [("127.0.0.1", 5173, 5173)]
+    assert ports(dev["api"]) == []
+    assert ports(prod["api"]) == [("127.0.0.1", 5000, 5000)]
+    assert ports(dev["caddy"]) == ports(prod["caddy"]) == [(None, 80, 80), (None, 443, 443)]
+    assert dev["frontend"]["depends_on"]["api"]["condition"] == "service_healthy"
+    assert dev["frontend"]["environment"]["API_PROXY_TARGET"] == "http://api:5000"
 
 
 class _CaddyStaticUpstream(SimpleHTTPRequestHandler):
@@ -801,7 +851,7 @@ def test_compose_does_not_pin_public_bridge_topology():
     assert "CONTENT_SECURITY_POLICY=${CONTENT_SECURITY_POLICY:-default-src" not in src
     assert "- CONTENT_SECURITY_POLICY" in src
     assert "ports" not in data["services"]["api"]
-    assert "ports" not in data["services"]["frontend"]
+    assert data["services"]["frontend"]["ports"] == ["127.0.0.1:5173:5173"]
     assert data["services"]["caddy"]["ports"] == [
         "${CADDY_HTTP_PORT:-80}:80",
         "${CADDY_HTTPS_PORT:-443}:443",

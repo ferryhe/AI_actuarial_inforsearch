@@ -42,6 +42,8 @@ def _first_seen_window(args):
 
 def recent(facade, args):
     source = args.get("source") or ""
+    excluded_source = args.get("exclude_source") or ""
+    exclusion = {"exclude_source": excluded_source} if excluded_source else {}
     window = _first_seen_window(args)
     rows, total = facade.storage.query_files_with_catalog(
         limit=3,
@@ -49,6 +51,7 @@ def recent(facade, args):
         order_dir="desc",
         source=source,
         exclude_urls=SOURCE_PORTAL_URLS,
+        **exclusion,
         **window,
     )
     items = [
@@ -64,7 +67,7 @@ def recent(facade, args):
     ]
     if window:
         names = facade.storage.get_source_options(
-            source=source, exclude_urls=SOURCE_PORTAL_URLS, **window
+            source=source, exclude_urls=SOURCE_PORTAL_URLS, **exclusion, **window
         )
         window["source_names"] = [(row["source_name_zh"], row["source_name_en"]) for row in names]
     return ToolResult(
@@ -75,17 +78,34 @@ def recent(facade, args):
             "source_filter": source,
             "date_meaning": "first_seen is system first collection; content revisions are not recorded",
             "action": "/database",
+            **({"excluded_source": excluded_source} if excluded_source else {}),
             **window,
         },
-        (_id("recent" + source + str(total) + str(items) + (str(window) if window else "")),),
+        (
+            _id(
+                "recent"
+                + source
+                + excluded_source
+                + str(total)
+                + str(items)
+                + (str(window) if window else "")
+            ),
+        ),
     )
 
 
 def catalog_search(facade, args):
     window = _first_seen_window(args)
     source = args.get("source") or ""
+    excluded_source = args.get("exclude_source") or ""
+    exclusion = {"exclude_source": excluded_source} if excluded_source else {}
     rows, total = facade.storage.query_files_with_catalog(
-        query=args["query"], source=source, limit=3, exclude_urls=SOURCE_PORTAL_URLS, **window
+        query=args["query"],
+        source=source,
+        limit=3,
+        exclude_urls=SOURCE_PORTAL_URLS,
+        **exclusion,
+        **window,
     )
     items = [
         {
@@ -107,10 +127,19 @@ def catalog_search(facade, args):
             "action": "/database",
             "note": "Catalog metadata is not body evidence; content revision history is not recorded.",
             **({"source_filter": source} if source else {}),
+            **({"excluded_source": excluded_source} if excluded_source else {}),
             **window,
         },
         (
-            (_id("catalog" + source + str(items) + (str(window) if window else "")),)
+            (
+                _id(
+                    "catalog"
+                    + source
+                    + excluded_source
+                    + str(items)
+                    + (str(window) if window else "")
+                ),
+            )
             if items or window
             else ()
         ),
@@ -233,6 +262,8 @@ def grounded_answer(tool_id, data, locale):
         ]
         if source:
             lines[0] += f"（{source}）" if zh else f" Source: {source}."
+        if excluded := data.get("excluded_source"):
+            lines[0] += f"（排除 {excluded}）" if zh else f" Excluding {excluded}."
         if (start := data.get("first_seen_from")) and (end := data.get("first_seen_before")):
             lines.append(
                 f"过去七天的系统首次收录时间（UTC）：自 {start}（含）至 {end}（不含）。"

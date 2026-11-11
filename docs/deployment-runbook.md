@@ -8,7 +8,7 @@ This document covers deployment, configuration, and operations for the AI Actuar
 
 ```bash
 # Development
-docker compose -f docker-compose.yml up
+docker compose -f docker-compose.yml up frontend
 
 # Production
 export CONFIG_PATH=/var/lib/aiinforsearch/config/sites.yaml
@@ -26,15 +26,20 @@ at the hostname in `DATABASE_URL` before starting the API.
 
 ### Start Development Services
 
+Open [the development UI](http://localhost:5173/) and check
+[API health through Vite](http://localhost:5173/api/health). Compose starts
+the internal API as a frontend dependency. Development uses the Vite entry
+point directly.
+
 ```bash
-# Start all services in detached mode
-docker compose -f docker-compose.yml up -d
+# Start the frontend and its API dependency in detached mode
+docker compose -f docker-compose.yml up -d frontend
 
 # Start with logs streaming
-docker compose -f docker-compose.yml up
+docker compose -f docker-compose.yml up frontend
 
 # Rebuild before starting (after code changes)
-docker compose -f docker-compose.yml up --build -d
+docker compose -f docker-compose.yml up --build -d frontend
 ```
 
 ### Stop Development Services

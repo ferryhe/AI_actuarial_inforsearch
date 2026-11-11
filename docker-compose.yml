@@ -1,6 +1,6 @@
 # docker-compose.yml - AI Actuarial Info Search
 # Usage:
-#   Development: docker compose -f docker-compose.yml up
+#   Development: docker compose -f docker-compose.yml up frontend
 #   Production: see docs/deployment-runbook.md for network preparation and startup.
 
 services:
@@ -58,8 +58,11 @@ services:
     command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
     expose:
       - "5173"
+    ports:
+      - "127.0.0.1:5173:5173"
     environment:
       - VITE_API_BASE_URL=${VITE_API_BASE_URL:-http://api:5000}
+      - API_PROXY_TARGET=http://api:5000
       - NODE_ENV=development
     volumes:
       - ./:/app

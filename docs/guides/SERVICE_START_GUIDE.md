@@ -88,17 +88,16 @@ In the UI:
 
 ## Docker Compose
 
-Start the stack:
+Start the development frontend and its API dependency:
 
 ```bash
-docker compose -f docker-compose.yml up --build
+docker compose -f docker-compose.yml up --build frontend
 ```
 
-Default ports:
-
-- API: `5000` inside Docker, exposed as `${API_PORT:-5000}`
-- Frontend: `${FRONTEND_PORT:-5173}`
-- Caddy: `${CADDY_HTTP_PORT:-80}` and `${CADDY_HTTPS_PORT:-443}`
+Open [the development UI](http://localhost:5173/) or
+[check API health](http://localhost:5173/api/health). Vite listens on loopback
+port 5173 and proxies `/api` to the API on port 5000 inside Docker.
+The development command starts only the frontend and API.
 
 Production-style override:
 
