@@ -132,23 +132,27 @@ try {
   await lazyFailurePage.goto(`${baseUrl}/chat`, { waitUntil: "domcontentloaded" });
   const lazyChatInput = lazyFailurePage.getByTestId("input-chat-message");
   await lazyChatInput.waitFor({ state: "visible" });
+  const unsentChatDraft = "Unsent Chat draft survives feedback recovery";
+  await lazyChatInput.fill(unsentChatDraft);
   const lazyChatSend = lazyFailurePage.getByTestId("button-send-message");
   const recoveredReload = lazyFailurePage.waitForEvent("framenavigated", (frame) => frame === lazyFailurePage.mainFrame());
   await lazyFailurePage.getByTestId("support-widget-trigger").click();
   await recoveredReload;
+  await lazyChatInput.waitFor({ state: "visible" });
+  const unsentChatDraftPreserved = (await lazyChatInput.inputValue()) === unsentChatDraft;
+  assert.equal(unsentChatDraftPreserved, true, "the one-time stale chunk recovery must preserve the unsent Chat draft");
   await lazyFailurePage.getByTestId("support-widget-trigger").click();
   await lazyFailurePage.locator("#feedback-panel").waitFor({ state: "visible" });
   assert.equal(failedFeedbackChunk, true, "the first lazy feedback request must fail to simulate a stale deployment chunk");
   assert.equal(await lazyFailurePage.getByRole("alert").count(), 0, "a stale chunk should recover after one page reload");
   assert.equal(await lazyChatInput.isVisible(), true, "a failed feedback chunk must not remove Chat input");
   assert.equal(await lazyChatSend.isVisible(), true, "a failed feedback chunk must not remove Chat send");
-  await lazyChatInput.fill("Chat remains usable after feedback chunk failure");
   const lazyChatResponse = lazyFailurePage.waitForResponse((response) => response.url().includes("/api/chat/query") && response.request().method() === "POST");
   await lazyChatSend.click();
   assert.equal((await lazyChatResponse).status(), 200);
   assert.equal(lazyChatQueryPosts, 1);
   await lazyFailurePage.screenshot({ path: path.join(evidenceDir, "feedback-stale-chunk-recovered-390x844.png"), fullPage: false });
-  const lazyFailureRecovery = { staleChunkFailedOnce: failedFeedbackChunk, pageReloaded: true, feedbackFormRecovered: await lazyFailurePage.locator("#feedback-panel").isVisible(), chatInputRemainsVisible: true, chatSendRemainsVisible: true, mockedChatSendAfterRecovery: true, mockedChatQueryPosts: lazyChatQueryPosts, providerCalls: 0, screenshot: "feedback-stale-chunk-recovered-390x844.png" };
+  const lazyFailureRecovery = { staleChunkFailedOnce: failedFeedbackChunk, pageReloaded: true, unsentChatDraftPreserved, feedbackFormRecovered: await lazyFailurePage.locator("#feedback-panel").isVisible(), chatInputRemainsVisible: true, chatSendRemainsVisible: true, mockedChatSendAfterRecovery: true, mockedChatQueryPosts: lazyChatQueryPosts, providerCalls: 0, screenshot: "feedback-stale-chunk-recovered-390x844.png" };
   await lazyFailurePage.close();
 
   for (const width of [390, 1024]) {
