@@ -2071,6 +2071,11 @@ def test_catalog_search_keeps_keyword_route_without_one_latest_collected_source(
         ("EN17", "recent", "exclude_besides"),
         ("EN18", "recent", "collection_fronted"),
         ("EN18", "catalog_search", "publication_fronted"),
+        ("EN18", "recent", "collection_imperative"),
+        ("EN18", "catalog_search", "publication_imperative"),
+        ("EN18", "catalog_search", "source_from"),
+        ("ZH18", "catalog_search", "source_from"),
+        ("EN18", "catalog_search", "topic_from"),
     ],
 )
 def test_recent_first_collection_uses_the_requested_seven_day_window(
@@ -2107,6 +2112,10 @@ def test_recent_first_collection_uses_the_requested_seven_day_window(
         message = "Over the past seven days, which published SOA reports did the site first collect? Include their publication dates."
     elif case == "publication_fronted":
         message = "Over the past seven days, which SOA reports were published? Show when the site first collected each one."
+    elif case == "collection_imperative":
+        message = "Over the past seven days, show me the published SOA reports that this site first collected."
+    elif case == "publication_imperative":
+        message = "Over the past seven days, list the SOA reports that were published, and when the site first collected each one."
     elif case == "collect_zh":
         message = "过去七天本站首次收集的 SOA 报告有哪些？"
     elif case == "publication_comma":
@@ -2138,6 +2147,7 @@ def test_recent_first_collection_uses_the_requested_seven_day_window(
         "publication_comma",
         "publication_zh_wrapper",
         "publication_fronted",
+        "publication_imperative",
     }
     collection_dates = case in {
         "collection_dates_en",
@@ -2145,15 +2155,19 @@ def test_recent_first_collection_uses_the_requested_seven_day_window(
         "collect_zh",
         "collection_with_publication_display",
         "collection_fronted",
+        "collection_imperative",
     }
-    split_dates = case in {"collection_with_publication_display", "collection_fronted"}
+    split_dates = case in {
+        "collection_with_publication_display",
+        "collection_fronted",
+        "collection_imperative",
+    }
     multiple_exclusions = case in {"exclude_many", "exclude_besides"}
-    include_longevity = collection_dates or case in {
-        "source_only",
-        "source_generic",
-        "source_files",
-        "topic",
-    }
+    source_only = case in {"source_only", "source_generic", "source_files", "source_from"}
+    include_longevity = collection_dates or source_only or case in {"topic", "topic_from"}
+    longevity_title = (
+        "Longevity Risk reports from SOA" if case == "topic_from" else "Longevity Risk Study"
+    )
     cia_url = "https://www.cia-ica.ca/in-window.pdf"
     early_publication_url = "https://www.soa.org/early-publication.pdf"
     unknown_publication_url = "https://www.soa.org/unknown-publication.pdf"
@@ -2165,8 +2179,8 @@ def test_recent_first_collection_uses_the_requested_seven_day_window(
             (longevity_url, "www.soa.org", "Longevity Risk Study", "2026-11-09T12:00:00+00:00"),
         ]
     elif include_longevity:
-        files.append((longevity_url, "www.soa.org", "Longevity Risk Study", lower))
-        if case == "topic":
+        files.append((longevity_url, "www.soa.org", longevity_title, lower))
+        if case in {"topic", "topic_from"}:
             files.append(("https://www.soa.org/pricing.pdf", "www.soa.org", "Pricing Study", lower))
     elif case == "exclude" or multiple_exclusions:
         files.extend(
@@ -2212,7 +2226,7 @@ def test_recent_first_collection_uses_the_requested_seven_day_window(
             if split_dates:
                 if url == old_url:
                     published_time = "2026-11-09"
-                elif case == "collection_with_publication_display":
+                elif case in {"collection_with_publication_display", "collection_imperative"}:
                     published_time = "2026-10-30"
             elif publication_case:
                 published_time = {
@@ -2260,10 +2274,15 @@ def test_recent_first_collection_uses_the_requested_seven_day_window(
                 "publication_comma": "SOA",
                 "publication_zh_wrapper": "SOA的文件",
                 "publication_fronted": "SOA",
+                "publication_imperative": "SOA",
                 "source_only": "Society of Actuaries",
                 "source_generic": "SOA research reports",
                 "source_files": "SOA files",
+                "source_from": (
+                    "来自SOA的报告" if question["language"] == "zh" else "reports from SOA"
+                ),
                 "topic": "Longevity Risk",
+                "topic_from": "Longevity Risk reports from SOA",
             }[case]
         }
     elif publication_case or collection_dates or case == "near_week":
@@ -2318,7 +2337,7 @@ def test_recent_first_collection_uses_the_requested_seven_day_window(
     assert observation["total"] == (
         4 if case == "collection" and not named_source else len(expected_files)
     )
-    expected_tool = "recent" if case in {"source_only", "source_generic", "source_files"} else tool
+    expected_tool = "recent" if source_only else tool
     assert trace_ids == [f"resources_updates.{expected_tool}"]
     assert observation["first_seen_from"] == lower
     assert observation["first_seen_before"] == upper
@@ -2327,10 +2346,12 @@ def test_recent_first_collection_uses_the_requested_seven_day_window(
         assert observation["source_filter"] == "soa"
     assert [citation.file_id for citation in outcome.response.citations] == expected_files
     if include_longevity:
-        assert "Longevity Risk Study" in outcome.response.answer
+        assert longevity_title in outcome.response.answer
     if collection_dates:
         publication_date = (
-            "2026-10-30" if case == "collection_with_publication_display" else "2026-10-01"
+            "2026-10-30"
+            if case in {"collection_with_publication_display", "collection_imperative"}
+            else "2026-10-01"
         )
         assert publication_date in outcome.response.answer
     assert old_url not in outcome.response.answer

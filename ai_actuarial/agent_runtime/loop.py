@@ -118,14 +118,18 @@ def _window_date_field(clause: str) -> str | None:
         clause[: period.start()],
         re.IGNORECASE,
     ):
-        # After a fronted period, the question's subject may describe the reports.
-        question = re.match(
-            r"\s*,?\s*(?:which|what)\b.*?\b(?:did|do|does|was|were|has|have|had)\b",
+        # After a fronted period, distinguish the report description from the date action.
+        predicate = re.match(
+            r"\s*[,，]?\s*(?:(?:which|what)\b[^,，]*?\b(?:did|do|does|was|were|has|have|had)"
+            r"|(?:show|list|find)\b[^,，]*?\b(?:that|which))\b",
             clause[period.end() :],
             re.IGNORECASE,
         )
-        if question:
-            predicate_start = period.end() + question.end()
+        if predicate:
+            predicate_start = period.end() + predicate.end()
+            display_separator = re.search(r"[,，]", clause[predicate_start:])
+            if display_separator:
+                clause = clause[: predicate_start + display_separator.start()]
     date_words = re.finditer(
         rf"(?P<first_seen>{_COLLECTION_WORDING}|收录)"
         r"|(?P<published_time>发布|发表|出版|\b(?:published|publication|released)\b)",
@@ -168,7 +172,7 @@ def _source_only_query(
                     if not name.isascii()
                     else rf"(?<![a-z0-9]){re.escape(name)}(?![a-z0-9])"
                 )
-                remainder, matches = re.subn(pattern, " ", remainder)
+                remainder, matches = re.subn(rf"(?:\bfrom\s+|来自\s*)?{pattern}", " ", remainder)
                 named = named or bool(matches)
     return (named or not require_source) and not re.sub(
         r"\b(?:latest|newest|recent|most|recently|newly|collected|added|ingested|research|reports?|studies|study|files?|materials?|documents?)\b"
