@@ -1733,7 +1733,7 @@ export default function Chat() {
               onKeyDown={handleKeyDown}
               placeholder={t("chat.input_placeholder")}
               rows={1}
-              className="flex-1 resize-none rounded-xl border border-border bg-background px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent transition-shadow min-h-[42px] max-h-[120px]"
+              className="flex-1 resize-none rounded-xl border border-border bg-background px-4 py-2.5 text-[16px] focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent transition-shadow min-h-[42px] max-h-[120px]"
               style={{ height: "auto" }}
               onInput={(e) => {
                 const el = e.currentTarget;

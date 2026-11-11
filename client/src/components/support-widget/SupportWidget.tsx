@@ -1,9 +1,11 @@
-import { Component, Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
+import { Component, useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
 import { MessageSquare, X } from "lucide-react";
 import { IconButton } from "@/components/a11y/IconButton";
 import { useTranslation } from "@/components/Layout";
 import { apiGet } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
+import AssistantPanel from "@/features/assistant/AssistantPanel";
+import FeedbackForm from "@/features/feedback/FeedbackForm";
 import { queryAssistant } from "@/features/assistant/transport";
 import { useLocation } from "wouter";
 
@@ -34,9 +36,6 @@ export default function SupportWidget({ onOpenChange }: { onOpenChange?: (open: 
   const trigger = useRef<HTMLButtonElement>(null);
   const host = useRef<HTMLDivElement>(null);
   const [panelSpace, setPanelSpace] = useState({ maxHeight: 0, lift: 0 });
-  const FeedbackForm = useMemo(() => lazy(() => import("@/features/feedback/FeedbackForm")), [loadAttempt]);
-  const AssistantPanel = useMemo(() => lazy(() => import("@/features/assistant/AssistantPanel")), [loadAttempt]);
-
   useEffect(() => {
     let mounted = true;
     apiGet<Capabilities>("/api/support/capabilities")
@@ -70,7 +69,7 @@ export default function SupportWidget({ onOpenChange }: { onOpenChange?: (open: 
       const chatTop = chatComposer?.getBoundingClientRect().top;
       const bottom = chatTop === undefined ? normalBottom : Math.min(normalBottom, chatTop - gap);
       const next = {
-        maxHeight: Math.max(0, Math.floor(bottom - viewportTop - safeTop) - 1),
+        maxHeight: Math.max(0, Math.floor(bottom - viewportTop - safeTop) - 2),
         lift: Math.max(0, Math.round(triggerBounds.top - gap - bottom)),
       };
       setPanelSpace((previous) => previous.maxHeight === next.maxHeight && previous.lift === next.lift ? previous : next);
@@ -114,7 +113,7 @@ export default function SupportWidget({ onOpenChange }: { onOpenChange?: (open: 
   if (!enabled) return null;
 
   return (
-    <div ref={host} className="pointer-events-none fixed bottom-[max(1rem,env(safe-area-inset-bottom))] right-4 z-50 flex flex-col items-end gap-3" style={{ paddingTop: "env(safe-area-inset-top, 0px)" }} onKeyDown={handleKeyDown}>
+    <div ref={host} className="pointer-events-none fixed bottom-[max(1rem,env(safe-area-inset-bottom))] right-4 z-50 flex flex-col items-end gap-3" style={{ paddingTop: "max(1rem, env(safe-area-inset-top, 0px))" }} onKeyDown={handleKeyDown}>
       {hasOpened && (
         <div id="support-panel" hidden={!open} className="pointer-events-auto" style={panelStyle}>
           <FeedbackLoadErrorBoundary
@@ -126,9 +125,7 @@ export default function SupportWidget({ onOpenChange }: { onOpenChange?: (open: 
               </div>
             )}
           >
-            <Suspense fallback={<div role="status" className="w-[min(22.5rem,calc(100vw-2rem))] overflow-y-auto rounded-xl border border-border bg-card p-4 text-sm shadow-xl">{t("feedback.title")}</div>}>
-              {assistantEnabled ? <AssistantPanel t={t} lang={lang} open={open} onClose={close} feedbackEnabled={feedbackEnabled} identity={JSON.stringify([user?.id, user?.email, permissions])} query={queryAssistant} /> : <FeedbackForm t={t} lang={lang} open={open} onClose={close} />}
-            </Suspense>
+            {assistantEnabled ? <AssistantPanel t={t} lang={lang} open={open} onClose={close} feedbackEnabled={feedbackEnabled} identity={JSON.stringify([user?.id, user?.email, permissions])} query={queryAssistant} /> : <FeedbackForm t={t} lang={lang} open={open} onClose={close} />}
           </FeedbackLoadErrorBoundary>
         </div>
       )}
