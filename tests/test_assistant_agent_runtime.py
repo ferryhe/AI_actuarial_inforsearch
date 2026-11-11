@@ -2069,6 +2069,8 @@ def test_catalog_search_keeps_keyword_route_without_one_latest_collected_source(
         ("EN18", "recent", "collection_with_publication_display"),
         ("ZH18", "catalog_search", "publication_zh_wrapper"),
         ("EN17", "recent", "exclude_besides"),
+        ("EN18", "recent", "collection_fronted"),
+        ("EN18", "catalog_search", "publication_fronted"),
     ],
 )
 def test_recent_first_collection_uses_the_requested_seven_day_window(
@@ -2101,6 +2103,10 @@ def test_recent_first_collection_uses_the_requested_seven_day_window(
         message = "Which organizations besides SOA and CAS had material added to this site's collection over the last seven days?"
     elif case == "collection_with_publication_display":
         message = "Which SOA reports did the site first collect over the last seven days, with publication dates?"
+    elif case == "collection_fronted":
+        message = "Over the past seven days, which published SOA reports did the site first collect? Include their publication dates."
+    elif case == "publication_fronted":
+        message = "Over the past seven days, which SOA reports were published? Show when the site first collected each one."
     elif case == "collect_zh":
         message = "过去七天本站首次收集的 SOA 报告有哪些？"
     elif case == "publication_comma":
@@ -2131,13 +2137,16 @@ def test_recent_first_collection_uses_the_requested_seven_day_window(
         "publication_with_collection",
         "publication_comma",
         "publication_zh_wrapper",
+        "publication_fronted",
     }
     collection_dates = case in {
         "collection_dates_en",
         "collection_dates_zh",
         "collect_zh",
         "collection_with_publication_display",
+        "collection_fronted",
     }
+    split_dates = case in {"collection_with_publication_display", "collection_fronted"}
     multiple_exclusions = case in {"exclude_many", "exclude_besides"}
     include_longevity = collection_dates or case in {
         "source_only",
@@ -2150,7 +2159,7 @@ def test_recent_first_collection_uses_the_requested_seven_day_window(
     unknown_publication_url = "https://www.soa.org/unknown-publication.pdf"
     if case == "mixed":
         files = [(joint_url, "www.casact.org", "Joint CAS/SOA study", lower)]
-    elif case == "collection_with_publication_display":
+    elif split_dates:
         files = [
             (old_url, "www.soa.org", "Recent publication", "2026-10-30T12:00:00+00:00"),
             (longevity_url, "www.soa.org", "Longevity Risk Study", "2026-11-09T12:00:00+00:00"),
@@ -2200,8 +2209,11 @@ def test_recent_first_collection_uses_the_requested_seven_day_window(
             )
         for url, source, title, first_seen in files:
             published_time = "2026-10-01" if collection_dates else lower
-            if case == "collection_with_publication_display":
-                published_time = "2026-11-09" if url == old_url else "2026-10-30"
+            if split_dates:
+                if url == old_url:
+                    published_time = "2026-11-09"
+                elif case == "collection_with_publication_display":
+                    published_time = "2026-10-30"
             elif publication_case:
                 published_time = {
                     longevity_url: "2026-11-09",
@@ -2247,6 +2259,7 @@ def test_recent_first_collection_uses_the_requested_seven_day_window(
                 "publication_with_collection": "SOA",
                 "publication_comma": "SOA",
                 "publication_zh_wrapper": "SOA的文件",
+                "publication_fronted": "SOA",
                 "source_only": "Society of Actuaries",
                 "source_generic": "SOA research reports",
                 "source_files": "SOA files",

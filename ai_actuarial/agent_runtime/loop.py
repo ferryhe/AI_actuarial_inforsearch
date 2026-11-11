@@ -112,6 +112,20 @@ def _window_date_field(clause: str) -> str | None:
     period = _past_seven_days(clause)
     if period is None:
         return None
+    predicate_start = 0
+    if re.fullmatch(
+        r"\s*(?:(?:in|over|during|within|throughout)\s+(?:the\s+)?)?",
+        clause[: period.start()],
+        re.IGNORECASE,
+    ):
+        # After a fronted period, the question's subject may describe the reports.
+        question = re.match(
+            r"\s*,?\s*(?:which|what)\b.*?\b(?:did|do|does|was|were|has|have|had)\b",
+            clause[period.end() :],
+            re.IGNORECASE,
+        )
+        if question:
+            predicate_start = period.end() + question.end()
     date_words = re.finditer(
         rf"(?P<first_seen>{_COLLECTION_WORDING}|收录)"
         r"|(?P<published_time>发布|发表|出版|\b(?:published|publication|released)\b)",
@@ -130,6 +144,7 @@ def _window_date_field(clause: str) -> str | None:
                     re.IGNORECASE,
                 )
             ),
+            word.start() < predicate_start,
             max(period.start() - word.end(), word.start() - period.end(), 0),
         ),
         default=None,
