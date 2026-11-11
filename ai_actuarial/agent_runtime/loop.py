@@ -67,7 +67,7 @@ def _named_source(message: str, options: list[dict]) -> str | None:
 def _past_seven_days(message: str) -> bool:
     return bool(
         re.search(
-            r"(?:过去|最近|近)\s*(?:七|7)\s*天|(?:过去|最近)\s*一\s*周"
+            r"(?:过去|最近|近)\s*(?:(?:七|7)\s*天|一\s*周)"
             r"|\b(?:past|last) (?:seven|7) days\b|\bpast week\b",
             message,
             re.IGNORECASE,
@@ -89,21 +89,27 @@ def _explicit_first_collection(message: str) -> bool:
     )
 
 
-def _source_only_query(query: str, source: str, options: list[dict]) -> bool:
-    remainder = query.casefold()
+def _source_only_query(
+    query: str, source: str, options: list[dict], *, exact: bool = False
+) -> bool:
+    remainder = query.strip().casefold()
     for option in options:
         if option.get("source_key") != source:
             continue
         for name in (source, *(option.get("aliases") or ())):
             if isinstance(name, str) and name.strip():
                 name = name.strip().casefold()
+                if exact:
+                    if remainder == name:
+                        return True
+                    continue
                 pattern = (
                     re.escape(name)
                     if not name.isascii()
                     else rf"(?<![a-z0-9]){re.escape(name)}(?![a-z0-9])"
                 )
                 remainder = re.sub(pattern, " ", remainder)
-    return not re.sub(
+    return not exact and not re.sub(
         r"\b(?:latest|newest|recent|most|recently|newly|collected|added|ingested|research|reports?|studies|study)\b"
         r"|最新|最近|收录|资料|报告|文件|研究|\W",
         "",
@@ -639,8 +645,11 @@ def run(
                 return result("", "error", "INVALID_MODEL_RESPONSE")
             if not isinstance(action["skill_id"], str) or not isinstance(action["tool_id"], str):
                 return result("", "error", "INVALID_MODEL_RESPONSE")
+            dated_catalog = (
+                collection_window and action["tool_id"] == "resources_updates.catalog_search"
+            )
             if (
-                _latest_first_collected(message)
+                (dated_catalog or _latest_first_collected(message))
                 and action["tool_id"]
                 in {
                     "document_research.find_documents",
@@ -665,7 +674,9 @@ def run(
                     source = _named_source(message, options)
                 except Exception:
                     source = None
-                if source and _source_only_query(action["args"]["query"], source, options):
+                if source and _source_only_query(
+                    action["args"]["query"], source, options, exact=dated_catalog
+                ):
                     action = {
                         "action": "call",
                         "skill_id": "resources_updates",

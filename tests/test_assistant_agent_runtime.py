@@ -2052,6 +2052,9 @@ def test_catalog_search_keeps_keyword_route_without_one_latest_collected_source(
         ("EN18", "catalog_search", "mixed"),
         ("EN18", "catalog_search", "publication"),
         ("ZH18", "recent", "publication"),
+        ("ZH18", "recent", "near_week"),
+        ("EN18", "catalog_search", "source_only"),
+        ("EN18", "catalog_search", "topic"),
     ],
 )
 def test_recent_first_collection_uses_the_requested_seven_day_window(
@@ -2068,9 +2071,11 @@ def test_recent_first_collection_uses_the_requested_seven_day_window(
     )["questions"]
     question = next(row for row in questions if row["id"] == question_id)
     message = question["question"]
-    if case == "publication":
+    if case == "near_week":
+        message = "近一周首次收录了哪些 SOA 文件？"
+    elif case == "publication":
         message = (
-            "过去七天发布了哪些 SOA 报告？"
+            "近一周发布了哪些 SOA 文件？"
             if question["language"] == "zh"
             else "Which SOA reports were published in the past seven days?"
         )
@@ -2088,8 +2093,13 @@ def test_recent_first_collection_uses_the_requested_seven_day_window(
     files = [(old_url, "www.soa.org", "Fourteen-day-old SOA report", "2026-10-27T12:00:00+00:00")]
     soa_samples = [f"https://www.soa.org/in-window-{i}.pdf" for i in range(3)]
     joint_url = "https://www.casact.org/joint-study.pdf"
+    longevity_url = "https://www.soa.org/longevity-risk.pdf"
     if case == "mixed":
         files = [(joint_url, "www.casact.org", "Joint CAS/SOA study", lower)]
+    elif case in {"source_only", "topic"}:
+        files.append((longevity_url, "www.soa.org", "Longevity Risk Study", lower))
+        if case == "topic":
+            files.append(("https://www.soa.org/pricing.pdf", "www.soa.org", "Pricing Study", lower))
     elif tool == "recent" and case == "collection":
         files.extend(
             [
@@ -2142,8 +2152,16 @@ def test_recent_first_collection_uses_the_requested_seven_day_window(
     prompts = []
     args = {"source": "soa"} if named_source and case != "mixed" else {}
     if tool == "catalog_search":
-        args = {"query": "SOA"}
-    elif case == "publication":
+        args = {
+            "query": {
+                "collection": "Fourteen-day-old SOA",
+                "mixed": "Joint CAS/SOA",
+                "publication": "SOA",
+                "source_only": "Society of Actuaries",
+                "topic": "Longevity Risk",
+            }[case]
+        }
+    elif case in {"publication", "near_week"}:
         args["window_days"] = 7
 
     def model(prompt, _remaining):
@@ -2170,20 +2188,26 @@ def test_recent_first_collection_uses_the_requested_seven_day_window(
     )
     assert outcome.runtime.kind == "finish"
     observation = prompts[-1]["observations"][0]["data"]
-    assert [trace.tool_id for trace in outcome.runtime.trace] == [f"resources_updates.{tool}"]
+    trace_ids = [trace.tool_id for trace in outcome.runtime.trace]
     if case == "publication":
+        assert trace_ids == [f"resources_updates.{tool}"]
         assert "first_seen_from" not in observation and "first_seen_before" not in observation
         assert [citation.file_id for citation in outcome.response.citations] == [old_url]
         assert old_url in outcome.response.answer
         return
-    assert observation["total"] == (0 if named_source else 4)
+    expected_files = [] if named_source else list(reversed(soa_samples))
+    if case in {"source_only", "topic"}:
+        expected_files = [longevity_url]
+    assert observation["total"] == (4 if not named_source else len(expected_files))
+    expected_tool = "recent" if case == "source_only" else tool
+    assert trace_ids == [f"resources_updates.{expected_tool}"]
     assert observation["first_seen_from"] == lower
     assert observation["first_seen_before"] == upper
     if named_source:
         assert observation["source_filter"] == "soa"
-    assert [citation.file_id for citation in outcome.response.citations] == (
-        [] if named_source else list(reversed(soa_samples))
-    )
+    assert [citation.file_id for citation in outcome.response.citations] == expected_files
+    if case in {"source_only", "topic"}:
+        assert "Longevity Risk Study" in outcome.response.answer
     assert old_url not in outcome.response.answer
     assert joint_url not in outcome.response.answer
     assert upper_url not in outcome.response.answer
