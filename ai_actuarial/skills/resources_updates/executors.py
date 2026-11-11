@@ -1,5 +1,5 @@
 import hashlib
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
 
 from ai_actuarial.agent_runtime import ToolResult
@@ -32,12 +32,20 @@ def sources(facade, _args):
 
 def recent(facade, args):
     source = args.get("source") or ""
+    window = {}
+    if args.get("window_days") == 7:
+        now = datetime.now(timezone.utc)
+        window = {
+            "first_seen_from": (now - timedelta(days=7)).isoformat(),
+            "first_seen_before": now.isoformat(),
+        }
     rows, total = facade.storage.query_files_with_catalog(
         limit=3,
         order_by="first_seen",
         order_dir="desc",
         source=source,
         exclude_urls=SOURCE_PORTAL_URLS,
+        **window,
     )
     items = [
         {
@@ -58,8 +66,9 @@ def recent(facade, args):
             "source_filter": source,
             "date_meaning": "first_seen is system first collection; content revisions are not recorded",
             "action": "/database",
+            **window,
         },
-        (_id("recent" + source + str(total) + str(items)),),
+        (_id("recent" + source + str(total) + str(items) + (str(window) if window else "")),),
     )
 
 
@@ -207,6 +216,16 @@ def grounded_answer(tool_id, data, locale):
         ]
         if source:
             lines[0] += f"（{source}）" if zh else f" Source: {source}."
+        if (
+            recent
+            and (start := data.get("first_seen_from"))
+            and (end := data.get("first_seen_before"))
+        ):
+            lines.append(
+                f"过去七天（UTC）：自 {start}（含）至 {end}（不含）。"
+                if zh
+                else f"Past seven days (UTC): from {start} (inclusive) to {end} (exclusive)."
+            )
         for row in data.get("files", []):
             lines.append(
                 f"- {row.get('title') or 'Untitled'} — {row.get('source') or 'Unknown source'}"

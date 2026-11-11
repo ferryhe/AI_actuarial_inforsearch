@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field
 
 from ai_actuarial.agent_runtime import Registry
@@ -11,6 +13,7 @@ class EmptyArgs(BaseModel):
 class RecentArgs(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     source: str | None = Field(default=None, max_length=128)
+    window_days: Literal[7] | None = None
 
 
 class CatalogArgs(BaseModel):

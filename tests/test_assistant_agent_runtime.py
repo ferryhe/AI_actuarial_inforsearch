@@ -8,6 +8,7 @@ import subprocess
 import sys
 import time
 from dataclasses import replace
+from datetime import datetime
 from pathlib import Path
 from threading import Event
 from types import SimpleNamespace
@@ -1981,9 +1982,10 @@ def test_latest_source_uses_recent_catalog_from_finder_or_catalog_search(
         locale="zh",
         model=model,
     )
-    assert calls[0] == ("recent", {"source": source.lower()})
+    assert calls[0] == ("recent", {"source": source.lower(), "window_days": None})
     assert calls[1][0] == "catalog"
     assert calls[1][1]["source"] == source.lower()
+    assert "first_seen_from" not in calls[1][1] and "first_seen_before" not in calls[1][1]
     assert (calls[1][1]["order_by"], calls[1][1]["order_dir"]) == ("first_seen", "desc")
     assert outcome.runtime.availability == "available"
     assert f"— {source}" in outcome.response.answer
@@ -2034,6 +2036,116 @@ def test_catalog_search_keeps_keyword_route_without_one_latest_collected_source(
     )
     assert used == [("resources_updates.catalog_search", {"query": "SOA"})]
     assert outcome.kind == "finish"
+
+
+@pytest.mark.parametrize("question_id", ["ZH17", "ZH18", "EN17", "EN18"])
+def test_recent_first_collection_uses_the_requested_seven_day_window(
+    host_fixture, tmp_path, question_id
+):
+    from ai_actuarial.skills.resources_updates import executors as resource_executors
+    from ai_actuarial.source_registry import install_registry
+    from ai_actuarial.storage import Storage
+    from tests.postgres_helpers import postgres_url_for_path
+
+    root = Path(__file__).resolve().parents[1]
+    questions = json.loads(
+        (root / "tests/fixtures/assistant_uat_questions.json").read_text(encoding="utf-8")
+    )["questions"]
+    question = next(row for row in questions if row["id"] == question_id)
+    named_source = question_id.endswith("18")
+    upper = "2026-11-10T12:00:00+00:00"
+    lower = "2026-11-03T12:00:00+00:00"
+    now = datetime.fromisoformat(upper)
+    database = postgres_url_for_path(tmp_path / "recent.db")
+    recent_url = "https://www.casact.org/within-window.pdf"
+    old_url = "https://www.soa.org/old-report.pdf"
+    upper_url = "https://www.soa.org/at-upper-bound.pdf"
+    storage = Storage(database)
+    try:
+        with storage.transaction():
+            install_registry(
+                storage._conn,
+                json.loads((root / "config/source_registry_seed.json").read_text(encoding="utf-8")),
+                target="test",
+                apply=True,
+            )
+        for url, source, title, first_seen in (
+            (recent_url, "www.casact.org", "Included CAS report", lower),
+            (old_url, "www.soa.org", "Fourteen-day-old SOA report", "2026-10-27T12:00:00+00:00"),
+            (upper_url, "www.soa.org", "Excluded SOA upper boundary", upper),
+        ):
+            filename = url.rsplit("/", 1)[-1]
+            storage.insert_file(
+                url=url,
+                sha256=filename,
+                title=title,
+                source_site=source,
+                source_page_url=f"https://{source}/",
+                original_filename=filename,
+                local_path=str(tmp_path / filename),
+                bytes=1,
+                content_type="application/pdf",
+            )
+            storage._conn.execute(
+                "UPDATE files SET first_seen = ?, last_seen = ?, published_time = ? WHERE url = ?",
+                (first_seen, upper, lower, url),
+            )
+        storage._conn.commit()
+    finally:
+        storage.close()
+
+    state = host_fixture
+    state.monkeypatch.setattr(host.chat, "Storage", lambda _database: Storage(database))
+    state.monkeypatch.setattr(resource_executors, "datetime", SimpleNamespace(now=lambda _: now))
+    auth = AuthContext(
+        {"subject": "reader"}, frozenset({"chat.query", "catalog.read", "files.read"})
+    )
+    state.monkeypatch.setattr(host.deps, "get_auth_context", lambda request: auth)
+    prompts = []
+
+    def model(prompt, _remaining):
+        prompts.append(json.loads(prompt))
+        if len(prompts) == 1:
+            return action(
+                action="call",
+                skill_id="resources_updates",
+                tool_id="resources_updates.recent",
+                args={"source": "soa"} if named_source else {},
+            )
+        return action(
+            action="finish",
+            answer="This draft is replaced by the grounded answer.",
+            evidence_ids=prompts[-1]["observations"][0]["evidence_ids"],
+        )
+
+    outcome = state.feature.query(
+        request=state.request,
+        auth=auth,
+        message=question["question"],
+        locale=question["language"],
+        model=model,
+    )
+    assert outcome.runtime.kind == "finish"
+    observation = prompts[-1]["observations"][0]["data"]
+    assert observation["total"] == (0 if named_source else 1)
+    assert observation["first_seen_from"] == lower
+    assert observation["first_seen_before"] == upper
+    assert [citation.file_id for citation in outcome.response.citations] == (
+        [] if named_source else [recent_url]
+    )
+    assert old_url not in outcome.response.answer
+    assert upper_url not in outcome.response.answer
+    assert lower in outcome.response.answer and upper in outcome.response.answer
+    assert (recent_url in outcome.response.answer) is not named_source
+    recent_tool = next(
+        tool
+        for skill in json.loads(prompts[0]["prompt"])["skills"]
+        for tool in skill["tools"]
+        if tool["tool_id"] == "resources_updates.recent"
+    )
+    assert {"const": 7, "type": "integer"} in (
+        recent_tool["arguments"]["properties"]["window_days"]["anyOf"]
+    )
 
 
 def test_latest_source_topic_keeps_catalog_search_query(host_fixture):

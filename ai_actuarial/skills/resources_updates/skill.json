@@ -17,7 +17,7 @@
     },
     {
       "tool_id": "resources_updates.recent",
-      "description": "List recently first-collected public files, optionally filtered by source organization, sorted by system first_seen. This is not content revision.",
+      "description": "List public files by system first_seen. Filter by source organization if named. Set window_days to 7 when the question asks for the past seven days; otherwise omit it for the latest files.",
       "executor": "resources_updates.recent",
       "arguments_model": "RecentArgs",
       "required_scopes": [
