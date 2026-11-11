@@ -7330,8 +7330,14 @@ Current branch head 4f030be has uncommitted small catalog/Storage variable defau
 - Five exact Host cases failed on the reviewed commit. The repair uses the first-collection action in the seven-day imperative with an omitted relative pronoun, accepts source-only phrases with English articles, and preserves `Study` in the exact topical title. Separate controls keep generic `study` and `studies` eligible for source-only routing.
 - All 427 related tests and all 45 date and source cases passed on isolated PostgreSQL 16. Six Compose checks, Chromium UI and same-origin API health, file and symbol checks, Black, isort, Ruff, and diff checks passed. Temporary containers, networks, volumes, and ports were cleaned up. The evidence ledger is `reports/issue-473-480-20261107/issue-480/review-e360-worker-20261111/evidence-ledger.jsonl`, SHA-256 `20024439ad05a078ca15f97465387ff588a2cbb070926856244b9fb381fd89e0`.
 
-## 2026-11-11 #480 final review follow-up on f5615df
+## 2026-11-11 #480 diagnostic follow-up on f5615df
 
-- The final independent review confirmed AC2 errors in the runtime seven-day window and the separate publication-date display. The repair preserves a valid model-provided seven-day window when the question names the period, honors an explicit publication filter, and treats a secondary comma-led date question as display. Three exact Host regressions reproduced the failures. The publication and no-window controls passed.
+- The over-limit diagnostic report confirmed AC2 errors in the runtime seven-day window and the separate publication-date display. The repair preserves a valid model-provided seven-day window when the question names the period, honors an explicit publication filter, and treats a secondary comma-led date question as display. Three exact Host regressions reproduced the failures. The publication and no-window controls passed.
 - All 432 related tests and all 50 date and source cases passed on isolated PostgreSQL 16. Six Compose checks, Chromium UI and same-origin API health, file and symbol checks, Black, isort, Ruff, and diff checks passed. Temporary containers, networks, volumes, and ports were cleaned up.
 - The controller released the final repair under the final-review-limit exception. Its status is validated and unreviewed. TypeSafe/Jev was unavailable in this session. The evidence ledger is `reports/issue-473-480-20261107/issue-480/review-f561-worker-20261111/evidence-ledger.jsonl`, SHA-256 `b3752891f18c3e236e00f9c2524f287c9e9d4339dcb1bdcae5c73fb5c719defc`.
+
+## 2026-11-11 #480 formal review count correction
+
+- The formal audit started at `review_count=5` with `max_reviews=15`. The report on `d8a1b76e` was formal Review 15. TypeSafe Jev 1.14.0 accepted narrow repairs for its AC2 findings R9 and R10. The decision SHA-256 is `7d1714b25999cb683ff0e92d7f75e4bbc15296314bda186f2dff4a91ee030b82`.
+- The later reports on `f37599da`, `3a9db1eb`, `e360991a`, and `f5615df6` are retained in chronological order as over-limit diagnostics. They do not increase the formal count or supply a formal reviewer PASS. The formal count stays at 15.
+- `dfedaea` is the final tested repair under the review-limit exception, with status **validated and unreviewed**. TypeSafe/Jev was unavailable for new ad hoc adjudication of over-limit evidence in this session. No new Judge PASS is claimed.
