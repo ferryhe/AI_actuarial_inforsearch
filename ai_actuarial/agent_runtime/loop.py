@@ -184,10 +184,15 @@ def _catalog_topic(
                 remainder, matches = re.subn(rf"(?:\bfrom\s+|来自\s*)?{pattern}", " ", remainder)
                 if matches:
                     suffix = re.search(
-                        rf"\s+(?:\b{resource}\s+)?\bfrom\s+{pattern}\s*$", query, re.IGNORECASE
+                        rf"\s+(?:\b{resource}\s+)?\bfrom\s+{pattern}\s*$", topic, re.IGNORECASE
                     )
                     if suffix:
-                        topic = query[: suffix.start()].rstrip()
+                        topic = topic[: suffix.start()].rstrip()
+                    prefixed_topic = re.fullmatch(
+                        rf"\s*{pattern}\s+(.+?)(?:\s+{resource})?\s*", topic, re.IGNORECASE
+                    )
+                    if prefixed_topic:
+                        topic = prefixed_topic[1]
                 named = named or bool(matches)
     if require_source and not named:
         return None

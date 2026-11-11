@@ -2076,6 +2076,7 @@ def test_catalog_search_keeps_keyword_route_without_one_latest_collected_source(
         ("EN18", "catalog_search", "source_from"),
         ("ZH18", "catalog_search", "source_from"),
         ("EN18", "catalog_search", "topic_from"),
+        ("EN18", "catalog_search", "topic_prefix"),
         ("EN18", "recent", "collection_passive"),
         ("EN18", "recent", "collection_relative"),
         ("ZH18", "recent", "collection_topic_zh"),
@@ -2096,6 +2097,7 @@ def test_recent_first_collection_uses_the_requested_seven_day_window(
     )["questions"]
     question = next(row for row in questions if row["id"] == question_id)
     message = question["question"]
+    source_topic = case in {"topic_from", "topic_prefix"}
     collection_variants = {
         "collection_passive": "Which SOA reports were first collected by this site in the last seven days, with publication dates?",
         "collection_relative": "Over the past seven days, which SOA reports that were published last month did this site first collect?",
@@ -2103,7 +2105,7 @@ def test_recent_first_collection_uses_the_requested_seven_day_window(
     }
     if case in collection_variants:
         message = collection_variants[case]
-    elif case == "topic_from":
+    elif source_topic:
         message = "Which SOA longevity risk reports were first collected in the past seven days?"
     elif case == "near_week":
         message = "近一周首次收录了哪些 SOA 文件？"
@@ -2188,7 +2190,7 @@ def test_recent_first_collection_uses_the_requested_seven_day_window(
     )
     multiple_exclusions = case in {"exclude_many", "exclude_besides"}
     source_only = case in {"source_only", "source_generic", "source_files", "source_from"}
-    include_longevity = collection_dates or source_only or case in {"topic", "topic_from"}
+    include_longevity = collection_dates or source_only or case == "topic" or source_topic
     longevity_title = "Longevity Risk Study"
     pricing_url = "https://www.soa.org/pricing.pdf"
     cia_url = "https://www.cia-ica.ca/in-window.pdf"
@@ -2211,9 +2213,9 @@ def test_recent_first_collection_uses_the_requested_seven_day_window(
         ]
     elif include_longevity:
         files.append((longevity_url, "www.soa.org", longevity_title, lower))
-        if case in {"topic", "topic_from"}:
+        if case == "topic" or source_topic:
             files.append((pricing_url, "www.soa.org", "Pricing Study", lower))
-        if case == "topic_from":
+        if source_topic:
             files.extend(
                 [
                     (joint_url, "www.casact.org", longevity_title, lower),
@@ -2327,6 +2329,7 @@ def test_recent_first_collection_uses_the_requested_seven_day_window(
                 ),
                 "topic": "Longevity Risk",
                 "topic_from": "Longevity Risk reports from SOA",
+                "topic_prefix": "SOA longevity risk reports",
             }[case]
         }
     elif publication_case or collection_dates or case == "near_week":
