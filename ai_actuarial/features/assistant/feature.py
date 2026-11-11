@@ -591,7 +591,7 @@ class AssistantFeature:
                 ),
                 recent_questions=recent_questions or [],
                 resolve_selected_document=resolve_selected_document,
-                source_options=lambda: storage.get_source_options(),
+                source_options=lambda: storage.get_source_options(include_empty=True),
             )
             if runtime.verified_quote is not None:
                 evidence_id = runtime.evidence_ids[0]

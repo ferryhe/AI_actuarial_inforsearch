@@ -83,8 +83,9 @@ def recent(facade, args):
 
 def catalog_search(facade, args):
     window = _first_seen_window(args)
+    source = args.get("source") or ""
     rows, total = facade.storage.query_files_with_catalog(
-        query=args["query"], limit=3, exclude_urls=SOURCE_PORTAL_URLS, **window
+        query=args["query"], source=source, limit=3, exclude_urls=SOURCE_PORTAL_URLS, **window
     )
     items = [
         {
@@ -105,9 +106,14 @@ def catalog_search(facade, args):
             "total": total,
             "action": "/database",
             "note": "Catalog metadata is not body evidence; content revision history is not recorded.",
+            **({"source_filter": source} if source else {}),
             **window,
         },
-        (_id("catalog" + str(items) + (str(window) if window else "")),) if items or window else (),
+        (
+            (_id("catalog" + source + str(items) + (str(window) if window else "")),)
+            if items or window
+            else ()
+        ),
     )
 
 
@@ -209,7 +215,7 @@ def grounded_answer(tool_id, data, locale):
         return "\n".join(lines)
     if tool_id in {"resources_updates.recent", "resources_updates.catalog_search"}:
         recent = tool_id.endswith("recent")
-        source = data.get("source_filter") if recent else None
+        source = data.get("source_filter")
         lines = [
             (
                 (

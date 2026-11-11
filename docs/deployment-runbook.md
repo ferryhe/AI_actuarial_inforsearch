@@ -37,31 +37,36 @@ docker compose -f docker-compose.yml up
 docker compose -f docker-compose.yml up --build -d
 ```
 
-### Stop Services
+### Stop Development Services
 
 ```bash
 # Stop containers (preserves volumes)
-docker compose down
+docker compose -f docker-compose.yml down
 
 # Stop and remove volumes (destroys data)
-docker compose down -v
+docker compose -f docker-compose.yml down -v
 ```
 
-### Inspect & Debug
+### Inspect & Debug Development Services
 
 ```bash
 # View running containers
-docker compose ps
+docker compose -f docker-compose.yml ps
 
 # View logs
-docker compose logs -f
+docker compose -f docker-compose.yml logs -f
 
 # Follow logs for a specific service
-docker compose logs -f api
+docker compose -f docker-compose.yml logs -f api
 
 # Open a shell in a running container
-docker compose exec api sh
+docker compose -f docker-compose.yml exec api sh
+
+# Validate the configuration
+docker compose -f docker-compose.yml config --quiet
 ```
+
+For production, use both Compose files as in the production quick start.
 
 ### Database Operations
 
@@ -208,8 +213,11 @@ sites:
 ### Container won't start
 
 ```bash
-# Check logs for errors
-docker compose logs api
+# Check development logs for errors
+docker compose -f docker-compose.yml logs api
+
+# Check production logs for errors
+docker compose -f docker-compose.yml -f docker-compose.override.yml logs api
 
 # Verify .env file exists and is populated
 cat .env

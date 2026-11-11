@@ -2803,6 +2803,7 @@ class Storage:
         first_seen_from: str | None = None,
         first_seen_before: str | None = None,
         source: str = "",
+        include_empty: bool = False,
     ) -> list[dict]:
         if self._schema_only:
             return []
@@ -2826,6 +2827,12 @@ class Storage:
         """,
             (*excluded, *params),
         ).fetchall()
+        if include_empty:
+            counts = dict(rows)
+            keys = self._conn.execute(
+                "SELECT source_key FROM canonical_sources ORDER BY source_key"
+            ).fetchall()
+            rows = [(row[0], counts.get(row[0], 0)) for row in keys]
         options = []
         for row in rows:
             aliases = self._conn.execute(

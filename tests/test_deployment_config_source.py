@@ -58,6 +58,16 @@ def test_documented_production_compose_start_prepares_postgres_network(path, cou
         )
 
 
+def test_development_compose_examples_use_the_base_file():
+    runbook = (ROOT / "docs/deployment-runbook.md").read_text(encoding="utf-8")
+    examples = runbook.split("## Docker Compose Commands", 1)[1].split(
+        "### Database Operations", 1
+    )[0]
+    commands = re.findall(r"^docker compose .+$", examples, re.MULTILINE)
+    assert all(cmd.startswith("docker compose -f docker-compose.yml ") for cmd in commands)
+    assert {cmd.split()[4] for cmd in commands} >= {"up", "down", "ps", "logs", "exec", "config"}
+
+
 def test_first_production_update_bootstraps_postgres_network_from_old_checkout():
     runbook = (ROOT / "docs/deployment-runbook.md").read_text(encoding="utf-8")
     update = (

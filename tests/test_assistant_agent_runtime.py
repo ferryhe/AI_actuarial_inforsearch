@@ -2039,17 +2039,23 @@ def test_catalog_search_keeps_keyword_route_without_one_latest_collected_source(
 
 
 @pytest.mark.parametrize(
-    "question_id,tool",
+    "question_id,tool,case",
     [
-        ("ZH17", "recent"),
-        ("ZH18", "recent"),
-        ("EN17", "recent"),
-        ("EN18", "recent"),
-        ("ZH18", "catalog_search"),
+        ("ZH17", "recent", "collection"),
+        ("ZH18", "recent", "collection"),
+        ("EN17", "recent", "collection"),
+        ("EN18", "recent", "collection"),
+        ("ZH18", "catalog_search", "collection"),
+        ("ZH18", "recent", "mixed"),
+        ("EN18", "recent", "mixed"),
+        ("ZH18", "catalog_search", "mixed"),
+        ("EN18", "catalog_search", "mixed"),
+        ("EN18", "catalog_search", "publication"),
+        ("ZH18", "recent", "publication"),
     ],
 )
 def test_recent_first_collection_uses_the_requested_seven_day_window(
-    host_fixture, tmp_path, question_id, tool
+    host_fixture, tmp_path, question_id, tool, case
 ):
     from ai_actuarial.skills.resources_updates import executors as resource_executors
     from ai_actuarial.source_registry import install_registry
@@ -2061,6 +2067,13 @@ def test_recent_first_collection_uses_the_requested_seven_day_window(
         (root / "tests/fixtures/assistant_uat_questions.json").read_text(encoding="utf-8")
     )["questions"]
     question = next(row for row in questions if row["id"] == question_id)
+    message = question["question"]
+    if case == "publication":
+        message = (
+            "过去七天发布了哪些 SOA 报告？"
+            if question["language"] == "zh"
+            else "Which SOA reports were published in the past seven days?"
+        )
     named_source = question_id.endswith("18")
     upper = "2026-11-10T12:00:00+00:00"
     lower = "2026-11-03T12:00:00+00:00"
@@ -2074,7 +2087,10 @@ def test_recent_first_collection_uses_the_requested_seven_day_window(
     )
     files = [(old_url, "www.soa.org", "Fourteen-day-old SOA report", "2026-10-27T12:00:00+00:00")]
     soa_samples = [f"https://www.soa.org/in-window-{i}.pdf" for i in range(3)]
-    if tool == "recent":
+    joint_url = "https://www.casact.org/joint-study.pdf"
+    if case == "mixed":
+        files = [(joint_url, "www.casact.org", "Joint CAS/SOA study", lower)]
+    elif tool == "recent" and case == "collection":
         files.extend(
             [
                 (recent_url, "www.casact.org", "Included CAS report", lower),
@@ -2124,9 +2140,11 @@ def test_recent_first_collection_uses_the_requested_seven_day_window(
     )
     state.monkeypatch.setattr(host.deps, "get_auth_context", lambda request: auth)
     prompts = []
-    args = {"source": "soa"} if named_source else {}
+    args = {"source": "soa"} if named_source and case != "mixed" else {}
     if tool == "catalog_search":
         args = {"query": "SOA"}
+    elif case == "publication":
+        args["window_days"] = 7
 
     def model(prompt, _remaining):
         prompts.append(json.loads(prompt))
@@ -2146,20 +2164,28 @@ def test_recent_first_collection_uses_the_requested_seven_day_window(
     outcome = state.feature.query(
         request=state.request,
         auth=auth,
-        message=question["question"],
+        message=message,
         locale=question["language"],
         model=model,
     )
     assert outcome.runtime.kind == "finish"
     observation = prompts[-1]["observations"][0]["data"]
+    assert [trace.tool_id for trace in outcome.runtime.trace] == [f"resources_updates.{tool}"]
+    if case == "publication":
+        assert "first_seen_from" not in observation and "first_seen_before" not in observation
+        assert [citation.file_id for citation in outcome.response.citations] == [old_url]
+        assert old_url in outcome.response.answer
+        return
     assert observation["total"] == (0 if named_source else 4)
     assert observation["first_seen_from"] == lower
     assert observation["first_seen_before"] == upper
-    assert [trace.tool_id for trace in outcome.runtime.trace] == [f"resources_updates.{tool}"]
+    if named_source:
+        assert observation["source_filter"] == "soa"
     assert [citation.file_id for citation in outcome.response.citations] == (
         [] if named_source else list(reversed(soa_samples))
     )
     assert old_url not in outcome.response.answer
+    assert joint_url not in outcome.response.answer
     assert upper_url not in outcome.response.answer
     assert lower in outcome.response.answer and upper in outcome.response.answer
     assert recent_url not in outcome.response.answer
