@@ -13,8 +13,15 @@ docker compose up
 # Production
 export CONFIG_PATH=/var/lib/aiinforsearch/config/sites.yaml
 export RUNTIME_CONFIG_DIR=/var/lib/aiinforsearch/config
+docker network inspect aiinforsearch-pg-net >/dev/null 2>&1 ||
+  docker network create --driver bridge aiinforsearch-pg-net
 docker compose -f docker-compose.yml -f docker-compose.override.yml up -d
 ```
+
+Use the same network prerequisite on a fresh recovery host, including when
+`DATABASE_URL` points to a PostgreSQL server outside Docker. If the database
+is a Docker container, ensure it is attached to that network and reachable
+at the hostname in `DATABASE_URL` before starting the API.
 
 ## Docker Compose Commands
 
