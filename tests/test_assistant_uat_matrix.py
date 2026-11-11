@@ -84,6 +84,28 @@ def test_assistant_uat_expectations_reference_current_tools_and_guide_sections()
                 assert "{#" + target.removeprefix("guide:") + "}" in guides[row["language"]]
 
 
+def test_assistant_uat_weekly_guide_scores_only_available_entries():
+    matrix = json.loads((FIXTURES / "assistant_uat_questions.json").read_text(encoding="utf-8"))
+    guide = matrix["expectations"]["weekly_guide"]
+    tasks = {task["id"]: task for task in matrix["tasks"]}
+
+    assert tasks["T03"]["scenario"] == "published_weekly"
+    assert tasks["T03"]["turns"][0]["expect"] == "weekly_guide"
+    assert tasks["T11"]["scenario"] == "no_weekly_snapshot"
+    assert tasks["T11"]["turns"][1]["expect"] == "weekly_guide"
+    assert tasks["T11"]["turns"][1]["also_expect"] == "weekly_data"
+
+    assert (
+        "If the Dashboard shows the weekly card, also describe Dashboard → View all → Weekly."
+        in guide["facts"]
+    )
+    assert "A Dashboard View all entry when the weekly card is absent" in guide["forbidden"]
+    assert "If no complete period has been published, say so." in guide["facts"]
+    assert "older period" in guide["facts"]
+    assert "/weekly" in guide["action"]
+    assert "do not state zero additions" in tasks["T11"]["turns"][1]["require"]
+
+
 def test_assistant_uat_t12_user_retry_is_a_separate_task_turn():
     matrix = json.loads((FIXTURES / "assistant_uat_questions.json").read_text(encoding="utf-8"))
     task = next(task for task in matrix["tasks"] if task["id"] == "T12")

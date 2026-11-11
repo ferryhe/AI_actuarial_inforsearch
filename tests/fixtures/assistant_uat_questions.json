@@ -35,8 +35,8 @@
     "weekly_guide": {
       "tools": ["usage_navigation.guide"],
       "target": "guide:weekly-reports",
-      "facts": "Dashboard → View all → Weekly; latest complete published period, older period selection, and opening a listed file for its detail and available source/preview/Markdown.",
-      "forbidden": "An invented menu, unfinished current week presented as published, or a count without a snapshot.",
+      "facts": "If the Dashboard shows the weekly card, also describe Dashboard → View all → Weekly. With published periods, explain how to find the latest complete period, select an older period, and open a listed file for its detail and available source/preview/Markdown. If no complete period has been published, say so.",
+      "forbidden": "A Dashboard View all entry when the weekly card is absent, an invented menu, an unfinished current week presented as published, or a count without a snapshot.",
       "action": "Working /weekly link and the localized weekly-reports guide citation.",
       "date": "Weekly additions are first collections within the published snapshot period."
     },
