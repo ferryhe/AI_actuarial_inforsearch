@@ -125,7 +125,9 @@ export CADDY_APP_REDIRECT_ORIGIN=https://www.app.example.test
 
 ## Update Helper
 
-The update helper lives at `scripts/deploy_update.sh`.
+The update helper lives at `scripts/deploy_update.sh`. For the first upgrade from
+an older checkout, follow the [network bootstrap in the deployment runbook](../deployment-runbook.md#updating-the-service)
+before invoking the helper with any of these options.
 
 ```bash
 APP_SERVICE_NAME=api bash scripts/deploy_update.sh

@@ -76,6 +76,18 @@ def _exclude_urls(urls: Iterable[str], column: str) -> tuple[str, tuple[str, ...
     return f"{column} NOT IN ({', '.join('?' for _ in values)})", values
 
 
+def _first_seen_filters(column: str, start: str | None, end: str | None):
+    filters = []
+    params = []
+    for operator, value in ((">=", start), ("<", end)):
+        if value is not None:
+            filters.append(
+                f"{column} IS NOT NULL AND ai_julianday({column}) {operator} ai_julianday(?)"
+            )
+            params.append(value)
+    return filters, params
+
+
 class Storage:
     AGENTIC_READY_RESERVED_ATTEMPT_DISPOSITIONS = frozenset({"superseded_generation"})
     AGENTIC_READY_FUTURE_EXECUTION_POLICY = {
@@ -2784,19 +2796,35 @@ class Storage:
     def get_sources_count(self, *, exclude_urls: Iterable[str] = ()) -> int:
         return len(self.get_source_options(exclude_urls=exclude_urls))
 
-    def get_source_options(self, *, exclude_urls: Iterable[str] = ()) -> list[dict]:
+    def get_source_options(
+        self,
+        *,
+        exclude_urls: Iterable[str] = (),
+        first_seen_from: str | None = None,
+        first_seen_before: str | None = None,
+        source: str = "",
+    ) -> list[dict]:
         if self._schema_only:
             return []
         exclusion, excluded = _exclude_urls(exclude_urls, "f.url")
         where = "f.local_path IS NOT NULL AND f.local_path != '' AND f.deleted_at IS NULL"
         where += f" AND {exclusion}" if exclusion else ""
+        filters, params = _first_seen_filters("f.first_seen", first_seen_from, first_seen_before)
+        if source:
+            key, _ = resolve_bookmark(self._conn, source)
+            if not key:
+                return []
+            filters.append(f"{source_sql()} = ?")
+            params.append(key)
+        if filters:
+            where += " AND " + " AND ".join(filters)
         rows = self._conn.execute(
             f"""
             SELECT {source_sql()} AS canonical_key, COUNT(*) FROM files f
             WHERE {where}
             GROUP BY canonical_key ORDER BY canonical_key
         """,
-            excluded,
+            (*excluded, *params),
         ).fetchall()
         options = []
         for row in rows:
@@ -3236,16 +3264,11 @@ class Storage:
                 )
                 params.extend([category, f"{category};%", f"%; {category}", f"%; {category};%"])
 
-        if first_seen_from is not None:
-            filters.append(
-                f"{snapshot_first_seen} IS NOT NULL AND ai_julianday({snapshot_first_seen}) >= ai_julianday(?)"
-            )
-            params.append(first_seen_from)
-        if first_seen_before is not None:
-            filters.append(
-                f"{snapshot_first_seen} IS NOT NULL AND ai_julianday({snapshot_first_seen}) < ai_julianday(?)"
-            )
-            params.append(first_seen_before)
+        window_filters, window_params = _first_seen_filters(
+            snapshot_first_seen, first_seen_from, first_seen_before
+        )
+        filters.extend(window_filters)
+        params.extend(window_params)
 
         # Avoid empty WHERE which causes SQLite "incomplete input"
         where_clause = " AND ".join(filters) if filters else "1=1"

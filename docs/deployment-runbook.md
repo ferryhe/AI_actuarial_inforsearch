@@ -588,12 +588,19 @@ PostgreSQL URL in the private runtime environment; `.dockerignore` excludes
 nested environment files, SQLite migration sources, and runtime/work directories
 from image builds.
 
+Before the first upgrade from a checkout that predates
+`scripts/ensure_postgres_network.sh`, run this block in that checkout.
+The old updater uses the new Compose files after it fast-forwards, so prepare
+the external PostgreSQL network before invoking it.
+
 ```bash
 # The guarded updater refuses a dirty worktree or root-disk use >=80%, creates a
 # quiesced full snapshot, fast-forwards main, builds with OCI revision labels,
 # restarts the API, and writes a release record.
 export CONFIG_PATH=/var/lib/aiinforsearch/config/sites.yaml
-scripts/deploy_update.sh
+docker network inspect aiinforsearch-pg-net >/dev/null 2>&1 ||
+  docker network create --driver bridge aiinforsearch-pg-net || exit 1
+bash scripts/deploy_update.sh
 ```
 
 The updater intentionally refuses the known production

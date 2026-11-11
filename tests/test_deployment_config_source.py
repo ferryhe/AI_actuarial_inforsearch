@@ -58,6 +58,26 @@ def test_documented_production_compose_start_prepares_postgres_network(path, cou
         )
 
 
+def test_first_production_update_bootstraps_postgres_network_from_old_checkout():
+    runbook = (ROOT / "docs/deployment-runbook.md").read_text(encoding="utf-8")
+    update = (
+        runbook.split("## Updating the Service", 1)[1].split("```bash", 1)[1].split("```", 1)[0]
+    )
+    assert (
+        "docker network inspect aiinforsearch-pg-net >/dev/null 2>&1 ||\n"
+        "  docker network create --driver bridge aiinforsearch-pg-net || exit 1\n"
+        "bash scripts/deploy_update.sh\n"
+    ) in update
+
+
+def test_production_override_keeps_shared_app_and_caddy_network_settings():
+    base = yaml.safe_load((ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
+    production = yaml.safe_load((ROOT / "docker-compose.override.yml").read_text(encoding="utf-8"))
+    assert base["networks"]["ai-net"] == {"driver": "bridge"}
+    assert base["services"]["caddy"]["networks"] == ["ai-net"]
+    assert "ai-net" not in production["networks"]
+
+
 class _CaddyStaticUpstream(SimpleHTTPRequestHandler):
     def end_headers(self):
         if hasattr(self, "_current_etag"):

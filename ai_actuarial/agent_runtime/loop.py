@@ -661,7 +661,10 @@ def run(
                 args = tool.arguments.model_validate(action["args"]).model_dump()
             except (ValueError, ValidationError, TypeError):
                 return result("", "error", "INVALID_MODEL_RESPONSE")
-            if tool.tool_id == "resources_updates.recent" and _past_seven_days(message):
+            if tool.tool_id in {
+                "resources_updates.recent",
+                "resources_updates.catalog_search",
+            } and _past_seven_days(message):
                 args["window_days"] = 7
             try:
                 observed = execute(tool, args, context, context.take_tool())

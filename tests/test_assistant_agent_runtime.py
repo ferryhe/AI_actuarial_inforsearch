@@ -2038,9 +2038,18 @@ def test_catalog_search_keeps_keyword_route_without_one_latest_collected_source(
     assert outcome.kind == "finish"
 
 
-@pytest.mark.parametrize("question_id", ["ZH17", "ZH18", "EN17", "EN18"])
+@pytest.mark.parametrize(
+    "question_id,tool",
+    [
+        ("ZH17", "recent"),
+        ("ZH18", "recent"),
+        ("EN17", "recent"),
+        ("EN18", "recent"),
+        ("ZH18", "catalog_search"),
+    ],
+)
 def test_recent_first_collection_uses_the_requested_seven_day_window(
-    host_fixture, tmp_path, question_id
+    host_fixture, tmp_path, question_id, tool
 ):
     from ai_actuarial.skills.resources_updates import executors as resource_executors
     from ai_actuarial.source_registry import install_registry
@@ -2060,20 +2069,33 @@ def test_recent_first_collection_uses_the_requested_seven_day_window(
     recent_url = "https://www.casact.org/within-window.pdf"
     old_url = "https://www.soa.org/old-report.pdf"
     upper_url = "https://www.soa.org/at-upper-bound.pdf"
+    registry_seed = json.loads(
+        (root / "config/source_registry_seed.json").read_text(encoding="utf-8")
+    )
+    files = [(old_url, "www.soa.org", "Fourteen-day-old SOA report", "2026-10-27T12:00:00+00:00")]
+    soa_samples = [f"https://www.soa.org/in-window-{i}.pdf" for i in range(3)]
+    if tool == "recent":
+        files.extend(
+            [
+                (recent_url, "www.casact.org", "Included CAS report", lower),
+                (upper_url, "www.soa.org", "Excluded SOA upper boundary", upper),
+            ]
+        )
+        if not named_source:
+            files.extend(
+                (url, "www.soa.org", f"Included SOA report {i}", f"2026-11-06T12:00:0{i}+00:00")
+                for i, url in enumerate(soa_samples)
+            )
     storage = Storage(database)
     try:
         with storage.transaction():
             install_registry(
                 storage._conn,
-                json.loads((root / "config/source_registry_seed.json").read_text(encoding="utf-8")),
+                registry_seed,
                 target="test",
                 apply=True,
             )
-        for url, source, title, first_seen in (
-            (recent_url, "www.casact.org", "Included CAS report", lower),
-            (old_url, "www.soa.org", "Fourteen-day-old SOA report", "2026-10-27T12:00:00+00:00"),
-            (upper_url, "www.soa.org", "Excluded SOA upper boundary", upper),
-        ):
+        for url, source, title, first_seen in files:
             filename = url.rsplit("/", 1)[-1]
             storage.insert_file(
                 url=url,
@@ -2102,6 +2124,9 @@ def test_recent_first_collection_uses_the_requested_seven_day_window(
     )
     state.monkeypatch.setattr(host.deps, "get_auth_context", lambda request: auth)
     prompts = []
+    args = {"source": "soa"} if named_source else {}
+    if tool == "catalog_search":
+        args = {"query": "SOA"}
 
     def model(prompt, _remaining):
         prompts.append(json.loads(prompt))
@@ -2109,8 +2134,8 @@ def test_recent_first_collection_uses_the_requested_seven_day_window(
             return action(
                 action="call",
                 skill_id="resources_updates",
-                tool_id="resources_updates.recent",
-                args={"source": "soa"} if named_source else {},
+                tool_id=f"resources_updates.{tool}",
+                args=args,
             )
         return action(
             action="finish",
@@ -2127,16 +2152,24 @@ def test_recent_first_collection_uses_the_requested_seven_day_window(
     )
     assert outcome.runtime.kind == "finish"
     observation = prompts[-1]["observations"][0]["data"]
-    assert observation["total"] == (0 if named_source else 1)
+    assert observation["total"] == (0 if named_source else 4)
     assert observation["first_seen_from"] == lower
     assert observation["first_seen_before"] == upper
+    assert [trace.tool_id for trace in outcome.runtime.trace] == [f"resources_updates.{tool}"]
     assert [citation.file_id for citation in outcome.response.citations] == (
-        [] if named_source else [recent_url]
+        [] if named_source else list(reversed(soa_samples))
     )
     assert old_url not in outcome.response.answer
     assert upper_url not in outcome.response.answer
     assert lower in outcome.response.answer and upper in outcome.response.answer
-    assert (recent_url in outcome.response.answer) is not named_source
+    assert recent_url not in outcome.response.answer
+    if not named_source:
+        names = {
+            row[f"name_{question['language']}"]
+            for row in registry_seed["sources"]
+            if row["source_key"] in {"cas", "soa"}
+        }
+        assert all(name in outcome.response.answer for name in names)
     recent_tool = next(
         tool
         for skill in json.loads(prompts[0]["prompt"])["skills"]
