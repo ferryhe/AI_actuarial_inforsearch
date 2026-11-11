@@ -2060,6 +2060,10 @@ def test_catalog_search_keeps_keyword_route_without_one_latest_collected_source(
         ("EN18", "catalog_search", "publication_with_collection"),
         ("EN18", "catalog_search", "source_generic"),
         ("EN17", "recent", "exclude"),
+        ("ZH18", "recent", "collect_zh"),
+        ("EN18", "catalog_search", "publication_comma"),
+        ("EN18", "catalog_search", "source_files"),
+        ("EN17", "recent", "exclude_many"),
     ],
 )
 def test_recent_first_collection_uses_the_requested_seven_day_window(
@@ -2086,6 +2090,12 @@ def test_recent_first_collection_uses_the_requested_seven_day_window(
         message = "Which SOA reports were published in the last seven days? Show when you first collected each one"
     elif case == "exclude":
         message = "Which organizations other than SOA had material added to this site's collection in the last seven days?"
+    elif case == "exclude_many":
+        message = "Which organizations other than SOA and CAS had material added to this site's collection over the last seven days?"
+    elif case == "collect_zh":
+        message = "过去七天本站首次收集的 SOA 报告有哪些？"
+    elif case == "publication_comma":
+        message = "Which SOA reports were published in the past seven days, and when did you first collect each one?"
     elif case == "publication":
         message = (
             "近一周发布了哪些 SOA 文件？"
@@ -2107,20 +2117,39 @@ def test_recent_first_collection_uses_the_requested_seven_day_window(
     soa_samples = [f"https://www.soa.org/in-window-{i}.pdf" for i in range(3)]
     joint_url = "https://www.casact.org/joint-study.pdf"
     longevity_url = "https://www.soa.org/longevity-risk.pdf"
-    publication_case = case in {"publication", "publication_with_collection"}
-    collection_dates = case in {"collection_dates_en", "collection_dates_zh"}
-    include_longevity = collection_dates or case in {"source_only", "source_generic", "topic"}
+    publication_case = case in {"publication", "publication_with_collection", "publication_comma"}
+    collection_dates = case in {"collection_dates_en", "collection_dates_zh", "collect_zh"}
+    include_longevity = collection_dates or case in {
+        "source_only",
+        "source_generic",
+        "source_files",
+        "topic",
+    }
+    cia_url = "https://www.cia-ica.ca/in-window.pdf"
+    early_publication_url = "https://www.soa.org/early-publication.pdf"
+    unknown_publication_url = "https://www.soa.org/unknown-publication.pdf"
     if case == "mixed":
         files = [(joint_url, "www.casact.org", "Joint CAS/SOA study", lower)]
     elif include_longevity:
         files.append((longevity_url, "www.soa.org", "Longevity Risk Study", lower))
         if case == "topic":
             files.append(("https://www.soa.org/pricing.pdf", "www.soa.org", "Pricing Study", lower))
-    elif case == "exclude":
+    elif case in {"exclude", "exclude_many"}:
         files.extend(
             [
                 (recent_url, "www.casact.org", "Included CAS report", lower),
                 (longevity_url, "www.soa.org", "Excluded SOA report", lower),
+            ]
+        )
+        if case == "exclude_many":
+            files.append((cia_url, "www.cia-ica.ca", "CIA only", lower))
+    elif publication_case:
+        files.extend(
+            [
+                (longevity_url, "www.soa.org", "Longevity Risk Study", "2026-10-31T12:00:00+00:00"),
+                (early_publication_url, "www.soa.org", "Early SOA publication", lower),
+                (upper_url, "www.soa.org", "SOA upper publication bound", lower),
+                (unknown_publication_url, "www.soa.org", "SOA unknown publication", lower),
             ]
         )
     elif tool == "recent" and case == "collection":
@@ -2159,7 +2188,21 @@ def test_recent_first_collection_uses_the_requested_seven_day_window(
             )
             storage._conn.execute(
                 "UPDATE files SET first_seen = ?, last_seen = ?, published_time = ? WHERE url = ?",
-                (first_seen, upper, "2026-10-01" if collection_dates else lower, url),
+                (
+                    first_seen,
+                    upper,
+                    (
+                        {
+                            longevity_url: "2026-11-09",
+                            early_publication_url: "2026-10-01",
+                            upper_url: upper,
+                            unknown_publication_url: None,
+                        }.get(url, lower)
+                        if publication_case
+                        else ("2026-10-01" if collection_dates else lower)
+                    ),
+                    url,
+                ),
             )
         storage._conn.commit()
     finally:
@@ -2181,8 +2224,10 @@ def test_recent_first_collection_uses_the_requested_seven_day_window(
                 "mixed": "Joint CAS/SOA",
                 "publication": "SOA",
                 "publication_with_collection": "SOA",
+                "publication_comma": "SOA",
                 "source_only": "Society of Actuaries",
                 "source_generic": "SOA research reports",
+                "source_files": "SOA files",
                 "topic": "Longevity Risk",
             }[case]
         }
@@ -2217,7 +2262,15 @@ def test_recent_first_collection_uses_the_requested_seven_day_window(
     if publication_case:
         assert trace_ids == [f"resources_updates.{tool}"]
         assert "first_seen_from" not in observation and "first_seen_before" not in observation
-        assert [citation.file_id for citation in outcome.response.citations] == [old_url]
+        assert [citation.file_id for citation in outcome.response.citations] == [
+            longevity_url,
+            old_url,
+        ]
+        assert observation["published_time_from"] == lower
+        assert observation["published_time_before"] == upper
+        assert "2026-10-31T12:00:00+00:00" in outcome.response.answer
+        if question["language"] == "zh" and tool == "recent":
+            assert "这段时间发布资料的来源机构" in outcome.response.answer
         assert old_url in outcome.response.answer
         return
     expected_files = [] if named_source else list(reversed(soa_samples))
@@ -2225,10 +2278,12 @@ def test_recent_first_collection_uses_the_requested_seven_day_window(
         expected_files = [longevity_url]
     elif case == "exclude":
         expected_files = [recent_url]
+    elif case == "exclude_many":
+        expected_files = [cia_url]
     assert observation["total"] == (
-        4 if not named_source and case != "exclude" else len(expected_files)
+        4 if case == "collection" and not named_source else len(expected_files)
     )
-    expected_tool = "recent" if case in {"source_only", "source_generic"} else tool
+    expected_tool = "recent" if case in {"source_only", "source_generic", "source_files"} else tool
     assert trace_ids == [f"resources_updates.{expected_tool}"]
     assert observation["first_seen_from"] == lower
     assert observation["first_seen_before"] == upper
@@ -2248,9 +2303,20 @@ def test_recent_first_collection_uses_the_requested_seven_day_window(
         assert longevity_url not in outcome.response.answer
         assert observation["excluded_source"] == "soa"
         assert all("SOA" not in name for names in observation["source_names"] for name in names)
+    elif case == "exclude_many":
+        assert observation["excluded_sources"] == ["cas", "soa"]
+        assert observation["source_names"] == [
+            [row["name_zh"], row["name_en"]]
+            for row in registry_seed["sources"]
+            if row["source_key"] == "cia"
+        ]
+        assert (
+            recent_url not in outcome.response.answer
+            and longevity_url not in outcome.response.answer
+        )
     else:
         assert recent_url not in outcome.response.answer
-    if not named_source and case != "exclude":
+    if not named_source and case == "collection":
         names = {
             row[f"name_{question['language']}"]
             for row in registry_seed["sources"]

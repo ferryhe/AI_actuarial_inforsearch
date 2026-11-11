@@ -76,7 +76,7 @@ def _exclude_urls(urls: Iterable[str], column: str) -> tuple[str, tuple[str, ...
     return f"{column} NOT IN ({', '.join('?' for _ in values)})", values
 
 
-def _first_seen_filters(column: str, start: str | None, end: str | None):
+def _timestamp_filters(column: str, start: str | None, end: str | None):
     filters = []
     params = []
     for operator, value in ((">=", start), ("<", end)):
@@ -2531,6 +2531,7 @@ class Storage:
         "source_site": "f.source_site",
         "bytes": "f.bytes",
         "first_seen": "f.first_seen",
+        "published_time": "ai_julianday(f.published_time)",
         "last_seen": "f.last_seen",
         "crawl_time": "f.crawl_time",
     }
@@ -2796,14 +2797,31 @@ class Storage:
     def get_sources_count(self, *, exclude_urls: Iterable[str] = ()) -> int:
         return len(self.get_source_options(exclude_urls=exclude_urls))
 
+    def _excluded_source_filter(self, sources: Iterable[str]) -> tuple[str, tuple[str, ...]]:
+        sources = tuple(dict.fromkeys(source for source in sources if source))
+        if not sources:
+            return "", ()
+        if self._schema_only:
+            keys = tuple(source.strip().lower() for source in sources)
+            column = "lower(trim(COALESCE(f.source_site, '')))"
+        else:
+            keys = tuple(
+                key for source in sources if (key := resolve_bookmark(self._conn, source)[0])
+            )
+            column = source_sql()
+        return _exclude_urls(keys, column)
+
     def get_source_options(
         self,
         *,
         exclude_urls: Iterable[str] = (),
         first_seen_from: str | None = None,
         first_seen_before: str | None = None,
+        published_time_from: str | None = None,
+        published_time_before: str | None = None,
         source: str = "",
         exclude_source: str = "",
+        exclude_sources: Iterable[str] = (),
         include_empty: bool = False,
     ) -> list[dict]:
         if self._schema_only:
@@ -2811,18 +2829,24 @@ class Storage:
         exclusion, excluded = _exclude_urls(exclude_urls, "f.url")
         where = "f.local_path IS NOT NULL AND f.local_path != '' AND f.deleted_at IS NULL"
         where += f" AND {exclusion}" if exclusion else ""
-        filters, params = _first_seen_filters("f.first_seen", first_seen_from, first_seen_before)
+        filters, params = _timestamp_filters("f.first_seen", first_seen_from, first_seen_before)
+        published_filters, published_params = _timestamp_filters(
+            "f.published_time", published_time_from, published_time_before
+        )
+        filters.extend(published_filters)
+        params.extend(published_params)
         if source:
             key, _ = resolve_bookmark(self._conn, source)
             if not key:
                 return []
             filters.append(f"{source_sql()} = ?")
             params.append(key)
-        if exclude_source:
-            excluded_key, _ = resolve_bookmark(self._conn, exclude_source)
-            if excluded_key:
-                filters.append(f"{source_sql()} <> ?")
-                params.append(excluded_key)
+        source_exclusion, excluded_keys = self._excluded_source_filter(
+            (exclude_source, *exclude_sources)
+        )
+        if source_exclusion:
+            filters.append(source_exclusion)
+            params.extend(excluded_keys)
         if filters:
             where += " AND " + " AND ".join(filters)
         rows = self._conn.execute(
@@ -3140,10 +3164,13 @@ class Storage:
         query: str = "",
         source: str = "",
         exclude_source: str = "",
+        exclude_sources: Iterable[str] = (),
         category: str = "",
         include_deleted: bool = False,
         first_seen_from: str | None = None,
         first_seen_before: str | None = None,
+        published_time_from: str | None = None,
+        published_time_before: str | None = None,
         snapshot_id: str = "",
         exclude_urls: Iterable[str] = (),
     ) -> tuple[list[dict], int]:
@@ -3157,10 +3184,13 @@ class Storage:
             query: Search term for title/filename/url
             source: Source site filter
             exclude_source: Canonical source to omit
+            exclude_sources: Additional canonical sources to omit
             category: Category filter
             include_deleted: Whether to include deleted files
             first_seen_from: Inclusive first-seen RFC3339 boundary
             first_seen_before: Exclusive first-seen RFC3339 boundary
+            published_time_from: Inclusive publication RFC3339 boundary
+            published_time_before: Exclusive publication RFC3339 boundary
             snapshot_id: Restrict rows to immutable weekly snapshot membership
 
         Returns:
@@ -3258,15 +3288,12 @@ class Storage:
                 key, _ = resolve_bookmark(self._conn, source)
                 filters.append(f"{source_sql()} = ?")
                 params.append(key or "__unresolved_bookmark__")
-        if exclude_source:
-            if self._schema_only:
-                filters.append("lower(trim(COALESCE(f.source_site, ''))) <> ?")
-                params.append(exclude_source.strip().lower())
-            else:
-                excluded_key, _ = resolve_bookmark(self._conn, exclude_source)
-                if excluded_key:
-                    filters.append(f"{source_sql()} <> ?")
-                    params.append(excluded_key)
+        source_exclusion, excluded_keys = self._excluded_source_filter(
+            (exclude_source, *exclude_sources)
+        )
+        if source_exclusion:
+            filters.append(source_exclusion)
+            params.extend(excluded_keys)
 
         if category:
             join_clause = catalog_join_clause
@@ -3288,11 +3315,16 @@ class Storage:
                 )
                 params.extend([category, f"{category};%", f"%; {category}", f"%; {category};%"])
 
-        window_filters, window_params = _first_seen_filters(
+        window_filters, window_params = _timestamp_filters(
             snapshot_first_seen, first_seen_from, first_seen_before
         )
         filters.extend(window_filters)
         params.extend(window_params)
+        published_filters, published_params = _timestamp_filters(
+            "f.published_time", published_time_from, published_time_before
+        )
+        filters.extend(published_filters)
+        params.extend(published_params)
 
         # Avoid empty WHERE which causes SQLite "incomplete input"
         where_clause = " AND ".join(filters) if filters else "1=1"

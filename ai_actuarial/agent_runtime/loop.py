@@ -42,9 +42,9 @@ def _latest_first_collected(message: str) -> bool:
     )
 
 
-def _named_source(message: str, options: list[dict], *, excluded: bool = False) -> str | None:
+def _source_scope(message: str, options: list[dict]) -> tuple[str | None, tuple[str, ...]]:
     question = message.casefold()
-    matches = set()
+    mentions = set()
     for option in options:
         key = option.get("source_key")
         if not isinstance(key, str) or not key:
@@ -58,41 +58,73 @@ def _named_source(message: str, options: list[dict], *, excluded: bool = False) 
             if name.isascii():
                 pattern = rf"(?<![a-z0-9]){pattern}(?![a-z0-9])"
             for match in re.finditer(pattern, question):
-                negated = bool(
-                    re.search(
-                        r"(?:\b(?:other than|except(?: for)?|excluding)\s+(?:the\s+)?"
-                        r"|(?:除了?|除去|排除|不含|不包括)\s*)$",
-                        question[: match.start()],
-                    )
-                )
-                if negated == excluded:
-                    matches.add(key)
-    return next(iter(matches)) if len(matches) == 1 else None
+                mentions.add((match.start(), -match.end(), key))
+    included = set()
+    excluded = set()
+    exclusion_end = None
+    for start, negative_end, key in sorted(mentions):
+        if exclusion_end is not None and start < exclusion_end:
+            continue
+        if re.search(
+            r"(?:\b(?:other than|except(?: for)?|excluding)\s+(?:the\s+)?"
+            r"|(?:除了?|除去|排除|不含|不包括)\s*)$",
+            question[:start],
+        ) or (
+            exclusion_end is not None
+            and re.fullmatch(
+                r"\s*(?:[,，、](?:\s*(?:and|or)\b)?|\b(?:and|or)\b|和|与|及)\s*(?:the\s+)?",
+                question[exclusion_end:start],
+            )
+        ):
+            excluded.add(key)
+            exclusion_end = -negative_end
+        else:
+            included.add(key)
+    included -= excluded
+    return (next(iter(included)) if len(included) == 1 else None), tuple(sorted(excluded))
 
 
-def _past_seven_days(message: str) -> bool:
-    return bool(
-        re.search(
-            r"(?:过去|最近|近)\s*(?:(?:七|7)\s*天|一\s*周)"
-            r"|\b(?:past|last) (?:seven|7) days\b|\bpast week\b",
-            message,
-            re.IGNORECASE,
-        )
+def _past_seven_days(message: str) -> re.Match[str] | None:
+    return re.search(
+        r"(?:过去|最近|近)\s*(?:(?:七|7)\s*天|一\s*周)"
+        r"|\b(?:past|last) (?:seven|7) days\b|\bpast week\b",
+        message,
+        re.IGNORECASE,
     )
+
+
+_COLLECTION_WORDING = (
+    r"收进|首次收录|新收录|首次采集|首次收集"
+    r"|\bfirst[- ](?:seen|collect(?:ed|ion)?|pick(?:ed)? up|ingest(?:ed)?)\b"
+    r"|\bnewly (?:collected|ingested)\b"
+    r"|\badded (?:to|into) (?:this site's collection|(?:this|the|our|your) collection)\b"
+)
 
 
 def _explicit_first_collection(message: str) -> bool:
     return bool(
-        re.search(
-            r"收进|首次收录|新收录|首次采集"
-            r"|\bfirst[- ](?:seen|collect(?:ed|ion)?|pick(?:ed)? up|ingest(?:ed)?)\b"
-            r"|\bnewly (?:collected|ingested)\b"
-            r"|\badded (?:to|into) (?:this site's collection|(?:this|the|our|your) collection)\b",
-            message,
-            re.IGNORECASE,
-        )
+        re.search(_COLLECTION_WORDING, message, re.IGNORECASE)
         or ("收录" in message and not re.search(r"发布|发表|出版", message))
     )
+
+
+def _window_date_field(clause: str) -> str | None:
+    period = _past_seven_days(clause)
+    if period is None:
+        return None
+    date_words = re.finditer(
+        rf"(?P<first_seen>{_COLLECTION_WORDING}|收录)"
+        r"|(?P<published_time>发布|发表|出版|\b(?:published|publication|released)\b)",
+        clause,
+        re.IGNORECASE,
+    )
+    # Use the date phrase tied to the period, even if a second date is requested for display.
+    nearest = min(
+        date_words,
+        key=lambda word: max(period.start() - word.end(), word.start() - period.end(), 0),
+        default=None,
+    )
+    return nearest.lastgroup if nearest else None
 
 
 def _source_only_query(
@@ -114,8 +146,8 @@ def _source_only_query(
                 remainder, matches = re.subn(pattern, " ", remainder)
                 named = named or bool(matches)
     return (named or not require_source) and not re.sub(
-        r"\b(?:latest|newest|recent|most|recently|newly|collected|added|ingested|research|reports?|studies|study)\b"
-        r"|最新|最近|收录|资料|报告|文件|研究|\W",
+        r"\b(?:latest|newest|recent|most|recently|newly|collected|added|ingested|research|reports?|studies|study|files?|materials?|documents?)\b"
+        r"|最新|最近|收录|资料|材料|报告|文件|文档|研究|\W",
         "",
         remainder,
     )
@@ -291,8 +323,12 @@ def run(
         "",
     )
     date_query = window_clause or message
-    first_collection = _explicit_first_collection(date_query)
-    collection_window = bool(window_clause and first_collection)
+    date_field = _window_date_field(window_clause)
+    collection_window = date_field == "first_seen"
+    publication_window = date_field == "published_time"
+    first_collection = collection_window or (
+        not window_clause and _explicit_first_collection(message)
+    )
     prompt_data = {
         "instruction": (
             "Choose an enabled skill from the question. Return exactly one JSON object with "
@@ -658,7 +694,7 @@ def run(
                 collection_window and action["tool_id"] == "resources_updates.catalog_search"
             )
             if (
-                (dated_catalog or _latest_first_collected(date_query))
+                (dated_catalog or (not publication_window and _latest_first_collected(date_query)))
                 and action["tool_id"]
                 in {
                     "document_research.find_documents",
@@ -680,9 +716,7 @@ def run(
             ):
                 try:
                     options = source_options() if source_options else []
-                    source = _named_source(message, options)
-                    if source == _named_source(message, options, excluded=True):
-                        source = None
+                    source, _ = _source_scope(message, options)
                 except Exception:
                     source = None
                 if source and _source_only_query(
@@ -705,18 +739,27 @@ def run(
             }:
                 if collection_window or tool.tool_id == "resources_updates.recent":
                     args["window_days"] = 7 if collection_window else None
-                if first_collection:
+                if publication_window:
+                    args["publication_window_days"] = 7
+                if first_collection or publication_window:
                     try:
                         options = source_options() if source_options else []
-                        source = _named_source(message, options)
-                        excluded_source = _named_source(message, options, excluded=True)
+                        source, excluded_sources = _source_scope(message, options)
                     except Exception:
                         return tool_unavailable(tool.tool_id, args)
-                    if excluded_source:
+                    if excluded_sources:
                         args.pop("source", None)
-                        args["exclude_source"] = excluded_source
-                    if source and source != excluded_source:
+                        args["exclude_sources"] = excluded_sources
+                    if source:
                         args["source"] = source
+                        if (
+                            publication_window
+                            and tool.tool_id == "resources_updates.catalog_search"
+                        ):
+                            if _source_only_query(
+                                args["query"], source, options, require_source=True
+                            ):
+                                args["query"] = ""
             try:
                 observed = execute(tool, args, context, context.take_tool())
             except TimeoutError:
