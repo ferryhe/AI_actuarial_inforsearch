@@ -88,22 +88,22 @@ In the UI:
 
 ## Docker Compose
 
-Start the stack:
+Start the development frontend and its API dependency:
 
 ```bash
-docker compose up --build
+docker compose -f docker-compose.yml up --build frontend
 ```
 
-Default ports:
-
-- API: `5000` inside Docker, exposed as `${API_PORT:-5000}`
-- Frontend: `${FRONTEND_PORT:-5173}`
-- Caddy: `${CADDY_HTTP_PORT:-80}` and `${CADDY_HTTPS_PORT:-443}`
+Open [the development UI](http://localhost:5173/) or
+[check API health](http://localhost:5173/api/health). Vite listens on loopback
+port 5173 and proxies `/api` to the API on port 5000 inside Docker.
+The development command starts only the frontend and API.
 
 Production-style override:
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.override.yml up -d --build
+bash scripts/ensure_postgres_network.sh &&
+  docker compose -f docker-compose.yml -f docker-compose.override.yml up -d --build
 ```
 
 Set production secrets before using the override:
@@ -124,7 +124,9 @@ export CADDY_APP_REDIRECT_ORIGIN=https://www.app.example.test
 
 ## Update Helper
 
-The update helper lives at `scripts/deploy_update.sh`.
+The update helper lives at `scripts/deploy_update.sh`. For the first upgrade from
+an older checkout, follow the [network bootstrap in the deployment runbook](../deployment-runbook.md#updating-the-service)
+before invoking the helper with any of these options.
 
 ```bash
 APP_SERVICE_NAME=api bash scripts/deploy_update.sh

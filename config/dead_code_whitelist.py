@@ -25,6 +25,7 @@ from ai_actuarial.assistant.knowledge import SourceCitation
 from ai_actuarial.assistant.query import QueryRequest
 from ai_actuarial.assistant.router import api_assistant_query
 from ai_actuarial.feedback.store import FeedbackRequest
+from ai_actuarial.skills.resources_updates.manifest import RecentArgs
 
 api_list_feedback  # reason: FastAPI registers this decorated route.
 api_submit_feedback  # reason: FastAPI registers this decorated route.
@@ -45,6 +46,7 @@ SourceCitation.source_date  # reason: Pydantic serializes the citation source da
 Document.internal_link  # reason: Pydantic includes the file-detail link in document tool JSON.
 SectionEvidence.index_version  # reason: Pydantic includes the Ready/Standard index version in section tool JSON.
 SectionEvidence.index_stale  # reason: Pydantic includes Standard index freshness in section tool JSON.
+RecentArgs.window_days  # reason: Pydantic exposes this optional tool argument to the model and serializes it into the executor's argument dictionary.
 
 from tests.test_assistant_feature_matrix import pytest_plugins as _assistant_matrix_plugins
 from tests.test_assistant_knowledge import pytest_plugins as _assistant_knowledge_plugins

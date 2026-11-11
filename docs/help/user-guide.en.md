@@ -11,7 +11,7 @@ This guide describes the current browsing, file, knowledge base, Chat, account, 
 
 ## Features and Dashboard {#features-dashboard}
 
-What features are available? The Dashboard at **/** shows current file, catalog and source counts, active tasks, and the latest published weekly additions when available. Use **Database** for search, **Source Portals** for source information, **Categories** for topics, **Knowledge Bases** for index status, **Chat** for questions, **Weekly** for the published update reader, **Profile** for your account and quota, and **Help and feedback** for help or suggestions. The navigation shows only entries your account can use. The Dashboard's **View all** weekly link opens **/weekly**.
+What features are available? The Dashboard at **/** shows current file, catalog and source counts, active tasks, and the latest published weekly additions when available. Use **Database** for search, **Source Portals** for source information, **Categories** for topics, **Knowledge Bases** for index status, **Chat** for questions, **Weekly** for the published update reader, **Profile** for your account and quota, and **Help and feedback** for help or suggestions. The navigation shows only entries your account can use.
 
 ## Browsing and search {#browse-search}
 
@@ -25,7 +25,7 @@ Open **Categories** to browse categories currently used by files. Open **Source 
 
 How do I view weekly updates?
 
-How do I use the weekly report or find this week's new files? From the Dashboard's weekly **View all** link, open **/weekly**. It opens the latest complete **published** snapshot, not an unfinished current week. Select an older published period in the reader to inspect its historical list; open an included file to read its detail, source link, preview, or Markdown when available. The snapshot counts files first collected by this system during its period (`first_seen`); an empty published period has no new files by that definition. If no complete published snapshot exists, the reader says so. **/weekly** is the direct action.
+How do I use the weekly report or find this week's new files? With permission to read files, open **/weekly** directly. If the Dashboard shows the weekly card, its **View all** link also opens Weekly. The reader opens the latest complete **published** snapshot and says when none is available. The current week appears once it is complete and published. Select an older published period to inspect its historical list. Open an included file to read its details, source link, preview, or Markdown when available. The snapshot counts files first collected by this system during its period (`first_seen`). An empty published period has no new files by that definition.
 
 ## Dates and updates {#dates-updates}
 

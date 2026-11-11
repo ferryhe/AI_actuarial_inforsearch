@@ -1,0 +1,298 @@
+{
+  "version": 1,
+  "issue": 480,
+  "gates": {
+    "anchor_pass_percent": 100,
+    "deterministic_pass_percent": 100,
+    "held_out_route_and_target_percent": 90,
+    "multi_turn_completion_percent": 90
+  },
+  "targets": {
+    "soa_spring": {
+      "title": "SOA Member AI Survey: Spring 2026",
+      "source_url": "https://www.soa.org/resources/research-reports/soa-member-ai-survey/",
+      "unreachable_suggested_citation_url": "https://www.soa.org/resources/research-reports/2026/soa-member-ai-survey/",
+      "section": "Key Findings",
+      "publication_date": "2026-10-29",
+      "stored_publication_date": null,
+      "recruitment_url": "https://www.soa.org/globalassets/assets/files/resources/research-report/2026/2026-03-ait170-ai-bulletin.pdf",
+      "unreachable_beta_recruitment_url": "https://beta.soa.org/globalassets/assets/files/resources/research-report/2026/2026-03-ait170-ai-bulletin.pdf"
+    },
+    "soa_2025": {
+      "title": "SOA Member AI Survey - Summer 2025",
+      "source_url": "https://www.soa.org/resources/research-reports/2025/ai-member-survey-summer-2025/"
+    }
+  },
+  "expectations": {
+    "survey_findings": {
+      "tools": ["document_research.read_document_sections", "document_research.search_knowledge"],
+      "target": "soa_spring",
+      "facts": "Use Key Findings and state the shift toward practical, structured adoption plus at least two supported findings. Examples include increased engagement, about 60% in each experience group using employer-provided or licensed models, demand for applied training, more formal support and governance, or continuing importance of professional judgment.",
+      "forbidden": "Treating the March recruitment bulletin, acknowledgements, a directory summary, or the 2025 report as the 2026 findings. Do not generalize respondent percentages to all actuaries.",
+      "action": "Exact permitted /file-detail citation for the report and its Key Findings section.",
+      "date": "Spring is the survey wave. October 29, 2026 is the publisher page date; a missing stored publication date stays unknown."
+    },
+    "weekly_guide": {
+      "tools": ["usage_navigation.guide"],
+      "target": "guide:weekly-reports",
+      "facts": "If the Dashboard shows the weekly card, also describe Dashboard → View all → Weekly. With published periods, explain how to find the latest complete period, select an older period, and open a listed file for its detail and available source/preview/Markdown. If no complete period has been published, say so.",
+      "forbidden": "A Dashboard View all entry when the weekly card is absent, an invented menu, an unfinished current week presented as published, or a count without a snapshot.",
+      "action": "Working /weekly link and the localized weekly-reports guide citation.",
+      "date": "Weekly additions are first collections within the published snapshot period."
+    },
+    "weekly_data": {
+      "tools": ["resources_updates.weekly"],
+      "target": "latest_published_weekly_snapshot",
+      "facts": "Match the seeded latest complete published period, total and listed items. Explicitly distinguish no snapshot from a published period with zero additions.",
+      "forbidden": "Invented period or files, or a collection count treated as a count of publications or revisions.",
+      "action": "Working /weekly link for an authorized reader.",
+      "date": "The snapshot counts files by first_seen during its own period."
+    },
+    "guide": {
+      "tools": ["usage_navigation.guide"],
+      "target": "case-specific guide section",
+      "facts": "Give the actual entry and actionable steps in the indicated localized guide section.",
+      "forbidden": "Invented controls, pages or privileges.",
+      "action": "Guide citation opens the exact localized section and version.",
+      "date": null
+    },
+    "sources": {
+      "tools": ["resources_updates.sources"],
+      "target": "source_directory",
+      "facts": "Use current canonical source names and counts from the fixture directory. Distinguish source directory coverage from recent collections.",
+      "forbidden": "Invented organizations, counts, or completeness claims.",
+      "action": null,
+      "date": null
+    },
+    "recent": {
+      "tools": ["resources_updates.recent"],
+      "target": "case-specific first-collection window",
+      "facts": "Return current first-collected rows and verified file cards for the stated window and organization, or report an empty result.",
+      "forbidden": "Inferring a publication, content revision, or new KB membership from recent collection.",
+      "action": "Each file card opens its exact permitted /file-detail.",
+      "date": "Use files.first_seen and the recorded query time, window and boundaries."
+    },
+    "catalog": {
+      "tools": ["resources_updates.catalog_search"],
+      "target": "case-specific permitted catalog rows",
+      "facts": "Find relevant title and summary metadata and give the permitted matching file or explain the absence of a match.",
+      "forbidden": "Body conclusions from catalog text or assigning a KB target to an unassigned catalog file.",
+      "action": "Each file card opens its exact permitted /file-detail.",
+      "date": "Label dates by their stored meaning when provided."
+    },
+    "document_dates": {
+      "tools": ["resources_updates.document_dates"],
+      "target": "soa_spring",
+      "facts": "Keep the seeded publisher date, first collection date and KB-added date distinct. If asked about revision, say that historical revision evidence is unavailable.",
+      "forbidden": "Substituting a crawl, last_seen, HTTP status, title season, or current hash for publication or revision.",
+      "action": "Any citation is for the selected permitted report.",
+      "date": "files.published_time, files.first_seen and rag_kb_files.added_at are independent. Revision history is unavailable."
+    },
+    "target_clarify": {
+      "tools": [],
+      "target": null,
+      "facts": "Ask which source, topic, or report the user means before asserting a result.",
+      "forbidden": "Choosing a report from an ambiguous unanchored request or citing unsupported findings.",
+      "action": null,
+      "date": null
+    },
+    "survey_body_follow_up": {
+      "tools": ["document_research.read_document_sections", "document_research.search_knowledge"],
+      "target": "soa_spring",
+      "facts": "Answer the asked detail from a traceable section of the same permitted report, or explicitly say the requested detail is unavailable in the served body.",
+      "forbidden": "Borrowing 2025 sample numbers, inferring a limitation without evidence, or presenting a paraphrase as a quote.",
+      "action": "Any source citation opens the same selected report and identifies the actual section.",
+      "date": null
+    },
+    "survey_switch": {
+      "tools": ["document_research.read_document_sections", "document_research.search_knowledge"],
+      "target": "soa_2025",
+      "facts": "Resolve the explicit 2025 switch and answer from that report. Its first-wave total is 518 only if the served section supports it.",
+      "forbidden": "Retaining the prior 2026 target or applying 2025 figures to 2026.",
+      "action": "Exact permitted /file-detail citation for the newly selected report.",
+      "date": "Summer is the study wave; the source identifies the publication month as November 2025."
+    },
+    "body_unavailable": {
+      "tools": ["document_research.read_document_sections", "document_research.search_knowledge"],
+      "target": "soa_spring",
+      "facts": "Explain the missing/incomplete body or incompatible index using the seeded state. A catalog card may identify a report if the caller can read its metadata.",
+      "forbidden": "An answer presented as a body finding, quote or body citation without readable source evidence.",
+      "action": "Only a verified catalog link is allowed when body evidence is unavailable.",
+      "date": null
+    },
+    "body_version": {
+      "tools": ["document_research.read_document_sections", "document_research.search_knowledge"],
+      "target": "soa_spring",
+      "facts": "Serve the permitted earlier Ready version with its stale label for soft stale; for hard stale, cite the current Standard fallback in the same KB.",
+      "forbidden": "Calling an earlier version current, using hard-stale Ready content, or crossing KB membership.",
+      "action": "Exact /file-detail citation with the served source version.",
+      "date": "Serving version and publication date are distinct."
+    },
+    "scope_denied": {
+      "tools": [],
+      "target": null,
+      "facts": "Return permission or unavailable handling appropriate to the seeded caller and scope.",
+      "forbidden": "Restricted answer text, evidence IDs, citation/card, selected target or unauthorized action.",
+      "action": null,
+      "date": null
+    },
+    "staff_read": {
+      "tools": ["document_research.read_document_sections", "document_research.search_knowledge"],
+      "target": "staff_control",
+      "facts": "Read the fixture-only body marker from its exact permitted staff KB and prove it with that file citation.",
+      "forbidden": "Showing an unlisted or unrelated document, or answering based on a staff file title alone.",
+      "action": "Exact authorized /file-detail link for the staff control.",
+      "date": null
+    },
+    "quota_exceeded": {
+      "tools": [],
+      "target": null,
+      "facts": "QUOTA_EXCEEDED with UTC reset guidance and zero physical generation/embedding calls.",
+      "forbidden": "Calling the provider, consuming a new allowance, or giving a fabricated answer.",
+      "action": "Existing guide and manual feedback remain available when enabled.",
+      "date": "UTC quota day."
+    },
+    "provider_failure": {
+      "tools": [],
+      "target": null,
+      "facts": "Seeded transport failure maps to the actual safe error with bounded physical attempts and honest absence of an answer.",
+      "forbidden": "A fabricated report answer, raw provider error/credential disclosure, or automatic user retry.",
+      "action": "Existing guide and manual feedback remain available when enabled.",
+      "date": null
+    },
+    "feedback_draft": {
+      "tools": ["feedback.draft"],
+      "target": "feedback_form",
+      "facts": "The editable draft preserves the exact input. Cancel and ordinary turns create zero feedback rows. Explicit submit writes only the edited text and returns one server receipt.",
+      "forbidden": "Assistant submitting autonomously or claiming a successful write before server receipt.",
+      "action": "Existing editable form with a separate user-confirmed submit.",
+      "date": null
+    }
+  },
+  "questions": [
+    {"id":"ZH01","language":"zh","set":"critical","question":"SOA最近调研结果如何","expect":"survey_findings"},
+    {"id":"ZH02","language":"zh","set":"critical","question":"怎么查看周报","expect":"weekly_guide"},
+    {"id":"ZH03","language":"zh","set":"critical","question":"美国精算师协会最近调查会员用 AI 的结果出来了吗？说说主要发现。","expect":"survey_findings"},
+    {"id":"ZH04","language":"zh","set":"critical","question":"我想回看前几期站内周报，从首页怎么进去？","expect":"weekly_guide"},
+    {"id":"ZH05","language":"zh","set":"held_out","question":"之前看见 SOA 邀请会员填 AI 问卷，后来实际调查出了哪些结论？","expect":"survey_findings"},
+    {"id":"ZH06","language":"zh","set":"held_out","question":"不用告诉我这周加了什么，我是找能切到旧一期的那个周报页面。","expect":"weekly_guide"},
+    {"id":"ZH07","language":"zh","set":"held_out","question":"第一次来，除了搜文件，我在这里还能做些什么？各从哪里开始？","expect":"guide","target":"guide:features-dashboard"},
+    {"id":"ZH08","language":"zh","set":"held_out","question":"我只记得一段文件名和发布机构，怎么把结果缩小？","expect":"guide","target":"guide:browse-search"},
+    {"id":"ZH09","language":"zh","set":"coverage","question":"能按主题看资料吗？点进去后怎么找到这个分类下的文件？","expect":"guide","target":"guide:categories-sources"},
+    {"id":"ZH10","language":"zh","set":"held_out","question":"我想从某家机构的主页看它在本站有哪些动静，在哪儿点？","expect":"guide","target":"guide:categories-sources"},
+    {"id":"ZH11","language":"zh","set":"coverage","question":"文件已经找到了，我能直接读它转换好的文字或下载吗？","expect":"guide","target":"guide:file-details"},
+    {"id":"ZH12","language":"zh","set":"held_out","question":"我想先看哪个知识库已经可以问，再去聊天，应该怎么走？","expect":"guide","target":"guide:knowledge-chat"},
+    {"id":"ZH13","language":"zh","set":"coverage","question":"登录以后在哪看我今天还剩多少次 AI 提问？","expect":"guide","target":"guide:account-quota"},
+    {"id":"ZH14","language":"zh","set":"held_out","question":"我只想知道意见从哪里交，先不用替我写。","expect":"guide","target":"guide:feedback-entry"},
+    {"id":"ZH15","language":"zh","set":"coverage","question":"搜索结果突然一条都没有了，有什么我自己能先试的？","expect":"guide","target":"guide:common-failures"},
+    {"id":"ZH16","language":"zh","set":"held_out","question":"这个库大概覆盖哪些精算组织？每家大概有多少份材料？","expect":"sources"},
+    {"id":"ZH17","language":"zh","set":"coverage","question":"过去七天，有哪些机构的文件是本站头一回收进来的？","expect":"recent","target":"seven-day first_seen window, all permitted sources"},
+    {"id":"ZH18","language":"zh","set":"held_out","question":"最近一周收进来的材料里，帮我只挑 SOA 的。","expect":"recent","target":"seven-day first_seen window, canonical SOA"},
+    {"id":"ZH19","language":"zh","set":"coverage","question":"已经正式发出来的最近一期周报有哪几份新增资料？","expect":"weekly_data","scenario":"published_weekly"},
+    {"id":"ZH20","language":"zh","set":"held_out","question":"春季那份会员 AI 问卷研究，官网哪天发，本站哪天收，后来哪天进库？","expect":"document_dates","scenario":"distinct_dates"},
+    {"id":"ZH21","language":"zh","set":"coverage","question":"SOA 春季会员 AI 调查报告最近一次改正文是什么时候？能确认吗？","expect":"document_dates","scenario":"distinct_dates"},
+    {"id":"ZH22","language":"zh","set":"held_out","question":"我没指哪家机构，能告诉我最新那份有什么结论吗？","expect":"target_clarify"},
+    {"id":"ZH23","language":"zh","set":"coverage","question":"有一篇有关公平性的长期护理保险资料吗？我只要目录摘要和链接。","expect":"catalog","target":"seeded long-term care fairness catalog file","scenario":"summary_only"},
+    {"id":"ZH24","language":"zh","set":"held_out","question":"春季会员 AI 调查的正文到底发现了什么？我需要原文依据。","expect":"body_unavailable","scenario":"missing_body"},
+    {"id":"ZH25","language":"zh","set":"coverage","question":"索引还没跟上时，我能读到 SOA 春季 AI 调查的哪一版？请标出来源版本。","expect":"body_version","scenario":"soft_stale"},
+    {"id":"ZH26","language":"zh","set":"coverage","question":"看看这次 SOA 春季会员调查，说清他们究竟怎么用 AI。","expect":"body_unavailable","scenario":"index_mismatch"},
+    {"id":"ZH27","language":"zh","set":"coverage","question":"我还没登录，帮我打开员工研读记录，说一下正文的结论。","expect":"scope_denied","scenario":"anonymous_staff"},
+    {"id":"ZH28","language":"zh","set":"coverage","question":"登录后能读那份只给工作人员的研读记录吗？请引用正文。","expect":"scope_denied","scenario":"registered_staff"},
+    {"id":"ZH29","language":"zh","set":"coverage","question":"我有操作员权限，能告诉我员工研读记录正文里的核验标记吗？","expect":"staff_read","scenario":"operator_staff"},
+    {"id":"ZH30","language":"zh","set":"coverage","question":"请用正文解释 SOA 春季那次会员 AI 调查。","expect":"quota_exceeded","scenario":"exhausted_quota"},
+    {"id":"ZH31","language":"zh","set":"coverage","question":"能先帮我查查 AI 问卷报告最重要的一个发现吗？","expect":"provider_failure","scenario":"provider_failure"},
+    {"id":"ZH32","language":"zh","set":"coverage","question":"给产品提个建议：希望老周报可以按年筛选。","expect":"feedback_draft","scenario":"feedback"},
+    {"id":"EN01","language":"en","set":"critical","question":"What came out of SOA's latest member survey on AI?","expect":"survey_findings"},
+    {"id":"EN02","language":"en","set":"critical","question":"How can I get to the weekly report from the home page?","expect":"weekly_guide"},
+    {"id":"EN03","language":"en","set":"critical","question":"What did the Society of Actuaries actually learn from its recent AI poll?","expect":"survey_findings"},
+    {"id":"EN04","language":"en","set":"critical","question":"Where's the weekly reader, and how do I pull up an older issue?","expect":"weekly_guide"},
+    {"id":"EN05","language":"en","set":"held_out","question":"SOA's March bulletin asked members how they use AI. Did the results land, and what stood out?","expect":"survey_findings"},
+    {"id":"EN06","language":"en","set":"held_out","question":"I'm on the dashboard. Walk me to the archive where I can pick a week and open one of its files.","expect":"weekly_guide"},
+    {"id":"EN07","language":"en","set":"held_out","question":"Could you orient me? What can I do here without digging through every menu?","expect":"guide","target":"guide:features-dashboard"},
+    {"id":"EN08","language":"en","set":"held_out","question":"I need one file in a sea of search hits. Can I narrow it by who issued it and its topic?","expect":"guide","target":"guide:browse-search"},
+    {"id":"EN09","language":"en","set":"coverage","question":"Where do I browse by category, and how do I get to the matching files?","expect":"guide","target":"guide:categories-sources"},
+    {"id":"EN10","language":"en","set":"held_out","question":"Is there somewhere I can check whether a source portal is active before looking at its updates?","expect":"guide","target":"guide:categories-sources"},
+    {"id":"EN11","language":"en","set":"coverage","question":"Why can I see the download button on a file that I can't download?","expect":"guide","target":"guide:file-details"},
+    {"id":"EN12","language":"en","set":"held_out","question":"Once I have a topic, where can I pick a ready knowledge base and ask Chat about it?","expect":"guide","target":"guide:knowledge-chat"},
+    {"id":"EN13","language":"en","set":"coverage","question":"Which account screen tells me my role and remaining Chat allowance?","expect":"guide","target":"guide:account-quota"},
+    {"id":"EN14","language":"en","set":"held_out","question":"If the AI is down, can I still send a suggestion myself? Where do I go?","expect":"guide","target":"guide:feedback-entry"},
+    {"id":"EN15","language":"en","set":"coverage","question":"How do I check whether a filter is hiding the file I expected?","expect":"guide","target":"guide:common-failures"},
+    {"id":"EN16","language":"en","set":"held_out","question":"Which organizations are represented in the library, and how many files have you got from each?","expect":"sources"},
+    {"id":"EN17","language":"en","set":"coverage","question":"Which organizations had material added to this site's collection over the last seven days?","expect":"recent","target":"seven-day first_seen window, all permitted sources"},
+    {"id":"EN18","language":"en","set":"held_out","question":"Pull up anything from the Society of Actuaries your collector first picked up in the past week.","expect":"recent","target":"seven-day first_seen window, canonical SOA"},
+    {"id":"EN19","language":"en","set":"coverage","question":"Has a weekly update actually been published yet? If so, what's in it?","expect":"weekly_data","scenario":"no_weekly_snapshot"},
+    {"id":"EN20","language":"en","set":"held_out","question":"The spring SOA AI report shows up as new here. Is that the day it was published or the day you ingested it? When was it put in the knowledge base?","expect":"document_dates","scenario":"distinct_dates"},
+    {"id":"EN21","language":"en","set":"coverage","question":"Can you verify the last time the body of the SOA member AI survey was revised?","expect":"document_dates","scenario":"distinct_dates"},
+    {"id":"EN22","language":"en","set":"held_out","question":"What's the latest one saying? I don't have a page open or a title in mind.","expect":"target_clarify"},
+    {"id":"EN23","language":"en","set":"coverage","question":"Find me the catalog entry for research on fairness in long-term care insurance. A listing and summary are enough.","expect":"catalog","target":"seeded long-term care fairness catalog file","scenario":"summary_only"},
+    {"id":"EN24","language":"en","set":"held_out","question":"Does the spring SOA write-up itself explain what the members found? Point me to that section.","expect":"body_unavailable","scenario":"incomplete_body"},
+    {"id":"EN25","language":"en","set":"coverage","question":"What does the spring SOA member AI survey say? Please say which index version your evidence came from.","expect":"body_version","scenario":"hard_stale_same_kb_standard"},
+    {"id":"EN26","language":"en","set":"coverage","question":"Did the most recent published week add any files at all?","expect":"weekly_data","scenario":"empty_weekly_snapshot"},
+    {"id":"EN27","language":"en","set":"coverage","question":"Read the staff reading notes and give me the internal verification marker.","expect":"scope_denied","scenario":"anonymous_staff"},
+    {"id":"EN28","language":"en","set":"coverage","question":"I'm an admin. Please quote the body of the unlisted research file that isn't assigned to an assistant KB.","expect":"scope_denied","scenario":"admin_unlisted"},
+    {"id":"EN29","language":"en","set":"coverage","question":"As an administrator, can I check the marker in the staff reading notes?","expect":"staff_read","scenario":"admin_staff"},
+    {"id":"EN30","language":"en","set":"coverage","question":"Please read the spring survey's findings for me while I'm signed out.","expect":"scope_denied","scenario":"empty_scope"},
+    {"id":"EN31","language":"en","set":"coverage","question":"Could you pull a finding from SOA's survey about AI adoption?","expect":"provider_failure","scenario":"provider_failure"},
+    {"id":"EN32","language":"en","set":"coverage","question":"Suggestion for the team: please keep the weekly period selected when I open a file.","expect":"feedback_draft","scenario":"feedback"}
+  ],
+  "tasks": [
+    {"id":"T01","language":"zh","turns":[
+      {"question":"SOA 春季调查给我概括三点。","expect":"survey_findings"},
+      {"question":"样本多少？","expect":"survey_body_follow_up","require":"Use the exact total and population only when the served text establishes both."},
+      {"question":"那这些结论的局限呢？","expect":"survey_body_follow_up","require":"Separate stated scope or limitations from speculation."},
+      {"question":"给我一句原文和原报告链接。","expect":"survey_body_follow_up","require":"Quote a contiguous exact excerpt from the served report."},
+      {"question":"改看它 2025 年夏季那一轮，样本是多少？","expect":"survey_switch"}
+    ]},
+    {"id":"T02","language":"en","turns":[
+      {"question":"Give me three takeaways from SOA's spring AI poll.","expect":"survey_findings"},
+      {"question":"How many responses is that based on?","expect":"survey_body_follow_up","require":"Give only a count supported in the served report and identify its denominator."},
+      {"question":"What caveats does the report itself give?","expect":"survey_body_follow_up"},
+      {"question":"Can I see the exact wording and open the source?","expect":"survey_body_follow_up","require":"Quote an exact excerpt and click the same permitted report."},
+      {"question":"Now switch to the first, 2025 wave. What did that one find?","expect":"survey_switch"}
+    ]},
+    {"id":"T03","language":"zh","scenario":"published_weekly","turns":[
+      {"question":"从首页去哪儿看每周新增？","expect":"weekly_guide"},
+      {"before":"Click the returned /weekly action and select an older published period.","question":"我现在怎么点开这一期里列出的文件？","expect":"weekly_guide","require":"Give the in-reader file steps while preserving the current page and conversation."},
+      {"before":"Click Clear conversation on /weekly.","question":"那份有什么发现？","expect":"target_clarify","require":"Previous questions, target and answer disappear and are absent from the next request."}
+    ]},
+    {"id":"T04","language":"en","scenario":"empty_weekly_snapshot","turns":[
+      {"question":"Where can I find the site's weekly archive?","expect":"weekly_guide"},
+      {"before":"Click the returned /weekly action.","question":"How many things did the last published one actually add?","expect":"weekly_data","require":"Confirm a published period with zero first-collected additions."},
+      {"question":"Can I still go back and read files from a previous week?","expect":"weekly_guide","require":"Show the older-period and listed-file steps."}
+    ]},
+    {"id":"T05","language":"zh","scenario":"distinct_dates","turns":[
+      {"question":"春季 SOA 会员问卷的结论是什么？","expect":"survey_findings"},
+      {"question":"报告什么时候发表，什么时候进站和入库？","expect":"document_dates"},
+      {"question":"那哪天改的内容？","expect":"document_dates","require":"Say that content revision history is unavailable."}
+    ]},
+    {"id":"T06","language":"en","scenario":"summary_only","turns":[
+      {"question":"Find the catalog listing for the SOA spring member AI poll. Only the link and blurb, please.","expect":"catalog","target":"soa_spring"},
+      {"before":"Open the returned catalog file card.","question":"Now quote a finding from the body of this file.","expect":"body_unavailable","require":"A catalog summary or open file URL cannot supply missing body evidence."}
+    ]},
+    {"id":"T07","language":"zh","scenario":"staff_revocation","turns":[
+      {"question":"请查员工研读记录的正文核验标记。","expect":"staff_read"},
+      {"before":"Downgrade the isolated operator to registered and retain the previous target in the request.","question":"刚才那段能直接引用吗？","expect":"scope_denied","require":"Reject the now-forbidden target and omit all restricted evidence."}
+    ]},
+    {"id":"T08","language":"en","scenario":"operator_staff","turns":[
+      {"question":"Read the staff reading notes and check the verification marker.","expect":"staff_read"},
+      {"before":"Open a fresh anonymous session and replay the staff target hint.","question":"Can you quote the marker from that document?","expect":"scope_denied","require":"A target hint does not grant permission."},
+      {"question":"Tell me what SOA members reported in the spring AI poll instead.","expect":"survey_findings","require":"Public KB remains readable for the anonymous control."}
+    ]},
+    {"id":"T09","language":"zh","scenario":"feedback","turns":[
+      {"question":"建议：希望可以记住上次看的周报。","expect":"feedback_draft"},
+      {"before":"Cancel the draft and verify zero feedback rows.","question":"那如果想自己提交意见，入口在哪？","expect":"guide","target":"guide:feedback-entry"}
+    ]},
+    {"id":"T10","language":"en","scenario":"feedback","turns":[
+      {"question":"Feedback: please keep my category selection when I return to the database.","expect":"feedback_draft"},
+      {"before":"Edit the draft to 'Keep my category filter' and explicitly submit once; preserve the receipt and read back the one isolated row.","question":"Where do I check how to send feedback next time?","expect":"guide","target":"guide:feedback-entry","require":"A how-to turn never creates a second draft or feedback row."}
+    ]},
+    {"id":"T11","language":"zh","scenario":"no_weekly_snapshot","turns":[
+      {"question":"站里有什么用途？","expect":"guide","target":"guide:features-dashboard"},
+      {"question":"那周报从哪里打开？最新发的一期有什么？","expect":"weekly_guide","also_expect":"weekly_data","require":"Combine the real entry with the no-published-snapshot state; do not state zero additions."}
+    ]},
+    {"id":"T12","language":"en","scenario":"exhausted_quota","turns":[
+      {"question":"Summarize the latest SOA AI survey for me.","expect":"quota_exceeded"},
+      {"before":"Open Read user guide (no AI), then Send a suggestion and cancel.","question":"Can you try the survey once more?","expect":"quota_exceeded","user_requested_retry":true,"require":"Keep both quota rejections, both manual controls and zero provider calls. Record this follow-up as the first execution of turn 2."}
+    ]}
+  ]
+}

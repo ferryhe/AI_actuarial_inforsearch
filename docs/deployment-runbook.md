@@ -8,54 +8,70 @@ This document covers deployment, configuration, and operations for the AI Actuar
 
 ```bash
 # Development
-docker compose up
+docker compose -f docker-compose.yml up frontend
 
 # Production
 export CONFIG_PATH=/var/lib/aiinforsearch/config/sites.yaml
 export RUNTIME_CONFIG_DIR=/var/lib/aiinforsearch/config
-docker compose -f docker-compose.yml -f docker-compose.override.yml up -d
+bash scripts/ensure_postgres_network.sh &&
+  docker compose -f docker-compose.yml -f docker-compose.override.yml up -d
 ```
+
+Use the same network prerequisite on a fresh recovery host, including when
+`DATABASE_URL` points to a PostgreSQL server outside Docker. If the database
+is a Docker container, ensure it is attached to that network and reachable
+at the hostname in `DATABASE_URL` before starting the API.
 
 ## Docker Compose Commands
 
-### Start Services
+### Start Development Services
+
+Open [the development UI](http://localhost:5173/) and check
+[API health through Vite](http://localhost:5173/api/health). Compose starts
+the internal API as a frontend dependency. Development uses the Vite entry
+point directly.
 
 ```bash
-# Start all services in detached mode
-docker compose up -d
+# Start the frontend and its API dependency in detached mode
+docker compose -f docker-compose.yml up -d frontend
 
 # Start with logs streaming
-docker compose up
+docker compose -f docker-compose.yml up frontend
 
 # Rebuild before starting (after code changes)
-docker compose up --build -d
+docker compose -f docker-compose.yml up --build -d frontend
 ```
 
-### Stop Services
+### Stop Development Services
 
 ```bash
 # Stop containers (preserves volumes)
-docker compose down
+docker compose -f docker-compose.yml down
 
 # Stop and remove volumes (destroys data)
-docker compose down -v
+docker compose -f docker-compose.yml down -v
 ```
 
-### Inspect & Debug
+### Inspect & Debug Development Services
 
 ```bash
 # View running containers
-docker compose ps
+docker compose -f docker-compose.yml ps
 
 # View logs
-docker compose logs -f
+docker compose -f docker-compose.yml logs -f
 
 # Follow logs for a specific service
-docker compose logs -f api
+docker compose -f docker-compose.yml logs -f api
 
 # Open a shell in a running container
-docker compose exec api sh
+docker compose -f docker-compose.yml exec api sh
+
+# Validate the configuration
+docker compose -f docker-compose.yml config --quiet
 ```
+
+For production, use both Compose files as in the production quick start.
 
 ### Database Operations
 
@@ -202,8 +218,11 @@ sites:
 ### Container won't start
 
 ```bash
-# Check logs for errors
-docker compose logs api
+# Check development logs for errors
+docker compose -f docker-compose.yml logs api
+
+# Check production logs for errors
+docker compose -f docker-compose.yml -f docker-compose.override.yml logs api
 
 # Verify .env file exists and is populated
 cat .env
@@ -332,6 +351,7 @@ CONFIG_PATH=/var/lib/aiinforsearch/config/sites.yaml
 COMPOSE="docker compose -f docker-compose.yml -f docker-compose.override.yml"
 # DATABASE_URL must be available from a private shell environment or secret store.
 
+bash scripts/ensure_postgres_network.sh || exit 1
 $COMPOSE stop api
 DATABASE_URL="$DATABASE_URL" sudo --preserve-env=DATABASE_URL python3 scripts/production_recovery.py backup \
   --data-dir "$DATA_DIR" \
@@ -466,8 +486,9 @@ DATABASE_URL="$DATABASE_URL" python3 scripts/production_recovery.py release-reco
   --config "$CONFIG_PATH" \
   --output /var/lib/aiinforsearch/releases/"$BUILD_RELEASE_ID".json
 export API_IMAGE_DIGEST=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["image_digest"].rsplit("@", 1)[-1])' /var/lib/aiinforsearch/releases/"$BUILD_RELEASE_ID".json)
-docker compose -f docker-compose.yml -f docker-compose.override.yml \
-  up -d --wait --wait-timeout 180 api frontend
+bash scripts/ensure_postgres_network.sh &&
+  docker compose -f docker-compose.yml -f docker-compose.override.yml \
+    up -d --wait --wait-timeout 180 api frontend
 ```
 
 The record rejects different frontend/API release IDs, SHAs, build timestamps,
@@ -580,12 +601,19 @@ PostgreSQL URL in the private runtime environment; `.dockerignore` excludes
 nested environment files, SQLite migration sources, and runtime/work directories
 from image builds.
 
+Before the first upgrade from a checkout that predates
+`scripts/ensure_postgres_network.sh`, run this block in that checkout.
+The old updater uses the new Compose files after it fast-forwards, so prepare
+the external PostgreSQL network before invoking it.
+
 ```bash
 # The guarded updater refuses a dirty worktree or root-disk use >=80%, creates a
 # quiesced full snapshot, fast-forwards main, builds with OCI revision labels,
 # restarts the API, and writes a release record.
 export CONFIG_PATH=/var/lib/aiinforsearch/config/sites.yaml
-scripts/deploy_update.sh
+docker network inspect aiinforsearch-pg-net >/dev/null 2>&1 ||
+  docker network create --driver bridge aiinforsearch-pg-net || exit 1
+bash scripts/deploy_update.sh
 ```
 
 The updater intentionally refuses the known production

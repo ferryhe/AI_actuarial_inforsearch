@@ -1,5 +1,5 @@
 import hashlib
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
 
 from ai_actuarial.agent_runtime import ToolResult
@@ -30,14 +30,47 @@ def sources(facade, _args):
     )
 
 
+def _date_window(args):
+    if args.get("publication_window_days") == 7:
+        field = "published_time"
+    elif args.get("window_days") == 7:
+        field = "first_seen"
+    else:
+        return {}
+    now = datetime.now(timezone.utc)
+    return {
+        f"{field}_from": (now - timedelta(days=7)).isoformat(),
+        f"{field}_before": now.isoformat(),
+    }
+
+
+def _source_exclusion(args):
+    sources = tuple(
+        dict.fromkeys(
+            source
+            for source in (args.get("exclude_source"), *(args.get("exclude_sources") or ()))
+            if source
+        )
+    )
+    if len(sources) == 1:
+        return {"exclude_source": sources[0]}, {"excluded_source": sources[0]}
+    if sources:
+        return {"exclude_sources": sources}, {"excluded_sources": sources}
+    return {}, {}
+
+
 def recent(facade, args):
     source = args.get("source") or ""
+    exclusion, excluded = _source_exclusion(args)
+    window = _date_window(args)
     rows, total = facade.storage.query_files_with_catalog(
         limit=3,
-        order_by="first_seen",
+        order_by="published_time" if "published_time_from" in window else "first_seen",
         order_dir="desc",
         source=source,
         exclude_urls=SOURCE_PORTAL_URLS,
+        **exclusion,
+        **window,
     )
     items = [
         {
@@ -50,6 +83,11 @@ def recent(facade, args):
         }
         for row in rows
     ]
+    if window:
+        names = facade.storage.get_source_options(
+            source=source, exclude_urls=SOURCE_PORTAL_URLS, **exclusion, **window
+        )
+        window["source_names"] = [(row["source_name_zh"], row["source_name_en"]) for row in names]
     return ToolResult(
         "ok",
         {
@@ -58,14 +96,35 @@ def recent(facade, args):
             "source_filter": source,
             "date_meaning": "first_seen is system first collection; content revisions are not recorded",
             "action": "/database",
+            **excluded,
+            **window,
         },
-        (_id("recent" + source + str(total) + str(items)),),
+        (
+            _id(
+                "recent"
+                + source
+                + str(excluded.get("excluded_source") or excluded.get("excluded_sources") or "")
+                + str(total)
+                + str(items)
+                + (str(window) if window else "")
+            ),
+        ),
     )
 
 
 def catalog_search(facade, args):
+    window = _date_window(args)
+    source = args.get("source") or ""
+    exclusion, excluded = _source_exclusion(args)
+    order = {"order_by": "published_time"} if "published_time_from" in window else {}
     rows, total = facade.storage.query_files_with_catalog(
-        query=args["query"], limit=3, exclude_urls=SOURCE_PORTAL_URLS
+        query=args["query"],
+        source=source,
+        limit=3,
+        exclude_urls=SOURCE_PORTAL_URLS,
+        **order,
+        **exclusion,
+        **window,
     )
     items = [
         {
@@ -80,14 +139,29 @@ def catalog_search(facade, args):
         for row in rows
     ]
     return ToolResult(
-        "ok" if items else "not_found",
+        "ok" if items or window else "not_found",
         {
             "files": items,
             "total": total,
             "action": "/database",
             "note": "Catalog metadata is not body evidence; content revision history is not recorded.",
+            **({"source_filter": source} if source else {}),
+            **excluded,
+            **window,
         },
-        (_id("catalog" + str(items)),) if items else (),
+        (
+            (
+                _id(
+                    "catalog"
+                    + source
+                    + str(excluded.get("excluded_source") or excluded.get("excluded_sources") or "")
+                    + str(items)
+                    + (str(window) if window else "")
+                ),
+            )
+            if items or window
+            else ()
+        ),
     )
 
 
@@ -189,7 +263,8 @@ def grounded_answer(tool_id, data, locale):
         return "\n".join(lines)
     if tool_id in {"resources_updates.recent", "resources_updates.catalog_search"}:
         recent = tool_id.endswith("recent")
-        source = data.get("source_filter") if recent else None
+        source = data.get("source_filter")
+        publication = "published_time_from" in data
         lines = [
             (
                 (
@@ -197,7 +272,7 @@ def grounded_answer(tool_id, data, locale):
                     if zh
                     else f"{data.get('total', 0)} files by system first collection date."
                 )
-                if recent
+                if recent and not publication
                 else (
                     f"目录检索找到 {data.get('total', 0)} 份资料。"
                     if zh
@@ -207,6 +282,33 @@ def grounded_answer(tool_id, data, locale):
         ]
         if source:
             lines[0] += f"（{source}）" if zh else f" Source: {source}."
+        if excluded := data.get("excluded_source") or ", ".join(data.get("excluded_sources", ())):
+            lines[0] += f"（排除 {excluded}）" if zh else f" Excluding {excluded}."
+        if (start := data.get("first_seen_from")) and (end := data.get("first_seen_before")):
+            lines.append(
+                f"过去七天的系统首次收录时间（UTC）：自 {start}（含）至 {end}（不含）。"
+                if zh
+                else f"System first collection in the past seven days (UTC): "
+                f"from {start} (inclusive) to {end} (exclusive)."
+            )
+        if (start := data.get("published_time_from")) and (
+            end := data.get("published_time_before")
+        ):
+            lines.append(
+                f"过去七天的发布日期（UTC）：自 {start}（含）至 {end}（不含）。"
+                if zh
+                else f"Publication dates in the past seven days (UTC): "
+                f"from {start} (inclusive) to {end} (exclusive)."
+            )
+        if source_names := data.get("source_names"):
+            names = ("、" if zh else ", ").join(name[0 if zh else 1] for name in source_names)
+            source_label = "这段时间发布资料的来源机构" if publication else "这段时间收录的来源机构"
+            lines.append(f"{source_label}：{names}。" if zh else f"Source organizations: {names}.")
+            shown = len(data.get("files", []))
+            if shown < data["total"]:
+                lines.append(
+                    f"以下列出其中 {shown} 份资料。" if zh else f"Showing {shown} sample files."
+                )
         for row in data.get("files", []):
             lines.append(
                 f"- {row.get('title') or 'Untitled'} — {row.get('source') or 'Unknown source'}"

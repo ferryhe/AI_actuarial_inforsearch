@@ -46,7 +46,8 @@ Compose mounts the containing directory so atomic replacement works:
 ```bash
 export RUNTIME_CONFIG_DIR=/var/lib/aiinforsearch/config
 export CONFIG_FILENAME=sites.yaml
-docker compose -f docker-compose.yml -f docker-compose.override.yml up -d
+bash scripts/ensure_postgres_network.sh &&
+  docker compose -f docker-compose.yml -f docker-compose.override.yml up -d
 ```
 
 Inside the API container the same file is available as

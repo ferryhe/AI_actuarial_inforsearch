@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import subprocess
 import sys
 import time
 from dataclasses import replace
+from datetime import datetime
 from pathlib import Path
 from threading import Event
 from types import SimpleNamespace
@@ -457,7 +459,8 @@ def test_agent_provider_preflight_respects_cancel_and_deadline():
     assert context.model_attempts == 1 and context.provider_requests == 0
     cancelled.clear()
     context.deadline = time.monotonic() + 0.1
-    assert 0 < context.take_provider_request(prepaid=True) <= 0.1
+    # The absolute deadline can round up by one representable float increment.
+    assert 0 < context.take_provider_request(prepaid=True) <= 0.1 + math.ulp(context.deadline)
     context.deadline = time.monotonic() - 1
     with pytest.raises(TimeoutError, match="deadline"):
         context.take_provider_request()
@@ -1981,9 +1984,10 @@ def test_latest_source_uses_recent_catalog_from_finder_or_catalog_search(
         locale="zh",
         model=model,
     )
-    assert calls[0] == ("recent", {"source": source.lower()})
+    assert calls[0] == ("recent", {"source": source.lower(), "window_days": None})
     assert calls[1][0] == "catalog"
     assert calls[1][1]["source"] == source.lower()
+    assert "first_seen_from" not in calls[1][1] and "first_seen_before" not in calls[1][1]
     assert (calls[1][1]["order_by"], calls[1][1]["order_dir"]) == ("first_seen", "desc")
     assert outcome.runtime.availability == "available"
     assert f"— {source}" in outcome.response.answer
@@ -2034,6 +2038,497 @@ def test_catalog_search_keeps_keyword_route_without_one_latest_collected_source(
     )
     assert used == [("resources_updates.catalog_search", {"query": "SOA"})]
     assert outcome.kind == "finish"
+
+
+@pytest.mark.parametrize(
+    "question_id,tool,case",
+    [
+        ("ZH17", "recent", "collection"),
+        ("ZH18", "recent", "collection"),
+        ("EN17", "recent", "collection"),
+        ("EN18", "recent", "collection"),
+        ("ZH18", "catalog_search", "collection"),
+        ("ZH18", "recent", "mixed"),
+        ("EN18", "recent", "mixed"),
+        ("ZH18", "catalog_search", "mixed"),
+        ("EN18", "catalog_search", "mixed"),
+        ("EN18", "catalog_search", "publication"),
+        ("ZH18", "recent", "publication"),
+        ("ZH18", "recent", "near_week"),
+        ("EN18", "catalog_search", "source_only"),
+        ("EN18", "catalog_search", "topic"),
+        ("EN18", "recent", "collection_dates_en"),
+        ("ZH18", "recent", "collection_dates_zh"),
+        ("EN18", "catalog_search", "publication_with_collection"),
+        ("EN18", "catalog_search", "source_generic"),
+        ("EN17", "recent", "exclude"),
+        ("ZH18", "recent", "collect_zh"),
+        ("EN18", "catalog_search", "publication_comma"),
+        ("EN18", "catalog_search", "source_files"),
+        ("EN17", "recent", "exclude_many"),
+        ("EN18", "recent", "collection_with_publication_display"),
+        ("ZH18", "catalog_search", "publication_zh_wrapper"),
+        ("EN17", "recent", "exclude_besides"),
+        ("EN18", "recent", "collection_fronted"),
+        ("EN18", "catalog_search", "publication_fronted"),
+        ("EN18", "recent", "collection_imperative"),
+        ("EN18", "catalog_search", "publication_imperative"),
+        ("EN18", "catalog_search", "source_from"),
+        ("ZH18", "catalog_search", "source_from"),
+        ("EN18", "catalog_search", "topic_from"),
+        ("EN18", "catalog_search", "topic_prefix"),
+        ("EN18", "recent", "collection_implicit_relative"),
+        ("EN18", "catalog_search", "source_from_article"),
+        ("EN18", "catalog_search", "source_with_latest"),
+        ("EN18", "catalog_search", "source_study"),
+        ("EN18", "catalog_search", "source_studies"),
+        ("EN18", "catalog_search", "study_from"),
+        ("EN18", "catalog_search", "study_prefix"),
+        ("EN18", "recent", "collection_passive"),
+        ("EN18", "recent", "collection_relative"),
+        ("ZH18", "recent", "collection_topic_zh"),
+        ("EN18", "catalog_search", "publication_passive"),
+        ("EN17", "recent", "added_en"),
+        ("ZH17", "recent", "added_zh"),
+        ("EN17", "recent", "added_publication_display"),
+        ("EN17", "recent", "added_no_period"),
+        ("EN17", "recent", "added_no_model_window"),
+    ],
+)
+def test_recent_first_collection_uses_the_requested_seven_day_window(
+    host_fixture, tmp_path, question_id, tool, case
+):
+    from ai_actuarial.skills.resources_updates import executors as resource_executors
+    from ai_actuarial.source_registry import install_registry
+    from ai_actuarial.storage import Storage
+    from tests.postgres_helpers import postgres_url_for_path
+
+    root = Path(__file__).resolve().parents[1]
+    questions = json.loads(
+        (root / "tests/fixtures/assistant_uat_questions.json").read_text(encoding="utf-8")
+    )["questions"]
+    question = next(row for row in questions if row["id"] == question_id)
+    message = question["question"]
+    exact_study = case in {"study_from", "study_prefix"}
+    source_topic = case in {"topic_from", "topic_prefix"} or exact_study
+    collection_variants = {
+        "collection_passive": "Which SOA reports were first collected by this site in the last seven days, with publication dates?",
+        "collection_relative": "Over the past seven days, which SOA reports that were published last month did this site first collect?",
+        "collection_topic_zh": "过去七天，已发布的 SOA 报告里，哪些是本站首次收录的？",
+        "collection_implicit_relative": "Over the past seven days, list the published SOA reports this site first collected.",
+    }
+    added_questions = {
+        "added_en": "What new files were added in the past week?",
+        "added_zh": "过去一周本站新增了哪些资料？",
+        "added_publication_display": "Which files did the site add in the past week, and when were they published?",
+        "added_no_period": "What new files were added?",
+        "added_no_model_window": "What new files were added in the past week?",
+    }
+    if case in added_questions:
+        message = added_questions[case]
+    elif case in collection_variants:
+        message = collection_variants[case]
+    elif source_topic:
+        message = "Which SOA longevity risk reports were first collected in the past seven days?"
+    elif case == "near_week":
+        message = "近一周首次收录了哪些 SOA 文件？"
+    elif case == "collection_dates_en":
+        message = "Which SOA reports did you first collect in the last seven days? Include publication dates."
+    elif case == "collection_dates_zh":
+        message = "近一周收录的 SOA 报告有哪些？请附上各自的发布日期。"
+    elif case == "publication_with_collection":
+        message = "Which SOA reports were published in the last seven days? Show when you first collected each one"
+    elif case == "exclude":
+        message = "Which organizations other than SOA had material added to this site's collection in the last seven days?"
+    elif case == "exclude_many":
+        message = "Which organizations other than SOA and CAS had material added to this site's collection over the last seven days?"
+    elif case == "exclude_besides":
+        message = "Which organizations besides SOA and CAS had material added to this site's collection over the last seven days?"
+    elif case == "collection_with_publication_display":
+        message = "Which SOA reports did the site first collect over the last seven days, with publication dates?"
+    elif case == "collection_fronted":
+        message = "Over the past seven days, which published SOA reports did the site first collect? Include their publication dates."
+    elif case == "publication_fronted":
+        message = "Over the past seven days, which SOA reports were published? Show when the site first collected each one."
+    elif case == "collection_imperative":
+        message = "Over the past seven days, show me the published SOA reports that this site first collected."
+    elif case == "publication_imperative":
+        message = "Over the past seven days, list the SOA reports that were published, and when the site first collected each one."
+    elif case == "publication_passive":
+        message = "Which SOA reports were published by the SOA in the last seven days, with first collection dates?"
+    elif case == "collect_zh":
+        message = "过去七天本站首次收集的 SOA 报告有哪些？"
+    elif case == "publication_comma":
+        message = "Which SOA reports were published in the past seven days, and when did you first collect each one?"
+    elif case in {"publication", "publication_zh_wrapper"}:
+        message = (
+            "近一周发布了哪些 SOA 文件？"
+            if question["language"] == "zh"
+            else "Which SOA reports were published in the past seven days?"
+        )
+    named_source = question_id.endswith("18")
+    upper = "2026-11-10T12:00:00+00:00"
+    lower = "2026-11-03T12:00:00+00:00"
+    now = datetime.fromisoformat(upper)
+    database = postgres_url_for_path(tmp_path / "recent.db")
+    recent_url = "https://www.casact.org/within-window.pdf"
+    old_url = "https://www.soa.org/old-report.pdf"
+    upper_url = "https://www.soa.org/at-upper-bound.pdf"
+    registry_seed = json.loads(
+        (root / "config/source_registry_seed.json").read_text(encoding="utf-8")
+    )
+    files = [(old_url, "www.soa.org", "Fourteen-day-old SOA report", "2026-10-27T12:00:00+00:00")]
+    soa_samples = [f"https://www.soa.org/in-window-{i}.pdf" for i in range(3)]
+    joint_url = "https://www.casact.org/joint-study.pdf"
+    longevity_url = "https://www.soa.org/longevity-risk.pdf"
+    publication_case = case in {
+        "publication",
+        "publication_with_collection",
+        "publication_comma",
+        "publication_zh_wrapper",
+        "publication_fronted",
+        "publication_imperative",
+        "publication_passive",
+    }
+    collection_dates = (
+        case
+        in {
+            "collection_dates_en",
+            "collection_dates_zh",
+            "collect_zh",
+            "collection_with_publication_display",
+            "collection_fronted",
+            "collection_imperative",
+        }
+        or case in collection_variants
+    )
+    split_dates = (
+        case
+        in {
+            "collection_with_publication_display",
+            "collection_fronted",
+            "collection_imperative",
+        }
+        or case in collection_variants
+    )
+    multiple_exclusions = case in {"exclude_many", "exclude_besides"}
+    source_wrapper = case in {
+        "source_from_article",
+        "source_with_latest",
+        "source_study",
+        "source_studies",
+    }
+    source_only = (
+        case in {"source_only", "source_generic", "source_files", "source_from"} or source_wrapper
+    )
+    include_longevity = collection_dates or source_only or case == "topic" or source_topic
+    longevity_title = "Longevity Risk Study"
+    pricing_url = "https://www.soa.org/pricing.pdf"
+    cia_url = "https://www.cia-ica.ca/in-window.pdf"
+    early_publication_url = "https://www.soa.org/early-publication.pdf"
+    unknown_publication_url = "https://www.soa.org/unknown-publication.pdf"
+    if case in added_questions:
+        files = [
+            (old_url, "www.soa.org", "January SOA report", "2026-01-01T12:00:00+00:00"),
+            (
+                recent_url,
+                "www.casact.org",
+                "Recently added CAS report",
+                "2026-11-09T12:00:00+00:00",
+            ),
+        ]
+    elif case == "mixed":
+        files = [(joint_url, "www.casact.org", "Joint CAS/SOA study", lower)]
+    elif case in collection_variants:
+        old_url = "https://www.soa.org/recent.pdf"
+        longevity_url = "https://www.soa.org/early.pdf"
+        files = [
+            (old_url, "www.soa.org", "Recent publication", "2026-10-30T12:00:00+00:00"),
+            (longevity_url, "www.soa.org", longevity_title, "2026-11-08T12:00:00+00:00"),
+            (pricing_url, "www.soa.org", "Pricing Study", "2026-11-08T12:00:00+00:00"),
+        ]
+    elif split_dates:
+        files = [
+            (old_url, "www.soa.org", "Recent publication", "2026-10-30T12:00:00+00:00"),
+            (longevity_url, "www.soa.org", "Longevity Risk Study", "2026-11-09T12:00:00+00:00"),
+        ]
+    elif include_longevity:
+        files.append((longevity_url, "www.soa.org", longevity_title, lower))
+        if source_wrapper:
+            files.extend(
+                [
+                    (pricing_url, "www.soa.org", "Pricing Study", "2026-11-08T12:00:00+00:00"),
+                    (joint_url, "www.casact.org", "Joint CAS/SOA report", lower),
+                ]
+            )
+        if case == "topic" or source_topic:
+            files.append((pricing_url, "www.soa.org", "Pricing Study", lower))
+        if exact_study:
+            files.append(
+                ("https://www.soa.org/outlook.pdf", "www.soa.org", "Longevity Risk Outlook", lower)
+            )
+        if source_topic:
+            files.extend(
+                [
+                    (joint_url, "www.casact.org", longevity_title, lower),
+                    (
+                        "https://www.soa.org/outside-window.pdf",
+                        "www.soa.org",
+                        longevity_title,
+                        "2026-10-27T12:00:00+00:00",
+                    ),
+                ]
+            )
+    elif case == "exclude" or multiple_exclusions:
+        files.extend(
+            [
+                (recent_url, "www.casact.org", "Included CAS report", lower),
+                (longevity_url, "www.soa.org", "Excluded SOA report", lower),
+            ]
+        )
+        if multiple_exclusions:
+            files.append((cia_url, "www.cia-ica.ca", "CIA only", lower))
+    elif publication_case:
+        files.extend(
+            [
+                (longevity_url, "www.soa.org", "Longevity Risk Study", "2026-10-31T12:00:00+00:00"),
+                (early_publication_url, "www.soa.org", "Early SOA publication", lower),
+                (upper_url, "www.soa.org", "SOA upper publication bound", lower),
+                (unknown_publication_url, "www.soa.org", "SOA unknown publication", lower),
+            ]
+        )
+    elif tool == "recent" and case == "collection":
+        files.extend(
+            [
+                (recent_url, "www.casact.org", "Included CAS report", lower),
+                (upper_url, "www.soa.org", "Excluded SOA upper boundary", upper),
+            ]
+        )
+        if not named_source:
+            files.extend(
+                (url, "www.soa.org", f"Included SOA report {i}", f"2026-11-06T12:00:0{i}+00:00")
+                for i, url in enumerate(soa_samples)
+            )
+    storage = Storage(database)
+    try:
+        with storage.transaction():
+            install_registry(
+                storage._conn,
+                registry_seed,
+                target="test",
+                apply=True,
+            )
+        for url, source, title, first_seen in files:
+            published_time = "2026-10-01" if collection_dates else lower
+            if split_dates:
+                if url == old_url:
+                    published_time = "2026-11-09"
+                elif case in {"collection_with_publication_display", "collection_imperative"}:
+                    published_time = "2026-10-30"
+            elif publication_case:
+                published_time = {
+                    longevity_url: "2026-11-09",
+                    early_publication_url: "2026-10-01",
+                    upper_url: upper,
+                    unknown_publication_url: None,
+                }.get(url, lower)
+            elif case == "added_publication_display":
+                published_time = "2026-11-09" if url == old_url else "2026-10-01"
+            filename = url.rsplit("/", 1)[-1]
+            storage.insert_file(
+                url=url,
+                sha256=filename,
+                title=title,
+                source_site=source,
+                source_page_url=f"https://{source}/",
+                original_filename=filename,
+                local_path=str(tmp_path / filename),
+                bytes=1,
+                content_type="application/pdf",
+            )
+            storage._conn.execute(
+                "UPDATE files SET first_seen = ?, last_seen = ?, published_time = ? WHERE url = ?",
+                (first_seen, upper, published_time, url),
+            )
+        storage._conn.commit()
+    finally:
+        storage.close()
+
+    state = host_fixture
+    state.monkeypatch.setattr(host.chat, "Storage", lambda _database: Storage(database))
+    state.monkeypatch.setattr(resource_executors, "datetime", SimpleNamespace(now=lambda _: now))
+    auth = AuthContext(
+        {"subject": "reader"}, frozenset({"chat.query", "catalog.read", "files.read"})
+    )
+    state.monkeypatch.setattr(host.deps, "get_auth_context", lambda request: auth)
+    prompts = []
+    args = {"source": "soa"} if named_source and case != "mixed" else {}
+    if tool == "catalog_search":
+        args = {
+            "query": {
+                "collection": "Fourteen-day-old SOA",
+                "mixed": "Joint CAS/SOA",
+                "publication": "SOA",
+                "publication_with_collection": "SOA",
+                "publication_comma": "SOA",
+                "publication_zh_wrapper": "SOA的文件",
+                "publication_fronted": "SOA",
+                "publication_imperative": "SOA",
+                "publication_passive": "SOA",
+                "source_only": "Society of Actuaries",
+                "source_generic": "SOA research reports",
+                "source_files": "SOA files",
+                "source_from": (
+                    "来自SOA的报告" if question["language"] == "zh" else "reports from SOA"
+                ),
+                "topic": "Longevity Risk",
+                "topic_from": "Longevity Risk reports from SOA",
+                "topic_prefix": "SOA longevity risk reports",
+                "source_from_article": "reports from the SOA",
+                "source_with_latest": "the latest reports from SOA",
+                "source_study": "study from SOA",
+                "source_studies": "studies from SOA",
+                "study_from": "Longevity Risk Study from SOA",
+                "study_prefix": "SOA Longevity Risk Study",
+            }[case]
+        }
+    elif (
+        publication_case
+        or collection_dates
+        or case == "near_week"
+        or (case in added_questions and case != "added_no_model_window")
+    ):
+        args["window_days"] = 7
+
+    def model(prompt, _remaining):
+        prompts.append(json.loads(prompt))
+        if len(prompts) == 1:
+            return action(
+                action="call",
+                skill_id="resources_updates",
+                tool_id=f"resources_updates.{tool}",
+                args=args,
+            )
+        return action(
+            action="finish",
+            answer="This draft is replaced by the grounded answer.",
+            evidence_ids=prompts[-1]["observations"][0]["evidence_ids"],
+        )
+
+    outcome = state.feature.query(
+        request=state.request,
+        auth=auth,
+        message=message,
+        locale=question["language"],
+        model=model,
+    )
+    assert outcome.runtime.kind == "finish"
+    observation = prompts[-1]["observations"][0]["data"]
+    trace_ids = [trace.tool_id for trace in outcome.runtime.trace]
+    if case in added_questions:
+        assert trace_ids == ["resources_updates.recent"]
+        assert "published_time_from" not in observation
+        cited = [citation.file_id for citation in outcome.response.citations]
+        if case in {"added_en", "added_zh", "added_publication_display"}:
+            assert observation["first_seen_from"] == lower
+            assert observation["first_seen_before"] == upper
+            assert observation["total"] == 1
+            assert cited == [recent_url]
+            assert old_url not in outcome.response.answer
+            if case == "added_publication_display":
+                assert "2026-10-01" in outcome.response.answer
+        else:
+            assert "first_seen_from" not in observation and "first_seen_before" not in observation
+            assert observation["total"] == 2
+            assert cited == [recent_url, old_url]
+        return
+    if publication_case:
+        assert trace_ids == [f"resources_updates.{tool}"]
+        assert "first_seen_from" not in observation and "first_seen_before" not in observation
+        assert [citation.file_id for citation in outcome.response.citations] == [
+            longevity_url,
+            old_url,
+        ]
+        assert observation["published_time_from"] == lower
+        assert observation["published_time_before"] == upper
+        assert "2026-10-31T12:00:00+00:00" in outcome.response.answer
+        if question["language"] == "zh" and tool == "recent":
+            assert "这段时间发布资料的来源机构" in outcome.response.answer
+        assert old_url in outcome.response.answer
+        return
+    expected_files = [] if named_source else list(reversed(soa_samples))
+    if case in collection_variants:
+        expected_files = [longevity_url, pricing_url]
+    elif source_wrapper:
+        expected_files = [pricing_url, longevity_url]
+    elif include_longevity:
+        expected_files = [longevity_url]
+    elif case == "exclude":
+        expected_files = [recent_url]
+    elif multiple_exclusions:
+        expected_files = [cia_url]
+    assert observation["total"] == (
+        4 if case == "collection" and not named_source else len(expected_files)
+    )
+    expected_tool = "recent" if source_only else tool
+    assert trace_ids == [f"resources_updates.{expected_tool}"]
+    assert observation["first_seen_from"] == lower
+    assert observation["first_seen_before"] == upper
+    assert "published_time_from" not in observation
+    if named_source:
+        assert observation["source_filter"] == "soa"
+    cited_files = [citation.file_id for citation in outcome.response.citations]
+    if case in collection_variants:
+        assert sorted(cited_files) == sorted(expected_files)
+    else:
+        assert cited_files == expected_files
+    if include_longevity:
+        assert longevity_title in outcome.response.answer
+    if collection_dates:
+        publication_date = (
+            "2026-10-30"
+            if case in {"collection_with_publication_display", "collection_imperative"}
+            else "2026-10-01"
+        )
+        assert publication_date in outcome.response.answer
+    assert old_url not in outcome.response.answer
+    assert joint_url not in outcome.response.answer
+    assert upper_url not in outcome.response.answer
+    assert lower in outcome.response.answer and upper in outcome.response.answer
+    if case == "exclude":
+        assert recent_url in outcome.response.answer
+        assert longevity_url not in outcome.response.answer
+        assert observation["excluded_source"] == "soa"
+        assert all("SOA" not in name for names in observation["source_names"] for name in names)
+    elif multiple_exclusions:
+        assert observation["excluded_sources"] == ["cas", "soa"]
+        assert observation["source_names"] == [
+            [row["name_zh"], row["name_en"]]
+            for row in registry_seed["sources"]
+            if row["source_key"] == "cia"
+        ]
+        assert (
+            recent_url not in outcome.response.answer
+            and longevity_url not in outcome.response.answer
+        )
+    else:
+        assert recent_url not in outcome.response.answer
+    if not named_source and case == "collection":
+        names = {
+            row[f"name_{question['language']}"]
+            for row in registry_seed["sources"]
+            if row["source_key"] in {"cas", "soa"}
+        }
+        assert all(name in outcome.response.answer for name in names)
+    recent_tool = next(
+        tool
+        for skill in json.loads(prompts[0]["prompt"])["skills"]
+        for tool in skill["tools"]
+        if tool["tool_id"] == "resources_updates.recent"
+    )
+    assert {"const": 7, "type": "integer"} in (
+        recent_tool["arguments"]["properties"]["window_days"]["anyOf"]
+    )
 
 
 def test_latest_source_topic_keeps_catalog_search_query(host_fixture):
@@ -2450,7 +2945,9 @@ def test_admin_api_deadline_reports_started_work(monkeypatch):
 
     def query(**kwargs):
         assert kwargs["budget"].total_seconds == 0.1
-        assert 0 < kwargs["deadline"] - time.monotonic() <= 0.1
+        deadline = kwargs["deadline"]
+        # Match the rounding precision of the absolute monotonic deadline.
+        assert 0 < deadline - time.monotonic() <= 0.1 + math.ulp(deadline)
         context = RunContext(principal="admin", scopes=auth.permissions)
         kwargs["request"].state.assistant_runtime_context = context
         context.take_model()
@@ -2924,14 +3421,25 @@ def test_usage_to_weekly_follow_up_keeps_exact_guide_citation_and_open_action(ho
 @pytest.mark.parametrize(
     "locale,question", [("en", "How do I view weekly updates?"), ("zh", "怎么查看周报")]
 )
-@pytest.mark.parametrize("snapshot_state", ["published", "none", "no_new"])
-def test_combined_weekly_guide_and_snapshot_keeps_steps_and_current_state(
-    host_fixture, locale, question, snapshot_state
+@pytest.mark.parametrize(
+    "resources, snapshot_state",
+    [
+        (("weekly",), "published"),
+        (("weekly",), "none"),
+        (("weekly",), "no_new"),
+        (("sources",), "published"),
+        (("sources",), "none"),
+        (("sources", "weekly"), "none"),
+        (("sources", "weekly"), "no_new"),
+    ],
+)
+def test_combined_weekly_guide_and_resource_keeps_steps_and_current_state(
+    host_fixture, locale, question, resources, snapshot_state
 ):
     from ai_actuarial.skills.usage_navigation.executors import guide
 
     state = host_fixture
-    auth = AuthContext({"subject": "user"}, frozenset({"chat.query", "files.read"}))
+    auth = AuthContext({"subject": "user"}, frozenset({"chat.query", "catalog.read", "files.read"}))
     state.monkeypatch.setattr(host.deps, "get_auth_context", lambda request: auth)
     hit = guide({"query": question, "language": locale})
     weekly_id = next(
@@ -2949,34 +3457,58 @@ def test_combined_weekly_guide_and_snapshot_keeps_steps_and_current_state(
             "file_count": 0 if snapshot_state == "no_new" else 1,
         }
     )
-    total = 1 if snapshot_state == "published" else 0
-    state.feature.executors["resources_updates.weekly"] = lambda facade, args: ToolResult(
-        "ok", {"snapshot": snapshot, "total": total, "action": "/weekly"}, ("weekly:current",)
+    reads = []
+
+    def latest_snapshot(_storage, *, now):
+        reads.append(now)
+        return snapshot
+
+    state.monkeypatch.setattr(
+        host.chat.Storage, "get_latest_weekly_snapshot", latest_snapshot, raising=False
     )
-    model, _ = scripted(
+    data = {
+        "weekly": {
+            "snapshot": snapshot,
+            "total": int(snapshot_state == "published"),
+            "action": "/weekly",
+        },
+        "sources": {"sources": [{"source_name_en": "CAS", "count": 1}], "total": 1},
+    }
+    steps = [
         action(
             action="call",
             skill_id="usage_navigation",
             tool_id="usage_navigation.guide",
             args={"query": question, "language": locale},
-        ),
-        action(
-            action="call", skill_id="resources_updates", tool_id="resources_updates.weekly", args={}
-        ),
-        action(action="finish", answer="model prose", evidence_ids=[weekly_id, "weekly:current"]),
-    )
+        )
+    ]
+    evidence_ids = [weekly_id]
+    for resource in resources:
+        tool_id = f"resources_updates.{resource}"
+        resource_id = f"{resource}:current"
+        result = ToolResult("ok", data[resource], (resource_id,))
+        state.feature.executors[tool_id] = lambda facade, args, result=result: result
+        steps.append(action(action="call", skill_id="resources_updates", tool_id=tool_id, args={}))
+        evidence_ids.append(resource_id)
+    steps.append(action(action="finish", answer="model prose", evidence_ids=evidence_ids))
+    model, _ = scripted(*steps)
     outcome = state.feature.query(
         request=state.request, auth=auth, message=question, locale=locale, model=model
     )
     answer = outcome.response.answer
     assert outcome.runtime.kind == "finish"
     assert outcome.response.citations[0].section_id == "weekly-reports"
-    assert ("查看全部" if locale == "zh" else "View all") in answer
+    if "sources" in resources:
+        assert "CAS" in answer
+    assert (("查看全部" if locale == "zh" else "View all") in answer) == (snapshot is not None)
     assert ("较早的已发布周期" if locale == "zh" else "older published period") in answer
     assert ("资料阅读详情" if locale == "zh" else "file to read its details") in answer
     assert ("原文链接" if locale == "zh" else "source link") in answer
     assert "Markdown" in answer
-    assert ("[周报](/weekly)" if locale == "zh" else "[Weekly](/weekly)") in answer
+    assert answer.split("\n\n", 1)[0] == (
+        "打开[周报](/weekly)。" if locale == "zh" else "Open [Weekly](/weekly)."
+    )
+    assert answer.count("](/weekly)") == 1
     statuses = {
         "published": "2026-10-26",
         "none": (
@@ -2989,6 +3521,7 @@ def test_combined_weekly_guide_and_snapshot_keeps_steps_and_current_state(
     assert answer.count(statuses[snapshot_state]) == 1
     if snapshot_state != "published":
         assert "2026-10-26" not in answer
+    assert len(reads) == int("weekly" not in resources)
 
 
 @pytest.mark.parametrize(
@@ -3017,7 +3550,8 @@ def test_weekly_empty_states_override_unsupported_model_claims(host_fixture, emp
         request=state.request, auth=auth, message="What is new this week?", model=model
     )
     assert outcome.runtime.kind == "finish"
-    assert expected in outcome.response.answer and "/weekly" in outcome.response.answer
+    assert expected in outcome.response.answer
+    assert outcome.response.answer.startswith("Open [Weekly](/weekly).\n\n")
     assert "Five changed" not in outcome.response.answer
     assert "feedback" not in {
         item["skill_id"] for item in json.loads(calls[0][0]["prompt"])["skills"]
@@ -3286,12 +3820,13 @@ def test_guide_only_feature_answer_cannot_contradict_current_section(
 
 
 @pytest.mark.parametrize("locale", ["en", "zh"])
-@pytest.mark.parametrize("mode", ["guide", "data", "denied"])
+@pytest.mark.parametrize("mode", ["guide", "data", "guide_empty", "data_empty", "denied"])
 def test_overview_keeps_all_selected_help_when_weekly_is_included(host_fixture, locale, mode):
     from ai_actuarial.skills.usage_navigation.executors import guide
 
     state = host_fixture
     files_read = mode != "denied"
+    has_snapshot = mode in {"guide", "data"}
     scopes = {"chat.query", "files.read"} if files_read else {"chat.query"}
     auth = AuthContext({"subject": "user"}, frozenset(scopes))
     state.monkeypatch.setattr(host.deps, "get_auth_context", lambda request: auth)
@@ -3300,7 +3835,9 @@ def test_overview_keeps_all_selected_help_when_weekly_is_included(host_fixture, 
     class WeeklyStorage(host.chat.Storage):
         def get_latest_weekly_snapshot(self, *, now):
             reads.append(now)
-            return {"period_start": "2026-10-26", "period_end": "2026-11-02"}
+            if has_snapshot:
+                return {"period_start": "2026-10-26", "period_end": "2026-11-02"}
+            return None
 
     state.monkeypatch.setattr(host.chat, "Storage", WeeklyStorage)
     sections = []
@@ -3329,17 +3866,22 @@ def test_overview_keeps_all_selected_help_when_weekly_is_included(host_fixture, 
     state.feature.executors["usage_navigation.guide"] = lambda args: ToolResult(
         "ok", {"sections": sections}, tuple(evidence_ids)
     )
-    if mode == "data":
+    uses_weekly_tool = mode.startswith("data")
+    if uses_weekly_tool:
         state.feature.executors["resources_updates.weekly"] = lambda facade, args: ToolResult(
             "ok",
             {
-                "snapshot": {
-                    "id": "published",
-                    "period_start": "2026-10-26",
-                    "period_end": "2026-11-02",
-                    "file_count": 3,
-                },
-                "total": 3,
+                "snapshot": (
+                    {
+                        "id": "published",
+                        "period_start": "2026-10-26",
+                        "period_end": "2026-11-02",
+                        "file_count": 3,
+                    }
+                    if has_snapshot
+                    else None
+                ),
+                "total": 3 if has_snapshot else 0,
                 "action": "/weekly",
             },
             ("weekly:published",),
@@ -3352,7 +3894,7 @@ def test_overview_keeps_all_selected_help_when_weekly_is_included(host_fixture, 
             args={"query": "overview", "language": locale},
         )
     ]
-    if mode == "data":
+    if uses_weekly_tool:
         steps.append(
             action(
                 action="call",
@@ -3365,7 +3907,7 @@ def test_overview_keeps_all_selected_help_when_weekly_is_included(host_fixture, 
         action(
             action="finish",
             answer="model overview",
-            evidence_ids=[*evidence_ids, *(["weekly:published"] if mode == "data" else [])],
+            evidence_ids=[*evidence_ids, *(["weekly:published"] if uses_weekly_tool else [])],
         )
     )
     model, _ = scripted(*steps)
@@ -3381,19 +3923,21 @@ def test_overview_keeps_all_selected_help_when_weekly_is_included(host_fixture, 
     ]
     assert sections[0]["content"][:30] in answer
     assert sections[1]["content"][:30] in answer
-    assert ("查看全部" if locale == "zh" else "View all") in answer
+    assert (("查看全部" if locale == "zh" else "View all") in answer) == has_snapshot
     assert ("](/weekly)" in answer) == files_read
-    assert ("2026-10-26" in answer) == files_read
-    assert len(reads) == int(mode == "guide")
+    assert ("2026-10-26" in answer) == has_snapshot
+    assert len(reads) == int(mode.startswith("guide"))
 
 
-@pytest.mark.parametrize("path", ["guide", "resource"])
+@pytest.mark.parametrize("path", ["guide", "resource", "identity_changed"])
 def test_weekly_action_is_not_clickable_after_files_read_is_denied(host_fixture, path):
     from ai_actuarial.skills.usage_navigation.executors import guide
 
     state = host_fixture
     denied = AuthContext({"subject": "user"}, frozenset({"chat.query"}))
     allowed = AuthContext({"subject": "user"}, frozenset({"chat.query", "files.read"}))
+    if path == "identity_changed":
+        denied = AuthContext({"subject": "other-user"}, allowed.permissions)
     if path == "guide":
         auth = denied
         state.monkeypatch.setattr(host.deps, "get_auth_context", lambda request: denied)
@@ -3424,12 +3968,12 @@ def test_weekly_action_is_not_clickable_after_files_read_is_denied(host_fixture,
         tool_id, args, skill_id = "resources_updates.weekly", {}, "resources_updates"
     model, _ = scripted(
         action(action="call", skill_id=skill_id, tool_id=tool_id, args=args),
-        action(action="finish", answer="Open /weekly", evidence_ids=[evidence_id]),
+        action(action="finish", answer="Open [Weekly](/weekly).", evidence_ids=[evidence_id]),
     )
     outcome = state.feature.query(
         request=state.request, auth=auth, message="How do I view weekly updates?", model=model
     )
-    if path == "resource":
+    if path != "guide":
         assert outcome.runtime.error_code == "SCOPE_REVOKED"
         assert outcome.response.evidence_ids == [] and outcome.response.citations == []
         assert outcome.response.selected_target is None
@@ -3505,15 +4049,19 @@ def test_weekly_guide_only_answer_uses_current_published_state(
     ) in outcome.response.answer
     assert ("原文链接" if locale == "zh" else "source link") in outcome.response.answer
     assert "Markdown" in outcome.response.answer
+    assert (("查看全部" if locale == "zh" else "View all") in outcome.response.answer) == (
+        snapshot_state == "published"
+    )
     if snapshot_state == "denied":
         assert "](/weekly)" not in outcome.response.answer
         assert (
             "无法打开周报页" if locale == "zh" else "cannot open"
         ) in outcome.response.answer.lower()
     else:
-        assert (
-            "[周报](/weekly)" if locale == "zh" else "[Weekly](/weekly)"
-        ) in outcome.response.answer
+        assert outcome.response.answer.split("\n\n", 1)[0] == (
+            "打开[周报](/weekly)。" if locale == "zh" else "Open [Weekly](/weekly)."
+        )
+        assert outcome.response.answer.count("](/weekly)") == 1
     if snapshot_state == "none":
         assert (
             "目前没有完整已发布的周报快照"

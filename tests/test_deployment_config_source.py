@@ -1,6 +1,8 @@
 import gzip
 import http.client
 import json
+import os
+import re
 import socket
 import subprocess
 import sys
@@ -29,6 +31,111 @@ TEST_CADDY_DEPLOYMENTS = (
         "CADDY_APP_REDIRECT_ORIGIN": "https://www.app-two.example.test",
     },
 )
+
+
+@pytest.mark.parametrize(
+    ("path", "count"),
+    [
+        ("docs/deployment-runbook.md", 2),
+        ("docs/guides/PRODUCTION_SECURITY_CONFIG.md", 1),
+        ("docs/guides/SERVICE_START_GUIDE.md", 1),
+        ("docs/runtime-config.md", 1),
+    ],
+)
+def test_documented_production_compose_start_prepares_postgres_network(path, count):
+    guide = (ROOT / path).read_text(encoding="utf-8")
+    starts = list(
+        re.finditer(
+            r"^[ \t]*docker compose -f docker-compose\.yml -f docker-compose\.override\.yml"
+            r"[ \t]+(?:\\\n[ \t]+)?up\b",
+            guide,
+            re.MULTILINE,
+        )
+    )
+    assert len(starts) == count
+    for start in starts:
+        assert guide[: start.start()].splitlines()[-1] == (
+            "bash scripts/ensure_postgres_network.sh &&"
+        )
+
+
+def test_development_compose_examples_use_the_base_file():
+    runbook = (ROOT / "docs/deployment-runbook.md").read_text(encoding="utf-8")
+    examples = runbook.split("## Docker Compose Commands", 1)[1].split(
+        "### Database Operations", 1
+    )[0]
+    commands = re.findall(r"^docker compose .+$", examples, re.MULTILINE)
+    assert all(cmd.startswith("docker compose -f docker-compose.yml ") for cmd in commands)
+    assert {cmd.split()[4] for cmd in commands} >= {"up", "down", "ps", "logs", "exec", "config"}
+
+
+def test_first_production_update_bootstraps_postgres_network_from_old_checkout():
+    runbook = (ROOT / "docs/deployment-runbook.md").read_text(encoding="utf-8")
+    update = (
+        runbook.split("## Updating the Service", 1)[1].split("```bash", 1)[1].split("```", 1)[0]
+    )
+    assert (
+        "docker network inspect aiinforsearch-pg-net >/dev/null 2>&1 ||\n"
+        "  docker network create --driver bridge aiinforsearch-pg-net || exit 1\n"
+        "bash scripts/deploy_update.sh\n"
+    ) in update
+
+
+def test_production_override_keeps_shared_app_and_caddy_network_settings():
+    base = yaml.safe_load((ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
+    production = yaml.safe_load((ROOT / "docker-compose.override.yml").read_text(encoding="utf-8"))
+    assert base["networks"]["ai-net"] == {"driver": "bridge"}
+    assert base["services"]["caddy"]["networks"] == ["ai-net"]
+    assert "ai-net" not in production["networks"]
+
+
+def test_development_frontend_proxy_and_production_ports(tmp_path):
+    env_file = tmp_path / "compose.env"
+    env_file.touch()
+    environment = {
+        **os.environ,
+        "DATABASE_URL": "postgresql://fixture:fixture@127.0.0.1:5432/fixture",
+        "FASTAPI_SESSION_SECRET": "fixture",
+        "TOKEN_ENCRYPTION_KEY": "fixture",
+        "CONFIG_WRITE_AUTH_TOKEN": "fixture",
+        "RUNTIME_CONFIG_DIR": tmp_path.as_posix(),
+        "FASTAPI_CORS_ORIGINS": "https://fixture.invalid",
+        "VITE_API_BASE_URL": "https://fixture.invalid/api",
+        "CADDY_APP_SITE_HOSTS": "fixture.invalid",
+        "CADDY_APP_REDIRECT_HOSTS": "www.fixture.invalid",
+        "CADDY_APP_REDIRECT_ORIGIN": "https://fixture.invalid",
+        "CADDY_HTTP_PORT": "80",
+        "CADDY_HTTPS_PORT": "443",
+    }
+
+    def render(*files):
+        command = ["docker", "compose", "--env-file", str(env_file)]
+        for path in files:
+            command.extend(["-f", path])
+        result = subprocess.run(
+            [*command, "config", "--format", "json"],
+            cwd=ROOT,
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return json.loads(result.stdout)["services"]
+
+    def ports(service):
+        return [
+            (item.get("host_ip"), int(item["published"]), item["target"])
+            for item in service.get("ports", [])
+        ]
+
+    dev = render("docker-compose.yml")
+    prod = render("docker-compose.yml", "docker-compose.override.yml")
+    assert ports(dev["frontend"]) == ports(prod["frontend"]) == [("127.0.0.1", 5173, 5173)]
+    assert ports(dev["api"]) == []
+    assert ports(prod["api"]) == [("127.0.0.1", 5000, 5000)]
+    assert ports(dev["caddy"]) == ports(prod["caddy"]) == [(None, 80, 80), (None, 443, 443)]
+    assert dev["frontend"]["depends_on"]["api"]["condition"] == "service_healthy"
+    assert dev["frontend"]["environment"]["API_PROXY_TARGET"] == "http://api:5000"
 
 
 class _CaddyStaticUpstream(SimpleHTTPRequestHandler):
@@ -744,7 +851,7 @@ def test_compose_does_not_pin_public_bridge_topology():
     assert "CONTENT_SECURITY_POLICY=${CONTENT_SECURITY_POLICY:-default-src" not in src
     assert "- CONTENT_SECURITY_POLICY" in src
     assert "ports" not in data["services"]["api"]
-    assert "ports" not in data["services"]["frontend"]
+    assert data["services"]["frontend"]["ports"] == ["127.0.0.1:5173:5173"]
     assert data["services"]["caddy"]["ports"] == [
         "${CADDY_HTTP_PORT:-80}:80",
         "${CADDY_HTTPS_PORT:-443}:443",

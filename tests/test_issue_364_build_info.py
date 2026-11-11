@@ -235,20 +235,20 @@ def test_release_record_rejects_frontend_mismatch_and_matches_safe_runtime(tmp_p
 
 
 @pytest.mark.parametrize(
-    "ready,include_config_digest,builder_state",
+    "ready,include_config_digest,builder_state,network_exists",
     [
-        (True, True, "missing"),
-        (True, False, "existing"),
-        (False, True, "existing"),
-        (False, False, "missing"),
-        (True, True, "wrong-driver"),
-        (True, True, "create-failed"),
-        (True, False, "bootstrap-failed"),
-        (True, True, "moby"),
+        (True, True, "missing", False),
+        (True, False, "existing", True),
+        (False, True, "existing", True),
+        (False, False, "missing", True),
+        (True, True, "wrong-driver", True),
+        (True, True, "create-failed", True),
+        (True, False, "bootstrap-failed", True),
+        (True, True, "moby", True),
     ],
 )
 def test_fake_deploy_builds_both_images_before_digest_and_runtime_handoff(
-    tmp_path, ready, include_config_digest, builder_state
+    tmp_path, ready, include_config_digest, builder_state, network_exists
 ):
     """Run the real shell flow using only isolated files and fake Docker/Git."""
     import pytest
@@ -267,6 +267,9 @@ def test_fake_deploy_builds_both_images_before_digest_and_runtime_handoff(
     data.mkdir()
     database_url = postgres_url_for_path(data / "index.db")
     (tmp_path / "backups").mkdir()
+    postgres_network = tmp_path / "postgres-network"
+    if network_exists:
+        postgres_network.touch()
     log = tmp_path / "commands.log"
     blobs = tmp_path / "buildkit-blobs"
     blobs.mkdir()
@@ -345,6 +348,14 @@ exec "{Path(sys.executable).as_posix()}" "$@"''',
     executable(
         "docker",
         """printf 'docker:%s digest=%s release=%s\\n' "$*" "${API_IMAGE_DIGEST:-unset}" "$BUILD_RELEASE_ID" >> "$FIXTURE_LOG"
+if [[ "$*" == "network inspect aiinforsearch-pg-net" ]]; then
+  [[ -f "$FIXTURE_PG_NETWORK" ]]; exit
+fi
+if [[ "$*" == "network create --driver bridge aiinforsearch-pg-net" ]]; then
+  [[ ! -e "$FIXTURE_PG_NETWORK" ]]
+  touch "$FIXTURE_PG_NETWORK"
+  exit
+fi
 if [[ "$1 $2" == "volume inspect" ]]; then echo "$FIXTURE_DATA"; exit; fi
 if [[ "$1 $2" == "buildx inspect" ]]; then
   if [[ "$3" == "--bootstrap" ]]; then
@@ -391,6 +402,10 @@ fi
 if [[ "$1" == "compose" ]]; then
   shift
   while [[ "$1" == "-f" ]]; do shift 2; done
+  if [[ "$1" == "up" && ! -f "$FIXTURE_PG_NETWORK" ]]; then
+    echo 'external PostgreSQL network not found' >&2
+    exit 98
+  fi
   case "$1" in
     ps) exit;;
     build) [[ "$*" == "build --pull api frontend" ]]; touch "$FIXTURE_BUILT";;
@@ -417,6 +432,7 @@ exit 93""",
         "FIXTURE_BIN": commands.as_posix(),
         "FIXTURE_LOG": log.as_posix(),
         "FIXTURE_DATA": data.as_posix(),
+        "FIXTURE_PG_NETWORK": postgres_network.as_posix(),
         "FIXTURE_BUILT": f"{fixture}/built",
         "FIXTURE_API_HASH": identities["api"][0],
         "FIXTURE_FRONTEND_HASH": identities["frontend"][0],
@@ -468,6 +484,14 @@ exit 93""",
     assert record["image_config_id"] == "sha256:" + identities["api"][1]
     assert record["frontend_image_config_id"] == "sha256:" + identities["frontend"][1]
     events = log.read_text()
+    network_inspect = "network inspect aiinforsearch-pg-net"
+    network_create = "network create --driver bridge aiinforsearch-pg-net"
+    assert events.index(network_inspect) < events.index("recovery:backup")
+    if network_exists:
+        assert network_create not in events
+    else:
+        assert events.index(network_inspect) < events.index(network_create)
+        assert events.index(network_create) < events.index("recovery:backup")
     assert "--use" not in events
     assert events.index("buildx inspect --bootstrap") < events.index("buildx bake")
     assert ("buildx create" in events) == (builder_state == "missing")

@@ -1,5 +1,5 @@
 # Resources and updates
 
-Filter recent by source when the question names an organization.
+Filter recent by source when the question names an organization. Set window_days to 7 when the question asks what the site first collected in the past seven days. Omit it for the latest files without a specified collection window.
 
 Use current canonical source, file catalog and published weekly snapshot data. Use catalog_search for public file titles and summaries; these are not body evidence. Source counts are live, never fixed. Recent means system first_seen, not publication or content change. Weekly means the latest complete published snapshot and its first-seen members, with /weekly as the action; say plainly when there is no snapshot or no new files. Publication date, first_seen, KB added_at and content revision are distinct. Current content revision lineage is not recorded; neither last_seen, refresh timing, HTTP status nor a single current hash proves an update. Locate a report before document_research body reading; do not treat catalog summaries as body evidence.
