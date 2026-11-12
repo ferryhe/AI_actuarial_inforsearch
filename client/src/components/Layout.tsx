@@ -24,7 +24,7 @@ import { useI18n } from "@/hooks/use-i18n";
 import { useState, createContext, useContext, useRef } from "react";
 import { useAuth } from "@/context/AuthContext";
 import { IconButton } from "@/components/a11y/IconButton";
-import SupportWidget from "@/components/support-widget/SupportWidget";
+import SupportWidget, { type OpenSupportPanel } from "@/components/support-widget/SupportWidget";
 
 const I18nContext = createContext<ReturnType<typeof useI18n>>({
   lang: "en",
@@ -116,7 +116,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const { theme, toggleTheme } = useTheme();
   const { user, isLoggedIn, logout, permissions } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [supportWidgetOpen, setSupportWidgetOpen] = useState(false);
+  const [openSupportPanel, setOpenSupportPanel] = useState<OpenSupportPanel>(null);
   const openSidebarRef = useRef<HTMLButtonElement>(null);
   const closeSidebar = () => {
     setSidebarOpen(false);
@@ -144,7 +144,11 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           </div>
         )}
 
-        <div className={cn("flex-1 flex flex-col min-w-0", supportWidgetOpen && "xl:mr-[24rem]")}>
+        <div className={cn(
+          "flex-1 flex flex-col min-w-0",
+          openSupportPanel === "assistant" && "lg:mr-[var(--assistant-panel-width)]",
+          openSupportPanel === "feedback" && "xl:mr-96",
+        )}>
           <header className="h-14 border-b border-border flex items-center justify-between px-4 bg-card/80 backdrop-blur-sm shrink-0">
             <IconButton
               ref={openSidebarRef}
@@ -215,14 +219,14 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             </div>
           </header>
 
-          <main className="group/support-widget flex-1 overflow-y-auto" data-feedback-open={supportWidgetOpen}>
+          <main className="group/support-widget flex-1 overflow-y-auto" data-feedback-open={openSupportPanel === "feedback"}>
             <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6">
               {children}
             </div>
           </main>
         </div>
       </div>
-      <SupportWidget onOpenChange={setSupportWidgetOpen} />
+      <SupportWidget onOpenChange={setOpenSupportPanel} />
       </>
     </I18nContext.Provider>
   );

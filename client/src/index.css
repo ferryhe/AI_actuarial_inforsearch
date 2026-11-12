@@ -22,6 +22,29 @@ html {
   max-width: var(--support-panel-max-width, none);
 }
 
+#support-panel[data-assistant] {
+  --support-panel-max-height: 100%;
+  inset: var(--assistant-viewport-top, 0px) 0 auto auto;
+  height: var(--assistant-viewport-height, 100dvh);
+  padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) 0;
+}
+
+#support-panel[data-assistant]::backdrop {
+  background: rgb(0 0 0 / 30%);
+}
+
+#support-panel[data-assistant] #feedback-panel {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+#support-panel[data-assistant] #feedback-content {
+  font-size: 16px;
+}
+
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
@@ -45,6 +68,7 @@ html {
 }
 
 :root {
+  --assistant-panel-width: clamp(20rem, 30vw, 24rem);
   --background: 220 20% 97%;
   --foreground: 222 47% 11%;
   --card: 0 0% 100%;

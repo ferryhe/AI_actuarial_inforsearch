@@ -42,7 +42,7 @@ def test_markdown_callers_keep_safe_defaults_and_file_preview_uses_inert_image_p
 
     assert 'import { MarkdownContent } from "@/components/MarkdownContent";' in chat
     assert 'import { MarkdownContent } from "@/components/MarkdownContent";' in detail
-    assert "const MessageBubble = memo(function MessageBubble" in chat
+    assert "const ChatMessage = memo(function ChatMessage" in chat
     assert "isUser ? message.content : <MarkdownContent content={message.content} />" in chat
     assert "!isUser && message.citations" in chat
     assert "!isUser && <RetrievedBlocks" in chat

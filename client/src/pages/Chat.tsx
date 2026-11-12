@@ -8,7 +8,6 @@ import {
   MessageSquare,
   Trash2,
   Bot,
-  User,
   BookOpen,
   Loader2,
   ChevronDown,
@@ -27,6 +26,7 @@ import { usePagedFiles } from "@/hooks/use-paged-files";
 import { cn } from "@/lib/utils";
 import { watchVisualViewport } from "@/lib/visual-viewport";
 import { MarkdownContent } from "@/components/MarkdownContent";
+import { MessageBubble } from "@/components/MessageBubble";
 import { useTranslation } from "@/components/Layout";
 import { useAuth } from "@/context/AuthContext";
 import {
@@ -375,7 +375,7 @@ function AgenticTrace({ trace }: { trace: AgenticToolTraceEntry[] }) {
   );
 }
 
-const MessageBubble = memo(function MessageBubble({ message, index, onRetry }: { message: Message; index: number; onRetry: (message: Message) => void }) {
+const ChatMessage = memo(function ChatMessage({ message, index, onRetry }: { message: Message; index: number; onRetry: (message: Message) => void }) {
   const isUser = message.role === "user";
   const retrievedBlocks = normalizeRetrievedBlocks(message.metadata?.retrieved_blocks);
   const toolTrace = normalizeAgenticToolTrace(message.metadata?.tool_trace);
@@ -384,30 +384,12 @@ const MessageBubble = memo(function MessageBubble({ message, index, onRetry }: {
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.3, delay: Math.min(index * 0.05, 0.3) }}
-      className={cn("flex min-w-0 max-w-3xl gap-3", isUser ? "ml-auto flex-row-reverse" : "")}
       data-testid={`message-${index}`}
     >
-      <div
-        className={cn(
-          "w-8 h-8 rounded-full flex items-center justify-center shrink-0",
-          isUser
-            ? "bg-primary text-primary-foreground"
-            : "bg-muted text-muted-foreground"
-        )}
+      <MessageBubble
+        role={message.role}
+        content={isUser ? message.content : <MarkdownContent content={message.content} />}
       >
-        {isUser ? <User className="w-4 h-4" /> : <Bot className="w-4 h-4" />}
-      </div>
-      <div className={cn("flex min-w-0 max-w-full flex-col gap-2", isUser ? "items-end" : "items-start")}>
-        <div
-          className={cn(
-            "min-w-0 max-w-full rounded-2xl px-4 py-2.5 text-sm leading-relaxed",
-            isUser
-              ? "whitespace-pre-wrap break-words bg-primary text-primary-foreground rounded-br-md [overflow-wrap:anywhere]"
-              : "bg-card border border-border rounded-bl-md"
-          )}
-        >
-          {isUser ? message.content : <MarkdownContent content={message.content} />}
-        </div>
         <FailedTurn message={message} onRetry={onRetry} />
         {!isUser && message.citations && message.citations.length > 0 && (
           <div className="flex flex-wrap gap-2 mt-1">
@@ -418,7 +400,7 @@ const MessageBubble = memo(function MessageBubble({ message, index, onRetry }: {
         )}
         {!isUser && <RetrievedBlocks blocks={retrievedBlocks} />}
         {!isUser && <AgenticTrace trace={toolTrace} />}
-      </div>
+      </MessageBubble>
     </motion.div>
   );
 });
@@ -1826,7 +1808,7 @@ export default function Chat() {
             ) : (
               <div className={cn("space-y-4 pt-6", optionsInHistory ? "pb-1" : "pb-6")}>
                 {messages.map((msg, i) => (
-                  <MessageBubble key={i} message={msg} index={i} onRetry={retryFailedMessage} />
+                  <ChatMessage key={i} message={msg} index={i} onRetry={retryFailedMessage} />
                 ))}
                 {sending && <TypingIndicator />}
               </div>
