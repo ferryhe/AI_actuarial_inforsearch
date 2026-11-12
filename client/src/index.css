@@ -19,6 +19,7 @@ html {
 #support-panel > *,
 #support-panel #feedback-panel {
   max-height: var(--support-panel-max-height, 0px);
+  max-width: var(--support-panel-max-width, none);
 }
 
 @custom-variant dark (&:is(.dark *));

@@ -49,6 +49,31 @@ describe("feedback support widget", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
+  it("uses compact feedback on short panned Chat and posts only after explicit submit", async () => {
+    route.value = "/chat";
+    vi.stubGlobal("visualViewport", Object.assign(new EventTarget(), { offsetTop: 680, height: 152 }));
+    const rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      if (this.hasAttribute("data-support-fixed-anchor")) return { top: 786, bottom: 830, right: 376, height: 44 } as DOMRect;
+      if (this.hasAttribute("data-chat-composer")) return { top: 728, bottom: 781, height: 53 } as DOMRect;
+      if (this.hasAttribute("data-chat-send")) return { left: 332 } as DOMRect;
+      return { top: 0, bottom: 0, height: 0 } as DOMRect;
+    });
+    try {
+      apiGet.mockResolvedValue({ feedback_enabled: true, assistant_enabled: false });
+      apiPost.mockResolvedValue({ feedback_id: "compact-receipt", status: "recorded" });
+      render(<><div data-chat-composer><button data-chat-send /><div data-chat-support-slot /></div><SupportWidget /></>);
+      fireEvent.click(await screen.findByTestId("support-widget-trigger"));
+      expect(document.querySelector("#support-panel")).toHaveAttribute("data-compact-feedback");
+      fireEvent.change(screen.getByLabelText("feedback.content"), { target: { value: "A panned feedback draft" } });
+      expect(apiPost).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByTestId("feedback-submit"));
+      expect(await screen.findByRole("status")).toHaveTextContent("compact-receipt");
+      expect(apiPost).toHaveBeenCalledOnce();
+    } finally {
+      rect.mockRestore();
+    }
+  });
+
   it("keeps the draft and request id when the mounted panel closes during an uncertain submission", async () => {
     apiGet.mockResolvedValue({ feedback_enabled: true, assistant_enabled: false });
     let rejectPending!: (error: Error) => void;

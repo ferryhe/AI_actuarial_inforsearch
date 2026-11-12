@@ -741,6 +741,12 @@ def test_opened_catalog_file_requires_current_body_permission_and_membership(hos
         "kb_id": "public",
         "file_id": url,
     }
+    scoped_tools = {
+        tool["tool_id"]
+        for skill in json.loads(prompts[0][0]["prompt"])["skills"]
+        for tool in skill["tools"]
+    }
+    assert "document_research.read_document_sections" in scoped_tools
     assert reads and allowed.response.availability == "available"
     assert quote in allowed.response.answer
     assert allowed.response.selected_target == {"kb_id": "public", "file_id": url}
@@ -846,11 +852,645 @@ def test_host_quota_once_for_anonymous_and_registered_chains(host_fixture):
     assert outcome.runtime.model_attempts == 1 and len(state.quota) == 2
 
 
+@pytest.mark.parametrize("can_find", [False, True])
+def test_host_prompt_only_describes_scoped_tools_and_still_rejects_direct_calls(
+    host_fixture, can_find
+):
+    state = host_fixture
+    scopes = {"chat.query"}
+    if can_find:
+        scopes.update({"catalog.read", "files.read"})
+    auth = AuthContext({"subject": "reader"}, frozenset(scopes))
+    state.monkeypatch.setattr(host.deps, "get_auth_context", lambda request: auth)
+
+    def forbidden(*_args):
+        pytest.fail("unauthorized body executor ran")
+
+    state.feature.executors["document_research.read_document_sections"] = forbidden
+    model, calls = scripted(
+        action(
+            action="call",
+            skill_id="document_research",
+            tool_id="document_research.read_document_sections",
+            args={"kb_id": "public", "file_id": "report", "query": "findings"},
+        )
+    )
+    outcome = state.feature.query(request=state.request, auth=auth, message="report", model=model)
+
+    assert outcome.runtime.error_code == "SCOPE_REVOKED"
+    raw_prompt = calls[0][0]["prompt"]
+    skills = {skill["skill_id"]: skill for skill in json.loads(raw_prompt)["skills"]}
+    assert "usage_navigation" in skills
+    assert "read_document_sections" not in raw_prompt
+    assert ("resources_updates.recent" in raw_prompt) is can_find
+    if can_find:
+        assert [tool["tool_id"] for tool in skills["document_research"]["tools"]] == [
+            "document_research.find_documents"
+        ]
+    else:
+        assert "document_research" not in skills
+
+
+@pytest.mark.parametrize("can_read_body", [False, True])
+def test_resources_prompt_omits_cross_skill_body_guidance_without_permission(
+    host_fixture, can_read_body
+):
+    state = host_fixture
+    scopes = {"chat.query", "catalog.read", "files.read"}
+    if can_read_body:
+        scopes.add("markdown.read")
+    auth = AuthContext({"subject": "reader"}, frozenset(scopes))
+    state.monkeypatch.setattr(host.deps, "get_auth_context", lambda request: auth)
+    state.monkeypatch.setattr(host, "permitted_kbs", lambda *_: ["public"])
+    executed = []
+
+    def find(_facade, args):
+        executed.append(args)
+        return ToolResult("not_found")
+
+    state.feature.executors["resources_updates.find_documents"] = find
+    model, calls = scripted(
+        action(
+            action="call",
+            skill_id="resources_updates",
+            tool_id="resources_updates.find_documents",
+            args={"query": "sample"},
+        ),
+        action(action="clarify", question="Which report?"),
+    )
+    outcome = state.feature.query(request=state.request, auth=auth, message="sample", model=model)
+
+    assert executed == [{"query": "sample", "kb_id": None}]
+    assert outcome.runtime.kind == "clarify"
+    prompt = json.loads(calls[0][0]["prompt"])
+    skills = {skill["skill_id"]: skill for skill in prompt["skills"]}
+    resources = skills["resources_updates"]
+    assert any(tool["tool_id"] == "resources_updates.find_documents" for tool in resources["tools"])
+    resource_find = next(
+        tool for tool in resources["tools"] if tool["tool_id"] == "resources_updates.find_documents"
+    )
+    assert ("document_research body read" in resources["description"]) is can_read_body
+    assert ("document_research body read" in resource_find["description"]) is can_read_body
+    if can_read_body:
+        assert "read_document_sections" in skills["document_research"]["description"]
+        assert "For document_research body findings" in prompt["instruction"]
+    else:
+        assert "read_document_sections" not in calls[0][0]["prompt"]
+        assert "For document_research body findings" not in prompt["instruction"]
+
+
+@pytest.fixture
+def r16_registry(host_fixture, tmp_path):
+    from ai_actuarial.agent_runtime.artifacts import ArtifactStore
+
+    state = host_fixture
+
+    def install(
+        *,
+        recent_internal=False,
+        body_internal=False,
+        rewrite_body_hint=False,
+        readiness_access=None,
+        dates_access=None,
+    ):
+        executors = frozenset(state.feature.executors)
+        builtins = state.feature.registry
+        store = ArtifactStore(
+            "unused-local-fixture",
+            tmp_path,
+            executors=executors,
+            argument_models=host.RESOURCES_ARGUMENT_MODELS | host.RESEARCH_ARGUMENT_MODELS,
+            registered_tools=host.RESOURCES_MANIFEST.tools + host.RESEARCH_MANIFEST.tools,
+        )
+        replacements = []
+        for name in ("resources_updates", "document_research"):
+            path = Path("ai_actuarial/skills") / name
+            manifest = json.loads((path / "skill.json").read_bytes())
+            instructions = (path / "SKILL.md").read_text(encoding="utf8")
+            if readiness_access == "omitted" and name == "document_research":
+                manifest["tools"] = [
+                    tool
+                    for tool in manifest["tools"]
+                    if tool["tool_id"] != "document_research.readiness"
+                ]
+            if dates_access == "omitted" and name == "resources_updates":
+                manifest["tools"] = [
+                    tool
+                    for tool in manifest["tools"]
+                    if tool["tool_id"] != "resources_updates.document_dates"
+                ]
+            for tool in manifest["tools"]:
+                if (
+                    dates_access in {"restricted", "allowed"}
+                    and tool["tool_id"] == "resources_updates.document_dates"
+                ):
+                    tool["required_scopes"].append("assistant.internal")
+                if dates_access and tool["tool_id"] == "document_research.find_documents":
+                    tool[
+                        "description"
+                    ] += " For date comparisons, follow with resources_updates.document_dates."
+                if (
+                    readiness_access == "restricted"
+                    and tool["tool_id"] == "document_research.readiness"
+                ):
+                    tool["required_scopes"].append("assistant.internal")
+                if (
+                    readiness_access
+                    and tool["tool_id"] == "document_research.read_document_sections"
+                ):
+                    tool[
+                        "description"
+                    ] += " For explicit status questions, call document_research.readiness."
+                if (
+                    recent_internal
+                    and tool["tool_id"] == "resources_updates.recent"
+                    or body_internal
+                    and name == "document_research"
+                    and tool["tool_id"] != "document_research.find_documents"
+                ):
+                    tool["required_scopes"].append("assistant.internal")
+                if rewrite_body_hint and tool["tool_id"] == "resources_updates.find_documents":
+                    tool["description"] += " Then call document_research.read_document_sections."
+            if rewrite_body_hint and name == "resources_updates":
+                instructions = instructions.replace(
+                    "Locate a report before document_research body reading; do not",
+                    "After locating a report, call document_research.read_document_sections "
+                    "to read its supporting passages. Do not",
+                )
+            if dates_access and name == "document_research":
+                instructions += "\nTo compare publication, first-seen, and KB-added dates, call resources_updates.document_dates."
+            content = instructions.encode()
+            spec = {
+                "artifact_id": "instructions",
+                "size": len(content),
+                "sha256": hashlib.sha256(content).hexdigest(),
+            }
+            replacements.append(store._skill(manifest, [spec], {"instructions": content}))
+        state.feature.registry = Registry(
+            (
+                *replacements,
+                *(
+                    skill
+                    for key, skill in builtins.skills.items()
+                    if key not in {"resources_updates", "document_research"}
+                ),
+            ),
+            executors,
+        )
+
+    return install
+
+
+def test_catalog_collection_keeps_authorized_search_when_recent_is_hidden(
+    host_fixture, r16_registry
+):
+    from ai_actuarial.shared_auth import REGISTERED_PERMISSIONS
+
+    r16_registry(recent_internal=True)
+    state = host_fixture
+    auth = AuthContext({"subject": "reader"}, REGISTERED_PERMISSIONS)
+    state.monkeypatch.setattr(host.deps, "get_auth_context", lambda _request: auth)
+    executed = []
+
+    def search(_facade, args):
+        executed.append(args)
+        return ToolResult("not_found")
+
+    state.feature.executors["resources_updates.catalog_search"] = search
+    state.feature.executors["resources_updates.recent"] = lambda *_: pytest.fail("recent executed")
+    model, calls = scripted(
+        action(
+            action="call",
+            skill_id="resources_updates",
+            tool_id="resources_updates.catalog_search",
+            args={"query": "SOA"},
+        ),
+        action(action="clarify", question="Which report?"),
+    )
+    outcome = state.feature.query(
+        request=state.request,
+        auth=auth,
+        message="Which SOA reports were first collected in the last seven days?",
+        model=model,
+    )
+    prompt = calls[0][0]["prompt"]
+    assert "resources_updates.catalog_search" in prompt
+    assert "resources_updates.recent" not in prompt
+    assert outcome.runtime.kind == "clarify", outcome.runtime.error_code
+    assert len(executed) == 1
+    assert executed[0]["source"] == "soa" and executed[0]["window_days"] == 7
+    assert executed[0]["query"] == ""
+
+
+def test_host_stops_before_model_after_operator_scope_downgrade(host_fixture, r16_registry):
+    from ai_actuarial.shared_auth import OPERATOR_PERMISSIONS, REGISTERED_PERMISSIONS
+
+    r16_registry(recent_internal=True)
+    state = host_fixture
+    operator = AuthContext({"subject": "reader", "group_name": "operator"}, OPERATOR_PERMISSIONS)
+    registered = AuthContext(
+        {"subject": "reader", "group_name": "registered"}, REGISTERED_PERMISSIONS
+    )
+    current = operator
+    state.monkeypatch.setattr(host.deps, "get_auth_context", lambda _request: current)
+
+    def search(_facade, _args):
+        nonlocal current
+        current = registered
+        return ToolResult("not_found")
+
+    state.feature.executors["resources_updates.catalog_search"] = search
+    state.feature.executors["resources_updates.recent"] = lambda *_: pytest.fail("recent executed")
+    model, calls = scripted(
+        action(
+            action="call",
+            skill_id="resources_updates",
+            tool_id="resources_updates.catalog_search",
+            args={"query": "SOA"},
+        ),
+        action(
+            action="call", skill_id="resources_updates", tool_id="resources_updates.recent", args={}
+        ),
+    )
+    outcome = state.feature.query(
+        request=state.request, auth=operator, message="Find SOA research reports", model=model
+    )
+    assert "resources_updates.recent" in calls[0][0]["prompt"]
+    assert len(calls) == 1
+    assert outcome.runtime.error_code == "SCOPE_REVOKED"
+    assert [item.tool_id for item in outcome.runtime.trace] == ["resources_updates.catalog_search"]
+
+
+@pytest.mark.parametrize("access", ["no_markdown", "registered", "operator"])
+def test_published_resource_prompt_requires_available_body_tools(
+    host_fixture, r16_registry, access
+):
+    from ai_actuarial.shared_auth import OPERATOR_PERMISSIONS, REGISTERED_PERMISSIONS
+
+    r16_registry(body_internal=True, rewrite_body_hint=True)
+    scopes = {
+        "no_markdown": REGISTERED_PERMISSIONS - {"markdown.read"},
+        "registered": REGISTERED_PERMISSIONS,
+        "operator": OPERATOR_PERMISSIONS,
+    }[access]
+    state = host_fixture
+    auth = AuthContext({"subject": "reader"}, scopes)
+    state.monkeypatch.setattr(host.deps, "get_auth_context", lambda _request: auth)
+    model, calls = scripted(action(action="clarify", question="Which report?"))
+    state.feature.query(request=state.request, auth=auth, message="Find SOA reports", model=model)
+    prompt = calls[0][0]["prompt"]
+    assert "resources_updates.find_documents" in prompt
+    assert ("document_research.read_document_sections" in prompt) is (access == "operator")
+
+
+@pytest.mark.parametrize("readiness_access", ["restricted", "omitted", "allowed"])
+def test_published_research_prompt_keeps_only_available_tool_guidance(
+    host_fixture,
+    r16_registry,
+    readiness_access,
+):
+    from ai_actuarial.shared_auth import REGISTERED_PERMISSIONS
+
+    r16_registry(readiness_access=readiness_access)
+    state = host_fixture
+    auth = AuthContext({"subject": "reader"}, REGISTERED_PERMISSIONS)
+    state.monkeypatch.setattr(host.deps, "get_auth_context", lambda _request: auth)
+    state.monkeypatch.setattr(host, "permitted_kbs", lambda *_: ["public"])
+    executed = []
+
+    def read(_facade, args):
+        executed.append(args["file_id"])
+        return ToolResult("not_found")
+
+    state.feature.executors["document_research.read_document_sections"] = read
+    state.feature.executors["document_research.readiness"] = lambda *_: pytest.fail(
+        "readiness executed"
+    )
+    model, calls = scripted(
+        action(
+            action="call",
+            skill_id="document_research",
+            tool_id="document_research.read_document_sections",
+            args={"kb_id": "public", "file_id": "report", "query": "findings"},
+        ),
+        action(action="clarify", question="Which section?"),
+    )
+    outcome = state.feature.query(
+        request=state.request, auth=auth, message="Find the report's main facts", model=model
+    )
+    assert outcome.runtime.kind == "clarify"
+    assert executed == ["report"]
+    for payload, _ in calls:
+        text = payload["prompt"]
+        skills = {skill["skill_id"]: skill for skill in json.loads(text)["skills"]}
+        research = skills["document_research"]
+        reader = next(
+            tool
+            for tool in research["tools"]
+            if tool["tool_id"] == "document_research.read_document_sections"
+        )
+        assert bool(reader["description"])
+        allowed = readiness_access == "allowed"
+        assert ("document_research.readiness" in text) is allowed
+        if allowed:
+            assert "Use `readiness`" in research["description"]
+            assert "explicit status questions" in reader["description"]
+        else:
+            assert "readiness" not in text
+            assert research["description"] == ""
+    if readiness_access != "allowed":
+        direct_call, _ = scripted(
+            action(
+                action="call",
+                skill_id="document_research",
+                tool_id="document_research.readiness",
+                args={"kb_id": "public", "file_id": "report"},
+            )
+        )
+        rejected = state.feature.query(
+            request=state.request,
+            auth=auth,
+            message="Check the report",
+            model=direct_call,
+        )
+        assert rejected.runtime.error_code == (
+            "SCOPE_REVOKED" if readiness_access == "restricted" else "INVALID_MODEL_RESPONSE"
+        )
+        assert executed == ["report"]
+
+
+@pytest.mark.parametrize("dates_access", ["restricted", "omitted", "allowed"])
+def test_published_research_guidance_requires_cross_skill_dates_tool(
+    host_fixture,
+    r16_registry,
+    dates_access,
+):
+    from ai_actuarial.shared_auth import OPERATOR_PERMISSIONS, REGISTERED_PERMISSIONS
+
+    r16_registry(dates_access=dates_access)
+    allowed = dates_access == "allowed"
+    state = host_fixture
+    auth = AuthContext(
+        {"subject": "reader"}, OPERATOR_PERMISSIONS if allowed else REGISTERED_PERMISSIONS
+    )
+    state.monkeypatch.setattr(host.deps, "get_auth_context", lambda _request: auth)
+    state.monkeypatch.setattr(host, "permitted_kbs", lambda *_: ["public"])
+    executed = []
+
+    def dates(_facade, args):
+        executed.append(("dates", args["file_id"]))
+        return ToolResult("not_found")
+
+    def find(_facade, args):
+        executed.append(("find", args["query"]))
+        return ToolResult("not_found")
+
+    state.feature.executors["resources_updates.document_dates"] = dates
+    state.feature.executors["document_research.find_documents"] = find
+    call_dates = action(
+        action="call",
+        skill_id="resources_updates",
+        tool_id="resources_updates.document_dates",
+        args={"kb_id": "public", "file_id": "report"},
+    )
+    call_find = action(
+        action="call",
+        skill_id="document_research",
+        tool_id="document_research.find_documents",
+        args={"query": "report"},
+    )
+    model, calls = scripted(
+        call_dates if allowed else call_find, action(action="clarify", question="Which report?")
+    )
+    outcome = state.feature.query(
+        request=state.request, auth=auth, message="Compare this report's dates", model=model
+    )
+    assert outcome.runtime.kind == "clarify"
+    assert executed == [("dates" if allowed else "find", "report")]
+    for payload, _ in calls:
+        prompt = json.loads(payload["prompt"])
+        skills = {skill["skill_id"]: skill for skill in prompt["skills"]}
+        research = skills["document_research"]
+        find_tool = next(
+            tool
+            for tool in research["tools"]
+            if tool["tool_id"] == "document_research.find_documents"
+        )
+        assert "Find reports by title" in find_tool["description"]
+        assert ("resources_updates.document_dates" in research["description"]) is allowed
+        assert ("resources_updates.document_dates" in find_tool["description"]) is allowed
+        assert ("resources_updates.document_dates" in payload["prompt"]) is allowed
+    if not allowed:
+        direct_call, _ = scripted(call_dates)
+        rejected = state.feature.query(
+            request=state.request, auth=auth, message="Check the report dates", model=direct_call
+        )
+        assert rejected.runtime.error_code == (
+            "SCOPE_REVOKED" if dates_access == "restricted" else "INVALID_MODEL_RESPONSE"
+        )
+        assert executed == [("find", "report")]
+
+
+@pytest.mark.parametrize(
+    "access,field",
+    [
+        (access, field)
+        for access in ("restricted", "omitted", "allowed")
+        for field in (
+            "manifest",
+            "instructions",
+            "tool",
+            "all",
+            "pair-manifest",
+            "pair-instructions",
+            "pair-tool",
+            "pair-all",
+            "possessive-manifest",
+            "possessive-instructions",
+            "possessive-tool",
+        )
+    ]
+    + [
+        ("restricted", "prefix"),
+        ("restricted", "pair-negative"),
+        ("allowed", "pair-other-owner"),
+        ("restricted", "possessive-negative"),
+        ("allowed", "possessive-other-owner"),
+    ],
+)
+def test_published_navigation_projects_exact_weekly_references(
+    host_fixture, tmp_path, access, field
+):
+    from ai_actuarial.agent_runtime.artifacts import ArtifactStore
+    from ai_actuarial.shared_auth import OPERATOR_PERMISSIONS, REGISTERED_PERMISSIONS
+
+    state = host_fixture
+    executors = frozenset(state.feature.executors)
+    weekly = "resources_updates.weekly"
+    registered_weekly = next(
+        tool for tool in host.RESOURCES_MANIFEST.tools if tool.tool_id == weekly
+    )
+    store = ArtifactStore(
+        "fixture",
+        tmp_path,
+        executors=executors,
+        argument_models=host.USAGE_ARGUMENT_MODELS | host.RESOURCES_ARGUMENT_MODELS,
+        registered_tools=(
+            host.USAGE_MANIFEST.tools
+            + host.RESOURCES_MANIFEST.tools
+            + (replace(registered_weekly, tool_id="other_resources.weekly"),)
+        ),
+    )
+    authored = {}
+    skills = []
+    for name in ("usage_navigation", "resources_updates"):
+        path = Path("ai_actuarial/skills") / name
+        manifest = json.loads((path / "skill.json").read_bytes())
+        instructions = (path / "SKILL.md").read_text(encoding="utf8").strip()
+        if name == "usage_navigation":
+            tool = manifest["tools"][0]
+            if field in {"manifest", "all"}:
+                manifest["description"] += f" Published handoff: {weekly}."
+            if field in {"instructions", "all"}:
+                instructions += f"\n请调用`{weekly}`，查看周报。"
+            if field in {"tool", "all"}:
+                tool["description"] += f" Follow with ({weekly}), if needed."
+            paired = "the `weekly` tool from the `resources_updates` skill"
+            if field in {"pair-manifest", "pair-all"}:
+                manifest["description"] += f" Published handoff: {paired}."
+            if field in {"pair-instructions", "pair-all"}:
+                instructions += f"\nCheck ({paired}), then summarize."
+            if field in {"pair-tool", "pair-all"}:
+                tool["description"] += f" Check weekly availability: {paired}，再回复。"
+            if field == "pair-negative":
+                instructions += (
+                    "\nCompare weekly tool from the resources_updates skill in ordinary prose; "
+                    "the `weekly` tool from the `usage_navigation` skill; "
+                    "the `weekly_archive` tool from the `resources_updates` skill; "
+                    "the `weekly`, tool from the `resources_updates` skill; "
+                    "the `weekly` tool from the `resources_updates_v2` skill."
+                )
+            if field == "pair-other-owner":
+                instructions += "\nCheck the `weekly` tool from the `other_resources` skill."
+            if field == "possessive-manifest":
+                manifest["description"] += " Check `resources_updates` skill's `weekly` tool."
+            if field == "possessive-instructions":
+                instructions += "\nCheck `resources_updates` skill’s `weekly` tool，查看周报。"
+            if field == "possessive-tool":
+                tool["description"] += " Check (`resources_updates` skill's `weekly` tool)."
+            if field == "possessive-negative":
+                instructions += (
+                    "\nCompare resources_updates skill's weekly tool in ordinary prose; "
+                    "`usage_navigation` skill's `weekly` tool; "
+                    "`resources_updates_archive` skill's `weekly` tool; "
+                    "`resources_updates` skill’s `weekly_archive` tool; "
+                    "`resources_updates` skill's `weekly` toolkit."
+                )
+            if field == "possessive-other-owner":
+                instructions += "\nCheck `other_resources` skill's `weekly` tool."
+            if field == "prefix":
+                instructions += (
+                    f"\nKeep these labels: {weekly}_archive, {weekly}.archive, {weekly}-draft."
+                )
+            authored = {
+                "description": manifest["description"] + "\n" + instructions,
+                "tool": tool["description"],
+            }
+        else:
+            if access == "omitted":
+                manifest["tools"] = [
+                    tool for tool in manifest["tools"] if tool["tool_id"] != weekly
+                ]
+            else:
+                next(tool for tool in manifest["tools"] if tool["tool_id"] == weekly)[
+                    "required_scopes"
+                ].append("assistant.internal")
+        content = instructions.encode()
+        skills.append(
+            store._skill(
+                manifest,
+                [
+                    {
+                        "artifact_id": "instructions",
+                        "size": len(content),
+                        "sha256": hashlib.sha256(content).hexdigest(),
+                    }
+                ],
+                {"instructions": content},
+            )
+        )
+    state.feature.registry = Registry(tuple(skills), executors)
+    allowed = access == "allowed"
+    auth = AuthContext(
+        {"subject": "reader"}, OPERATOR_PERMISSIONS if allowed else REGISTERED_PERMISSIONS
+    )
+    state.monkeypatch.setattr(host.deps, "get_auth_context", lambda _request: auth)
+    executed = []
+
+    def guide(_args):
+        executed.append("guide")
+        return ToolResult("not_found")
+
+    def current_weekly(_facade, _args):
+        executed.append("weekly")
+        return ToolResult("not_found")
+
+    state.feature.executors["usage_navigation.guide"] = guide
+    state.feature.executors[weekly] = current_weekly
+    guide_call = action(
+        action="call",
+        skill_id="usage_navigation",
+        tool_id="usage_navigation.guide",
+        args={"query": "weekly", "language": "en"},
+    )
+    weekly_call = action(action="call", skill_id="resources_updates", tool_id=weekly, args={})
+    actions = [
+        guide_call,
+        *([weekly_call] if allowed else []),
+        action(action="clarify", question="Which week?"),
+    ]
+    model, calls = scripted(*actions)
+    outcome = state.feature.query(
+        request=state.request, auth=auth, message="Which files are new?", model=model
+    )
+    assert outcome.runtime.kind == "clarify"
+    assert executed == (["guide", "weekly"] if allowed else ["guide"])
+    for payload, _ in calls:
+        projected = json.loads(payload["prompt"])["skills"]
+        navigation = next(skill for skill in projected if skill["skill_id"] == "usage_navigation")
+        (tool,) = navigation["tools"]
+        assert tool["tool_id"] == "usage_navigation.guide"
+        assert (
+            weekly in {row["tool_id"] for skill in projected for row in skill["tools"]}
+        ) is allowed
+        if (allowed and not field.endswith("other-owner")) or field in {
+            "prefix",
+            "pair-negative",
+            "possessive-negative",
+        }:
+            assert navigation["description"] == authored["description"]
+            assert tool["description"] == authored["tool"]
+        else:
+            assert navigation["description"] == ""
+            assert tool["description"] == host.USAGE_MANIFEST.tools[0].standalone_description
+            if not allowed:
+                assert weekly not in payload["prompt"]
+    if not allowed:
+        direct_model, _ = scripted(weekly_call)
+        denied = state.feature.query(
+            request=state.request, auth=auth, message="Which files are new?", model=direct_model
+        )
+        assert denied.runtime.error_code == (
+            "SCOPE_REVOKED" if access == "restricted" else "INVALID_MODEL_RESPONSE"
+        )
+        assert executed == ["guide"]
+
+
 def test_host_revalidates_before_every_tool_and_rejects_revocation(host_fixture):
     state = host_fixture
     good = AuthContext({"subject": "user", "group_name": "registered"}, frozenset({"chat.query"}))
     revoked = AuthContext(None, frozenset())
-    current = iter([good, revoked])
+    current = iter([good, good, good, revoked])
     state.monkeypatch.setattr(host.deps, "get_auth_context", lambda request: next(current))
     model, _calls = scripted(
         action(
@@ -954,7 +1594,7 @@ def test_host_rechecks_identity_after_final_resource_model_callback(host_fixture
         )
 
 
-@pytest.mark.parametrize("revoke", [False, True])
+@pytest.mark.parametrize("revoke", [None, "before", "after"])
 @pytest.mark.parametrize("quote_only", [False, True])
 def test_host_rechecks_body_permission_after_summary_verifier_callback(
     host_fixture, revoke, quote_only
@@ -1027,7 +1667,7 @@ def test_host_rechecks_body_permission_after_summary_verifier_callback(
 
     def model(_prompt, _remaining):
         output = outputs.pop(0)
-        if revoke and not outputs:
+        if (revoke == "before" and len(outputs) == 1) or (revoke == "after" and not outputs):
             current[0] = AuthContext({"subject": "reader"}, frozenset({"chat.query"}))
         return output
 
@@ -1044,6 +1684,7 @@ def test_host_rechecks_body_permission_after_summary_verifier_callback(
     )
     assert outcome.runtime.model_attempts == 3
     if revoke:
+        assert len(outputs) == int(revoke == "before")
         assert outcome.runtime.error_code == "SCOPE_REVOKED"
         assert outcome.runtime.answer == "" and outcome.runtime.evidence_ids == ()
         assert outcome.response.evidence_ids == [] and outcome.response.citations == []
@@ -1368,11 +2009,16 @@ def test_host_cancel_or_deadline_during_auth_lookup_prevents_tool_start(
     cancelled = Event()
     auth = AuthContext({"subject": "user"}, frozenset({"chat.query"}))
 
+    lookups = 0
+
     def recheck(request):
-        if expire_deadline:
-            request.state.assistant_runtime_context.deadline = time.monotonic() - 1
-        else:
-            cancelled.set()
+        nonlocal lookups
+        lookups += 1
+        if lookups == 2:
+            if expire_deadline:
+                request.state.assistant_runtime_context.deadline = time.monotonic() - 1
+            else:
+                cancelled.set()
         return auth
 
     state.monkeypatch.setattr(host.deps, "get_auth_context", recheck)
@@ -3102,6 +3748,7 @@ def test_host_uses_same_agent_budget_with_bounded_sdk_attempts(
     assert observed["closed"]
 
 
+@pytest.mark.parametrize("revoke_before_recovery", [False, True])
 @pytest.mark.parametrize(
     "provider,model_name,chat_tokens,token_key,budget_section,initial,recovery,request_seconds",
     [
@@ -3136,12 +3783,17 @@ def test_host_agent_recovery_counts_real_creates_and_refreshes_timeout(
     initial,
     recovery,
     request_seconds,
+    revoke_before_recovery,
 ):
     from ai_actuarial.assistant import agent_budget
     from ai_actuarial.chatbot import config as config_module
     from ai_actuarial.chatbot import llm as llm_module
+    from ai_actuarial.shared_auth import OPERATOR_PERMISSIONS, REGISTERED_PERMISSIONS
 
     state = host_fixture
+    auth = AuthContext({"subject": "reader", "group_name": "operator"}, OPERATOR_PERMISSIONS)
+    current = auth
+    state.monkeypatch.setattr(host.deps, "get_auth_context", lambda _request: current)
     state.monkeypatch.setattr(
         agent_budget, "load_ai_config", lambda: {"assistant_agent": budget_section}
     )
@@ -3157,10 +3809,15 @@ def test_host_agent_recovery_counts_real_creates_and_refreshes_timeout(
             return self
 
         def create(self, **kwargs):
+            nonlocal current
             requests.append(kwargs)
             if len(requests) == 1:
                 state.request.state.assistant_runtime_context.deadline = time.monotonic() + 10
                 content, finish_reason = "", "length"
+                if revoke_before_recovery:
+                    current = AuthContext(
+                        {"subject": "reader", "group_name": "registered"}, REGISTERED_PERMISSIONS
+                    )
             else:
                 content, finish_reason = action(action="clarify", question="Which report?"), "stop"
             return SimpleNamespace(
@@ -3187,10 +3844,12 @@ def test_host_agent_recovery_counts_real_creates_and_refreshes_timeout(
         config_module.ChatbotConfig, "from_config", lambda **kwargs: chat_config
     )
     state.monkeypatch.setattr(llm_module.openai, "OpenAI", lambda **kwargs: SDK())
-    outcome = state.feature.query(
-        request=state.request, auth=AuthContext(None, frozenset()), message="Which report?"
-    )
+    outcome = state.feature.query(request=state.request, auth=auth, message="Which report?")
     context = state.request.state.assistant_runtime_context
+    if revoke_before_recovery:
+        assert outcome.runtime.error_code == "SCOPE_REVOKED"
+        assert len(requests) == context.provider_requests == 1
+        return
     assert outcome.response.answer == "Which report?"
     assert chat_config.max_tokens == chat_tokens
     assert options == [{"max_retries": 0}]

@@ -106,11 +106,47 @@ it("lifts the support panel above a software keyboard that shrinks only the visu
     removeEventListener: vi.fn(),
   });
   vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
-    return this.dataset.testid === "support-widget-trigger" ? { top: 750, bottom: 794, height: 44 } as DOMRect : { top: 0, bottom: 0, height: 0 } as DOMRect;
+    return this.hasAttribute("data-support-fixed-anchor") ? { top: 750, bottom: 794, height: 44 } as DOMRect : { top: 0, bottom: 0, height: 0 } as DOMRect;
   });
   render(<SupportWidget />);
   fireEvent.click(await screen.findByTestId("support-widget-trigger"));
   await waitFor(() => expect(document.querySelector("#support-panel")).toHaveStyle({ marginBottom: "394px" }));
+});
+
+it("uses the compact Assistant in a short panned Chat viewport with a visible fixed trigger", async () => {
+  route.current = "/chat";
+  apiGet.mockResolvedValue({ feedback_enabled: true, assistant_enabled: true });
+  vi.stubGlobal("visualViewport", Object.assign(new EventTarget(), { offsetTop: 680, height: 152 }));
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+    if (this.hasAttribute("data-support-fixed-anchor")) return { top: 786, bottom: 830, right: 376, height: 44 } as DOMRect;
+    if (this.hasAttribute("data-chat-composer")) return { top: 728, bottom: 781, height: 53 } as DOMRect;
+    if (this.hasAttribute("data-chat-send")) return { left: 332 } as DOMRect;
+    return { top: 0, bottom: 0, height: 0 } as DOMRect;
+  });
+  render(<><div data-chat-composer><button data-chat-send /><div data-chat-support-slot /></div><SupportWidget /></>);
+  const trigger = await screen.findByTestId("support-widget-trigger");
+  fireEvent.click(trigger);
+  expect(document.querySelector("#support-panel")).toHaveAttribute("data-compact-assistant");
+  expect(document.querySelector("[data-support-fixed-anchor]")).toContainElement(trigger);
+  expect(document.querySelector("[data-chat-support-slot]")).toBeEmptyDOMElement();
+});
+
+it("uses the compact Assistant in a short panned Weekly viewport without a Chat composer", async () => {
+  route.current = "/weekly";
+  apiGet.mockResolvedValue({ feedback_enabled: true, assistant_enabled: true });
+  vi.stubGlobal("visualViewport", Object.assign(new EventTarget(), { offsetTop: 680, height: 152 }));
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+    return this.hasAttribute("data-support-fixed-anchor")
+      ? { top: 786, bottom: 830, right: 376, height: 44 } as DOMRect
+      : { top: 0, bottom: 0, height: 0 } as DOMRect;
+  });
+  render(<SupportWidget />);
+  const trigger = await screen.findByTestId("support-widget-trigger");
+  fireEvent.click(trigger);
+  const panel = document.querySelector<HTMLElement>("#support-panel");
+  expect(panel).toHaveAttribute("data-compact-assistant");
+  expect(panel?.style.getPropertyValue("--support-panel-max-width")).toBe("");
+  expect(document.querySelector("[data-support-fixed-anchor]")).toContainElement(trigger);
 });
 
 it("uses automatic routing with one freeform question input", async () => {

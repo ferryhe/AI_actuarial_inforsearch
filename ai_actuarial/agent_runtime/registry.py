@@ -8,6 +8,30 @@ from typing import Literal, Mapping
 
 from pydantic import BaseModel, ConfigDict, Field
 
+# Built-in descriptions are trusted fallbacks except where the copy routes to another tool.
+_STANDALONE_DESCRIPTIONS = {
+    "document_research.read_document_sections": (
+        "For findings, read current exact sections of one permitted report with Ready-first/Standard fallback."
+    ),
+    "resources_updates.find_documents": "Locate a permitted KB report by title, organization, alias or summary.",
+}
+_RESOURCE_RESEARCH_DEPENDENCIES = frozenset(
+    {
+        "document_research.find_documents",
+        "document_research.read_document_sections",
+        "document_research.search_knowledge",
+        "document_research.readiness",
+    }
+)
+
+
+def _guidance_dependencies(skill_id: str, *, published: bool = False) -> frozenset[str]:
+    if skill_id == "resources_updates":
+        return _RESOURCE_RESEARCH_DEPENDENCIES
+    if published and skill_id == "document_research":
+        return frozenset({"resources_updates.document_dates"})
+    return frozenset()
+
 
 class _ToolManifest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
@@ -37,6 +61,7 @@ class Tool:
     arguments: type[BaseModel]
     required_scopes: frozenset[str] = frozenset({"chat.query"})
     result_kind: Literal["generic", "catalog_discovery"] = "generic"
+    standalone_description: str = ""
 
 
 @dataclass(frozen=True)
@@ -46,6 +71,8 @@ class Skill:
     description: str
     tools: tuple[Tool, ...]
     enabled: bool = True
+    expected_tool_ids: frozenset[str] = frozenset()
+    guidance_dependencies: frozenset[str] = frozenset()
 
 
 class Registry:
@@ -65,13 +92,21 @@ class Registry:
                     argument_models[item.arguments_model],
                     frozenset(item.required_scopes),
                     item.result_kind,
+                    standalone_description=_STANDALONE_DESCRIPTIONS.get(
+                        item.tool_id, item.description
+                    ),
                 )
                 for item in data.tools
             )
         except KeyError as exc:
             raise ValueError(f"Unknown arguments model: {exc.args[0]}") from exc
         return Skill(
-            data.skill_id, data.version, data.description + "\n" + instructions, tools, data.enabled
+            data.skill_id,
+            data.version,
+            data.description + "\n" + instructions,
+            tools,
+            data.enabled,
+            guidance_dependencies=_guidance_dependencies(data.skill_id),
         )
 
     def __init__(self, skills: tuple[Skill, ...], executors: frozenset[str]):
@@ -103,20 +138,43 @@ class Registry:
                 return tool
         raise ValueError("Unknown tool")
 
-    def descriptions(self) -> list[dict]:
-        return [
-            {
-                "skill_id": skill.skill_id,
-                "description": skill.description,
-                "tools": [
-                    {
-                        "tool_id": tool.tool_id,
-                        "description": tool.description,
-                        "arguments": tool.arguments.model_json_schema(),
-                    }
-                    for tool in skill.tools
-                ],
+    def descriptions(self, scopes: frozenset[str] | None = None) -> list[dict]:
+        available = {
+            skill.skill_id: {
+                tool.tool_id: tool
+                for tool in skill.tools
+                if scopes is None or tool.required_scopes <= scopes
             }
             for skill in self.skills.values()
             if skill.enabled
-        ]
+        }
+        descriptions = []
+        for skill_id, tools in available.items():
+            if scopes is not None and not tools:
+                continue
+            skill = self.skills[skill_id]
+            expected = skill.expected_tool_ids | {tool.tool_id for tool in skill.tools}
+            full_guidance = scopes is None or (
+                expected <= tools.keys()
+                and all(
+                    dependency in available.get(dependency.partition(".")[0], {})
+                    for dependency in skill.guidance_dependencies
+                )
+            )
+            descriptions.append(
+                {
+                    "skill_id": skill_id,
+                    "description": skill.description if full_guidance else "",
+                    "tools": [
+                        {
+                            "tool_id": tool.tool_id,
+                            "description": (
+                                tool.description if full_guidance else tool.standalone_description
+                            ),
+                            "arguments": tool.arguments.model_json_schema(),
+                        }
+                        for tool in tools.values()
+                    ],
+                }
+            )
+        return descriptions

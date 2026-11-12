@@ -14,11 +14,18 @@ from pydantic import ValidationError
 
 from ai_actuarial.postgres import PostgresConnection
 
-from .registry import Registry, Skill, Tool, _SkillManifest
+from .registry import Registry, Skill, Tool, _guidance_dependencies, _SkillManifest
 
 _DIGEST = re.compile(r"[0-9a-f]{64}\Z")
 _GIT_SHA = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})\Z")
 _KEY = re.compile(r"[a-zA-Z0-9_.-]+\Z")
+_QUALIFIED_TOOL_ID = re.compile(r"[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)+")
+_NAMED_TOOL = re.compile(
+    r"(?<!`)`([A-Za-z0-9_-]+)`\s+tool\s+from\s+the\s+`([A-Za-z0-9_-]+)`\s+skill\b"
+)
+_POSSESSIVE_TOOL = re.compile(
+    r"(?<!`)`([A-Za-z0-9_-]+)`\s+skill['’]s\s+`([A-Za-z0-9_-]+)`\s+tool(?![\w-])"
+)
 
 
 class ArtifactError(ValueError):
@@ -116,6 +123,9 @@ class ArtifactStore:
                     self.argument_models[item.arguments_model],
                     frozenset(item.required_scopes),
                     self.registered_tools[item.tool_id].result_kind,
+                    standalone_description=self.registered_tools[
+                        item.tool_id
+                    ].standalone_description,
                 )
                 for item in parsed.tools
             )
@@ -137,7 +147,37 @@ class ArtifactStore:
             if not instruction_text:
                 raise ArtifactError("Empty skill instructions")
             description = parsed.description + "\n" + instruction_text
-            skill = Skill(parsed.skill_id, parsed.version, description, tools, parsed.enabled)
+            references = set()
+            for text in (
+                parsed.description,
+                instruction_text,
+                *(tool.description for tool in tools),
+            ):
+                references.update(_QUALIFIED_TOOL_ID.findall(text))
+                references.update(f"{owner}.{tool}" for tool, owner in _NAMED_TOOL.findall(text))
+                references.update(
+                    f"{owner}.{tool}" for owner, tool in _POSSESSIVE_TOOL.findall(text)
+                )
+            references = {
+                token
+                for token in references.intersection(self.registered_tools)
+                if not token.startswith(parsed.skill_id + ".")
+            }
+            skill = Skill(
+                parsed.skill_id,
+                parsed.version,
+                description,
+                tools,
+                parsed.enabled,
+                expected_tool_ids=frozenset(
+                    tool_id
+                    for tool_id in self.registered_tools
+                    if tool_id.startswith(parsed.skill_id + ".")
+                ),
+                guidance_dependencies=(
+                    _guidance_dependencies(parsed.skill_id, published=True) | references
+                ),
+            )
             Registry((skill,), self.executors)
             return skill
         except (KeyError, UnicodeDecodeError, ValidationError) as exc:

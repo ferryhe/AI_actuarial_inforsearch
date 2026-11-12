@@ -993,7 +993,7 @@ def test_body_findings_prompt_distinguishes_evidence_id_from_section_id(research
         message="请引用 Key Findings 原文并用中文说明。",
         locale="zh",
         registry=Registry((MANIFEST,), frozenset(tool.executor for tool in MANIFEST.tools)),
-        context=RunContext(principal="test", scopes=frozenset({"chat.query"})),
+        context=RunContext(principal="test", scopes=frozenset({"chat.query", "markdown.read"})),
         model=model,
         execute=lambda *_: pytest.fail("clarify must not call a tool"),
     )
@@ -2079,7 +2079,7 @@ def test_feature_rechecks_auth_between_skill_calls(research, monkeypatch):
     monkeypatch.setattr(host.chat, "Storage", lambda database: storage)
     monkeypatch.setattr(host.chat, "_resolve_chat_user", lambda request, auth: ("test", None))
     monkeypatch.setattr(host.chat, "_enforce_chat_quota", lambda **kwargs: None)
-    current = iter([full, revoked])
+    current = iter([full, full, revoked])
     monkeypatch.setattr(host.deps, "get_auth_context", lambda request: next(current))
     actions = iter(
         [

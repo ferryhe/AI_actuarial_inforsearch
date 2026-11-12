@@ -115,6 +115,21 @@ class AssistantFeature:
         initial_scopes = auth.permissions if auth.token else public_permissions_for_request(request)
         if "chat.query" not in initial_scopes:
             raise PermissionError("chat.query required")
+
+        def refresh_authorization() -> tuple[AuthContext, frozenset[str]]:
+            if hasattr(request.state, "auth_context"):
+                del request.state.auth_context
+            current = deps.get_auth_context(request)
+            scopes = (
+                current.permissions if current.token else public_permissions_for_request(request)
+            )
+            return current, scopes
+
+        def check_model_authorization() -> None:
+            current, scopes = refresh_authorization()
+            if _identity(current) != initial_identity or scopes != initial_scopes:
+                raise PermissionError("identity or scope changed")
+
         principal, session_update = chat._resolve_chat_user(request, auth)
         budget = budget or load_agent_budget()
         context = RunContext(
@@ -214,6 +229,7 @@ class AssistantFeature:
                             opened_target = matches[0]
             if model is None:
                 from ai_actuarial.chatbot.config import ChatbotConfig
+                from ai_actuarial.chatbot.exceptions import LLMException
                 from ai_actuarial.chatbot.llm import LLMClient
 
                 config = replace(
@@ -231,6 +247,7 @@ class AssistantFeature:
 
                     def before_request() -> float:
                         nonlocal first_request
+                        check_model_authorization()
                         timeout = context.take_provider_request(prepaid=first_request)
                         first_request = False
                         return timeout
@@ -240,17 +257,33 @@ class AssistantFeature:
                         if config.llm_provider == "deepseek" and config.model == "deepseek-flash"
                         else None
                     )
-                    raw = client.generate(
-                        messages=[
-                            {"role": "system", "content": "Return the requested JSON object."},
-                            {"role": "user", "content": prompt},
-                        ],
-                        temperature=0,
-                        response_format={"type": "json_object"},
-                        extra_body=extra_body,
-                        before_request=before_request,
-                    )
+                    try:
+                        raw = client.generate(
+                            messages=[
+                                {"role": "system", "content": "Return the requested JSON object."},
+                                {"role": "user", "content": prompt},
+                            ],
+                            temperature=0,
+                            response_format={"type": "json_object"},
+                            extra_body=extra_body,
+                            before_request=before_request,
+                        )
+                    except LLMException as exc:
+                        cause = exc.__cause__
+                        if isinstance(cause, PermissionError):
+                            # Pylint does not narrow the optional cause after the type check.
+                            raise PermissionError.with_traceback(
+                                cause, cause.__traceback__
+                            ) from None
+                        raise
                     return _normalize_json_object_label(raw)
+
+            else:
+                supplied_model = model
+
+                def model(prompt: str, remaining: float) -> str:
+                    check_model_authorization()
+                    return supplied_model(prompt, min(remaining, context.remaining()))
 
             verified_target = opened_target if opened_file_url is not None else selected_target
             found_targets: set[tuple[str, str]] = set()
@@ -292,15 +325,7 @@ class AssistantFeature:
                     and (args.get("kb_id"), args.get("file_id")) not in found_targets
                 ):
                     attempted_opened_body = True
-                # The dependency cache is request-scoped, so force a fresh lookup per action.
-                if hasattr(request.state, "auth_context"):
-                    del request.state.auth_context
-                current = deps.get_auth_context(request)
-                current_scopes = (
-                    current.permissions
-                    if current.token
-                    else public_permissions_for_request(request)
-                )
+                current, current_scopes = refresh_authorization()
                 if (
                     _identity(current) != initial_identity
                     or not tool.required_scopes <= run_context.scopes

@@ -1,4 +1,4 @@
-import { memo, useEffect, useState, useRef, useCallback } from "react";
+import { memo, useEffect, useLayoutEffect, useState, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useLocation } from "wouter";
 import { useHistoryState } from "wouter/use-browser-location";
@@ -25,6 +25,7 @@ import {
 import FilePagination from "@/components/FilePagination";
 import { usePagedFiles } from "@/hooks/use-paged-files";
 import { cn } from "@/lib/utils";
+import { watchVisualViewport } from "@/lib/visual-viewport";
 import { MarkdownContent } from "@/components/MarkdownContent";
 import { useTranslation } from "@/components/Layout";
 import { useAuth } from "@/context/AuthContext";
@@ -502,7 +503,18 @@ export default function Chat() {
   const [selectedCompareDocs, setSelectedCompareDocs] = useState<AvailableDocument[]>([]);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [quotaWarning, setQuotaWarning] = useState<string | null>(null);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [compactChat, setCompactChat] = useState(false);
+  const [optionsInHistory, setOptionsInHistory] = useState(false);
+  const chatFrame = useRef<HTMLDivElement>(null);
+  const chatViewport = useRef<HTMLDivElement>(null);
+  const chatHistory = useRef<HTMLDivElement>(null);
+  const conversationControlsRef = useRef<HTMLDivElement>(null);
+  const composerErrorRef = useRef<HTMLDivElement>(null);
+  const composerRef = useRef<HTMLDivElement>(null);
+  const composerOptionsRef = useRef<HTMLDivElement>(null);
+  const modeTriggerRef = useRef<HTMLButtonElement>(null);
+  const kbTriggerRef = useRef<HTMLButtonElement>(null);
+  const pendingOptionFocus = useRef<string | undefined>(undefined);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const openSidebarRef = useRef<HTMLButtonElement>(null);
   const closeSidebarRef = useRef<HTMLButtonElement>(null);
@@ -513,8 +525,81 @@ export default function Chat() {
   const scopeClearRequestRef = useRef(0);
   const documentScopeSwitchPendingRef = useRef(false);
 
+  useLayoutEffect(() => {
+    const frame = chatFrame.current;
+    const panel = chatViewport.current;
+    if (!frame || !panel) return;
+    const rows = [conversationControlsRef.current, composerErrorRef.current];
+    const composer = composerRef.current;
+    const options = composerOptionsRef.current;
+    let height = 0;
+    let visibleTop = 0;
+    const updateLayout = () => {
+      const shortComposer = height < 288;
+      panel.toggleAttribute("data-short-chat", shortComposer);
+      // Use the same row sizes in and out of history so moving them cannot flip the decision.
+      const fixedHeight = rows.reduce((total, row) => total + (row?.getBoundingClientRect().height ?? 0), 0);
+      const composerHeight = composer?.getBoundingClientRect().height ?? 0;
+      const optionsHeight = options?.getBoundingClientRect().height ?? 0;
+      const historyWithFixedOptions = height - composerHeight - (optionsInHistory ? optionsHeight : 0);
+      let menuRoom = Infinity;
+      if (composer && options) {
+        const composerBounds = composer.getBoundingClientRect();
+        const optionsBounds = options.getBoundingClientRect();
+        const panelRight = panel.getBoundingClientRect().right;
+        const style = getComputedStyle(composer);
+        // Predict the same fixed anchor even while its row is in the scroller.
+        const fixedOptionsTop = optionsInHistory
+          ? composerBounds.top - optionsHeight + parseFloat(style.paddingTop) + parseFloat(style.borderTopWidth)
+          : optionsBounds.top;
+        for (const [trigger, width] of [[modeTriggerRef.current, 140], [kbTriggerRef.current, 220]] as const) {
+          if (!trigger) continue;
+          const bounds = trigger.getBoundingClientRect();
+          if (!bounds.height) continue;
+          const room = Math.floor(fixedOptionsTop + bounds.top - optionsBounds.top - visibleTop - 4);
+          menuRoom = Math.min(menuRoom, room);
+          trigger.parentElement?.style.setProperty("--chat-menu-height", `${Math.max(0, room)}px`);
+          trigger.parentElement?.style.setProperty("--chat-menu-left", `${Math.min(0, panelRight - bounds.left - width - 8)}px`);
+        }
+      }
+      setCompactChat(shortComposer || historyWithFixedOptions - fixedHeight < 48);
+      const moveOptions = historyWithFixedOptions < 48 || menuRoom < 44;
+      if (moveOptions !== optionsInHistory) {
+        const active = document.activeElement;
+        if (active instanceof HTMLElement && panel.contains(active) && active.closest("[data-chat-options], [data-chat-option-menu]")) {
+          pendingOptionFocus.current = active.dataset.testid;
+        }
+        setOptionsInHistory(moveOptions);
+      }
+    };
+    const stopWatching = watchVisualViewport((viewportTop, viewportBottom) => {
+      const bounds = frame.getBoundingClientRect();
+      const top = Math.max(bounds.top, viewportTop);
+      visibleTop = top;
+      const bottom = Math.min(bounds.bottom, viewportBottom);
+      height = Math.max(0, Math.floor(bottom - top));
+      panel.style.setProperty("--chat-visible-offset", `${top - bounds.top}px`);
+      panel.style.setProperty("--chat-visible-height", `${height}px`);
+      panel.style.setProperty("--chat-drawer-top", `${viewportTop}px`);
+      panel.style.setProperty("--chat-drawer-height", `${viewportBottom - viewportTop}px`);
+      panel.toggleAttribute("data-short-drawer", isMobile && viewportBottom - viewportTop < 288);
+      updateLayout();
+    });
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(updateLayout);
+    for (const row of [...rows, composer, options]) if (row) observer?.observe(row);
+    if (pendingOptionFocus.current) {
+      panel.querySelector<HTMLElement>(`[data-testid="${pendingOptionFocus.current}"]`)?.focus();
+      pendingOptionFocus.current = undefined;
+    }
+    return () => {
+      observer?.disconnect();
+      stopWatching();
+    };
+  }, [compactChat, isMobile, optionsInHistory]);
+
   const scrollToBottom = useCallback(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    const history = chatHistory.current;
+    if (history) history.scrollTo?.({ top: history.scrollHeight, behavior: "smooth" });
   }, []);
 
   useEffect(() => {
@@ -1045,15 +1130,279 @@ export default function Chat() {
     setShowKbDropdown(false);
   }
 
-  return (
-    <div className="flex h-[calc(100vh-8rem)] -mx-4 sm:-mx-6 -my-6 overflow-hidden">
+  const conversationControls = (
+    <div ref={conversationControlsRef} className="flow-root shrink-0">
+      {!sidebarOpen && (
+        <div className="p-2 border-b border-border flex items-center gap-2">
+          <IconButton
+            ref={openSidebarRef}
+            onClick={() => setSidebarOpen(true)}
+            label={t("a11y.open_chat_sidebar")}
+            className="hover:bg-muted text-muted-foreground"
+            data-testid="button-open-chat-sidebar"
+          >
+            <ChevronRight className="w-4 h-4" />
+          </IconButton>
+          <span className="text-xs text-muted-foreground">{t("chat.show_sidebar")}</span>
+        </div>
+      )}
+
+      {documentScope.length > 0 && (
+        <div
+          className="mx-4 sm:mx-6 mt-3 flex min-w-0 items-center gap-2 rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-xs"
+          data-testid="chat-document-scope"
+        >
+          <FileText className="h-3.5 w-3.5 shrink-0 text-primary" />
+          <span className="shrink-0 font-medium text-muted-foreground">
+            {t("chat.current_document_scope")}
+          </span>
+          <span className="min-w-0 flex-1 truncate font-medium" title={documentScope.map((source) => source.title || source.filename).join(", ")}>
+            {documentScope.map((source) => source.title || source.filename || t("chat.document_fallback")).join(", ")}
+          </span>
+          <button
+            type="button"
+            onClick={clearDocumentScope}
+            disabled={sending || clearingDocumentScope}
+            aria-busy={clearingDocumentScope}
+            className="shrink-0 rounded-md px-2 py-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
+            aria-label={t("chat.clear_document_scope")}
+            data-testid="button-clear-document-scope"
+          >
+            {clearingDocumentScope ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : t("chat.clear_document_scope")}
+          </button>
+        </div>
+      )}
+
+      {conversationLoadError && activeConvId && (
+        <div
+          role="alert"
+          className="mx-4 sm:mx-6 mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs"
+          data-testid="conversation-load-error"
+        >
+          <span className="min-w-0 flex-1">{t("chat.conversation_load_failed")}</span>
+          <button
+            type="button"
+            onClick={() => { void loadConversation(activeConvId); }}
+            className="rounded-md px-2 py-1 font-medium text-foreground hover:bg-muted"
+            data-testid="button-retry-load-conversation"
+          >
+            {t("chat.retry_loading_conversation")}
+          </button>
+          <button
+            type="button"
+            onClick={() => { void createConversation(); }}
+            className="rounded-md px-2 py-1 font-medium text-foreground hover:bg-muted"
+            data-testid="button-new-conversation-after-load-error"
+          >
+            {t("chat.start_new_conversation")}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+  const composerError = (
+    <div ref={composerErrorRef} className="flow-root shrink-0">
+      {errorMsg && (
+        <div className="mx-4 sm:mx-6 mb-2 px-3 py-2 rounded-lg bg-destructive/10 text-destructive text-xs flex items-center gap-2">
+          <span className="flex-1">{errorMsg}</span>
+          <IconButton onClick={() => setErrorMsg(null)} label={t("a11y.dismiss_error")} className="shrink-0">
+            <X className="w-3.5 h-3.5" />
+          </IconButton>
+        </div>
+      )}
+    </div>
+  );
+
+  const modeMenu = showModeDropdown && (
+    <div data-chat-option-menu className={cn("bg-card border border-border rounded-lg shadow-lg py-1 min-w-[140px]", optionsInHistory ? "mb-2" : "absolute bottom-full mb-1 left-[var(--chat-menu-left,0px)] z-50 w-[140px] max-h-[var(--chat-menu-height)] overflow-y-auto")}>
+      {MODES.map((m) => (
+        <button
+          key={m}
+          onClick={() => {
+            setMode(m);
+            setShowModeDropdown(false);
+          }}
+          className={cn(
+            "w-full text-left px-3 py-1.5 text-xs hover:bg-muted transition-colors",
+            mode === m && "text-primary font-medium"
+          )}
+          data-testid={`mode-option-${m}`}
+        >
+          {t(`chat.mode.${m}`)}
+        </button>
+      ))}
+    </div>
+  );
+  const kbMenu = showKbDropdown && (
+    <div data-chat-option-menu className={cn("bg-card border border-border rounded-lg shadow-lg py-1 min-w-[220px]", optionsInHistory ? "mb-2" : "absolute bottom-full mb-1 left-[var(--chat-menu-left,0px)] z-50 w-[220px] max-h-[min(12rem,var(--chat-menu-height))] overflow-y-auto")}>
+      {knowledgeBases.length === 0 ? (
+        <div className="px-3 py-2 text-xs text-muted-foreground">
+          {t("chat.no_kbs")}
+        </div>
+      ) : (
+        knowledgeBases.map((kb) => {
+          const isSelected = selectedKbs.includes(kb.kb_id);
+          const isSelectable = isChatKnowledgeBaseAvailable(kb);
+          const resultCountLabel = getKbResultCountLabel(kb, ragMode, t);
+          const availabilityLabel = getKbAvailabilityLabel(kb, t);
+          return (
+            <button
+              key={kb.kb_id}
+              onClick={() => toggleKb(kb.kb_id)}
+              disabled={!isSelectable}
+              className={cn(
+                "w-full text-left px-3 py-2 text-xs transition-colors flex items-center gap-2",
+                isSelectable ? "hover:bg-muted" : "opacity-60 cursor-not-allowed bg-muted/20",
+                isSelected && "text-primary font-medium"
+              )}
+              data-testid={`kb-option-${kb.kb_id}`}
+            >
+              <div
+                className={cn(
+                  "w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0",
+                  isSelected
+                    ? "bg-primary border-primary"
+                    : "border-border"
+                )}
+              >
+                {isSelected && (
+                  <svg className="w-2.5 h-2.5 text-primary-foreground" viewBox="0 0 12 12">
+                    <path d="M10 3L4.5 8.5 2 6" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                )}
+              </div>
+              <div className="min-w-0 flex-1">
+                <span className="truncate block">{kb.name}</span>
+                <div className="flex items-center gap-2 min-w-0">
+                  {kb.description && (
+                    <span className="text-[10px] text-muted-foreground truncate block">{kb.description}</span>
+                  )}
+                  {availabilityLabel && (
+                    <span className={cn(
+                      "shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-medium",
+                      kb.availability === "ready" && "bg-emerald-500/10 text-emerald-600",
+                      kb.availability === "needs_reindex" && "bg-amber-500/10 text-amber-700",
+                      kb.availability === "building" && "bg-slate-500/10 text-slate-600"
+                    )}>
+                      {availabilityLabel}
+                    </span>
+                  )}
+                </div>
+              </div>
+              {resultCountLabel && (
+                <span className="text-[10px] text-muted-foreground shrink-0">{resultCountLabel}</span>
+              )}
+            </button>
+          );
+        })
+      )}
+    </div>
+  );
+  const composerOptions = (
+    <>
+      <div ref={composerOptionsRef} data-chat-options className="flex flex-wrap items-center gap-2 pb-2">
+        <div className="relative group-data-[feedback-open=true]/support-widget:pointer-events-auto">
+          <button
+            ref={modeTriggerRef}
+            onClick={() => {
+              setShowModeDropdown(!showModeDropdown);
+              setShowKbDropdown(false);
+            }}
+            className={cn("flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-muted hover:bg-muted/80 transition-colors", showModeDropdown && !optionsInHistory && "relative z-50")}
+            aria-expanded={showModeDropdown}
+            data-testid="button-mode-selector"
+          >
+            {t(`chat.mode.${mode}`)}
+            <ChevronDown className="w-3 h-3" />
+          </button>
+          {!optionsInHistory && showModeDropdown && (
+            <>
+              <div className="fixed inset-0 z-40" onClick={() => setShowModeDropdown(false)} />
+              {modeMenu}
+            </>
+          )}
+        </div>
+
+        <div className="flex rounded-lg bg-muted p-0.5 group-data-[feedback-open=true]/support-widget:pointer-events-auto" data-testid="rag-mode-selector">
+          {RAG_MODES.map((nextMode) => (
+            <button
+              key={nextMode}
+              type="button"
+              onClick={() => {
+                setRagMode(nextMode);
+                if (nextMode === "agentic") {
+                  setSelectedKbs((prev) => prev.filter((kbId) => isChatKnowledgeBaseAvailable(knowledgeBases.find((kb) => kb.kb_id === kbId))).slice(0, 1));
+                }
+                setShowKbDropdown(false);
+                setShowModeDropdown(false);
+              }}
+              className={cn(
+                "inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium transition-colors",
+                ragMode === nextMode
+                  ? "bg-card text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
+              )}
+              data-testid={`rag-mode-option-${nextMode}`}
+            >
+              {nextMode === "agentic" ? (
+                <Sparkles className="h-3 w-3" />
+              ) : (
+                <Search className="h-3 w-3" />
+              )}
+              {t(`chat.rag_mode.${nextMode}`)}
+            </button>
+          ))}
+        </div>
+
+        <div className="relative group-data-[feedback-open=true]/support-widget:pointer-events-auto">
+          <button
+            ref={kbTriggerRef}
+            onClick={() => {
+              setShowKbDropdown(!showKbDropdown);
+              setShowModeDropdown(false);
+            }}
+            className={cn(
+              "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors",
+              showKbDropdown && !optionsInHistory && "relative z-50",
+              selectedKbs.length > 0
+                ? "bg-primary/10 text-primary hover:bg-primary/15"
+                : "bg-muted hover:bg-muted/80"
+            )}
+            aria-expanded={showKbDropdown}
+            data-testid="button-kb-selector"
+          >
+            <BookOpen className="w-3 h-3" />
+            {selectedKbs.length > 0
+              ? `${selectedKbs.length} ${t("chat.kbs_selected")}`
+              : t("chat.select_kb")}
+            <ChevronDown className="w-3 h-3" />
+          </button>
+          {!optionsInHistory && showKbDropdown && (
+            <>
+              <div className="fixed inset-0 z-40" onClick={() => setShowKbDropdown(false)} />
+              {kbMenu}
+            </>
+          )}
+        </div>
+      </div>
+      {optionsInHistory && (modeMenu || kbMenu)}
+    </>
+  );
+
+  const panel = (
+    <div
+      ref={chatViewport}
+      data-testid="chat-viewport"
+      data-compact-chat={compactChat || undefined}
+      className="group/chat-viewport absolute inset-x-0 top-[var(--chat-visible-offset,0px)] flex h-[var(--chat-visible-height,100%)] overflow-hidden"
+    >
       <AnimatePresence>
         {sidebarOpen && (
           <>
             {isMobile && (
               <div
                 aria-hidden="true"
-                className="fixed inset-0 z-[70] bg-black/40"
+                className="fixed inset-x-0 top-[var(--chat-drawer-top,0px)] z-[70] h-[var(--chat-drawer-height,100vh)] bg-black/40"
                 data-testid="chat-sidebar-backdrop"
                 onClick={() => setSidebarOpen(false)}
               />
@@ -1065,10 +1414,10 @@ export default function Chat() {
             transition={{ duration: 0.2 }}
             className={cn(
               "border-r border-border bg-card flex flex-col overflow-hidden",
-              isMobile ? "fixed inset-y-0 left-0 z-[80] w-[min(18.75rem,calc(100vw-1rem))] shadow-xl" : "shrink-0",
+              isMobile ? "fixed left-0 top-[var(--chat-drawer-top,0px)] z-[80] h-[var(--chat-drawer-height,100vh)] w-[min(18.75rem,calc(100vw-1rem))] shadow-xl group-data-[short-drawer]/chat-viewport:overflow-y-auto group-data-[short-drawer]/chat-viewport:overscroll-y-contain" : "shrink-0",
             )}
           >
-            <div className="p-3 border-b border-border space-y-2">
+            <div className="p-3 border-b border-border space-y-2 group-data-[short-drawer]/chat-viewport:sticky group-data-[short-drawer]/chat-viewport:top-0 group-data-[short-drawer]/chat-viewport:z-10 group-data-[short-drawer]/chat-viewport:shrink-0 group-data-[short-drawer]/chat-viewport:bg-card">
               <div className="flex items-center gap-2">
                 {canUseConversations && (
                   <button
@@ -1182,7 +1531,7 @@ export default function Chat() {
             </div>
 
             {sidebarTab === "conversations" && canUseConversations ? (
-              <div className="flex-1 overflow-y-auto p-2 space-y-0.5">
+              <div className="flex-1 overflow-y-auto p-2 space-y-0.5 group-data-[short-drawer]/chat-viewport:flex-none group-data-[short-drawer]/chat-viewport:overflow-visible">
                 {loadingConvs ? (
                   <div className="flex justify-center py-8">
                     <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
@@ -1426,296 +1775,70 @@ export default function Chat() {
         )}
       </AnimatePresence>
 
-      <div className="flex-1 flex flex-col min-w-0">
-        {!sidebarOpen && (
-          <div className="p-2 border-b border-border flex items-center gap-2">
-            <IconButton
-              ref={openSidebarRef}
-              onClick={() => setSidebarOpen(true)}
-              label={t("a11y.open_chat_sidebar")}
-              className="hover:bg-muted text-muted-foreground"
-              data-testid="button-open-chat-sidebar"
-            >
-              <ChevronRight className="w-4 h-4" />
-            </IconButton>
-            <span className="text-xs text-muted-foreground">{t("chat.show_sidebar")}</span>
-          </div>
-        )}
+      <div className="flex-1 flex flex-col min-h-0 min-w-0">
+        {!compactChat && conversationControls}
 
-        {documentScope.length > 0 && (
-          <div
-            className="mx-4 sm:mx-6 mt-3 flex min-w-0 items-center gap-2 rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-xs"
-            data-testid="chat-document-scope"
-          >
-            <FileText className="h-3.5 w-3.5 shrink-0 text-primary" />
-            <span className="shrink-0 font-medium text-muted-foreground">
-              {t("chat.current_document_scope")}
-            </span>
-            <span className="min-w-0 flex-1 truncate font-medium" title={documentScope.map((source) => source.title || source.filename).join(", ")}>
-              {documentScope.map((source) => source.title || source.filename || t("chat.document_fallback")).join(", ")}
-            </span>
-            <button
-              type="button"
-              onClick={clearDocumentScope}
-              disabled={sending || clearingDocumentScope}
-              aria-busy={clearingDocumentScope}
-              className="shrink-0 rounded-md px-2 py-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
-              aria-label={t("chat.clear_document_scope")}
-              data-testid="button-clear-document-scope"
-            >
-              {clearingDocumentScope ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : t("chat.clear_document_scope")}
-            </button>
+        <div ref={chatHistory} data-testid="chat-history" className="min-h-0 flex-1 overflow-y-auto">
+          {compactChat && conversationControls}
+          {optionsInHistory && <div className="px-4 sm:px-6">{composerOptions}</div>}
+          <div className="min-h-full px-4 sm:px-6">
+            {messages.length === 0 ? (
+              <div className="flex min-h-full flex-col items-center justify-center py-6 text-center">
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.9 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ duration: 0.4 }}
+                  className="max-w-md"
+                >
+                  <div className="w-16 h-16 rounded-2xl bg-primary/10 flex items-center justify-center mx-auto mb-4">
+                    <Bot className="w-8 h-8 text-primary" />
+                  </div>
+                  <h2 className="text-xl font-serif font-bold mb-2">{t("chat.welcome")}</h2>
+                  <p className="text-sm text-muted-foreground mb-6">
+                    {t("chat.welcome_desc")}
+                  </p>
+                  <div className="grid grid-cols-2 gap-2 text-left">
+                    <button
+                      onClick={() => {
+                        setInput(t("chat.suggestion_1"));
+                        setShowKbDropdown(false);
+                        setShowModeDropdown(false);
+                      }}
+                      className="p-3 rounded-lg border border-border bg-card hover:border-primary/30 hover:bg-muted/50 transition-all text-xs text-muted-foreground"
+                      data-testid="suggestion-1"
+                    >
+                      {t("chat.suggestion_1")}
+                    </button>
+                    <button
+                      onClick={() => {
+                        setInput(t("chat.suggestion_2"));
+                        setShowKbDropdown(false);
+                        setShowModeDropdown(false);
+                      }}
+                      className="p-3 rounded-lg border border-border bg-card hover:border-primary/30 hover:bg-muted/50 transition-all text-xs text-muted-foreground"
+                      data-testid="suggestion-2"
+                    >
+                      {t("chat.suggestion_2")}
+                    </button>
+                  </div>
+                </motion.div>
+              </div>
+            ) : (
+              <div className={cn("space-y-4 pt-6", optionsInHistory ? "pb-1" : "pb-6")}>
+                {messages.map((msg, i) => (
+                  <MessageBubble key={i} message={msg} index={i} onRetry={retryFailedMessage} />
+                ))}
+                {sending && <TypingIndicator />}
+              </div>
+            )}
           </div>
-        )}
-
-        {conversationLoadError && activeConvId && (
-          <div
-            role="alert"
-            className="mx-4 sm:mx-6 mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs"
-            data-testid="conversation-load-error"
-          >
-            <span className="min-w-0 flex-1">{t("chat.conversation_load_failed")}</span>
-            <button
-              type="button"
-              onClick={() => { void loadConversation(activeConvId); }}
-              className="rounded-md px-2 py-1 font-medium text-foreground hover:bg-muted"
-              data-testid="button-retry-load-conversation"
-            >
-              {t("chat.retry_loading_conversation")}
-            </button>
-            <button
-              type="button"
-              onClick={() => { void createConversation(); }}
-              className="rounded-md px-2 py-1 font-medium text-foreground hover:bg-muted"
-              data-testid="button-new-conversation-after-load-error"
-            >
-              {t("chat.start_new_conversation")}
-            </button>
-          </div>
-        )}
-
-        <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-6 space-y-4">
-          {messages.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-full text-center">
-              <motion.div
-                initial={{ opacity: 0, scale: 0.9 }}
-                animate={{ opacity: 1, scale: 1 }}
-                transition={{ duration: 0.4 }}
-                className="max-w-md"
-              >
-                <div className="w-16 h-16 rounded-2xl bg-primary/10 flex items-center justify-center mx-auto mb-4">
-                  <Bot className="w-8 h-8 text-primary" />
-                </div>
-                <h2 className="text-xl font-serif font-bold mb-2">{t("chat.welcome")}</h2>
-                <p className="text-sm text-muted-foreground mb-6">
-                  {t("chat.welcome_desc")}
-                </p>
-                <div className="grid grid-cols-2 gap-2 text-left">
-                  <button
-                    onClick={() => {
-                      setInput(t("chat.suggestion_1"));
-                      setShowKbDropdown(false);
-                      setShowModeDropdown(false);
-                    }}
-                    className="p-3 rounded-lg border border-border bg-card hover:border-primary/30 hover:bg-muted/50 transition-all text-xs text-muted-foreground"
-                    data-testid="suggestion-1"
-                  >
-                    {t("chat.suggestion_1")}
-                  </button>
-                  <button
-                    onClick={() => {
-                      setInput(t("chat.suggestion_2"));
-                      setShowKbDropdown(false);
-                      setShowModeDropdown(false);
-                    }}
-                    className="p-3 rounded-lg border border-border bg-card hover:border-primary/30 hover:bg-muted/50 transition-all text-xs text-muted-foreground"
-                    data-testid="suggestion-2"
-                  >
-                    {t("chat.suggestion_2")}
-                  </button>
-                </div>
-              </motion.div>
-            </div>
-          ) : (
-            <>
-              {messages.map((msg, i) => (
-                <MessageBubble key={i} message={msg} index={i} onRetry={retryFailedMessage} />
-              ))}
-              {sending && <TypingIndicator />}
-            </>
-          )}
-          <div ref={messagesEndRef} />
+          {compactChat && composerError}
         </div>
 
-        {errorMsg && (
-          <div className="mx-4 sm:mx-6 mb-2 px-3 py-2 rounded-lg bg-destructive/10 text-destructive text-xs flex items-center gap-2">
-            <span className="flex-1">{errorMsg}</span>
-            <IconButton onClick={() => setErrorMsg(null)} label={t("a11y.dismiss_error")} className="shrink-0">
-              <X className="w-3.5 h-3.5" />
-            </IconButton>
-          </div>
-        )}
+        {!compactChat && composerError}
 
-        <div data-chat-composer className="relative group-data-[feedback-open=true]/support-widget:z-[60] group-data-[feedback-open=true]/support-widget:pointer-events-none group-data-[feedback-open=true]/support-widget:border-transparent group-data-[feedback-open=true]/support-widget:bg-transparent group-data-[feedback-open=true]/support-widget:backdrop-blur-none border-t border-border bg-card/80 backdrop-blur-sm px-4 sm:px-6 py-3">
-          <div className="flex items-center gap-2 mb-2 flex-wrap">
-            <div className="relative group-data-[feedback-open=true]/support-widget:pointer-events-auto">
-              <button
-                onClick={() => {
-                  setShowModeDropdown(!showModeDropdown);
-                  setShowKbDropdown(false);
-                }}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-muted hover:bg-muted/80 transition-colors"
-                data-testid="button-mode-selector"
-              >
-                {t(`chat.mode.${mode}`)}
-                <ChevronDown className="w-3 h-3" />
-              </button>
-              {showModeDropdown && (
-                <>
-                  <div className="fixed inset-0 z-40" onClick={() => setShowModeDropdown(false)} />
-                  <div className="absolute bottom-full mb-1 left-0 z-50 bg-card border border-border rounded-lg shadow-lg py-1 min-w-[140px]">
-                    {MODES.map((m) => (
-                      <button
-                        key={m}
-                        onClick={() => {
-                          setMode(m);
-                          setShowModeDropdown(false);
-                        }}
-                        className={cn(
-                          "w-full text-left px-3 py-1.5 text-xs hover:bg-muted transition-colors",
-                          mode === m && "text-primary font-medium"
-                        )}
-                        data-testid={`mode-option-${m}`}
-                      >
-                        {t(`chat.mode.${m}`)}
-                      </button>
-                    ))}
-                  </div>
-                </>
-              )}
-            </div>
-
-            <div className="flex rounded-lg bg-muted p-0.5 group-data-[feedback-open=true]/support-widget:pointer-events-auto" data-testid="rag-mode-selector">
-              {RAG_MODES.map((nextMode) => (
-                <button
-                  key={nextMode}
-                  type="button"
-                  onClick={() => {
-                    setRagMode(nextMode);
-                    if (nextMode === "agentic") {
-                      setSelectedKbs((prev) => prev.filter((kbId) => isChatKnowledgeBaseAvailable(knowledgeBases.find((kb) => kb.kb_id === kbId))).slice(0, 1));
-                    }
-                    setShowKbDropdown(false);
-                    setShowModeDropdown(false);
-                  }}
-                  className={cn(
-                    "inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium transition-colors",
-                    ragMode === nextMode
-                      ? "bg-card text-foreground shadow-sm"
-                      : "text-muted-foreground hover:text-foreground"
-                  )}
-                  data-testid={`rag-mode-option-${nextMode}`}
-                >
-                  {nextMode === "agentic" ? (
-                    <Sparkles className="h-3 w-3" />
-                  ) : (
-                    <Search className="h-3 w-3" />
-                  )}
-                  {t(`chat.rag_mode.${nextMode}`)}
-                </button>
-              ))}
-            </div>
-
-            <div className="relative group-data-[feedback-open=true]/support-widget:pointer-events-auto">
-              <button
-                onClick={() => {
-                  setShowKbDropdown(!showKbDropdown);
-                  setShowModeDropdown(false);
-                }}
-                className={cn(
-                  "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors",
-                  selectedKbs.length > 0
-                    ? "bg-primary/10 text-primary hover:bg-primary/15"
-                    : "bg-muted hover:bg-muted/80"
-                )}
-                data-testid="button-kb-selector"
-              >
-                <BookOpen className="w-3 h-3" />
-                {selectedKbs.length > 0
-                  ? `${selectedKbs.length} ${t("chat.kbs_selected")}`
-                  : t("chat.select_kb")}
-                <ChevronDown className="w-3 h-3" />
-              </button>
-              {showKbDropdown && (
-                <>
-                  <div className="fixed inset-0 z-40" onClick={() => setShowKbDropdown(false)} />
-                  <div className="absolute bottom-full mb-1 left-0 z-50 bg-card border border-border rounded-lg shadow-lg py-1 min-w-[220px] max-h-48 overflow-y-auto">
-                    {knowledgeBases.length === 0 ? (
-                      <div className="px-3 py-2 text-xs text-muted-foreground">
-                        {t("chat.no_kbs")}
-                      </div>
-                    ) : (
-                      knowledgeBases.map((kb) => {
-                        const isSelected = selectedKbs.includes(kb.kb_id);
-                        const isSelectable = isChatKnowledgeBaseAvailable(kb);
-                        const resultCountLabel = getKbResultCountLabel(kb, ragMode, t);
-                        const availabilityLabel = getKbAvailabilityLabel(kb, t);
-                        return (
-                        <button
-                          key={kb.kb_id}
-                          onClick={() => toggleKb(kb.kb_id)}
-                          disabled={!isSelectable}
-                          className={cn(
-                            "w-full text-left px-3 py-2 text-xs transition-colors flex items-center gap-2",
-                            isSelectable ? "hover:bg-muted" : "opacity-60 cursor-not-allowed bg-muted/20",
-                            isSelected && "text-primary font-medium"
-                          )}
-                          data-testid={`kb-option-${kb.kb_id}`}
-                        >
-                          <div
-                            className={cn(
-                              "w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0",
-                              isSelected
-                                ? "bg-primary border-primary"
-                                : "border-border"
-                            )}
-                          >
-                            {isSelected && (
-                              <svg className="w-2.5 h-2.5 text-primary-foreground" viewBox="0 0 12 12">
-                                <path d="M10 3L4.5 8.5 2 6" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                              </svg>
-                            )}
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <span className="truncate block">{kb.name}</span>
-                            <div className="flex items-center gap-2 min-w-0">
-                              {kb.description && (
-                                <span className="text-[10px] text-muted-foreground truncate block">{kb.description}</span>
-                              )}
-                              {availabilityLabel && (
-                                <span className={cn(
-                                  "shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-medium",
-                                  kb.availability === "ready" && "bg-emerald-500/10 text-emerald-600",
-                                  kb.availability === "needs_reindex" && "bg-amber-500/10 text-amber-700",
-                                  kb.availability === "building" && "bg-slate-500/10 text-slate-600"
-                                )}>
-                                  {availabilityLabel}
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                          {resultCountLabel && (
-                            <span className="text-[10px] text-muted-foreground shrink-0">{resultCountLabel}</span>
-                          )}
-                        </button>
-                        );
-                      })
-                    )}
-                  </div>
-                </>
-              )}
-            </div>
-          </div>
+        <div ref={composerRef} data-chat-composer className="relative shrink-0 group-data-[feedback-open=true]/support-widget:z-[60] group-data-[feedback-open=true]/support-widget:pointer-events-none group-data-[feedback-open=true]/support-widget:border-transparent group-data-[feedback-open=true]/support-widget:bg-transparent group-data-[feedback-open=true]/support-widget:backdrop-blur-none border-t border-border bg-card/80 backdrop-blur-sm px-4 sm:px-6 py-3 group-data-[short-chat]/chat-viewport:py-1">
+          {!optionsInHistory && composerOptions}
 
           <div className="flex items-end gap-2 group-data-[feedback-open=true]/support-widget:pointer-events-auto">
             {quotaWarning && (
@@ -1729,11 +1852,11 @@ export default function Chat() {
               value={input}
               onChange={(e) => setInput(e.target.value)}
               disabled={loadingConversation || conversationLoadError || clearingDocumentScope}
-              onFocus={() => { setShowKbDropdown(false); setQuotaWarning(null); }}
+              onFocus={() => { setShowKbDropdown(false); setShowModeDropdown(false); setQuotaWarning(null); }}
               onKeyDown={handleKeyDown}
               placeholder={t("chat.input_placeholder")}
               rows={1}
-              className="flex-1 resize-none rounded-xl border border-border bg-background px-4 py-2.5 text-[16px] focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent transition-shadow min-h-[42px] max-h-[120px]"
+              className="min-w-0 flex-1 resize-none rounded-xl border border-border bg-background px-4 py-2.5 text-[16px] focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent transition-shadow min-h-[42px] max-h-[120px] group-data-[short-chat]/chat-viewport:max-h-[clamp(42px,calc(var(--chat-visible-height)/3),84px)]"
               style={{ height: "auto" }}
               onInput={(e) => {
                 const el = e.currentTarget;
@@ -1754,6 +1877,7 @@ export default function Chat() {
                   : "bg-muted text-muted-foreground cursor-not-allowed"
               )}
               data-testid="button-send-message"
+              data-chat-send
             >
               {sending ? (
                 <Loader2 className="w-5 h-5 animate-spin" />
@@ -1761,9 +1885,16 @@ export default function Chat() {
                 <Send className="w-5 h-5" />
               )}
             </IconButton>
+            <div data-chat-support-slot className="shrink-0 empty:hidden" />
           </div>
         </div>
       </div>
+    </div>
+  );
+
+  return (
+    <div ref={chatFrame} className="relative h-[calc(100vh-8rem)] -mx-4 sm:-mx-6 -my-6">
+      {panel}
     </div>
   );
 }
