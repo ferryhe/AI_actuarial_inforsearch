@@ -633,16 +633,46 @@ it("keeps the mounted assistant history when the host navigates to Weekly", asyn
   expect(apiPost.mock.calls[1][1].recent_questions).toEqual(["Weekly guide"]);
 });
 
+it("sends on Enter and leaves Shift+Enter and IME confirmation to the textarea", async () => {
+  let resolve!: (value: unknown) => void;
+  apiPost.mockImplementationOnce(() => new Promise((done) => { resolve = done; }));
+  show(false);
+  const input = screen.getByLabelText("assistant.message");
+  fireEvent.change(input, { target: { value: "First line\nSecond line" } });
+  expect(fireEvent.keyDown(input, { key: "Enter", shiftKey: true })).toBe(true);
+  expect(fireEvent.keyDown(input, { key: "Enter", isComposing: true })).toBe(true);
+  expect(fireEvent.keyDown(input, { key: "Enter", keyCode: 229 })).toBe(true);
+  expect(apiPost).not.toHaveBeenCalled();
+
+  expect(fireEvent.keyDown(input, { key: "Enter" })).toBe(false);
+  expect(apiPost).toHaveBeenCalledTimes(1);
+  expect(apiPost.mock.calls[0][1].message).toBe("First line\nSecond line");
+  expect(screen.getByText("First line Second line", { selector: '[data-message-role="user"] p' })).toBeVisible();
+  expect(screen.getByRole("status", { name: "assistant.wait" })).toBeVisible();
+  expect(screen.queryByRole("button", { name: "assistant.ask" })).not.toBeInTheDocument();
+
+  resolve(reply("answer"));
+  expect(await screen.findByText("Review first")).toBeVisible();
+  expect(screen.queryByRole("status", { name: "assistant.wait" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "assistant.ask" })).toBeVisible();
+});
+
 it("cancels the real request and ignores a response that arrives late", async () => {
   let resolve!: (value: unknown) => void;
   apiPost.mockImplementationOnce(() => new Promise((done) => { resolve = done; })).mockResolvedValueOnce(reply("answer"));
   show(false); question("Slow question");
   const signal = apiPost.mock.calls[0][2].signal as AbortSignal;
-  fireEvent.click(screen.getByRole("button", { name: "assistant.cancel_request" }));
+  const stop = screen.getByRole("button", { name: "assistant.cancel_request" });
+  expect(stop).toHaveAttribute("type", "button");
+  expect(screen.getByRole("status", { name: "assistant.wait" })).toBeVisible();
+  fireEvent.click(stop);
   expect(signal.aborted).toBe(true);
+  expect(screen.getByText("Slow question", { selector: "article p" })).toBeVisible();
+  expect(screen.queryByRole("status", { name: "assistant.wait" })).not.toBeInTheDocument();
   resolve({ ...reply("answer"), answer: "Outdated answer" });
   question("New question");
-  await screen.findByText("New question", { selector: "article p" });
+  await screen.findByText("Review first");
+  expect(apiPost.mock.calls[1][1].recent_questions).toEqual([]);
   expect(screen.queryByText("Outdated answer")).not.toBeInTheDocument();
 });
 
