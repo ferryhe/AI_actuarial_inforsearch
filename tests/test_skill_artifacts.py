@@ -575,6 +575,7 @@ def test_assistant_run_uses_one_pinned_release_snapshot(tmp_path: Path, monkeypa
         state=SimpleNamespace(),
     )
     auth = AuthContext({"subject": "fixture"}, frozenset({"chat.query"}))
+    monkeypatch.setattr(host.deps, "get_auth_context", lambda _request: auth)
     seen = []
 
     def model(prompt, _remaining):
@@ -616,6 +617,7 @@ def test_postgres_without_published_release_cannot_execute_builtin_tool(
         state=SimpleNamespace(),
     )
     auth = AuthContext({"subject": "fixture"}, frozenset({"chat.query"}))
+    monkeypatch.setattr(host.deps, "get_auth_context", lambda _request: auth)
     feature = host.AssistantFeature()
     calls = []
     feature.executors["test_lookup.search"] = lambda args: calls.append(args)

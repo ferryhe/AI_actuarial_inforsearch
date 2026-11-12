@@ -97,13 +97,13 @@ export default function FeedbackForm({ t, lang, open = true, onClose, initialCon
 
   return (
     <section id="feedback-panel" aria-labelledby="feedback-title" className="flex w-[min(22.5rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-xl border border-border bg-card text-card-foreground shadow-2xl">
-      <header className="flex items-center justify-between border-b border-border px-4 py-2">
+      <header className="flex items-center justify-between border-b border-border px-4 py-2 group-data-[compact-feedback]/support-panel:shrink-0 group-data-[compact-feedback]/support-panel:py-0">
         <h2 id="feedback-title" className="text-base font-semibold">{t("feedback.title")}</h2>
         <IconButton label={t("a11y.close_feedback")} onClick={onClose}>
           <X className="h-4 w-4" />
         </IconButton>
       </header>
-      <form onSubmit={submit} className="min-h-0 space-y-3 overflow-y-auto p-4">
+      <form onSubmit={submit} className="min-h-0 space-y-3 overflow-y-auto p-4 group-data-[compact-feedback]/support-panel:flex-1 group-data-[compact-feedback]/support-panel:overscroll-y-contain group-data-[compact-feedback]/support-panel:p-2">
         <div>
           <label htmlFor="feedback-kind" className="mb-1 block text-sm font-medium">{t("feedback.kind")}</label>
           <select
@@ -129,7 +129,7 @@ export default function FeedbackForm({ t, lang, open = true, onClose, initialCon
             disabled={submitting}
             aria-describedby="feedback-content-hint"
             onChange={(event) => { edit(); setContent(event.target.value); }}
-            className="w-full resize-y rounded-md border border-border bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+            className="w-full resize-y rounded-md border border-border bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary group-data-[compact-feedback]/support-panel:min-h-[44px] group-data-[compact-feedback]/support-panel:max-h-[56px] group-data-[compact-feedback]/support-panel:resize-none"
           />
           <p id="feedback-content-hint" className="mt-1 text-xs text-muted-foreground">{t("feedback.content_hint")}</p>
         </div>

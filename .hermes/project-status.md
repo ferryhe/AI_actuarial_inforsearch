@@ -7356,3 +7356,79 @@ Current branch head 4f030be has uncommitted small catalog/Storage variable defau
 - PR #492 is the change path. CI #912 is running on published head `bfae247`; the current diff needs a fresh push, independent review, and current-head CI before merge. Copilot reported insufficient quota; there were no other review threads on the prior head.
 - Production has not been deployed. Both sites still report healthy `824f029`; the earlier deployment argument check did not replace containers. Disk preflight showed 8.5 GB free in China and 2.1 GB overseas. Any cleanup before building must remain limited to confirmed AI InfoSearch artifacts.
 - Next: validate the latest PR head, merge, then deploy only when each configured mirror resolves the exact merge SHA.
+
+## 2026-11-11 #480 quick local Chat viewport and tool scopes
+
+- Isolated codex/issue-480-chat-viewport-scopes at fresh origin/main 15bafb5. Chat uses the shared visual viewport observer and separately scrolls history. Model tool descriptions are projected from RunContext scopes, with server execution checks intact.
+- Local evidence: `reports/issue-480-local-chat-viewport-scopes/`. 385 PG16-backed backend tests, 48 frontend tests, typecheck/build/lint and Chromium simulated viewport passed. Real iPhone Safari keyboard remains unverified. Independent review recommended; no verdict recorded by the worker. No commit, push, deployment, or real model call.
+
+## 2026-11-11 #480 R6 diagnostic repairs
+
+- TypeSafe diagnostic accepted both narrow repairs. The official local-review limit is 15; this fix has no fresh independent review or PASS.
+- The compact Chat layout and independent history scroll passed 667x375/200px and 390x844/310px Chromium viewport simulation, including mock Send. The Host now removes the two known published cross-skill body hints when body tools are unavailable.
+- 387 PG16 backend and 48 frontend tests passed. Evidence: `reports/issue-480-local-chat-viewport-scopes/R6.md`. Physical Safari OSK remains untested. No commit, push, deployment, or real model calls.
+
+## 2026-11-11 #480 R16 diagnostic repairs
+
+- Same uncommitted 15bafb5 candidate. TypeSafe Judge supported the four scoped R16 repairs. No new independent review or PASS for this diff.
+- Compact Chat preserves touch send and scrollable history at 667x375/200px with six draft lines, for both ordinary and document-scoped conversations.
+- Host keeps authorized catalog date filters, refreshes authorization before model dispatch and keeps tool-time checks. Published resource guidance is constrained by body-tool availability.
+- Evidence: `reports/issue-480-r16-worker-fix/`. Final isolated PG16 suite 397 passed, frontend 71 passed, Chromium mock passes, typecheck/build/lint passed. Temporary services cleaned. Physical Safari remains untested. No provider calls, production access, commit, push, PR or deployment.
+
+## 2026-11-11 #480 R17 diagnostic repairs
+
+- Same uncommitted 15bafb5 candidate. TypeSafe supported both scoped repairs. R18 disposition pending.
+- Chat preserves visible and independently scrollable history while the simulated 200px viewport pans 0/150/175/0. Scoped and ordinary mock touch send succeeded at offset 175.
+- Registry projects safe tool descriptions for partial or omitted published siblings and keeps full-scope authored guidance. Host authorization remains in place.
+- Evidence: `reports/issue-480-r17-worker-fix/`. Isolated PG16 400 passed, frontend 72 passed, current and prior Chromium mock scenarios passed. Services cleaned. Physical Safari untested. No live provider, production access, commit, push or deployment.
+
+## 2026-11-11 #480 R18 scoped repairs
+
+- Same uncommitted 15bafb5 candidate. R18 TypeSafe accepted both scoped repairs. Fresh R19 pending.
+- Compact Chat measures the fixed rows and composer to preserve independently scrollable history at constant keyboard height. Scoped and ordinary 390x844 touch sends passed at visual offset 480.
+- Published research prompts now require the cross-skill dates tool to be visible before exposing authored guidance. Standalone descriptions and Host authorization remain available.
+- Evidence: `reports/issue-480-r18-worker-fix/`. Isolated PG16 403 passed, frontend 73 passed, Chromium current and prior mock checks passed. Temporary services cleaned. No live provider, production access, commit, push or deployment. Physical Safari untested.
+
+## 2026-11-11 #480 R19 scoped repairs
+
+- Same uncommitted 15bafb5 candidate. Formal R19 CHANGES, 19/25, failed review cycles 16. Registered TypeSafe accepted both fixes. R20 pending.
+- Very short Chat moves mode/RAG/KB above history messages and keeps textarea/Send fixed. Chromium 12-case touch matrix retained earlier/latest text, independent scroll and one mock send each. Mode, RAG and KB selections, drawer, support and portrait draft restore passed.
+- Published artifact projection now adds exact cross-skill tool references to existing registered guidance dependencies. Direct unavailable calls are still denied by the Host or registry.
+- Evidence: `reports/issue-480-r19-worker-fix/`. Isolated PG16 416 passed, frontend 74 passed, current and prior Chromium mocks passed. Services cleaned. No real provider, production access, commit, push or deployment. Physical Safari untested.
+
+## 2026-11-11 #480 R20 scoped repairs
+
+- Same uncommitted candidate at 15bafb5. Chat caps upward menus to visible space and preserves menu focus when falling back into history. The single Support trigger docks next to Send when its fixed position is outside the visual viewport.
+- Published skill descriptions recognize explicit Markdown tool/skill pairs by exact registered owner and tool key. Existing fallback and per-tool Host checks remain in place.
+- Evidence is in the main checkout at reports/issue-480-r20-worker-fix/. Isolated PG16 430 passed, frontend 87 passed, 7 Chromium touch cases and 6 mock sends passed, plus R19 and R6/R16-R18 browser regressions. Native Safari untested. No provider calls, production access, commit, push or deployment. Awaiting independent review.
+
+## 2026-11-11 #480 R21 scoped repairs
+
+- Same uncommitted 15bafb5 candidate. ArtifactStore recognizes exact registered owner-first Markdown tool references and uses the existing scope-projected fallback. Host tool-time checks remain in place.
+- Short Chat viewports reclaim the docked Support anchor's reserved space for the Assistant panel. Raw Chromium touch measured a 33px answer scroller, moved it in both directions and opened the actual Weekly route. Chat draft and Send, drawer, feedback-only and normal-height controls passed.
+- Evidence: main checkout reports/issue-480-r21-worker-fix/. Isolated PG16 441 passed, Vitest 239 passed, six new Chromium cases plus R20/R19/R6/R16-R18 passed. Temporary resources cleaned. Native iOS Safari untested. Zero provider calls, production access, commit, push or deployment. Awaiting independent review.
+
+## 2026-11-11 #480 R22 scoped repair
+
+- Same uncommitted 15bafb5 candidate. The Assistant now uses compact layout when the available space above Chat is too small, including when the Support trigger can stay fixed.
+- Raw Chromium touch passed 12 cases including five fixed-trigger panned viewports. At 680/152 the answer had 40px of touch-scroll space, Close/Ask/input had 44px targets and the actual Weekly link was opened. Draft/send, drawer/backdrop, feedback-only and previous viewport regressions passed.
+- Evidence: main checkout reports/issue-480-r22-worker-fix/. Isolated PG16 441 passed, Vitest 240 passed, focused backend 49 passed, type/build/lint/format/diff checks passed. Local services cleaned. Native iOS Safari untested. Zero provider calls or production access. Awaiting independent review.
+
+## 2026-11-11 #480 R23 scoped repair
+
+- Same uncommitted 15bafb5 candidate. Assistant compact placement uses available height on Weekly and other routes. Chat keeps its separate horizontal composer clearance.
+- Raw Chromium touch passed five direct Weekly panned cases and one Chat-to-Weekly retained-conversation case. At 680/152, the answer had a 40px touch scrollport, the three controls had 44px targets, and follow-up history and Weekly navigation were verified.
+- Evidence: main checkout reports/issue-480-r23-worker-fix/. Isolated PG16 441 passed, Vitest 241 passed, focused backend 49 passed. R22/R21/R20/R19/R6/R16-R18 browser regressions and type/build/lint/format/diff checks passed. Local services cleaned. Native iOS Safari untested. Zero provider calls or production access. Awaiting independent review.
+
+## 2026-11-11 #480 R24 scoped repair
+
+- Same uncommitted 15bafb5 candidate. The mobile Chat drawer and backdrop use the measured visual viewport top and height, keeping the focused Close control reachable when the keyboard pans the viewport.
+- Raw Chromium touch passed 3 drawer cases. At 680/152 the Close target moved from y10.5–54.5 to y690.5–734.5. Both Close and backdrop restored opener focus and preserved the draft. The panned Chat composer remained usable with Support open.
+- Evidence: main checkout reports/issue-480-r24-worker-fix/. Isolated PG16 441 passed, Vitest 242 passed (90 focused), permission backend 49 passed. R23/R22 and earlier browser regressions plus type/build/lint/format/diff passed. Temporary resources cleaned. Native iOS Safari untested. No provider calls, production access, commit, or push. Awaiting independent review.
+
+## 2026-11-11 #480 R25 final tested repair
+
+- Same uncommitted 15bafb5 candidate. Short mobile Chat drawers scroll to saved conversations while the header and Close remain reachable. Feedback-only Support uses compact placement for short Chat, with a touch-scrollable form and explicit Submit.
+- Raw Chromium tests passed both 680/152 cases. Saved history loaded into the correct conversation and accepted the retained draft. Feedback drafting produced zero requests; the explicit tap produced one mock POST and receipt.
+- Evidence: main checkout reports/issue-480-r25-final-fix/. Isolated PG16 441 passed, Vitest 243 passed (91 focused), backend permission 49 passed. R24 and earlier Chromium regressions plus type/build/lint/format/diff passed. Temporary resources cleaned. Native iOS Safari, production and live models untested.
+- Review limit 25/25. This is the final tested, unreviewed repair. No reviewer PASS, new review round, commit, or push.

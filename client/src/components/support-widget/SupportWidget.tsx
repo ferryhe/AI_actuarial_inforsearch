@@ -1,8 +1,11 @@
 import { Component, useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { MessageSquare, X } from "lucide-react";
 import { IconButton } from "@/components/a11y/IconButton";
 import { useTranslation } from "@/components/Layout";
 import { apiGet } from "@/lib/api";
+import { watchVisualViewport } from "@/lib/visual-viewport";
+import { cn } from "@/lib/utils";
 import { useAuth } from "@/context/AuthContext";
 import AssistantPanel from "@/features/assistant/AssistantPanel";
 import FeedbackForm from "@/features/feedback/FeedbackForm";
@@ -35,7 +38,13 @@ export default function SupportWidget({ onOpenChange }: { onOpenChange?: (open: 
   const [loadAttempt, setLoadAttempt] = useState(0);
   const trigger = useRef<HTMLButtonElement>(null);
   const host = useRef<HTMLDivElement>(null);
-  const [panelSpace, setPanelSpace] = useState({ maxHeight: 0, lift: 0 });
+  const fixedAnchor = useRef<HTMLDivElement>(null);
+  const currentSlot = useRef<HTMLElement | null>(null);
+  const restoreTriggerFocus = useRef(false);
+  const [portalSlot, setPortalSlot] = useState<HTMLElement | null>(null);
+  const [panelSpace, setPanelSpace] = useState({
+    maxHeight: 0, lift: 0, compact: false, compactWidth: null as number | null, rightInset: 0,
+  });
   useEffect(() => {
     let mounted = true;
     apiGet<Capabilities>("/api/support/capabilities")
@@ -53,48 +62,73 @@ export default function SupportWidget({ onOpenChange }: { onOpenChange?: (open: 
   useLayoutEffect(() => {
     if (!enabled) return;
     const hostElement = host.current;
-    const triggerElement = trigger.current;
-    if (!hostElement || !triggerElement) return;
+    const anchor = fixedAnchor.current;
+    if (!hostElement || !anchor) return;
     const chatComposer = isChat ? document.querySelector<HTMLElement>("[data-chat-composer]") : null;
+    const chatSend = chatComposer?.querySelector<HTMLElement>("[data-chat-send]");
 
-    const updatePanelSpace = () => {
-      const visualViewport = window.visualViewport;
-      const viewportTop = visualViewport?.offsetTop ?? 0;
-      const viewportBottom = viewportTop + (visualViewport?.height ?? window.innerHeight);
-      const triggerBounds = triggerElement.getBoundingClientRect();
+    const updatePanelSpace = (viewportTop: number, viewportBottom: number) => {
+      const triggerBounds = anchor.getBoundingClientRect();
+      const covered = triggerBounds.top < viewportTop || triggerBounds.bottom > viewportBottom;
+      const slot = covered ? chatComposer?.querySelector<HTMLElement>("[data-chat-support-slot]") ?? null : null;
+      if (slot !== currentSlot.current) {
+        restoreTriggerFocus.current = document.activeElement === trigger.current;
+        currentSlot.current = slot;
+        setPortalSlot(slot);
+      }
       const hostStyle = getComputedStyle(hostElement);
       const gap = Number.parseFloat(hostStyle.rowGap) || 0;
       const safeTop = Number.parseFloat(hostStyle.paddingTop) || 0;
       const normalBottom = Math.min(triggerBounds.top - gap, viewportBottom - triggerBounds.height - gap);
       const chatTop = chatComposer?.getBoundingClientRect().top;
-      const bottom = chatTop === undefined ? normalBottom : Math.min(normalBottom, chatTop - gap);
+      const aboveComposer = chatTop === undefined ? normalBottom : Math.min(normalBottom, chatTop - gap);
+      const compact = open && (assistantEnabled || isChat) && aboveComposer - viewportTop - safeTop < 132;
+      const bottom = compact ? viewportBottom - 4 : aboveComposer;
+      // Leave Send and the leading part of the Chat textarea available beside the panel.
+      const compactChat = compact && chatSend;
+      const right = compactChat ? chatSend.getBoundingClientRect().left - 4 : triggerBounds.right;
       const next = {
         maxHeight: Math.max(0, Math.floor(bottom - viewportTop - safeTop) - 2),
-        lift: Math.max(0, Math.round(triggerBounds.top - gap - bottom)),
+        lift: Math.round(triggerBounds.top - gap - bottom),
+        compact,
+        compactWidth: compactChat ? Math.max(0, Math.floor(right - 44)) : null,
+        rightInset: Math.max(0, Math.ceil(triggerBounds.right - right)),
       };
-      setPanelSpace((previous) => previous.maxHeight === next.maxHeight && previous.lift === next.lift ? previous : next);
+      setPanelSpace((previous) => previous.maxHeight === next.maxHeight && previous.lift === next.lift
+        && previous.compact === next.compact && previous.compactWidth === next.compactWidth
+        && previous.rightInset === next.rightInset ? previous : next);
     };
 
-    updatePanelSpace();
-    const resizeObserver = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(updatePanelSpace);
-    resizeObserver?.observe(triggerElement);
+    let bounds: [number, number];
+    const stopWatching = watchVisualViewport((top, bottom) => {
+      bounds = [top, bottom];
+      updatePanelSpace(...bounds);
+    });
+    const updateLayout = () => updatePanelSpace(...bounds);
+    const resizeObserver = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(updateLayout);
+    resizeObserver?.observe(anchor);
     if (chatComposer) resizeObserver?.observe(chatComposer);
-    window.addEventListener("resize", updatePanelSpace);
-    window.addEventListener("scroll", updatePanelSpace, true);
-    window.visualViewport?.addEventListener("resize", updatePanelSpace);
-    window.visualViewport?.addEventListener("scroll", updatePanelSpace);
+    window.addEventListener("scroll", updateLayout, true);
     return () => {
       resizeObserver?.disconnect();
-      window.removeEventListener("resize", updatePanelSpace);
-      window.removeEventListener("scroll", updatePanelSpace, true);
-      window.visualViewport?.removeEventListener("resize", updatePanelSpace);
-      window.visualViewport?.removeEventListener("scroll", updatePanelSpace);
+      window.removeEventListener("scroll", updateLayout, true);
+      stopWatching();
     };
-  }, [enabled, isChat, location]);
+  }, [enabled, isChat, location, assistantEnabled, open, portalSlot]);
 
+  useLayoutEffect(() => {
+    if (restoreTriggerFocus.current) {
+      restoreTriggerFocus.current = false;
+      trigger.current?.focus({ preventScroll: true });
+    }
+  }, [portalSlot]);
+
+  const { compact, compactWidth } = panelSpace;
   const panelStyle = {
     "--support-panel-max-height": `min(38rem, ${panelSpace.maxHeight}px)`,
+    "--support-panel-max-width": compactWidth === null ? undefined : `${compactWidth}px`,
     marginBottom: panelSpace.lift,
+    marginRight: panelSpace.rightInset,
   } as CSSProperties;
 
   const close = useCallback(() => {
@@ -111,11 +145,27 @@ export default function SupportWidget({ onOpenChange }: { onOpenChange?: (open: 
   };
 
   if (!enabled) return null;
+  const supportTrigger = (
+    <IconButton
+      ref={trigger}
+      label={open ? t("a11y.close_feedback") : t("a11y.open_feedback")}
+      aria-expanded={open}
+      aria-controls="support-panel"
+      onClick={() => {
+        if (open) close();
+        else { setHasOpened(true); setOpen(true); onOpenChange?.(true); }
+      }}
+      className="pointer-events-auto rounded-full bg-primary text-primary-foreground shadow-lg hover:bg-primary/90"
+      data-testid="support-widget-trigger"
+    >
+      {open ? <X className="h-5 w-5" /> : <MessageSquare className="h-5 w-5" />}
+    </IconButton>
+  );
 
   return (
-    <div ref={host} className="pointer-events-none fixed bottom-[max(1rem,env(safe-area-inset-bottom))] right-4 z-50 flex flex-col items-end gap-3" style={{ paddingTop: "max(1rem, env(safe-area-inset-top, 0px))" }} onKeyDown={handleKeyDown}>
+    <div ref={host} className={cn("pointer-events-none fixed bottom-[max(1rem,env(safe-area-inset-bottom))] right-4 flex flex-col items-end gap-3", compact ? "z-[65]" : "z-50")} style={{ paddingTop: "max(1rem, env(safe-area-inset-top, 0px))" }} onKeyDown={handleKeyDown}>
       {hasOpened && (
-        <div id="support-panel" hidden={!open} className="pointer-events-auto" style={panelStyle}>
+        <div id="support-panel" hidden={!open} data-compact-assistant={compact && assistantEnabled || undefined} data-compact-feedback={compact && !assistantEnabled || undefined} className="group/support-panel pointer-events-auto" style={panelStyle}>
           <FeedbackLoadErrorBoundary
             key={loadAttempt}
             fallback={(
@@ -129,20 +179,9 @@ export default function SupportWidget({ onOpenChange }: { onOpenChange?: (open: 
           </FeedbackLoadErrorBoundary>
         </div>
       )}
-      <IconButton
-        ref={trigger}
-        label={open ? t("a11y.close_feedback") : t("a11y.open_feedback")}
-        aria-expanded={open}
-        aria-controls="support-panel"
-        onClick={() => {
-          if (open) close();
-          else { setHasOpened(true); setOpen(true); onOpenChange?.(true); }
-        }}
-        className="pointer-events-auto rounded-full bg-primary text-primary-foreground shadow-lg hover:bg-primary/90"
-        data-testid="support-widget-trigger"
-      >
-        {open ? <X className="h-5 w-5" /> : <MessageSquare className="h-5 w-5" />}
-      </IconButton>
+      <div ref={fixedAnchor} data-support-fixed-anchor className="size-11 shrink-0">
+        {portalSlot ? createPortal(supportTrigger, portalSlot) : supportTrigger}
+      </div>
     </div>
   );
 }
