@@ -269,8 +269,12 @@ class AssistantFeature:
                             before_request=before_request,
                         )
                     except LLMException as exc:
-                        if isinstance(exc.__cause__, PermissionError):
-                            raise exc.__cause__ from None
+                        cause = exc.__cause__
+                        if isinstance(cause, PermissionError):
+                            # Pylint does not narrow the optional cause after the type check.
+                            raise PermissionError.with_traceback(
+                                cause, cause.__traceback__
+                            ) from None
                         raise
                     return _normalize_json_object_label(raw)
 
