@@ -647,6 +647,7 @@ it("sends on Enter and leaves Shift+Enter and IME confirmation to the textarea",
   expect(fireEvent.keyDown(input, { key: "Enter" })).toBe(false);
   expect(apiPost).toHaveBeenCalledTimes(1);
   expect(apiPost.mock.calls[0][1].message).toBe("First line\nSecond line");
+  expect(input).toHaveValue("");
   expect(screen.getByText("First line Second line", { selector: '[data-message-role="user"] p' })).toBeVisible();
   expect(screen.getByRole("status", { name: "assistant.wait" })).toBeVisible();
   expect(screen.queryByRole("button", { name: "assistant.ask" })).not.toBeInTheDocument();
@@ -668,6 +669,7 @@ it("cancels the real request and ignores a response that arrives late", async ()
   fireEvent.click(stop);
   expect(signal.aborted).toBe(true);
   expect(screen.getByText("Slow question", { selector: "article p" })).toBeVisible();
+  expect(screen.getByLabelText("assistant.message")).toHaveValue("Slow question");
   expect(screen.queryByRole("status", { name: "assistant.wait" })).not.toBeInTheDocument();
   resolve({ ...reply("answer"), answer: "Outdated answer" });
   question("New question");
