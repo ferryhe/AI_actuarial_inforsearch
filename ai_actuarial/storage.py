@@ -3162,6 +3162,7 @@ class Storage:
         order_by: str = "last_seen",
         order_dir: str = "desc",
         query: str = "",
+        search_markdown_content: bool = True,
         source: str = "",
         exclude_source: str = "",
         exclude_sources: Iterable[str] = (),
@@ -3181,7 +3182,8 @@ class Storage:
             offset: Offset for pagination
             order_by: Column to order by
             order_dir: Order direction ('asc' or 'desc')
-            query: Search term for title/filename/url
+            query: Search term for file and catalog fields
+            search_markdown_content: Whether the query may match extracted Markdown body text
             source: Source site filter
             exclude_source: Canonical source to omit
             exclude_sources: Additional canonical sources to omit
@@ -3252,6 +3254,11 @@ class Storage:
 
         if query:
             join_clause = catalog_join_clause
+            markdown_search = (
+                "OR LOWER(COALESCE(c.markdown_content, '')) LIKE ? "
+                if search_markdown_content
+                else ""
+            )
             bilingual_search = (
                 "OR LOWER(COALESCE(json_extract(c.bilingual_metadata_json, '$.zh.title'), '')) LIKE ? "
                 "OR LOWER(COALESCE(json_extract(c.bilingual_metadata_json, '$.zh.summary'), '')) LIKE ? "
@@ -3274,11 +3281,11 @@ class Storage:
                 "OR LOWER(COALESCE(c.summary, '')) LIKE ? "
                 "OR LOWER(COALESCE(c.keywords, '')) LIKE ? "
                 "OR LOWER(COALESCE(c.category, '')) LIKE ? "
-                "OR LOWER(COALESCE(c.markdown_content, '')) LIKE ? "
+                f"{markdown_search}"
                 f"{bilingual_search})"
             )
             search_term = f"%{query.lower()}%"
-            params.extend([search_term] * 13)
+            params.extend([search_term] * (12 + int(search_markdown_content)))
 
         if source:
             if self._schema_only:
