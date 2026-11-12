@@ -24,8 +24,59 @@ class FeedbackLoadErrorBoundary extends Component<{ children: ReactNode; fallbac
 }
 
 type Capabilities = { feedback_enabled: boolean; assistant_enabled: boolean };
+export type OpenSupportPanel = "assistant" | "feedback" | null;
 
-export default function SupportWidget({ onOpenChange }: { onOpenChange?: (open: boolean) => void }) {
+function AssistantDialog({ open, onClose, label, children }: { open: boolean; onClose: () => void; label: string; children: ReactNode }) {
+  const ref = useRef<HTMLDialogElement>(null);
+
+  useLayoutEffect(() => {
+    const dialog = ref.current;
+    if (!open || !dialog) return;
+    const desktop = window.matchMedia("(min-width: 64rem)");
+    const show = () => {
+      const focused = document.activeElement;
+      if (dialog.open) dialog.close();
+      if (desktop.matches) dialog.show();
+      else dialog.showModal();
+      if (focused instanceof HTMLElement && dialog.contains(focused)) focused.focus({ preventScroll: true });
+    };
+    const stopWatching = watchVisualViewport((top, bottom) => {
+      const height = bottom - top;
+      dialog.style.setProperty("--assistant-viewport-top", `${top}px`);
+      dialog.style.setProperty("--assistant-viewport-height", `${height}px`);
+      dialog.toggleAttribute("data-compact-assistant", height < 240);
+      dialog.toggleAttribute("data-compact-feedback", height < 240);
+    });
+    show();
+    desktop.addEventListener("change", show);
+    return () => {
+      desktop.removeEventListener("change", show);
+      stopWatching();
+      if (dialog.open) dialog.close();
+    };
+  }, [open]);
+
+  return (
+    <dialog
+      ref={ref}
+      id="support-panel"
+      data-assistant
+      aria-label={label}
+      className="group/support-panel fixed z-50 m-0 w-[min(24rem,calc(100%-3rem))] max-h-none max-w-none overflow-hidden border-l border-border bg-card text-card-foreground shadow-xl lg:w-[var(--assistant-panel-width)]"
+      onCancel={(event) => { event.preventDefault(); onClose(); }}
+      onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); onClose(); } }}
+      onClick={(event) => {
+        if (event.target !== event.currentTarget) return;
+        const { left, right, top, bottom } = event.currentTarget.getBoundingClientRect();
+        if (event.clientX < left || event.clientX > right || event.clientY < top || event.clientY > bottom) onClose();
+      }}
+    >
+      {children}
+    </dialog>
+  );
+}
+
+export default function SupportWidget({ onOpenChange }: { onOpenChange?: (panel: OpenSupportPanel) => void }) {
   const { t, lang } = useTranslation();
   const { user, permissions } = useAuth();
   const [location] = useLocation();
@@ -76,13 +127,18 @@ export default function SupportWidget({ onOpenChange }: { onOpenChange?: (open: 
         currentSlot.current = slot;
         setPortalSlot(slot);
       }
+      if (assistantEnabled) {
+        const offset = Math.max(viewportTop + 4 - triggerBounds.top, Math.min(0, viewportBottom - 4 - triggerBounds.bottom));
+        hostElement.style.setProperty("--assistant-trigger-offset", `${offset}px`);
+        return;
+      }
       const hostStyle = getComputedStyle(hostElement);
       const gap = Number.parseFloat(hostStyle.rowGap) || 0;
       const safeTop = Number.parseFloat(hostStyle.paddingTop) || 0;
       const normalBottom = Math.min(triggerBounds.top - gap, viewportBottom - triggerBounds.height - gap);
       const chatTop = chatComposer?.getBoundingClientRect().top;
       const aboveComposer = chatTop === undefined ? normalBottom : Math.min(normalBottom, chatTop - gap);
-      const compact = open && (assistantEnabled || isChat) && aboveComposer - viewportTop - safeTop < 132;
+      const compact = open && isChat && aboveComposer - viewportTop - safeTop < 132;
       const bottom = compact ? viewportBottom - 4 : aboveComposer;
       // Leave Send and the leading part of the Chat textarea available beside the panel.
       const compactChat = compact && chatSend;
@@ -133,8 +189,8 @@ export default function SupportWidget({ onOpenChange }: { onOpenChange?: (open: 
 
   const close = useCallback(() => {
     setOpen(false);
-    onOpenChange?.(false);
-    requestAnimationFrame(() => trigger.current?.focus());
+    onOpenChange?.(null);
+    requestAnimationFrame(() => trigger.current?.focus({ preventScroll: true }));
   }, [onOpenChange]);
 
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -151,37 +207,49 @@ export default function SupportWidget({ onOpenChange }: { onOpenChange?: (open: 
       label={open ? t("a11y.close_feedback") : t("a11y.open_feedback")}
       aria-expanded={open}
       aria-controls="support-panel"
+      aria-haspopup={assistantEnabled ? "dialog" : undefined}
       onClick={() => {
         if (open) close();
-        else { setHasOpened(true); setOpen(true); onOpenChange?.(true); }
+        else { setHasOpened(true); setOpen(true); onOpenChange?.(assistantEnabled ? "assistant" : "feedback"); }
       }}
-      className="pointer-events-auto rounded-full bg-primary text-primary-foreground shadow-lg hover:bg-primary/90"
+      className={cn(
+        "pointer-events-auto rounded-full bg-primary text-primary-foreground shadow-lg hover:bg-primary/90",
+        assistantEnabled && "translate-y-[var(--assistant-trigger-offset,0px)]",
+        assistantEnabled && open && "invisible",
+      )}
       data-testid="support-widget-trigger"
     >
       {open ? <X className="h-5 w-5" /> : <MessageSquare className="h-5 w-5" />}
     </IconButton>
   );
+  const panel = hasOpened && (
+    <FeedbackLoadErrorBoundary
+      key={loadAttempt}
+      fallback={(
+        <div role="alert" className={cn("overflow-y-auto bg-card p-4 text-sm", !assistantEnabled && "w-[min(22.5rem,calc(100vw-2rem))] rounded-xl border border-border shadow-xl")}>
+          {assistantEnabled && <IconButton label={t("a11y.close_feedback")} onClick={close} className="float-right"><X className="h-4 w-4" /></IconButton>}
+          <p>{t("feedback.load_error")}</p>
+          <button type="button" className="mt-3 min-h-[44px] rounded-md border border-border px-3" onClick={() => setLoadAttempt((attempt) => attempt + 1)}>{t("feedback.retry")}</button>
+        </div>
+      )}
+    >
+      {assistantEnabled ? <AssistantPanel t={t} lang={lang} open={open} onClose={close} feedbackEnabled={feedbackEnabled} identity={JSON.stringify([user?.id, user?.email, permissions])} query={queryAssistant} /> : <FeedbackForm t={t} lang={lang} open={open} onClose={close} />}
+    </FeedbackLoadErrorBoundary>
+  );
 
-  return (
+  return (<>
     <div ref={host} className={cn("pointer-events-none fixed bottom-[max(1rem,env(safe-area-inset-bottom))] right-4 flex flex-col items-end gap-3", compact ? "z-[65]" : "z-50")} style={{ paddingTop: "max(1rem, env(safe-area-inset-top, 0px))" }} onKeyDown={handleKeyDown}>
-      {hasOpened && (
-        <div id="support-panel" hidden={!open} data-compact-assistant={compact && assistantEnabled || undefined} data-compact-feedback={compact && !assistantEnabled || undefined} className="group/support-panel pointer-events-auto" style={panelStyle}>
-          <FeedbackLoadErrorBoundary
-            key={loadAttempt}
-            fallback={(
-              <div role="alert" className="w-[min(22.5rem,calc(100vw-2rem))] overflow-y-auto rounded-xl border border-border bg-card p-4 text-sm shadow-xl">
-                <p>{t("feedback.load_error")}</p>
-                <button type="button" className="mt-3 min-h-[44px] rounded-md border border-border px-3" onClick={() => setLoadAttempt((attempt) => attempt + 1)}>{t("feedback.retry")}</button>
-              </div>
-            )}
-          >
-            {assistantEnabled ? <AssistantPanel t={t} lang={lang} open={open} onClose={close} feedbackEnabled={feedbackEnabled} identity={JSON.stringify([user?.id, user?.email, permissions])} query={queryAssistant} /> : <FeedbackForm t={t} lang={lang} open={open} onClose={close} />}
-          </FeedbackLoadErrorBoundary>
+      {hasOpened && !assistantEnabled && (
+        <div id="support-panel" hidden={!open} data-compact-feedback={compact || undefined} className="group/support-panel pointer-events-auto" style={panelStyle}>
+          {panel}
         </div>
       )}
       <div ref={fixedAnchor} data-support-fixed-anchor className="size-11 shrink-0">
         {portalSlot ? createPortal(supportTrigger, portalSlot) : supportTrigger}
       </div>
     </div>
-  );
+    {assistantEnabled && hasOpened && (
+      <AssistantDialog open={open} onClose={close} label={t("assistant.title")}>{panel}</AssistantDialog>
+    )}
+  </>);
 }

@@ -1,6 +1,6 @@
 import "@testing-library/jest-dom/vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import axe from "axe-core";
 import { useI18n } from "@/hooks/use-i18n";
 import { ApiError } from "@/lib/api";
@@ -22,6 +22,14 @@ function LocalizedAssistant({ lang }: { lang: string }) {
   return <AssistantPanel t={t} lang={lang} open feedbackEnabled onClose={vi.fn()} />;
 }
 
+beforeAll(() => {
+  const show = function (this: HTMLDialogElement) { this.open = true; };
+  Object.assign(HTMLDialogElement.prototype, {
+    show,
+    showModal: show,
+    close(this: HTMLDialogElement) { this.open = false; },
+  });
+});
 beforeEach(() => { route.current = "/database"; navigate.mockReset(); apiGet.mockReset(); apiPost.mockReset(); vi.stubGlobal("crypto", { randomUUID: vi.fn(() => "one-request") }); });
 afterEach(() => { cleanup(); localStorage.removeItem("lang"); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
@@ -97,44 +105,52 @@ it("does not show the assistant scope note", () => {
   expect(screen.queryByText("assistant.scope")).not.toBeInTheDocument();
 });
 
-it("lifts the support panel above a software keyboard that shrinks only the visual viewport", async () => {
+it("fits the same assistant drawer when the visual viewport shrinks, pans, and restores", async () => {
   apiGet.mockResolvedValue({ feedback_enabled: true, assistant_enabled: true });
-  vi.stubGlobal("visualViewport", {
-    height: 400,
-    offsetTop: 0,
-    addEventListener: vi.fn(),
-    removeEventListener: vi.fn(),
-  });
-  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
-    return this.hasAttribute("data-support-fixed-anchor") ? { top: 750, bottom: 794, height: 44 } as DOMRect : { top: 0, bottom: 0, height: 0 } as DOMRect;
-  });
+  const viewport = Object.assign(new EventTarget(), { height: 844, offsetTop: 0 });
+  vi.stubGlobal("visualViewport", viewport);
   render(<SupportWidget />);
-  fireEvent.click(await screen.findByTestId("support-widget-trigger"));
-  await waitFor(() => expect(document.querySelector("#support-panel")).toHaveStyle({ marginBottom: "394px" }));
-});
-
-it("uses the compact Assistant in a short panned Chat viewport with a visible fixed trigger", async () => {
-  route.current = "/chat";
-  apiGet.mockResolvedValue({ feedback_enabled: true, assistant_enabled: true });
-  vi.stubGlobal("visualViewport", Object.assign(new EventTarget(), { offsetTop: 680, height: 152 }));
-  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
-    if (this.hasAttribute("data-support-fixed-anchor")) return { top: 786, bottom: 830, right: 376, height: 44 } as DOMRect;
-    if (this.hasAttribute("data-chat-composer")) return { top: 728, bottom: 781, height: 53 } as DOMRect;
-    if (this.hasAttribute("data-chat-send")) return { left: 332 } as DOMRect;
-    return { top: 0, bottom: 0, height: 0 } as DOMRect;
-  });
-  render(<><div data-chat-composer><button data-chat-send /><div data-chat-support-slot /></div><SupportWidget /></>);
   const trigger = await screen.findByTestId("support-widget-trigger");
   fireEvent.click(trigger);
-  expect(document.querySelector("#support-panel")).toHaveAttribute("data-compact-assistant");
-  expect(document.querySelector("[data-support-fixed-anchor]")).toContainElement(trigger);
-  expect(document.querySelector("[data-chat-support-slot]")).toBeEmptyDOMElement();
+  const dialog = screen.getByRole<HTMLDialogElement>("dialog", { name: "assistant.title" });
+  const input = screen.getByLabelText("assistant.message");
+  expect(dialog.style.getPropertyValue("--assistant-viewport-height")).toBe("844px");
+  viewport.height = 152;
+  viewport.dispatchEvent(new Event("resize"));
+  viewport.offsetTop = 680;
+  viewport.dispatchEvent(new Event("scroll"));
+  expect(dialog.style.getPropertyValue("--assistant-viewport-top")).toBe("680px");
+  expect(dialog.style.getPropertyValue("--assistant-viewport-height")).toBe("152px");
+  expect(dialog).toHaveAttribute("data-compact-assistant");
+  Object.assign(viewport, { height: 844, offsetTop: 0 });
+  viewport.dispatchEvent(new Event("resize"));
+  expect(dialog.style.getPropertyValue("--assistant-viewport-top")).toBe("0px");
+  expect(dialog).not.toHaveAttribute("data-compact-assistant");
+  expect(screen.getByLabelText("assistant.message")).toBe(input);
+  fireEvent.keyDown(input, { key: "Escape" });
+  expect(dialog).not.toHaveAttribute("open");
+  await waitFor(() => expect(trigger).toHaveFocus());
 });
 
-it("uses the compact Assistant in a short panned Weekly viewport without a Chat composer", async () => {
+it("keeps the Chat composer slot available when the assistant launcher is below the visual viewport", async () => {
+  route.current = "/chat";
+  apiGet.mockResolvedValue({ feedback_enabled: true, assistant_enabled: true });
+  vi.stubGlobal("visualViewport", Object.assign(new EventTarget(), { offsetTop: 500, height: 200 }));
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+    if (this.hasAttribute("data-support-fixed-anchor")) return { top: 786, bottom: 830, right: 376, height: 44 } as DOMRect;
+    return { top: 0, bottom: 0, height: 0 } as DOMRect;
+  });
+  render(<><div data-chat-composer><div data-chat-support-slot /></div><SupportWidget /></>);
+  const trigger = await screen.findByTestId("support-widget-trigger");
+  expect(document.querySelector("[data-chat-support-slot]")).toContainElement(trigger);
+  fireEvent.click(trigger);
+  expect(screen.getByRole("dialog")).toHaveAttribute("data-compact-assistant");
+});
+
+it("lifts the launcher into the visual viewport on a page without the Chat composer", async () => {
   route.current = "/weekly";
   apiGet.mockResolvedValue({ feedback_enabled: true, assistant_enabled: true });
-  vi.stubGlobal("visualViewport", Object.assign(new EventTarget(), { offsetTop: 680, height: 152 }));
+  vi.stubGlobal("visualViewport", Object.assign(new EventTarget(), { offsetTop: 500, height: 200 }));
   vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
     return this.hasAttribute("data-support-fixed-anchor")
       ? { top: 786, bottom: 830, right: 376, height: 44 } as DOMRect
@@ -142,11 +158,9 @@ it("uses the compact Assistant in a short panned Weekly viewport without a Chat 
   });
   render(<SupportWidget />);
   const trigger = await screen.findByTestId("support-widget-trigger");
-  fireEvent.click(trigger);
-  const panel = document.querySelector<HTMLElement>("#support-panel");
-  expect(panel).toHaveAttribute("data-compact-assistant");
-  expect(panel?.style.getPropertyValue("--support-panel-max-width")).toBe("");
-  expect(document.querySelector("[data-support-fixed-anchor]")).toContainElement(trigger);
+  const anchor = document.querySelector("[data-support-fixed-anchor]");
+  expect(anchor).toContainElement(trigger);
+  expect(anchor?.parentElement?.style.getPropertyValue("--assistant-trigger-offset")).toBe("-134px");
 });
 
 it("uses automatic routing with one freeform question input", async () => {
