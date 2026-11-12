@@ -121,7 +121,7 @@ async function latestAnswerGeometry(page) {
     const history = panel?.querySelector(":scope > div.overflow-y-auto");
     const answers = panel?.querySelectorAll(".assistant-answer");
     const answer = answers?.[answers.length - 1];
-    const body = answer?.firstElementChild || answer;
+    const body = answer?.querySelector("p") ?? answer;
     if (!panel || !history || !body) return null;
     const clip = history.getBoundingClientRect();
     const bodyRect = body.getBoundingClientRect();
@@ -143,6 +143,25 @@ async function latestAnswerGeometry(page) {
 async function waitForAnswer(page) {
   await page.waitForFunction(() => Boolean(document.querySelector("#assistant-panel .assistant-answer")), null, { timeout: 5000 });
   await page.waitForTimeout(50);
+}
+
+async function checkMessageAlignment(transcript) {
+  const rows = await transcript.evaluate((root) => Object.fromEntries(
+    [...root.querySelectorAll("[data-message-role]")].map((row) => {
+      const avatar = row.firstElementChild.getBoundingClientRect();
+      const bubble = row.lastElementChild.firstElementChild.getBoundingClientRect();
+      const bounds = row.getBoundingClientRect();
+      return [row.dataset.messageRole, {
+        left: bounds.left, right: bounds.right,
+        avatarLeft: avatar.left, avatarRight: avatar.right,
+        bubbleLeft: bubble.left, bubbleRight: bubble.right,
+      }];
+    }),
+  ));
+  const { user, assistant } = rows;
+  assert.ok(user && Math.abs(user.avatarRight - user.right) <= 1 && user.bubbleRight < user.avatarLeft && user.bubbleLeft >= user.left - 1, JSON.stringify(rows));
+  assert.ok(assistant && Math.abs(assistant.avatarLeft - assistant.left) <= 1 && assistant.bubbleLeft > assistant.avatarRight && assistant.bubbleRight <= assistant.right + 1, JSON.stringify(rows));
+  return rows;
 }
 
 async function checkLayout(page, viewport) {
@@ -190,6 +209,7 @@ async function checkLongAnswer(page, viewport, useMouseWheel = true) {
   assert.ok(before.submit.y >= 0 && before.submit.y <= viewport.height, `assistant submit lies outside viewport: ${JSON.stringify(before)}`);
   await page.mouse.click(before.submit.x, before.submit.y);
   await waitForAnswer(page);
+  const messageAlignment = await checkMessageAlignment(panel.locator("article").last());
   const answer = await latestAnswerGeometry(page);
   assert.ok(answer?.bodyStartVisible, `latest answer body start must be visible in history at ${viewport.width}x${viewport.height}: ${JSON.stringify(answer)}`);
   assert.ok(answer.history.overflowY === "auto" && answer.history.scrollHeight > answer.history.clientHeight, `history must scroll independently: ${JSON.stringify(answer.history)}`);
@@ -211,7 +231,7 @@ async function checkLongAnswer(page, viewport, useMouseWheel = true) {
   assert.ok(afterScroll.history.scrollTop > oldHistoryTop, "history must move its own scroll pane");
   assert.equal(afterScroll.windowScrollY, 0, "history must not scroll window");
   assert.equal(afterScroll.mainScrollTop, mainBefore, "history must not scroll main page region");
-  return { before, afterAnswer: answer, afterHistoryScroll: afterScroll };
+  return { before, messageAlignment, afterAnswer: answer, afterHistoryScroll: afterScroll };
 }
 
 async function checkChatFooter(page, requests) {
@@ -234,7 +254,8 @@ async function checkChatFooter(page, requests) {
   const sendHit = await nativeClick(page, send, "Chat send");
   await page.waitForFunction(() => document.querySelectorAll('[data-testid^="message-"]').length >= 2, null, { timeout: 5000 });
   assert.equal(requests.length, 1, "native Chat send must issue exactly one mocked request");
-  return { modeHit, kbHit, optionHit, inputHit, sendHit };
+  const messageAlignment = await checkMessageAlignment(page.getByTestId("chat-history"));
+  return { modeHit, kbHit, optionHit, inputHit, sendHit, messageAlignment };
 }
 
 async function runCoreCase(routePath, viewport) {
@@ -313,14 +334,14 @@ async function runFlagCase(assistantEnabled, feedbackEnabled) {
     await nativeClick(page, cancel, "cancel manual feedback after reply");
     await page.locator("#assistant-panel").waitFor({ state: "visible" });
     await page.waitForFunction(() => {
-      const answer = document.querySelector("#assistant-panel .assistant-answer > :first-child");
+      const answer = document.querySelector("#assistant-panel .assistant-answer p");
       const history = document.querySelector("#assistant-panel > div.overflow-y-auto");
       if (!answer || !history) return false;
       const clip = history.getBoundingClientRect();
       const top = answer.getBoundingClientRect().top;
       return top >= clip.top + history.clientTop - 1 && top < clip.top + history.clientTop + history.clientHeight;
     }, null, { timeout: 5000 });
-    const citationButton = page.locator("#assistant-panel .assistant-answer + button");
+    const citationButton = panel.locator(".assistant-answer").getByRole("button", { name: /Guide \/ file-details/ });
     await revealWithinPane(page, page.locator("#assistant-panel > div.overflow-y-auto"), citationButton, "help citation");
     await page.getByTestId("assistant-help-section").waitFor({ state: "visible" });
 
@@ -494,8 +515,8 @@ async function runLongHistoryManualFeedbackCase() {
   const cancel = page.locator("#feedback-panel button").filter({ hasText: /cancel/i });
   await revealWithinPane(page, page.locator("#feedback-panel form"), cancel, "cancel manual feedback after delayed reply");
   await page.waitForFunction(() => {
-    const answers = document.querySelectorAll("#assistant-panel .assistant-answer > :first-child");
-    const answer = answers[answers.length - 1];
+    const answers = document.querySelectorAll("#assistant-panel .assistant-answer");
+    const answer = answers[answers.length - 1]?.querySelector("p");
     const history = document.querySelector("#assistant-panel > div.overflow-y-auto");
     if (!answer || !history) return false;
     const clip = history.getBoundingClientRect();
