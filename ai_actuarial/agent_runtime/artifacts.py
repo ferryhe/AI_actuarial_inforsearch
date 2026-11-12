@@ -338,14 +338,27 @@ class ArtifactStore:
         )
         # Validate against registered code before placing any bytes on the durable volume.
         self._skill(manifest, artifacts, source_content)
-        for content, digest in pending:
-            self._persist(content, digest)
         digest = _digest(_json({"manifest": manifest, "artifacts": artifacts}).encode())
         release_id = str(uuid4())
         db = PostgresConnection(self.database_url)
         try:
-            db.execute(
-                "INSERT INTO agent_skill_releases (release_id,feature_key,skill_key,version,executor_id,runtime_contract_version,manifest_jsonb,artifacts_jsonb,content_digest,source_ref,validation_jsonb,status,validated_at) VALUES (?,?,?,?,?,1,?::jsonb,?::jsonb,?,?,?::jsonb,?,CASE WHEN ? THEN NULL ELSE now() END)",
+            existing = db.execute(
+                "SELECT release_id,content_digest,status,source_ref,validation_jsonb "
+                "FROM agent_skill_releases WHERE feature_key=? AND skill_key=? AND version=?",
+                (feature_key, manifest["skill_id"], manifest["version"]),
+            ).fetchone()
+            if existing:
+                return self._reuse_existing(
+                    existing,
+                    digest=digest,
+                    source_ref=source_ref,
+                    receipt=receipt,
+                    draft=draft,
+                )
+            for content, artifact_digest in pending:
+                self._persist(content, artifact_digest)
+            inserted = db.execute(
+                "INSERT INTO agent_skill_releases (release_id,feature_key,skill_key,version,executor_id,runtime_contract_version,manifest_jsonb,artifacts_jsonb,content_digest,source_ref,validation_jsonb,status,validated_at) VALUES (?,?,?,?,?,1,?::jsonb,?::jsonb,?,?,?::jsonb,?,CASE WHEN ? THEN NULL ELSE now() END) ON CONFLICT (feature_key,skill_key,version) DO NOTHING RETURNING release_id",
                 (
                     release_id,
                     feature_key,
@@ -360,10 +373,39 @@ class ArtifactStore:
                     "draft" if draft else "validated",
                     draft,
                 ),
+            ).fetchone()
+            if inserted:
+                return str(inserted[0])
+            existing = db.execute(
+                "SELECT release_id,content_digest,status,source_ref,validation_jsonb "
+                "FROM agent_skill_releases WHERE feature_key=? AND skill_key=? AND version=?",
+                (feature_key, manifest["skill_id"], manifest["version"]),
+            ).fetchone()
+            if not existing:
+                raise ArtifactError("Release version collision")
+            return self._reuse_existing(
+                existing,
+                digest=digest,
+                source_ref=source_ref,
+                receipt=receipt,
+                draft=draft,
             )
-            return release_id
         finally:
             db.close()
+
+    @staticmethod
+    def _reuse_existing(row, *, digest: str, source_ref: str, receipt: dict, draft: bool) -> str:
+        if row[1] != digest:
+            raise ArtifactError("Immutable skill version collision")
+        if row[2] != ("draft" if draft else "validated") and not (
+            not draft and row[2] == "published"
+        ):
+            raise ArtifactError("Existing skill release is not reusable")
+        if draft and (
+            row[3] != source_ref or any(row[4].get(key) != value for key, value in receipt.items())
+        ):
+            raise ArtifactError("Existing skill release provenance mismatch")
+        return str(row[0])
 
     def validate_draft(self, release_id: str, *, uat: dict) -> None:
         db = PostgresConnection(self.database_url, autocommit=False)
@@ -453,9 +495,17 @@ class ArtifactStore:
             db.close()
 
     def activate(
-        self, *, feature_key: str, site_key: str, changes: dict[str, tuple[str, int]]
+        self,
+        *,
+        feature_key: str,
+        site_key: str,
+        changes: dict[str, tuple[str, int]],
+        expected_active: dict[str, str | None] | None = None,
     ) -> None:
-        """Switch all requested slots or none, with per-slot expected revisions."""
+        """Switch all requested slots or none, with per-slot expected revisions.
+
+        Optionally require unchanged slots to retain the active IDs observed by the caller.
+        """
         db = PostgresConnection(self.database_url, autocommit=False)
         try:
             db.execute(
@@ -463,6 +513,14 @@ class ArtifactStore:
                 "current_schema() || ':agent_skill_slots:' || ? || ':' || ?, 0))",
                 (feature_key, site_key),
             )
+            for skill_key, expected_release_id in sorted((expected_active or {}).items()):
+                row = db.execute(
+                    "SELECT active_release_id FROM agent_skill_slots WHERE feature_key=? AND site_key=? AND skill_key=? FOR UPDATE",
+                    (feature_key, site_key, skill_key),
+                ).fetchone()
+                active_release_id = str(row[0]) if row and row[0] else None
+                if active_release_id != expected_release_id:
+                    raise RevisionConflict(f"Slot active release conflict: {skill_key}")
             for skill_key in sorted(changes):
                 release_id, expected = changes[skill_key]
                 db.execute(
