@@ -14,6 +14,7 @@ from pathlib import Path
 
 import psycopg2
 
+from .agent_runtime.artifacts import ArtifactError, RevisionConflict
 from .ai_runtime import get_search_runtime_credentials
 from .api.services.weekly_updates import (
     WeeklySnapshotNotFoundError,
@@ -23,6 +24,10 @@ from .api.services.weekly_updates import (
     get_weekly_update_summary_files,
     list_weekly_update_summaries,
 )
+from .assistant.release import REQUIRED_SKILLS
+from .assistant.release import publish as publish_assistant_skills
+from .assistant.release import readiness as assistant_skill_readiness
+from .assistant.release import rollback as rollback_assistant_skill
 from .catalog import (
     CATALOG_VERSION,
     CatalogItem,
@@ -61,6 +66,7 @@ from .shared_runtime import (
     get_sites_config_path,
     load_sites_config,
     resolve_data_path,
+    resolve_runtime_features,
 )
 from .sqlite_schema import json_dumps
 from .storage import Storage
@@ -71,6 +77,13 @@ _PIPELINE_API_TIMEOUT_SECONDS = 30
 
 
 def _load_dotenv(path: str) -> None:
+    if os.getenv("AI_ACTUARIAL_IGNORE_DOTENV", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }:
+        return
     if not os.path.exists(path):
         return
     try:
@@ -713,6 +726,77 @@ def _print_cli_payload(payload: dict, *, as_json: bool) -> None:
             indent=None if as_json else 2,
         )
     )
+
+
+def cmd_assistant_release(args: argparse.Namespace) -> int:
+    from .features.assistant.feature import AssistantFeature
+
+    try:
+        config = _load_config(args.config)
+        feature = AssistantFeature()
+        store = feature.artifact_store(resolve_database_config(config), resolve_data_root(config))
+        feature_enabled = resolve_runtime_features(config)["assistant_enabled"]
+        if args.release_action == "status":
+            result = assistant_skill_readiness(store, feature, feature_enabled=feature_enabled)
+        elif args.release_action == "rollback":
+            rollback_assistant_skill(
+                store, skill_id=args.skill, expected_revision=args.expected_revision
+            )
+            result = assistant_skill_readiness(store, feature, feature_enabled=feature_enabled)
+        else:
+            receipts = {}
+            for item in args.receipt:
+                skill, separator, path = item.partition("=")
+                if not separator or skill in receipts:
+                    raise ValueError("Invalid or duplicate skill receipt argument")
+                receipt = json.loads(Path(path).read_text(encoding="utf-8"))
+                if not isinstance(receipt, dict):
+                    raise ValueError("Receipt must be a JSON object")
+                receipts[skill] = receipt
+            expected_revisions = {}
+            for item in args.expected_revision:
+                skill, separator, raw_revision = item.partition("=")
+                if not separator or skill in expected_revisions:
+                    raise ValueError("Invalid or duplicate expected revision argument")
+                expected_revisions[skill] = int(raw_revision)
+            result = publish_assistant_skills(
+                store,
+                feature=feature,
+                receipts=receipts,
+                expected_revisions=expected_revisions,
+                source_ref=args.source_ref,
+                code_sha=args.code_sha,
+                data_version=args.data_version,
+                model=args.model,
+                feature_enabled=feature_enabled,
+            )
+        _print_cli_payload({"success": result["state"] != "invalid", **result}, as_json=args.json)
+        return 0 if result["state"] != "invalid" else 1
+    except RevisionConflict as exc:
+        _print_cli_payload({"success": False, "error": str(exc)}, as_json=args.json)
+    except ArtifactError as exc:
+        _print_cli_payload({"success": False, "error": str(exc)}, as_json=args.json)
+    except (DatabaseConfigurationError, DatabaseConnectionError):
+        _print_cli_payload(
+            {"success": False, "error": "PostgreSQL is unavailable or not configured"},
+            as_json=args.json,
+        )
+    except (OSError, json.JSONDecodeError):
+        _print_cli_payload(
+            {"success": False, "error": "A package or receipt file is missing or invalid"},
+            as_json=args.json,
+        )
+    except (TypeError, ValueError):
+        _print_cli_payload(
+            {"success": False, "error": "Invalid assistant release arguments or data"},
+            as_json=args.json,
+        )
+    except Exception:
+        _print_cli_payload(
+            {"success": False, "error": "Assistant release operation failed"},
+            as_json=args.json,
+        )
+    return 2
 
 
 def cmd_weekly_explanation(args: argparse.Namespace) -> int:
@@ -1421,6 +1505,50 @@ def build_parser() -> argparse.ArgumentParser:
         command.add_argument("--timeout", type=float, default=30)
         command.add_argument("--json", action="store_true")
         command.set_defaults(func=cmd_article_interpretation)
+
+    p_assistant_release = sub.add_parser(
+        "assistant-release", help="Inspect and publish the Assistant skill release set"
+    )
+    p_assistant_release_sub = p_assistant_release.add_subparsers(
+        dest="release_action", required=True
+    )
+    p_assistant_release_status = p_assistant_release_sub.add_parser(
+        "status", help="Read actual published skills and their public readiness"
+    )
+    p_assistant_release_status.add_argument("--json", action="store_true")
+    p_assistant_release_status.set_defaults(func=cmd_assistant_release)
+
+    p_assistant_release_publish = p_assistant_release_sub.add_parser(
+        "publish", help="Validate supplied receipts and atomically activate shipped skills"
+    )
+    p_assistant_release_publish.add_argument("--source-ref", required=True)
+    p_assistant_release_publish.add_argument("--code-sha", required=True)
+    p_assistant_release_publish.add_argument("--data-version", required=True)
+    p_assistant_release_publish.add_argument("--model", required=True)
+    p_assistant_release_publish.add_argument(
+        "--receipt",
+        action="append",
+        required=True,
+        metavar="SKILL=PATH",
+        help="Actual matching UAT receipt JSON (repeat for all three skills)",
+    )
+    p_assistant_release_publish.add_argument(
+        "--expected-revision",
+        action="append",
+        required=True,
+        metavar="SKILL=N",
+        help="Slot revision from status (repeat for all three skills)",
+    )
+    p_assistant_release_publish.add_argument("--json", action="store_true")
+    p_assistant_release_publish.set_defaults(func=cmd_assistant_release)
+
+    p_assistant_release_rollback = p_assistant_release_sub.add_parser(
+        "rollback", help="Roll back one required skill using its expected slot revision"
+    )
+    p_assistant_release_rollback.add_argument("skill", choices=REQUIRED_SKILLS)
+    p_assistant_release_rollback.add_argument("--expected-revision", type=int, required=True)
+    p_assistant_release_rollback.add_argument("--json", action="store_true")
+    p_assistant_release_rollback.set_defaults(func=cmd_assistant_release)
 
     p_pipeline = sub.add_parser("pipeline", help="Control the fixed five-step pipeline baton")
     p_pipeline_sub = p_pipeline.add_subparsers(dest="pipeline_cmd", required=True)

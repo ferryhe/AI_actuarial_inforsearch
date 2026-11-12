@@ -602,7 +602,9 @@ def test_postgres_without_published_release_cannot_execute_builtin_tool(
     store = _store(tmp_path)
     monkeypatch.setenv("DATA_DIR", str(store.root.parent))
     monkeypatch.setattr(host.chat, "_resolve_chat_user", lambda *_: ("fixture", None))
-    monkeypatch.setattr(host.chat, "_enforce_chat_quota", lambda **_: None)
+    quota_calls = []
+    model_calls = []
+    monkeypatch.setattr(host.chat, "_enforce_chat_quota", lambda **_: quota_calls.append(True))
 
     class Storage:
         def __init__(self, _database):
@@ -621,22 +623,91 @@ def test_postgres_without_published_release_cannot_execute_builtin_tool(
     feature = host.AssistantFeature()
     calls = []
     feature.executors["test_lookup.search"] = lambda args: calls.append(args)
-    outcome = feature.query(
-        request=request,
-        auth=auth,
-        message="sample",
-        model=lambda *_: json.dumps(
+
+    def model(*_):
+        model_calls.append(True)
+        return json.dumps(
             {
                 "action": "call",
                 "skill_id": "test_lookup",
                 "tool_id": "test_lookup.search",
                 "args": {"term": "sample"},
             }
-        ),
+        )
+
+    outcome = feature.query(
+        request=request,
+        auth=auth,
+        message="sample",
+        model=model,
     )
     assert calls == []
-    assert outcome.runtime.error_code == "INVALID_MODEL_RESPONSE"
+    assert outcome.runtime.error_code == "ASSISTANT_SKILLS_NOT_READY"
+    assert outcome.runtime.availability == "unavailable"
+    assert outcome.response.intent == "answer"
+    assert outcome.response.stop_reason == "error"
+    assert (
+        outcome.response.answer
+        == "The assistant is not ready yet. You can still open the user guide."
+    )
+    assert model_calls == quota_calls == []
     assert request.state.assistant_release_ids == {}
+    assert request.state.assistant_release_status == "not_ready"
+
+
+def test_empty_postgres_release_returns_bilingual_unavailable_from_user_route(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from ai_actuarial.api.routers.assistant_help import router as help_router
+    from ai_actuarial.api.routers.assistant_runtime import router as runtime_router
+
+    store = _store(tmp_path)
+    feature = host.AssistantFeature()
+    quota_calls = []
+
+    class Storage:
+        def __init__(self, _database):
+            pass
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(host.chat, "Storage", Storage)
+    monkeypatch.setattr(host.chat, "_resolve_chat_user", lambda *_: ("fixture", None))
+    monkeypatch.setattr(host.chat, "_enforce_chat_quota", lambda **_: quota_calls.append(True))
+
+    app = FastAPI()
+    app.state.assistant_enabled = True
+    app.state.feedback_enabled = False
+    app.state.db_path = store.database_url
+    app.state.data_root = store.root.parent
+    app.state.assistant_feature = feature
+    app.include_router(runtime_router, prefix="/api")
+    app.include_router(help_router, prefix="/api")
+    with TestClient(app) as client:
+        expected = {
+            "en": "The assistant is not ready yet. You can still open the user guide.",
+            "zh": "助手暂未就绪。你可以先查阅使用指南。",
+        }
+        for locale, answer in expected.items():
+            response = client.post(
+                "/api/assistant/v1/query",
+                json={"message": "What features are available?", "locale": locale},
+            )
+            assert response.status_code == 200
+            assert response.json()["intent"] == "answer"
+            assert response.json()["availability"] == "unavailable"
+            assert response.json()["error_code"] == "ASSISTANT_SKILLS_NOT_READY"
+            assert response.json()["stop_reason"] == "error"
+            assert response.json()["answer"] == answer
+        assert (
+            client.get("/api/assistant/help?q=What%20features%20are%20available%3F").status_code
+            == 200
+        )
+    assert quota_calls == []
 
 
 def test_invalid_candidate_and_missing_file_do_not_activate(tmp_path: Path) -> None:

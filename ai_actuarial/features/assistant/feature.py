@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from threading import Event
@@ -39,6 +40,8 @@ from ai_actuarial.skills.test_lookup.manifest import MANIFEST as TEST_MANIFEST
 from ai_actuarial.skills.usage_navigation import executors as usage_executors
 from ai_actuarial.skills.usage_navigation.manifest import ARGUMENT_MODELS as USAGE_ARGUMENT_MODELS
 from ai_actuarial.skills.usage_navigation.manifest import MANIFEST as USAGE_MANIFEST
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -96,6 +99,27 @@ class AssistantFeature:
             frozenset(self.executors),
         )
 
+    def artifact_store(self, database, data_root=None) -> ArtifactStore:
+        return ArtifactStore(
+            database,
+            data_root or resolve_data_root(),
+            executors=frozenset(self.executors),
+            argument_models=(
+                ARGUMENT_MODELS
+                | RESEARCH_ARGUMENT_MODELS
+                | USAGE_ARGUMENT_MODELS
+                | RESOURCES_ARGUMENT_MODELS
+                | FEEDBACK_ARGUMENT_MODELS
+            ),
+            registered_tools=(
+                TEST_MANIFEST.tools
+                + RESEARCH_MANIFEST.tools
+                + USAGE_MANIFEST.tools
+                + RESOURCES_MANIFEST.tools
+                + FEEDBACK_MANIFEST.tools
+            ),
+        )
+
     def query(
         self,
         *,
@@ -148,31 +172,24 @@ class AssistantFeature:
             if isinstance(database, DatabaseConfig) or str(database).startswith(
                 ("postgres://", "postgresql://")
             ):
-                store = ArtifactStore(
-                    database,
-                    getattr(request.app.state, "data_root", None) or resolve_data_root(),
-                    executors=frozenset(self.executors),
-                    argument_models=(
-                        ARGUMENT_MODELS
-                        | RESEARCH_ARGUMENT_MODELS
-                        | USAGE_ARGUMENT_MODELS
-                        | RESOURCES_ARGUMENT_MODELS
-                        | FEEDBACK_ARGUMENT_MODELS
-                    ),
-                    registered_tools=(
-                        TEST_MANIFEST.tools
-                        + RESEARCH_MANIFEST.tools
-                        + USAGE_MANIFEST.tools
-                        + RESOURCES_MANIFEST.tools
-                        + FEEDBACK_MANIFEST.tools
-                    ),
-                )
+                store = self.artifact_store(database, getattr(request.app.state, "data_root", None))
                 try:
                     registry, pinned = store.resolve_active(
                         feature_key="assistant", site_key="default"
                     )
                     request.state.assistant_release_ids = pinned
+                    if not pinned:
+                        request.state.assistant_release_status = "not_ready"
+                        logger.warning(
+                            "Assistant skills are not ready: no active releases "
+                            "(feature=assistant site=default)"
+                        )
+                        runtime = RunResult(
+                            "", "unavailable", "ASSISTANT_SKILLS_NOT_READY", (), 0, 0, 0, ()
+                        )
+                        return Outcome(self._response(runtime, locale), runtime, session_update)
                 except ArtifactError:
+                    request.state.assistant_release_status = "invalid"
                     runtime = RunResult("", "error", "INVALID_SKILL_RELEASE", (), 0, 0, 0, ())
                     return Outcome(self._response(runtime, locale), runtime, session_update)
             if (
@@ -990,6 +1007,10 @@ class AssistantFeature:
                 "没有可核验的当前证据；请缩小问题范围或打开资料原文。",
                 "No current evidence was found. Narrow the question or open the source file.",
             ),
+            "ASSISTANT_SKILLS_NOT_READY": (
+                "助手暂未就绪。你可以先查阅使用指南。",
+                "The assistant is not ready yet. You can still open the user guide.",
+            ),
         }
         answer = runtime.answer or (
             errors[runtime.error_code][int(not zh)]
@@ -998,7 +1019,11 @@ class AssistantFeature:
         )
         routing = 1 if runtime.model_attempts else 0
         return FeatureResponse(
-            intent="answer" if runtime.kind == "finish" else "clarify",
+            intent=(
+                "answer"
+                if runtime.kind == "finish" or runtime.error_code == "ASSISTANT_SKILLS_NOT_READY"
+                else "clarify"
+            ),
             answer=answer,
             availability=runtime.availability,
             error_code=runtime.error_code,
