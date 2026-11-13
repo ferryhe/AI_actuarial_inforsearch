@@ -1400,10 +1400,14 @@ def test_verified_finding_retains_the_reference_in_its_paragraph(finish_fields):
     "message,needs_body",
     [
         ("What does the site have on climate risk?", False),
+        ("站内有哪些关于气候风险的报告？", False),
         ("What does the site have on climate risk? What does it recommend?", True),
         ("What does the site have on climate risk and what it recommends?", True),
         ("What reports does this site have, with the main findings from each?", True),
         ("What reports does this site have, including what each recommends?", True),
+        ("What documents does this site have plus their key recommendations?", True),
+        ("站内有哪些报告和它们的结论？", True),
+        ("这个网站有哪些资料和各自的主要发现？", True),
     ],
 )
 def test_inventory_uses_the_discovered_titles_before_an_unneeded_body_read(message, needs_body):

@@ -184,21 +184,23 @@ def _restricts_topic_lookup(message: str, documents: list[dict]) -> bool:
 
 def _explicit_site_inventory(message: str) -> bool:
     if re.search(
-        r"[?？。]\s*\S|[,，;；]|\b(?:and|including|with)\b"
-        r"|\b(?:summari[sz]e|compare|explain|evaluate|recommends?)\b"
-        r"|\bwhat (?:it|they|the reports?) (?:say|says|recommend|recommends|found)\b"
-        r"|另外|同时|并(?:请|说明|总结|比较|解释)|总结|概述|比较|推荐|正文",
+        r"\b(?:and|plus|including|with|each|their|summari[sz]e|compare|explain|"
+        r"evaluate|recommend\w*|findings|conclusions)\b"
+        r"|另外|同时|以及|和|与|并|总结|概述|比较|推荐|发现|结论|正文",
         message,
         re.I,
     ):
         return False
+    site = r"(?:this|the|your) site"
+    topic = r"(?:\s+(?:on|about|related to|covering)\s+[\w'’ -]+)?"
     return bool(
-        re.match(
-            r"\s*(?:what (?:does|can) (?:this|the|your) site (?:have|offer|provide)\b|"
-            r"(?:what|which) (?:materials|reports|documents|articles|resources)\b.*"
-            r"\b(?:this|the|your) site\b|"
-            r"(?:本站|这个网站|站内)(?:有(?:什么|哪些)|.*有哪些)(?:.*(?:资料|报告|文章|文件)))",
-            message,
+        re.fullmatch(
+            rf"(?:what does {site} (?:have|offer|provide){topic}|"
+            rf"(?:what|which) (?:materials|reports|documents|articles|resources){topic}"
+            rf" does {site} (?:have|offer|provide){topic}|"
+            r"(?:本站|这个网站|站内)(?:有(?:什么|哪些))"
+            r"(?:关于[\w -]+的)?(?:资料|报告|文章|文件))[?？。]?",
+            message.strip(),
             re.I,
         )
     )
@@ -1428,9 +1430,22 @@ def run(
                 and prior_partial is None
             ):
                 target = {"kb_id": args.get("kb_id"), "file_id": args.get("file_id")}
-                if any(catalog_documents[item]["target"] == target for item in found_catalog_ids):
+                discovery = next(
+                    (
+                        entry
+                        for entry in reversed(observations)
+                        if entry["result_kind"] == "catalog_discovery"
+                        and any(
+                            item in found_catalog_ids
+                            and catalog_documents[item]["target"] == target
+                            for item in entry["evidence_ids"]
+                        )
+                    ),
+                    None,
+                )
+                if discovery is not None:
                     return catalog_finish(
-                        [item for item in catalog_documents if item in found_catalog_ids]
+                        [item for item in discovery["evidence_ids"] if item in found_catalog_ids]
                     )
             if tool.tool_id in {
                 "resources_updates.recent",
