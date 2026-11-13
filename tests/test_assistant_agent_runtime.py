@@ -1397,20 +1397,16 @@ def test_verified_finding_retains_the_reference_in_its_paragraph(finish_fields):
 
 
 @pytest.mark.parametrize(
-    "message,needs_body",
+    "message,terminal,needs_body",
     [
-        ("What does the site have on climate risk?", False),
-        ("站内有哪些关于气候风险的报告？", False),
-        ("What does the site have on climate risk? What does it recommend?", True),
-        ("What does the site have on climate risk and what it recommends?", True),
-        ("What reports does this site have, with the main findings from each?", True),
-        ("What reports does this site have, including what each recommends?", True),
-        ("What documents does this site have plus their key recommendations?", True),
-        ("站内有哪些报告和它们的结论？", True),
-        ("这个网站有哪些资料和各自的主要发现？", True),
+        ("What does the site have on climate risk?", True, False),
+        ("What does the site have on climate risk?", False, True),
+        ("What reports does this site have, with the main findings from each?", False, True),
+        ("站内有哪些报告和它们的结论？", False, True),
+        ("What does the site have on climate risk in 2025?", True, True),
     ],
 )
-def test_inventory_uses_the_discovered_titles_before_an_unneeded_body_read(message, needs_body):
+def test_only_explicit_unscoped_inventory_can_finish_at_discovery(message, terminal, needs_body):
     url = "https://example.test/practice-note.pdf"
     target = {"kb_id": "public", "file_id": url}
     doc = {"target": target, "source_url": url, "title": "Climate Risk Practice Note"}
@@ -1421,6 +1417,7 @@ def test_inventory_uses_the_discovered_titles_before_an_unneeded_body_read(messa
             skill_id="document_research",
             tool_id="document_research.find_documents",
             args={"query": "climate risk"},
+            **({"catalog_only": True} if terminal else {}),
         ),
         action(
             action="call",
@@ -1464,7 +1461,7 @@ def test_inventory_uses_the_discovered_titles_before_an_unneeded_body_read(messa
         assert result.model_attempts == 4 and result.tool_attempts == 2
         assert excerpt in result.answer and result.evidence_ids == ("body:policy",)
     else:
-        assert result.model_attempts == 2 and result.tool_attempts == 1
+        assert result.model_attempts == 1 and result.tool_attempts == 1
         assert doc["title"] in result.answer and result.evidence_ids == ("catalog:policy",)
 
 
@@ -2705,7 +2702,8 @@ def test_host_rechecks_body_permission_after_summary_verifier_callback(
 
 
 @pytest.mark.parametrize(
-    "body_outcome", ["verified", "normalized_quote", "unknown_id", "time_gap", "invalid_quote"]
+    "body_outcome",
+    ["verified", "normalized_quote", "unknown_id", "coverage_note", "time_gap", "invalid_quote"],
 )
 def test_body_and_guide_keep_both_supported_parts(host_fixture, body_outcome):
     from ai_actuarial.assistant.document_research import Document, SelectedTarget
@@ -2756,7 +2754,7 @@ def test_body_and_guide_keep_both_supported_parts(host_fixture, body_outcome):
         },
         ("body:report",),
     )
-    verified = body_outcome in ("verified", "normalized_quote", "unknown_id")
+    verified = body_outcome in ("verified", "normalized_quote", "unknown_id", "coverage_note")
     quoted = {
         "invalid_quote": "forged",
         "normalized_quote": "The survey's estimate is around 60% for both experience groups.",
@@ -2783,7 +2781,12 @@ def test_body_and_guide_keep_both_supported_parts(host_fixture, body_outcome):
                 {
                     "evidence_id": "body:report",
                     "quote": quoted,
-                    "summary": quote,
+                    "summary": quote
+                    + (
+                        "; this excerpt does not provide the headcount."
+                        if body_outcome == "coverage_note"
+                        else ""
+                    ),
                 }
             ]
             + (
@@ -2810,6 +2813,10 @@ def test_body_and_guide_keep_both_supported_parts(host_fixture, body_outcome):
     assert "Profile" in response.answer and "UTC" in response.answer
     assert (quote in response.answer) == verified
     assert "Unverified model draft" not in response.answer
+    if body_outcome == "coverage_note":
+        verification = next(prompt for prompt, _ in prompts if "items" in prompt)
+        assert verification["items"][0]["summary"] == quote
+        assert "did not verify the complete answer" in response.answer
     assert {ref.source_type for ref in response.citations} == (
         {"help", "kb"} if verified else {"help"}
     )

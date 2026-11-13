@@ -97,6 +97,26 @@ def _body_findings(value, evidence_ids: list[str], sections: dict[str, dict]) ->
     return findings
 
 
+def _split_excerpt_limitations(findings: list[dict]) -> list[dict]:
+    items = []
+    for item in findings:
+        claim, *tail = re.split(r"[;；]", item["summary"], maxsplit=1)
+        if (
+            claim.strip()
+            and tail
+            and re.match(
+                r"\s*(?:this (?:quote|excerpt|passage) (?:does not|doesn't) (?:give|provide|state|report)\b"
+                r"|(?:该|这段|这一|此)(?:引文|摘录|段落|片段)(?:未|没有|不)(?:给出|提供|说明|列出))",
+                tail[0],
+                re.I,
+            )
+        ):
+            items.append({**item, "summary": claim.rstrip(), "excerpt_limitation": tail[0].strip()})
+        else:
+            items.append(item)
+    return items
+
+
 def _latest_first_collected(message: str) -> bool:
     query = message.casefold()
     return (
@@ -180,30 +200,6 @@ def _restricts_topic_lookup(message: str, documents: list[dict]) -> bool:
         if len(title) >= 6 and title in words:
             return True
     return False
-
-
-def _explicit_site_inventory(message: str) -> bool:
-    if re.search(
-        r"\b(?:and|plus|including|with|each|their|summari[sz]e|compare|explain|"
-        r"evaluate|recommend\w*|findings|conclusions)\b"
-        r"|另外|同时|以及|和|与|并|总结|概述|比较|推荐|发现|结论|正文",
-        message,
-        re.I,
-    ):
-        return False
-    site = r"(?:this|the|your) site"
-    topic = r"(?:\s+(?:on|about|related to|covering)\s+[\w'’ -]+)?"
-    return bool(
-        re.fullmatch(
-            rf"(?:what does {site} (?:have|offer|provide){topic}|"
-            rf"(?:what|which) (?:materials|reports|documents|articles|resources){topic}"
-            rf" does {site} (?:have|offer|provide){topic}|"
-            r"(?:本站|这个网站|站内)(?:有(?:什么|哪些))"
-            r"(?:关于[\w -]+的)?(?:资料|报告|文章|文件))[?？。]?",
-            message.strip(),
-            re.I,
-        )
-    )
 
 
 def _past_seven_days(message: str) -> re.Match[str] | None:
@@ -599,26 +595,29 @@ def run(
         "document_research.search_knowledge",
         _TOPIC_SEARCH,
     }
-    inventory_only = (
+    terminal_catalog_allowed = (
         site_context is not None
         and selected_target is None
         and opened_file is None
-        and _explicit_site_inventory(message)
+        and not window_clause
+        and not _restricts_topic_lookup(message, [])
     )
     prompt_data = {
         "instruction": (
             "Choose an enabled skill from the question. Return exactly one JSON object with "
             "one of these exact shapes, including the action field and no extra or omitted fields: "
             '{"action":"call","skill_id":"<enabled skill>","tool_id":"<tool>","args":{}}; '
+            '{"action":"call","skill_id":"<enabled skill>","tool_id":"<document finder>","args":{},"catalog_only":true}; '
             '{"action":"finish","answer":"<answer>","evidence_ids":["<observed ID>"]}; '
             '{"action":"finish","answer":"<answer>","evidence_ids":["<finder ID>"],"catalog_only":true}; '
             '{"action":"clarify","question":"<question>"}; or '
             '{"action":"clarify","question":"<question>","blocking_input":"<missing fact>","blocking_reason":"<why it blocks useful work>"}. '
             "Always set action to call, finish, or clarify, and fill call args to the tool schema. "
             "Choose one useful next action from the observations. A short, unscoped question about "
-            "what materials the site has is an inventory request: search the catalog "
-            "and stop once a relevant match is available. Use catalog_only when answering an "
-            "inventory question with observed finder IDs. For factual topic questions or a named "
+            "what materials the site has is an inventory request. When titles and links "
+            "alone satisfy the whole question, use a document finder with catalog_only:true "
+            "to return its matches directly. For mixed questions or an explicit source, period "
+            "or document, use normal calls and check each requested part. For factual topic questions or a named "
             "report, use a matching validated selected/opened target or find a permitted document "
             "and read its body using only that exact target; never guess a KB ID from a URL or title. "
             "Catalog metadata is a scoped fallback, not body evidence. After not_found or unavailable, "
@@ -964,6 +963,8 @@ def run(
                         else ()
                     )
                     findings = _body_findings(action.get("findings"), ids, document_sections)
+                    if independent:
+                        findings = _split_excerpt_limitations(findings)
                     if not findings:
                         if prior_partial is not None:
                             return keep_partial()
@@ -1045,7 +1046,17 @@ def run(
                                         "True requires every factual claim, quantity, qualifier, comparison, "
                                         "attribution, and negation to be supported; faithful cross-language "
                                         "paraphrases are allowed. It must also answer a part of the original "
-                                        "question within the scope and time established by the source. Use the "
+                                        "question within the scope and time established by the source. "
+                                        + (
+                                            "Judge each part independently. A supported proportion remains "
+                                            "useful when a headcount is missing. If a statement only notes a "
+                                            "limit of the quoted evidence, do not count that statement as "
+                                            "an unsupported claim about the report. Mark the missing part "
+                                            "with gap=coverage. "
+                                            if independent
+                                            else ""
+                                        )
+                                        + "Use the "
                                         "full passage to check context, but do not use it to supply facts missing "
                                         "from the quote, except for a formal document identifier for the "
                                         "same instrument explicitly named in the passage. "
@@ -1130,6 +1141,10 @@ def run(
                         )
                     ]
                     gap = _EVIDENCE_GAPS.get(verdict.get("gap"))
+                    if gap is None and any(
+                        "excerpt_limitation" in item for item in verified_findings
+                    ):
+                        gap = _EVIDENCE_GAPS["coverage"]
                     gap_notice = gap[int(not locale.startswith("zh"))] if gap else None
                     if (
                         lookup_available_after_check
@@ -1354,7 +1369,10 @@ def run(
                     used=tuple(dict.fromkeys(ids)),
                     kind="finish",
                 )
-            if kind != "call" or set(action) != {"action", "skill_id", "tool_id", "args"}:
+            if kind != "call" or set(action) not in (
+                {"action", "skill_id", "tool_id", "args"},
+                {"action", "skill_id", "tool_id", "args", "catalog_only"},
+            ):
                 if prior_partial is not None:
                     return keep_partial()
                 return result("", "error", "INVALID_MODEL_RESPONSE")
@@ -1415,6 +1433,18 @@ def run(
                 if prior_partial is not None:
                     return keep_partial()
                 return result("", "error", "INVALID_MODEL_RESPONSE")
+            finish_catalog = (
+                terminal_catalog_allowed
+                and action.get("catalog_only") is True
+                and not observations
+                and tool.result_kind == "catalog_discovery"
+            )
+            if finish_catalog and source_options is not None:
+                try:
+                    source, excluded = _source_scope(message, source_options())
+                    finish_catalog = not source and not excluded
+                except Exception:
+                    finish_catalog = False
             if tool.tool_id == _TOPIC_SEARCH and (
                 not topic_lookup_available
                 or not any(entry["tool_id"] in body_tool_ids for entry in observations)
@@ -1422,31 +1452,6 @@ def run(
                 if prior_partial is not None:
                     return keep_partial()
                 return cannot_verify_body()
-            if (
-                inventory_only
-                and tool.tool_id in body_tool_ids
-                and tool.required_scopes <= context.scopes
-                and not document_sections
-                and prior_partial is None
-            ):
-                target = {"kb_id": args.get("kb_id"), "file_id": args.get("file_id")}
-                discovery = next(
-                    (
-                        entry
-                        for entry in reversed(observations)
-                        if entry["result_kind"] == "catalog_discovery"
-                        and any(
-                            item in found_catalog_ids
-                            and catalog_documents[item]["target"] == target
-                            for item in entry["evidence_ids"]
-                        )
-                    ),
-                    None,
-                )
-                if discovery is not None:
-                    return catalog_finish(
-                        [item for item in discovery["evidence_ids"] if item in found_catalog_ids]
-                    )
             if tool.tool_id in {
                 "resources_updates.recent",
                 "resources_updates.catalog_search",
@@ -1561,6 +1566,8 @@ def run(
                     catalog_documents.update(catalog_rows)
                     found_catalog_ids.update(identifier for identifier, _ in catalog_rows)
                     catalog_status.update({item: "catalog_only" for item in observed.evidence_ids})
+                    if finish_catalog:
+                        return catalog_finish(list(observed.evidence_ids))
                 elif action["tool_id"] == "document_research.readiness":
                     if observed.data.get("document"):
                         catalog_documents[observed.evidence_ids[0]] = observed.data["document"]
