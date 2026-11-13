@@ -75,6 +75,7 @@ class AssistantFeature:
             "document_research.find_documents": research_executors.find_documents,
             "document_research.read_document_sections": research_executors.read_document_sections,
             "document_research.search_knowledge": research_executors.search_knowledge,
+            "document_research.search_topic": research_executors.search_topic,
             "document_research.readiness": research_executors.readiness,
             "usage_navigation.guide": usage_executors.guide,
             "resources_updates.sources": resources_executors.sources,
@@ -532,41 +533,48 @@ class AssistantFeature:
                     if result.status == "ok" and tool.executor in {
                         "document_research.read_document_sections",
                         "document_research.search_knowledge",
+                        "document_research.search_topic",
                     }:
-                        body_evidence_kbs.update(
-                            (evidence_id, args["kb_id"]) for evidence_id in result.evidence_ids
-                        )
-                        document = facade._document(
+                        sections = result.data.get("sections") or [result.data.get("document", {})]
+                        fixed_target = (
                             SelectedTarget(kb_id=args["kb_id"], file_id=args["file_id"])
+                            if "file_id" in args
+                            else None
                         )
-                        if document:
-                            source_citations.update(
-                                (
-                                    evidence_id,
-                                    SourceCitation(
-                                        source_type=(
-                                            "kb" if section.get("section_id") else "catalog"
-                                        ),
-                                        file_id=document.target.file_id,
-                                        kb_id=document.target.kb_id,
-                                        section_id=section.get("section_id", ""),
-                                        title=document.title,
-                                        link=document.internal_link,
-                                        source_version=section.get("source_version"),
-                                        source_date=document.publication_date,
-                                        stale=section.get("serving_stale", False),
-                                    ),
-                                )
-                                for evidence_id, section in zip(
-                                    result.evidence_ids,
-                                    result.data.get("sections")
-                                    or [result.data.get("document", {})],
-                                )
+                        documents = {}
+                        for evidence_id, section in zip(result.evidence_ids, sections):
+                            target = fixed_target or SelectedTarget.model_validate(
+                                section["target"]
                             )
-                        body_read_targets.add((args["kb_id"], args["file_id"]))
-                        verified_target = SelectedTarget(
-                            kb_id=args["kb_id"], file_id=args["file_id"]
-                        )
+                            key = (target.kb_id, target.file_id)
+                            if key not in documents:
+                                documents[key] = facade._document(target)
+                            document = documents[key]
+                            body_evidence_kbs[evidence_id] = target.kb_id
+                            if document is None:
+                                raise ValueError("Body source is no longer available")
+                            if section.get("section_id") and (
+                                section.get("target") != target.model_dump()
+                                or section.get("source_url") != document.source_url
+                            ):
+                                raise ValueError("Body source does not match the current document")
+                            source_citations[evidence_id] = SourceCitation(
+                                source_type="kb" if section.get("section_id") else "catalog",
+                                file_id=target.file_id,
+                                kb_id=target.kb_id,
+                                section_id=section.get("section_id", ""),
+                                title=document.title,
+                                link=document.internal_link,
+                                source_version=section.get("source_version"),
+                                source_date=document.publication_date,
+                                stale=section.get("serving_stale", False),
+                            )
+                            if fixed_target is None:
+                                found_targets.add(key)
+                                found_evidence_targets[evidence_id] = target
+                        if fixed_target is not None:
+                            body_read_targets.add((fixed_target.kb_id, fixed_target.file_id))
+                            verified_target = fixed_target
                     if (
                         result.status == "not_found"
                         and args.get("file_id")
@@ -657,6 +665,7 @@ class AssistantFeature:
                 resolve_selected_document=resolve_selected_document,
                 source_options=lambda: storage.get_source_options(include_empty=True),
                 site_context="the current AI Actuarial InfoSearch site and its permitted holdings",
+                can_render_evidence=lambda item: item in help_answers or item in resource_answers,
             )
             partial_prefix = None
             cited_partial_ids = runtime.evidence_ids if runtime.error_code == "NO_EVIDENCE" else ()
@@ -879,6 +888,15 @@ class AssistantFeature:
                     verified_target = resource_file_targets[evidence_id]
                 else:
                     verified_target = found_evidence_targets.get(evidence_id, verified_target)
+            elif runtime.kind == "finish":
+                topic_targets = {
+                    (target.kb_id, target.file_id): target
+                    for item in runtime.evidence_ids
+                    if item in body_evidence_kbs
+                    and (target := found_evidence_targets.get(item)) is not None
+                }
+                if len(topic_targets) == 1:
+                    verified_target = next(iter(topic_targets.values()))
             elif runtime.kind != "finish":
                 verified_target = (
                     revalidate_target(initial_accepted_target)
@@ -1100,7 +1118,13 @@ class AssistantFeature:
                         weekly_guide_answer = dashboard_entry + weekly_guide_answer
                     guide_answers.append(weekly_guide_answer)
                 if grounded or guide_answers:
-                    response.answer = "\n\n".join(dict.fromkeys([*guide_answers, *grounded]))
+                    parts = [*guide_answers, *grounded]
+                    if runtime.answer and (
+                        runtime.error_code == "SUMMARY_UNVERIFIED"
+                        or any(item in body_evidence_kbs for item in runtime.evidence_ids)
+                    ):
+                        parts.insert(0, runtime.answer)
+                    response.answer = "\n\n".join(dict.fromkeys(parts))
             if weekly_used:
                 if weekly_access is not True:
                     if weekly_access is False:

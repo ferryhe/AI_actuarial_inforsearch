@@ -11,6 +11,10 @@ class FindArgs(BaseModel):
     kb_id: str | None = Field(default=None, max_length=128)
 
 
+class TopicArgs(FindArgs):
+    exclude_file_url: str | None = Field(default=None, max_length=1024)
+
+
 class TargetArgs(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     kb_id: str = Field(min_length=1, max_length=128)
@@ -22,5 +26,10 @@ class ReadArgs(TargetArgs):
     section: str | None = Field(default=None, max_length=120)
 
 
-ARGUMENT_MODELS = {"FindArgs": FindArgs, "TargetArgs": TargetArgs, "ReadArgs": ReadArgs}
+ARGUMENT_MODELS = {
+    "FindArgs": FindArgs,
+    "TargetArgs": TargetArgs,
+    "ReadArgs": ReadArgs,
+    "TopicArgs": TopicArgs,
+}
 MANIFEST = Registry.load_skill(__package__, ARGUMENT_MODELS)

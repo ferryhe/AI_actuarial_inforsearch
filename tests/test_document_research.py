@@ -170,6 +170,101 @@ def test_bilingual_target_ranks_before_old_and_neighboring_reports(research, que
     assert documents[0].source_url == SURVEY
 
 
+def test_exact_identifier_survives_broad_catalog_terms(research, monkeypatch):
+    facade, storage, _, _ = research
+    base_search = storage.search_catalog_projection
+    terms_seen = []
+
+    def search(terms, **kwargs):
+        terms_seen.extend(terms)
+        if "2025/1234" in terms:
+            return [
+                {
+                    "file_url": ASHK,
+                    "title": "Final instrument",
+                    "summary": "Text of 2025/1234",
+                }
+            ]
+        return base_search(terms, **kwargs)
+
+    monkeypatch.setattr(storage, "search_catalog_projection", search)
+    documents = facade.find_documents("SOA AI survey 2025/1234")
+    assert "2025/1234" in terms_seen
+    assert documents[0].target.file_id == ASHK
+
+
+def test_body_tool_bounds_metadata_and_preserves_excerpt_ids():
+    from ai_actuarial.assistant.document_research import SectionEvidence
+
+    target = SelectedTarget(kb_id="public", file_id="https://example.test/" + "p" * 300)
+    evidence = [
+        SectionEvidence(
+            target=target,
+            section_id=f"{target.file_id}#section-{index}",
+            title="Long document " + "t" * 170,
+            publication_date="2025-06-20",
+            excerpt="a" * 1200,
+            source_url=target.file_id,
+            retrieval="ready",
+        )
+        for index in (1, 2)
+    ]
+    facade = SimpleNamespace(
+        read_document_sections=lambda *_args, **_kwargs: (evidence, "available")
+    )
+    result = executors.read_document_sections(facade, {**target.model_dump(), "query": "policy"})
+    assert result.status == "ok"
+    assert len(json.dumps(result.data, ensure_ascii=False)) <= 4000
+    assert len(result.data["sections"]) == len(result.evidence_ids) >= 1
+    assert result.data["sections"][0]["publication_date"] == "2025-06-20"
+    assert result.data["sections"][0]["excerpt"] == evidence[0].excerpt
+
+
+def test_topic_search_uses_current_publication_and_authorized_membership(research, monkeypatch):
+    from ai_actuarial.api.services import ready_data_publication
+    from ai_actuarial.assistant import document_research
+
+    monkeypatch.setattr(
+        ready_data_publication,
+        "read_public_ready_data_snapshot",
+        document_research.read_public_ready_data_snapshot,
+    )
+    facade, _, _, state = research
+    facade.config = SimpleNamespace(top_k=5)
+    state["sections"] = [
+        {
+            "file_url": BULLETIN,
+            "section_id": "historical",
+            "text_snippet": "A consultation paper discussed the committee's proposal.",
+        },
+        {
+            "file_url": SURVEY,
+            "section_id": "current",
+            "text_snippet": "Final instrument 2025/1234 requires documented annual review.",
+        },
+        {
+            "file_url": "https://example.test/not-a-member",
+            "section_id": "private",
+            "text_snippet": "2025/1234 requires something different.",
+        },
+    ]
+    result = executors.search_topic(facade, {"query": "final instrument 2025/1234"})
+    assert result.status == "ok"
+    sections = result.data["sections"]
+    assert sections[0]["target"]["file_id"] == SURVEY
+    assert sections[0]["section_id"] == "current"
+    assert sections[0]["source_version"] == "ready-v1"
+    assert all(section["section_id"] != "private" for section in sections)
+    excluded = executors.search_topic(
+        facade, {"query": "final instrument 2025/1234", "exclude_file_url": SURVEY}
+    )
+    assert all(
+        section["target"]["file_id"] != SURVEY for section in excluded.data.get("sections", [])
+    )
+    with pytest.raises(PermissionError):
+        executors.search_topic(facade, {"query": "2025/1234", "kb_id": "private"})
+
+
 @pytest.mark.parametrize("bulk_in_public_kb", [False, True])
 def test_scoped_catalog_keeps_old_member_ahead_of_newer_less_relevant_matches(
     tmp_path, bulk_in_public_kb
