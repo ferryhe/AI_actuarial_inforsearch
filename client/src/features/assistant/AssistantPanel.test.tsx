@@ -666,8 +666,9 @@ it("cancels the real request and ignores a response that arrives late", async ()
   const stop = screen.getByRole("button", { name: "assistant.cancel_request" });
   expect(stop).toHaveAttribute("type", "button");
   expect(screen.getByRole("status", { name: "assistant.wait" })).toBeVisible();
-  fireEvent.click(stop);
+  expect(fireEvent.click(stop)).toBe(false);
   expect(signal.aborted).toBe(true);
+  expect(apiPost).toHaveBeenCalledTimes(1);
   expect(screen.getByText("Slow question", { selector: "article p" })).toBeVisible();
   expect(screen.getByLabelText("assistant.message")).toHaveValue("Slow question");
   expect(screen.queryByRole("status", { name: "assistant.wait" })).not.toBeInTheDocument();
