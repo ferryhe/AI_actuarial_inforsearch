@@ -37,7 +37,7 @@ _DOCUMENT_REFERENCE = re.compile(
 )
 _PUBLICATION_YEAR = re.compile(r"(?<!\d)(?:19|20)\d{2}(?!\d)")
 _ATTRIBUTION_YEAR = re.compile(
-    r"^(?P<source>[^.!?。！？;；:：\n]{1,90}?)"
+    r"^(?P<source>[^,.!?，。！？;；:：\n]{1,90}?)"
     r"(?:\s+(?:reports?|found|states?|says?)\b|(?:报告|调查|研究)(?:显示|指出|称|发现))",
     re.I,
 )
@@ -56,10 +56,17 @@ def _summary_numbers_supported(
     source = _ATTRIBUTION_YEAR.match(summary)
     if source:
         source_years = set(_PUBLICATION_YEAR.findall(source_title))
-        attribution = _PUBLICATION_YEAR.sub(
-            lambda match: "" if match[0] in source_years else match[0], source["source"]
-        )
-        summary = attribution + summary[source.end("source") :]
+        years = list(_PUBLICATION_YEAR.finditer(source["source"]))
+        if len(years) == 1 and years[0][0] in source_years:
+            start, end = years[0].span()
+            if re.match(
+                r"\s*(?:年\s*)?(?:春季|夏季|秋季|冬季)?\s*$"
+                r"|\s+(?:spring\s+|summer\s+|autumn\s+|fall\s+|winter\s+)?"
+                r"(?:survey|report|study)\s*$",
+                source["source"][end:],
+                re.I,
+            ):
+                summary = summary[:start] + summary[end:]
     return _numeric_literals(_DOCUMENT_REFERENCE.sub("", summary)) <= _numeric_literals(quote)
 
 
@@ -720,6 +727,12 @@ def run(
             "explain that the body cannot be read and keep its detail link; do not claim to have read it. "
             "Do not claim body findings without a permitted body tool result."
         )
+        if selected_target is not None and opened_file.get("body_access") == "available":
+            prompt_data["opened_report_instruction"] = (
+                "When the question asks about this opened report, the target is already verified. "
+                "Read it directly using selected_target and skip the finder. Search for a different "
+                "document when the question names a different target."
+            )
     if recent_questions:
         prompt_data["recent_questions"] = recent_questions
         prompt_data[

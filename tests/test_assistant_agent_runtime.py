@@ -741,6 +741,7 @@ def test_opened_catalog_file_requires_current_body_permission_and_membership(hos
         "kb_id": "public",
         "file_id": url,
     }
+    assert "skip the finder" in json.loads(prompts[0][0]["prompt"])["opened_report_instruction"]
     scoped_tools = {
         tool["tool_id"]
         for skill in json.loads(prompts[0][0]["prompt"])["skills"]
@@ -1364,6 +1365,15 @@ def test_report_title_year_only_supports_the_attribution():
     )
     assert not _summary_numbers_supported(
         "SOA 2026 春季调查称有 2026 人使用企业 AI。", quote, quote, title
+    )
+    assert not _summary_numbers_supported(
+        "SOA 2026 春季调查，样本共 2026 人，报告称约 60% 使用企业 AI。",
+        quote,
+        quote,
+        title,
+    )
+    assert not _summary_numbers_supported(
+        "这份有 2026 人参与的调查称约 60% 使用企业 AI。", quote, quote, title
     )
 
 
