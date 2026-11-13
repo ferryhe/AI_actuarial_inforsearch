@@ -417,10 +417,15 @@ def content_hub_record_source_portal_capture(
                 "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
                 (f"content_hub:source_portal:{portal_key}",),
             )
+            compare_ai_resources = (
+                portal_key == "soa-artificial-intelligence" and scope_key == "ai-resources-v1"
+            )
             cursor.execute(
                 "SELECT EXISTS (SELECT 1 FROM source_portal_captures WHERE portal_key = %s "
-                "AND acquired_on = %s AND capture_kind = 'daily_collection')",
-                (portal_key, acquired_on),
+                "AND acquired_on = %s AND capture_kind = 'daily_collection' "
+                "AND (NOT %s OR (NULLIF(btrim(description_zh), '') IS NOT NULL "
+                "AND NULLIF(btrim(description_en), '') IS NOT NULL)))",
+                (portal_key, acquired_on, compare_ai_resources),
             )
             superseded_by_daily = bool(cursor.fetchone()[0])
             cursor.execute(
@@ -464,9 +469,9 @@ def content_hub_record_source_portal_capture(
                 "SELECT c.capture_id FROM source_portal_captures c "
                 "WHERE c.portal_key = %s AND c.scope_key = %s AND c.complete = TRUE "
                 "AND c.capture_kind = 'directory' "
-                "AND c.acquired_on < %s "
+                f"AND c.{'captured_at' if compare_ai_resources else 'acquired_on'} < %s "
                 "ORDER BY c.acquired_on DESC, c.captured_at DESC, c.capture_id DESC LIMIT 1",
-                (portal_key, scope_key, acquired_on),
+                (portal_key, scope_key, captured_at if compare_ai_resources else acquired_on),
             )
             prior_row = cursor.fetchone()
             if complete and prior_row:
@@ -476,7 +481,11 @@ def content_hub_record_source_portal_capture(
                 )
                 previous = {str(row[0]): str(row[1]) for row in cursor.fetchall()}
             description_zh = description_en = None
-            if complete and normalized:
+            if (
+                complete
+                and normalized
+                and not (compare_ai_resources and (previous is None or previous == normalized))
+            ):
                 description_zh, description_en = _portal_description(
                     previous,
                     normalized,

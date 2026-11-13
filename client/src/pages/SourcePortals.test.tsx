@@ -7,6 +7,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 const state = vi.hoisted(() => ({
   apiGet: vi.fn(),
+  lang: "en",
   translate: (key: string, values?: Record<string, string | number>) => {
     const message = ({
       "source_portals.title": "Source Portals",
@@ -38,7 +39,7 @@ const state = vi.hoisted(() => ({
   },
 }));
 vi.mock("@/components/Layout", () => ({
-  useTranslation: () => ({ lang: "en", t: state.translate }),
+  useTranslation: () => ({ lang: state.lang, t: state.translate }),
 }));
 vi.mock("@/lib/api", async (original) => ({
   ...await original<typeof import("@/lib/api")>(),
@@ -96,8 +97,39 @@ function makePortal(index: number) {
 
 beforeEach(() => {
   state.apiGet.mockReset();
+  state.lang = "en";
 });
 afterEach(() => cleanup());
+
+it.each(["en", "zh"])("shows three SOA AI entry links in %s and keeps other cards' single link", async (language) => {
+  state.lang = language;
+  const ai = {
+    ...portal,
+    portal_key: "soa-artificial-intelligence",
+    url: "https://www.soa.org/programs/ai-resources/",
+    title_en: "Artificial Intelligence",
+    title_zh: "人工智能专题",
+    entry_links: [
+      { url: "https://www.soa.org/programs/ai-resources/", title_en: "SOA AI Resources", title_zh: "SOA 人工智能资源" },
+      { url: "https://www.soa.org/research/topics/artificial-intelligence-res-report-list/", title_en: "SOA AI Research Reports", title_zh: "SOA 人工智能研究报告目录" },
+      { url: "https://www.soa.org/resources/research-reports/2025/research-ai-bulletin/", title_en: "SOA AI Bulletin", title_zh: "SOA 人工智能公报" },
+    ],
+  };
+  state.apiGet.mockResolvedValue({ portals: [ai, portal] });
+  renderPortalApp("/source-portals/soa-artificial-intelligence");
+
+  expect(await screen.findByTestId("source-portal-detail")).toBeInTheDocument();
+  const links = screen.getAllByTestId("source-portal-entry-link");
+  expect(links).toHaveLength(3);
+  expect(links.map((link) => link.getAttribute("href"))).toEqual(ai.entry_links.map((entry) => entry.url));
+  expect(links.map((link) => link.textContent)).toEqual(ai.entry_links.map((entry) => language === "zh" ? entry.title_zh : entry.title_en));
+  expect(screen.getByText(language === "zh" ? "这次多了「研究新进展」，可以从入口继续阅读。" : "The directory now includes “New research”.")).toBeInTheDocument();
+
+  cleanup();
+  renderPortalApp("/source-portals/soa-research-topics");
+  expect(await screen.findByTestId("source-portal-original-link")).toHaveAttribute("href", portal.url);
+  expect(screen.queryByTestId("source-portal-entry-link")).not.toBeInTheDocument();
+});
 
 it("shows compact rows without exposing update prose", async () => {
   state.apiGet.mockResolvedValue({ portals: [portal, { ...portal, portal_key: "empty-history", updates: [] }] });

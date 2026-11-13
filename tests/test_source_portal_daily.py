@@ -5,6 +5,8 @@ import datetime as dt
 import hashlib
 import json
 from functools import partial
+from pathlib import Path
+from types import SimpleNamespace
 
 import psycopg2
 import pytest
@@ -1110,6 +1112,57 @@ def test_runtime_file_only_partial_attempt_records_hub_before_digest_and_retries
     assert len(sent) == 3
 
 
+def test_completed_duplicate_existing_result_only_marks_soa_ai_card(tmp_path, monkeypatch):
+    monkeypatch.setattr(runtime, "_ACTIVE_STATE_PATH", tmp_path / "state.json")
+    raw_sha = hashlib.sha256(b"%PDF-1.4 verified test file").hexdigest()
+    ai_portal = SOURCE_PORTALS_BY_KEY["soa-artificial-intelligence"]
+    topics_portal = SOURCE_PORTALS_BY_KEY["soa-research-topics"]
+    sources = [
+        ("https://www.soa.org/research/ai-pricing-study.pdf", ai_portal.url),
+        ("https://www.soa.org/research/general-mortality-study.pdf", topics_portal.url),
+    ]
+    state = {"sites": {"soa": {}}, "articles": {}}
+    for version_id, (url, referrer) in enumerate(sources, start=1):
+        state["articles"][runtime._file_key(url, raw_sha)] = {
+            "url": url,
+            "raw_sha256": raw_sha,
+            "source_page_url": referrer,
+            "site_id": "soa",
+            "stage": "complete",
+            "content_version_id": version_id,
+            "discovery_sites": ["soa"],
+        }
+    captured = runtime._capture(
+        runtime.SITES["soa"],
+        state,
+        _Crawler(),
+        tmp_path,
+        state["sites"]["soa"],
+        request_limit=2,
+        initial_frontier=[
+            {"url": url, "kind": "document", "referrer": referrer, "title": "Study"}
+            for url, referrer in sources
+        ],
+    )
+    assert len(captured["downloads"]) == 2
+    monkeypatch.setattr(runtime, "_capture", lambda *_args, **_kwargs: captured)
+    monkeypatch.setattr(runtime, "_new_crawler", lambda _root: _Crawler())
+    monkeypatch.setattr(runtime, "_process_articles", lambda *_args, **_kwargs: _processed())
+    monkeypatch.setattr(
+        runtime,
+        "_sync_source_portals",
+        lambda *_args: {"status": "succeeded", "targets": {}, "digests": [], "errors": []},
+    )
+    config = {"data_root": str(tmp_path), "state_root": str(tmp_path), "targets": {}}
+    runtime._run_site(
+        "soa", dt.datetime.now(runtime.TIME_ZONE).date().isoformat(), config, state, None
+    )
+    [run] = state["source_portal_daily_runs"].values()
+    assert [(item["url"], item["status"]) for item in run["hub_results"]] == [
+        (sources[0][0], "existing")
+    ]
+
+
 def test_partial_page_without_directory_entries_still_has_daily_digest(tmp_path, monkeypatch):
     url, schema = _database(tmp_path, "daily-page")
     _patch_hub(monkeypatch, url, schema)
@@ -1140,6 +1193,117 @@ def test_partial_page_without_directory_entries_still_has_daily_digest(tmp_path,
     assert sent[0]["description_en"] == "No new AI materials were found."
     assert "checked" not in sent[0]["description_en"]
     assert "directory no longer" not in sent[0]["description_en"].lower()
+
+
+def test_soa_ai_collection_baseline_and_unchanged_runs_do_not_publish_daily_updates(
+    tmp_path, monkeypatch
+):
+    url, schema = _database(tmp_path, "soa-ai-daily-silence")
+    _patch_hub(monkeypatch, url, schema)
+    monkeypatch.setattr(runtime, "_ACTIVE_STATE_PATH", tmp_path / "state.json")
+    portal = SOURCE_PORTALS_BY_KEY["soa-artificial-intelligence"]
+    site = runtime.SITES["soa-ai-bulletin-focused"]
+    old_pdf = (
+        "https://www.soa.org/globalassets/assets/files/resources/research-report/old-ai-report.pdf"
+    )
+    new_pdf = (
+        "https://www.soa.org/globalassets/assets/files/resources/research-report/new-ai-report.pdf"
+    )
+    baseline = (
+        f'<section class="nextsteps-block"><a href="{old_pdf}">Old AI report</a></section>'.encode()
+    )
+    changed = baseline.replace(
+        b"</section>", f'<a href="{new_pdf}">New AI report</a></section>'.encode()
+    )
+
+    class FrozenDateTime(dt.datetime):
+        current = dt.datetime(2026, 11, 10, 12, tzinfo=runtime.TIME_ZONE)
+
+        @classmethod
+        def now(cls, tz=None):
+            return cls.current.astimezone(tz)
+
+    clock = SimpleNamespace(**vars(dt))
+    clock.datetime = FrozenDateTime
+    monkeypatch.setattr(runtime, "dt", clock)
+    sent = []
+    monkeypatch.setattr(
+        runtime,
+        "_stream_source_portals",
+        lambda _config, _target, updates: sent.extend(copy.deepcopy(updates)) or {"failures": []},
+    )
+    state = {"articles": {}}
+    config = {"targets": {"china": {"host": "china"}, "overseas": {"host": "overseas"}}}
+
+    def collect_and_sync(body, day, request_limit):
+        FrozenDateTime.current = dt.datetime(2026, 11, day, 12, tzinfo=runtime.TIME_ZONE)
+        captured = runtime._capture(
+            site,
+            state,
+            _Crawler(page=body),
+            tmp_path / "data",
+            {},
+            request_limit=request_limit,
+            initial_frontier=[{"url": portal.url, "kind": "page", "referrer": portal.url}],
+        )
+        assert captured["portal_captures"]
+        return captured
+
+    collect_and_sync(baseline, 10, 1)
+    assert runtime._sync_source_portals(state, config, url)["status"] == "succeeded"
+    assert sent == []
+    collect_and_sync(baseline, 11, 1)
+    assert runtime._sync_source_portals(state, config, url)["status"] == "succeeded"
+    assert sent == []
+    with psycopg2.connect(url) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT description_en FROM source_portal_captures "
+                "WHERE portal_key = %s AND capture_kind = 'daily_collection' ORDER BY capture_id",
+                (portal.portal_key,),
+            )
+            assert cursor.fetchall() == [(None,), (None,)]
+
+    captured = collect_and_sync(changed, 12, 3)
+    new_capture = next(item for item in captured["downloads"] if item["url"] == new_pdf)
+    imported = hub.ingest_live_article(
+        canonical_url=new_pdf,
+        source_site=site.site_id,
+        source_page_url=portal.url,
+        title="New AI report",
+        raw_bytes=Path(new_capture["artifact_path"]).read_bytes(),
+        markdown="AI research evidence for a new actuarial report.",
+        content_type="application/pdf",
+        data_root=tmp_path / "live-data",
+        database_url=url,
+        schema=schema,
+    )
+    package = {
+        "title": "New AI report",
+        "summary": "New AI report",
+        "category": "AI",
+        "keywords": ["AI"],
+    }
+    hub.save_live_enrichment(
+        content_version_id=imported["content_version_id"],
+        markdown_text_variant_id=imported["markdown_text_variant_id"],
+        markdown_sha256=imported["markdown_sha256"],
+        primary_category="AI",
+        bilingual_metadata={"zh": package, "en": package},
+        categories=[{"key": "AI", "evidence": ["AI research evidence"]}],
+        date_facts={"publication_date": None, "revision_date": None, "document_version_date": None},
+        date_review_status="complete",
+        date_review_reason=None,
+        date_review_unresolved=[],
+        recipe="soa-ai-daily-test",
+        run_id="soa-ai-new-report",
+        database_url=url,
+        schema=schema,
+    )
+    assert runtime._sync_source_portals(state, config, url)["status"] == "succeeded"
+    assert len(sent) == 2
+    assert all("Found 1 new AI material" in update["description_en"] for update in sent)
+    assert all("New AI report" in update["description_en"] for update in sent)
 
 
 def test_later_directory_retry_cannot_replace_a_daily_digest_and_bad_sha_blocks_retry(
@@ -1412,7 +1576,7 @@ def test_daily_deduplication_preserves_separate_portal_attribution(tmp_path, mon
         "soa-research-topics",
         "soa-artificial-intelligence",
     }
-    assert len(state["pending_source_portal_publications"]) == 2
+    assert set(state["pending_source_portal_publications"]) == {"soa-research-topics|2026-11-02"}
     with psycopg2.connect(url) as connection:
         with connection.cursor() as cursor:
             cursor.execute("SELECT portal_key, evidence_json FROM source_portal_captures")

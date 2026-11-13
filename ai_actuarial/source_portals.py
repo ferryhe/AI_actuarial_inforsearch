@@ -25,6 +25,26 @@ class SourcePortal:
         return self.extraction_site_id or self.site_ids[0]
 
 
+SOA_AI_ENTRY_LINKS = (
+    {
+        "url": "https://www.soa.org/programs/ai-resources/",
+        "title_zh": "SOA 人工智能资源",
+        "title_en": "SOA AI Resources",
+    },
+    {
+        "url": "https://www.soa.org/research/topics/artificial-intelligence-res-report-list/",
+        "title_zh": "SOA 人工智能研究报告目录",
+        "title_en": "SOA AI Research Reports",
+    },
+    {
+        "url": "https://www.soa.org/resources/research-reports/2025/research-ai-bulletin/",
+        "title_zh": "SOA 人工智能公报",
+        "title_en": "SOA AI Bulletin",
+    },
+)
+SOA_AI_OLD_TOPIC_URL = "https://www.soa.org/research/topics/artificial-intelligence-topic-landing/"
+
+
 SOURCE_PORTALS = (
     SourcePortal(
         "soa-research-topics",
@@ -40,9 +60,9 @@ SOURCE_PORTALS = (
     ),
     SourcePortal(
         "soa-artificial-intelligence",
-        "https://www.soa.org/research/topics/artificial-intelligence-topic-landing/",
+        SOA_AI_ENTRY_LINKS[0]["url"],
         ("soa", "soa-ai-topic-landing", "soa-ai-bulletin-focused"),
-        ("https://www.soa.org/research/topics/artificial-intelligence-topic-landing/",),
+        (SOA_AI_ENTRY_LINKS[0]["url"],),
         "人工智能专题",
         "Artificial Intelligence",
         "美国精算师协会（SOA）",
@@ -50,6 +70,7 @@ SOURCE_PORTALS = (
         "汇集 SOA 人工智能专题的研究与相关资料。",
         "SOA's research and related materials on artificial intelligence.",
         extraction_site_id="soa-ai-topic-landing",
+        scope_key="ai-resources-v1",
     ),
     SourcePortal(
         "cas-publications-research",
@@ -409,7 +430,7 @@ for _portal in SOURCE_PORTALS:
             raise ValueError(f"Source portal URL belongs to multiple portal cards: {_url}")
         SOURCE_PORTALS_BY_URL[_url] = _portal
 SOURCE_PORTALS_BY_KEY = {portal.portal_key: portal for portal in SOURCE_PORTALS}
-SOURCE_PORTAL_URLS = tuple(SOURCE_PORTALS_BY_URL)
+SOURCE_PORTAL_URLS = (*SOURCE_PORTALS_BY_URL, SOA_AI_OLD_TOPIC_URL)
 
 
 def source_portal_for_observation(site_id: str, url: str, source_page_url: str = "") -> str | None:
@@ -419,6 +440,8 @@ def source_portal_for_observation(site_id: str, url: str, source_page_url: str =
     if site_id == "soa":
         ai_roots = (
             SOURCE_PORTALS_BY_KEY["soa-artificial-intelligence"].url,
+            SOA_AI_OLD_TOPIC_URL,
+            SOA_AI_ENTRY_LINKS[1]["url"],
             "https://www.soa.org/resources/research-reports/2025/research-ai-bulletin/",
         )
         if any(value.startswith(root) for value in (url, source_page_url) for root in ai_roots):

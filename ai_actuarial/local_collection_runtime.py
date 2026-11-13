@@ -53,6 +53,7 @@ from ai_actuarial.postgres import DatabaseConfig
 from ai_actuarial.security import resolve_safe_http_url
 from ai_actuarial.source_portal_daily import is_generic_material_label
 from ai_actuarial.source_portals import (
+    SOA_AI_ENTRY_LINKS,
     SOURCE_PORTALS,
     SOURCE_PORTALS_BY_KEY,
     SOURCE_PORTALS_BY_URL,
@@ -182,14 +183,17 @@ SITES: dict[str, Site] = {
     "soa-ai-topic-landing": Site(
         "soa-ai-topic-landing",
         "collect",
-        ("https://www.soa.org/research/topics/artificial-intelligence-topic-landing/",),
+        ("https://www.soa.org/programs/ai-resources/",),
         ("soa.org",),
         2.0,
     ),
     "soa-ai-bulletin-focused": Site(
         "soa-ai-bulletin-focused",
         "collect",
-        ("https://www.soa.org/resources/research-reports/2025/research-ai-bulletin/",),
+        (
+            "https://www.soa.org/research/topics/artificial-intelligence-res-report-list/",
+            "https://www.soa.org/resources/research-reports/2025/research-ai-bulletin/",
+        ),
         ("soa.org",),
         2.0,
         1,
@@ -586,6 +590,92 @@ class _LinkParser(HTMLParser):
             self._href, self._text = None, []
 
 
+class _SoaAiReportsParser(_LinkParser):
+    """Keep the directory's year/month alongside each report link."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.report_links: list[tuple[str, str, str]] = []
+        self._year = ""
+        self._main = False
+        self._report_list = False
+        self._heading = False
+        self._heading_text: list[str] = []
+        self._li_start: int | None = None
+        self._month = ""
+        self._strong = False
+        self._strong_text: list[str] = []
+        self._seen: set[str] = set()
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        super().handle_starttag(tag, attrs)
+        if tag == "main":
+            self._main = True
+        elif tag == "h3" and self._main:
+            self._heading, self._heading_text = True, []
+        elif tag == "ul" and self._main and "no_bullet" in (dict(attrs).get("class") or "").split():
+            self._report_list = True
+        elif tag == "li" and self._report_list and self._year:
+            self._li_start, self._month = len(self.links), ""
+        elif tag in {"strong", "b"} and self._li_start is not None:
+            self._strong, self._strong_text = True, []
+
+    def handle_data(self, data: str) -> None:
+        super().handle_data(data)
+        if self._heading:
+            self._heading_text.append(data)
+        if self._strong:
+            self._strong_text.append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        super().handle_endtag(tag)
+        if tag == "h3":
+            year = "".join(self._heading_text).strip()
+            self._year = year if re.fullmatch(r"20\d{2}", year) else ""
+            self._heading = False
+        elif tag in {"strong", "b"} and self._strong:
+            month = " ".join("".join(self._strong_text).split()).casefold()
+            if month in _SOA_REPORT_MONTHS:
+                self._month = _SOA_REPORT_MONTHS[month]
+            self._strong = False
+        elif tag == "li" and self._li_start is not None:
+            if len(self.links) > self._li_start:
+                href, title = self.links[self._li_start]
+                if href not in self._seen and title:
+                    self.report_links.append(
+                        (href, title, self._year + (f"-{self._month}" if self._month else ""))
+                    )
+                    self._seen.add(href)
+            self._li_start = None
+        elif tag == "ul" and self._report_list:
+            self._report_list = False
+        elif tag == "main":
+            self._main = False
+            self._year = ""
+
+
+_SOA_REPORT_MONTHS = {
+    month.casefold(): f"{index:02d}"
+    for index, month in enumerate(
+        (
+            "January",
+            "February",
+            "March",
+            "April",
+            "May",
+            "June",
+            "July",
+            "August",
+            "September",
+            "October",
+            "November",
+            "December",
+        ),
+        1,
+    )
+}
+
+
 class _PortalLinkParser(HTMLParser):
     """Collect entry links from semantic main/article content, not shared navigation."""
 
@@ -629,8 +719,9 @@ class _PortalLinkParser(HTMLParser):
         "→",
     }
 
-    def __init__(self) -> None:
+    def __init__(self, *, resource_sections: bool = False) -> None:
         super().__init__(convert_charrefs=True)
+        self.resource_sections = resource_sections
         self.links: list[tuple[str, str]] = []
         self.section_found = False
         self.section_depth = 0
@@ -687,7 +778,11 @@ class _PortalLinkParser(HTMLParser):
             self.pagination = True
             if tag_name not in {"a", "button", "link"}:
                 self._pagination_container_stack.append(tag_name)
-        if tag_name in {"main", "article"}:
+        if (not self.resource_sections and tag_name in {"main", "article"}) or (
+            self.resource_sections
+            and tag_name == "section"
+            and "nextsteps-block" in values.get("class", "").split()
+        ):
             self.section_found = True
             self._section_stack.append(tag_name)
             self.section_depth += 1
@@ -754,21 +849,27 @@ def _source_portal_observation(
     captured_at: dt.datetime,
 ) -> dict[str, Any]:
     site = SITES[portal.extraction_source_id]
-    parser = _PortalLinkParser()
+    parser = _PortalLinkParser(resource_sections=portal.portal_key == "soa-artificial-intelligence")
     parser.feed(body.decode("utf-8", errors="replace"))
     entries: dict[str, str] = {}
+    ai_resources = portal.portal_key == "soa-artificial-intelligence" and page_url == portal.url
     for href, label in parser.links:
         candidate = _canonical_http_link(page_url, href)
         if (
             not candidate
             or candidate == page_url
             or not label.strip()
-            or not _allowed_host(candidate, site)
-            or not _allowed_path(candidate, site)
-            or not _site_candidate_allowed(site, candidate, label)
-            or not (
-                _looks_site_document(candidate, label, site)
-                or _relevant_page(candidate, label, site)
+            or (
+                not ai_resources
+                and (
+                    not _allowed_host(candidate, site)
+                    or not _allowed_path(candidate, site)
+                    or not _site_candidate_allowed(site, candidate, label)
+                    or not (
+                        _looks_site_document(candidate, label, site)
+                        or _relevant_page(candidate, label, site)
+                    )
+                )
             )
         ):
             continue
@@ -2524,6 +2625,26 @@ def _capture(
         },
     }
 
+    def retain_directory_period(prior: dict[str, Any], record: dict[str, Any]) -> None:
+        if site.site_id != "soa-ai-bulletin-focused" or not record_portals:
+            return
+        metadata = record.get("discovery_metadata") or {}
+        hint = metadata.get("date_hint")
+        origin = metadata.get("date_hint_source_page_url") or record.get("source_page_url")
+        if (
+            hint
+            and origin == SOA_AI_ENTRY_LINKS[1]["url"]
+            and not (prior.get("discovery_metadata") or {}).get("date_hint")
+        ):
+            prior["discovery_metadata"] = {
+                **(prior.get("discovery_metadata") or {}),
+                "date_hint": hint,
+                "date_hint_source_site": site.site_id,
+                "date_hint_source_page_url": origin,
+            }
+            if prior.get("stage") == "complete":
+                prior["source_provenance_pending"] = True
+
     def usable_material_title(value: Any, url: str) -> str:
         title = " ".join(str(value or "").split())
         if (
@@ -2760,6 +2881,7 @@ def _capture(
                     prior.setdefault("discovery_sites", [])
                     if site.site_id not in prior["discovery_sites"]:
                         prior["discovery_sites"].append(site.site_id)
+                    retain_directory_period(prior, record)
                     downloads.append(prior)
                 else:
                     state["articles"][key] = {
@@ -2943,7 +3065,11 @@ def _capture(
                         )
                         queued_urls.add(candidate)
             else:
-                parser = _LinkParser()
+                report_directory = (
+                    site.site_id == "soa-ai-bulletin-focused"
+                    and _canonical_url(final_url) == SOA_AI_ENTRY_LINKS[1]["url"]
+                )
+                parser = _SoaAiReportsParser() if report_directory else _LinkParser()
                 parser.feed(body.decode("utf-8", errors="replace"))
                 portal = SOURCE_PORTALS_BY_URL.get(url)
                 if item.get("kind") == "page" and portal is not None:
@@ -3002,18 +3128,53 @@ def _capture(
                         if identity not in queued_urls:
                             queue.append(query_item)
                             queued_urls.add(identity)
-                for href, label in parser.links:
+                links = (
+                    parser.report_links
+                    if isinstance(parser, _SoaAiReportsParser)
+                    else [(href, label, "") for href, label in parser.links]
+                )
+                for href, label, date_hint in links:
                     if (item.get("discovery_metadata") or {}).get("operator_exact_url"):
                         break
+                    period_hint = date_hint or (
+                        (item.get("discovery_metadata") or {}).get("date_hint", "")
+                        if site.site_id == "soa-ai-bulletin-focused"
+                        else ""
+                    )
+                    period_origin = (
+                        _canonical_url(final_url)
+                        if date_hint
+                        else (item.get("discovery_metadata") or {}).get("date_hint_source_page_url")
+                    )
+                    period_metadata = (
+                        {
+                            "date_hint": period_hint,
+                            **(
+                                {"date_hint_source_page_url": period_origin}
+                                if period_origin
+                                else {}
+                            ),
+                        }
+                        if period_hint
+                        else {}
+                    )
                     candidate = _canonical_http_link(final_url, href)
                     if candidate is None:
                         continue
                     if (
                         not _allowed_host(candidate, site)
                         or not _allowed_path(candidate, site)
-                        or candidate in queued_urls
                         or candidate in visited
                     ):
+                        continue
+                    if candidate in queued_urls:
+                        if period_hint:
+                            for pending in queue[cursor + 1 :]:
+                                if _queue_identity(pending) == candidate:
+                                    pending_metadata = pending.setdefault("discovery_metadata", {})
+                                    if not pending_metadata.get("date_hint"):
+                                        pending_metadata.update(period_metadata)
+                                    break
                         continue
                     if any(
                         token in urlsplit(candidate).path.lower()
@@ -3032,6 +3193,11 @@ def _capture(
                                 "depth": int(item.get("depth") or 0) + 1,
                                 "referrer": final_url,
                                 "title": label,
+                                **(
+                                    {"discovery_metadata": dict(period_metadata)}
+                                    if period_hint
+                                    else {}
+                                ),
                             }
                         )
                         queued_urls.add(candidate)
@@ -3045,6 +3211,11 @@ def _capture(
                                 "depth": int(item.get("depth") or 0) + 1,
                                 "referrer": final_url,
                                 "title": label,
+                                **(
+                                    {"discovery_metadata": dict(period_metadata)}
+                                    if period_hint
+                                    else {}
+                                ),
                             }
                         )
                         queued_urls.add(candidate)
@@ -3101,6 +3272,7 @@ def _capture(
                                 "artifact_path": str(artifact),
                                 "detected_kind": "html",
                                 "preset_markdown": markdown,
+                                "discovery_metadata": item.get("discovery_metadata") or {},
                             }
                             key = _file_key(record["url"], raw_sha)
                             if key not in state["articles"]:
@@ -3111,7 +3283,12 @@ def _capture(
                                 }
                                 downloads.append(state["articles"][key])
                             else:
-                                downloads.append(state["articles"][key])
+                                prior = state["articles"][key]
+                                prior.setdefault("discovery_sites", [])
+                                if site.site_id not in prior["discovery_sites"]:
+                                    prior["discovery_sites"].append(site.site_id)
+                                retain_directory_period(prior, record)
+                                downloads.append(prior)
             # Parsing and adapter work must finish before this item becomes visited.
             # Failed JSON/XML parsing remains eligible for the durable retry queue.
             if item.get("kind") != "document":
@@ -3255,6 +3432,11 @@ def _ingest_live_capture(
             "last_modified": article.get("last_modified"),
             "etag": article.get("etag"),
             "detected_kind": article.get("detected_kind"),
+            **(
+                {"date_hint": article["discovery_metadata"]["date_hint"]}
+                if (article.get("discovery_metadata") or {}).get("date_hint")
+                else {}
+            ),
         },
     )
 
@@ -4866,7 +5048,39 @@ def _sync_source_portals(
     blocked_values = {identity: pending_updates[identity] for identity in blocked_update_keys}
     if state_upgraded and _ACTIVE_STATE_PATH is not None:
         _atomic_json(_state_path_for_data(state), state)
-    for observation in list(pending_captures):
+
+    def is_complete_ai_resources(observation: dict[str, Any]) -> bool:
+        return (
+            observation.get("portal_key") == "soa-artificial-intelligence"
+            and observation.get("scope_key") == "ai-resources-v1"
+            and observation.get("complete") is True
+        )
+
+    def capture_time(observation: dict[str, Any]) -> dt.datetime:
+        try:
+            captured_at = dt.datetime.fromisoformat(
+                str(observation["captured_at"]).replace("Z", "+00:00")
+            )
+            if captured_at.tzinfo is not None:
+                return captured_at.astimezone(dt.timezone.utc)
+        except (KeyError, ValueError, TypeError):
+            pass
+        return dt.datetime.min.replace(tzinfo=dt.timezone.utc)
+
+    ai_captures = iter(
+        sorted(
+            (item for item in pending_captures if is_complete_ai_resources(item)),
+            key=capture_time,
+        )
+    )
+    capture_order = [
+        next(ai_captures) if is_complete_ai_resources(item) else item
+        for item in list(pending_captures)
+    ]
+    blocked_ai_resources = False
+    for observation in capture_order:
+        if blocked_ai_resources and is_complete_ai_resources(observation):
+            continue
         portal = SOURCE_PORTALS_BY_KEY.get(str(observation.get("portal_key") or ""))
         if portal is None:
             errors.append("pending source portal capture refers to an unknown portal")
@@ -4895,6 +5109,8 @@ def _sync_source_portals(
                 _atomic_json(_state_path_for_data(state), state)
         except Exception as exc:
             errors.append(f"{portal.portal_key}: {type(exc).__name__}: {exc}")
+            if is_complete_ai_resources(observation):
+                blocked_ai_resources = True
 
     digests, daily_errors = _persist_daily_source_portals(state, hub)
     errors.extend(daily_errors)
@@ -6047,6 +6263,51 @@ def _run_site(
         process_url = _canonical_url(str(captured["downloads"][0]["url"]))
     if not preview:
         state["active_source_portal_daily_run"] = captured.get("daily_run_id")
+        daily_run = (state.get("source_portal_daily_runs") or {}).get(
+            captured.get("daily_run_id")
+        ) or {}
+        soa_ai_observed = {
+            (item["url"], item["raw_sha256"])
+            for item in daily_run.get("observations", [])
+            if source_portal_for_observation(site_id, item["url"], item["source_page_url"])
+            == "soa-artificial-intelligence"
+        }
+        for article in captured["downloads"]:
+            if (
+                article.get("stage") == "complete"
+                and (article["url"], article["raw_sha256"]) in soa_ai_observed
+            ):
+                _record_daily_hub_result(state, site_id, article, False, article)
+        for article in state["articles"].values():
+            if site_id not in (article.get("discovery_sites") or []) or not article.get(
+                "source_provenance_pending"
+            ):
+                continue
+            try:
+                origin = article["discovery_metadata"]
+                if (
+                    origin.get("date_hint_source_site") != "soa-ai-bulletin-focused"
+                    or origin.get("date_hint_source_page_url") != SOA_AI_ENTRY_LINKS[1]["url"]
+                ):
+                    raise RuntimeErrorSafe("pending directory period lacks its official origin")
+                _ingest_live_capture(
+                    {
+                        **article,
+                        "site_id": origin["date_hint_source_site"],
+                        "source_page_url": origin["date_hint_source_page_url"],
+                    },
+                    config,
+                    hub,
+                    _verified_article_raw_bytes(article),
+                    None,
+                )
+            except Exception as exc:
+                captured["errors"].append(
+                    f"{article['url']}: source provenance: {type(exc).__name__}: {exc}"
+                )
+            else:
+                article.pop("source_provenance_pending")
+                _atomic_json(_state_path_for_data(state), state)
     processed = _process_articles(
         site_id,
         state,

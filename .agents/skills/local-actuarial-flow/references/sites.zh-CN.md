@@ -13,8 +13,8 @@
 | 01 | `iaa` / International Actuarial Association | collect | `collect.py` 目前把外部搜索/URL 转成候选；不可永久限制为 search-only，先用本机 Crawler 完整验证 sitemap 和真实枚举。 |
 | 02 | `iaba` / International Association of Black Actuaries | monitor_only | 不进入每日下载或 AI 流程；低频复核 sitemap，有新增时再按同一 URL/SHA Hub 合同处理。 |
 | 03 | `soa` / Society of Actuaries | collect | 低频扫主题链；与两个 SOA focused 监控项按规范 URL 去重，避免同一页面重复入库。 |
-| 04 | `soa-ai-topic-landing` / SOA AI Topic Landing | collect | 修总请求数上限，再并入 SOA 父项周期并按 URL 去重。 |
-| 05 | `soa-ai-bulletin-focused` / SOA AI Bulletin | collect | 并入 SOA 父站周期并按 URL 去重；保留来源页身份以区分发现来源。 |
+| 04 | `soa-ai-topic-landing` / SOA AI Resources | collect | 采集 AI Resources 页面并入 SOA 父项周期；同一 URL 去重。 |
+| 05 | `soa-ai-bulletin-focused` / SOA AI Research Reports and Bulletin | collect | 固定采集 AI Research Reports 目录与 Bulletin；并入 SOA 父站周期，按 URL 去重并保留目录年月。 |
 | 06 | `cas` / Casualty Actuarial Society | collect | 每次传 `--refresh` 更新 sitemap；报告只计可采文件并拆分 research 页面，不把历史 `status.candidates` 当文件数。 |
 | 07 | `aaa` / American Academy of Actuaries | collect | 保留 REST 全量核对并按 URL/SHA 幂等去重；`--since` 当前未约束 REST AI-resource 列表，增量上线前补更新时间过滤。 |
 | 08 | `cia-ica` / Canadian Institute of Actuaries | collect | 从 `/publications/` 与公开 WordPress `news` REST frontier 发现；新闻优先于积压附件处理，新闻 page 1 会在后续轮次刷新，即使旧 story/page 2 仍在排队。只接收公开 `/app/themes/wicket/custom/dl_file.php` 且带 `p`、`fid` 参数的附件，始终拒绝 `/private-files/`。已保存 frontier 会在保留游标时幂等补入入口。 |

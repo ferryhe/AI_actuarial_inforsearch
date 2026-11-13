@@ -7432,3 +7432,42 @@ Current branch head 4f030be has uncommitted small catalog/Storage variable defau
 - Raw Chromium tests passed both 680/152 cases. Saved history loaded into the correct conversation and accepted the retained draft. Feedback drafting produced zero requests; the explicit tap produced one mock POST and receipt.
 - Evidence: main checkout reports/issue-480-r25-final-fix/. Isolated PG16 441 passed, Vitest 243 passed (91 focused), backend permission 49 passed. R24 and earlier Chromium regressions plus type/build/lint/format/diff passed. Temporary resources cleaned. Native iOS Safari, production and live models untested.
 - Review limit 25/25. This is the final tested, unreviewed repair. No reviewer PASS, new review round, commit, or push.
+
+## 2026-11-13 Issue #491 local implementation
+
+- Branch `codex/issue-491-soa-ai-entries` in the isolated Issue #491 worktree. SOA AI card now projects three bilingual official links; legacy topic URL remains excluded from ordinary file listings. AI Resources uses a new comparison scope so its first complete capture is baseline only; changed links publish one update, and identical same-day or later captures do not. Existing incomplete-capture and per-target retry behavior remains.
+- The existing `soa-ai-bulletin-focused` site now also seeds the official Research Reports directory without changing the 32-site order or schedule. Live read-only inspection found 61 report links and no footer links; directory year/month is carried into Hub source metadata, including for undated PDFs. Local fixture proves duplicate report/PDF routes collect once.
+- Validation: 262 backend/local-flow tests passed on a disposable PostgreSQL 16 container; 7 focused frontend tests passed; English/Chinese desktop/narrow browser smoke passed; typecheck, build, Black, isort, Ruff and whitespace checks passed. ESLint had zero errors and four pre-existing warnings outside touched files. Disposable PostgreSQL and Vite were stopped. Evidence: `reports/issue-to-merge-20261113/issue-491/worker-validation.md` in the main repository's evidence directory.
+- No commit, push, PR, deployment, production access, or provider call by the worker. Awaiting independent local review and controller's authorized publication flow. Exact publication-date enrichment for every live SOA PDF was not exercised; directory period is retained as provenance.
+
+## 2026-11-13 Issue #491 daily history repair
+
+- A normal SOA AI Resources collection persisted a daily no-new description and sent it to both history targets even though the directory capture was silent. A new full-flow regression reproduced this on the first baseline. The daily description now returns no publishable text for this card when the verified run has no qualifying new AI material; immutable daily evidence remains stored. Other cards keep their existing no-new descriptions.
+- The regression covers baseline, an unchanged next-day collection, and a new AI-annotated PDF. Both targets receive the new-material digest, and the unrelated SOA card still queues its normal daily update. Focused backend portal suites: 85 passed. Ruff passed; Black formatting applied to the test. No commit, push, PR, deployment, production access, or provider call by this worker. Awaiting fresh local review.
+
+## 2026-11-13 Issue #491 directory period on completed duplicates
+
+- The completed-record PDF and HTML duplicate paths now retain a missing official Research Reports year/month from later discovery. The existing live-capture provenance ingestion persists the hint in a new source observation while preserving the same content version, enrichment, and exact date facts. A pending provenance write survives a transient Hub failure and succeeds on retry. An already present date hint is kept.
+- Completed duplicate documents are recorded as existing in the daily run, so the SOA AI card does not announce the same enriched material again. The HTML path also records the later discovery site, allowing cross-site provenance persistence. Four focused regression variants passed, including a simulated retry; the affected collection and portal suites passed 227 tests. Black, isort, Ruff, and whitespace checks passed. No schedule/order change, commit, push, PR, deployment, production access, or provider call by this worker. Awaiting fresh independent review.
+
+## 2026-11-13 Issue #491 daily attribution boundary
+
+- The completed-duplicate existing-result recording now checks the same observation URL and referrer attribution used by daily persistence, and applies only to the SOA AI card. A new same-site regression reproduced the prior spillover into the SOA Research Topics card before the restriction and now verifies only the AI observation is marked existing.
+- Final affected backend suite: 228 passed. Black, isort, Ruff, and whitespace checks passed. No change to other portal daily summaries, schedule, commit, push, PR, deployment, production access, or provider calls. Awaiting independent review.
+
+## 2026-11-13 Issue #491 AI section and period-origin repair
+
+- AI Resources captures now require the expected `nextsteps-block` resource section and take links only from that section. A generic main/article link cannot form a complete baseline or publish a change; the complete official section still works, including when unrelated main-page links are present.
+- The Research Reports year/month now carries its official directory page through direct and nested report links. On a completed duplicate, state retains both the period and its source site/page, and a new Hub source observation identifies the official directory while the earlier source observation, content version, enrichment, and exact publication date remain intact. The pending write retries after a simulated Hub failure; an existing period remains unchanged.
+- Affected backend suite: 228 passed. Black, isort, Ruff, and whitespace checks passed. No schedule/order change, commit, push, PR, deployment, production access, or provider call. Awaiting fresh independent review.
+
+## 2026-11-13 Issue #491 same-day silent daily precedence
+
+- AI Resources directory captures now treat a same-day daily row as superseding only when both public daily descriptions are nonempty. A baseline, silent same-day daily capture, and later meaningful link change produced one update in each of two isolated targets; an identical rerun produced none. Existing precedence for publishable daily digests and all other portal cards remains.
+- The affected Hub, runtime, and portal suite passed 257 tests. Black, isort, Ruff, and whitespace checks passed. The migration Git fixture required temporary Git-index access; it passed under that access. No commit, push, PR, deployment, production access, or provider call by this worker. Awaiting independent review.
+
+## 2026-11-13 Issue #491 AI Resources capture retry ordering
+
+- Pending complete AI Resources captures now persist in capture-time order. If an earlier Hub write fails, later complete captures stay queued, preserving the silent first baseline and the later link-change comparison. Other portal capture order and retry handling remain unchanged.
+- A real Hub and two isolated target regression covers the failed 10:00 baseline, blocked 11:00 changed capture, recovery with a reversed pending queue, one update per target, and an identical rerun with no extra target history. The clean affected backend suite passed 258 tests. Black, isort, Ruff, and whitespace checks passed. A focused run had a transient Windows FAISS load failure; its retry passed. A suite attempt reused Hub test data from that focused run, so the final suite was rerun against a fresh disposable PostgreSQL 16 container and passed.
+- No commit, push, PR, deployment, production access, or provider call by this worker. Awaiting independent review.
