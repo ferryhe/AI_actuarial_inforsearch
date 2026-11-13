@@ -30,10 +30,22 @@ _EVIDENCE_GAPS = {
     ),
 }
 _TOPIC_SEARCH = "document_research.search_topic"
+_DOCUMENT_REFERENCE = re.compile(
+    r"\b(?:regulation|directive|decision|standard)\s+"
+    r"(?:\([A-Z]{2,5}\)\s*)?(?:No\.?\s*)?(\d{4}/\d{2,})(?![\w/])",
+    re.I,
+)
 
 
 def _numeric_literals(text: str) -> set[str]:
     return {value.replace(",", "") for value in re.findall(r"[0-9][0-9,]*(?:\.[0-9]+)?", text)}
+
+
+def _summary_numbers_supported(summary: str, quote: str, passage: str) -> bool:
+    references = set(_DOCUMENT_REFERENCE.findall(summary))
+    if references and not references.issubset(_DOCUMENT_REFERENCE.findall(passage)):
+        return False
+    return _numeric_literals(_DOCUMENT_REFERENCE.sub("", summary)) <= _numeric_literals(quote)
 
 
 def _literal_quote(quote: str, excerpt: str) -> str | None:
@@ -951,7 +963,9 @@ def run(
                                         "paraphrases are allowed. It must also answer a part of the original "
                                         "question within the scope and time established by the source. Use the "
                                         "full passage to check context, but do not use it to supply facts missing "
-                                        "from the quote. When asked which instruments govern a topic, an "
+                                        "from the quote, except for a formal document identifier for the "
+                                        "same instrument explicitly named in the passage. "
+                                        "When asked which instruments govern a topic, an "
                                         "unnamed rule in a related example does not identify an instrument. "
                                         "For current facts, an older passage saying a change "
                                         "was planned, under discussion, or expected in the future is not "
@@ -1025,7 +1039,11 @@ def run(
                         item
                         for item, supported in zip(findings, verdict["supported"])
                         if supported
-                        and _numeric_literals(item["summary"]) <= _numeric_literals(item["quote"])
+                        and _summary_numbers_supported(
+                            item["summary"],
+                            item["quote"],
+                            document_sections[item["evidence_id"]]["excerpt"],
+                        )
                     ]
                     gap = _EVIDENCE_GAPS.get(verdict.get("gap"))
                     gap_notice = gap[int(not locale.startswith("zh"))] if gap else None

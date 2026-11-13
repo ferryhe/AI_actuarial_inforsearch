@@ -1341,6 +1341,16 @@ def test_finish_keeps_valid_findings_within_verifier_limit():
     assert findings == [valid] * 5
 
 
+def test_formal_reference_can_use_same_passage_without_relaxing_quantities():
+    from ai_actuarial.agent_runtime.loop import _summary_numbers_supported
+
+    quote = "Annual review covered 60% of decisions."
+    passage = "The review under Standard 2025/1234. " + quote
+    assert _summary_numbers_supported("Standard 2025/1234: 60%.", quote, passage)
+    assert not _summary_numbers_supported("Standard 2025/1235: 60%.", quote, passage)
+    assert not _summary_numbers_supported("Standard 2025/1234: 62%.", quote, passage)
+
+
 def test_early_clarification_rechecks_one_authorized_lookup():
     from ai_actuarial.agent_runtime.contracts import AgentBudget
     from ai_actuarial.skills.resources_updates import executors as resource_executors
