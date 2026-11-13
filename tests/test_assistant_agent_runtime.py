@@ -1397,16 +1397,26 @@ def test_verified_finding_retains_the_reference_in_its_paragraph(finish_fields):
 
 
 @pytest.mark.parametrize(
-    "message,terminal,needs_body",
+    "message,terminal,needs_body,models_used,source_options",
     [
-        ("What does the site have on climate risk?", True, False),
-        ("What does the site have on climate risk?", False, True),
-        ("What reports does this site have, with the main findings from each?", False, True),
-        ("站内有哪些报告和它们的结论？", False, True),
-        ("What does the site have on climate risk in 2025?", True, True),
+        ("What materials are available on climate risk?", True, False, 1, []),
+        ("What does the site have on climate risk?", False, False, 1, []),
+        ("What reports does this site have, with the main findings from each?", False, True, 4, []),
+        ("站内有哪些报告和它们的结论？", False, True, 4, []),
+        ("What does the site have on climate risk in 2025?", True, True, 4, []),
+        ("What does the site have on climate risk during the past year?", False, True, 4, []),
+        (
+            "What does the site have on climate risk from CAS?",
+            True,
+            True,
+            4,
+            [{"source_key": "cas", "aliases": ["CAS"]}],
+        ),
     ],
 )
-def test_only_explicit_unscoped_inventory_can_finish_at_discovery(message, terminal, needs_body):
+def test_only_unscoped_inventory_can_finish_at_discovery(
+    message, terminal, needs_body, models_used, source_options
+):
     url = "https://example.test/practice-note.pdf"
     target = {"kb_id": "public", "file_id": url}
     doc = {"target": target, "source_url": url, "title": "Climate Risk Practice Note"}
@@ -1422,7 +1432,7 @@ def test_only_explicit_unscoped_inventory_can_finish_at_discovery(message, termi
         action(
             action="call",
             skill_id="document_research",
-            tool_id="document_research.read_document_sections",
+            tool_id="read_document_sections",
             args={**target, "query": "climate risk"},
         ),
         action(
@@ -1454,15 +1464,50 @@ def test_only_explicit_unscoped_inventory_can_finish_at_discovery(message, termi
         model=model,
         execute=execute,
         resolve_selected_document=lambda _target: doc,
+        source_options=lambda: source_options,
         site_context="current site",
     )
     assert result.kind == "finish"
+    assert result.model_attempts == models_used
     if needs_body:
-        assert result.model_attempts == 4 and result.tool_attempts == 2
+        assert result.tool_attempts == 2
         assert excerpt in result.answer and result.evidence_ids == ("body:policy",)
     else:
-        assert result.model_attempts == 1 and result.tool_attempts == 1
+        assert result.tool_attempts == 1
         assert doc["title"] in result.answer and result.evidence_ids == ("catalog:policy",)
+
+
+def test_explicit_catalog_finish_checks_the_original_period():
+    target = {"kb_id": "public", "file_id": "https://example.test/report"}
+    document = {"target": target, "source_url": target["file_id"], "title": "Climate Risk Note"}
+    model, _ = scripted(
+        action(
+            action="call",
+            skill_id="document_research",
+            tool_id="document_research.find_documents",
+            args={"query": "climate risk"},
+        ),
+        action(
+            action="finish",
+            answer="Climate Risk Note was published in 2025.",
+            evidence_ids=["catalog:note"],
+            catalog_only=True,
+        ),
+    )
+    result = run(
+        message="What does the site have on climate risk in 2025?",
+        locale="en",
+        registry=AssistantFeature().registry,
+        context=RunContext(
+            principal="reader", scopes=frozenset({"chat.query", "catalog.read", "files.read"})
+        ),
+        model=model,
+        execute=lambda *_: ToolResult("ok", {"documents": [document]}, ("catalog:note",)),
+        resolve_selected_document=lambda _target: document,
+        site_context="current site",
+    )
+    assert result.availability == "unavailable"
+    assert "published in 2025" not in result.answer
 
 
 def test_early_clarification_rechecks_one_authorized_lookup():

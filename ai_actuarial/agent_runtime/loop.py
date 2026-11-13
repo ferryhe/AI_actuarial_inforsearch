@@ -202,6 +202,25 @@ def _restricts_topic_lookup(message: str, documents: list[dict]) -> bool:
     return False
 
 
+def _unscoped_site_inventory(message: str) -> bool:
+    match = re.fullmatch(
+        r"what does (?:this|the|your) site have (?:on|about) ([a-z -]+)[?]?",
+        message.strip(),
+        re.I,
+    )
+    return bool(
+        match
+        and not re.search(
+            r"\b(?:and|or|with|including|plus|their|each|"
+            r"from|since|before|after|during|between|last|past|recent|current|new|"
+            r"summari[sz]e|recommend\w*|explain|compare|findings|conclusions|"
+            r"what|why|when|where|which|can you|give me)\b",
+            match[1],
+            re.I,
+        )
+    )
+
+
 def _past_seven_days(message: str) -> re.Match[str] | None:
     return re.search(
         r"(?:过去|最近|近)\s*(?:(?:七|7)\s*天|一\s*周)"
@@ -602,22 +621,37 @@ def run(
         and not window_clause
         and not _restricts_topic_lookup(message, [])
     )
+    inventory_request = terminal_catalog_allowed and _unscoped_site_inventory(message)
+    catalog_source_unscoped: bool | None = None
+
+    def catalog_allowed() -> bool:
+        nonlocal catalog_source_unscoped
+        if not terminal_catalog_allowed:
+            return False
+        if catalog_source_unscoped is None:
+            try:
+                source, excluded = _source_scope(
+                    message, source_options() if source_options else []
+                )
+                catalog_source_unscoped = not source and not excluded
+            except Exception:
+                catalog_source_unscoped = False
+        return catalog_source_unscoped
+
     prompt_data = {
         "instruction": (
             "Choose an enabled skill from the question. Return exactly one JSON object with "
             "one of these exact shapes, including the action field and no extra or omitted fields: "
             '{"action":"call","skill_id":"<enabled skill>","tool_id":"<tool>","args":{}}; '
-            '{"action":"call","skill_id":"<enabled skill>","tool_id":"<document finder>","args":{},"catalog_only":true}; '
             '{"action":"finish","answer":"<answer>","evidence_ids":["<observed ID>"]}; '
             '{"action":"finish","answer":"<answer>","evidence_ids":["<finder ID>"],"catalog_only":true}; '
             '{"action":"clarify","question":"<question>"}; or '
             '{"action":"clarify","question":"<question>","blocking_input":"<missing fact>","blocking_reason":"<why it blocks useful work>"}. '
             "Always set action to call, finish, or clarify, and fill call args to the tool schema. "
             "Choose one useful next action from the observations. A short, unscoped question about "
-            "what materials the site has is an inventory request. When titles and links "
-            "alone satisfy the whole question, use a document finder with catalog_only:true "
-            "to return its matches directly. For mixed questions or an explicit source, period "
-            "or document, use normal calls and check each requested part. For factual topic questions or a named "
+            "what materials the site has is an inventory request: search the catalog "
+            "and stop once a relevant match is available. Use catalog_only when answering an "
+            "inventory question with observed finder IDs. For factual topic questions or a named "
             "report, use a matching validated selected/opened target or find a permitted document "
             "and read its body using only that exact target; never guess a KB ID from a URL or title. "
             "Catalog metadata is a scoped fallback, not body evidence. After not_found or unavailable, "
@@ -1260,8 +1294,7 @@ def run(
                     return keep_partial()
                 if (
                     action.get("catalog_only") is True
-                    and site_context
-                    and not selected_target
+                    and catalog_allowed()
                     and all(item in found_catalog_ids for item in ids)
                 ):
                     return catalog_finish(ids)
@@ -1380,6 +1413,10 @@ def run(
                 if prior_partial is not None:
                     return keep_partial()
                 return result("", "error", "INVALID_MODEL_RESPONSE")
+            if "." not in action["tool_id"]:
+                qualified = f"{action['skill_id']}.{action['tool_id']}"
+                if qualified in described_tools:
+                    action["tool_id"] = qualified
             dated_catalog = (
                 collection_window and action["tool_id"] == "resources_updates.catalog_search"
             )
@@ -1434,17 +1471,10 @@ def run(
                     return keep_partial()
                 return result("", "error", "INVALID_MODEL_RESPONSE")
             finish_catalog = (
-                terminal_catalog_allowed
-                and action.get("catalog_only") is True
-                and not observations
-                and tool.result_kind == "catalog_discovery"
+                tool.result_kind == "catalog_discovery"
+                and (inventory_request or (action.get("catalog_only") is True and not observations))
+                and catalog_allowed()
             )
-            if finish_catalog and source_options is not None:
-                try:
-                    source, excluded = _source_scope(message, source_options())
-                    finish_catalog = not source and not excluded
-                except Exception:
-                    finish_catalog = False
             if tool.tool_id == _TOPIC_SEARCH and (
                 not topic_lookup_available
                 or not any(entry["tool_id"] in body_tool_ids for entry in observations)
@@ -1568,6 +1598,16 @@ def run(
                     catalog_status.update({item: "catalog_only" for item in observed.evidence_ids})
                     if finish_catalog:
                         return catalog_finish(list(observed.evidence_ids))
+                elif (
+                    inventory_request
+                    and tool.tool_id == "resources_updates.catalog_search"
+                    and observed.data.get("files")
+                    and observed.evidence_ids
+                    and can_render_evidence is not None
+                    and all(can_render_evidence(item) for item in observed.evidence_ids)
+                    and catalog_allowed()
+                ):
+                    return result("", "available", used=observed.evidence_ids, kind="finish")
                 elif action["tool_id"] == "document_research.readiness":
                     if observed.data.get("document"):
                         catalog_documents[observed.evidence_ids[0]] = observed.data["document"]
