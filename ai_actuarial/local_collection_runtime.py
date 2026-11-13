@@ -3147,6 +3147,7 @@ def _capture(
                     period_hint = date_hint or (
                         (item.get("discovery_metadata") or {}).get("date_hint", "")
                         if site.site_id == "soa-ai-bulletin-focused"
+                        and _canonical_url(final_url) != SOA_AI_ENTRY_LINKS[2]["url"]
                         else ""
                     )
                     period_origin = (

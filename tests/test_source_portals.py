@@ -218,6 +218,286 @@ def test_report_from_directory_and_bulletin_is_collected_once_with_official_peri
     assert result["downloads"][1]["discovery_metadata"]["date_hint_source_page_url"] == directory
 
 
+def test_bulletin_summary_period_does_not_pass_to_undated_issue_pdf_links(
+    tmp_path: Path, monkeypatch
+) -> None:
+    site = runtime.SITES["soa-ai-bulletin-focused"]
+    directory, bulletin = site.seeds
+    issues = (
+        (
+            "https://www.soa.org/globalassets/assets/files/resources/research-report/2026/2026-07-ait170-aib.pdf",
+            "c666d7073e8ba491d384b1e6451f7ea76fa712f27ec7f5e17917ec62748643f7",
+            3616,
+            "2026-07",
+        ),
+        (
+            "https://www.soa.org/globalassets/assets/files/resources/research-report/2026/2026-03-ait170-ai-bulletin.pdf",
+            "f1509e665eb5ed58c6254379f5fa71d166b766785985ce1e38e4ad3722163afd",
+            1965,
+            "2026-03",
+        ),
+    )
+    direct = "https://www.soa.org/resources/research-reports/2026/direct-ai-report/"
+    directory_body = (
+        '<main><h3>2026</h3><ul class="no_bullet">'
+        f'<li><strong><a href="{bulletin}">Actuarial Intelligence Bulletin</a></strong>'
+        "<br><strong>September</strong></li>"
+        f'<li><strong><a href="{direct}">Direct AI report</a></strong>'
+        "<br><strong>October</strong></li></ul></main>"
+    ).encode()
+    bulletin_body = (
+        "<main>"
+        + "".join(f'<a href="{url}">Actuarial Intelligence Bulletin</a>' for url, *_ in issues)
+        + "</main>"
+    ).encode()
+
+    class Crawler:
+        site_attempts = 0
+        site_budget = 2
+        caa_cookie = None
+        algolia_key = None
+
+        def begin_site(self, budget: int) -> None:
+            self.site_budget = budget
+
+        def _request(self, url: str, **_kwargs):
+            self.site_attempts += 1
+            return (
+                (directory_body if url == directory else bulletin_body),
+                {"content-type": "text/html"},
+                url,
+            )
+
+        def _download_file(self, *_args, **_kwargs):
+            pytest.fail("the bounded regression must not download live issue PDFs")
+
+    articles = {
+        runtime._file_key(url, sha): {
+            "url": url,
+            "raw_sha256": sha,
+            "stage": "complete",
+            "content_version_id": version,
+            "publication_date": published,
+            "discovery_metadata": {},
+            "discovery_sites": [site.site_id],
+        }
+        for url, sha, version, published in issues
+    }
+    state = {"articles": articles}
+    site_state = {}
+    monkeypatch.setattr(runtime, "_ACTIVE_STATE_PATH", tmp_path / "state.json")
+    result = runtime._capture(
+        site, state, Crawler(), tmp_path / "data", site_state, request_limit=2, record_portals=False
+    )
+    assert result["errors"] == []
+    pending = {item["url"]: item for item in site_state["queue"]}
+    assert pending[bulletin]["discovery_metadata"]["date_hint"] == "2026-09"
+    assert pending[direct]["discovery_metadata"]["date_hint"] == "2026-10"
+    for url, sha, version, published in issues:
+        assert not (pending[url].get("discovery_metadata") or {}).get("date_hint")
+        prior = state["articles"][runtime._file_key(url, sha)]
+        assert prior["content_version_id"] == version
+        assert prior["publication_date"] == published
+        assert not prior["discovery_metadata"]
+        assert "source_provenance_pending" not in prior
+
+    class IssuePeriodParser(runtime._SoaAiReportsParser):
+        def feed(self, data: str) -> None:
+            super().feed(data)
+            self.report_links = [
+                (issues[0][0], "Actuarial Intelligence Bulletin", "2026-07"),
+                (issues[1][0], "Actuarial Intelligence Bulletin", ""),
+            ]
+
+    monkeypatch.setattr(runtime, "_LinkParser", IssuePeriodParser)
+    period_site_state = {}
+    runtime._capture(
+        site,
+        state,
+        Crawler(),
+        tmp_path / "data-with-issue-period",
+        period_site_state,
+        request_limit=2,
+        record_portals=False,
+    )
+    period_pending = {item["url"]: item for item in period_site_state["queue"]}
+    assert period_pending[issues[0][0]]["discovery_metadata"] == {
+        "date_hint": "2026-07",
+        "date_hint_source_page_url": bulletin,
+    }
+    assert not (period_pending[issues[1][0]].get("discovery_metadata") or {}).get("date_hint")
+
+
+@pytest.mark.parametrize(
+    ("issue_path", "published"),
+    [
+        ("2026-07-ait170-aib.pdf", "2026-07"),
+        ("2026-03-ait170-ai-bulletin.pdf", "2026-03"),
+    ],
+)
+def test_completed_bulletin_issue_does_not_ingest_summary_period_as_provenance(
+    tmp_path: Path, monkeypatch, issue_path: str, published: str
+) -> None:
+    hub_url, schema = _database_schema(tmp_path, f"bulletin-{published}")
+    apply_content_hub_schema(hub_url, schema=schema)
+    site = runtime.SITES["soa-ai-bulletin-focused"]
+    directory, bulletin = site.seeds
+    issue_url = (
+        "https://www.soa.org/globalassets/assets/files/resources/research-report/2026/" + issue_path
+    )
+    raw = f"%PDF-1.4\n{published} official issue evidence\n%%EOF".encode()
+    digest = hashlib.sha256(raw).hexdigest()
+    config = {
+        "data_root": str(tmp_path / "data"),
+        "state_root": str(tmp_path / "state"),
+        "targets": {},
+    }
+    Path(config["data_root"]).mkdir()
+    Path(config["state_root"]).mkdir()
+    first = hub.ingest_live_article(
+        canonical_url=issue_url,
+        source_site=site.site_id,
+        source_page_url=bulletin,
+        title="Actuarial Intelligence Bulletin",
+        raw_bytes=raw,
+        markdown=f"Official {published} issue evidence.",
+        content_type="application/pdf",
+        data_root=tmp_path / "data",
+        database_url=hub_url,
+        schema=schema,
+    )
+    package = {
+        "title": "Actuarial Intelligence Bulletin",
+        "summary": f"Official {published} issue",
+        "category": "AI",
+        "keywords": ["AI"],
+    }
+    hub.save_live_enrichment(
+        content_version_id=first["content_version_id"],
+        markdown_text_variant_id=first["markdown_text_variant_id"],
+        markdown_sha256=first["markdown_sha256"],
+        primary_category="AI",
+        bilingual_metadata={"zh": package, "en": package},
+        categories=[{"key": "AI", "evidence": [f"Official {published} issue evidence"]}],
+        date_facts={
+            "publication_date": {
+                "value": published,
+                "precision": "month",
+                "semantic": "publication",
+                "evidence": f"Official {published} issue evidence",
+                "location": "PDF first page",
+            },
+            "revision_date": None,
+            "document_version_date": None,
+        },
+        date_review_status="complete",
+        date_review_reason=None,
+        date_review_unresolved=[],
+        recipe="bulletin-period-boundary-test",
+        run_id=f"bulletin-{published}",
+        database_url=hub_url,
+        schema=schema,
+    )
+    original = hub.content_hub_read_version(issue_url, digest, hub_url, schema=schema)
+    prior = {
+        "site_id": site.site_id,
+        "url": issue_url,
+        "source_page_url": bulletin,
+        "title": "Actuarial Intelligence Bulletin",
+        "raw_sha256": digest,
+        "artifact_path": str(runtime._persist_cas(tmp_path / "data", raw, digest)),
+        "content_type": "application/pdf",
+        "detected_kind": "pdf",
+        "stage": "complete",
+        "content_version_id": first["content_version_id"],
+        "discovery_metadata": {},
+        "discovery_sites": [site.site_id],
+    }
+    directory_body = (
+        '<main><h3>2026</h3><ul class="no_bullet"><li><strong>'
+        f'<a href="{bulletin}">Actuarial Intelligence Bulletin</a></strong>'
+        "<br><strong>September</strong></li></ul></main>"
+    ).encode()
+    bulletin_body = (
+        f'<main><a href="{issue_url}">Actuarial Intelligence Bulletin</a></main>'.encode()
+    )
+
+    class Crawler:
+        site_attempts = 0
+        site_budget = 3
+        caa_cookie = None
+        algolia_key = None
+
+        def begin_site(self, budget: int) -> None:
+            self.site_budget = budget
+
+        def _request(self, url: str, **_kwargs):
+            self.site_attempts += 1
+            return (
+                (directory_body if url == directory else bulletin_body),
+                {"content-type": "text/html"},
+                url,
+            )
+
+        def _download_file(self, url: str, root: Path, **_kwargs):
+            self.site_attempts += 1
+            root.mkdir(parents=True, exist_ok=True)
+            path = root / issue_path
+            path.write_bytes(raw)
+            return path, {"content-type": "application/pdf"}, url, digest, len(raw)
+
+    state = {
+        "articles": {runtime._file_key(issue_url, digest): prior},
+        "sites": {site.site_id: {}},
+        "target_acks": {},
+    }
+    monkeypatch.setattr(runtime, "_ACTIVE_STATE_PATH", tmp_path / "state" / "runtime.json")
+    monkeypatch.setattr(runtime, "_new_crawler", lambda _root: Crawler())
+    monkeypatch.setattr(
+        runtime, "ingest_live_article", partial(hub.ingest_live_article, schema=schema)
+    )
+    monkeypatch.setattr(
+        runtime,
+        "_process_articles",
+        lambda *_args, **_kwargs: {
+            "candidate_count": 0,
+            "pending_article_count": 0,
+            "new_versions": 0,
+            "duplicates": 0,
+            "enriched": 0,
+            "ai_candidates": 0,
+            "article_errors": [],
+            "target": {
+                name: {"acknowledged": 0, "pending": 0, "failed": 0, "ready_status": "succeeded"}
+                for name in ("china", "overseas")
+            },
+        },
+    )
+    monkeypatch.setattr(
+        runtime,
+        "_sync_source_portals",
+        lambda *_args: {"status": "succeeded", "targets": {}, "digests": [], "errors": []},
+    )
+    runtime._run_site(site.site_id, "2026-11-13", config, state, hub_url, request_limit=3)
+    assert len(state["articles"]) == 1
+    assert prior["stage"] == "complete"
+    assert prior["content_version_id"] == first["content_version_id"]
+    assert not prior["discovery_metadata"]
+    assert "source_provenance_pending" not in prior
+    current = hub.content_hub_read_version(issue_url, digest, hub_url, schema=schema)
+    assert current["content_version_id"] == original["content_version_id"]
+    assert current["annotation"] == original["annotation"]
+    with psycopg2.connect(hub_url) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(f'SET search_path TO "{schema}"')
+            cursor.execute(
+                "SELECT source_metadata_json::jsonb->>'date_hint' FROM source_record_map "
+                "WHERE content_version_id = %s",
+                (first["content_version_id"],),
+            )
+            assert cursor.fetchall() == [(None,)]
+
+
 def test_report_directory_period_reaches_hub_capture_metadata(monkeypatch, tmp_path: Path) -> None:
     captured = {}
     monkeypatch.setattr(runtime, "ingest_live_article", lambda **kwargs: captured.update(kwargs))
