@@ -184,8 +184,8 @@ def _restricts_topic_lookup(message: str, documents: list[dict]) -> bool:
 
 def _explicit_site_inventory(message: str) -> bool:
     if re.search(
-        r"[?？。]\s*\S|[;；]|(?:\band\s+(?:what|how|summari[sz]e|compare|explain)\b)"
-        r"|\b(?:please\s+)?(?:summari[sz]e|compare|explain|evaluate|recommend)\b"
+        r"[?？。]\s*\S|[,，;；]|\b(?:and|including|with)\b"
+        r"|\b(?:summari[sz]e|compare|explain|evaluate|recommends?)\b"
         r"|\bwhat (?:it|they|the reports?) (?:say|says|recommend|recommends|found)\b"
         r"|另外|同时|并(?:请|说明|总结|比较|解释)|总结|概述|比较|推荐|正文",
         message,
@@ -673,6 +673,11 @@ def run(
     source_restricted: bool | None = None
     try:
         for _ in range(10):
+            must_finish_body = (
+                site_context is not None
+                and bool(document_sections)
+                and context.budget.model_requests - context.model_attempts == 2
+            )
             topic_searched = any(entry["tool_id"] == _TOPIC_SEARCH for entry in observations)
             topic_lookup_available = (
                 body_topic_tool is not None
@@ -746,7 +751,8 @@ def run(
                         payload["prompt"] = json.dumps(
                             {
                                 "instruction": (
-                                    "Return only the finish object shown below. Read sections and their "
+                                    "Return only the JSON object shown below, with every key. "
+                                    "Read sections and their "
                                     "evidence IDs in parallel order. Select up to five findings that answer "
                                     "the question most directly, strongest first. For each claim copy a "
                                     "short continuous quote with no ellipses. Use the name or identifier "
@@ -838,6 +844,21 @@ def run(
                 if prior_partial is not None:
                     return keep_partial()
                 return result("", "error", "INVALID_MODEL_RESPONSE")
+            if (
+                must_finish_body
+                and {"evidence_ids", "findings"} <= action.keys()
+                and action.keys() <= {"action", "answer", "evidence_ids", "findings"}
+                and not {"action", "answer"} <= action.keys()
+                and action.get("action", "finish") == "finish"
+                and isinstance(action["findings"], list)
+                and isinstance(action["evidence_ids"], list)
+                and any(
+                    isinstance(item, str) and item in document_sections
+                    for item in action["evidence_ids"]
+                )
+            ):
+                # Body replies are rendered from findings, never the unused draft answer.
+                action = {**action, "action": "finish", "answer": "body findings"}
             if guarded_excerpt:
                 if (
                     set(action) != {"findings"}

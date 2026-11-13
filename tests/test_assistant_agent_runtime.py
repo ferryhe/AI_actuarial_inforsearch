@@ -1351,7 +1351,10 @@ def test_formal_reference_can_use_same_passage_without_relaxing_quantities():
     assert not _summary_numbers_supported("Standard 2025/1234: 62%.", quote, passage)
 
 
-def test_verified_finding_retains_the_reference_in_its_paragraph():
+@pytest.mark.parametrize("finish_fields", [{}, {"action": "finish"}, {"answer": "Unused draft"}])
+def test_verified_finding_retains_the_reference_in_its_paragraph(finish_fields):
+    from ai_actuarial.agent_runtime.contracts import AgentBudget
+
     quote = "The rule requires annual review."
     target = {"kb_id": "public", "file_id": "https://example.test/standard"}
     section = {
@@ -1368,10 +1371,9 @@ def test_verified_finding_retains_the_reference_in_its_paragraph():
             args={**target, "query": "annual review"},
         ),
         action(
-            action="finish",
-            answer=quote,
             evidence_ids=["body:policy"],
             findings=[{"evidence_id": "body:policy", "quote": quote, "summary": quote}],
+            **finish_fields,
         ),
         action(supported=[True]),
     )
@@ -1379,7 +1381,11 @@ def test_verified_finding_retains_the_reference_in_its_paragraph():
         message="What standards apply to this policy?",
         locale="en",
         registry=AssistantFeature().registry,
-        context=RunContext(principal="reader", scopes=frozenset({"chat.query", "markdown.read"})),
+        context=RunContext(
+            principal="reader",
+            scopes=frozenset({"chat.query", "markdown.read"}),
+            budget=AgentBudget(model_requests=3),
+        ),
         model=model,
         execute=lambda *_: ToolResult("ok", {"sections": [section]}, ("body:policy",)),
         selected_target=target,
@@ -1390,8 +1396,17 @@ def test_verified_finding_retains_the_reference_in_its_paragraph():
     assert "2020/2345" not in result.answer
 
 
-@pytest.mark.parametrize("follow_up", ["", " What does it recommend?", " and what it recommends?"])
-def test_inventory_uses_the_discovered_titles_before_an_unneeded_body_read(follow_up):
+@pytest.mark.parametrize(
+    "message,needs_body",
+    [
+        ("What does the site have on climate risk?", False),
+        ("What does the site have on climate risk? What does it recommend?", True),
+        ("What does the site have on climate risk and what it recommends?", True),
+        ("What reports does this site have, with the main findings from each?", True),
+        ("What reports does this site have, including what each recommends?", True),
+    ],
+)
+def test_inventory_uses_the_discovered_titles_before_an_unneeded_body_read(message, needs_body):
     url = "https://example.test/practice-note.pdf"
     target = {"kb_id": "public", "file_id": url}
     doc = {"target": target, "source_url": url, "title": "Climate Risk Practice Note"}
@@ -1428,7 +1443,7 @@ def test_inventory_uses_the_discovered_titles_before_an_unneeded_body_read(follo
         )
 
     result = run(
-        message="What does the site have on climate risk" + (follow_up or "?"),
+        message=message,
         locale="en",
         registry=AssistantFeature().registry,
         context=RunContext(
@@ -1441,7 +1456,7 @@ def test_inventory_uses_the_discovered_titles_before_an_unneeded_body_read(follo
         site_context="current site",
     )
     assert result.kind == "finish"
-    if follow_up:
+    if needs_body:
         assert result.model_attempts == 4 and result.tool_attempts == 2
         assert excerpt in result.answer and result.evidence_ids == ("body:policy",)
     else:
