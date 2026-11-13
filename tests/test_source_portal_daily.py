@@ -5,6 +5,8 @@ import datetime as dt
 import hashlib
 import json
 from functools import partial
+from pathlib import Path
+from types import SimpleNamespace
 
 import psycopg2
 import pytest
@@ -905,6 +907,7 @@ def _patch_hub(monkeypatch, url, schema):
         "content_hub_record_source_portal_daily",
         "content_hub_record_source_portal_capture",
         "content_hub_read_source_portal_capture",
+        "content_hub_project_source_portal_update",
     ):
         monkeypatch.setattr(runtime, name, partial(getattr(hub, name), schema=schema))
 
@@ -1110,6 +1113,57 @@ def test_runtime_file_only_partial_attempt_records_hub_before_digest_and_retries
     assert len(sent) == 3
 
 
+def test_completed_duplicate_existing_result_only_marks_soa_ai_card(tmp_path, monkeypatch):
+    monkeypatch.setattr(runtime, "_ACTIVE_STATE_PATH", tmp_path / "state.json")
+    raw_sha = hashlib.sha256(b"%PDF-1.4 verified test file").hexdigest()
+    ai_portal = SOURCE_PORTALS_BY_KEY["soa-artificial-intelligence"]
+    topics_portal = SOURCE_PORTALS_BY_KEY["soa-research-topics"]
+    sources = [
+        ("https://www.soa.org/research/ai-pricing-study.pdf", ai_portal.url),
+        ("https://www.soa.org/research/general-mortality-study.pdf", topics_portal.url),
+    ]
+    state = {"sites": {"soa": {}}, "articles": {}}
+    for version_id, (url, referrer) in enumerate(sources, start=1):
+        state["articles"][runtime._file_key(url, raw_sha)] = {
+            "url": url,
+            "raw_sha256": raw_sha,
+            "source_page_url": referrer,
+            "site_id": "soa",
+            "stage": "complete",
+            "content_version_id": version_id,
+            "discovery_sites": ["soa"],
+        }
+    captured = runtime._capture(
+        runtime.SITES["soa"],
+        state,
+        _Crawler(),
+        tmp_path,
+        state["sites"]["soa"],
+        request_limit=2,
+        initial_frontier=[
+            {"url": url, "kind": "document", "referrer": referrer, "title": "Study"}
+            for url, referrer in sources
+        ],
+    )
+    assert len(captured["downloads"]) == 2
+    monkeypatch.setattr(runtime, "_capture", lambda *_args, **_kwargs: captured)
+    monkeypatch.setattr(runtime, "_new_crawler", lambda _root: _Crawler())
+    monkeypatch.setattr(runtime, "_process_articles", lambda *_args, **_kwargs: _processed())
+    monkeypatch.setattr(
+        runtime,
+        "_sync_source_portals",
+        lambda *_args: {"status": "succeeded", "targets": {}, "digests": [], "errors": []},
+    )
+    config = {"data_root": str(tmp_path), "state_root": str(tmp_path), "targets": {}}
+    runtime._run_site(
+        "soa", dt.datetime.now(runtime.TIME_ZONE).date().isoformat(), config, state, None
+    )
+    [run] = state["source_portal_daily_runs"].values()
+    assert [(item["url"], item["status"]) for item in run["hub_results"]] == [
+        (sources[0][0], "existing")
+    ]
+
+
 def test_partial_page_without_directory_entries_still_has_daily_digest(tmp_path, monkeypatch):
     url, schema = _database(tmp_path, "daily-page")
     _patch_hub(monkeypatch, url, schema)
@@ -1140,6 +1194,309 @@ def test_partial_page_without_directory_entries_still_has_daily_digest(tmp_path,
     assert sent[0]["description_en"] == "No new AI materials were found."
     assert "checked" not in sent[0]["description_en"]
     assert "directory no longer" not in sent[0]["description_en"].lower()
+
+
+def test_soa_ai_collection_baseline_and_unchanged_runs_do_not_publish_daily_updates(
+    tmp_path, monkeypatch
+):
+    url, schema = _database(tmp_path, "soa-ai-daily-silence")
+    _patch_hub(monkeypatch, url, schema)
+    monkeypatch.setattr(runtime, "_ACTIVE_STATE_PATH", tmp_path / "state.json")
+    portal = SOURCE_PORTALS_BY_KEY["soa-artificial-intelligence"]
+    site = runtime.SITES["soa-ai-bulletin-focused"]
+    old_pdf = (
+        "https://www.soa.org/globalassets/assets/files/resources/research-report/old-ai-report.pdf"
+    )
+    new_pdf = (
+        "https://www.soa.org/globalassets/assets/files/resources/research-report/new-ai-report.pdf"
+    )
+    baseline = (
+        f'<section class="nextsteps-block"><a href="{old_pdf}">Old AI report</a></section>'.encode()
+    )
+    changed = baseline.replace(
+        b"</section>", f'<a href="{new_pdf}">New AI report</a></section>'.encode()
+    )
+
+    class FrozenDateTime(dt.datetime):
+        current = dt.datetime(2026, 11, 10, 12, tzinfo=runtime.TIME_ZONE)
+
+        @classmethod
+        def now(cls, tz=None):
+            return cls.current.astimezone(tz)
+
+    clock = SimpleNamespace(**vars(dt))
+    clock.datetime = FrozenDateTime
+    monkeypatch.setattr(runtime, "dt", clock)
+    sent = []
+    monkeypatch.setattr(
+        runtime,
+        "_stream_source_portals",
+        lambda _config, _target, updates: sent.extend(copy.deepcopy(updates)) or {"failures": []},
+    )
+    state = {"articles": {}}
+    config = {"targets": {"china": {"host": "china"}, "overseas": {"host": "overseas"}}}
+
+    def collect_and_sync(body, day, request_limit):
+        FrozenDateTime.current = dt.datetime(2026, 11, day, 12, tzinfo=runtime.TIME_ZONE)
+        captured = runtime._capture(
+            site,
+            state,
+            _Crawler(page=body),
+            tmp_path / "data",
+            {},
+            request_limit=request_limit,
+            initial_frontier=[{"url": portal.url, "kind": "page", "referrer": portal.url}],
+        )
+        assert captured["portal_captures"]
+        return captured
+
+    collect_and_sync(baseline, 10, 1)
+    assert runtime._sync_source_portals(state, config, url)["status"] == "succeeded"
+    assert sent == []
+    collect_and_sync(baseline, 11, 1)
+    assert runtime._sync_source_portals(state, config, url)["status"] == "succeeded"
+    assert sent == []
+    with psycopg2.connect(url) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT description_en FROM source_portal_captures "
+                "WHERE portal_key = %s AND capture_kind = 'daily_collection' ORDER BY capture_id",
+                (portal.portal_key,),
+            )
+            assert cursor.fetchall() == [(None,), (None,)]
+
+    captured = collect_and_sync(changed, 12, 3)
+    new_capture = next(item for item in captured["downloads"] if item["url"] == new_pdf)
+    imported = hub.ingest_live_article(
+        canonical_url=new_pdf,
+        source_site=site.site_id,
+        source_page_url=portal.url,
+        title="New AI report",
+        raw_bytes=Path(new_capture["artifact_path"]).read_bytes(),
+        markdown="AI research evidence for a new actuarial report.",
+        content_type="application/pdf",
+        data_root=tmp_path / "live-data",
+        database_url=url,
+        schema=schema,
+    )
+    package = {
+        "title": "New AI report",
+        "summary": "New AI report",
+        "category": "AI",
+        "keywords": ["AI"],
+    }
+    hub.save_live_enrichment(
+        content_version_id=imported["content_version_id"],
+        markdown_text_variant_id=imported["markdown_text_variant_id"],
+        markdown_sha256=imported["markdown_sha256"],
+        primary_category="AI",
+        bilingual_metadata={"zh": package, "en": package},
+        categories=[{"key": "AI", "evidence": ["AI research evidence"]}],
+        date_facts={"publication_date": None, "revision_date": None, "document_version_date": None},
+        date_review_status="complete",
+        date_review_reason=None,
+        date_review_unresolved=[],
+        recipe="soa-ai-daily-test",
+        run_id="soa-ai-new-report",
+        database_url=url,
+        schema=schema,
+    )
+    assert runtime._sync_source_portals(state, config, url)["status"] == "succeeded"
+    assert len(sent) == 2
+    assert all("Found 1 new AI material" in update["description_en"] for update in sent)
+    assert all("New AI report" in update["description_en"] for update in sent)
+
+
+@pytest.mark.parametrize("digest_first", [False, True], ids=["structure-first", "digest-first"])
+def test_soa_ai_same_day_digest_and_structure_share_one_public_update(
+    tmp_path, monkeypatch, digest_first
+):
+    from ai_actuarial.api.services.read import list_source_portals
+    from ai_actuarial.local_collection_target_worker import apply_source_portals
+    from ai_actuarial.storage import Storage
+
+    url, schema = _database(tmp_path, "soa-ai-combined-day")
+    _patch_hub(monkeypatch, url, schema)
+    monkeypatch.setattr(runtime, "_ACTIVE_STATE_PATH", None)
+    portal = SOURCE_PORTALS_BY_KEY["soa-artificial-intelligence"]
+    target_urls = {
+        name: uninitialized_postgres_url_for_path(tmp_path / f"combined-{name}.db")
+        for name in ("china", "overseas")
+    }
+    state = {}
+    config = {"targets": {name: {"host": name} for name in target_urls}}
+    sent = []
+    fail_overseas = False
+
+    def stream(_config, target, updates):
+        sent.append((target, copy.deepcopy(updates)))
+        if (
+            fail_overseas
+            and target == "overseas"
+            and updates
+            and "New digest report" in updates[0]["description_en"]
+            and "New structure resource" in updates[0]["description_en"]
+        ):
+            raise RuntimeError("temporary overseas failure")
+        return apply_source_portals(
+            {"target": target, "cards": runtime.source_portal_cards(), "updates": updates},
+            storage_factory=lambda: Storage(target_urls[target]),
+        )
+
+    monkeypatch.setattr(runtime, "_stream_source_portals", stream)
+    at = dt.datetime(2026, 11, 20, 10, tzinfo=runtime.TIME_ZONE)
+    base = b'<section class="nextsteps-block"><a href="/research/old">Old resource</a></section>'
+    changed = base.replace(
+        b"</section>", b'<a href="/research/new">New structure resource</a></section>'
+    )
+
+    def queue_capture(body, when):
+        observed = runtime._source_portal_observation(portal, portal.url, body, when)
+        artifact = tmp_path / f"structure-{when.day}.html"
+        artifact.write_bytes(body)
+        observed["artifact_path"] = str(artifact)
+        state.setdefault("pending_source_portal_captures", []).append(observed)
+
+    queue_capture(base, at)
+    assert runtime._sync_source_portals(state, config, url)["status"] == "succeeded"
+    material_url = "https://www.soa.org/research/new-ai-digest.pdf"
+    raw = b"new AI digest source bytes"
+    imported = hub.ingest_live_article(
+        canonical_url=material_url,
+        source_site="soa-ai-bulletin-focused",
+        source_page_url=portal.url,
+        title="New digest report",
+        raw_bytes=raw,
+        markdown="AI report evidence for daily summary.",
+        content_type="application/pdf",
+        data_root=tmp_path / "live-data",
+        database_url=url,
+        schema=schema,
+    )
+    package = {
+        "title": "New digest report",
+        "summary": "AI report",
+        "category": "AI",
+        "keywords": ["AI"],
+    }
+    hub.save_live_enrichment(
+        content_version_id=imported["content_version_id"],
+        markdown_text_variant_id=imported["markdown_text_variant_id"],
+        markdown_sha256=imported["markdown_sha256"],
+        primary_category="AI",
+        bilingual_metadata={"zh": package, "en": package},
+        categories=[{"key": "AI", "evidence": ["AI report evidence"]}],
+        date_facts={"publication_date": None, "revision_date": None, "document_version_date": None},
+        date_review_status="complete",
+        date_review_reason=None,
+        date_review_unresolved=[],
+        recipe="soa-ai-combined-test",
+        run_id="soa-ai-combined",
+        database_url=url,
+        schema=schema,
+    )
+    material = tmp_path / "daily.pdf"
+    material.write_bytes(raw)
+    later = at + dt.timedelta(days=1)
+    daily = {
+        "site_id": "soa-ai-bulletin-focused",
+        "run_id": hashlib.sha256(b"soa-ai-combined-day").hexdigest(),
+        "captured_at": (later + dt.timedelta(hours=1)).isoformat(),
+        "acquired_on": later.date().isoformat(),
+        "observations": [
+            {
+                "url": material_url,
+                "raw_sha256": hashlib.sha256(raw).hexdigest(),
+                "kind": "file",
+                "title": "New digest report",
+                "source_page_url": portal.url,
+                "request_scope": "a" * 64,
+                "artifact_path": str(material),
+            }
+        ],
+        "hub_results": [],
+        "limits": {
+            "request_count": 1,
+            "request_limit": 1,
+            "budget_exhausted": False,
+            "frontier_remaining": 0,
+            "source_error_count": 0,
+            "finished": True,
+        },
+    }
+
+    def publish_daily():
+        state.setdefault("source_portal_daily_runs", {})[daily["run_id"]] = copy.deepcopy(daily)
+        return runtime._sync_source_portals(state, config, url)
+
+    def publish_structure():
+        queue_capture(changed, later)
+        return runtime._sync_source_portals(state, config, url)
+
+    assert (publish_daily if digest_first else publish_structure)()["status"] == "succeeded"
+    fail_overseas = True
+    assert (publish_structure if digest_first else publish_daily)()["status"] == "partial"
+    assert len(state["pending_source_portal_publications"]) == 1
+    fail_overseas = False
+    assert runtime._sync_source_portals(state, config, url)["status"] == "succeeded"
+    assert (
+        sum(
+            target == "china"
+            and bool(updates)
+            and "New digest report" in updates[0]["description_en"]
+            and "New structure resource" in updates[0]["description_en"]
+            for target, updates in sent
+        )
+        == 1
+    )
+    expected_en = (
+        "Found 1 new AI material: “New digest report”.\n"
+        "The directory now includes “New structure resource”."
+    )
+    expected_zh = (
+        "新发现1份AI资料：「New digest report」。\n"
+        "这次多了「New structure resource」，可以从入口继续阅读。"
+    )
+    for target_url in target_urls.values():
+        card = next(
+            item
+            for item in list_source_portals(db_path=target_url)["portals"]
+            if item["portal_key"] == portal.portal_key
+        )
+        assert len(card["updates"]) == 1
+        assert card["updates"][0]["description_en"] == expected_en
+        assert card["updates"][0]["description_zh"] == expected_zh
+        assert "New digest report" in card["updates"][0]["description_en"]
+        assert "New structure resource" in card["updates"][0]["description_en"]
+        assert "新发现1份AI资料" in card["updates"][0]["description_zh"]
+        assert "New structure resource" in card["updates"][0]["description_zh"]
+    with psycopg2.connect(url) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(f'SET search_path TO "{schema}"')
+            cursor.execute(
+                "SELECT capture_kind, description_en FROM source_portal_captures "
+                "WHERE portal_key = %s AND acquired_on = %s ORDER BY capture_id",
+                (portal.portal_key, later.date()),
+            )
+            evidence = dict(cursor.fetchall())
+            assert set(evidence) == {"directory", "daily_collection"}
+            assert "New structure resource" in evidence["directory"]
+            assert "New digest report" not in evidence["directory"]
+            assert "New digest report" in evidence["daily_collection"]
+            assert "New structure resource" not in evidence["daily_collection"]
+    assert publish_structure()["status"] == "succeeded"
+    assert publish_daily()["status"] == "succeeded"
+    for target_url in target_urls.values():
+        card = next(
+            item
+            for item in list_source_portals(db_path=target_url)["portals"]
+            if item["portal_key"] == portal.portal_key
+        )
+        assert len(card["updates"]) == 1
+        assert "New digest report" in card["updates"][0]["description_en"]
+        assert "New structure resource" in card["updates"][0]["description_en"]
+    assert not state["pending_source_portal_captures"]
+    assert not state["pending_source_portal_publications"]
 
 
 def test_later_directory_retry_cannot_replace_a_daily_digest_and_bad_sha_blocks_retry(
@@ -1412,7 +1769,7 @@ def test_daily_deduplication_preserves_separate_portal_attribution(tmp_path, mon
         "soa-research-topics",
         "soa-artificial-intelligence",
     }
-    assert len(state["pending_source_portal_publications"]) == 2
+    assert set(state["pending_source_portal_publications"]) == {"soa-research-topics|2026-11-02"}
     with psycopg2.connect(url) as connection:
         with connection.cursor() as cursor:
             cursor.execute("SELECT portal_key, evidence_json FROM source_portal_captures")

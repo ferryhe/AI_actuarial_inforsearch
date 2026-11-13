@@ -3085,8 +3085,11 @@ def _site_label(site: str, language: str = "zh") -> str:
         "iaa": ("国际精算协会", "International Actuarial Association"),
         "iaba": ("国际黑人精算师协会", "International Association of Black Actuaries"),
         "soa": ("美国精算师学会", "Society of Actuaries"),
-        "soa-ai-topic-landing": ("美国精算师学会 AI 主题页", "SOA AI topic page"),
-        "soa-ai-bulletin-focused": ("美国精算师学会 AI 简报", "SOA AI bulletin"),
+        "soa-ai-topic-landing": ("美国精算师学会 AI 资源", "SOA AI Resources"),
+        "soa-ai-bulletin-focused": (
+            "美国精算师学会 AI 研究报告与简报",
+            "SOA AI Research Reports and Bulletin",
+        ),
         "cas": ("美国意外险精算师协会", "Casualty Actuarial Society"),
         "aaa": ("美国精算师学会 AAA", "American Academy of Actuaries"),
         "cia-ica": ("加拿大精算师协会", "Canadian Institute of Actuaries"),

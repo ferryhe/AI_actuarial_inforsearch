@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from typing import Any, Mapping
 
 from ai_actuarial.shared_runtime import get_categories_config_path, load_yaml, parse_int_clamped
-from ai_actuarial.source_portals import SOURCE_PORTAL_URLS, source_portal_cards
+from ai_actuarial.source_portals import SOA_AI_ENTRY_LINKS, SOURCE_PORTAL_URLS, source_portal_cards
 from ai_actuarial.storage import Storage
 
 PUBLIC_FILE_LIST_FIELDS: tuple[str, ...] = (
@@ -244,6 +244,9 @@ def list_source_portals(*, db_path: str) -> dict[str, list[dict[str, Any]]]:
     ]
     if not cards:
         cards = [{**card, "updates": []} for card in source_portal_cards()]
+    for card in cards:
+        if card["portal_key"] == "soa-artificial-intelligence":
+            card["entry_links"] = list(SOA_AI_ENTRY_LINKS)
     by_key = {card["portal_key"]: card for card in cards}
     for row in update_rows:
         card = by_key.get(str(row[0]))

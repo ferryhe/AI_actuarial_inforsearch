@@ -24,6 +24,14 @@ const portals = Array.from({ length: 21 }, (_, index) => {
     }],
   };
 });
+portals[0].portal_key = "soa-artificial-intelligence";
+portals[0].title_zh = "人工智能专题";
+portals[0].title_en = "Artificial Intelligence";
+portals[0].entry_links = [
+  { url: "https://www.soa.org/programs/ai-resources/", title_zh: "SOA 人工智能资源", title_en: "SOA AI Resources" },
+  { url: "https://www.soa.org/research/topics/artificial-intelligence-res-report-list/", title_zh: "SOA 人工智能研究报告目录", title_en: "SOA AI Research Reports" },
+  { url: "https://www.soa.org/resources/research-reports/2025/research-ai-bulletin/", title_zh: "SOA 人工智能公报", title_en: "SOA AI Bulletin" },
+];
 
 try {
   for (const language of ["en", "zh"]) {
@@ -53,6 +61,18 @@ try {
       }
       assert.equal(await page.getByText(language === "zh" ? "动态全文 1，详情页才会显示。" : "Full update prose for source 1, shown only on its detail page.").count(), 0);
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
+      await page.goto(`${base}/source-portals/soa-artificial-intelligence`);
+      await page.getByTestId("source-portal-detail").waitFor();
+      const entryLinks = page.getByTestId("source-portal-entry-link");
+      assert.equal(await entryLinks.count(), 3);
+      for (const [index, entry] of portals[0].entry_links.entries()) {
+        assert.equal(await entryLinks.nth(index).getAttribute("href"), entry.url);
+        assert.equal((await entryLinks.nth(index).innerText()).trim(), language === "zh" ? entry.title_zh : entry.title_en);
+      }
+      assert.equal(await page.getByText(language === "zh" ? portals[0].updates[0].description_zh : portals[0].updates[0].description_en).count(), 1);
+      assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
+      await page.goto(`${base}/source-portals`);
+      await page.getByTestId("source-portals-list").waitFor();
       if (viewport.width === 375) {
         const row = page.getByTestId("source-portal-row").nth(19);
         const cells = row.locator(":scope > [role='cell']");

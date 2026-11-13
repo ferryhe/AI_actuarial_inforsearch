@@ -262,7 +262,24 @@ def _portal_description(
     *,
     intro_zh: str,
     intro_en: str,
+    multi_labels: bool = False,
 ) -> tuple[str, str]:
+    if multi_labels:
+
+        def expand(entries: dict[str, str]) -> dict[tuple[str, str], str]:
+            expanded = {}
+            for url, value in entries.items():
+                try:
+                    labels = json.loads(value)
+                except (TypeError, ValueError):
+                    labels = value
+                for label in labels if isinstance(labels, list) else [value]:
+                    expanded[(url, label)] = label
+            return expanded
+
+        previous = expand(previous) if previous is not None else None
+        current = expand(current)
+
     def title_example(title: str) -> str:
         title = " ".join(title.split())
         return title if len(title) <= 120 else title[:119].rstrip() + "…"
@@ -385,7 +402,11 @@ def content_hub_record_source_portal_capture(
         raise ContentHubError("Source portal acquisition date must match America/New_York time")
     if not isinstance(entries, list) or len(entries) > 2000:
         raise ContentHubError("Source portal entry set is outside its bounded contract")
+    compare_ai_resources = (
+        portal_key == "soa-artificial-intelligence" and scope_key == "ai-resources-v1"
+    )
     normalized: dict[str, str] = {}
+    resource_labels: dict[str, set[str]] = {}
     for item in entries:
         if not isinstance(item, dict):
             raise ContentHubError("Source portal entries must be objects")
@@ -401,10 +422,22 @@ def content_hub_record_source_portal_capture(
             or not isinstance(title, str)
             or not title.strip()
             or len(title) > 500
-            or url in normalized
+            or (
+                url in normalized
+                if not compare_ai_resources
+                else title.strip() in resource_labels.get(url, set())
+            )
         ):
             raise ContentHubError("Source portal entry is malformed or duplicated")
-        normalized[url] = title.strip()
+        if compare_ai_resources:
+            resource_labels.setdefault(url, set()).add(title.strip())
+        else:
+            normalized[url] = title.strip()
+    if compare_ai_resources:
+        normalized = {
+            url: json.dumps(sorted(labels), ensure_ascii=False, separators=(",", ":"))
+            for url, labels in resource_labels.items()
+        }
     if complete and not normalized:
         raise ContentHubError("A complete source portal capture must include observed entries")
 
@@ -419,8 +452,10 @@ def content_hub_record_source_portal_capture(
             )
             cursor.execute(
                 "SELECT EXISTS (SELECT 1 FROM source_portal_captures WHERE portal_key = %s "
-                "AND acquired_on = %s AND capture_kind = 'daily_collection')",
-                (portal_key, acquired_on),
+                "AND acquired_on = %s AND capture_kind = 'daily_collection' "
+                "AND (NOT %s OR (NULLIF(btrim(description_zh), '') IS NOT NULL "
+                "AND NULLIF(btrim(description_en), '') IS NOT NULL)))",
+                (portal_key, acquired_on, compare_ai_resources),
             )
             superseded_by_daily = bool(cursor.fetchone()[0])
             cursor.execute(
@@ -464,9 +499,9 @@ def content_hub_record_source_portal_capture(
                 "SELECT c.capture_id FROM source_portal_captures c "
                 "WHERE c.portal_key = %s AND c.scope_key = %s AND c.complete = TRUE "
                 "AND c.capture_kind = 'directory' "
-                "AND c.acquired_on < %s "
+                f"AND c.{'captured_at' if compare_ai_resources else 'acquired_on'} < %s "
                 "ORDER BY c.acquired_on DESC, c.captured_at DESC, c.capture_id DESC LIMIT 1",
-                (portal_key, scope_key, acquired_on),
+                (portal_key, scope_key, captured_at if compare_ai_resources else acquired_on),
             )
             prior_row = cursor.fetchone()
             if complete and prior_row:
@@ -476,12 +511,17 @@ def content_hub_record_source_portal_capture(
                 )
                 previous = {str(row[0]): str(row[1]) for row in cursor.fetchall()}
             description_zh = description_en = None
-            if complete and normalized:
+            if (
+                complete
+                and normalized
+                and not (compare_ai_resources and (previous is None or previous == normalized))
+            ):
                 description_zh, description_en = _portal_description(
                     previous,
                     normalized,
                     intro_zh=intro_zh.strip(),
                     intro_en=intro_en.strip(),
+                    multi_labels=compare_ai_resources,
                 )
             cursor.execute(
                 "INSERT INTO source_portal_captures "
@@ -521,6 +561,94 @@ def content_hub_record_source_portal_capture(
     except Exception:
         connection.rollback()
         raise
+    finally:
+        connection.close()
+
+
+def content_hub_project_source_portal_update(
+    *,
+    portal_key: str,
+    acquired_on: date | str,
+    database_url: DatabaseConfig | str | None = None,
+    schema: str = HUB_SCHEMA,
+) -> dict[str, Any] | None:
+    """Combine independent AI Resources and daily evidence for one public card/day row."""
+    schema = _validate_schema(schema)
+    if portal_key != "soa-artificial-intelligence":
+        raise ContentHubError("Combined source portal projection is limited to AI Resources")
+    if isinstance(acquired_on, str):
+        try:
+            acquired_on = date.fromisoformat(acquired_on)
+        except ValueError as exc:
+            raise ContentHubError("Source portal projection date is malformed") from exc
+    if not isinstance(acquired_on, date) or isinstance(acquired_on, datetime):
+        raise ContentHubError("Source portal projection date is malformed")
+    connection = _connect(database_url)
+    try:
+        with connection.cursor() as cursor:
+            _require_current_schema(cursor, schema)
+            _set_search_path(cursor, schema)
+            cursor.execute(
+                "SELECT capture_kind, capture_id, captured_at, "
+                "description_zh, description_en FROM source_portal_captures "
+                "WHERE portal_key = %s AND acquired_on = %s "
+                "AND (capture_kind = 'daily_collection' "
+                "OR (capture_kind = 'directory' AND scope_key = 'ai-resources-v1')) "
+                "AND NULLIF(btrim(description_zh), '') IS NOT NULL "
+                "AND NULLIF(btrim(description_en), '') IS NOT NULL "
+                "ORDER BY captured_at, capture_id",
+                (portal_key, acquired_on),
+            )
+            rows = cursor.fetchall()
+        if not rows:
+            return None
+        daily = next((row for row in reversed(rows) if row[0] == "daily_collection"), None)
+        ordered = [daily] if daily else []
+        seen: set[tuple[str, str]] = set()
+        directory = []
+        for row in rows:
+            description = (row[3], row[4])
+            if row[0] == "directory" and description not in seen:
+                directory.append(row)
+                seen.add(description)
+
+        def prose(parts: list[tuple[Any, ...]]) -> tuple[str, str]:
+            return "\n".join(row[3] for row in parts), "\n".join(row[4] for row in parts)
+
+        for row in directory:
+            candidate = prose([*ordered, row])
+            if any(len(value) > 2000 for value in candidate):
+                break
+            ordered.append(row)
+        description_zh, description_en = prose(ordered)
+        if len(ordered) < len(directory) + bool(daily):
+            suffix_zh, suffix_en = (
+                "更多目录变化见来源。",
+                "More directory changes are in the source.",
+            )
+            while len(ordered) > bool(daily) and any(
+                len(value) > 2000
+                for value in (
+                    prose(ordered)[0] + "\n" + suffix_zh,
+                    prose(ordered)[1] + "\n" + suffix_en,
+                )
+            ):
+                ordered.pop()
+            description_zh, description_en = prose(ordered)
+            description_zh = "\n".join(filter(None, (description_zh, suffix_zh)))
+            description_en = "\n".join(filter(None, (description_en, suffix_en)))
+        if len(description_zh) > 2000 or len(description_en) > 2000:
+            raise ContentHubError("AI Resources public projection exceeds the target prose limit")
+        return {
+            "capture_id": max(row[1] for row in rows),
+            "captured_at": max(row[2] for row in rows).isoformat(),
+            "acquired_on": acquired_on.isoformat(),
+            "capture_kind": "daily_collection" if daily else "directory",
+            "description_zh": description_zh,
+            "description_en": description_en,
+        }
+    except psycopg2.Error as exc:
+        raise ContentHubError("Content hub source portal projection failed") from exc
     finally:
         connection.close()
 

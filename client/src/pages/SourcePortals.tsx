@@ -20,6 +20,7 @@ interface SourcePortal {
   institution_en: string;
   overview_zh: string;
   overview_en: string;
+  entry_links?: { url: string; title_zh: string; title_en: string }[];
   updates: PortalUpdate[];
 }
 
@@ -290,17 +291,30 @@ export function SourcePortalDetail({ params }: { params?: { portalKey?: string }
                   {localized(lang, portal.institution_zh, portal.institution_en)}
                 </p>
               </div>
-              <a
-                href={portal.url}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex min-h-[44px] max-w-full items-center gap-2 self-start break-all rounded-lg border border-border px-3 py-2 text-sm text-primary hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                aria-label={`${t("source_portals.open_source")} ${localized(lang, portal.title_zh, portal.title_en)}`}
-                data-testid="source-portal-original-link"
-              >
-                <ExternalLink className="h-4 w-4 shrink-0" aria-hidden="true" />
-                <span className="break-all">{portal.url}</span>
-              </a>
+              {portal.entry_links?.length ? (
+                <div className="flex min-w-0 flex-col gap-2">
+                  {portal.entry_links.map((entry) => (
+                    <a key={entry.url} href={entry.url} target="_blank" rel="noreferrer"
+                      className="inline-flex min-h-[44px] max-w-full items-center gap-2 self-start rounded-lg border border-border px-3 py-2 text-sm text-primary hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                      data-testid="source-portal-entry-link">
+                      <ExternalLink className="h-4 w-4 shrink-0" aria-hidden="true" />
+                      <span className="break-words">{localized(lang, entry.title_zh, entry.title_en)}</span>
+                    </a>
+                  ))}
+                </div>
+              ) : (
+                <a
+                  href={portal.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex min-h-[44px] max-w-full items-center gap-2 self-start break-all rounded-lg border border-border px-3 py-2 text-sm text-primary hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                  aria-label={`${t("source_portals.open_source")} ${localized(lang, portal.title_zh, portal.title_en)}`}
+                  data-testid="source-portal-original-link"
+                >
+                  <ExternalLink className="h-4 w-4 shrink-0" aria-hidden="true" />
+                  <span className="break-all">{portal.url}</span>
+                </a>
+              )}
             </div>
             <p className="mt-4 break-words text-sm leading-relaxed text-muted-foreground">
               {localized(lang, portal.overview_zh, portal.overview_en)}

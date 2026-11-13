@@ -181,7 +181,7 @@ def daily_description(
     previous: list[dict[str, Any]],
     *,
     ai_materials: set[tuple[str, str]],
-) -> tuple[str, str]:
+) -> tuple[str | None, str | None]:
     previous_urls: set[str] = set()
 
     def run_sort_key(run: dict[str, Any]) -> tuple[dt.datetime, str]:
@@ -239,6 +239,8 @@ def daily_description(
         and status != "existing"
     }
     titles = sorted(new_files.values())
+    if not new_files and evidence[0]["portal_key"] == "soa-artificial-intelligence":
+        return None, None
     if new_files:
         zh = f"新发现{len(new_files)}份AI资料"
         material_word = "material" if len(new_files) == 1 else "materials"

@@ -3,12 +3,14 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import json
+from functools import partial
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import psycopg2
 import pytest
 
+import ai_actuarial.content_hub as hub
 import ai_actuarial.local_collection_runtime as runtime
 from ai_actuarial.content_hub import (
     ContentHubError,
@@ -64,6 +66,1236 @@ def test_catalog_urls_are_exact_runtime_site_seeds_and_aliases() -> None:
         "soa-ai-topic-landing"
     )
     assert "https://www.actuaries.org.uk/insight/" in SOURCE_PORTAL_URLS
+
+
+def test_soa_ai_card_entries_and_fixed_collection_sources() -> None:
+    from ai_actuarial.source_portals import SOA_AI_ENTRY_LINKS
+
+    portal = SOURCE_PORTALS_BY_KEY["soa-artificial-intelligence"]
+    assert [entry["url"] for entry in SOA_AI_ENTRY_LINKS] == [
+        "https://www.soa.org/programs/ai-resources/",
+        "https://www.soa.org/research/topics/artificial-intelligence-res-report-list/",
+        "https://www.soa.org/resources/research-reports/2025/research-ai-bulletin/",
+    ]
+    assert all(entry["title_zh"] and entry["title_en"] for entry in SOA_AI_ENTRY_LINKS)
+    assert portal.capture_urls == (SOA_AI_ENTRY_LINKS[0]["url"],)
+    assert runtime.SITES[portal.extraction_source_id].seeds == portal.capture_urls
+    assert SOA_AI_ENTRY_LINKS[1]["url"] in runtime.SITES["soa-ai-bulletin-focused"].seeds
+    assert (
+        "https://www.soa.org/research/topics/artificial-intelligence-topic-landing/"
+        in SOURCE_PORTAL_URLS
+    )
+    assert len(runtime.SITES) == 32
+
+
+def test_ai_resources_capture_uses_live_section_shape_and_partial_safety() -> None:
+    portal = SOURCE_PORTALS_BY_KEY["soa-artificial-intelligence"]
+    at = dt.datetime(2026, 11, 13, 12, tzinfo=ZoneInfo("America/New_York"))
+    body = (
+        '<nav><a href="/research/unrelated">Navigation</a></nav>'
+        '<main><a href="/research/unrelated-main-link">Unrelated main link</a></main>'
+        '<section class="nextsteps-block soa-redesign"><h2>Explore AI Resources</h2>'
+        '<a class="nextsteps-block-item" href="/research/topics/artificial-intelligence-res-report-list/">'
+        "<h4>AI Research Reports</h4></a>"
+        '<a class="nextsteps-block-item" href="/prof-dev/pdopportunities/">'
+        "<h4>AI Webcasts</h4></a>"
+        '<a class="nextsteps-block-item" href="https://getpluggedin.libsyn.com/">'
+        "<h4>AI Insights Podcast</h4></a></section>"
+    ).encode()
+    observed = runtime._source_portal_observation(portal, portal.url, body, at)
+    assert observed["complete"] is True
+    assert observed["entries"] == [
+        {"url": "https://getpluggedin.libsyn.com/", "title": "AI Insights Podcast"},
+        {"url": "https://www.soa.org/prof-dev/pdopportunities/", "title": "AI Webcasts"},
+        {
+            "url": "https://www.soa.org/research/topics/artificial-intelligence-res-report-list/",
+            "title": "AI Research Reports",
+        },
+    ]
+    assert (
+        runtime._source_portal_observation(portal, portal.url, body[:-10], at)["complete"] is False
+    )
+    unrelated = b'<main><a href="/research/unrelated-main-link">Unrelated main link</a></main>'
+    unrelated_observation = runtime._source_portal_observation(portal, portal.url, unrelated, at)
+    assert unrelated_observation["entries"] == []
+    assert unrelated_observation["complete"] is False
+
+
+def test_soa_report_directory_preserves_year_month_and_one_document_identity() -> None:
+    from ai_actuarial.local_collection_runtime import _SoaAiReportsParser
+
+    parser = _SoaAiReportsParser()
+    parser.feed(
+        '<nav><ul><li><a href="/about/nav">Navigation</a></li></ul></nav>'
+        '<main><div class="card__text"><h3>2026</h3><ul class="no_bullet">'
+        '<li><strong><a href="/resources/research-reports/soa-member-ai-survey/">'
+        "SOA Member AI Survey: Spring 2026</a></strong><br><strong>October</strong></li>"
+        '<li><a href="/resources/research-reports/soa-member-ai-survey/">'
+        "SOA Member AI Survey: Spring 2026</a><br><strong>October</strong></li>"
+        '<li><a href="/resources/research-reports/2025/research-ai-bulletin/">'
+        "<b>Actuarial Intelligence Bulletin</b></a><br><b>September</b></li>"
+        '</ul><ul><li><a href="/about/other">Other list</a></li></ul></div></main>'
+        '<footer><ul><li><a href="/about/footer">Footer</a></li></ul></footer>'
+    )
+    assert parser.report_links == [
+        (
+            "/resources/research-reports/soa-member-ai-survey/",
+            "SOA Member AI Survey: Spring 2026",
+            "2026-10",
+        ),
+        (
+            "/resources/research-reports/2025/research-ai-bulletin/",
+            "Actuarial Intelligence Bulletin",
+            "2026-09",
+        ),
+    ]
+
+
+def test_report_from_directory_and_bulletin_is_collected_once_with_official_period(
+    tmp_path: Path, monkeypatch
+) -> None:
+    site = runtime.SITES["soa-ai-bulletin-focused"]
+    directory, bulletin = site.seeds
+    report = "https://www.soa.org/resources/research-reports/soa-member-ai-survey/"
+    pdf = "https://www.soa.org/globalassets/assets/files/resources/research-report/ai-survey.pdf"
+    pages = {
+        directory: (
+            '<main><div class="card__text"><h3>2026</h3><ul class="no_bullet">'
+            f'<li><strong><a href="{report}">SOA Member AI Survey: Spring 2026</a></strong>'
+            "<br><strong>October</strong></li></ul></div></main>"
+        ).encode(),
+        bulletin: f'<main><a href="{report}">SOA Member AI Survey: Spring 2026</a><a href="{pdf}">Survey PDF</a></main>'.encode(),
+        report: f'<article><h1>SOA Member AI Survey: Spring 2026</h1><p>Published on: October 29, 2026</p><a href="{pdf}">Survey PDF</a></article>'.encode(),
+    }
+
+    class Crawler:
+        site_attempts = 0
+        site_budget = 4
+        caa_cookie = None
+        algolia_key = None
+        requested: list[str] = []
+
+        def begin_site(self, budget: int) -> None:
+            self.site_budget = budget
+
+        def _request(self, url: str, **_kwargs):
+            self.site_attempts += 1
+            self.requested.append(url)
+            return pages[url], {"content-type": "text/html"}, url
+
+        def _download_file(self, url: str, root: Path, **_kwargs):
+            self.site_attempts += 1
+            self.requested.append(url)
+            root.mkdir(parents=True, exist_ok=True)
+            raw = b"%PDF-1.4\nNo embedded publication date.\n%%EOF"
+            path = root / "survey.pdf"
+            path.write_bytes(raw)
+            return (
+                path,
+                {"content-type": "application/pdf"},
+                url,
+                hashlib.sha256(raw).hexdigest(),
+                len(raw),
+            )
+
+    monkeypatch.setattr(runtime, "_ACTIVE_STATE_PATH", tmp_path / "runtime-state.json")
+    monkeypatch.setattr(
+        runtime.WebPageCollector,
+        "_extract_text",
+        lambda *_args: "Published on: October 29, 2026. " * 8,
+    )
+    state = {"articles": {}}
+    crawler = Crawler()
+    result = runtime._capture(site, state, crawler, tmp_path / "data", {}, request_limit=4)
+    assert result["errors"] == []
+    assert crawler.requested == [directory, bulletin, report, pdf]
+    assert len(result["downloads"]) == 2
+    assert result["downloads"][0]["discovery_metadata"]["date_hint"] == "2026-10"
+    assert result["downloads"][0]["discovery_metadata"]["date_hint_source_page_url"] == directory
+    assert b"October 29, 2026" in Path(result["downloads"][0]["artifact_path"]).read_bytes()
+    assert result["downloads"][1]["url"] == pdf
+    assert result["downloads"][1]["discovery_metadata"]["date_hint"] == "2026-10"
+    assert result["downloads"][1]["discovery_metadata"]["date_hint_source_page_url"] == directory
+
+
+def test_bulletin_summary_period_does_not_pass_to_undated_issue_pdf_links(
+    tmp_path: Path, monkeypatch
+) -> None:
+    site = runtime.SITES["soa-ai-bulletin-focused"]
+    directory, bulletin = site.seeds
+    issues = (
+        (
+            "https://www.soa.org/globalassets/assets/files/resources/research-report/2026/2026-07-ait170-aib.pdf",
+            "c666d7073e8ba491d384b1e6451f7ea76fa712f27ec7f5e17917ec62748643f7",
+            3616,
+            "2026-07",
+        ),
+        (
+            "https://www.soa.org/globalassets/assets/files/resources/research-report/2026/2026-03-ait170-ai-bulletin.pdf",
+            "f1509e665eb5ed58c6254379f5fa71d166b766785985ce1e38e4ad3722163afd",
+            1965,
+            "2026-03",
+        ),
+    )
+    direct = "https://www.soa.org/resources/research-reports/2026/direct-ai-report/"
+    directory_body = (
+        '<main><h3>2026</h3><ul class="no_bullet">'
+        f'<li><strong><a href="{bulletin}">Actuarial Intelligence Bulletin</a></strong>'
+        "<br><strong>September</strong></li>"
+        f'<li><strong><a href="{direct}">Direct AI report</a></strong>'
+        "<br><strong>October</strong></li></ul></main>"
+    ).encode()
+    bulletin_body = (
+        "<main>"
+        + "".join(f'<a href="{url}">Actuarial Intelligence Bulletin</a>' for url, *_ in issues)
+        + "</main>"
+    ).encode()
+
+    class Crawler:
+        site_attempts = 0
+        site_budget = 2
+        caa_cookie = None
+        algolia_key = None
+
+        def begin_site(self, budget: int) -> None:
+            self.site_budget = budget
+
+        def _request(self, url: str, **_kwargs):
+            self.site_attempts += 1
+            return (
+                (directory_body if url == directory else bulletin_body),
+                {"content-type": "text/html"},
+                url,
+            )
+
+        def _download_file(self, *_args, **_kwargs):
+            pytest.fail("the bounded regression must not download live issue PDFs")
+
+    articles = {
+        runtime._file_key(url, sha): {
+            "url": url,
+            "raw_sha256": sha,
+            "stage": "complete",
+            "content_version_id": version,
+            "publication_date": published,
+            "discovery_metadata": {},
+            "discovery_sites": [site.site_id],
+        }
+        for url, sha, version, published in issues
+    }
+    state = {"articles": articles}
+    site_state = {}
+    monkeypatch.setattr(runtime, "_ACTIVE_STATE_PATH", tmp_path / "state.json")
+    result = runtime._capture(
+        site, state, Crawler(), tmp_path / "data", site_state, request_limit=2, record_portals=False
+    )
+    assert result["errors"] == []
+    pending = {item["url"]: item for item in site_state["queue"]}
+    assert pending[bulletin]["discovery_metadata"]["date_hint"] == "2026-09"
+    assert pending[direct]["discovery_metadata"]["date_hint"] == "2026-10"
+    for url, sha, version, published in issues:
+        assert not (pending[url].get("discovery_metadata") or {}).get("date_hint")
+        prior = state["articles"][runtime._file_key(url, sha)]
+        assert prior["content_version_id"] == version
+        assert prior["publication_date"] == published
+        assert not prior["discovery_metadata"]
+        assert "source_provenance_pending" not in prior
+
+    class IssuePeriodParser(runtime._SoaAiReportsParser):
+        def feed(self, data: str) -> None:
+            super().feed(data)
+            self.report_links = [
+                (issues[0][0], "Actuarial Intelligence Bulletin", "2026-07"),
+                (issues[1][0], "Actuarial Intelligence Bulletin", ""),
+            ]
+
+    monkeypatch.setattr(runtime, "_LinkParser", IssuePeriodParser)
+    period_site_state = {}
+    runtime._capture(
+        site,
+        state,
+        Crawler(),
+        tmp_path / "data-with-issue-period",
+        period_site_state,
+        request_limit=2,
+        record_portals=False,
+    )
+    period_pending = {item["url"]: item for item in period_site_state["queue"]}
+    assert period_pending[issues[0][0]]["discovery_metadata"] == {
+        "date_hint": "2026-07",
+        "date_hint_source_page_url": bulletin,
+    }
+    assert not (period_pending[issues[1][0]].get("discovery_metadata") or {}).get("date_hint")
+
+
+@pytest.mark.parametrize(
+    ("issue_path", "published"),
+    [
+        ("2026-07-ait170-aib.pdf", "2026-07"),
+        ("2026-03-ait170-ai-bulletin.pdf", "2026-03"),
+    ],
+)
+def test_completed_bulletin_issue_does_not_ingest_summary_period_as_provenance(
+    tmp_path: Path, monkeypatch, issue_path: str, published: str
+) -> None:
+    hub_url, schema = _database_schema(tmp_path, f"bulletin-{published}")
+    apply_content_hub_schema(hub_url, schema=schema)
+    site = runtime.SITES["soa-ai-bulletin-focused"]
+    directory, bulletin = site.seeds
+    issue_url = (
+        "https://www.soa.org/globalassets/assets/files/resources/research-report/2026/" + issue_path
+    )
+    raw = f"%PDF-1.4\n{published} official issue evidence\n%%EOF".encode()
+    digest = hashlib.sha256(raw).hexdigest()
+    config = {
+        "data_root": str(tmp_path / "data"),
+        "state_root": str(tmp_path / "state"),
+        "targets": {},
+    }
+    Path(config["data_root"]).mkdir()
+    Path(config["state_root"]).mkdir()
+    first = hub.ingest_live_article(
+        canonical_url=issue_url,
+        source_site=site.site_id,
+        source_page_url=bulletin,
+        title="Actuarial Intelligence Bulletin",
+        raw_bytes=raw,
+        markdown=f"Official {published} issue evidence.",
+        content_type="application/pdf",
+        data_root=tmp_path / "data",
+        database_url=hub_url,
+        schema=schema,
+    )
+    package = {
+        "title": "Actuarial Intelligence Bulletin",
+        "summary": f"Official {published} issue",
+        "category": "AI",
+        "keywords": ["AI"],
+    }
+    hub.save_live_enrichment(
+        content_version_id=first["content_version_id"],
+        markdown_text_variant_id=first["markdown_text_variant_id"],
+        markdown_sha256=first["markdown_sha256"],
+        primary_category="AI",
+        bilingual_metadata={"zh": package, "en": package},
+        categories=[{"key": "AI", "evidence": [f"Official {published} issue evidence"]}],
+        date_facts={
+            "publication_date": {
+                "value": published,
+                "precision": "month",
+                "semantic": "publication",
+                "evidence": f"Official {published} issue evidence",
+                "location": "PDF first page",
+            },
+            "revision_date": None,
+            "document_version_date": None,
+        },
+        date_review_status="complete",
+        date_review_reason=None,
+        date_review_unresolved=[],
+        recipe="bulletin-period-boundary-test",
+        run_id=f"bulletin-{published}",
+        database_url=hub_url,
+        schema=schema,
+    )
+    original = hub.content_hub_read_version(issue_url, digest, hub_url, schema=schema)
+    prior = {
+        "site_id": site.site_id,
+        "url": issue_url,
+        "source_page_url": bulletin,
+        "title": "Actuarial Intelligence Bulletin",
+        "raw_sha256": digest,
+        "artifact_path": str(runtime._persist_cas(tmp_path / "data", raw, digest)),
+        "content_type": "application/pdf",
+        "detected_kind": "pdf",
+        "stage": "complete",
+        "content_version_id": first["content_version_id"],
+        "discovery_metadata": {},
+        "discovery_sites": [site.site_id],
+    }
+    directory_body = (
+        '<main><h3>2026</h3><ul class="no_bullet"><li><strong>'
+        f'<a href="{bulletin}">Actuarial Intelligence Bulletin</a></strong>'
+        "<br><strong>September</strong></li></ul></main>"
+    ).encode()
+    bulletin_body = (
+        f'<main><a href="{issue_url}">Actuarial Intelligence Bulletin</a></main>'.encode()
+    )
+
+    class Crawler:
+        site_attempts = 0
+        site_budget = 3
+        caa_cookie = None
+        algolia_key = None
+
+        def begin_site(self, budget: int) -> None:
+            self.site_budget = budget
+
+        def _request(self, url: str, **_kwargs):
+            self.site_attempts += 1
+            return (
+                (directory_body if url == directory else bulletin_body),
+                {"content-type": "text/html"},
+                url,
+            )
+
+        def _download_file(self, url: str, root: Path, **_kwargs):
+            self.site_attempts += 1
+            root.mkdir(parents=True, exist_ok=True)
+            path = root / issue_path
+            path.write_bytes(raw)
+            return path, {"content-type": "application/pdf"}, url, digest, len(raw)
+
+    state = {
+        "articles": {runtime._file_key(issue_url, digest): prior},
+        "sites": {site.site_id: {}},
+        "target_acks": {},
+    }
+    monkeypatch.setattr(runtime, "_ACTIVE_STATE_PATH", tmp_path / "state" / "runtime.json")
+    monkeypatch.setattr(runtime, "_new_crawler", lambda _root: Crawler())
+    monkeypatch.setattr(
+        runtime, "ingest_live_article", partial(hub.ingest_live_article, schema=schema)
+    )
+    monkeypatch.setattr(
+        runtime,
+        "_process_articles",
+        lambda *_args, **_kwargs: {
+            "candidate_count": 0,
+            "pending_article_count": 0,
+            "new_versions": 0,
+            "duplicates": 0,
+            "enriched": 0,
+            "ai_candidates": 0,
+            "article_errors": [],
+            "target": {
+                name: {"acknowledged": 0, "pending": 0, "failed": 0, "ready_status": "succeeded"}
+                for name in ("china", "overseas")
+            },
+        },
+    )
+    monkeypatch.setattr(
+        runtime,
+        "_sync_source_portals",
+        lambda *_args: {"status": "succeeded", "targets": {}, "digests": [], "errors": []},
+    )
+    runtime._run_site(site.site_id, "2026-11-13", config, state, hub_url, request_limit=3)
+    assert len(state["articles"]) == 1
+    assert prior["stage"] == "complete"
+    assert prior["content_version_id"] == first["content_version_id"]
+    assert not prior["discovery_metadata"]
+    assert "source_provenance_pending" not in prior
+    current = hub.content_hub_read_version(issue_url, digest, hub_url, schema=schema)
+    assert current["content_version_id"] == original["content_version_id"]
+    assert current["annotation"] == original["annotation"]
+    with psycopg2.connect(hub_url) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(f'SET search_path TO "{schema}"')
+            cursor.execute(
+                "SELECT source_metadata_json::jsonb->>'date_hint' FROM source_record_map "
+                "WHERE content_version_id = %s",
+                (first["content_version_id"],),
+            )
+            assert cursor.fetchall() == [(None,)]
+
+
+def test_report_directory_period_reaches_hub_capture_metadata(monkeypatch, tmp_path: Path) -> None:
+    captured = {}
+    monkeypatch.setattr(runtime, "ingest_live_article", lambda **kwargs: captured.update(kwargs))
+    runtime._ingest_live_capture(
+        {
+            "url": "https://www.soa.org/resources/research-reports/soa-member-ai-survey/",
+            "site_id": "soa-ai-bulletin-focused",
+            "source_page_url": "https://www.soa.org/research/topics/artificial-intelligence-res-report-list/",
+            "title": "SOA Member AI Survey: Spring 2026",
+            "content_type": "text/html",
+            "discovery_metadata": {"date_hint": "2026-10"},
+        },
+        {"data_root": str(tmp_path)},
+        object(),
+        b"report",
+        None,
+    )
+    assert captured["metadata"]["date_hint"] == "2026-10"
+
+
+def test_report_without_embedded_date_keeps_directory_period_in_hub(tmp_path: Path) -> None:
+    hub_url, _schema = _database_schema(tmp_path, "soa-report-period")
+    apply_content_hub_schema(hub_url)
+    raw = b"%PDF-1.4\nNo publication date in this file.\n%%EOF"
+    runtime._ingest_live_capture(
+        {
+            "url": "https://www.soa.org/resources/research-reports/no-date-report.pdf",
+            "site_id": "soa-ai-bulletin-focused",
+            "source_page_url": "https://www.soa.org/research/topics/artificial-intelligence-res-report-list/",
+            "title": "Undated report",
+            "content_type": "application/pdf",
+            "discovery_metadata": {"date_hint": "2026-10"},
+        },
+        {"data_root": str(tmp_path)},
+        hub_url,
+        raw,
+        None,
+    )
+    connection = psycopg2.connect(hub_url)
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT source_metadata_json::jsonb->>'date_hint' FROM content_hub.source_record_map "
+                "WHERE source_table = 'files' AND source_metadata_json::jsonb->>'title' = 'Undated report'"
+            )
+            assert cursor.fetchone()[0] == "2026-10"
+    finally:
+        connection.close()
+
+
+@pytest.mark.parametrize("kind", ["pdf", "html"])
+@pytest.mark.parametrize("existing_hint", [None, "2026-09"])
+def test_later_directory_period_reaches_completed_duplicate_without_reprocessing(
+    tmp_path: Path, monkeypatch, kind: str, existing_hint: str | None
+) -> None:
+    hub_url, schema = _database_schema(tmp_path, f"late-period-{kind}-{existing_hint}")
+    apply_content_hub_schema(hub_url, schema=schema)
+    for name in (
+        "ingest_live_article",
+        "content_hub_record_source_portal_daily",
+        "content_hub_record_source_portal_capture",
+        "content_hub_read_source_portal_capture",
+    ):
+        monkeypatch.setattr(runtime, name, partial(getattr(hub, name), schema=schema))
+    site = runtime.SITES["soa-ai-bulletin-focused"]
+    directory, bulletin = site.seeds
+    report_url = (
+        "https://www.soa.org/globalassets/assets/files/resources/research-report/late-ai-study.pdf"
+        if kind == "pdf"
+        else "https://www.soa.org/resources/research-reports/late-ai-study/"
+    )
+    directory_link = (
+        "https://www.soa.org/resources/research-reports/late-ai-study/"
+        if kind == "pdf"
+        else report_url
+    )
+    raw = (
+        b"%PDF-1.4\nPublished January 15, 2026.\n%%EOF"
+        if kind == "pdf"
+        else b"<article><h1>Late AI Study</h1><p>Published January 15, 2026. Actuarial research findings and analysis with substantial source text for the collector.</p></article>"
+    )
+    markdown = "Published January 15, 2026. Actuarial AI research findings and analysis."
+    config = {
+        "data_root": str(tmp_path / "data"),
+        "state_root": str(tmp_path / "state"),
+        "targets": {name: {"host": name} for name in ("china", "overseas")},
+    }
+    for path in (tmp_path / "data", tmp_path / "state"):
+        path.mkdir()
+    digest = hashlib.sha256(raw).hexdigest()
+    first_site = "soa" if kind == "html" else site.site_id
+    prior = {
+        "site_id": first_site,
+        "url": report_url,
+        "source_page_url": (
+            SOURCE_PORTALS_BY_KEY["soa-research-topics"].url if kind == "html" else bulletin
+        ),
+        "title": "Late AI Study",
+        "raw_sha256": digest,
+        "artifact_path": str(runtime._persist_cas(tmp_path / "data", raw, digest)),
+        "content_type": "application/pdf" if kind == "pdf" else "text/html",
+        "detected_kind": kind,
+        "stage": "complete",
+        "discovery_sites": [first_site],
+        "discovery_metadata": {"date_hint": existing_hint} if existing_hint else {},
+    }
+    first = runtime._ingest_live_capture(prior, config, hub_url, raw, markdown)
+    prior["content_version_id"] = first["content_version_id"]
+    date_facts = {
+        "publication_date": {
+            "value": "2026-01-15",
+            "precision": "day",
+            "semantic": "publication",
+            "evidence": "Published January 15, 2026",
+            "location": "report",
+        },
+        "revision_date": None,
+        "document_version_date": None,
+    }
+    package = {
+        "title": "Late AI Study",
+        "summary": "AI research study",
+        "category": "AI",
+        "keywords": ["AI"],
+    }
+    hub.save_live_enrichment(
+        content_version_id=first["content_version_id"],
+        markdown_text_variant_id=first["markdown_text_variant_id"],
+        markdown_sha256=first["markdown_sha256"],
+        primary_category="AI",
+        bilingual_metadata={"zh": package, "en": package},
+        categories=[{"key": "AI", "evidence": ["Actuarial AI research findings"]}],
+        date_facts=date_facts,
+        date_review_status="complete",
+        date_review_reason=None,
+        date_review_unresolved=[],
+        recipe="late-directory-period-test",
+        run_id=f"late-period-{kind}-{existing_hint}",
+        database_url=hub_url,
+        schema=schema,
+    )
+    original = hub.content_hub_read_version(report_url, digest, hub_url, schema=schema)
+    directory_body = (
+        '<main><div class="card__text"><h3>2026</h3><ul class="no_bullet">'
+        f'<li><strong><a href="{directory_link}">Late AI Study</a></strong>'
+        "<br><strong>October</strong></li></ul></div></main>"
+    ).encode()
+    report_body = f'<main><a href="{report_url}">Download PDF</a></main>'.encode()
+
+    class Crawler:
+        site_attempts = 0
+        site_budget = 2
+        caa_cookie = None
+        algolia_key = None
+
+        def begin_site(self, budget: int) -> None:
+            self.site_budget = budget
+
+        def _request(self, url: str, **_kwargs):
+            self.site_attempts += 1
+            body = directory_body if url == directory else report_body if kind == "pdf" else raw
+            return body, {"content-type": "text/html"}, url
+
+        def _download_file(self, url: str, root: Path, **_kwargs):
+            self.site_attempts += 1
+            root.mkdir(parents=True, exist_ok=True)
+            path = root / "late.pdf"
+            path.write_bytes(raw)
+            return path, {"content-type": "application/pdf"}, url, digest, len(raw)
+
+    monkeypatch.setattr(runtime, "_ACTIVE_STATE_PATH", tmp_path / "state" / "runtime.json")
+    monkeypatch.setattr(runtime, "_new_crawler", lambda _root: Crawler())
+    monkeypatch.setattr(
+        runtime.WebPageCollector,
+        "_extract_text",
+        lambda *_args: markdown * 3 if kind == "html" else "",
+    )
+    monkeypatch.setattr(
+        runtime, "_run_model", lambda *_args, **_kwargs: pytest.fail("enrichment repeated")
+    )
+    published = []
+    monkeypatch.setattr(
+        runtime,
+        "_stream_source_portals",
+        lambda _config, _target, updates: published.extend(updates) or {"failures": []},
+    )
+    monkeypatch.setattr(
+        runtime, "_stream_target", lambda *_args: pytest.fail("article republished")
+    )
+    state = {
+        "articles": {runtime._file_key(report_url, digest): prior},
+        "sites": {
+            site.site_id: {
+                "queue": [{"url": directory, "kind": "page", "depth": 0, "referrer": directory}],
+                "cursor": 0,
+                "visited": [],
+            }
+        },
+        "target_acks": {},
+    }
+    if kind == "pdf" and existing_hint is None:
+        ingest = runtime.ingest_live_article
+        attempts = 0
+
+        def fail_once(**kwargs):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise OSError("temporary Hub failure")
+            return ingest(**kwargs)
+
+        monkeypatch.setattr(runtime, "ingest_live_article", fail_once)
+    runtime._run_site(
+        site.site_id, "2026-11-13", config, state, hub_url, request_limit=3 if kind == "pdf" else 2
+    )
+    if kind == "pdf" and existing_hint is None:
+        assert prior["source_provenance_pending"] is True
+        assert not published
+        runtime._run_site(site.site_id, "2026-11-13", config, state, hub_url, request_limit=1)
+    assert len(state["articles"]) == 1
+    assert prior["stage"] == "complete"
+    assert prior["discovery_metadata"]["date_hint"] == (existing_hint or "2026-10")
+    if existing_hint is None:
+        assert prior["discovery_metadata"]["date_hint_source_site"] == site.site_id
+        assert prior["discovery_metadata"]["date_hint_source_page_url"] == directory
+    assert not published
+    assert "source_provenance_pending" not in prior
+    current = hub.content_hub_read_version(report_url, digest, hub_url, schema=schema)
+    assert current["content_version_id"] == original["content_version_id"]
+    assert current["annotation"] == original["annotation"]
+    with psycopg2.connect(hub_url) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT source_metadata_json::jsonb->>'date_hint', "
+                "source_metadata_json::jsonb->>'source_site', "
+                "source_metadata_json::jsonb->>'source_page_url' FROM source_record_map "
+                "WHERE content_version_id = %s ORDER BY source_snapshot_id DESC",
+                (first["content_version_id"],),
+            )
+            rows = cursor.fetchall()
+            assert rows[0] == (
+                existing_hint or "2026-10",
+                first_site if existing_hint else site.site_id,
+                prior["source_page_url"] if existing_hint else directory,
+            )
+            assert len(rows) == (1 if existing_hint else 2)
+            if existing_hint is None:
+                assert rows[-1] == (None, first_site, prior["source_page_url"])
+
+
+def test_ai_resources_baseline_change_rerun_and_independent_target_retry(
+    tmp_path: Path, monkeypatch
+) -> None:
+    hub_url, schema = _database_schema(tmp_path, "soa-ai-resources")
+    apply_content_hub_schema(hub_url, schema=schema)
+    portal = SOURCE_PORTALS_BY_KEY["soa-artificial-intelligence"]
+    at = dt.datetime(2026, 11, 10, 12, tzinfo=ZoneInfo("America/New_York"))
+    base = b'<section class="nextsteps-block"><a href="/research/ai-report">AI report</a></section>'
+    changed = base.replace(
+        b"</section>", b'<a href="/research/new-ai-report">New AI report</a></section>'
+    )
+    config = {"targets": {"china": {"host": "china"}, "overseas": {"host": "overseas"}}}
+    state: dict = {}
+    sent: list[tuple[str, list[dict]]] = []
+    fail_overseas = True
+
+    def stream(_config, target, updates):
+        sent.append((target, updates))
+        if target == "overseas" and updates and fail_overseas:
+            raise RuntimeError("temporary target failure")
+        return {"failures": []}
+
+    monkeypatch.setattr(runtime, "_ACTIVE_STATE_PATH", None)
+    monkeypatch.setattr(runtime, "_stream_source_portals", stream)
+
+    def capture(body: bytes, when: dt.datetime, *, complete: bool = True) -> dict:
+        observed = runtime._source_portal_observation(portal, portal.url, body, when)
+        record = content_hub_record_source_portal_capture(
+            portal_key=portal.portal_key,
+            page_url=portal.url,
+            scope_key=portal.scope_key,
+            captured_at=when,
+            acquired_on=when.date(),
+            page_sha256=observed["page_sha256"],
+            entries=observed["entries"],
+            complete=complete and observed["complete"],
+            intro_zh=portal.overview_zh,
+            intro_en=portal.overview_en,
+            database_url=hub_url,
+            schema=schema,
+        )
+        runtime._queue_source_portal_update(
+            state.setdefault("pending_source_portal_publications", {}), portal.portal_key, record
+        )
+        return record
+
+    baseline = capture(base, at)
+    assert baseline["description_en"] is None
+    assert state["pending_source_portal_publications"] == {}
+    unrelated = b'<main><a href="/research/unrelated-main-link">Unrelated main link</a></main>'
+    unrelated_observation = runtime._source_portal_observation(
+        portal, portal.url, unrelated, at + dt.timedelta(days=1)
+    )
+    assert unrelated_observation["complete"] is False
+    assert capture(unrelated, at + dt.timedelta(days=1))["description_en"] is None
+    assert state["pending_source_portal_publications"] == {}
+    assert (
+        capture(base[:-10], at + dt.timedelta(days=1, hours=1), complete=False)["description_en"]
+        is None
+    )
+    update = capture(changed, at + dt.timedelta(days=2))
+    assert "New AI report" in update["description_en"]
+    assert capture(changed, at + dt.timedelta(days=2, hours=1))["description_en"] is None
+    assert capture(changed, at + dt.timedelta(days=3))["description_en"] is None
+    assert capture(changed, at + dt.timedelta(days=3))["duplicate"] is True
+    assert len(state["pending_source_portal_publications"]) == 1
+
+    first = runtime._sync_source_portals(state, config, object())
+    assert first["targets"]["china"]["status"] == "succeeded"
+    assert first["targets"]["overseas"]["status"] == "pending"
+    fail_overseas = False
+    second = runtime._sync_source_portals(state, config, object())
+    assert second["status"] == "succeeded"
+    assert [target for target, updates in sent if updates] == ["china", "overseas", "overseas"]
+    assert state["pending_source_portal_publications"] == {}
+
+
+@pytest.mark.parametrize(
+    "silent_daily_same_day", [False, True], ids=["next-day", "same-day-after-silent-daily"]
+)
+def test_ai_resources_real_hub_projects_one_update_to_two_isolated_targets(
+    tmp_path: Path, monkeypatch, silent_daily_same_day: bool
+) -> None:
+    from ai_actuarial.api.services.read import list_source_portals
+    from ai_actuarial.local_collection_target_worker import apply_source_portals
+    from ai_actuarial.storage import Storage
+
+    hub_url, _schema = _database_schema(tmp_path, "soa-ai-hub-to-targets")
+    apply_content_hub_schema(hub_url)
+    target_urls = {
+        target: uninitialized_postgres_url_for_path(tmp_path / f"soa-ai-{target}.db")
+        for target in ("china", "overseas")
+    }
+    portal = SOURCE_PORTALS_BY_KEY["soa-artificial-intelligence"]
+    at = dt.datetime(2026, 11, 10, 12, tzinfo=ZoneInfo("America/New_York"))
+    base = b'<section class="nextsteps-block"><a href="/research/ai-report">AI report</a></section>'
+    changed = base.replace(
+        b"</section>", b'<a href="/research/new-ai-report">New AI report</a></section>'
+    )
+    state: dict = {}
+    sent: list[tuple[str, int]] = []
+
+    def stream(_config, target, updates):
+        sent.append((target, len(updates)))
+        return apply_source_portals(
+            {"target": target, "cards": runtime.source_portal_cards(), "updates": updates},
+            storage_factory=lambda: Storage(target_urls[target]),
+        )
+
+    monkeypatch.setattr(runtime, "_ACTIVE_STATE_PATH", None)
+    monkeypatch.setattr(runtime, "_stream_source_portals", stream)
+    config = {"targets": {target: {"host": target} for target in target_urls}}
+
+    def sync(body: bytes, when: dt.datetime) -> None:
+        observed = runtime._source_portal_observation(portal, portal.url, body, when)
+        artifact = tmp_path / f"capture-{when.day}-{when.hour}.html"
+        artifact.write_bytes(body)
+        observed["artifact_path"] = str(artifact)
+        state.setdefault("pending_source_portal_captures", []).append(observed)
+        result = runtime._sync_source_portals(state, config, hub_url)
+        assert result["status"] == "succeeded", result["errors"]
+
+    sync(base, at)
+    for target_url in target_urls.values():
+        card = next(
+            c
+            for c in list_source_portals(db_path=target_url)["portals"]
+            if c["portal_key"] == portal.portal_key
+        )
+        assert card["url"] == portal.url
+        assert len(card["entry_links"]) == 3
+        assert card["updates"] == []
+
+    if silent_daily_same_day:
+        raw_sha = hashlib.sha256(base).hexdigest()
+        artifact = tmp_path / "daily-baseline.html"
+        artifact.write_bytes(base)
+        run_id = hashlib.sha256(b"soa-ai-silent-daily").hexdigest()
+        state.setdefault("source_portal_daily_runs", {})[run_id] = {
+            "site_id": "soa-ai-topic-landing",
+            "run_id": run_id,
+            "captured_at": (at + dt.timedelta(hours=1)).isoformat(),
+            "acquired_on": at.date().isoformat(),
+            "observations": [
+                {
+                    "url": portal.url,
+                    "raw_sha256": raw_sha,
+                    "kind": "page",
+                    "title": "",
+                    "source_page_url": portal.url,
+                    "request_scope": "a" * 64,
+                    "artifact_path": str(artifact),
+                }
+            ],
+            "hub_results": [],
+            "limits": {
+                "request_count": 1,
+                "request_limit": 1,
+                "budget_exhausted": False,
+                "frontier_remaining": 0,
+                "source_error_count": 0,
+                "finished": True,
+            },
+        }
+        assert runtime._sync_source_portals(state, config, hub_url)["status"] == "succeeded"
+        assert not state["pending_source_portal_publications"]
+        with psycopg2.connect(hub_url) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT description_zh, description_en FROM content_hub.source_portal_captures "
+                    "WHERE portal_key = %s AND capture_kind = 'daily_collection'",
+                    (portal.portal_key,),
+                )
+                assert cursor.fetchall() == [(None, None)]
+    changed_at = at + (dt.timedelta(hours=2) if silent_daily_same_day else dt.timedelta(days=1))
+    sync(changed, changed_at)
+    sync(changed, changed_at + dt.timedelta(hours=1))
+    assert sent == [("china", 0), ("overseas", 0), ("china", 1), ("overseas", 1)]
+    for target_url in target_urls.values():
+        card = next(
+            c
+            for c in list_source_portals(db_path=target_url)["portals"]
+            if c["portal_key"] == portal.portal_key
+        )
+        assert len(card["updates"]) == 1
+        assert "New AI report" in card["updates"][0]["description_en"]
+
+
+def test_ai_resources_same_day_additions_keep_both_public_descriptions(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from ai_actuarial.api.services.read import list_source_portals
+    from ai_actuarial.local_collection_target_worker import apply_source_portals
+    from ai_actuarial.storage import Storage
+
+    hub_url, schema = _database_schema(tmp_path, "soa-ai-two-structure-changes")
+    apply_content_hub_schema(hub_url, schema=schema)
+    for name in (
+        "content_hub_record_source_portal_capture",
+        "content_hub_project_source_portal_update",
+    ):
+        monkeypatch.setattr(runtime, name, partial(getattr(hub, name), schema=schema))
+    targets = {
+        name: uninitialized_postgres_url_for_path(tmp_path / f"two-changes-{name}.db")
+        for name in ("china", "overseas")
+    }
+    portal = SOURCE_PORTALS_BY_KEY["soa-artificial-intelligence"]
+    at = dt.datetime(2026, 11, 10, 10, tzinfo=ZoneInfo("America/New_York"))
+    state: dict = {}
+    sent: list[tuple[str, list[dict]]] = []
+
+    def stream(_config, target, updates):
+        sent.append((target, updates))
+        return apply_source_portals(
+            {"target": target, "cards": runtime.source_portal_cards(), "updates": updates},
+            storage_factory=lambda: Storage(targets[target]),
+        )
+
+    monkeypatch.setattr(runtime, "_ACTIVE_STATE_PATH", None)
+    monkeypatch.setattr(runtime, "_stream_source_portals", stream)
+    config = {"targets": {name: {"host": name} for name in targets}}
+
+    def capture(labels: tuple[str, ...], when: dt.datetime) -> None:
+        body = (
+            '<section class="nextsteps-block">'
+            + "".join(f'<a href="/research/{label}">{label}</a>' for label in labels)
+            + "</section>"
+        ).encode()
+        observed = runtime._source_portal_observation(portal, portal.url, body, when)
+        assert observed["complete"] is True
+        artifact = tmp_path / f"capture-{when.day}-{when.hour}.html"
+        artifact.write_bytes(body)
+        observed["artifact_path"] = str(artifact)
+        state.setdefault("pending_source_portal_captures", []).append(observed)
+        result = runtime._sync_source_portals(state, config, hub_url)
+        assert result["status"] == "succeeded", result["errors"]
+
+    capture(("A",), at)
+    capture(("A", "B"), at + dt.timedelta(days=1))
+    capture(("A", "B", "C"), at + dt.timedelta(days=1, hours=1))
+    public_text = {}
+    for name, target_url in targets.items():
+        card = next(
+            item
+            for item in list_source_portals(db_path=target_url)["portals"]
+            if item["portal_key"] == portal.portal_key
+        )
+        assert len(card["updates"]) == 1
+        public_text[name] = card["updates"][0]
+        assert "“B”" in public_text[name]["description_en"]
+        assert "“C”" in public_text[name]["description_en"]
+        assert public_text[name]["description_en"].index("“B”") < public_text[name][
+            "description_en"
+        ].index("“C”")
+        assert len(public_text[name]["description_zh"]) <= 2000
+        assert len(public_text[name]["description_en"]) <= 2000
+    assert public_text["china"] == public_text["overseas"]
+    with psycopg2.connect(hub_url) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(f'SET search_path TO "{schema}"')
+            cursor.execute(
+                "SELECT capture_id, description_en FROM source_portal_captures "
+                "WHERE portal_key = %s AND acquired_on = %s AND complete = TRUE "
+                "ORDER BY captured_at",
+                (portal.portal_key, (at + dt.timedelta(days=1)).date()),
+            )
+            captures = cursor.fetchall()
+            assert len(captures) == 2
+            assert "“B”" in captures[0][1] and "“C”" not in captures[0][1]
+            assert "“C”" in captures[1][1] and "“B”" not in captures[1][1]
+            for capture_id, expected_count in zip((row[0] for row in captures), (2, 3)):
+                cursor.execute(
+                    "SELECT count(*) FROM source_portal_entries WHERE capture_id = %s",
+                    (capture_id,),
+                )
+                assert cursor.fetchone()[0] == expected_count
+    capture(("A", "B"), at + dt.timedelta(days=1))
+    capture(("A", "B", "C"), at + dt.timedelta(days=1, hours=1))
+    for name, target_url in targets.items():
+        card = next(
+            item
+            for item in list_source_portals(db_path=target_url)["portals"]
+            if item["portal_key"] == portal.portal_key
+        )
+        assert card["updates"] == [public_text[name]]
+    assert not state["pending_source_portal_captures"]
+    assert not state["pending_source_portal_publications"]
+
+
+def test_ai_resources_day_projection_bounds_many_distinct_structure_changes(
+    tmp_path: Path,
+) -> None:
+    hub_url, schema = _database_schema(tmp_path, "soa-ai-bounded-structure-day")
+    apply_content_hub_schema(hub_url, schema=schema)
+    portal = SOURCE_PORTALS_BY_KEY["soa-artificial-intelligence"]
+    at = dt.datetime(2026, 11, 10, 10, tzinfo=ZoneInfo("America/New_York"))
+    entries = [{"url": "https://www.soa.org/research/a", "title": "A"}]
+
+    def record(when: dt.datetime) -> None:
+        content_hub_record_source_portal_capture(
+            portal_key=portal.portal_key,
+            page_url=portal.url,
+            scope_key=portal.scope_key,
+            captured_at=when,
+            acquired_on=when.date(),
+            page_sha256=hashlib.sha256(when.isoformat().encode()).hexdigest(),
+            entries=list(entries),
+            complete=True,
+            intro_zh=portal.overview_zh,
+            intro_en=portal.overview_en,
+            database_url=hub_url,
+            schema=schema,
+        )
+
+    record(at)
+    for index in range(20):
+        entries.append(
+            {
+                "url": f"https://www.soa.org/research/long-{index}",
+                "title": f"Long topic {index:02d} " + "X" * 110,
+            }
+        )
+        record(at + dt.timedelta(days=1, minutes=index))
+    projection = hub.content_hub_project_source_portal_update(
+        portal_key=portal.portal_key,
+        acquired_on=(at + dt.timedelta(days=1)).date(),
+        database_url=hub_url,
+        schema=schema,
+    )
+    assert projection is not None
+    assert "Long topic 00" in projection["description_en"]
+    assert "More directory changes are in the source." in projection["description_en"]
+    assert len(projection["description_zh"]) <= 2000
+    assert len(projection["description_en"]) <= 2000
+
+
+def test_ai_resources_failed_baseline_holds_later_capture_until_hub_recovers(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from ai_actuarial.api.services.read import list_source_portals
+    from ai_actuarial.local_collection_target_worker import apply_source_portals
+    from ai_actuarial.storage import Storage
+
+    hub_url, _schema = _database_schema(tmp_path, "soa-ai-retry-hub")
+    apply_content_hub_schema(hub_url)
+    target_urls = {
+        target: uninitialized_postgres_url_for_path(tmp_path / f"soa-ai-retry-{target}.db")
+        for target in ("china", "overseas")
+    }
+    portal = SOURCE_PORTALS_BY_KEY["soa-artificial-intelligence"]
+    at = dt.datetime(2026, 11, 10, 10, tzinfo=ZoneInfo("America/New_York"))
+    base = b'<section class="nextsteps-block"><a href="/research/ai-report">AI report</a></section>'
+    changed = base.replace(
+        b"</section>", b'<a href="/research/new-ai-report">New AI report</a></section>'
+    )
+    state: dict = {}
+    sent: list[tuple[str, int]] = []
+    attempts: list[str] = []
+    hub_failed = True
+    record_capture = runtime.content_hub_record_source_portal_capture
+
+    def persist(**values):
+        attempts.append(values["captured_at"])
+        if hub_failed and values["captured_at"] == at.isoformat():
+            raise RuntimeError("temporary Hub failure")
+        return record_capture(**values)
+
+    def stream(_config, target, updates):
+        sent.append((target, len(updates)))
+        return apply_source_portals(
+            {"target": target, "cards": runtime.source_portal_cards(), "updates": updates},
+            storage_factory=lambda: Storage(target_urls[target]),
+        )
+
+    monkeypatch.setattr(runtime, "_ACTIVE_STATE_PATH", None)
+    monkeypatch.setattr(runtime, "content_hub_record_source_portal_capture", persist)
+    monkeypatch.setattr(runtime, "_stream_source_portals", stream)
+    config = {"targets": {target: {"host": target} for target in target_urls}}
+
+    def queue(body: bytes, when: dt.datetime) -> None:
+        observed = runtime._source_portal_observation(portal, portal.url, body, when)
+        assert observed["complete"] is True
+        artifact = tmp_path / f"retry-{when.hour}.html"
+        artifact.write_bytes(body)
+        observed["artifact_path"] = str(artifact)
+        state.setdefault("pending_source_portal_captures", []).append(observed)
+
+    queue(base, at)
+    first = runtime._sync_source_portals(state, config, hub_url)
+    assert first["status"] == "partial"
+    assert first["captures_persisted"] == 0
+    queue(changed, at + dt.timedelta(hours=1))
+    second = runtime._sync_source_portals(state, config, hub_url)
+    assert second["status"] == "partial"
+    assert second["captures_persisted"] == 0
+    assert attempts == [at.isoformat(), at.isoformat()]
+    assert len(state["pending_source_portal_captures"]) == 2
+    assert state["pending_source_portal_publications"] == {}
+
+    hub_failed = False
+    state["pending_source_portal_captures"].reverse()
+    recovered = runtime._sync_source_portals(state, config, hub_url)
+    assert recovered["status"] == "succeeded", recovered["errors"]
+    assert recovered["captures_persisted"] == 2
+    assert attempts[-2:] == [at.isoformat(), (at + dt.timedelta(hours=1)).isoformat()]
+    assert state["pending_source_portal_captures"] == []
+    assert state["pending_source_portal_publications"] == {}
+    assert [(target, count) for target, count in sent if count] == [
+        ("china", 1),
+        ("overseas", 1),
+    ]
+    with psycopg2.connect(hub_url) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT description_en FROM content_hub.source_portal_captures "
+                "WHERE portal_key = %s AND capture_kind = 'directory' ORDER BY captured_at",
+                (portal.portal_key,),
+            )
+            descriptions = [row[0] for row in cursor.fetchall()]
+    assert descriptions[0] is None
+    assert "New AI report" in descriptions[1]
+
+    queue(changed, at + dt.timedelta(hours=1))
+    rerun = runtime._sync_source_portals(state, config, hub_url)
+    assert rerun["status"] == "succeeded", rerun["errors"]
+    assert state["pending_source_portal_captures"] == []
+    for target_url in target_urls.values():
+        card = next(
+            c
+            for c in list_source_portals(db_path=target_url)["portals"]
+            if c["portal_key"] == portal.portal_key
+        )
+        assert len(card["updates"]) == 1
+        assert "New AI report" in card["updates"][0]["description_en"]
+
+
+def test_ai_resources_shared_href_keeps_each_label_and_projects_both_changes(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from ai_actuarial.api.services.read import list_source_portals
+    from ai_actuarial.local_collection_target_worker import apply_source_portals
+    from ai_actuarial.storage import Storage
+
+    hub_url, schema = _database_schema(tmp_path, "soa-ai-shared-href")
+    apply_content_hub_schema(hub_url, schema=schema)
+    targets = {
+        name: uninitialized_postgres_url_for_path(tmp_path / f"shared-href-{name}.db")
+        for name in ("china", "overseas")
+    }
+    portal = SOURCE_PORTALS_BY_KEY["soa-artificial-intelligence"]
+    at = dt.datetime(2026, 11, 20, 10, tzinfo=ZoneInfo("America/New_York"))
+
+    def page(labels, pd_edge_href="/prof-dev/pd-edge/"):
+        return (
+            '<section class="nextsteps-block">'
+            + "".join(
+                f'<a href="{pd_edge_href if label == "PD Edge +" else "/prof-dev/pd-edge/"}">{label}</a>'
+                for label in labels
+            )
+            + "</section>"
+        ).encode()
+
+    state: dict = {}
+    sent: list[tuple[str, int]] = []
+
+    def stream(_config, target, updates):
+        sent.append((target, len(updates)))
+        return apply_source_portals(
+            {"target": target, "cards": runtime.source_portal_cards(), "updates": updates},
+            storage_factory=lambda: Storage(targets[target]),
+        )
+
+    monkeypatch.setattr(runtime, "_ACTIVE_STATE_PATH", None)
+    monkeypatch.setattr(runtime, "_stream_source_portals", stream)
+    config = {"targets": {name: {"host": name} for name in targets}}
+
+    def capture(labels, when, pd_edge_href="/prof-dev/pd-edge/"):
+        body = page(labels, pd_edge_href)
+        observed = runtime._source_portal_observation(portal, portal.url, body, when)
+        assert observed["complete"] is True
+        record = content_hub_record_source_portal_capture(
+            portal_key=portal.portal_key,
+            page_url=portal.url,
+            scope_key=portal.scope_key,
+            captured_at=when,
+            acquired_on=when.date(),
+            page_sha256=observed["page_sha256"],
+            entries=observed["entries"],
+            complete=True,
+            intro_zh=portal.overview_zh,
+            intro_en=portal.overview_en,
+            database_url=hub_url,
+            schema=schema,
+        )
+        runtime._queue_source_portal_update(
+            state.setdefault("pending_source_portal_publications", {}), portal.portal_key, record
+        )
+        assert runtime._sync_source_portals(state, config, hub_url)["status"] == "succeeded"
+        return observed, record
+
+    baseline, first = capture(["PD Edge +", "AI Insights Symposium"], at)
+    assert len(baseline["entries"]) == 2
+    assert first["description_en"] is None
+    with psycopg2.connect(hub_url) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(f'SET search_path TO "{schema}"')
+            cursor.execute(
+                "SELECT title FROM source_portal_entries WHERE capture_id = %s AND entry_url = %s",
+                (first["capture_id"], "https://www.soa.org/prof-dev/pd-edge/"),
+            )
+            assert json.loads(cursor.fetchone()[0]) == ["AI Insights Symposium", "PD Edge +"]
+    removed, second = capture(["AI Insights Symposium"], at + dt.timedelta(days=1))
+    assert len(removed["entries"]) == 1
+    assert "PD Edge +" in second["description_en"]
+    assert "no longer lists" in second["description_en"]
+    _, third = capture(["PD Edge +", "AI Insights Symposium"], at + dt.timedelta(days=2))
+    assert "PD Edge +" in third["description_en"]
+    assert "now includes" in third["description_en"]
+    _, moved = capture(
+        ["PD Edge +", "AI Insights Symposium"],
+        at + dt.timedelta(days=3),
+        pd_edge_href="/prof-dev/pd-edge-new/",
+    )
+    assert "PD Edge +" in moved["description_en"]
+    assert "now includes" in moved["description_en"]
+    assert "no longer lists" in moved["description_en"]
+    assert [item for item in sent if item[1]] == [
+        ("china", 1),
+        ("overseas", 1),
+        ("china", 1),
+        ("overseas", 1),
+        ("china", 1),
+        ("overseas", 1),
+    ]
+    _, replay = capture(
+        ["PD Edge +", "AI Insights Symposium"],
+        at + dt.timedelta(days=3),
+        pd_edge_href="/prof-dev/pd-edge-new/",
+    )
+    assert replay["duplicate"] is True
+    for url in targets.values():
+        card = next(
+            item
+            for item in list_source_portals(db_path=url)["portals"]
+            if item["portal_key"] == portal.portal_key
+        )
+        assert len(card["updates"]) == 3
+        assert all("PD Edge +" in item["description_en"] for item in card["updates"])
 
 
 def test_portal_parser_uses_only_main_entries_and_marks_partial_sections() -> None:
@@ -129,11 +1361,11 @@ def test_portal_parser_excludes_nested_navigation_and_uses_fixed_portal_policy()
 
     ai_portal = SOURCE_PORTALS_BY_KEY["soa-artificial-intelligence"]
     ai_body = (
-        "<main>"
+        "<section class='nextsteps-block'>"
         "<a href='/research/topics/ai-newsletter'>AI newsletter</a>"
         "<a href='/research/topics/ai-governance-paper'>AI governance paper</a>"
         "<a href='/research/topics/ai-study'>AI study</a>"
-        "</main>"
+        "</section>"
     ).encode()
     ai_observation = runtime._source_portal_observation(
         ai_portal, ai_portal.url, ai_body, captured_at
