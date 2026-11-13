@@ -756,6 +756,120 @@ def test_ai_resources_failed_baseline_holds_later_capture_until_hub_recovers(
         assert "New AI report" in card["updates"][0]["description_en"]
 
 
+def test_ai_resources_shared_href_keeps_each_label_and_projects_both_changes(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from ai_actuarial.api.services.read import list_source_portals
+    from ai_actuarial.local_collection_target_worker import apply_source_portals
+    from ai_actuarial.storage import Storage
+
+    hub_url, schema = _database_schema(tmp_path, "soa-ai-shared-href")
+    apply_content_hub_schema(hub_url, schema=schema)
+    targets = {
+        name: uninitialized_postgres_url_for_path(tmp_path / f"shared-href-{name}.db")
+        for name in ("china", "overseas")
+    }
+    portal = SOURCE_PORTALS_BY_KEY["soa-artificial-intelligence"]
+    at = dt.datetime(2026, 11, 20, 10, tzinfo=ZoneInfo("America/New_York"))
+
+    def page(labels, pd_edge_href="/prof-dev/pd-edge/"):
+        return (
+            '<section class="nextsteps-block">'
+            + "".join(
+                f'<a href="{pd_edge_href if label == "PD Edge +" else "/prof-dev/pd-edge/"}">{label}</a>'
+                for label in labels
+            )
+            + "</section>"
+        ).encode()
+
+    state: dict = {}
+    sent: list[tuple[str, int]] = []
+
+    def stream(_config, target, updates):
+        sent.append((target, len(updates)))
+        return apply_source_portals(
+            {"target": target, "cards": runtime.source_portal_cards(), "updates": updates},
+            storage_factory=lambda: Storage(targets[target]),
+        )
+
+    monkeypatch.setattr(runtime, "_ACTIVE_STATE_PATH", None)
+    monkeypatch.setattr(runtime, "_stream_source_portals", stream)
+    config = {"targets": {name: {"host": name} for name in targets}}
+
+    def capture(labels, when, pd_edge_href="/prof-dev/pd-edge/"):
+        body = page(labels, pd_edge_href)
+        observed = runtime._source_portal_observation(portal, portal.url, body, when)
+        assert observed["complete"] is True
+        record = content_hub_record_source_portal_capture(
+            portal_key=portal.portal_key,
+            page_url=portal.url,
+            scope_key=portal.scope_key,
+            captured_at=when,
+            acquired_on=when.date(),
+            page_sha256=observed["page_sha256"],
+            entries=observed["entries"],
+            complete=True,
+            intro_zh=portal.overview_zh,
+            intro_en=portal.overview_en,
+            database_url=hub_url,
+            schema=schema,
+        )
+        runtime._queue_source_portal_update(
+            state.setdefault("pending_source_portal_publications", {}), portal.portal_key, record
+        )
+        assert runtime._sync_source_portals(state, config, hub_url)["status"] == "succeeded"
+        return observed, record
+
+    baseline, first = capture(["PD Edge +", "AI Insights Symposium"], at)
+    assert len(baseline["entries"]) == 2
+    assert first["description_en"] is None
+    with psycopg2.connect(hub_url) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(f'SET search_path TO "{schema}"')
+            cursor.execute(
+                "SELECT title FROM source_portal_entries WHERE capture_id = %s AND entry_url = %s",
+                (first["capture_id"], "https://www.soa.org/prof-dev/pd-edge/"),
+            )
+            assert json.loads(cursor.fetchone()[0]) == ["AI Insights Symposium", "PD Edge +"]
+    removed, second = capture(["AI Insights Symposium"], at + dt.timedelta(days=1))
+    assert len(removed["entries"]) == 1
+    assert "PD Edge +" in second["description_en"]
+    assert "no longer lists" in second["description_en"]
+    _, third = capture(["PD Edge +", "AI Insights Symposium"], at + dt.timedelta(days=2))
+    assert "PD Edge +" in third["description_en"]
+    assert "now includes" in third["description_en"]
+    _, moved = capture(
+        ["PD Edge +", "AI Insights Symposium"],
+        at + dt.timedelta(days=3),
+        pd_edge_href="/prof-dev/pd-edge-new/",
+    )
+    assert "PD Edge +" in moved["description_en"]
+    assert "now includes" in moved["description_en"]
+    assert "no longer lists" in moved["description_en"]
+    assert [item for item in sent if item[1]] == [
+        ("china", 1),
+        ("overseas", 1),
+        ("china", 1),
+        ("overseas", 1),
+        ("china", 1),
+        ("overseas", 1),
+    ]
+    _, replay = capture(
+        ["PD Edge +", "AI Insights Symposium"],
+        at + dt.timedelta(days=3),
+        pd_edge_href="/prof-dev/pd-edge-new/",
+    )
+    assert replay["duplicate"] is True
+    for url in targets.values():
+        card = next(
+            item
+            for item in list_source_portals(db_path=url)["portals"]
+            if item["portal_key"] == portal.portal_key
+        )
+        assert len(card["updates"]) == 3
+        assert all("PD Edge +" in item["description_en"] for item in card["updates"])
+
+
 def test_portal_parser_uses_only_main_entries_and_marks_partial_sections() -> None:
     portal = SOURCE_PORTALS_BY_KEY["soa-research-topics"]
     page = (

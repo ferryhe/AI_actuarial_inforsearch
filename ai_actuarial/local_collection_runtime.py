@@ -38,6 +38,7 @@ from ai_actuarial.content_hub import (
     apply_content_hub_schema,
     content_hub_ai_url_versions,
     content_hub_list_ai_versions,
+    content_hub_project_source_portal_update,
     content_hub_read_source_portal_capture,
     content_hub_read_version,
     content_hub_record_source_portal_capture,
@@ -852,6 +853,7 @@ def _source_portal_observation(
     parser = _PortalLinkParser(resource_sections=portal.portal_key == "soa-artificial-intelligence")
     parser.feed(body.decode("utf-8", errors="replace"))
     entries: dict[str, str] = {}
+    resource_entries: set[tuple[str, str]] = set()
     ai_resources = portal.portal_key == "soa-artificial-intelligence" and page_url == portal.url
     for href, label in parser.links:
         candidate = _canonical_http_link(page_url, href)
@@ -873,15 +875,18 @@ def _source_portal_observation(
             )
         ):
             continue
-        entries[candidate] = label.strip()
-        if len(entries) > 2000:
+        if ai_resources:
+            resource_entries.add((candidate, label.strip()))
+        else:
+            entries[candidate] = label.strip()
+        if len(resource_entries if ai_resources else entries) > 2000:
             break
     complete = (
         parser.section_found
         and parser.section_depth == 0
-        and bool(entries)
+        and bool(resource_entries if ai_resources else entries)
         and not parser.pagination
-        and len(entries) <= 2000
+        and len(resource_entries if ai_resources else entries) <= 2000
     )
     return {
         "portal_key": portal.portal_key,
@@ -890,7 +895,10 @@ def _source_portal_observation(
         "captured_at": captured_at.isoformat(),
         "acquired_on": captured_at.date().isoformat(),
         "page_sha256": hashlib.sha256(body).hexdigest(),
-        "entries": [{"url": url, "title": title} for url, title in sorted(entries.items())[:2000]],
+        "entries": [
+            {"url": url, "title": title}
+            for url, title in sorted(resource_entries if ai_resources else entries.items())[:2000]
+        ],
         "complete": complete,
     }
 
@@ -4849,10 +4857,17 @@ def _upgrade_legacy_source_portal_updates(
         try:
             if portal is None or type(capture_id) is not int or capture_id < 1:
                 raise RuntimeErrorSafe("pending update identity is incomplete")
-            capture = content_hub_read_source_portal_capture(
-                portal_key=portal_key,
-                capture_id=capture_id,
-                database_url=hub,
+            capture = (
+                content_hub_project_source_portal_update(
+                    portal_key=portal_key, acquired_on=update.get("acquired_on"), database_url=hub
+                )
+                if portal_key == "soa-artificial-intelligence"
+                and update.get("capture_kind") == "daily_collection"
+                else content_hub_read_source_portal_capture(
+                    portal_key=portal_key,
+                    capture_id=capture_id,
+                    database_url=hub,
+                )
             )
             if capture is None:
                 raise RuntimeErrorSafe("matching Content Hub capture was not found")
@@ -4866,6 +4881,11 @@ def _upgrade_legacy_source_portal_updates(
                 or identity != f"{portal_key}|{acquired_on}"
                 or capture.get("description_zh") != update.get("description_zh")
                 or capture.get("description_en") != update.get("description_en")
+                or (
+                    portal_key == "soa-artificial-intelligence"
+                    and update.get("capture_kind") == "daily_collection"
+                    and capture.get("capture_id") != capture_id
+                )
                 or (
                     update.get("capture_kind") == "daily_collection"
                     and capture.get("capture_kind") != "daily_collection"
@@ -4897,8 +4917,20 @@ def _upgrade_legacy_source_portal_updates(
 
 
 def _queue_source_portal_update(
-    pending_updates: dict[str, Any], portal_key: str, record: dict[str, Any]
+    pending_updates: dict[str, Any],
+    portal_key: str,
+    record: dict[str, Any],
+    *,
+    hub: DatabaseConfig | None = None,
 ) -> None:
+    if not record.get("description_zh") or not record.get("description_en"):
+        return
+    if portal_key == "soa-artificial-intelligence" and hub is not None:
+        record = content_hub_project_source_portal_update(
+            portal_key=portal_key, acquired_on=record["acquired_on"], database_url=hub
+        )
+        if record is None:
+            return
     if (
         not record.get("description_zh")
         or not record.get("description_en")
@@ -5015,6 +5047,7 @@ def _persist_daily_source_portals(
                     state.setdefault("pending_source_portal_publications", {}),
                     evidence["portal_key"],
                     record,
+                    hub=hub,
                 )
                 digests.append(
                     {
@@ -5102,7 +5135,7 @@ def _sync_source_portals(
                 intro_en=portal.overview_en,
                 database_url=hub,
             )
-            _queue_source_portal_update(pending_updates, portal.portal_key, record)
+            _queue_source_portal_update(pending_updates, portal.portal_key, record, hub=hub)
             pending_captures.remove(observation)
             persisted += 1
             if _ACTIVE_STATE_PATH is not None:

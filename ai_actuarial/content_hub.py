@@ -262,7 +262,24 @@ def _portal_description(
     *,
     intro_zh: str,
     intro_en: str,
+    multi_labels: bool = False,
 ) -> tuple[str, str]:
+    if multi_labels:
+
+        def expand(entries: dict[str, str]) -> dict[tuple[str, str], str]:
+            expanded = {}
+            for url, value in entries.items():
+                try:
+                    labels = json.loads(value)
+                except (TypeError, ValueError):
+                    labels = value
+                for label in labels if isinstance(labels, list) else [value]:
+                    expanded[(url, label)] = label
+            return expanded
+
+        previous = expand(previous) if previous is not None else None
+        current = expand(current)
+
     def title_example(title: str) -> str:
         title = " ".join(title.split())
         return title if len(title) <= 120 else title[:119].rstrip() + "…"
@@ -385,7 +402,11 @@ def content_hub_record_source_portal_capture(
         raise ContentHubError("Source portal acquisition date must match America/New_York time")
     if not isinstance(entries, list) or len(entries) > 2000:
         raise ContentHubError("Source portal entry set is outside its bounded contract")
+    compare_ai_resources = (
+        portal_key == "soa-artificial-intelligence" and scope_key == "ai-resources-v1"
+    )
     normalized: dict[str, str] = {}
+    resource_labels: dict[str, set[str]] = {}
     for item in entries:
         if not isinstance(item, dict):
             raise ContentHubError("Source portal entries must be objects")
@@ -401,10 +422,22 @@ def content_hub_record_source_portal_capture(
             or not isinstance(title, str)
             or not title.strip()
             or len(title) > 500
-            or url in normalized
+            or (
+                url in normalized
+                if not compare_ai_resources
+                else title.strip() in resource_labels.get(url, set())
+            )
         ):
             raise ContentHubError("Source portal entry is malformed or duplicated")
-        normalized[url] = title.strip()
+        if compare_ai_resources:
+            resource_labels.setdefault(url, set()).add(title.strip())
+        else:
+            normalized[url] = title.strip()
+    if compare_ai_resources:
+        normalized = {
+            url: json.dumps(sorted(labels), ensure_ascii=False, separators=(",", ":"))
+            for url, labels in resource_labels.items()
+        }
     if complete and not normalized:
         raise ContentHubError("A complete source portal capture must include observed entries")
 
@@ -416,9 +449,6 @@ def content_hub_record_source_portal_capture(
             cursor.execute(
                 "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
                 (f"content_hub:source_portal:{portal_key}",),
-            )
-            compare_ai_resources = (
-                portal_key == "soa-artificial-intelligence" and scope_key == "ai-resources-v1"
             )
             cursor.execute(
                 "SELECT EXISTS (SELECT 1 FROM source_portal_captures WHERE portal_key = %s "
@@ -491,6 +521,7 @@ def content_hub_record_source_portal_capture(
                     normalized,
                     intro_zh=intro_zh.strip(),
                     intro_en=intro_en.strip(),
+                    multi_labels=compare_ai_resources,
                 )
             cursor.execute(
                 "INSERT INTO source_portal_captures "
@@ -530,6 +561,58 @@ def content_hub_record_source_portal_capture(
     except Exception:
         connection.rollback()
         raise
+    finally:
+        connection.close()
+
+
+def content_hub_project_source_portal_update(
+    *,
+    portal_key: str,
+    acquired_on: date | str,
+    database_url: DatabaseConfig | str | None = None,
+    schema: str = HUB_SCHEMA,
+) -> dict[str, Any] | None:
+    """Combine independent AI Resources and daily evidence for one public card/day row."""
+    schema = _validate_schema(schema)
+    if portal_key != "soa-artificial-intelligence":
+        raise ContentHubError("Combined source portal projection is limited to AI Resources")
+    if isinstance(acquired_on, str):
+        try:
+            acquired_on = date.fromisoformat(acquired_on)
+        except ValueError as exc:
+            raise ContentHubError("Source portal projection date is malformed") from exc
+    if not isinstance(acquired_on, date) or isinstance(acquired_on, datetime):
+        raise ContentHubError("Source portal projection date is malformed")
+    connection = _connect(database_url)
+    try:
+        with connection.cursor() as cursor:
+            _require_current_schema(cursor, schema)
+            _set_search_path(cursor, schema)
+            cursor.execute(
+                "SELECT DISTINCT ON (capture_kind) capture_kind, capture_id, captured_at, "
+                "description_zh, description_en FROM source_portal_captures "
+                "WHERE portal_key = %s AND acquired_on = %s "
+                "AND (capture_kind = 'daily_collection' "
+                "OR (capture_kind = 'directory' AND scope_key = 'ai-resources-v1')) "
+                "AND NULLIF(btrim(description_zh), '') IS NOT NULL "
+                "AND NULLIF(btrim(description_en), '') IS NOT NULL "
+                "ORDER BY capture_kind, captured_at DESC, capture_id DESC",
+                (portal_key, acquired_on),
+            )
+            parts = {row[0]: row for row in cursor.fetchall()}
+        if not parts:
+            return None
+        ordered = [parts[kind] for kind in ("daily_collection", "directory") if kind in parts]
+        return {
+            "capture_id": max(row[1] for row in ordered),
+            "captured_at": max(row[2] for row in ordered).isoformat(),
+            "acquired_on": acquired_on.isoformat(),
+            "capture_kind": "daily_collection" if "daily_collection" in parts else "directory",
+            "description_zh": "\n".join(row[3] for row in ordered),
+            "description_en": "\n".join(row[4] for row in ordered),
+        }
+    except psycopg2.Error as exc:
+        raise ContentHubError("Content hub source portal projection failed") from exc
     finally:
         connection.close()
 
