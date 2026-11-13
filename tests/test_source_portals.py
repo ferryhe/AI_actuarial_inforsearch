@@ -936,6 +936,154 @@ def test_ai_resources_real_hub_projects_one_update_to_two_isolated_targets(
         assert "New AI report" in card["updates"][0]["description_en"]
 
 
+def test_ai_resources_same_day_additions_keep_both_public_descriptions(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from ai_actuarial.api.services.read import list_source_portals
+    from ai_actuarial.local_collection_target_worker import apply_source_portals
+    from ai_actuarial.storage import Storage
+
+    hub_url, schema = _database_schema(tmp_path, "soa-ai-two-structure-changes")
+    apply_content_hub_schema(hub_url, schema=schema)
+    for name in (
+        "content_hub_record_source_portal_capture",
+        "content_hub_project_source_portal_update",
+    ):
+        monkeypatch.setattr(runtime, name, partial(getattr(hub, name), schema=schema))
+    targets = {
+        name: uninitialized_postgres_url_for_path(tmp_path / f"two-changes-{name}.db")
+        for name in ("china", "overseas")
+    }
+    portal = SOURCE_PORTALS_BY_KEY["soa-artificial-intelligence"]
+    at = dt.datetime(2026, 11, 10, 10, tzinfo=ZoneInfo("America/New_York"))
+    state: dict = {}
+    sent: list[tuple[str, list[dict]]] = []
+
+    def stream(_config, target, updates):
+        sent.append((target, updates))
+        return apply_source_portals(
+            {"target": target, "cards": runtime.source_portal_cards(), "updates": updates},
+            storage_factory=lambda: Storage(targets[target]),
+        )
+
+    monkeypatch.setattr(runtime, "_ACTIVE_STATE_PATH", None)
+    monkeypatch.setattr(runtime, "_stream_source_portals", stream)
+    config = {"targets": {name: {"host": name} for name in targets}}
+
+    def capture(labels: tuple[str, ...], when: dt.datetime) -> None:
+        body = (
+            '<section class="nextsteps-block">'
+            + "".join(f'<a href="/research/{label}">{label}</a>' for label in labels)
+            + "</section>"
+        ).encode()
+        observed = runtime._source_portal_observation(portal, portal.url, body, when)
+        assert observed["complete"] is True
+        artifact = tmp_path / f"capture-{when.day}-{when.hour}.html"
+        artifact.write_bytes(body)
+        observed["artifact_path"] = str(artifact)
+        state.setdefault("pending_source_portal_captures", []).append(observed)
+        result = runtime._sync_source_portals(state, config, hub_url)
+        assert result["status"] == "succeeded", result["errors"]
+
+    capture(("A",), at)
+    capture(("A", "B"), at + dt.timedelta(days=1))
+    capture(("A", "B", "C"), at + dt.timedelta(days=1, hours=1))
+    public_text = {}
+    for name, target_url in targets.items():
+        card = next(
+            item
+            for item in list_source_portals(db_path=target_url)["portals"]
+            if item["portal_key"] == portal.portal_key
+        )
+        assert len(card["updates"]) == 1
+        public_text[name] = card["updates"][0]
+        assert "“B”" in public_text[name]["description_en"]
+        assert "“C”" in public_text[name]["description_en"]
+        assert public_text[name]["description_en"].index("“B”") < public_text[name][
+            "description_en"
+        ].index("“C”")
+        assert len(public_text[name]["description_zh"]) <= 2000
+        assert len(public_text[name]["description_en"]) <= 2000
+    assert public_text["china"] == public_text["overseas"]
+    with psycopg2.connect(hub_url) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(f'SET search_path TO "{schema}"')
+            cursor.execute(
+                "SELECT capture_id, description_en FROM source_portal_captures "
+                "WHERE portal_key = %s AND acquired_on = %s AND complete = TRUE "
+                "ORDER BY captured_at",
+                (portal.portal_key, (at + dt.timedelta(days=1)).date()),
+            )
+            captures = cursor.fetchall()
+            assert len(captures) == 2
+            assert "“B”" in captures[0][1] and "“C”" not in captures[0][1]
+            assert "“C”" in captures[1][1] and "“B”" not in captures[1][1]
+            for capture_id, expected_count in zip((row[0] for row in captures), (2, 3)):
+                cursor.execute(
+                    "SELECT count(*) FROM source_portal_entries WHERE capture_id = %s",
+                    (capture_id,),
+                )
+                assert cursor.fetchone()[0] == expected_count
+    capture(("A", "B"), at + dt.timedelta(days=1))
+    capture(("A", "B", "C"), at + dt.timedelta(days=1, hours=1))
+    for name, target_url in targets.items():
+        card = next(
+            item
+            for item in list_source_portals(db_path=target_url)["portals"]
+            if item["portal_key"] == portal.portal_key
+        )
+        assert card["updates"] == [public_text[name]]
+    assert not state["pending_source_portal_captures"]
+    assert not state["pending_source_portal_publications"]
+
+
+def test_ai_resources_day_projection_bounds_many_distinct_structure_changes(
+    tmp_path: Path,
+) -> None:
+    hub_url, schema = _database_schema(tmp_path, "soa-ai-bounded-structure-day")
+    apply_content_hub_schema(hub_url, schema=schema)
+    portal = SOURCE_PORTALS_BY_KEY["soa-artificial-intelligence"]
+    at = dt.datetime(2026, 11, 10, 10, tzinfo=ZoneInfo("America/New_York"))
+    entries = [{"url": "https://www.soa.org/research/a", "title": "A"}]
+
+    def record(when: dt.datetime) -> None:
+        content_hub_record_source_portal_capture(
+            portal_key=portal.portal_key,
+            page_url=portal.url,
+            scope_key=portal.scope_key,
+            captured_at=when,
+            acquired_on=when.date(),
+            page_sha256=hashlib.sha256(when.isoformat().encode()).hexdigest(),
+            entries=list(entries),
+            complete=True,
+            intro_zh=portal.overview_zh,
+            intro_en=portal.overview_en,
+            database_url=hub_url,
+            schema=schema,
+        )
+
+    record(at)
+    for index in range(20):
+        entries.append(
+            {
+                "url": f"https://www.soa.org/research/long-{index}",
+                "title": f"Long topic {index:02d} " + "X" * 110,
+            }
+        )
+        record(at + dt.timedelta(days=1, minutes=index))
+    projection = hub.content_hub_project_source_portal_update(
+        portal_key=portal.portal_key,
+        acquired_on=(at + dt.timedelta(days=1)).date(),
+        database_url=hub_url,
+        schema=schema,
+    )
+    assert projection is not None
+    assert "Long topic 00" in projection["description_en"]
+    assert "More directory changes are in the source." in projection["description_en"]
+    assert len(projection["description_zh"]) <= 2000
+    assert len(projection["description_en"]) <= 2000
+
+
 def test_ai_resources_failed_baseline_holds_later_capture_until_hub_recovers(
     tmp_path: Path, monkeypatch
 ) -> None:

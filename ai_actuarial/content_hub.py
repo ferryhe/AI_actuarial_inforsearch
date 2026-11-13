@@ -589,27 +589,63 @@ def content_hub_project_source_portal_update(
             _require_current_schema(cursor, schema)
             _set_search_path(cursor, schema)
             cursor.execute(
-                "SELECT DISTINCT ON (capture_kind) capture_kind, capture_id, captured_at, "
+                "SELECT capture_kind, capture_id, captured_at, "
                 "description_zh, description_en FROM source_portal_captures "
                 "WHERE portal_key = %s AND acquired_on = %s "
                 "AND (capture_kind = 'daily_collection' "
                 "OR (capture_kind = 'directory' AND scope_key = 'ai-resources-v1')) "
                 "AND NULLIF(btrim(description_zh), '') IS NOT NULL "
                 "AND NULLIF(btrim(description_en), '') IS NOT NULL "
-                "ORDER BY capture_kind, captured_at DESC, capture_id DESC",
+                "ORDER BY captured_at, capture_id",
                 (portal_key, acquired_on),
             )
-            parts = {row[0]: row for row in cursor.fetchall()}
-        if not parts:
+            rows = cursor.fetchall()
+        if not rows:
             return None
-        ordered = [parts[kind] for kind in ("daily_collection", "directory") if kind in parts]
+        daily = next((row for row in reversed(rows) if row[0] == "daily_collection"), None)
+        ordered = [daily] if daily else []
+        seen: set[tuple[str, str]] = set()
+        directory = []
+        for row in rows:
+            description = (row[3], row[4])
+            if row[0] == "directory" and description not in seen:
+                directory.append(row)
+                seen.add(description)
+
+        def prose(parts: list[tuple[Any, ...]]) -> tuple[str, str]:
+            return "\n".join(row[3] for row in parts), "\n".join(row[4] for row in parts)
+
+        for row in directory:
+            candidate = prose([*ordered, row])
+            if any(len(value) > 2000 for value in candidate):
+                break
+            ordered.append(row)
+        description_zh, description_en = prose(ordered)
+        if len(ordered) < len(directory) + bool(daily):
+            suffix_zh, suffix_en = (
+                "更多目录变化见来源。",
+                "More directory changes are in the source.",
+            )
+            while len(ordered) > bool(daily) and any(
+                len(value) > 2000
+                for value in (
+                    prose(ordered)[0] + "\n" + suffix_zh,
+                    prose(ordered)[1] + "\n" + suffix_en,
+                )
+            ):
+                ordered.pop()
+            description_zh, description_en = prose(ordered)
+            description_zh = "\n".join(filter(None, (description_zh, suffix_zh)))
+            description_en = "\n".join(filter(None, (description_en, suffix_en)))
+        if len(description_zh) > 2000 or len(description_en) > 2000:
+            raise ContentHubError("AI Resources public projection exceeds the target prose limit")
         return {
-            "capture_id": max(row[1] for row in ordered),
-            "captured_at": max(row[2] for row in ordered).isoformat(),
+            "capture_id": max(row[1] for row in rows),
+            "captured_at": max(row[2] for row in rows).isoformat(),
             "acquired_on": acquired_on.isoformat(),
-            "capture_kind": "daily_collection" if "daily_collection" in parts else "directory",
-            "description_zh": "\n".join(row[3] for row in ordered),
-            "description_en": "\n".join(row[4] for row in ordered),
+            "capture_kind": "daily_collection" if daily else "directory",
+            "description_zh": description_zh,
+            "description_en": description_en,
         }
     except psycopg2.Error as exc:
         raise ContentHubError("Content hub source portal projection failed") from exc
