@@ -157,7 +157,13 @@ def test_assistant_release_cli_publishes_idempotently_and_serves_public_route(
     assert set(published["activated"]) == set(_SKILLS)
     assert published["release_ids"]["usage_navigation"] == staged
     assert all(published["guide"].values())
-    assert sum(len(skill["visible_tools"]) for skill in published["skills"].values()) == 11
+    for skill_id in _SKILLS:
+        manifest = json.loads(
+            (_ROOT / "ai_actuarial" / "skills" / skill_id / "skill.json").read_text("utf-8")
+        )
+        assert published["skills"][skill_id]["visible_tools"] == sorted(
+            tool["tool_id"] for tool in manifest["tools"]
+        )
 
     # A repeated invocation validates the receipts but does not insert or bump active slots.
     code, repeated = _run_cli(_publish_args(receipt_paths, code_sha=code_sha, revisions=0), capsys)

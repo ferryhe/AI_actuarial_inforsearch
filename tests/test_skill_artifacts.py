@@ -959,7 +959,17 @@ def test_issue478_four_packages_publish_and_disable_independently(tmp_path: Path
     shutil.copytree(Path("ai_actuarial/skills/document_research"), legacy)
     legacy_manifest = json.loads((legacy / "skill.json").read_text(encoding="utf-8"))
     legacy_manifest["version"] = "1.0"
-    legacy_manifest["tools"][0].pop("result_kind")
+    legacy_manifest["tools"] = [
+        tool
+        for tool in legacy_manifest["tools"]
+        if tool["tool_id"] != "document_research.search_topic"
+    ]
+    legacy_finder = next(
+        tool
+        for tool in legacy_manifest["tools"]
+        if tool["tool_id"] == "document_research.find_documents"
+    )
+    legacy_finder.pop("result_kind")
     (legacy / "skill.json").write_text(json.dumps(legacy_manifest), encoding="utf-8")
     legacy_release = _import(store, legacy)
     store.activate(
@@ -972,6 +982,9 @@ def test_issue478_four_packages_publish_and_disable_independently(tmp_path: Path
         legacy_registry.tool("document_research", "document_research.find_documents").result_kind
         == "catalog_discovery"
     )
+    assert "document_research.search_topic" not in {
+        tool.tool_id for tool in legacy_registry.skills["document_research"].tools
+    }
 
     disabled = tmp_path / "disabled"
     shutil.copytree(Path("ai_actuarial/skills/feedback"), disabled)

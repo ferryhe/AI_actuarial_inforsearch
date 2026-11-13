@@ -101,9 +101,17 @@ def catalog_evidence(storage, message: str, *, zh: bool) -> list[Evidence]:
 
 
 def body_evidence(
-    storage, message: str, kb_ids: list[str], *, config, deadline: float, on_embedding
+    storage,
+    message: str,
+    kb_ids: list[str],
+    *,
+    config,
+    deadline: float,
+    on_embedding,
+    topic_phrases: tuple[str, ...] = (),
+    exclude_file_url: str | None = None,
 ) -> tuple[list[Evidence], str | None]:
-    from ai_actuarial.agentic_rag.ready_data_tools import search_sections
+    from ai_actuarial.agentic_rag.ready_data_tools import DOCUMENT_NUMBER, search_sections
     from ai_actuarial.api.services.ready_data_publication import read_public_ready_data_snapshot
     from ai_actuarial.chatbot.exceptions import (
         EmbeddingConfigurationMismatchException,
@@ -132,7 +140,9 @@ def body_evidence(
                 (kb_id,),
             ).fetchall()
             files = {
-                row[0]: {"file_url": row[0], "title": row[1], "date": row[2]} for row in members
+                row[0]: {"file_url": row[0], "title": row[1], "date": row[2]}
+                for row in members
+                if row[0] != exclude_file_url
             }
             if not files:
                 continue
@@ -147,6 +157,14 @@ def body_evidence(
                     limit=min(5, max(1, config.top_k)),
                     excerpt_terms=_tokens(message) - _EN_STOPWORDS,
                     file_urls=set(files),
+                    **(
+                        {
+                            "preferred_phrases": topic_phrases,
+                            "prioritize_references": True,
+                        }
+                        if topic_phrases
+                        else {}
+                    ),
                 )
                 for row in rows:
                     file_url = row.get("file_url") or row.get("doc_id")
@@ -223,6 +241,8 @@ def body_evidence(
         for item in sorted(
             evidence,
             key=lambda item: (
+                -sum(phrase in item.content.casefold() for phrase in topic_phrases),
+                not bool(topic_phrases and DOCUMENT_NUMBER.search(item.content)),
                 -len(query_terms & _tokens(item.content)),
                 item.citation.kb_id or "",
             ),

@@ -173,6 +173,10 @@ class ArtifactStore:
                     tool_id
                     for tool_id in self.registered_tools
                     if tool_id.startswith(parsed.skill_id + ".")
+                    and (
+                        tool_id != "document_research.search_topic"
+                        or any(tool.tool_id == tool_id for tool in tools)
+                    )
                 ),
                 guidance_dependencies=(
                     _guidance_dependencies(parsed.skill_id, published=True) | references

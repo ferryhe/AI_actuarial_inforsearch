@@ -9,6 +9,10 @@ from threading import Event
 from typing import Any, Literal, Mapping
 
 
+class ModelBudgetExhausted(TimeoutError):
+    """The model request allowance ended while the overall request was still live."""
+
+
 @dataclass(frozen=True)
 class AgentBudget:
     initial_tokens: int = 3000
@@ -108,6 +112,7 @@ class RunResult:
     trace: tuple[ToolTrace, ...]
     kind: Literal["finish", "clarify", "error"] = "error"
     verified_quote: tuple[str, str] | None = None
+    model_budget_exhausted: bool = False
 
 
 class RunContext:
@@ -147,7 +152,7 @@ class RunContext:
     def take_model(self) -> float:
         remaining = self.remaining()
         if self.model_attempts >= self.budget.model_requests:
-            raise TimeoutError("model budget")
+            raise ModelBudgetExhausted("model budget")
         self.model_attempts += 1
         return remaining
 
@@ -157,10 +162,10 @@ class RunContext:
         if self.model_attempts > limit or (
             prepaid and self.model_attempts <= self.provider_requests
         ):
-            raise TimeoutError("model budget")
+            raise ModelBudgetExhausted("model budget")
         if not prepaid:
             if self.model_attempts >= limit:
-                raise TimeoutError("model budget")
+                raise ModelBudgetExhausted("model budget")
             self.model_attempts += 1
         self.provider_requests += 1
         return min(self.budget.request_seconds, remaining)

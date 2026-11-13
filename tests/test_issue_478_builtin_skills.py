@@ -15,6 +15,8 @@ from ai_actuarial.skills.resources_updates import executors as resources
 from ai_actuarial.skills.resources_updates.manifest import MANIFEST as RESOURCES
 from ai_actuarial.skills.usage_navigation import executors as usage
 from ai_actuarial.skills.usage_navigation.manifest import MANIFEST as USAGE
+from ai_actuarial.storage import Storage
+from tests.postgres_helpers import postgres_url_for_path
 
 
 def test_four_packages_are_independent_and_disable_separately():
@@ -80,6 +82,49 @@ def test_recent_can_filter_source_outside_global_top_three():
     assert result.data["total"] == 1
     assert result.data["source_filter"] == "SOA"
     assert result.data["files"][0]["source"] == "SOA"
+
+
+def test_catalog_search_matches_public_metadata_but_not_raw_markdown(tmp_path):
+    url = "https://example.test/report.pdf"
+    body_only = "body-only-search-needle"
+    storage = Storage(postgres_url_for_path(tmp_path / "db"))
+    try:
+        storage.insert_file(
+            url=url,
+            sha256="catalog-test",
+            title="Public Report",
+            source_site="example.test",
+            source_page_url=url,
+            original_filename="public-report.pdf",
+            local_path=str(tmp_path / "report.pdf"),
+            bytes=100,
+            content_type="application/pdf",
+        )
+        storage.upsert_catalog_item(
+            {
+                "url": url,
+                "sha256": "catalog-test",
+                "keywords": ["metadata test"],
+                "summary": "Public summary for catalog search.",
+                "category": "Testing",
+            },
+            pipeline_version="test",
+        )
+        storage.update_file_markdown(url, f"Body text contains {body_only} only.")
+
+        assert storage.query_files_with_catalog(query=body_only)[1] == 1
+        body_result = resources.catalog_search(
+            SimpleNamespace(storage=storage), {"query": body_only}
+        )
+        assert body_result.status == "not_found" and body_result.data["total"] == 0
+
+        metadata_result = resources.catalog_search(
+            SimpleNamespace(storage=storage), {"query": "Public summary"}
+        )
+        assert metadata_result.status == "ok" and metadata_result.data["total"] == 1
+        assert metadata_result.data["files"][0]["title"] == "Public Report"
+    finally:
+        storage.close()
 
 
 @pytest.mark.parametrize("count,locale", [(13, "en"), (13, "zh"), (2, "en")])

@@ -741,6 +741,7 @@ def test_opened_catalog_file_requires_current_body_permission_and_membership(hos
         "kb_id": "public",
         "file_id": url,
     }
+    assert "skip the finder" in json.loads(prompts[0][0]["prompt"])["opened_report_instruction"]
     scoped_tools = {
         tool["tool_id"]
         for skill in json.loads(prompts[0][0]["prompt"])["skills"]
@@ -937,6 +938,1130 @@ def test_resources_prompt_omits_cross_skill_body_guidance_without_permission(
     else:
         assert "read_document_sections" not in calls[0][0]["prompt"]
         assert "For document_research body findings" not in prompt["instruction"]
+
+
+def test_topic_facts_recover_with_valid_targets_and_inventory_stops_at_match():
+    from ai_actuarial.skills.resources_updates import executors as resource_executors
+
+    feature = AssistantFeature()
+    scopes = frozenset({"chat.query", "catalog.read", "files.read", "markdown.read"})
+    target = {"kb_id": "public", "file_id": "https://example.test/ai-governance.pdf"}
+    document = {
+        "target": target,
+        "title": "Artificial Intelligence Oversight for Insurers",
+        "source_url": target["file_id"],
+    }
+    quote = "Insurers should document governance for artificial intelligence models."
+    section = {
+        "target": target,
+        "section_id": "governance",
+        "excerpt": quote,
+        "source_url": target["file_id"],
+    }
+    calls_seen, finder_queries, body_args = [], [], []
+    inventory = {
+        "climate risk": [
+            {
+                "title": "Climate Risk Practice Note",
+                "url": "https://example.test/climate-risk.pdf",
+                "summary": "A catalog record about climate risk.",
+            }
+        ]
+    }
+
+    class CatalogStorage:
+        def query_files_with_catalog(self, *, query, **_kwargs):
+            calls_seen.append(query)
+            rows = inventory.get(query, [])
+            return rows, len(rows)
+
+    catalog_facade = SimpleNamespace(storage=CatalogStorage())
+
+    def execute(tool, args, _context, _remaining):
+        if tool.executor == "document_research.find_documents":
+            finder_queries.append(args["query"])
+            if len(finder_queries) == 1:
+                return ToolResult("not_found")
+            return ToolResult("ok", {"documents": [document]}, ("catalog:ai",))
+        if tool.executor == "document_research.read_document_sections":
+            body_args.append(args)
+            return ToolResult("ok", {"status": "available", "sections": [section]}, ("body:ai",))
+        if tool.executor == "resources_updates.catalog_search":
+            return resource_executors.catalog_search(catalog_facade, args)
+        raise AssertionError(f"Unexpected tool: {tool.tool_id}")
+
+    factual_model, factual_calls = scripted(
+        action(
+            action="call",
+            skill_id="document_research",
+            tool_id="document_research.find_documents",
+            args={"query": "人工智能法规"},
+        ),
+        action(
+            action="call",
+            skill_id="document_research",
+            tool_id="document_research.find_documents",
+            args={"query": "AI regulation"},
+        ),
+        action(
+            action="call",
+            skill_id="document_research",
+            tool_id="document_research.read_document_sections",
+            args={"kb_id": "public", "file_id": target["file_id"], "query": "governance"},
+        ),
+        action(
+            action="finish",
+            answer="保险机构应记录人工智能模型的治理流程。",
+            evidence_ids=["body:ai"],
+            findings=[
+                {
+                    "evidence_id": "body:ai",
+                    "quote": quote,
+                    "summary": "保险机构应记录人工智能模型的治理流程。",
+                }
+            ],
+        ),
+        action(supported=[True]),
+    )
+    factual = run(
+        message="关于AI的法规有什么？",
+        locale="zh",
+        registry=feature.registry,
+        context=RunContext(principal="reader", scopes=scopes),
+        model=factual_model,
+        execute=execute,
+    )
+    assert factual.kind == "finish" and factual.error_code is None
+    assert [item.status for item in factual.trace] == ["not_found", "ok", "ok"]
+    assert [item.tool_id for item in factual.trace] == [
+        "document_research.find_documents",
+        "document_research.find_documents",
+        "document_research.read_document_sections",
+    ]
+    assert finder_queries == ["人工智能法规", "AI regulation"]
+    assert body_args == [
+        {
+            "kb_id": target["kb_id"],
+            "file_id": target["file_id"],
+            "query": "governance",
+            "section": None,
+        }
+    ]
+    assert factual_calls[1][0]["observations"][0]["status"] == "not_found"
+    prompt = json.loads(factual_calls[0][0]["prompt"])
+    resources = next(item for item in prompt["skills"] if item["skill_id"] == "resources_updates")
+    assert "validated selected/opened target" in prompt["instruction"]
+    assert "at most one materially different synonym" in resources["description"]
+
+    catalog_result = resource_executors.catalog_search(catalog_facade, {"query": "climate risk"})
+    calls_seen.clear()
+    inventory_model, _ = scripted(
+        action(
+            action="call",
+            skill_id="resources_updates",
+            tool_id="resources_updates.catalog_search",
+            args={"query": "climate risk"},
+        ),
+        action(
+            action="finish",
+            answer="The catalog lists a climate risk practice note.",
+            evidence_ids=list(catalog_result.evidence_ids),
+        ),
+    )
+    discovery = run(
+        message="What materials are available about climate risk?",
+        locale="en",
+        registry=feature.registry,
+        context=RunContext(principal="reader", scopes=scopes),
+        model=inventory_model,
+        execute=execute,
+    )
+    assert discovery.kind == "finish" and discovery.evidence_ids == catalog_result.evidence_ids
+    assert [item.tool_id for item in discovery.trace] == ["resources_updates.catalog_search"]
+    assert calls_seen == ["climate risk"]
+
+    ambiguous_model, ambiguous_calls = scripted(
+        action(
+            action="clarify",
+            question="Which report should I use?",
+            blocking_input="The user must select one of the two reports.",
+            blocking_reason="The question asks for a choice between named alternatives.",
+        )
+    )
+    ambiguous = run(
+        message="Which report should I use, the mortality report or the pension report?",
+        locale="en",
+        registry=feature.registry,
+        context=RunContext(principal="reader", scopes=scopes),
+        model=ambiguous_model,
+        execute=execute,
+    )
+    assert ambiguous.kind == "clarify" and ambiguous.tool_attempts == 0
+    assert ambiguous.model_attempts == 1 and len(ambiguous_calls) == 1
+    assert calls_seen == ["climate risk"]
+
+
+@pytest.mark.parametrize(
+    "scenario",
+    [
+        "direct",
+        "refine",
+        "repair",
+        "verifier_search",
+        "verifier_fallback",
+        "repair_timeout",
+        "repair_cancelled",
+        "no_current",
+        "repeat",
+        "historical",
+    ],
+)
+def test_document_evidence_supports_the_question_time_scope(scenario):
+    current = {
+        "target": {"kb_id": "public", "file_id": "https://example.test/final"},
+        "title": "Published governance requirements",
+        "publication_date": "2025-09-01",
+        "excerpt": "The final standard requires annual review of automated decisions.",
+    }
+    historical = {
+        "target": {"kb_id": "public", "file_id": "https://example.test/consultation"},
+        "title": "Consultation on governance",
+        "publication_date": "2023-02-01",
+        "excerpt": "The committee is considering annual review of automated decisions.",
+    }
+    question = (
+        "What did this consultation propose?"
+        if scenario == "historical"
+        else "What governance requirements apply to automated decisions?"
+    )
+
+    def read(doc):
+        return action(
+            action="call",
+            skill_id="document_research",
+            tool_id="document_research.read_document_sections",
+            args={**doc["target"], "query": "annual review"},
+        )
+
+    def finish(doc):
+        eid = doc["target"]["file_id"]
+        return action(
+            action="finish",
+            answer="A body finding",
+            evidence_ids=[eid],
+            findings=[{"evidence_id": eid, "quote": doc["excerpt"], "summary": doc["excerpt"]}],
+        )
+
+    first = current if scenario == "direct" else historical
+    steps = [read(first)]
+    verifier_lookup = scenario in (
+        "verifier_search",
+        "verifier_fallback",
+        "repair_timeout",
+        "repair_cancelled",
+    )
+    interrupted = scenario in ("repair_timeout", "repair_cancelled")
+    if verifier_lookup:
+        steps.insert(
+            0,
+            action(
+                action="call",
+                skill_id="document_research",
+                tool_id="document_research.find_documents",
+                args={"query": "automated decisions"},
+            ),
+        )
+    if scenario == "refine":
+        steps.append(read(current))
+    steps.append(finish(current if scenario == "refine" else first))
+    steps.append(
+        action(supported=[True], gap="source")
+        if interrupted
+        else (
+            action(supported=[False], gap="time", search_query="Published governance requirements")
+            if scenario == "verifier_search"
+            else (
+                action(supported=[False], gap="time")
+                if scenario in ("no_current", "repeat", "repair", "verifier_fallback")
+                else action(supported=[True], gap=None)
+            )
+        )
+    )
+    if scenario == "repeat":
+        steps.append(read(first))
+    if scenario == "repair":
+        steps.extend([read(current), finish(current), action(supported=[True], gap=None)])
+    if verifier_lookup and not interrupted:
+        steps.extend([finish(current), action(supported=[True], gap=None)])
+    model, prompts = scripted(*steps)
+
+    def execute(tool, args, _context, _remaining):
+        if tool.tool_id == "document_research.find_documents":
+            return ToolResult(
+                "ok",
+                {"documents": [{**historical, "source_url": historical["target"]["file_id"]}]},
+                ("finder:consultation",),
+            )
+        if tool.tool_id == "document_research.search_topic":
+            assert verifier_lookup
+            assert args["query"] == (
+                current["title"] if scenario == "verifier_search" else "annual review"
+            )
+            assert args["exclude_file_url"] == historical["target"]["file_id"]
+            assert args["kb_id"] == historical["target"]["kb_id"]
+            if interrupted:
+                if scenario == "repair_cancelled":
+                    _context.cancelled.set()
+                raise TimeoutError("lookup timed out")
+            doc = current
+        else:
+            assert tool.tool_id == "document_research.read_document_sections"
+            doc = next(
+                doc for doc in (historical, current) if doc["target"]["file_id"] == args["file_id"]
+            )
+        url = doc["target"]["file_id"]
+        section = {**doc, "section_id": "policy", "source_url": url}
+        return ToolResult("ok", {"sections": [section]}, (url,))
+
+    from ai_actuarial.agent_runtime.contracts import AgentBudget
+
+    result = run(
+        message=question,
+        locale="en",
+        registry=AssistantFeature().registry,
+        context=RunContext(
+            principal="reader",
+            scopes=frozenset({"chat.query", "catalog.read", "files.read", "markdown.read"}),
+            budget=AgentBudget(model_requests=3 if scenario == "no_current" else 6),
+        ),
+        model=model,
+        execute=execute,
+        selected_target=historical["target"] if scenario == "historical" else None,
+        site_context="current site",
+    )
+    verification = next(p for p, _ in prompts if "items" in p)
+    assert verification["question"] == question
+    expected = current if scenario in ("direct", "refine") else historical
+    assert verification["items"][0]["source"]["publication_date"] == expected["publication_date"]
+    assert "check_evidence_before_finishing" in prompts[2 if verifier_lookup else 1][0]
+    if interrupted:
+        assert result.model_attempts == 4 and result.tool_attempts == 3
+        if scenario == "repair_cancelled":
+            assert result.error_code == "ASSISTANT_TIMEOUT" and not result.evidence_ids
+        else:
+            assert result.kind == "finish" and result.error_code is None
+            assert result.evidence_ids == (historical["target"]["file_id"],)
+            assert historical["excerpt"] in result.answer
+        return
+    assert result.kind == "finish"
+    assert result.tool_attempts == (
+        3 if verifier_lookup else 2 if scenario in ("refine", "repair") else 1
+    )
+    assert result.model_attempts == (
+        6
+        if scenario == "repair" or verifier_lookup
+        else 4 if scenario in ("refine", "repeat") else 3
+    )
+    if scenario in ("no_current", "repeat"):
+        assert result.error_code == "SUMMARY_UNVERIFIED" and not result.evidence_ids
+        assert "requested time" in result.answer and first["excerpt"] not in result.answer
+    else:
+        final_doc = current if scenario == "repair" or verifier_lookup else expected
+        assert result.error_code is None and final_doc["excerpt"] in result.answer
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "What does Consultation on Governance require for annual reviews?",
+        "What governance rules applied in 2023?",
+        "What governance requirements does the Public Standards Board identify?",
+    ],
+)
+def test_topic_repair_preserves_named_source_and_period(question):
+    document = {
+        "target": {"kb_id": "public", "file_id": "https://example.test/consultation"},
+        "title": "Consultation on Governance",
+        "source_url": "https://example.test/consultation",
+    }
+    excerpt = "The committee considered requiring annual reviews."
+    model, prompts = scripted(
+        action(
+            action="call",
+            skill_id="document_research",
+            tool_id="document_research.find_documents",
+            args={"query": document["title"]},
+        ),
+        action(
+            action="call",
+            skill_id="document_research",
+            tool_id="document_research.read_document_sections",
+            args={**document["target"], "query": "annual reviews"},
+        ),
+        action(
+            action="finish",
+            answer="Annual reviews",
+            evidence_ids=["body:consultation"],
+            findings=[{"evidence_id": "body:consultation", "quote": excerpt, "summary": excerpt}],
+        ),
+        action(supported=[False], gap="source", search_query="Different report"),
+    )
+
+    def execute(tool, _args, _context, _remaining):
+        if tool.tool_id == "document_research.find_documents":
+            return ToolResult("ok", {"documents": [document]}, ("finder:consultation",))
+        assert tool.tool_id == "document_research.read_document_sections"
+        section = {**document, "section_id": "policy", "excerpt": excerpt}
+        return ToolResult("ok", {"sections": [section]}, ("body:consultation",))
+
+    result = run(
+        message=question,
+        locale="en",
+        registry=AssistantFeature().registry,
+        context=RunContext(
+            principal="reader",
+            scopes=frozenset({"chat.query", "catalog.read", "files.read", "markdown.read"}),
+        ),
+        model=model,
+        execute=execute,
+        site_context="current site",
+        source_options=lambda: [{"source_key": "board", "aliases": ["Public Standards Board"]}],
+    )
+    assert "document_research.search_topic" not in prompts[2][0]["prompt"]
+    assert '"search_query"' not in prompts[3][0]["instruction"]
+    assert result.kind == "finish" and result.error_code == "SUMMARY_UNVERIFIED"
+    assert result.model_attempts == 4 and result.tool_attempts == 2
+
+
+def test_finish_keeps_valid_findings_within_verifier_limit():
+    from ai_actuarial.agent_runtime.loop import _body_findings
+
+    sections = {"source": {"excerpt": "Annual review is required."}}
+    valid = {"evidence_id": "source", "quote": sections["source"]["excerpt"], "summary": "Review."}
+    findings = _body_findings([{"evidence_id": "wrong"}, *([valid] * 6)], ["source"], sections)
+    assert findings == [valid] * 5
+
+
+def test_formal_reference_can_use_same_passage_without_relaxing_quantities():
+    from ai_actuarial.agent_runtime.loop import _summary_numbers_supported
+
+    quote = "Annual review covered 60% of decisions."
+    passage = "The review under Standard 2025/1234. " + quote
+    assert _summary_numbers_supported("Standard 2025/1234: 60%.", quote, passage)
+    assert not _summary_numbers_supported("Standard 2025/1235: 60%.", quote, passage)
+    assert not _summary_numbers_supported("Standard 2025/1234: 62%.", quote, passage)
+
+
+def test_report_title_year_only_supports_the_attribution():
+    from ai_actuarial.agent_runtime.loop import _summary_numbers_supported
+
+    quote = "Approximately 60% of respondents use enterprise AI."
+    title = "SOA Member AI Survey: Spring 2026"
+    assert _summary_numbers_supported(
+        "SOA 2026 春季调查称约 60% 使用企业 AI。", quote, quote, title
+    )
+    assert not _summary_numbers_supported(
+        "SOA 2025 春季调查称约 60% 使用企业 AI。", quote, quote, title
+    )
+    assert not _summary_numbers_supported(
+        "SOA 2026 春季调查称有 2026 人使用企业 AI。", quote, quote, title
+    )
+    assert not _summary_numbers_supported(
+        "SOA 2026 春季调查，样本共 2026 人，报告称约 60% 使用企业 AI。",
+        quote,
+        quote,
+        title,
+    )
+    assert not _summary_numbers_supported(
+        "这份有 2026 人参与的调查称约 60% 使用企业 AI。", quote, quote, title
+    )
+
+
+def test_inferred_coverage_does_not_retry_a_verified_mixed_result():
+    quote = "About 60% used the service."
+    target = {"kb_id": "public", "file_id": "https://example.test/report"}
+    section = {**target, "source_url": target["file_id"], "target": target, "excerpt": quote}
+    model, _ = scripted(
+        action(
+            action="call",
+            skill_id="document_research",
+            tool_id="document_research.read_document_sections",
+            args={**target, "query": "survey participation"},
+        ),
+        action(
+            action="finish",
+            answer="unused",
+            evidence_ids=["body:survey", "guide:quota"],
+            findings=[
+                {
+                    "evidence_id": "body:survey",
+                    "quote": quote,
+                    "summary": f"{quote}; this excerpt does not give the headcount.",
+                },
+            ],
+        ),
+        action(supported=[True]),
+    )
+    result = run(
+        message="How many respondents used the service, and how do I check my quota?",
+        locale="en",
+        registry=AssistantFeature().registry,
+        context=RunContext(
+            principal="reader",
+            scopes=frozenset({"chat.query", "catalog.read", "files.read", "markdown.read"}),
+        ),
+        model=model,
+        execute=lambda *_: ToolResult(
+            "ok", {"sections": [section]}, ("body:survey", "guide:quota")
+        ),
+        can_render_evidence=lambda eid: eid == "guide:quota",
+        site_context="current site",
+    )
+    assert result.model_attempts == 3 and result.tool_attempts == 1
+    assert quote in result.answer and "did not verify the complete answer" in result.answer
+    assert result.evidence_ids == ("body:survey", "guide:quota")
+
+
+@pytest.mark.parametrize("finish_fields", [{}, {"action": "finish"}, {"answer": "Unused draft"}])
+def test_verified_finding_retains_the_reference_in_its_paragraph(finish_fields):
+    from ai_actuarial.agent_runtime.contracts import AgentBudget
+
+    quote = "The rule requires annual review."
+    target = {"kb_id": "public", "file_id": "https://example.test/standard"}
+    section = {
+        "target": target,
+        "section_id": "policy",
+        "source_url": target["file_id"],
+        "excerpt": f"Standard 2025/1234 governs this policy. {quote}\n\nDirective 2020/2345.",
+    }
+    model, _ = scripted(
+        action(
+            action="call",
+            skill_id="document_research",
+            tool_id="document_research.read_document_sections",
+            args={**target, "query": "annual review"},
+        ),
+        action(
+            evidence_ids=["body:policy"],
+            findings=[{"evidence_id": "body:policy", "quote": quote, "summary": quote}],
+            **finish_fields,
+        ),
+        action(supported=[True], gap="coverage"),
+    )
+    result = run(
+        message="What standards apply to this policy?",
+        locale="en",
+        registry=AssistantFeature().registry,
+        context=RunContext(
+            principal="reader",
+            scopes=frozenset({"chat.query", "markdown.read"}),
+            budget=AgentBudget(model_requests=3),
+        ),
+        model=model,
+        execute=lambda *_: ToolResult("ok", {"sections": [section]}, ("body:policy",)),
+        selected_target=target,
+        site_context="current site",
+    )
+    assert result.model_attempts == 3 and result.evidence_ids == ("body:policy",)
+    assert "Standard 2025/1234" in result.answer
+    assert "2020/2345" not in result.answer
+
+
+@pytest.mark.parametrize(
+    "message,terminal,needs_body,models_used,source_options",
+    [
+        ("What materials are available on climate risk?", True, False, 1, []),
+        ("What does the site have on climate risk?", False, False, 1, []),
+        ("What reports does this site have, with the main findings from each?", False, True, 4, []),
+        ("站内有哪些报告和它们的结论？", False, True, 4, []),
+        ("What does the site have on climate risk in 2025?", True, True, 4, []),
+        ("What does the site have on climate risk during the past year?", False, True, 4, []),
+        (
+            "What does the site have on climate risk from CAS?",
+            True,
+            True,
+            4,
+            [{"source_key": "cas", "aliases": ["CAS"]}],
+        ),
+        (
+            "What does this site have on CAS and LIMRA?",
+            True,
+            True,
+            4,
+            [{"source_key": "cas"}, {"source_key": "limra"}],
+        ),
+    ],
+)
+def test_only_unscoped_inventory_can_finish_at_discovery(
+    message, terminal, needs_body, models_used, source_options
+):
+    url = "https://example.test/practice-note.pdf"
+    target = {"kb_id": "public", "file_id": url}
+    doc = {"target": target, "source_url": url, "title": "Climate Risk Practice Note"}
+    excerpt = "Review all climate scenarios annually."
+    model, _ = scripted(
+        action(
+            action="call",
+            skill_id="document_research",
+            tool_id="document_research.find_documents",
+            args={"query": "climate risk"},
+            **({"catalog_only": True} if terminal else {}),
+        ),
+        action(
+            action="call",
+            skill_id="document_research",
+            tool_id="read_document_sections",
+            args={**target, "query": "climate risk"},
+        ),
+        action(
+            action="finish",
+            answer=excerpt,
+            evidence_ids=["body:policy"],
+            findings=[{"evidence_id": "body:policy", "quote": excerpt, "summary": excerpt}],
+        ),
+        action(supported=[True]),
+    )
+
+    def execute(tool, *_):
+        if tool.result_kind == "catalog_discovery":
+            return ToolResult("ok", {"documents": [doc]}, ("catalog:policy",))
+        return ToolResult(
+            "ok",
+            {"sections": [{**doc, "excerpt": excerpt, "section_id": "policy"}]},
+            ("body:policy",),
+        )
+
+    result = run(
+        message=message,
+        locale="en",
+        registry=AssistantFeature().registry,
+        context=RunContext(
+            principal="reader",
+            scopes=frozenset({"chat.query", "catalog.read", "files.read", "markdown.read"}),
+        ),
+        model=model,
+        execute=execute,
+        resolve_selected_document=lambda _target: doc,
+        source_options=lambda: source_options,
+        site_context="current site",
+    )
+    assert result.kind == "finish"
+    assert result.model_attempts == models_used
+    if needs_body:
+        assert result.tool_attempts == 2
+        assert excerpt in result.answer and result.evidence_ids == ("body:policy",)
+    else:
+        assert result.tool_attempts == 1
+        assert doc["title"] in result.answer and result.evidence_ids == ("catalog:policy",)
+
+
+@pytest.mark.parametrize("preposition", ["in", "for"])
+def test_explicit_catalog_finish_checks_the_original_period(preposition):
+    target = {"kb_id": "public", "file_id": "https://example.test/report"}
+    document = {"target": target, "source_url": target["file_id"], "title": "Climate Risk Note"}
+    model, _ = scripted(
+        action(
+            action="call",
+            skill_id="document_research",
+            tool_id="document_research.find_documents",
+            args={"query": "climate risk"},
+        ),
+        action(
+            action="finish",
+            answer="Climate Risk Note was published in 2025.",
+            evidence_ids=["catalog:note"],
+            catalog_only=True,
+        ),
+    )
+    result = run(
+        message=f"What does the site have on climate risk {preposition} 2025?",
+        locale="en",
+        registry=AssistantFeature().registry,
+        context=RunContext(
+            principal="reader", scopes=frozenset({"chat.query", "catalog.read", "files.read"})
+        ),
+        model=model,
+        execute=lambda *_: ToolResult("ok", {"documents": [document]}, ("catalog:note",)),
+        resolve_selected_document=lambda _target: document,
+        site_context="current site",
+    )
+    assert result.availability == "unavailable"
+    assert "published in 2025" not in result.answer
+
+
+def test_early_clarification_rechecks_one_authorized_lookup():
+    from ai_actuarial.agent_runtime.contracts import AgentBudget
+    from ai_actuarial.skills.resources_updates import executors as resource_executors
+
+    feature = AssistantFeature()
+    scopes = frozenset({"chat.query", "catalog.read", "files.read"})
+    rows = [
+        {
+            "url": "https://example.test/ai-governance.pdf",
+            "title": "AI Governance Report",
+            "source_name_en": "SOA",
+            "first_seen": "2026-11-01",
+        }
+    ]
+
+    class CatalogStorage:
+        def query_files_with_catalog(self, **_kwargs):
+            return rows, len(rows)
+
+    facade = SimpleNamespace(storage=CatalogStorage())
+    calls = []
+    outputs = [
+        action(action="clarify", question="Which report do you mean?"),
+        action(
+            action="call",
+            skill_id="resources_updates",
+            tool_id="resources_updates.catalog_search",
+            args={"query": "AI governance"},
+        ),
+    ]
+
+    def model(prompt, _remaining):
+        calls.append(json.loads(prompt))
+        if outputs:
+            return outputs.pop(0)
+        evidence_ids = calls[-1]["observations"][-1]["evidence_ids"]
+        return action(
+            action="finish", answer="The catalog has a matching report.", evidence_ids=evidence_ids
+        )
+
+    def execute(tool, args, _context, _remaining):
+        assert tool.tool_id == "resources_updates.catalog_search"
+        return resource_executors.catalog_search(facade, args)
+
+    result = run(
+        message="What materials cover AI governance?",
+        locale="en",
+        registry=feature.registry,
+        context=RunContext(principal="reader", scopes=scopes),
+        model=model,
+        execute=execute,
+        site_context="the current AI Actuarial InfoSearch site and its permitted holdings",
+    )
+    initial_prompt = json.loads(calls[0]["prompt"])
+    assert initial_prompt["site_context"] == (
+        "the current AI Actuarial InfoSearch site and its permitted holdings"
+    )
+    assert calls[1]["clarification_recheck"]["previous_question"] == "Which report do you mean?"
+    assert calls[1]["enabled_capabilities"] == sorted(
+        tool["tool_id"] for skill in initial_prompt["skills"] for tool in skill["tools"]
+    )
+    assert calls[1]["model_calls_remaining"] == 5
+    assert result.kind == "finish" and result.tool_attempts == 1
+    assert [item.tool_id for item in result.trace] == ["resources_updates.catalog_search"]
+
+    low_budget_calls = []
+    low_budget, _ = scripted(action(action="clarify", question="Which report do you mean?"))
+    low_budget_model = lambda prompt, timeout: (
+        low_budget_calls.append(prompt) or low_budget(prompt, timeout)
+    )
+    preserved = run(
+        message="What materials cover AI governance?",
+        locale="en",
+        registry=feature.registry,
+        context=RunContext(principal="reader", scopes=scopes, budget=AgentBudget(model_requests=2)),
+        model=low_budget_model,
+        execute=lambda *_: pytest.fail("lookup should not start with one call left"),
+        site_context="the current AI Actuarial InfoSearch site and its permitted holdings",
+    )
+    assert preserved.kind == "clarify" and preserved.answer == "Which report do you mean?"
+    assert preserved.model_attempts == 1 and len(low_budget_calls) == 1
+
+
+@pytest.mark.parametrize(
+    "mode,model_requests",
+    [
+        ("no_evidence", 2),
+        ("budget", 1),
+        ("provider_budget", 2),
+        ("cancelled", 2),
+    ],
+)
+def test_host_returns_latest_grounded_resource_after_soft_failure(
+    host_fixture, mode, model_requests
+):
+    from ai_actuarial.agent_runtime.contracts import AgentBudget
+
+    state = host_fixture
+    auth = AuthContext(
+        {"subject": "reader"}, frozenset({"chat.query", "catalog.read", "files.read"})
+    )
+    state.monkeypatch.setattr(host.deps, "get_auth_context", lambda _request: auth)
+
+    class Facade:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def _document(self, _target):
+            return None
+
+    state.monkeypatch.setattr(host, "DocumentResearch", Facade)
+    evidence_id = "catalog:public-rules"
+    state.feature.executors["resources_updates.catalog_search"] = lambda *_args: ToolResult(
+        "ok",
+        {
+            "files": [
+                {
+                    "title": "2026 AI rules overview",
+                    "source_url": "https://example.test/ai-rules.pdf",
+                    "source": "Public registry",
+                }
+            ],
+            "total": 1,
+            "action": "/database",
+        },
+        (evidence_id,),
+    )
+    calls = []
+
+    def model(prompt, _remaining):
+        payload = json.loads(prompt)
+        calls.append(payload)
+        if mode == "provider_budget":
+            context = state.request.state.assistant_runtime_context
+            context.take_provider_request(prepaid=len(calls) == 1)
+        if len(calls) == 1:
+            return action(
+                action="call",
+                skill_id="resources_updates",
+                tool_id="resources_updates.catalog_search",
+                args={"query": "AI rules"},
+            )
+        if mode == "no_evidence":
+            return action(action="finish", answer="Unsupported claim", evidence_ids=["invented:id"])
+        return action(action="finish", answer="Unsupported", evidence_ids=[evidence_id])
+
+    cancelled = Event()
+    if mode == "cancelled":
+        original = state.feature.executors["resources_updates.catalog_search"]
+
+        def cancel_after_lookup(*args):
+            result = original(*args)
+            cancelled.set()
+            return result
+
+        state.feature.executors["resources_updates.catalog_search"] = cancel_after_lookup
+
+    outcome = state.feature.query(
+        request=state.request,
+        auth=auth,
+        message="What materials cover AI rules?",
+        model=model,
+        cancelled=cancelled,
+        budget=AgentBudget(model_requests=model_requests),
+    )
+
+    assert calls[0]["model_calls_remaining"] == model_requests
+    if mode == "cancelled":
+        assert outcome.runtime.error_code == "ASSISTANT_TIMEOUT"
+        assert outcome.runtime.kind == "error"
+        assert "2026 AI rules overview" not in outcome.response.answer
+    else:
+        assert outcome.runtime.kind == "finish"
+        assert outcome.runtime.evidence_ids == (evidence_id,)
+        assert outcome.runtime.error_code is None
+        assert "Partial result:" in outcome.response.answer
+        assert "2026 AI rules overview" in outcome.response.answer
+        assert len(outcome.response.citations) == 1
+        assert outcome.runtime.model_budget_exhausted is (mode in {"budget", "provider_budget"})
+        if mode in {"budget", "provider_budget"}:
+            assert "model-call budget was exhausted" in outcome.response.answer
+        else:
+            assert "could not be verified" in outcome.response.answer
+
+
+@pytest.mark.parametrize("case", ["ambiguous", "inventory", "mixed", "mixed_timeout"])
+def test_host_preserves_only_cited_resource_for_ambiguous_catalog_finish(host_fixture, case):
+    from ai_actuarial.assistant.document_research import Document, SelectedTarget
+
+    state = host_fixture
+    auth = AuthContext(
+        {"subject": "reader"}, frozenset({"chat.query", "catalog.read", "files.read"})
+    )
+    state.monkeypatch.setattr(host.deps, "get_auth_context", lambda _request: auth)
+    state.monkeypatch.setattr(host, "permitted_kbs", lambda *_: ["public"])
+    documents = [
+        Document(
+            target=SelectedTarget(
+                kb_id="public", file_id=f"https://example.test/candidate-{index}.pdf"
+            ),
+            title=f"Candidate report {index}",
+            source_url=f"https://example.test/candidate-{index}.pdf",
+            internal_link=f"/file-detail?url=candidate-{index}",
+        )
+        for index in range(3)
+    ]
+
+    class Facade:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def _document(self, target):
+            return next((item for item in documents if item.target == target), None)
+
+    state.monkeypatch.setattr(host, "DocumentResearch", Facade)
+    state.feature.executors["document_research.find_documents"] = lambda *_args: ToolResult(
+        "ok",
+        {"documents": [item.model_dump() for item in documents]},
+        ("finder:one", "finder:two", "finder:three"),
+    )
+    resource_id = "resource:catalog"
+    state.feature.executors["resources_updates.catalog_search"] = lambda *_args: ToolResult(
+        "ok",
+        {
+            "files": [
+                {
+                    "title": "AI governance catalog record",
+                    "source": "Public registry",
+                    "source_url": "https://example.test/governance.pdf",
+                    "summary": "A catalog summary.",
+                }
+            ],
+            "total": 1,
+            "action": "/database",
+        },
+        (resource_id,),
+    )
+    outputs = []
+    evidence_ids = ["finder:one", "finder:two", "finder:three"]
+    include_resource = case in {"mixed", "mixed_timeout"}
+    if include_resource:
+        outputs.append(
+            action(
+                action="call",
+                skill_id="resources_updates",
+                tool_id="resources_updates.catalog_search",
+                args={"query": "AI governance"},
+            )
+        )
+        evidence_ids.insert(0, resource_id)
+    outputs.extend(
+        [
+            action(
+                action="call",
+                skill_id="document_research",
+                tool_id="document_research.find_documents",
+                args={"query": "AI governance"},
+            ),
+            action(
+                action="finish",
+                answer="Several reports are relevant.",
+                evidence_ids=evidence_ids,
+                **({"catalog_only": True} if case == "inventory" else {}),
+            ),
+        ]
+    )
+    model, _calls = scripted(*outputs)
+    if case == "mixed_timeout":
+        original_run = host.run
+
+        def cancel_after_run(**kwargs):
+            result = original_run(**kwargs)
+            state.request.state.assistant_runtime_context.cancelled.set()
+            return result
+
+        state.monkeypatch.setattr(host, "run", cancel_after_run)
+
+    outcome = state.feature.query(
+        request=state.request,
+        auth=auth,
+        message=(
+            "What reports on AI governance does the site have?"
+            if case == "inventory"
+            else "What does the AI governance material say?"
+        ),
+        model=model,
+    )
+
+    if case == "mixed_timeout":
+        assert outcome.runtime.error_code == "ASSISTANT_TIMEOUT"
+        assert outcome.runtime.evidence_ids == () and outcome.response.evidence_ids == []
+        assert "AI governance catalog record" not in outcome.response.answer
+    elif case == "inventory":
+        assert outcome.response.availability == "available"
+        assert outcome.response.error_code is None
+        assert outcome.response.generation_attempts == 2
+        assert outcome.response.evidence_ids == evidence_ids
+        assert outcome.response.answer.splitlines()[1:] == [
+            f"- Candidate report {index}" for index in range(3)
+        ]
+        assert [item.link for item in outcome.response.citations] == [
+            item.internal_link for item in documents
+        ]
+        assert outcome.response.selected_target is None
+    elif include_resource:
+        assert outcome.runtime.kind == "finish" and outcome.runtime.error_code is None
+        assert outcome.runtime.evidence_ids == (resource_id,)
+        assert "Partial result:" in outcome.response.answer
+        assert "AI governance catalog record" in outcome.response.answer
+        assert [item.title for item in outcome.response.citations] == [
+            "AI governance catalog record"
+        ]
+    else:
+        assert outcome.runtime.kind == "clarify" and outcome.runtime.error_code is None
+        assert outcome.runtime.evidence_ids == ()
+        assert outcome.response.intent == "clarify" and outcome.response.citations == []
+    if case != "inventory":
+        assert all(f"Candidate report {index}" not in outcome.response.answer for index in range(3))
+
+
+@pytest.mark.parametrize("case", ["candidate", "selected", "guide_partial"])
+def test_host_falls_back_to_revalidated_candidate_when_no_rendered_result_exists(
+    host_fixture, case
+):
+    from ai_actuarial.assistant.document_research import Document, SelectedTarget
+
+    state = host_fixture
+    auth = AuthContext(
+        {"subject": "reader"},
+        frozenset({"chat.query", "catalog.read", "files.read", "markdown.read"}),
+    )
+    state.monkeypatch.setattr(host.deps, "get_auth_context", lambda _request: auth)
+    state.monkeypatch.setattr(host, "permitted_kbs", lambda *_: ["public"])
+    target_a = SelectedTarget(kb_id="public", file_id="https://example.test/selected-report.pdf")
+    target_b = SelectedTarget(kb_id="public", file_id="https://example.test/ai-regulation.pdf")
+    documents = {
+        target_a.file_id: Document(
+            target=target_a,
+            title="Selected Report A",
+            source_url=target_a.file_id,
+            internal_link="/file-detail?url=selected-report",
+        ),
+        target_b.file_id: Document(
+            target=target_b,
+            title="AI Regulation Overview",
+            summary="A candidate record for a regulation question.",
+            source_url=target_b.file_id,
+            internal_link="/file-detail?url=ai-regulation",
+        ),
+    }
+
+    class Facade:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def _document(self, selected):
+            return documents.get(selected.file_id) if selected.kb_id == "public" else None
+
+    state.monkeypatch.setattr(host, "DocumentResearch", Facade)
+    state.feature.executors["document_research.find_documents"] = lambda *_args: ToolResult(
+        "ok",
+        {"documents": [documents[target_b.file_id].model_dump()]},
+        ("candidate:ai-regulation",),
+    )
+    outputs = [
+        action(
+            action="call",
+            skill_id="document_research",
+            tool_id="document_research.find_documents",
+            args={"query": "AI regulation"},
+        )
+    ]
+    if case == "guide_partial":
+        from ai_actuarial.skills.usage_navigation.executors import guide
+
+        sections = guide({"query": "What features are available?", "language": "en"})
+        outputs.append(
+            action(
+                action="call",
+                skill_id="usage_navigation",
+                tool_id="usage_navigation.guide",
+                args={"query": "What features are available?", "language": "en"},
+            )
+        )
+    outputs.append(
+        action(action="finish", answer="Unsupported finding", evidence_ids=["made-up:id"])
+    )
+    model, _calls = scripted(*outputs)
+
+    outcome = state.feature.query(
+        request=state.request,
+        auth=auth,
+        message="What does the AI regulation require?",
+        model=model,
+        selected_target=target_a if case != "candidate" else None,
+    )
+
+    if case == "guide_partial":
+        assert outcome.runtime.kind == "finish" and outcome.runtime.error_code is None
+        assert outcome.runtime.evidence_ids == sections.evidence_ids
+        assert outcome.response.selected_target == target_a.model_dump()
+        assert [item.title for item in outcome.response.citations] == [
+            item["document_title"] for item in sections.data["sections"]
+        ]
+        assert "AI Regulation Overview" not in outcome.response.answer
+    elif case == "selected":
+        assert outcome.runtime.kind == "error" and outcome.runtime.error_code == "NO_EVIDENCE"
+        assert outcome.runtime.evidence_ids == ()
+        assert "AI Regulation Overview" not in outcome.response.answer
+        assert outcome.response.citations == []
+        assert outcome.response.selected_target == target_a.model_dump()
+    else:
+        assert outcome.runtime.kind == "finish" and outcome.runtime.error_code == "NO_EVIDENCE"
+        assert outcome.runtime.evidence_ids == ("candidate:ai-regulation",)
+        assert "AI Regulation Overview" in outcome.response.answer
+        assert "bodies were not verified" in outcome.response.answer
+        assert "Unsupported finding" not in outcome.response.answer
+        assert len(outcome.response.citations) == 1
+        assert outcome.response.citations[0].link == "/file-detail?url=ai-regulation"
+
+
+@pytest.mark.parametrize("expire_deadline", [False, True])
+def test_host_does_not_revalidate_selected_target_after_timeout(host_fixture, expire_deadline):
+    from ai_actuarial.assistant.document_research import Document, SelectedTarget
+
+    state = host_fixture
+    cancelled = Event()
+    auth = AuthContext(
+        {"subject": "reader"},
+        frozenset({"chat.query", "catalog.read", "files.read", "markdown.read"}),
+    )
+    state.monkeypatch.setattr(host.deps, "get_auth_context", lambda _request: auth)
+    target = SelectedTarget(kb_id="public", file_id="https://example.test/selected.pdf")
+    document = Document(
+        target=target,
+        title="Selected report",
+        source_url=target.file_id,
+        internal_link="/file-detail?url=selected",
+    )
+    lookups = []
+
+    class Facade:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def _document(self, selected):
+            lookups.append(selected.file_id)
+            if len(lookups) > 1:
+                state.request.state.assistant_runtime_context.remaining()
+            return document if selected == target else None
+
+    state.monkeypatch.setattr(host, "DocumentResearch", Facade)
+
+    def model(_prompt, _remaining):
+        context = state.request.state.assistant_runtime_context
+        if expire_deadline:
+            context.deadline = time.monotonic() - 1
+        else:
+            cancelled.set()
+        return action(action="clarify", question="Which section do you mean?")
+
+    outcome = state.feature.query(
+        request=state.request,
+        auth=auth,
+        message="What does this report say?",
+        model=model,
+        cancelled=cancelled,
+        selected_target=target,
+    )
+
+    assert outcome.runtime.error_code == "ASSISTANT_TIMEOUT"
+    assert outcome.response.selected_target is None
+    assert lookups == [target.file_id]
 
 
 @pytest.fixture
@@ -1698,6 +2823,132 @@ def test_host_rechecks_body_permission_after_summary_verifier_callback(
         assert (
             outcome.response.citations and outcome.response.selected_target == target.model_dump()
         )
+
+
+@pytest.mark.parametrize(
+    "body_outcome",
+    ["verified", "normalized_quote", "unknown_id", "coverage_note", "time_gap", "invalid_quote"],
+)
+def test_body_and_guide_keep_both_supported_parts(host_fixture, body_outcome):
+    from ai_actuarial.assistant.document_research import Document, SelectedTarget
+    from ai_actuarial.skills.usage_navigation.executors import guide
+
+    state = host_fixture
+    auth = AuthContext(
+        {"subject": "reader"},
+        frozenset({"chat.query", "catalog.read", "files.read", "markdown.read"}),
+    )
+    state.monkeypatch.setattr(host.deps, "get_auth_context", lambda _request: auth)
+    state.monkeypatch.setattr(host, "permitted_kbs", lambda *_: ["public"])
+    target = SelectedTarget(kb_id="public", file_id="https://example.test/report.pdf")
+    report = Document(
+        target=target,
+        title="Research report",
+        source_url=target.file_id,
+        internal_link="/file-detail?url=report",
+    )
+    quote = "The survey’s estimate is around 60%\nfor both experience groups."
+    guide_query = "Where do I see remaining AI quota and when does it reset?"
+    guide_result = guide({"query": guide_query, "language": "en"})
+    guide_id = next(
+        eid
+        for eid, section in zip(guide_result.evidence_ids, guide_result.data["sections"])
+        if section["reference"]["section_id"] == "account-quota"
+    )
+
+    class Facade:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def _document(self, selected):
+            return report if selected == target else None
+
+    state.monkeypatch.setattr(host, "DocumentResearch", Facade)
+    state.feature.executors["document_research.read_document_sections"] = lambda *_: ToolResult(
+        "ok",
+        {
+            "sections": [
+                {
+                    "target": target.model_dump(),
+                    "section_id": "findings",
+                    "excerpt": quote,
+                    "source_url": target.file_id,
+                }
+            ]
+        },
+        ("body:report",),
+    )
+    verified = body_outcome in ("verified", "normalized_quote", "unknown_id", "coverage_note")
+    quoted = {
+        "invalid_quote": "forged",
+        "normalized_quote": "The survey's estimate is around 60% for both experience groups.",
+    }.get(body_outcome, quote)
+    actions = [
+        action(
+            action="call",
+            skill_id="usage_navigation",
+            tool_id="usage_navigation.guide",
+            args={"query": guide_query, "language": "en"},
+        ),
+        action(
+            action="call",
+            skill_id="document_research",
+            tool_id="document_research.read_document_sections",
+            args={**target.model_dump(), "query": "enterprise AI use"},
+        ),
+        action(
+            action="finish",
+            answer="Unverified model draft",
+            evidence_ids=[guide_id, "body:report"]
+            + (["body:unobserved"] if body_outcome == "unknown_id" else []),
+            findings=[
+                {
+                    "evidence_id": "body:report",
+                    "quote": quoted,
+                    "summary": quote
+                    + (
+                        "; this excerpt does not provide the headcount."
+                        if body_outcome == "coverage_note"
+                        else ""
+                    ),
+                }
+            ]
+            + (
+                [{"evidence_id": "body:unobserved", "quote": quoted, "summary": "Not observed."}]
+                if body_outcome == "unknown_id"
+                else []
+            ),
+        ),
+    ]
+    if body_outcome != "invalid_quote":
+        actions.append(action(supported=[verified], gap=None if verified else "time"))
+    model, prompts = scripted(*actions)
+    response = state.feature.query(
+        request=state.request,
+        auth=auth,
+        message=f"What percentage uses enterprise AI? {guide_query}",
+        locale="en",
+        selected_target=target,
+        model=model,
+    ).response
+    assert response.stop_reason == "finish" and response.generation_attempts == len(prompts) == len(
+        actions
+    )
+    assert "Profile" in response.answer and "UTC" in response.answer
+    assert (quote in response.answer) == verified
+    assert "Unverified model draft" not in response.answer
+    if body_outcome == "coverage_note":
+        verification = next(prompt for prompt, _ in prompts if "items" in prompt)
+        assert verification["items"][0]["summary"] == quote
+        assert "did not verify the complete answer" in response.answer
+    assert {ref.source_type for ref in response.citations} == (
+        {"help", "kb"} if verified else {"help"}
+    )
+    assert response.selected_target == target.model_dump()
+    if not verified:
+        assert response.error_code == "SUMMARY_UNVERIFIED"
+        expected = "requested time" if body_outcome == "time_gap" else "did not verify"
+        assert expected in response.answer
 
 
 @pytest.mark.parametrize("locale", ["en", "zh"])
@@ -3819,7 +5070,15 @@ def test_host_agent_recovery_counts_real_creates_and_refreshes_timeout(
                         {"subject": "reader", "group_name": "registered"}, REGISTERED_PERMISSIONS
                     )
             else:
-                content, finish_reason = action(action="clarify", question="Which report?"), "stop"
+                content, finish_reason = (
+                    action(
+                        action="clarify",
+                        question="Which report?",
+                        blocking_input="The report was not named.",
+                        blocking_reason="A specific report is needed to answer its contents.",
+                    ),
+                    "stop",
+                )
             return SimpleNamespace(
                 choices=[
                     SimpleNamespace(

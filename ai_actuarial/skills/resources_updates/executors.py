@@ -121,6 +121,7 @@ def catalog_search(facade, args):
         query=args["query"],
         source=source,
         limit=3,
+        search_markdown_content=False,
         exclude_urls=SOURCE_PORTAL_URLS,
         **order,
         **exclusion,

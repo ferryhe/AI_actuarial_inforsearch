@@ -9,6 +9,7 @@ from urllib.parse import urlencode
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from ai_actuarial.agentic_rag.ready_data_tools import DOCUMENT_NUMBER
 from ai_actuarial.api.services.ready_data_publication import read_public_ready_data_snapshot
 
 _STOP = set(
@@ -43,6 +44,8 @@ class SectionEvidence(BaseModel):
     excerpt: str
     source_url: str
     retrieval: str
+    title: str = ""
+    publication_date: str | None = None
     source_version: str | None = None
     index_version: str | None = None
     serving_stale: bool = False
@@ -63,7 +66,7 @@ def _terms(query: str) -> list[str]:
         "主要发现": "findings",
     }
     words.extend(value for key, value in aliases.items() if key in query)
-    return list(dict.fromkeys(words))[:12]
+    return list(dict.fromkeys([*DOCUMENT_NUMBER.findall(query), *words]))[:12]
 
 
 def _body_query(query: str, section: str | None) -> tuple[str, set[str]]:
@@ -171,12 +174,17 @@ class DocumentResearch:
         terms = _terms(query)
         correction = re.search(r"(?:\bi meant\b|不是.*?(?:[，,；;]\s*是|而是))(.*)", query, re.I)
         ranking_terms = _terms(correction.group(1)) if correction else terms
+        ranking_query = (
+            correction.group(1).strip().casefold() if correction else query.strip().casefold()
+        )
+        ranking_numbers = DOCUMENT_NUMBER.findall(ranking_query)
         rows = {}
-        for term in terms or [""]:
+        search_phrases = list(dict.fromkeys([ranking_query, *terms])) if ranking_query else terms
+        for term in search_phrases or [""]:
             for row in self.storage.search_catalog_projection(
                 [term] if term else [], limit=50, kb_ids=current_kbs
             ):
-                rows[row["file_url"]] = row
+                rows.setdefault(row["file_url"], row)
         found = []
         for row in rows.values():
             for current_kb in current_kbs:
@@ -203,6 +211,8 @@ class DocumentResearch:
             ):
                 score += 20
             return (
+                -sum(term in title or term in summary for term in ranking_numbers),
+                not bool(ranking_query and (ranking_query in title or ranking_query in summary)),
                 -score,
                 -(
                     int((doc.publication_date or "")[:4])
@@ -299,6 +309,11 @@ class DocumentResearch:
                 limit=5,
                 excerpt_terms=excerpt_terms,
                 file_urls={target.file_id},
+                **(
+                    {"preferred_phrases": tuple(DOCUMENT_NUMBER.findall(body_query))}
+                    if DOCUMENT_NUMBER.search(body_query)
+                    else {}
+                ),
             )
             for row in rows:
                 if (
@@ -330,6 +345,8 @@ class DocumentResearch:
                         excerpt=str(row["text_snippet"]),
                         source_url=document.source_url,
                         retrieval="ready",
+                        title=document.title[:180],
+                        publication_date=document.publication_date,
                         source_version=manifest.get("publication_id")
                         or manifest.get("source_version_id"),
                         index_version=manifest.get("index_version_id"),
@@ -401,6 +418,8 @@ class DocumentResearch:
                     excerpt=excerpt[:1600],
                     source_url=document.source_url,
                     retrieval="standard",
+                    title=document.title[:180],
+                    publication_date=document.publication_date,
                     source_version=metadata.get("index_version_id"),
                     index_version=metadata.get("index_version_id"),
                     index_stale=bool(metadata.get("index_stale")),
@@ -412,3 +431,50 @@ class DocumentResearch:
         self, target: SelectedTarget, query: str
     ) -> tuple[list[SectionEvidence], str]:
         return self.read_document_sections(target, query=query)
+
+    def search_topic(
+        self, query: str, *, kb_id: str | None = None, exclude_file_url: str | None = None
+    ) -> tuple[list[SectionEvidence], str]:
+        from ai_actuarial.assistant.knowledge import body_evidence
+        from ai_actuarial.chatbot.config import ChatbotConfig
+
+        allowed = self.authorized_kbs()
+        if kb_id is not None and kb_id not in allowed:
+            raise PermissionError("KB target is outside current scope")
+        if not allowed:
+            return [], "knowledge_unavailable"
+        config = self.config or ChatbotConfig.load_unvalidated(storage=self.storage)
+        terms = query.strip().casefold()
+        numbers = DOCUMENT_NUMBER.findall(query)
+        rows, failure = body_evidence(
+            self.storage,
+            query,
+            [kb_id] if kb_id is not None else allowed,
+            config=config,
+            deadline=self.deadline,
+            on_embedding=self.on_embedding,
+            topic_phrases=tuple(dict.fromkeys([*numbers, terms])),
+            exclude_file_url=exclude_file_url,
+        )
+        if not rows and failure is not None:
+            return [], failure.lower()
+        sections = []
+        for row in rows:
+            ref = row.citation
+            target = SelectedTarget(kb_id=ref.kb_id, file_id=ref.file_id)
+            document = self._document(target)
+            if document:
+                sections.append(
+                    SectionEvidence(
+                        target=target,
+                        section_id=ref.section_id,
+                        excerpt=row.content,
+                        source_url=document.source_url,
+                        retrieval="knowledge",
+                        title=document.title[:180],
+                        publication_date=document.publication_date,
+                        source_version=ref.source_version,
+                        serving_stale=ref.stale,
+                    )
+                )
+        return sections, "available" if sections else "not_found"

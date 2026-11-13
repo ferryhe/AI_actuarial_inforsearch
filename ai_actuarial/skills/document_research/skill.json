@@ -1,9 +1,21 @@
 {
   "skill_id": "document_research",
-  "version": "1.1",
+  "version": "1.2",
   "description": "Find a permitted report and read current, source-linked body sections.",
   "enabled": true,
   "tools": [
+    {
+      "tool_id": "document_research.search_topic",
+      "description": "Retrieve exact passages across the permitted knowledge bases for a factual topic without a user-selected document. Search by a short formal name, identifier, or issuer. If results are too broad or historical, refine the topic or select a returned source and read it.",
+      "executor": "document_research.search_topic",
+      "arguments_model": "TopicArgs",
+      "required_scopes": [
+        "chat.query",
+        "catalog.read",
+        "files.read",
+        "markdown.read"
+      ]
+    },
     {
       "tool_id": "document_research.find_documents",
       "description": "Find reports by title, organization, aliases and summary before recency.",

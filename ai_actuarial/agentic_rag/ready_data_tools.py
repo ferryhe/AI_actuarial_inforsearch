@@ -9,6 +9,8 @@ from ai_actuarial.retrieval_indicators import build_retrieval_indicators
 
 _TOKEN_PART_RE = re.compile(r"[a-z0-9_]+|[\u4e00-\u9fff]+", re.IGNORECASE | re.UNICODE)
 _CJK_RE = re.compile(r"[\u4e00-\u9fff]", re.UNICODE)
+DOCUMENT_NUMBER = re.compile(r"\b\d{4}/\d{2,}\b")
+_NUMBERED_REFERENCE = re.compile(r"(?<![\w/])\d{4}/\d{2,}(?![\w/])")
 
 
 def _norm(value: Any) -> str:
@@ -488,6 +490,8 @@ def search_sections(
     limit: int = 10,
     excerpt_terms: set[str] | None = None,
     file_urls: set[str] | None = None,
+    preferred_phrases: tuple[str, ...] = (),
+    prioritize_references: bool = False,
 ) -> list[dict[str, Any]]:
     """Search L1 structured sections, falling back to L0 sections when needed."""
     query_text = _norm(query)
@@ -502,6 +506,11 @@ def search_sections(
     source = "sections_structured" if ready_data["sections_structured"] else "sections"
     section_rows = ready_data["sections_structured"] or ready_data["sections"]
     keyword_max = len(query_tokens) * (4.0 + 3.0 + 1.0 + 1.0 + 4.0) + 3.0
+    reference_terms = (
+        set(query_tokens) if prioritize_references and not DOCUMENT_NUMBER.search(query) else set()
+    )
+    best_reference: dict[str, Any] | None = None
+    reference_coverage = (0, 0.0)
     scored: list[dict[str, Any]] = []
     for section in section_rows:
         doc_id = _norm(section.get("doc_id"))
@@ -530,31 +539,49 @@ def search_sections(
             score += 3.0
         if score <= 0:
             continue
-        scored.append(
-            _with_retrieval_indicators(
-                {
-                    "doc_id": doc_id,
-                    "file_url": file_url,
-                    "title": _norm(section.get("title")) or _norm(doc.get("title")) or file_url,
-                    "section_id": _norm(section.get("section_id")),
-                    "heading_path": heading_path,
-                    "heading": heading,
-                    "text_snippet": (
-                        _matching_excerpt(text, excerpt_terms)
-                        if excerpt_terms is not None
-                        else _text_snippet(text)
-                    ),
-                    "score": round(float(score), 4),
-                    "source": source,
-                },
-                score=score,
-                source=source,
-                tool="search_sections",
-                keyword_max=keyword_max,
-            )
+        preferred_match = next(
+            (phrase for phrase in preferred_phrases if phrase and phrase in text.casefold()), None
         )
+        matched_terms = 0
+        if preferred_match is None and reference_terms:
+            for reference in _NUMBERED_REFERENCE.finditer(text):
+                nearby = text[max(0, reference.start() - 100) : reference.end() + 160]
+                matches = len(reference_terms.intersection(_tokens(nearby)))
+                if matches >= 2 and matches > matched_terms:
+                    preferred_match = reference.group()
+                    matched_terms = matches
+        elif preferred_match:
+            score += keyword_max
+        row = _with_retrieval_indicators(
+            {
+                "doc_id": doc_id,
+                "file_url": file_url,
+                "title": _norm(section.get("title")) or _norm(doc.get("title")) or file_url,
+                "section_id": _norm(section.get("section_id")),
+                "heading_path": heading_path,
+                "heading": heading,
+                "text_snippet": (
+                    _matching_excerpt(text, {preferred_match} if preferred_match else excerpt_terms)
+                    if excerpt_terms is not None
+                    else _text_snippet(text)
+                ),
+                "score": round(float(score), 4),
+                "source": source,
+            },
+            score=score,
+            source=source,
+            tool="search_sections",
+            keyword_max=keyword_max,
+        )
+        if matched_terms and (matched_terms, score) > reference_coverage:
+            best_reference = row
+            reference_coverage = (matched_terms, score)
+        scored.append(row)
 
     scored.sort(key=lambda item: (-float(item["score"]), item["title"].lower(), item["section_id"]))
+    if best_reference is not None:
+        scored.remove(best_reference)
+        scored.insert(0, best_reference)
     return scored[: _limit(limit)]
 
 

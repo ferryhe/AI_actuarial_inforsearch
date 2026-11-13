@@ -75,6 +75,7 @@ class AssistantFeature:
             "document_research.find_documents": research_executors.find_documents,
             "document_research.read_document_sections": research_executors.read_document_sections,
             "document_research.search_knowledge": research_executors.search_knowledge,
+            "document_research.search_topic": research_executors.search_topic,
             "document_research.readiness": research_executors.readiness,
             "usage_navigation.guide": usage_executors.guide,
             "resources_updates.sources": resources_executors.sources,
@@ -306,6 +307,7 @@ class AssistantFeature:
             found_targets: set[tuple[str, str]] = set()
             found_evidence_targets: dict[str, SelectedTarget] = {}
             body_read_targets: set[tuple[str, str]] = set()
+            requested_body_targets: set[tuple[str, str]] = set()
             body_evidence_kbs: dict[str, str] = {}
             help_citations: dict[str, HelpCitation] = {}
             source_citations: dict[str, SourceCitation] = {}
@@ -326,6 +328,7 @@ class AssistantFeature:
                         verified_target = None
                 except PermissionError:
                     verified_target = None
+            initial_accepted_target = verified_target
 
             def execute(tool, args: dict, run_context: RunContext, _remaining: float) -> ToolResult:
                 nonlocal verified_target, attempted_opened_body
@@ -358,6 +361,11 @@ class AssistantFeature:
                 ):
                     raise PermissionError("KB target is outside current scope")
                 run_context.remaining()
+                if tool.executor in {
+                    "document_research.read_document_sections",
+                    "document_research.search_knowledge",
+                }:
+                    requested_body_targets.add((args["kb_id"], args["file_id"]))
                 if (
                     attempted_opened_body
                     and opened_target is None
@@ -525,41 +533,48 @@ class AssistantFeature:
                     if result.status == "ok" and tool.executor in {
                         "document_research.read_document_sections",
                         "document_research.search_knowledge",
+                        "document_research.search_topic",
                     }:
-                        body_evidence_kbs.update(
-                            (evidence_id, args["kb_id"]) for evidence_id in result.evidence_ids
-                        )
-                        document = facade._document(
+                        sections = result.data.get("sections") or [result.data.get("document", {})]
+                        fixed_target = (
                             SelectedTarget(kb_id=args["kb_id"], file_id=args["file_id"])
+                            if "file_id" in args
+                            else None
                         )
-                        if document:
-                            source_citations.update(
-                                (
-                                    evidence_id,
-                                    SourceCitation(
-                                        source_type=(
-                                            "kb" if section.get("section_id") else "catalog"
-                                        ),
-                                        file_id=document.target.file_id,
-                                        kb_id=document.target.kb_id,
-                                        section_id=section.get("section_id", ""),
-                                        title=document.title,
-                                        link=document.internal_link,
-                                        source_version=section.get("source_version"),
-                                        source_date=document.publication_date,
-                                        stale=section.get("serving_stale", False),
-                                    ),
-                                )
-                                for evidence_id, section in zip(
-                                    result.evidence_ids,
-                                    result.data.get("sections")
-                                    or [result.data.get("document", {})],
-                                )
+                        documents = {}
+                        for evidence_id, section in zip(result.evidence_ids, sections):
+                            target = fixed_target or SelectedTarget.model_validate(
+                                section["target"]
                             )
-                        body_read_targets.add((args["kb_id"], args["file_id"]))
-                        verified_target = SelectedTarget(
-                            kb_id=args["kb_id"], file_id=args["file_id"]
-                        )
+                            key = (target.kb_id, target.file_id)
+                            if key not in documents:
+                                documents[key] = facade._document(target)
+                            document = documents[key]
+                            body_evidence_kbs[evidence_id] = target.kb_id
+                            if document is None:
+                                raise ValueError("Body source is no longer available")
+                            if section.get("section_id") and (
+                                section.get("target") != target.model_dump()
+                                or section.get("source_url") != document.source_url
+                            ):
+                                raise ValueError("Body source does not match the current document")
+                            source_citations[evidence_id] = SourceCitation(
+                                source_type="kb" if section.get("section_id") else "catalog",
+                                file_id=target.file_id,
+                                kb_id=target.kb_id,
+                                section_id=section.get("section_id", ""),
+                                title=document.title,
+                                link=document.internal_link,
+                                source_version=section.get("source_version"),
+                                source_date=document.publication_date,
+                                stale=section.get("serving_stale", False),
+                            )
+                            if fixed_target is None:
+                                found_targets.add(key)
+                                found_evidence_targets[evidence_id] = target
+                        if fixed_target is not None:
+                            body_read_targets.add((fixed_target.kb_id, fixed_target.file_id))
+                            verified_target = fixed_target
                     if (
                         result.status == "not_found"
                         and args.get("file_id")
@@ -614,6 +629,21 @@ class AssistantFeature:
                 except Exception:
                     return None
 
+            def revalidate_target(target: SelectedTarget) -> SelectedTarget | None:
+                nonlocal verified_target
+                try:
+                    context.remaining()
+                    verified_target = target
+                    current = resolve_selected_document(target.model_dump())
+                    context.remaining()
+                except TimeoutError:
+                    verified_target = None
+                    return None
+                if isinstance(current, dict) and current.get("target") == target.model_dump():
+                    return target
+                verified_target = None
+                return None
+
             runtime = run(
                 message=message,
                 locale=locale,
@@ -634,7 +664,154 @@ class AssistantFeature:
                 recent_questions=recent_questions or [],
                 resolve_selected_document=resolve_selected_document,
                 source_options=lambda: storage.get_source_options(include_empty=True),
+                site_context="the current AI Actuarial InfoSearch site and its permitted holdings",
+                can_render_evidence=lambda item: item in help_answers or item in resource_answers,
             )
+            partial_prefix = None
+            cited_partial_ids = runtime.evidence_ids if runtime.error_code == "NO_EVIDENCE" else ()
+            preserve_cited_partial = bool(cited_partial_ids)
+            if (
+                runtime.error_code in {"NO_EVIDENCE", "TOOL_UNAVAILABLE"}
+                or runtime.model_budget_exhausted
+            ):
+                try:
+                    context.remaining()
+                except TimeoutError:
+                    if preserve_cited_partial:
+                        runtime = replace(
+                            runtime,
+                            availability="error",
+                            error_code="ASSISTANT_TIMEOUT",
+                            evidence_ids=(),
+                        )
+                else:
+                    if preserve_cited_partial:
+                        visible_ids = tuple(
+                            item
+                            for item in cited_partial_ids
+                            if item in help_answers or item in resource_answers
+                        )
+                    else:
+                        latest_result = next(
+                            (
+                                item
+                                for item in reversed(runtime.trace)
+                                if item.tool_id.startswith(
+                                    ("usage_navigation.", "resources_updates.")
+                                )
+                            ),
+                            None,
+                        )
+                        visible_ids = (
+                            tuple(
+                                evidence_id
+                                for evidence_id in latest_result.evidence_ids
+                                if evidence_id in help_answers or evidence_id in resource_answers
+                            )
+                            if latest_result is not None and latest_result.status == "ok"
+                            else ()
+                        )
+                    recovered_ids = visible_ids
+                    answer = ""
+                    availability = "available"
+                    error_code = None
+                    if not visible_ids and not preserve_cited_partial:
+                        discovery_tools = {
+                            tool.tool_id
+                            for skill in registry.skills.values()
+                            for tool in skill.tools
+                            if tool.result_kind == "catalog_discovery"
+                        }
+                        latest_finder = next(
+                            (
+                                item
+                                for item in reversed(runtime.trace)
+                                if item.tool_id in discovery_tools
+                            ),
+                            None,
+                        )
+                        candidates = []
+                        if latest_finder is not None and latest_finder.status == "ok":
+                            try:
+                                for evidence_id in latest_finder.evidence_ids:
+                                    target = found_evidence_targets.get(evidence_id)
+                                    citation = source_citations.get(evidence_id)
+                                    if (
+                                        target is None
+                                        or citation is None
+                                        or (
+                                            initial_accepted_target is not None
+                                            and target != initial_accepted_target
+                                        )
+                                        or (
+                                            requested_body_targets
+                                            and (target.kb_id, target.file_id)
+                                            not in requested_body_targets
+                                        )
+                                    ):
+                                        continue
+                                    current = resolve_selected_document(target.model_dump())
+                                    if (
+                                        isinstance(current, dict)
+                                        and current.get("target") == target.model_dump()
+                                        and isinstance(current.get("title"), str)
+                                        and current["title"].strip()
+                                        and isinstance(current.get("internal_link"), str)
+                                        and current["internal_link"].strip()
+                                    ):
+                                        source_citations[evidence_id] = citation.model_copy(
+                                            update={
+                                                "title": current["title"],
+                                                "link": current["internal_link"],
+                                                "source_date": current.get("publication_date"),
+                                            }
+                                        )
+                                        candidates.append((evidence_id, current["title"]))
+                                context.remaining()
+                            except TimeoutError:
+                                candidates = []
+                        if candidates:
+                            recovered_ids = tuple(item[0] for item in candidates)
+                            notice = (
+                                "候选资料正文未核验："
+                                if locale.startswith("zh")
+                                else "Candidate document bodies were not verified:"
+                            )
+                            answer = "\n".join([notice, *(f"- {title}" for _, title in candidates)])
+                            availability = "unavailable"
+                            error_code = runtime.error_code
+                    if preserve_cited_partial and not visible_ids:
+                        runtime = replace(
+                            runtime,
+                            availability="available",
+                            error_code=None,
+                            evidence_ids=(),
+                            kind="clarify",
+                        )
+                    if recovered_ids:
+                        reason = (
+                            "模型调用额度已用完，无法核验完整答案"
+                            if runtime.model_budget_exhausted
+                            else "未能核验完整答案"
+                        )
+                        partial_prefix = (
+                            f"部分结果：{reason}。已核实的部分如下。"
+                            if locale.startswith("zh")
+                            else (
+                                "Partial result: the model-call budget was exhausted before the complete answer could be verified. Verified information follows."
+                                if runtime.model_budget_exhausted
+                                else "Partial result: the complete answer could not be verified. Verified information follows."
+                            )
+                        )
+                        runtime = replace(
+                            runtime,
+                            answer=answer,
+                            availability=availability,
+                            error_code=error_code,
+                            evidence_ids=recovered_ids,
+                            kind="finish",
+                            verified_quote=None,
+                        )
             if runtime.verified_quote is not None:
                 evidence_id = runtime.evidence_ids[0]
                 quote, source_url = runtime.verified_quote
@@ -688,14 +865,44 @@ class AssistantFeature:
                             "source_date": publication_date,
                         }
                     )
-            if runtime.error_code == "SCOPE_REVOKED":
+            if runtime.error_code in {"SCOPE_REVOKED", "ASSISTANT_TIMEOUT"}:
                 verified_target = None
+            elif partial_prefix is not None:
+                partial_target = initial_accepted_target
+                if partial_target is None:
+                    grounded_targets = {}
+                    for evidence_id in runtime.evidence_ids:
+                        target = resource_file_targets.get(
+                            evidence_id
+                        ) or found_evidence_targets.get(evidence_id)
+                        if target is not None:
+                            grounded_targets[(target.kb_id, target.file_id)] = target
+                    if len(grounded_targets) == 1:
+                        partial_target = next(iter(grounded_targets.values()))
+                verified_target = (
+                    revalidate_target(partial_target) if partial_target is not None else None
+                )
             elif runtime.kind == "finish" and len(runtime.evidence_ids) == 1:
                 evidence_id = runtime.evidence_ids[0]
                 if evidence_id in resource_file_targets:
                     verified_target = resource_file_targets[evidence_id]
                 else:
                     verified_target = found_evidence_targets.get(evidence_id, verified_target)
+            elif runtime.kind == "finish":
+                topic_targets = {
+                    (target.kb_id, target.file_id): target
+                    for item in runtime.evidence_ids
+                    if item in body_evidence_kbs
+                    and (target := found_evidence_targets.get(item)) is not None
+                }
+                if len(topic_targets) == 1:
+                    verified_target = next(iter(topic_targets.values()))
+            elif runtime.kind != "finish":
+                verified_target = (
+                    revalidate_target(initial_accepted_target)
+                    if initial_accepted_target is not None
+                    else None
+                )
             if runtime.kind == "finish":
                 try:
                     required_scopes = {"chat.query"}
@@ -911,7 +1118,13 @@ class AssistantFeature:
                         weekly_guide_answer = dashboard_entry + weekly_guide_answer
                     guide_answers.append(weekly_guide_answer)
                 if grounded or guide_answers:
-                    response.answer = "\n\n".join(dict.fromkeys([*guide_answers, *grounded]))
+                    parts = [*guide_answers, *grounded]
+                    if runtime.answer and (
+                        runtime.error_code == "SUMMARY_UNVERIFIED"
+                        or any(item in body_evidence_kbs for item in runtime.evidence_ids)
+                    ):
+                        parts.insert(0, runtime.answer)
+                    response.answer = "\n\n".join(dict.fromkeys(parts))
             if weekly_used:
                 if weekly_access is not True:
                     if weekly_access is False:
@@ -972,6 +1185,12 @@ class AssistantFeature:
                     if locale.startswith("zh")
                     else "This is only a draft. Review, edit and confirm to submit; nothing is recorded yet."
                 )
+            if (
+                partial_prefix
+                and runtime.kind == "finish"
+                and runtime.error_code != "SCOPE_REVOKED"
+            ):
+                response.answer = f"{partial_prefix}\n\n{response.answer}"
             response.selected_target = verified_target.model_dump() if verified_target else None
             return Outcome(response, runtime, session_update)
         finally:

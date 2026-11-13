@@ -345,6 +345,46 @@ def test_search_sections_returns_stable_section_hits_from_l1_artifact(tmp_path: 
     assert results[0]["score"] > 0
 
 
+def test_topic_sections_surface_one_matching_reference_without_changing_default_rank(tmp_path):
+    _write_ready_data(tmp_path)
+    _write_jsonl(
+        tmp_path / "sections_structured.jsonl",
+        [
+            {
+                "section_id": "discussion",
+                "doc_id": "discussion",
+                "heading": "AI regulation",
+                "text": "The committee plans to discuss the proposed AI regulation.",
+            },
+            {
+                "section_id": "reference",
+                "doc_id": "reference",
+                "text": "The final AI regulation 2025/1234 sets annual review requirements.",
+            },
+            {
+                "section_id": "different_topic",
+                "doc_id": "different_topic",
+                "text": "The pension regulation 2026/444 concerns annuities.",
+            },
+        ],
+    )
+    manifest_path = tmp_path / "ready_data_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["artifact_files"].append("sections_structured.jsonl")
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    ordinary = search_sections("AI regulation", output_dir=tmp_path, limit=1)
+    assert ordinary[0]["section_id"] == "discussion"
+    focused = search_sections(
+        "AI regulation",
+        output_dir=tmp_path,
+        excerpt_terms={"ai", "regulation"},
+        prioritize_references=True,
+    )
+    assert [row["section_id"] for row in focused[:2]] == ["reference", "discussion"]
+    assert "2025/1234" in focused[0]["text_snippet"]
+
+
 def test_search_sections_matches_cjk_query_terms_inside_structured_sections(tmp_path: Path) -> None:
     _write_ready_data(tmp_path)
     _write_jsonl(
