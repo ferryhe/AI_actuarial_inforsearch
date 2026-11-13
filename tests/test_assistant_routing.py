@@ -304,7 +304,7 @@ def test_quota_rejects_before_config_or_provider(runtime):
     result = runtime.run()
     assert result.error_code == "QUOTA_EXCEEDED"
     assert runtime.initialized == len(runtime.calls) == 0
-    assert runtime.quota[0][1:] == (5, {"ip_address": "test-ip"})
+    assert runtime.quota[0][1:] == (20, {"ip_address": "test-ip"})
 
 
 def test_registered_identity_uses_exact_chat_ledger(runtime):
@@ -312,7 +312,7 @@ def test_registered_identity_uses_exact_chat_ledger(runtime):
     runtime.run(
         auth=AuthContext({"group_name": "registered", "_email_user": {"id": 42}}, frozenset())
     )
-    assert runtime.quota[0][1:] == (20, {"user_id": 42})
+    assert runtime.quota[0][1:] == (40, {"user_id": 42})
 
 
 def test_expired_deadline_makes_zero_provider_requests(runtime):

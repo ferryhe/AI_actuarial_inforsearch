@@ -127,9 +127,9 @@ def test_role_permissions_copy_and_frontend_menu_contract_are_bilingual() -> Non
     for text in (
         '"users.role_operator_ai_legacy": "Operator (legacy alias)"',
         '"users.role_operator_ai_legacy": "Operator（旧版别名）"',
-        '"users.role_registered_description": "Same permissions as Premium; 20 AI chats per day."',
+        '"users.role_registered_description": "Same permissions as Premium; 40 AI chats per day."',
         '"users.role_premium_description": "Same permissions as Registered; 50 AI chats per day."',
-        '"users.role_registered_description": "权限与 Premium 相同；每日 20 次 AI 对话。"',
+        '"users.role_registered_description": "权限与 Premium 相同；每日 40 次 AI 对话。"',
         '"users.role_premium_description": "权限与 Registered 相同；每日 50 次 AI 对话。"',
     ):
         assert text in translations

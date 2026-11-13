@@ -408,10 +408,8 @@ export default function Chat() {
   const [location, navigate] = useLocation();
   const rawSearch = useRawSearch();
   const routeState = useHistoryState<ChatRouteState | null>();
-  const { user, isLoggedIn, permissions, isLoading: authLoading } = useAuth();
+  const { permissions, isLoading: authLoading } = useAuth();
   const canUseConversations = permissions.includes("chat.conversations");
-  const isGuest = !isLoggedIn || user?.role === "guest";
-  const GUEST_CHAT_QUOTA = 5;
   const [mode, setMode] = useState<ChatMode>("expert");
   const [ragMode, setRagMode] = useState<RagMode>("standard");
   const getMode = useCallback(() => mode, [mode]);
@@ -881,18 +879,6 @@ export default function Chat() {
     if (shouldUseAgentic && (requestKbIds.length !== 1 || !isChatKnowledgeBaseAvailable(selectedAgenticKb))) {
       setErrorMsg(t("chat.agentic_requires_kb"));
       return false;
-    }
-
-    // Check guest quota
-    if (isGuest) {
-      const userMessageCount = messages.filter((m) => m.role === "user").length;
-      if (userMessageCount >= GUEST_CHAT_QUOTA) {
-        setQuotaWarning(t("chat.quota_exceeded"));
-        return false;
-      }
-      if (userMessageCount === GUEST_CHAT_QUOTA - 1) {
-        setQuotaWarning(t("chat.quota_last_message"));
-      }
     }
 
     setShowKbDropdown(false);

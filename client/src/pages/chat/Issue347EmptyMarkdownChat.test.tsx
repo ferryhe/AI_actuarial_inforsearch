@@ -203,6 +203,33 @@ beforeEach(() => {
 
 afterEach(() => cleanup());
 
+it("uses the server's daily quota for guest Chat with existing history", async () => {
+  testState.guest = true;
+  testState.routeState = null;
+  testState.initialActiveConversationId = "conv-guest-quota";
+  testState.initialMessages = Array.from({ length: 20 }, (_, index) => ({
+    role: "user",
+    content: `Previous question ${index + 1}`,
+  }));
+  const quotaError = "Daily AI chat limit reached (20/day). Please register to get more queries.";
+  vi.mocked(queryChat)
+    .mockResolvedValueOnce({
+      data: { conversation_id: "conv-guest-quota", response: "Quota available", citations: [] },
+    })
+    .mockRejectedValueOnce(new ApiError(quotaError, 429, quotaError));
+
+  const user = userEvent.setup();
+  render(<Chat />);
+  await user.type(screen.getByTestId("input-chat-message"), "Today's question");
+  await user.click(screen.getByTestId("button-send-message"));
+  expect(await screen.findByText("Quota available")).toBeInTheDocument();
+
+  await user.type(screen.getByTestId("input-chat-message"), "One more question");
+  await user.click(screen.getByTestId("button-send-message"));
+  expect(await screen.findByText(quotaError)).toBeInTheDocument();
+  expect(queryChat).toHaveBeenCalledTimes(2);
+});
+
 describe("Issue 347 empty Markdown Chat flow", () => {
   it("lets the backend persist and classify an empty referenced document once", async () => {
     render(<Chat />);

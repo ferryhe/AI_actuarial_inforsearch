@@ -364,6 +364,7 @@ def test_fastapi_auth_register_login_logout_and_profile_flow(tmp_path: Path, mon
     user_me = client.get("/api/user/me")
     assert user_me.status_code == 200, user_me.text
     assert user_me.json()["user"]["display_name"] == "New User"
+    assert user_me.json()["quota"]["limit"] == 40
 
     logout = client.post("/api/auth/logout")
     assert logout.status_code == 200, logout.text
