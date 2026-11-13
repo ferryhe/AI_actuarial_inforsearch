@@ -10,6 +10,7 @@ import re
 import sqlite3
 import stat
 import tempfile
+import uuid
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from pathlib import Path, PurePosixPath
@@ -42,7 +43,7 @@ from .sqlite_schema import (
 
 MANIFEST_FORMAT = "ai_actuarial.content_hub.artifact_manifest"
 HUB_SCHEMA = "content_hub"
-HUB_SCHEMA_VERSION = 6
+HUB_SCHEMA_VERSION = 7
 _MIGRATION_DIR = Path(__file__).with_name("content_hub_migrations")
 _HASH_RE = re.compile(r"^[0-9a-f]{64}$")
 _SOURCE_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
@@ -459,6 +460,12 @@ def content_hub_record_source_portal_capture(
             )
             superseded_by_daily = bool(cursor.fetchone()[0])
             cursor.execute(
+                "SELECT EXISTS (SELECT 1 FROM source_portal_captures "
+                "WHERE portal_key = %s AND acquired_on = %s AND capture_kind = 'daily_projection')",
+                (portal_key, acquired_on),
+            )
+            projection_present = bool(cursor.fetchone()[0])
+            cursor.execute(
                 "SELECT capture_id, captured_at, complete, description_zh, description_en, "
                 "page_url, page_sha256 "
                 "FROM source_portal_captures WHERE portal_key = %s AND scope_key = %s "
@@ -490,6 +497,7 @@ def content_hub_record_source_portal_capture(
                     "description_en": existing[4],
                     "duplicate": True,
                     "superseded_by_daily": superseded_by_daily,
+                    "projection_present": projection_present,
                 }
                 connection.commit()
                 return result
@@ -554,6 +562,7 @@ def content_hub_record_source_portal_capture(
             "description_en": description_en,
             "duplicate": False,
             "superseded_by_daily": superseded_by_daily,
+            "projection_present": projection_present,
         }
     except psycopg2.Error as exc:
         connection.rollback()
@@ -572,10 +581,10 @@ def content_hub_project_source_portal_update(
     database_url: DatabaseConfig | str | None = None,
     schema: str = HUB_SCHEMA,
 ) -> dict[str, Any] | None:
-    """Combine independent AI Resources and daily evidence for one public card/day row."""
+    """Combine publishable daily revisions and independent directory evidence."""
     schema = _validate_schema(schema)
-    if portal_key != "soa-artificial-intelligence":
-        raise ContentHubError("Combined source portal projection is limited to AI Resources")
+    if not isinstance(portal_key, str) or not _SOURCE_RE.fullmatch(portal_key):
+        raise ContentHubError("Source portal key is malformed")
     if isinstance(acquired_on, str):
         try:
             acquired_on = date.fromisoformat(acquired_on)
@@ -592,23 +601,55 @@ def content_hub_project_source_portal_update(
                 "SELECT capture_kind, capture_id, captured_at, "
                 "description_zh, description_en FROM source_portal_captures "
                 "WHERE portal_key = %s AND acquired_on = %s "
-                "AND (capture_kind = 'daily_collection' "
-                "OR (capture_kind = 'directory' AND scope_key = 'ai-resources-v1')) "
+                "AND (capture_kind IN ('daily_collection', 'daily_projection') "
+                "OR (capture_kind = 'directory' AND (%s <> 'soa-artificial-intelligence' "
+                "OR scope_key = 'ai-resources-v1'))) "
                 "AND NULLIF(btrim(description_zh), '') IS NOT NULL "
                 "AND NULLIF(btrim(description_en), '') IS NOT NULL "
                 "ORDER BY captured_at, capture_id",
-                (portal_key, acquired_on),
+                (portal_key, acquired_on, portal_key),
             )
             rows = cursor.fetchall()
         if not rows:
             return None
-        daily = next((row for row in reversed(rows) if row[0] == "daily_collection"), None)
+        for row in rows:
+            if row[0] in {"daily_collection", "daily_projection"}:
+                content_hub_read_source_portal_capture(
+                    portal_key=portal_key,
+                    capture_id=int(row[1]),
+                    database_url=database_url,
+                    schema=schema,
+                )
+        if portal_key != "soa-artificial-intelligence" and not any(
+            row[0] == "daily_projection" for row in rows
+        ):
+            daily_rows = [row for row in rows if row[0] == "daily_collection"]
+            latest = max(daily_rows or rows, key=lambda row: (row[2], row[1]))
+            return {
+                "capture_id": int(latest[1]),
+                "captured_at": latest[2].isoformat(),
+                "acquired_on": acquired_on.isoformat(),
+                "capture_kind": latest[0],
+                "description_zh": latest[3],
+                "description_en": latest[4],
+            }
+        projection_rows = [row for row in rows if row[0] == "daily_projection"]
+        daily_rows = projection_rows or (
+            [row for row in rows if row[0] == "daily_collection"]
+            if portal_key == "soa-artificial-intelligence"
+            else []
+        )
+        daily = max(daily_rows, key=lambda row: (row[2], row[1])) if daily_rows else None
         ordered = [daily] if daily else []
         seen: set[tuple[str, str]] = set()
         directory = []
         for row in rows:
             description = (row[3], row[4])
-            if row[0] == "directory" and description not in seen:
+            if (
+                row[0] == "directory"
+                and description not in seen
+                and (not daily or description != (daily[3], daily[4]))
+            ):
                 directory.append(row)
                 seen.add(description)
 
@@ -638,12 +679,12 @@ def content_hub_project_source_portal_update(
             description_zh = "\n".join(filter(None, (description_zh, suffix_zh)))
             description_en = "\n".join(filter(None, (description_en, suffix_en)))
         if len(description_zh) > 2000 or len(description_en) > 2000:
-            raise ContentHubError("AI Resources public projection exceeds the target prose limit")
+            raise ContentHubError("Source portal public projection exceeds the target prose limit")
         return {
             "capture_id": max(row[1] for row in rows),
             "captured_at": max(row[2] for row in rows).isoformat(),
             "acquired_on": acquired_on.isoformat(),
-            "capture_kind": "daily_collection" if daily else "directory",
+            "capture_kind": daily[0] if daily else "directory",
             "description_zh": description_zh,
             "description_en": description_en,
         }
@@ -651,6 +692,22 @@ def content_hub_project_source_portal_update(
         raise ContentHubError("Content hub source portal projection failed") from exc
     finally:
         connection.close()
+
+
+def content_hub_latest_source_portal_update(
+    *,
+    portal_key: str,
+    acquired_on: date | str,
+    database_url: DatabaseConfig | str | None = None,
+    schema: str = HUB_SCHEMA,
+) -> dict[str, Any] | None:
+    """Read the current card/date composition from immutable Hub captures."""
+    return content_hub_project_source_portal_update(
+        portal_key=portal_key,
+        acquired_on=acquired_on,
+        database_url=database_url,
+        schema=schema,
+    )
 
 
 def content_hub_record_source_portal_daily(
@@ -675,6 +732,12 @@ def content_hub_record_source_portal_daily(
                 "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
                 (f"content_hub:source_portal:{portal_key}",),
             )
+            cursor.execute(
+                "SELECT EXISTS (SELECT 1 FROM source_portal_captures "
+                "WHERE portal_key = %s AND acquired_on = %s AND capture_kind = 'daily_projection')",
+                (portal_key, acquired_on),
+            )
+            projection_present = bool(cursor.fetchone()[0])
             cursor.execute(
                 "SELECT capture_id, evidence_sha256 FROM source_portal_captures "
                 "WHERE portal_key = %s AND capture_kind = 'daily_collection' "
@@ -794,6 +857,7 @@ def content_hub_record_source_portal_daily(
             "description_zh": description_zh,
             "description_en": description_en,
             "duplicate": bool(existing),
+            "projection_present": projection_present,
         }
     except psycopg2.Error as exc:
         connection.rollback()
@@ -801,6 +865,393 @@ def content_hub_record_source_portal_daily(
     except Exception:
         connection.rollback()
         raise
+    finally:
+        connection.close()
+
+
+def content_hub_project_source_portal_daily(
+    *,
+    portal_key: str,
+    acquired_on: date | str,
+    data_root: str | Path,
+    database_url: DatabaseConfig | str | None = None,
+    schema: str = HUB_SCHEMA,
+) -> dict[str, Any] | None:
+    """Revise one dated card from saved captures and exact, current Hub annotations."""
+    schema = _validate_schema(schema)
+    if not isinstance(portal_key, str) or not _SOURCE_RE.fullmatch(portal_key):
+        raise ContentHubError("Source portal key is malformed")
+    if isinstance(acquired_on, str):
+        acquired_on = date.fromisoformat(acquired_on)
+    if not isinstance(acquired_on, date) or isinstance(acquired_on, datetime):
+        raise ContentHubError("Source portal projection date is malformed")
+    root = Path(data_root).expanduser().resolve()
+    connection = _connect(database_url)
+    try:
+        with connection.cursor() as cursor:
+            _require_current_schema(cursor, schema)
+            _set_search_path(cursor, schema)
+            cursor.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                (f"content_hub:source_portal:{portal_key}",),
+            )
+            cursor.execute(
+                "SELECT capture_id, acquired_on, evidence_json, evidence_sha256 "
+                "FROM source_portal_captures WHERE portal_key = %s "
+                "AND acquired_on <= %s AND capture_kind = 'daily_collection' "
+                "ORDER BY captured_at, capture_id LIMIT 2001",
+                (portal_key, acquired_on),
+            )
+            rows = cursor.fetchall()
+            if len(rows) > 2000:
+                raise ContentHubError("Source portal projection exceeds its capture limit")
+            current, previous, capture_ids = [], [], []
+            for capture_id, row_date, evidence, stored_sha in rows:
+                captured_at, evidence_date, digest = validate_daily_evidence(evidence)
+                if (
+                    evidence["portal_key"] != portal_key
+                    or evidence_date != row_date
+                    or digest != str(stored_sha).strip()
+                ):
+                    raise ContentHubError(
+                        "Stored daily capture evidence conflicts with its identity"
+                    )
+                (current if row_date == acquired_on else previous).append(evidence)
+                if row_date == acquired_on:
+                    capture_ids.append((int(capture_id), captured_at, digest))
+            if not current:
+                connection.commit()
+                return None
+            current_urls = {
+                item["url"]
+                for run in current
+                for item in run["observations"]
+                if item["kind"] == "file" or item.get("is_article") is True
+            }
+            pairs = {
+                (item["url"], item["raw_sha256"])
+                for run in [*previous, *current]
+                for item in run["observations"]
+                if (item["kind"] == "file" or item.get("is_article") is True)
+                and item["url"] in current_urls
+            }
+            ai_materials = set()
+            invalid_ai_urls = set()
+            versions = []
+            for url, raw_sha in sorted(pairs):
+                url_hash = hashlib.sha256(url.encode("utf-8")).hexdigest()
+                cursor.execute(
+                    "SELECT url_value_json FROM excluded_urls WHERE url_identity_sha256 = %s",
+                    (url_hash,),
+                )
+                exclusion = cursor.fetchone()
+                if exclusion:
+                    if _load_json(exclusion[0]) != url:
+                        raise ContentHubError("Excluded URL identity conflicts with the exact URL")
+                    continue
+                cursor.execute(
+                    "SELECT v.content_version_id, v.url_value_json, v.raw_sha256, "
+                    "b.cas_relpath, b.byte_size, b.availability, "
+                    "a.source_primary_category, a.categories_json, a.source_signature, a.result_sha256, "
+                    "EXISTS (SELECT 1 FROM source_file_observations o "
+                    "JOIN source_snapshots s USING (source_snapshot_id) "
+                    "WHERE o.content_version_id = v.content_version_id "
+                    "AND o.raw_sha256 = v.raw_sha256 AND o.availability = 'present' "
+                    "AND s.source_kind = 'live_capture') "
+                    "FROM content_versions v "
+                    "LEFT JOIN content_blobs b ON b.sha256 = v.blob_sha256 "
+                    "LEFT JOIN article_enrichment_annotations a USING (content_version_id) "
+                    "WHERE v.url_identity_sha256 = %s AND v.raw_sha256 = %s",
+                    (url_hash, raw_sha),
+                )
+                version = cursor.fetchone()
+                if version is None:
+                    continue
+                (
+                    version_id,
+                    stored_url,
+                    stored_raw,
+                    cas_relpath,
+                    byte_size,
+                    availability,
+                    primary,
+                    categories,
+                    signature,
+                    annotation_sha,
+                    live_original,
+                ) = version
+                if _load_json(stored_url) != url or str(stored_raw).strip() != raw_sha:
+                    raise ContentHubError("Stored version conflicts with the exact URL/SHA")
+                first = (
+                    categories[0].get("key")
+                    if isinstance(categories, list) and categories
+                    else None
+                )
+                if categories is not None and (first == "AI") != (primary == "AI"):
+                    raise ContentHubError("Stored ordered category conflicts with primary category")
+                expected_path = f"cas/sha256/{raw_sha[:2]}/{raw_sha}"
+                path = root.joinpath(*PurePosixPath(expected_path).parts)
+                if (
+                    not live_original
+                    or availability != "present"
+                    or cas_relpath != expected_path
+                    or not path.is_file()
+                    or path.stat().st_size != byte_size
+                    or hashlib.sha256(path.read_bytes()).hexdigest() != raw_sha
+                ):
+                    if first == "AI":
+                        invalid_ai_urls.add(url)
+                    continue
+                if first != "AI":
+                    continue
+                ai_materials.add((url, raw_sha))
+                versions.append(
+                    {
+                        "url": url,
+                        "raw_sha256": raw_sha,
+                        "content_version_id": int(version_id),
+                        "source_signature": str(signature).strip(),
+                        "annotation_sha256": str(annotation_sha).strip(),
+                    }
+                )
+            if invalid_ai_urls - {url for url, _sha in ai_materials}:
+                raise ContentHubError("AI material lacks a verified live original")
+            projected_current = []
+            for run in current:
+                results = [
+                    {"url": item["url"], "raw_sha256": item["raw_sha256"], "status": "new"}
+                    for item in run["observations"]
+                    if (item["url"], item["raw_sha256"]) in ai_materials
+                ]
+                projected_current.append(
+                    {
+                        **run,
+                        "observations": [
+                            item
+                            for item in run["observations"]
+                            if (item["url"], item["raw_sha256"]) in ai_materials
+                            and (item["kind"] == "file" or item.get("is_article") is True)
+                        ],
+                        "hub_results": results,
+                    }
+                )
+            projected_previous = [
+                {
+                    **run,
+                    "observations": [
+                        item
+                        for item in run["observations"]
+                        if (item["url"], item["raw_sha256"]) in ai_materials
+                        and (item["kind"] == "file" or item.get("is_article") is True)
+                    ],
+                    "hub_results": [],
+                }
+                for run in previous
+            ]
+            description_zh, description_en = daily_description(
+                projected_current, projected_previous, ai_materials=ai_materials
+            )
+            cursor.execute(
+                "SELECT capture_id, captured_at, description_zh, description_en, capture_kind "
+                "FROM source_portal_captures WHERE portal_key = %s AND acquired_on = %s "
+                "AND capture_kind IN ('daily_collection', 'daily_projection') "
+                "ORDER BY (capture_kind = 'daily_projection') DESC, "
+                "captured_at DESC, capture_id DESC LIMIT 1",
+                (portal_key, acquired_on),
+            )
+            latest = cursor.fetchone()
+            if description_zh is None:
+                if latest is None or not latest[2] or not latest[3]:
+                    connection.commit()
+                    return None
+                description_zh, description_en = (
+                    "未发现新的AI资料。",
+                    "No new AI materials were found.",
+                )
+            if latest and (latest[2], latest[3]) == (description_zh, description_en):
+                connection.commit()
+                return {
+                    "capture_id": int(latest[0]),
+                    "captured_at": latest[1].isoformat(),
+                    "acquired_on": acquired_on.isoformat(),
+                    "capture_kind": latest[4],
+                    "description_zh": description_zh,
+                    "description_en": description_en,
+                    "duplicate": True,
+                }
+            cursor.execute(
+                "SELECT capture_id, captured_at, page_sha256 FROM source_portal_captures "
+                "WHERE portal_key = %s AND acquired_on = %s AND capture_kind = 'directory'",
+                (portal_key, acquired_on),
+            )
+            directories = cursor.fetchall()
+            projected_at = max(
+                [item[1] for item in capture_ids] + [item[1] for item in directories]
+            )
+            content_sha = hashlib.sha256(
+                (description_zh + "\0" + description_en).encode("utf-8")
+            ).hexdigest()
+            trace = {
+                "schema_version": 1,
+                "source_captures": [
+                    {"capture_id": item[0], "evidence_sha256": item[2]} for item in capture_ids
+                ],
+                "directory_captures": [
+                    {"capture_id": int(item[0]), "page_sha256": str(item[2]).strip()}
+                    for item in directories
+                ],
+                "versions": versions,
+                "content_sha256": content_sha,
+            }
+            trace_sha = hashlib.sha256(_canonical_json(trace).encode("utf-8")).hexdigest()
+            cursor.execute(
+                "INSERT INTO source_portal_captures "
+                "(portal_key, scope_key, captured_at, acquired_on, complete, description_zh, "
+                "description_en, capture_kind, evidence_json, evidence_sha256, generated_at) "
+                "VALUES (%s, %s, %s, %s, FALSE, %s, %s, 'daily_projection', %s, %s, clock_timestamp()) "
+                "RETURNING capture_id, generated_at",
+                (
+                    portal_key,
+                    f"daily-projection:{uuid.uuid4().hex}",
+                    projected_at,
+                    acquired_on,
+                    description_zh,
+                    description_en,
+                    Json(trace),
+                    trace_sha,
+                ),
+            )
+            capture_id, generated_at = cursor.fetchone()
+        connection.commit()
+        return {
+            "capture_id": int(capture_id),
+            "captured_at": projected_at.isoformat(),
+            "acquired_on": acquired_on.isoformat(),
+            "capture_kind": "daily_projection",
+            "description_zh": description_zh,
+            "description_en": description_en,
+            "content_sha256": content_sha,
+            "generated_at": generated_at.isoformat(),
+            "duplicate": False,
+        }
+    except psycopg2.Error as exc:
+        connection.rollback()
+        raise ContentHubError("Content hub daily projection failed") from exc
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+
+def content_hub_source_portal_dates_for_versions(
+    version_ids: list[int],
+    *,
+    after: tuple[str, str] | None = None,
+    limit: int = 32,
+    database_url: DatabaseConfig | str | None = None,
+    schema: str = HUB_SCHEMA,
+) -> list[tuple[str, str]]:
+    """Read one stable page of saved material dates for processed versions' exact URLs."""
+    schema = _validate_schema(schema)
+    if (
+        not isinstance(version_ids, list)
+        or len(version_ids) > 32
+        or any(type(value) is not int or value < 1 for value in version_ids)
+        or type(limit) is not int
+        or not 1 <= limit <= 32
+    ):
+        raise ContentHubError("Source portal version set is outside its bounded contract")
+    if after is not None:
+        try:
+            if len(after) != 2 or not _SOURCE_RE.fullmatch(after[0]):
+                raise ValueError("invalid portal")
+            after_day = date.fromisoformat(after[1])
+        except (TypeError, ValueError) as exc:
+            raise ContentHubError("Source portal date cursor is malformed") from exc
+    if not version_ids:
+        return []
+    connection = _connect(database_url)
+    try:
+        with connection.cursor() as cursor:
+            _require_current_schema(cursor, schema)
+            _set_search_path(cursor, schema)
+            cursor.execute(
+                "SELECT DISTINCT c.portal_key, c.acquired_on "
+                "FROM content_versions v JOIN source_portal_captures c "
+                "ON c.capture_kind = 'daily_collection' "
+                "WHERE v.content_version_id = ANY(%s) "
+                "AND EXISTS (SELECT 1 FROM jsonb_array_elements(c.evidence_json->'observations') observed(item) "
+                "WHERE observed.item->>'url' = v.url_value_json::jsonb #>> '{}' "
+                "AND (observed.item->>'kind' = 'file' OR observed.item->>'is_article' = 'true')) "
+                + ("AND (c.acquired_on, c.portal_key) > (%s, %s) " if after is not None else "")
+                + "ORDER BY c.acquired_on, c.portal_key LIMIT %s",
+                (version_ids, *((after_day, after[0]) if after is not None else ()), limit),
+            )
+            rows = cursor.fetchall()
+            return [(str(key), day.isoformat()) for key, day in rows]
+    except psycopg2.Error as exc:
+        raise ContentHubError("Content hub affected-date query failed") from exc
+    finally:
+        connection.close()
+
+
+def content_hub_source_portal_annotation_watermark(
+    *, database_url: DatabaseConfig | str | None = None, schema: str = HUB_SCHEMA
+) -> str:
+    """Return the v7 activation time; earlier annotations stay outside ordinary refresh."""
+    schema = _validate_schema(schema)
+    connection = _connect(database_url)
+    try:
+        with connection.cursor() as cursor:
+            _require_current_schema(cursor, schema)
+            _set_search_path(cursor, schema)
+            cursor.execute("SELECT applied_at FROM schema_migrations WHERE version = 7")
+            row = cursor.fetchone()
+            if row is None:
+                raise ContentHubError("Source portal annotation scan requires Hub migration 7")
+            return row[0].isoformat()
+    finally:
+        connection.close()
+
+
+def content_hub_source_portal_annotation_versions(
+    *,
+    after_at: str,
+    after_id: int,
+    limit: int = 16,
+    database_url: DatabaseConfig | str | None = None,
+    schema: str = HUB_SCHEMA,
+) -> list[tuple[str, int]]:
+    """Read a bounded slice of annotation changes since Hub migration 7."""
+    schema = _validate_schema(schema)
+    try:
+        after = datetime.fromisoformat(after_at)
+    except ValueError as exc:
+        raise ContentHubError("Source portal annotation cursor is malformed") from exc
+    if (
+        after.tzinfo is None
+        or type(after_id) is not int
+        or after_id < 0
+        or type(limit) is not int
+        or not 1 <= limit <= 16
+    ):
+        raise ContentHubError("Source portal annotation cursor is malformed")
+    connection = _connect(database_url)
+    try:
+        with connection.cursor() as cursor:
+            _require_current_schema(cursor, schema)
+            _set_search_path(cursor, schema)
+            cursor.execute(
+                "SELECT a.annotated_at, a.content_version_id "
+                "FROM article_enrichment_annotations a "
+                "WHERE (a.annotated_at, a.content_version_id) > (%s, %s) "
+                "ORDER BY a.annotated_at, a.content_version_id LIMIT %s",
+                (after, after_id, limit),
+            )
+            return [(row[0].isoformat(), int(row[1])) for row in cursor.fetchall()]
+    except psycopg2.Error as exc:
+        raise ContentHubError("Content hub annotation change query failed") from exc
     finally:
         connection.close()
 
@@ -828,7 +1279,7 @@ def content_hub_read_source_portal_capture(
             _set_search_path(cursor, schema)
             cursor.execute(
                 "SELECT captured_at, acquired_on, complete, description_zh, description_en, "
-                "capture_kind, evidence_json, evidence_sha256 "
+                "capture_kind, evidence_json, evidence_sha256, generated_at "
                 "FROM source_portal_captures "
                 "WHERE portal_key = %s AND capture_id = %s",
                 (portal_key, capture_id),
@@ -841,7 +1292,16 @@ def content_hub_read_source_portal_capture(
                 and validate_daily_evidence(row[6])[2] != str(row[7]).strip()
             ):
                 raise ContentHubError("Stored source portal daily evidence failed SHA verification")
+            if row[5] == "daily_projection" and (
+                not isinstance(row[6], dict)
+                or hashlib.sha256(_canonical_json(row[6]).encode("utf-8")).hexdigest()
+                != str(row[7]).strip()
+                or row[6].get("content_sha256")
+                != hashlib.sha256((row[3] + "\0" + row[4]).encode("utf-8")).hexdigest()
+            ):
+                raise ContentHubError("Stored daily projection failed SHA verification")
             return {
+                "capture_id": capture_id,
                 "captured_at": row[0].isoformat(),
                 "acquired_on": row[1].isoformat(),
                 "complete": bool(row[2]),
@@ -849,6 +1309,7 @@ def content_hub_read_source_portal_capture(
                 "description_en": row[4],
                 "capture_kind": row[5],
                 "evidence_sha256": str(row[7]).strip() if row[7] else None,
+                "generated_at": row[8].isoformat() if row[8] else None,
             }
     except psycopg2.Error as exc:
         raise ContentHubError("Content hub source portal capture read failed") from exc
