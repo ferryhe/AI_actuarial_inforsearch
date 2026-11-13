@@ -140,7 +140,7 @@ def _latest_first_collected(message: str) -> bool:
     )
 
 
-def _source_scope(message: str, options: list[dict]) -> tuple[str | None, tuple[str, ...]]:
+def _source_mentions(message: str, options: list[dict]) -> tuple[set[str], set[str]]:
     question = message.casefold()
     mentions = set()
     for option in options:
@@ -179,6 +179,11 @@ def _source_scope(message: str, options: list[dict]) -> tuple[str | None, tuple[
         else:
             included.add(key)
     included -= excluded
+    return included, excluded
+
+
+def _source_scope(message: str, options: list[dict]) -> tuple[str | None, tuple[str, ...]]:
+    included, excluded = _source_mentions(message, options)
     return (next(iter(included)) if len(included) == 1 else None), tuple(sorted(excluded))
 
 
@@ -619,6 +624,7 @@ def run(
         and selected_target is None
         and opened_file is None
         and not window_clause
+        and not re.search(r"(?<!\d)(?:19|20)\d{2}(?!\d)", message)
         and not _restricts_topic_lookup(message, [])
     )
     inventory_request = terminal_catalog_allowed and _unscoped_site_inventory(message)
@@ -630,10 +636,10 @@ def run(
             return False
         if catalog_source_unscoped is None:
             try:
-                source, excluded = _source_scope(
+                included, excluded = _source_mentions(
                     message, source_options() if source_options else []
                 )
-                catalog_source_unscoped = not source and not excluded
+                catalog_source_unscoped = not included and not excluded
             except Exception:
                 catalog_source_unscoped = False
         return catalog_source_unscoped
@@ -1205,6 +1211,7 @@ def run(
                         }
                     can_repair = (
                         gap_notice is not None
+                        and (not verified_findings or verdict.get("gap") != "coverage")
                         and prior_partial is None
                         and not topic_searched
                         and body_tool_ids & described_tools

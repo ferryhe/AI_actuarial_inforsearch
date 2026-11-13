@@ -1375,7 +1375,7 @@ def test_verified_finding_retains_the_reference_in_its_paragraph(finish_fields):
             findings=[{"evidence_id": "body:policy", "quote": quote, "summary": quote}],
             **finish_fields,
         ),
-        action(supported=[True]),
+        action(supported=[True], gap="coverage"),
     )
     result = run(
         message="What standards apply to this policy?",
@@ -1411,6 +1411,13 @@ def test_verified_finding_retains_the_reference_in_its_paragraph(finish_fields):
             True,
             4,
             [{"source_key": "cas", "aliases": ["CAS"]}],
+        ),
+        (
+            "What does this site have on CAS and LIMRA?",
+            True,
+            True,
+            4,
+            [{"source_key": "cas"}, {"source_key": "limra"}],
         ),
     ],
 )
@@ -1477,7 +1484,8 @@ def test_only_unscoped_inventory_can_finish_at_discovery(
         assert doc["title"] in result.answer and result.evidence_ids == ("catalog:policy",)
 
 
-def test_explicit_catalog_finish_checks_the_original_period():
+@pytest.mark.parametrize("preposition", ["in", "for"])
+def test_explicit_catalog_finish_checks_the_original_period(preposition):
     target = {"kb_id": "public", "file_id": "https://example.test/report"}
     document = {"target": target, "source_url": target["file_id"], "title": "Climate Risk Note"}
     model, _ = scripted(
@@ -1495,7 +1503,7 @@ def test_explicit_catalog_finish_checks_the_original_period():
         ),
     )
     result = run(
-        message="What does the site have on climate risk in 2025?",
+        message=f"What does the site have on climate risk {preposition} 2025?",
         locale="en",
         registry=AssistantFeature().registry,
         context=RunContext(
