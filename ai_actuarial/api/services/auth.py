@@ -297,7 +297,7 @@ def user_me(*, request: Request, auth: AuthContext) -> dict[str, Any]:
         if isinstance(email_user, dict):
             used = storage.get_ai_chat_quota_used(today, user_id=int(email_user["id"]))
             role = str(email_user.get("role") or "registered")
-            limit = AI_CHAT_QUOTA.get(role, 5)
+            limit = AI_CHAT_QUOTA.get(role, AI_CHAT_QUOTA["anonymous"])
             recent_activity = storage.list_user_activity(user_id=int(email_user["id"]), limit=20)
             return {
                 "success": True,
@@ -320,7 +320,7 @@ def user_me(*, request: Request, auth: AuthContext) -> dict[str, Any]:
             }
 
         role = str(auth.token.get("group_name") or "reader").lower()
-        limit = AI_CHAT_QUOTA.get(role, 5)
+        limit = AI_CHAT_QUOTA.get(role, AI_CHAT_QUOTA["anonymous"])
         used = storage.get_ai_chat_quota_used(today, ip_address=client_ip(request))
         return {
             "success": True,
@@ -551,7 +551,7 @@ def _serialize_user_row(storage: Storage, user: dict[str, Any]) -> dict[str, Any
         "canonical_role": canonical_user_role(role),
         "username": user.get("display_name") or user.get("email") or f"user-{user.get('id')}",
         "quota_used": quota_used,
-        "quota_limit": AI_CHAT_QUOTA.get(role, 5),
+        "quota_limit": AI_CHAT_QUOTA.get(role, AI_CHAT_QUOTA["anonymous"]),
         "last_login": user.get("last_login_at"),
     }
 

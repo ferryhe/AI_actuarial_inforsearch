@@ -130,7 +130,7 @@ class TestChatQuota:
 
     def test_guest_quota_is_limited(self):
         """Guest should have limited chat quota."""
-        assert AI_CHAT_QUOTA["guest"] == 5
+        assert AI_CHAT_QUOTA["guest"] == 20
 
     def test_admin_quota_is_unlimited(self):
         """Admin should have unlimited quota (large sentinel)."""

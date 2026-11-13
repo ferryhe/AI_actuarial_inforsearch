@@ -2,7 +2,7 @@
 doc_id: user-guide-en
 language: en
 title: AI Actuarial Info Search — User Guide
-source_version: 1.1.2
+source_version: 1.1.3
 ---
 
 # User Guide
@@ -41,7 +41,7 @@ Open **Knowledge Bases** to see available knowledge bases and their readiness. U
 
 ## Account and quota {#account-quota}
 
-Sign in or register when the deployment offers those options. Open **Profile** while signed in to see your role, Chat quota usage, remaining quota, and recent activity. Anonymous visitors can use only the public features granted by the deployment. Chat and the website assistant share one daily AI quota: guests have 5 queries and registered users have 20 queries per UTC day; other roles follow the existing Chat allowance. Manual feedback and opening help do not call AI or consume the allowance.
+Sign in or register when the deployment offers those options. Open **Profile** while signed in to see your role, Chat quota usage, remaining quota, and recent activity. Anonymous visitors can use only the public features granted by the deployment. Chat and the website assistant share one daily AI quota. Guests have 20 queries per IP address, and registered users have 40 queries per account. The quota resets at midnight UTC. Manual feedback and opening help do not call AI or consume the allowance.
 
 ## Feedback entry {#feedback-entry}
 

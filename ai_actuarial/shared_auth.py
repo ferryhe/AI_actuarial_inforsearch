@@ -138,14 +138,14 @@ GROUP_PERMISSIONS: dict[str, frozenset[str]] = {
 
 # Chat quota per user group (0 = no access, positive = limit, 999999 = unlimited)
 AI_CHAT_QUOTA: dict[str, int] = {
-    "guest": 5,  # Limited to 5 messages
-    "registered": 20,  # 20 messages
+    "guest": 20,
+    "registered": 40,
     "premium": 50,  # 50 messages
     "operator": 200,  # 200 messages
     "admin": 999999,  # Unlimited (use large sentinel, not -1; storage treats <=0 as "no access")
     # Legacy role aliases for backwards compatibility
-    "anonymous": 5,  # Alias for guest
-    "reader": 20,  # Alias for registered
+    "anonymous": 20,  # Alias for guest
+    "reader": 40,  # Alias for registered
     "operator_ai": 200,  # Alias for operator
 }
 
