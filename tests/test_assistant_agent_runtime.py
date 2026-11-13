@@ -1351,6 +1351,104 @@ def test_formal_reference_can_use_same_passage_without_relaxing_quantities():
     assert not _summary_numbers_supported("Standard 2025/1234: 62%.", quote, passage)
 
 
+def test_verified_finding_retains_the_reference_in_its_paragraph():
+    quote = "The rule requires annual review."
+    target = {"kb_id": "public", "file_id": "https://example.test/standard"}
+    section = {
+        "target": target,
+        "section_id": "policy",
+        "source_url": target["file_id"],
+        "excerpt": f"Standard 2025/1234 governs this policy. {quote}\n\nDirective 2020/2345.",
+    }
+    model, _ = scripted(
+        action(
+            action="call",
+            skill_id="document_research",
+            tool_id="document_research.read_document_sections",
+            args={**target, "query": "annual review"},
+        ),
+        action(
+            action="finish",
+            answer=quote,
+            evidence_ids=["body:policy"],
+            findings=[{"evidence_id": "body:policy", "quote": quote, "summary": quote}],
+        ),
+        action(supported=[True]),
+    )
+    result = run(
+        message="What standards apply to this policy?",
+        locale="en",
+        registry=AssistantFeature().registry,
+        context=RunContext(principal="reader", scopes=frozenset({"chat.query", "markdown.read"})),
+        model=model,
+        execute=lambda *_: ToolResult("ok", {"sections": [section]}, ("body:policy",)),
+        selected_target=target,
+        site_context="current site",
+    )
+    assert result.model_attempts == 3 and result.evidence_ids == ("body:policy",)
+    assert "Standard 2025/1234" in result.answer
+    assert "2020/2345" not in result.answer
+
+
+@pytest.mark.parametrize("follow_up", ["", " What does it recommend?", " and what it recommends?"])
+def test_inventory_uses_the_discovered_titles_before_an_unneeded_body_read(follow_up):
+    url = "https://example.test/practice-note.pdf"
+    target = {"kb_id": "public", "file_id": url}
+    doc = {"target": target, "source_url": url, "title": "Climate Risk Practice Note"}
+    excerpt = "Review all climate scenarios annually."
+    model, _ = scripted(
+        action(
+            action="call",
+            skill_id="document_research",
+            tool_id="document_research.find_documents",
+            args={"query": "climate risk"},
+        ),
+        action(
+            action="call",
+            skill_id="document_research",
+            tool_id="document_research.read_document_sections",
+            args={**target, "query": "climate risk"},
+        ),
+        action(
+            action="finish",
+            answer=excerpt,
+            evidence_ids=["body:policy"],
+            findings=[{"evidence_id": "body:policy", "quote": excerpt, "summary": excerpt}],
+        ),
+        action(supported=[True]),
+    )
+
+    def execute(tool, *_):
+        if tool.result_kind == "catalog_discovery":
+            return ToolResult("ok", {"documents": [doc]}, ("catalog:policy",))
+        return ToolResult(
+            "ok",
+            {"sections": [{**doc, "excerpt": excerpt, "section_id": "policy"}]},
+            ("body:policy",),
+        )
+
+    result = run(
+        message="What does the site have on climate risk" + (follow_up or "?"),
+        locale="en",
+        registry=AssistantFeature().registry,
+        context=RunContext(
+            principal="reader",
+            scopes=frozenset({"chat.query", "catalog.read", "files.read", "markdown.read"}),
+        ),
+        model=model,
+        execute=execute,
+        resolve_selected_document=lambda _target: doc,
+        site_context="current site",
+    )
+    assert result.kind == "finish"
+    if follow_up:
+        assert result.model_attempts == 4 and result.tool_attempts == 2
+        assert excerpt in result.answer and result.evidence_ids == ("body:policy",)
+    else:
+        assert result.model_attempts == 2 and result.tool_attempts == 1
+        assert doc["title"] in result.answer and result.evidence_ids == ("catalog:policy",)
+
+
 def test_early_clarification_rechecks_one_authorized_lookup():
     from ai_actuarial.agent_runtime.contracts import AgentBudget
     from ai_actuarial.skills.resources_updates import executors as resource_executors

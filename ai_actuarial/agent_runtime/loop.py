@@ -48,6 +48,16 @@ def _summary_numbers_supported(summary: str, quote: str, passage: str) -> bool:
     return _numeric_literals(_DOCUMENT_REFERENCE.sub("", summary)) <= _numeric_literals(quote)
 
 
+def _quoted_reference(quote: str, passage: str, answer: str) -> str | None:
+    paragraph = next((part for part in re.split(r"\n\s*\n", passage) if quote in part), "")
+    references = {match[1]: match[0] for match in _DOCUMENT_REFERENCE.finditer(paragraph)}
+    if len(references) == 1:
+        number, label = next(iter(references.items()))
+        if number not in answer:
+            return label
+    return None
+
+
 def _literal_quote(quote: str, excerpt: str) -> str | None:
     if quote in excerpt:
         return quote
@@ -170,6 +180,28 @@ def _restricts_topic_lookup(message: str, documents: list[dict]) -> bool:
         if len(title) >= 6 and title in words:
             return True
     return False
+
+
+def _explicit_site_inventory(message: str) -> bool:
+    if re.search(
+        r"[?？。]\s*\S|[;；]|(?:\band\s+(?:what|how|summari[sz]e|compare|explain)\b)"
+        r"|\b(?:please\s+)?(?:summari[sz]e|compare|explain|evaluate|recommend)\b"
+        r"|\bwhat (?:it|they|the reports?) (?:say|says|recommend|recommends|found)\b"
+        r"|另外|同时|并(?:请|说明|总结|比较|解释)|总结|概述|比较|推荐|正文",
+        message,
+        re.I,
+    ):
+        return False
+    return bool(
+        re.match(
+            r"\s*(?:what (?:does|can) (?:this|the|your) site (?:have|offer|provide)\b|"
+            r"(?:what|which) (?:materials|reports|documents|articles|resources)\b.*"
+            r"\b(?:this|the|your) site\b|"
+            r"(?:本站|这个网站|站内)(?:有(?:什么|哪些)|.*有哪些)(?:.*(?:资料|报告|文章|文件)))",
+            message,
+            re.I,
+        )
+    )
 
 
 def _past_seven_days(message: str) -> re.Match[str] | None:
@@ -449,6 +481,29 @@ def run(
             kind="finish",
         )
 
+    def catalog_finish(ids: list[str]) -> RunResult:
+        titles = {}
+        for item in tuple(dict.fromkeys(ids))[:5]:
+            doc = catalog_documents[item]
+            current = resolve_selected_document(doc["target"]) if resolve_selected_document else doc
+            if (
+                isinstance(current, dict)
+                and current.get("target") == doc["target"]
+                and current.get("source_url") == doc["source_url"]
+                and isinstance(current.get("title"), str)
+                and current["title"].strip()
+            ):
+                titles[item] = current["title"]
+        if not titles:
+            return result("", "unavailable", "SCOPE_REVOKED")
+        label = "站内相关资料" if locale.startswith("zh") else "Relevant site documents"
+        return result(
+            "\n".join([label, *(f"- {title}" for title in titles.values())])[:4000],
+            "available",
+            used=tuple(titles),
+            kind="finish",
+        )
+
     def timed_out() -> RunResult:
         if prior_partial is not None:
             try:
@@ -542,6 +597,12 @@ def run(
         "document_research.search_knowledge",
         _TOPIC_SEARCH,
     }
+    inventory_only = (
+        site_context is not None
+        and selected_target is None
+        and opened_file is None
+        and _explicit_site_inventory(message)
+    )
     prompt_data = {
         "instruction": (
             "Choose an enabled skill from the question. Return exactly one JSON object with "
@@ -1113,10 +1174,21 @@ def run(
                         kept = []
                         suffix = ("\n\n" + gap_notice) if gap_notice else ""
                         for item in verified_findings:
+                            section = document_sections[item["evidence_id"]]
                             part = (
                                 f"{item['summary'].strip()} — “{item['quote']}” "
-                                f"[{document_sections[item['evidence_id']]['source_url']}]"
+                                f"[{section['source_url']}]"
                             )
+                            reference = _quoted_reference(
+                                item["quote"], section["excerpt"], "\n".join((*parts, part))
+                            )
+                            if reference:
+                                label = (
+                                    "同段所列编号"
+                                    if locale.startswith("zh")
+                                    else "Reference in this passage"
+                                )
+                                part += f"\n{label} — {reference}"
                             if len("\n\n".join((*parts, part))) + len(suffix) <= 4000:
                                 parts.append(part)
                                 kept.append(item["evidence_id"])
@@ -1154,31 +1226,7 @@ def run(
                     and not selected_target
                     and all(item in found_catalog_ids for item in ids)
                 ):
-                    titles = {}
-                    for item in tuple(dict.fromkeys(ids))[:5]:
-                        doc = catalog_documents[item]
-                        current = (
-                            resolve_selected_document(doc["target"])
-                            if resolve_selected_document is not None
-                            else doc
-                        )
-                        if (
-                            isinstance(current, dict)
-                            and current.get("target") == doc["target"]
-                            and current.get("source_url") == doc["source_url"]
-                            and isinstance(current.get("title"), str)
-                            and current["title"].strip()
-                        ):
-                            titles[item] = current["title"]
-                    if not titles:
-                        return result("", "unavailable", "SCOPE_REVOKED")
-                    label = "站内相关资料" if locale.startswith("zh") else "Relevant site documents"
-                    return result(
-                        "\n".join([label, *(f"- {title}" for title in titles.values())])[:4000],
-                        "available",
-                        used=tuple(titles),
-                        kind="finish",
-                    )
+                    return catalog_finish(ids)
                 if any(item in catalog_documents for item in ids):
                     documents = [
                         catalog_documents[item] for item in ids if item in catalog_documents
@@ -1351,6 +1399,18 @@ def run(
                 if prior_partial is not None:
                     return keep_partial()
                 return cannot_verify_body()
+            if (
+                inventory_only
+                and tool.tool_id in body_tool_ids
+                and tool.required_scopes <= context.scopes
+                and not document_sections
+                and prior_partial is None
+            ):
+                target = {"kb_id": args.get("kb_id"), "file_id": args.get("file_id")}
+                if any(catalog_documents[item]["target"] == target for item in found_catalog_ids):
+                    return catalog_finish(
+                        [item for item in catalog_documents if item in found_catalog_ids]
+                    )
             if tool.tool_id in {
                 "resources_updates.recent",
                 "resources_updates.catalog_search",
