@@ -27,6 +27,7 @@ import { cn } from "@/lib/utils";
 import { watchVisualViewport } from "@/lib/visual-viewport";
 import { MarkdownContent } from "@/components/MarkdownContent";
 import { MessageBubble } from "@/components/MessageBubble";
+import { TypingIndicator } from "@/components/TypingIndicator";
 import { useTranslation } from "@/components/Layout";
 import { useAuth } from "@/context/AuthContext";
 import {
@@ -114,26 +115,6 @@ function normalizeFileRouteHref(value: string | undefined, kind: "detail" | "pre
   return kind === "detail"
     ? buildFileDetailPath(fileUrl, "/chat")
     : buildFilePreviewPath(fileUrl, "/chat");
-}
-
-function TypingIndicator() {
-  return (
-    <div className="flex items-center gap-3 max-w-3xl">
-      <div className="w-8 h-8 rounded-full bg-muted flex items-center justify-center shrink-0">
-        <Bot className="w-4 h-4 text-muted-foreground" />
-      </div>
-      <div className="flex gap-1 px-4 py-3 rounded-2xl bg-card border border-border rounded-bl-md">
-        {[0, 1, 2].map((i) => (
-          <motion.div
-            key={i}
-            className="w-2 h-2 rounded-full bg-muted-foreground/40"
-            animate={{ y: [0, -6, 0] }}
-            transition={{ duration: 0.6, repeat: Infinity, delay: i * 0.15 }}
-          />
-        ))}
-      </div>
-    </div>
-  );
 }
 
 function CitationCard({ citation, index }: { citation: Citation; index: number }) {

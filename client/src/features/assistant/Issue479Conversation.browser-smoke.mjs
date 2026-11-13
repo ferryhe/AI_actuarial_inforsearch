@@ -34,7 +34,7 @@ async function setup(page, language, responses) {
 async function ask(page, text, count) {
   await page.locator("#assistant-message").fill(text);
   await page.locator('#assistant-panel form button[type="submit"]').click();
-  await page.locator("#assistant-panel article").nth(count - 1).waitFor();
+  await page.locator("#assistant-panel .assistant-answer").nth(count - 1).waitFor();
 }
 
 try {
