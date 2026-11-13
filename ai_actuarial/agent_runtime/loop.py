@@ -437,6 +437,16 @@ def run(
             kind="finish",
         )
 
+    def timed_out() -> RunResult:
+        if prior_partial is not None:
+            try:
+                context.remaining()
+            except TimeoutError:
+                pass
+            else:
+                return keep_partial()
+        return result("", "error", "ASSISTANT_TIMEOUT")
+
     def tool_unavailable(tool_id: str, args: dict) -> RunResult:
         context.remaining()
         if prior_partial is not None:
@@ -1519,7 +1529,7 @@ def run(
             return keep_partial()
         return result("", "error", "ASSISTANT_TIMEOUT", model_budget_exhausted=True)
     except TimeoutError:
-        return result("", "error", "ASSISTANT_TIMEOUT")
+        return timed_out()
     except PermissionError:
         return result("", "unavailable", "SCOPE_REVOKED")
     except json.JSONDecodeError:
@@ -1528,7 +1538,7 @@ def run(
         return result("", "error", "INVALID_MODEL_RESPONSE")
     except Exception as exc:
         if getattr(exc, "classification", None) == "timeout":
-            return result("", "error", "ASSISTANT_TIMEOUT")
+            return timed_out()
         if prior_partial is not None:
             return keep_partial()
         code = (

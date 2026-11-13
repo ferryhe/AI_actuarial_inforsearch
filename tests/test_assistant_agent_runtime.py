@@ -1108,6 +1108,8 @@ def test_topic_facts_recover_with_valid_targets_and_inventory_stops_at_match():
         "repair",
         "verifier_search",
         "verifier_fallback",
+        "repair_timeout",
+        "repair_cancelled",
         "no_current",
         "repeat",
         "historical",
@@ -1151,7 +1153,13 @@ def test_document_evidence_supports_the_question_time_scope(scenario):
 
     first = current if scenario == "direct" else historical
     steps = [read(first)]
-    verifier_lookup = scenario in ("verifier_search", "verifier_fallback")
+    verifier_lookup = scenario in (
+        "verifier_search",
+        "verifier_fallback",
+        "repair_timeout",
+        "repair_cancelled",
+    )
+    interrupted = scenario in ("repair_timeout", "repair_cancelled")
     if verifier_lookup:
         steps.insert(
             0,
@@ -1166,19 +1174,23 @@ def test_document_evidence_supports_the_question_time_scope(scenario):
         steps.append(read(current))
     steps.append(finish(current if scenario == "refine" else first))
     steps.append(
-        action(supported=[False], gap="time", search_query="Published governance requirements")
-        if scenario == "verifier_search"
+        action(supported=[True], gap="source")
+        if interrupted
         else (
-            action(supported=[False], gap="time")
-            if scenario in ("no_current", "repeat", "repair", "verifier_fallback")
-            else action(supported=[True], gap=None)
+            action(supported=[False], gap="time", search_query="Published governance requirements")
+            if scenario == "verifier_search"
+            else (
+                action(supported=[False], gap="time")
+                if scenario in ("no_current", "repeat", "repair", "verifier_fallback")
+                else action(supported=[True], gap=None)
+            )
         )
     )
     if scenario == "repeat":
         steps.append(read(first))
     if scenario == "repair":
         steps.extend([read(current), finish(current), action(supported=[True], gap=None)])
-    if verifier_lookup:
+    if verifier_lookup and not interrupted:
         steps.extend([finish(current), action(supported=[True], gap=None)])
     model, prompts = scripted(*steps)
 
@@ -1196,6 +1208,10 @@ def test_document_evidence_supports_the_question_time_scope(scenario):
             )
             assert args["exclude_file_url"] == historical["target"]["file_id"]
             assert args["kb_id"] == historical["target"]["kb_id"]
+            if interrupted:
+                if scenario == "repair_cancelled":
+                    _context.cancelled.set()
+                raise TimeoutError("lookup timed out")
             doc = current
         else:
             assert tool.tool_id == "document_research.read_document_sections"
@@ -1227,6 +1243,15 @@ def test_document_evidence_supports_the_question_time_scope(scenario):
     expected = current if scenario in ("direct", "refine") else historical
     assert verification["items"][0]["source"]["publication_date"] == expected["publication_date"]
     assert "check_evidence_before_finishing" in prompts[2 if verifier_lookup else 1][0]
+    if interrupted:
+        assert result.model_attempts == 4 and result.tool_attempts == 3
+        if scenario == "repair_cancelled":
+            assert result.error_code == "ASSISTANT_TIMEOUT" and not result.evidence_ids
+        else:
+            assert result.kind == "finish" and result.error_code is None
+            assert result.evidence_ids == (historical["target"]["file_id"],)
+            assert historical["excerpt"] in result.answer
+        return
     assert result.kind == "finish"
     assert result.tool_attempts == (
         3 if verifier_lookup else 2 if scenario in ("refine", "repair") else 1
