@@ -1,21 +1,23 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
-import { X } from "lucide-react";
+import { Send, Square, X } from "lucide-react";
 import { z } from "zod";
 import { useLocation } from "wouter";
 import { IconButton } from "@/components/a11y/IconButton";
 import { MarkdownContent } from "@/components/MarkdownContent";
 import { MessageBubble } from "@/components/MessageBubble";
+import { TypingIndicator } from "@/components/TypingIndicator";
 import FeedbackForm from "@/features/feedback/FeedbackForm";
 import { ApiError, apiGet } from "@/lib/api";
 import { helpSchema, type HelpCitation, type QueryTransport, type Reply } from "./contract";
 import { queryAssistant } from "./transport";
 
 type Translate = (key: string, values?: Record<string, string | number>) => string;
+type Turn = { id: number; question: string; reply?: Reply };
 
 export default function AssistantPanel({ t, lang, open, feedbackEnabled, onClose, identity = "guest", query = queryAssistant }: { t: Translate; lang: string; open: boolean; feedbackEnabled: boolean; onClose: () => void; identity?: string; query?: QueryTransport }) {
   const [, navigate] = useLocation();
   const [message, setMessage] = useState("");
-  const [history, setHistory] = useState<{ question: string; reply: Reply }[]>([]);
+  const [history, setHistory] = useState<Turn[]>([]);
   const latestEntry = history[history.length - 1];
   const [selectedTarget, setSelectedTarget] = useState<Reply["selected_target"]>(null);
   const [openedFileUrl, setOpenedFileUrl] = useState<string | null>(null);
@@ -28,8 +30,8 @@ export default function AssistantPanel({ t, lang, open, feedbackEnabled, onClose
   const mounted = useRef(true);
   const input = useRef<HTMLTextAreaElement>(null);
   const scrollContainer = useRef<HTMLDivElement>(null);
-  const latestAnswer = useRef<HTMLDivElement>(null);
-  const revealedReply = useRef<(typeof history)[number] | undefined>(undefined);
+  const latestResponse = useRef<HTMLDivElement>(null);
+  const revealedReply = useRef<Turn | undefined>(undefined);
   const userScrolledDuringRequest = useRef(false);
   const inFlight = useRef(false);
   const feedbackGeneration = useRef(0);
@@ -66,19 +68,25 @@ export default function AssistantPanel({ t, lang, open, feedbackEnabled, onClose
     clear();
   }, [identity, clear]);
   useEffect(() => {
-    if (!open || feedbackOpen || latestEntry !== revealedReply.current) return;
+    if (!open || feedbackOpen || pending || (latestEntry?.reply && latestEntry !== revealedReply.current)) return;
     const frame = requestAnimationFrame(() => input.current?.focus({ preventScroll: true }));
     return () => cancelAnimationFrame(frame);
-  }, [latestEntry, open, feedbackOpen]);
+  }, [latestEntry, open, feedbackOpen, pending]);
   useEffect(() => {
     if (!open || feedbackOpen || !latestEntry || latestEntry === revealedReply.current) return;
     const container = scrollContainer.current;
-    const answer = latestAnswer.current;
-    if (container && answer && !userScrolledDuringRequest.current) {
-      container.scrollTop += answer.getBoundingClientRect().top - container.getBoundingClientRect().top;
+    const response = latestResponse.current;
+    if (container && response && !userScrolledDuringRequest.current) {
+      const panel = container.getBoundingClientRect();
+      const bounds = response.getBoundingClientRect();
+      if (latestEntry.reply) {
+        container.scrollTop += bounds.top - panel.top;
+      } else if (container.scrollHeight > container.clientHeight && (bounds.top < panel.top || bounds.bottom > panel.bottom)) {
+        container.scrollTop += bounds.bottom - panel.bottom;
+      }
     }
-    revealedReply.current = latestEntry;
-  }, [feedbackOpen, latestEntry, open]);
+    if (latestEntry.reply) revealedReply.current = latestEntry;
+  }, [feedbackOpen, latestEntry, open, pending]);
 
   function openFeedback(text: string) {
     if (!feedbackEnabled) return;
@@ -129,13 +137,17 @@ export default function AssistantPanel({ t, lang, open, feedbackEnabled, onClose
     const question = message;
     const generation = feedbackGeneration.current;
     const requestId = ++requestGeneration.current;
+    const turn = { id: requestId, question };
+    setHistory((items) => [...items.slice(-11), turn]);
     const controller = new AbortController();
     request.current = controller;
     try {
-      const reply = await query({ message: question, locale: lang === "zh" ? "zh" : "en", selected_target: selectedTarget, recent_questions: history.slice(-3).map((item) => item.question.slice(0, 500)), ...(openedFileUrl && { opened_file_url: openedFileUrl }) }, controller.signal);
+      const reply = await query({ message: question, locale: lang === "zh" ? "zh" : "en", selected_target: selectedTarget, recent_questions: history.filter((item) => item.reply).slice(-3).map((item) => item.question.slice(0, 500)), ...(openedFileUrl && { opened_file_url: openedFileUrl }) }, controller.signal);
       if (!mounted.current || requestId !== requestGeneration.current) return;
-      if (reply.error_code === "SCOPE_REVOKED") setHistory([]);
-      setHistory((items) => [...items.slice(-11), { question, reply }]);
+      const answered = { ...turn, reply };
+      setHistory((items) => reply.error_code === "SCOPE_REVOKED"
+        ? [answered]
+        : items.map((item) => item.id === requestId ? answered : item));
       setSelectedTarget(reply.selected_target);
       if (reply.selected_target || reply.error_code === "SCOPE_REVOKED") setOpenedFileUrl(null);
       if (reply.intent === "feedback" && reply.availability === "available" && reply.feedback_draft !== null && generation === feedbackGeneration.current) openFeedback(question);
@@ -150,6 +162,12 @@ export default function AssistantPanel({ t, lang, open, feedbackEnabled, onClose
       setError(t("assistant.error"));
     } finally {
       if (mounted.current && requestId === requestGeneration.current) { request.current = null; inFlight.current = false; setPending(false); }
+    }
+  }
+
+  function submitOnEnter(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing && event.keyCode !== 229) {
+      void ask(event);
     }
   }
 
@@ -178,10 +196,10 @@ export default function AssistantPanel({ t, lang, open, feedbackEnabled, onClose
       <header className="flex shrink-0 items-center justify-between border-b border-border px-4 py-0 group-data-[compact-assistant]/support-panel:px-2"><h2 id="assistant-title" className="text-base font-semibold group-data-[compact-assistant]/support-panel:text-sm group-data-[compact-assistant]/support-panel:leading-tight">{t("assistant.title")}</h2><IconButton label={t("a11y.close_feedback")} onClick={onClose}><X className="h-4 w-4" /></IconButton></header>
       <div ref={scrollContainer} onWheel={preserveScrollPosition} onTouchMove={preserveScrollPosition} onMouseDown={preserveScrollbarScroll} onKeyDown={preserveKeyboardScroll} className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-y-contain p-4 text-sm group-data-[compact-assistant]/support-panel:px-2 group-data-[compact-assistant]/support-panel:py-1">
         <div className="flex flex-wrap gap-2">{feedbackEnabled && <button type="button" className="min-h-[44px] rounded-md border border-border px-3" onClick={() => { userScrolledDuringRequest.current = false; openFeedback(message); }}>{t("assistant.feedback")}</button>}<button type="button" className="min-h-[44px] rounded-md border border-border px-3" onClick={browseHelp}>{t("assistant.guide")}</button><button type="button" className="min-h-[44px] rounded-md border border-border px-3" onClick={clear}>{t("assistant.clear")}</button></div>
-        {history.map(({ question, reply }, index) => (
-          <article key={index} className="space-y-3">
+        {history.map(({ id, question, reply }, index) => (
+          <article key={id} className="space-y-3">
             <MessageBubble role="user" content={<p>{question}</p>} />
-            <div ref={index === history.length - 1 ? latestAnswer : undefined} className="assistant-answer">
+            {reply ? <div ref={index === history.length - 1 ? latestResponse : undefined} className="assistant-answer">
               <MessageBubble role="assistant" content={<MarkdownContent content={reply.answer} />}>
                 {reply.citations.map((ref, i) => ref.source_type === "help" ? (
                   <button type="button" key={`${ref.doc_id}-${ref.section_id}`} className="min-h-[44px] max-w-full break-words text-left text-primary underline" onClick={() => readCitation(ref)}>
@@ -205,20 +223,22 @@ export default function AssistantPanel({ t, lang, open, feedbackEnabled, onClose
                 {reply.evidence_ids.map((id, i) => <p key={id} className="break-all text-xs text-muted-foreground">[{i + 1}] {id}</p>)}
                 {reply.intent === "clarify" && <p>{t("assistant.choose")}</p>}
               </MessageBubble>
-            </div>
+            </div> : pending && index === history.length - 1 && (
+              <div ref={latestResponse}><TypingIndicator label={t("assistant.wait")} /></div>
+            )}
           </article>
         ))}
         {help.map((ref) => <button type="button" key={ref.section_id} className="block min-h-[44px] text-left text-primary underline" onClick={() => readCitation(ref)}>{ref.section_id} ({ref.source_version})</button>)}
         {section && <div className="border-t border-border pt-3" data-testid="assistant-help-section"><MarkdownContent content={section} /></div>}
-        {pending && <p role="status">{t("assistant.wait")}</p>}
         {error && <p role="alert" className="text-destructive">{error}</p>}
       </div>
       <form onSubmit={ask} className="flex shrink-0 items-end gap-2 border-t border-border px-2 py-1 group-data-[compact-assistant]/support-panel:py-0">
         <label className="sr-only" htmlFor="assistant-message">{t("assistant.message")}</label>
-        <textarea id="assistant-message" ref={input} required rows={1} maxLength={4000} value={message} disabled={pending} onChange={(e) => setMessage(e.target.value)} className="min-h-[44px] max-h-32 min-w-0 flex-1 resize-y overflow-y-auto rounded-md border border-border bg-background px-3 py-2 text-[16px] group-data-[compact-assistant]/support-panel:max-h-[44px] group-data-[compact-assistant]/support-panel:resize-none" aria-describedby="assistant-hint" />
+        <textarea id="assistant-message" ref={input} required rows={1} maxLength={4000} value={pending ? "" : message} disabled={pending} onChange={(e) => setMessage(e.target.value)} onKeyDown={submitOnEnter} className="min-h-[44px] max-h-32 min-w-0 flex-1 resize-y overflow-y-auto rounded-md border border-border bg-background px-3 py-2 text-[16px] group-data-[compact-assistant]/support-panel:max-h-[44px] group-data-[compact-assistant]/support-panel:resize-none" aria-describedby="assistant-hint" />
         <p id="assistant-hint" className="sr-only">{t("feedback.content_hint")}</p>
-        <button type="submit" disabled={pending} className="min-h-[44px] shrink-0 rounded-md bg-primary px-4 text-primary-foreground disabled:opacity-60 group-data-[compact-assistant]/support-panel:px-2">{pending ? t("assistant.wait") : t("assistant.ask")}</button>
-        {pending && <button type="button" className="min-h-[44px] shrink-0 rounded-md border border-border px-2" onClick={cancelRequest}>{t("assistant.cancel_request")}</button>}
+        <IconButton type={pending ? "button" : "submit"} label={t(pending ? "assistant.cancel_request" : "assistant.ask")} onClick={pending ? cancelRequest : undefined} className="shrink-0 bg-primary text-primary-foreground hover:bg-primary/90">
+          {pending ? <Square aria-hidden="true" className="h-4 w-4 fill-current" /> : <Send aria-hidden="true" className="h-4 w-4" />}
+        </IconButton>
       </form>
     </section>
   </>;
