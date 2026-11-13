@@ -772,6 +772,11 @@ def test_ai_resources_baseline_change_rerun_and_independent_target_retry(
 
     monkeypatch.setattr(runtime, "_ACTIVE_STATE_PATH", None)
     monkeypatch.setattr(runtime, "_stream_source_portals", stream)
+    monkeypatch.setattr(
+        runtime,
+        "content_hub_latest_source_portal_update",
+        partial(hub.content_hub_latest_source_portal_update, schema=schema),
+    )
 
     def capture(body: bytes, when: dt.datetime, *, complete: bool = True) -> dict:
         observed = runtime._source_portal_observation(portal, portal.url, body, when)
@@ -815,11 +820,11 @@ def test_ai_resources_baseline_change_rerun_and_independent_target_retry(
     assert capture(changed, at + dt.timedelta(days=3))["duplicate"] is True
     assert len(state["pending_source_portal_publications"]) == 1
 
-    first = runtime._sync_source_portals(state, config, object())
+    first = runtime._sync_source_portals(state, config, hub_url)
     assert first["targets"]["china"]["status"] == "succeeded"
     assert first["targets"]["overseas"]["status"] == "pending"
     fail_overseas = False
-    second = runtime._sync_source_portals(state, config, object())
+    second = runtime._sync_source_portals(state, config, hub_url)
     assert second["status"] == "succeeded"
     assert [target for target, updates in sent if updates] == ["china", "overseas", "overseas"]
     assert state["pending_source_portal_publications"] == {}
@@ -948,6 +953,7 @@ def test_ai_resources_same_day_additions_keep_both_public_descriptions(
     for name in (
         "content_hub_record_source_portal_capture",
         "content_hub_project_source_portal_update",
+        "content_hub_latest_source_portal_update",
     ):
         monkeypatch.setattr(runtime, name, partial(getattr(hub, name), schema=schema))
     targets = {
@@ -1222,6 +1228,11 @@ def test_ai_resources_shared_href_keeps_each_label_and_projects_both_changes(
 
     monkeypatch.setattr(runtime, "_ACTIVE_STATE_PATH", None)
     monkeypatch.setattr(runtime, "_stream_source_portals", stream)
+    monkeypatch.setattr(
+        runtime,
+        "content_hub_latest_source_portal_update",
+        partial(hub.content_hub_latest_source_portal_update, schema=schema),
+    )
     config = {"targets": {name: {"host": name} for name in targets}}
 
     def capture(labels, when, pd_edge_href="/prof-dev/pd-edge/"):
@@ -1874,6 +1885,14 @@ def test_pending_portal_projection_uses_capture_time_when_persistence_is_out_of_
 
     monkeypatch.setattr(runtime, "_ACTIVE_STATE_PATH", None)
     monkeypatch.setattr(runtime, "content_hub_record_source_portal_capture", record_capture)
+    monkeypatch.setattr(
+        runtime,
+        "content_hub_latest_source_portal_update",
+        lambda **_kwargs: {
+            **record_capture(captured_at="2026-10-31T14:00:00-04:00"),
+            "capture_kind": "directory",
+        },
+    )
     streamed: list[dict] = []
 
     def stream(config, target, updates):
@@ -1949,6 +1968,11 @@ def test_legacy_pending_portal_updates_backfill_only_from_matching_hub_evidence(
         )
 
     monkeypatch.setattr(runtime, "content_hub_read_source_portal_capture", read_capture)
+    monkeypatch.setattr(
+        runtime,
+        "content_hub_latest_source_portal_update",
+        partial(hub.content_hub_latest_source_portal_update, schema=schema),
+    )
     streamed: list[dict] = []
 
     def stream(_config, target, updates):

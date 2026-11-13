@@ -2170,6 +2170,7 @@ def apply_source_portals(
             raise RuntimeError(
                 "Source portal application migration is missing; apply schema migration 6 before syncing"
             )
+        skipped_updates = []
         with storage.transaction(immediate=True):
             for card in normalized_cards:
                 storage._conn.execute(
@@ -2213,11 +2214,36 @@ def apply_source_portals(
                         update["description_en"],
                     ),
                 )
+                actual = storage._conn.execute(
+                    "SELECT capture_id, captured_at, description_zh, description_en "
+                    "FROM source_portal_updates WHERE portal_key = ? AND acquired_on = ?",
+                    (update["portal_key"], update["acquired_on"]),
+                ).fetchone()
+                if (
+                    int(actual[0]) != update["capture_id"]
+                    or datetime.fromisoformat(str(actual[1])).astimezone(timezone.utc)
+                    != datetime.fromisoformat(update["captured_at"])
+                    or (actual[2], actual[3])
+                    != (update["description_zh"], update["description_en"])
+                ):
+                    skipped_updates.append(
+                        {
+                            "portal_key": update["portal_key"],
+                            "acquired_on": update["acquired_on"],
+                            "capture_id": int(actual[0]),
+                            "captured_at": datetime.fromisoformat(str(actual[1]))
+                            .astimezone(timezone.utc)
+                            .isoformat(),
+                            "description_zh": actual[2],
+                            "description_en": actual[3],
+                        }
+                    )
         return {
             "schema_version": 1,
             "target": target,
             "cards_synced": len(normalized_cards),
             "updates_synced": len(normalized_updates),
+            "updates_skipped": skipped_updates,
             "failures": [],
         }
     finally:

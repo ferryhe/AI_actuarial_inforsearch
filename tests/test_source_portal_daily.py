@@ -908,6 +908,7 @@ def _patch_hub(monkeypatch, url, schema):
         "content_hub_record_source_portal_capture",
         "content_hub_read_source_portal_capture",
         "content_hub_project_source_portal_update",
+        "content_hub_latest_source_portal_update",
     ):
         monkeypatch.setattr(runtime, name, partial(getattr(hub, name), schema=schema))
 
@@ -1800,12 +1801,40 @@ def test_migration_keeps_v5_directory_rows_and_enforces_daily_nullability(tmp_pa
                 ("a" * 64,),
             )
             capture_id = cursor.fetchone()[0]
-    assert hub.apply_content_hub_schema(url, schema=schema)["version"] == 6
+    with monkeypatch.context() as patch:
+        patch.setattr(hub, "_migrations", lambda: migrations()[:6])
+        assert hub.apply_content_hub_schema(url, schema=schema)["version"] == 6
+    evidence = _evidence(day="2026-11-02")
+    with psycopg2.connect(url) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "INSERT INTO source_portal_captures (portal_key, scope_key, captured_at, "
+                "acquired_on, complete, description_zh, description_en, capture_kind, "
+                "evidence_json, evidence_sha256) VALUES (%s, %s, %s, %s, FALSE, %s, %s, "
+                "'daily_collection', %s::jsonb, %s) RETURNING capture_id",
+                (
+                    evidence["portal_key"],
+                    f"daily:{evidence['run_id']}",
+                    evidence["captured_at"],
+                    evidence["acquired_on"],
+                    "未发现新的AI资料。",
+                    "No new AI materials were found.",
+                    json.dumps(evidence),
+                    validate_daily_evidence(evidence)[2],
+                ),
+            )
+            daily_id = cursor.fetchone()[0]
+    assert hub.apply_content_hub_schema(url, schema=schema)["version"] == 7
     assert hub.content_hub_schema_plan(url, schema=schema)["pending"] == []
     old = hub.content_hub_read_source_portal_capture(
         portal_key="cia-publications", capture_id=capture_id, database_url=url, schema=schema
     )
     assert old["capture_kind"] == "directory" and old["description_en"] == "Preserved old update"
+    old_daily = hub.content_hub_read_source_portal_capture(
+        portal_key="cia-publications", capture_id=daily_id, database_url=url, schema=schema
+    )
+    assert old_daily["capture_kind"] == "daily_collection"
+    assert old_daily["description_en"] == "No new AI materials were found."
     with psycopg2.connect(url) as connection:
         with connection.cursor() as cursor:
             with pytest.raises(psycopg2.IntegrityError):
