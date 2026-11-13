@@ -1351,6 +1351,67 @@ def test_formal_reference_can_use_same_passage_without_relaxing_quantities():
     assert not _summary_numbers_supported("Standard 2025/1234: 62%.", quote, passage)
 
 
+def test_report_title_year_only_supports_the_attribution():
+    from ai_actuarial.agent_runtime.loop import _summary_numbers_supported
+
+    quote = "Approximately 60% of respondents use enterprise AI."
+    title = "SOA Member AI Survey: Spring 2026"
+    assert _summary_numbers_supported(
+        "SOA 2026 春季调查称约 60% 使用企业 AI。", quote, quote, title
+    )
+    assert not _summary_numbers_supported(
+        "SOA 2025 春季调查称约 60% 使用企业 AI。", quote, quote, title
+    )
+    assert not _summary_numbers_supported(
+        "SOA 2026 春季调查称有 2026 人使用企业 AI。", quote, quote, title
+    )
+
+
+def test_inferred_coverage_does_not_retry_a_verified_mixed_result():
+    quote = "About 60% used the service."
+    target = {"kb_id": "public", "file_id": "https://example.test/report"}
+    section = {**target, "source_url": target["file_id"], "target": target, "excerpt": quote}
+    model, _ = scripted(
+        action(
+            action="call",
+            skill_id="document_research",
+            tool_id="document_research.read_document_sections",
+            args={**target, "query": "survey participation"},
+        ),
+        action(
+            action="finish",
+            answer="unused",
+            evidence_ids=["body:survey", "guide:quota"],
+            findings=[
+                {
+                    "evidence_id": "body:survey",
+                    "quote": quote,
+                    "summary": f"{quote}; this excerpt does not give the headcount.",
+                },
+            ],
+        ),
+        action(supported=[True]),
+    )
+    result = run(
+        message="How many respondents used the service, and how do I check my quota?",
+        locale="en",
+        registry=AssistantFeature().registry,
+        context=RunContext(
+            principal="reader",
+            scopes=frozenset({"chat.query", "catalog.read", "files.read", "markdown.read"}),
+        ),
+        model=model,
+        execute=lambda *_: ToolResult(
+            "ok", {"sections": [section]}, ("body:survey", "guide:quota")
+        ),
+        can_render_evidence=lambda eid: eid == "guide:quota",
+        site_context="current site",
+    )
+    assert result.model_attempts == 3 and result.tool_attempts == 1
+    assert quote in result.answer and "did not verify the complete answer" in result.answer
+    assert result.evidence_ids == ("body:survey", "guide:quota")
+
+
 @pytest.mark.parametrize("finish_fields", [{}, {"action": "finish"}, {"answer": "Unused draft"}])
 def test_verified_finding_retains_the_reference_in_its_paragraph(finish_fields):
     from ai_actuarial.agent_runtime.contracts import AgentBudget

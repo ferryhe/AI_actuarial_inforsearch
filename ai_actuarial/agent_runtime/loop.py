@@ -35,16 +35,31 @@ _DOCUMENT_REFERENCE = re.compile(
     r"(?:\([A-Z]{2,5}\)\s*)?(?:No\.?\s*)?(\d{4}/\d{2,})(?![\w/])",
     re.I,
 )
+_PUBLICATION_YEAR = re.compile(r"(?<!\d)(?:19|20)\d{2}(?!\d)")
+_ATTRIBUTION_YEAR = re.compile(
+    r"^(?P<source>[^.!?。！？;；:：\n]{1,90}?)"
+    r"(?:\s+(?:reports?|found|states?|says?)\b|(?:报告|调查|研究)(?:显示|指出|称|发现))",
+    re.I,
+)
 
 
 def _numeric_literals(text: str) -> set[str]:
     return {value.replace(",", "") for value in re.findall(r"[0-9][0-9,]*(?:\.[0-9]+)?", text)}
 
 
-def _summary_numbers_supported(summary: str, quote: str, passage: str) -> bool:
+def _summary_numbers_supported(
+    summary: str, quote: str, passage: str, source_title: str = ""
+) -> bool:
     references = set(_DOCUMENT_REFERENCE.findall(summary))
     if references and not references.issubset(_DOCUMENT_REFERENCE.findall(passage)):
         return False
+    source = _ATTRIBUTION_YEAR.match(summary)
+    if source:
+        source_years = set(_PUBLICATION_YEAR.findall(source_title))
+        attribution = _PUBLICATION_YEAR.sub(
+            lambda match: "" if match[0] in source_years else match[0], source["source"]
+        )
+        summary = attribution + summary[source.end("source") :]
     return _numeric_literals(_DOCUMENT_REFERENCE.sub("", summary)) <= _numeric_literals(quote)
 
 
@@ -624,7 +639,7 @@ def run(
         and selected_target is None
         and opened_file is None
         and not window_clause
-        and not re.search(r"(?<!\d)(?:19|20)\d{2}(?!\d)", message)
+        and not _PUBLICATION_YEAR.search(message)
         and not _restricts_topic_lookup(message, [])
     )
     inventory_request = terminal_catalog_allowed and _unscoped_site_inventory(message)
@@ -1099,7 +1114,8 @@ def run(
                                         + "Use the "
                                         "full passage to check context, but do not use it to supply facts missing "
                                         "from the quote, except for a formal document identifier for the "
-                                        "same instrument explicitly named in the passage. "
+                                        "same instrument explicitly named in the passage, or a source "
+                                        "year used only to identify a report whose title contains that year. "
                                         "When asked which instruments govern a topic, an "
                                         "unnamed rule in a related example does not identify an instrument. "
                                         "For current facts, an older passage saying a change "
@@ -1178,17 +1194,19 @@ def run(
                             item["summary"],
                             item["quote"],
                             document_sections[item["evidence_id"]]["excerpt"],
+                            document_sections[item["evidence_id"]].get("title") or "",
                         )
                     ]
-                    gap = _EVIDENCE_GAPS.get(verdict.get("gap"))
-                    if gap is None and any(
+                    evidence_gap_kind = verdict.get("gap")
+                    if evidence_gap_kind is None and any(
                         "excerpt_limitation" in item for item in verified_findings
                     ):
-                        gap = _EVIDENCE_GAPS["coverage"]
+                        evidence_gap_kind = "coverage"
+                    gap = _EVIDENCE_GAPS.get(evidence_gap_kind)
                     gap_notice = gap[int(not locale.startswith("zh"))] if gap else None
                     if (
                         lookup_available_after_check
-                        and verdict.get("gap") in {"time", "source"}
+                        and evidence_gap_kind in {"time", "source"}
                         and context.budget.model_requests - context.model_attempts == 2
                     ):
                         previous = next(
@@ -1211,7 +1229,7 @@ def run(
                         }
                     can_repair = (
                         gap_notice is not None
-                        and (not verified_findings or verdict.get("gap") != "coverage")
+                        and (not verified_findings or evidence_gap_kind != "coverage")
                         and prior_partial is None
                         and not topic_searched
                         and body_tool_ids & described_tools
@@ -1283,7 +1301,7 @@ def run(
                         )
                     if pending_lookup is not None or can_repair:
                         prior_partial = verified
-                        evidence_gap = verdict["gap"]
+                        evidence_gap = evidence_gap_kind
                         repair_steps_left = (
                             1
                             if pending_lookup is not None
