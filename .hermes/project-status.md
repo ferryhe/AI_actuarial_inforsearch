@@ -7490,3 +7490,23 @@ Current branch head 4f030be has uncommitted small catalog/Storage variable defau
 - On clean pushed HEAD `f1714a65`, a real Hub and two-target regression reproduced the loss of the first same-day AI Resources change: A→A+B followed by A+B→A+B+C showed C alone. The projection now preserves separate immutable captures and combines distinct directory descriptions in capture order into one public daily row per target. It keeps the latest publishable daily digest first and bounds both public descriptions to 2000 characters with a source continuation note when needed.
 - The red assertion failed on missing B; green focused regressions passed, including exact replay and a many-capture length case. The affected Hub/runtime/portal backend suite passed 266 tests with three dependency warnings. Black, isort, Ruff, and whitespace checks passed. Evidence: `reports/issue-to-merge-20261113/issue-491/worker-fix-8-ac2.md` and `worker-fix-validation-8-ac2.md` in the main repository's evidence folder.
 - Changes remain uncommitted for controller review. No production or real Hub write, Scheduler change, commit, push, deployment, PR operation, merge, or Issue closure by this worker.
+
+## 2026-11-14 Issue #506 — restored local interpretation after Content Hub v7
+
+- The new isolated runtime is a clean detached worktree at main `b248fff1def4debdaa962e8fb187ac3c74a834ab`, including migration 0007. Its source and operation SHA-256 values are in `C:/Project/AI_actuarial_inforsearch/reports/issue-506-20261114/freeze.json`. The old frozen tree and 10:00 failure receipt remain unchanged. Backups preserve the prior freeze, receipt, automation entry, case queue, and local runtime-state file; private config and the 06:00 model-run archive were not copied.
+- Only the existing `automation-6` entry was updated. It remains active at 10:00 America/New_York; next run is 2026-11-15 at 10:00. No other automation or collection schedule changed.
+- One bounded local run produced three Chinese Ready drafts. All three have domestic and overseas native ACKs; each target passed 49 native/public readback checks. The preserved nonfatal warnings are `unsupported_number` and `unlabelled_inference`. All three English translation attempts failed the existing number validator, so no English drafts were created; the run status is `partial`. No WeChat publication occurred.
+- Evidence: `C:/Project/AI_actuarial_inforsearch/reports/issue-506-20261114/runtime-acceptance.json`, `preflight.json`, and `runs/2026-11-14-132356-154452/run.json` plus `readback.json`. Persistent case `case-6a7aa1d7b050002c` and GitHub Issue #506 are closed after the required Chinese Ready/readback checks passed.
+- No source change was needed, so no branch, PR, CI run, or Copilot review was created. The original `C:/Project/AI_actuarial_inforsearch` checkout already had uncommitted changes; they were left untouched. This status entry is in the isolated Codex worktree.
+
+## 2026-11-14 英文翻译纠错预算修复（本地候选）
+
+- 在 `fix/english-translation-correction-budget-20261114` 上处理 Issue #506 暴露的英文翻译失败。无历史调用的新请求按最大纠错反馈预留字符和 UTF-8 字节空间，并预留 6,000 输出 token；已保存纠错按实际 bounded feedback 预检；已消耗调用但没有纠错时不预留假想重试空间。最大字节数使用 prefix 的编码长度和诊断文本最坏 UTF-8 字节数。诊断文本保持 180 字符上限。预算不够时在模型调用前返回 `english_translation_input_too_large`。
+- 数字、单位、精度和顺序校验保持严格；未将既有 mismatch 改判为通过。耗尽调用预算的回放跳过输入预算预检并保留原错误；没有调用 provider。整个 `tests/test_article_interpretation_english.py` 在一次性本地 PostgreSQL 16 容器上通过（33 tests），覆盖中断后紧预算单次恢复、精确旧纠错恢复、新请求最大预留边界和耗尽预算终态回放；Black、isort、Ruff 和 `git diff --check` 通过。容器已停止并移除。
+- 未提交、推送或创建 PR；上一条 #506 状态记录保留。
+
+## 2026-11-14 英文翻译纠错预算修复 — 候选通过审查
+
+- 新译文首轮保留一次最大纠错空间；恢复时按已保存的实际诊断计算；中断后仅剩一次调用且无诊断时不预留无法发送的提示；调用上限耗尽时不重写原失败原因。预算按固定提示的实际 UTF-8 字节数、诊断最多 180 字符和额外消息开销计算。数字/单位/顺序校验和每篇两次调用上限保持不变。
+- 英文翻译测试 33 项通过（一次性 PostgreSQL 16 容器已删除）；Black、isort、Ruff 与 `git diff --check` 通过。第 4 轮独立审查 PASS；TypeSafe Jev 1.14.0 对 staged-exact-reserve 和 exhausted-terminal-state 两项均作出支持裁定，证据在用户级 `C:/Users/ferry/.codex/task-evidence/english-translation-budget-followup-20261114/`。
+- 当前为本地候选，尚未提交/推送；没有真实 provider 调用。待处理英文将在 PR 合并后按现有调用上限尝试，确认回执与 Ready 回读。

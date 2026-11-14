@@ -813,9 +813,36 @@ def test_failed_translation_and_same_content_replay_cannot_renew_two_call_budget
     first = EnglishTranslationService(storage, generator=generator).run(file_urls=[URL])
     assert first["provider_calls"] == 2
     assert first["slots"][0]["status"] == "failed"
+
+    saved = dict(
+        storage._conn.execute(
+            "SELECT payload_json FROM article_interpretations WHERE interpretation_id=?",
+            (draft["interpretation_id"],),
+        ).fetchone()[0]
+    )
+    legacy_diagnostic = "english_claim_1_1_number_mismatch".ljust(
+        english.MAX_CORRECTION_DIAGNOSTIC_CHARS, "."
+    )
+    saved["english_translation"]["last_validation_error"] = legacy_diagnostic
+    material = english._material(saved)
+    messages = [
+        {"role": "system", "content": english.PROMPT},
+        {
+            "role": "user",
+            "content": json.dumps(material, ensure_ascii=False, separators=(",", ":")),
+        },
+    ]
+    base_bytes = sum(len(message["content"].encode("utf-8")) + 16 for message in messages)
+    saved["coverage"]["context_tokens"] = base_bytes + english.MAX_OUTPUT_TOKENS
+    storage._conn.execute(
+        "UPDATE article_interpretations SET payload_json=?::jsonb WHERE interpretation_id=?",
+        (json.dumps(saved, ensure_ascii=False), draft["interpretation_id"]),
+    )
+
     second = EnglishTranslationService(storage, generator=generator).run(file_urls=[URL])
     assert second["provider_calls"] == 2
     assert len(generator.calls) == 2
+    assert second["slots"][0]["reason"] == "validation"
     saved = dict(
         storage._conn.execute(
             "SELECT payload_json FROM article_interpretations WHERE interpretation_id=?",
@@ -823,6 +850,8 @@ def test_failed_translation_and_same_content_replay_cannot_renew_two_call_budget
         ).fetchone()[0]
     )
     assert saved["english_translation"]["status"] == "failed"
+    assert saved["english_translation"]["error"] == "validation"
+    assert saved["english_translation"]["last_validation_error"] == legacy_diagnostic
 
 
 def test_reserved_translation_call_survives_process_interruption_and_only_uses_remaining_call(
@@ -846,6 +875,21 @@ def test_reserved_translation_call_survives_process_interruption_and_only_uses_r
         ).fetchone()[0]
     )
     assert interrupted["english_translation"]["attempts"][0]["calls"][0]["status"] == "reserved"
+    assert "last_validation_error" not in interrupted["english_translation"]
+    material = english._material(interrupted)
+    messages = [
+        {"role": "system", "content": english.PROMPT},
+        {
+            "role": "user",
+            "content": json.dumps(material, ensure_ascii=False, separators=(",", ":")),
+        },
+    ]
+    base_bytes = sum(len(message["content"].encode("utf-8")) + 16 for message in messages)
+    interrupted["coverage"]["context_tokens"] = base_bytes + english.MAX_OUTPUT_TOKENS
+    storage._conn.execute(
+        "UPDATE article_interpretations SET payload_json=?::jsonb WHERE interpretation_id=?",
+        (json.dumps(interrupted, ensure_ascii=False), draft["interpretation_id"]),
+    )
     resumed = EnglishTranslationService(storage, generator=generator).run(file_urls=[URL])
     assert resumed["provider_calls"] == 2
     assert len(generator.calls) == 1
@@ -854,6 +898,13 @@ def test_reserved_translation_call_survives_process_interruption_and_only_uses_r
         "Return the complete corrected English JSON"
         not in generator.calls[0]["messages"][-1]["content"]
     )
+    resumed_state = dict(
+        storage._conn.execute(
+            "SELECT payload_json FROM article_interpretations WHERE interpretation_id=?",
+            (draft["interpretation_id"],),
+        ).fetchone()[0]
+    )["english_translation"]
+    assert sum(len(attempt["calls"]) for attempt in resumed_state["attempts"]) == english.MAX_CALLS
 
 
 def test_provider_cleanup_stops_batch_and_blocks_same_content_on_later_day(storage):
@@ -913,7 +964,7 @@ def test_authentication_failure_stops_remaining_english_batch(storage):
     assert len(generator.calls) == 1
 
 
-def test_correction_is_omitted_when_it_would_exceed_the_original_input_budget(storage):
+def test_translation_requires_room_for_its_bounded_correction(storage):
     draft = _draft(storage)
     material = english._material(draft)
     messages = [
@@ -933,10 +984,106 @@ def test_correction_is_omitted_when_it_would_exceed_the_original_input_budget(st
     receipt = EnglishTranslationService(storage, generator=generator).run(
         interpretation_ids=[draft["interpretation_id"]]
     )
+    assert len(generator.calls) == 0
+    assert receipt["provider_calls"] == 0
+    assert receipt["slots"][0]["reason"] == "english_translation_input_too_large"
+
+
+def test_fresh_translation_fits_at_exact_maximum_correction_reserve(storage):
+    draft = _draft(storage)
+    material = english._material(draft)
+    messages = [
+        {"role": "system", "content": english.PROMPT},
+        {
+            "role": "user",
+            "content": json.dumps(material, ensure_ascii=False, separators=(",", ":")),
+        },
+    ]
+    base_bytes = sum(len(message["content"].encode("utf-8")) + 16 for message in messages)
+    assert english.MAX_CORRECTION_FEEDBACK_BYTES == (
+        len(english.CORRECTION_FEEDBACK_PREFIX.encode("utf-8"))
+        + english.MAX_CORRECTION_DIAGNOSTIC_CHARS * 4
+        + 16
+    )
+    draft["coverage"]["context_tokens"] = (
+        base_bytes + english.MAX_CORRECTION_FEEDBACK_BYTES + english.MAX_OUTPUT_TOKENS
+    )
+    storage._conn.execute(
+        "UPDATE article_interpretations SET payload_json=?::jsonb WHERE interpretation_id=?",
+        (json.dumps(draft, ensure_ascii=False), draft["interpretation_id"]),
+    )
+    generator = Generator()
+
+    receipt = EnglishTranslationService(storage, generator=generator).run(
+        interpretation_ids=[draft["interpretation_id"]]
+    )
+
     assert len(generator.calls) == 1
     assert receipt["provider_calls"] == 1
-    assert receipt["slots"][0]["reason"] == "english_correction_feedback_does_not_fit"
-    assert len(generator.calls[0]["messages"]) == 2
+    assert receipt["slots"][0]["status"] == "ready"
+
+
+def test_saved_bounded_correction_resumes_with_one_remaining_content_call(storage):
+    draft = _draft(storage)
+    first_generator = Generator(
+        outputs=[lambda messages: _valid_response(messages, first_number="999")]
+    )
+    stopped = EnglishTranslationService(
+        storage,
+        generator=first_generator,
+        stop_check=lambda: bool(first_generator.calls),
+    ).run(interpretation_ids=[draft["interpretation_id"]])
+    assert len(first_generator.calls) == 1
+    assert stopped["provider_calls"] == 1
+
+    saved = dict(
+        storage._conn.execute(
+            "SELECT payload_json FROM article_interpretations WHERE interpretation_id=?",
+            (draft["interpretation_id"],),
+        ).fetchone()[0]
+    )
+    translation = saved["english_translation"]
+    assert translation["status"] == "queued"
+    assert len(translation["attempts"][0]["calls"]) == 1
+    assert translation["last_validation_error"].startswith("english_claim_1_1_number_mismatch")
+
+    legacy_correction = "english_claim_1_1_number_mismatch".ljust(140, ".")
+    feedback = english.CORRECTION_FEEDBACK_PREFIX + legacy_correction
+    assert len(feedback.encode("utf-8")) == 243
+    material = english._material(saved)
+    messages = [
+        {"role": "system", "content": english.PROMPT},
+        {
+            "role": "user",
+            "content": json.dumps(material, ensure_ascii=False, separators=(",", ":")),
+        },
+    ]
+    base_bytes = sum(len(message["content"].encode("utf-8")) + 16 for message in messages)
+    saved["coverage"]["context_tokens"] = (
+        base_bytes + len(feedback.encode("utf-8")) + 16 + english.MAX_OUTPUT_TOKENS
+    )
+    translation["last_validation_error"] = legacy_correction
+    storage._conn.execute(
+        "UPDATE article_interpretations SET payload_json=?::jsonb WHERE interpretation_id=?",
+        (json.dumps(saved, ensure_ascii=False), draft["interpretation_id"]),
+    )
+
+    resume_generator = Generator()
+    resumed = EnglishTranslationService(storage, generator=resume_generator).run(
+        interpretation_ids=[draft["interpretation_id"]]
+    )
+    assert resumed["provider_calls"] == 2
+    assert len(resume_generator.calls) == 1
+    assert resume_generator.calls[0]["messages"][-1]["content"] == feedback
+    saved = dict(
+        storage._conn.execute(
+            "SELECT payload_json FROM article_interpretations WHERE interpretation_id=?",
+            (draft["interpretation_id"],),
+        ).fetchone()[0]
+    )
+    assert saved["english_translation"]["status"] == "ready"
+    assert len(saved["english_translation"]["attempts"]) == 2
+    assert sum(len(attempt["calls"]) for attempt in saved["english_translation"]["attempts"]) == 2
 
 
 def test_manual_ready_chinese_replay_translates_once_and_skips_hidden_or_stale(storage):

@@ -36,6 +36,16 @@ MAX_DAILY_CALLS = 6
 MAX_DAILY_PROVIDER_SECONDS = 900.0
 MAX_INPUT_CHARS = 32_000
 MAX_OUTPUT_TOKENS = 6_000
+CORRECTION_FEEDBACK_PREFIX = (
+    "Return the complete corrected English JSON from the saved Chinese material. "
+    "Fix this validation issue: "
+)
+MAX_CORRECTION_DIAGNOSTIC_CHARS = 180
+MAX_CORRECTION_FEEDBACK_CHARS = len(CORRECTION_FEEDBACK_PREFIX) + MAX_CORRECTION_DIAGNOSTIC_CHARS
+# Reserve worst-case UTF-8 bytes and the extra message overhead used on retry.
+MAX_CORRECTION_FEEDBACK_BYTES = (
+    len(CORRECTION_FEEDBACK_PREFIX.encode("utf-8")) + MAX_CORRECTION_DIAGNOSTIC_CHARS * 4 + 16
+)
 PROMPT_VERSION = "article-interpretation-english-v1"
 ROLES = articles.SECTION_ROLES
 
@@ -53,6 +63,14 @@ Do not add metadata fields such as authors, publication dates, source names, or 
 
 def _json(value) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+
+def _correction_feedback(correction):
+    return (
+        CORRECTION_FEEDBACK_PREFIX + str(correction)[:MAX_CORRECTION_DIAGNOSTIC_CHARS]
+        if correction
+        else None
+    )
 
 
 def _sha(value: str) -> str:
@@ -423,20 +441,32 @@ class EnglishTranslationService:
             "started_at": min(starts) if starts else None,
         }
 
-    def _build_messages(self, material, draft):
+    def _build_messages(self, material, draft, correction=None, prior_calls=0):
         messages = [
             {"role": "system", "content": PROMPT},
             {"role": "user", "content": _json(material)},
         ]
+        feedback = _correction_feedback(correction)
         chars = sum(len(message["content"]) for message in messages)
         input_bytes = sum(len(message["content"].encode("utf-8")) + 16 for message in messages)
+        if feedback:
+            feedback_chars = len(feedback)
+            feedback_bytes = len(feedback.encode("utf-8")) + 16
+        elif prior_calls:
+            feedback_chars = feedback_bytes = 0
+        else:
+            feedback_chars = MAX_CORRECTION_FEEDBACK_CHARS
+            feedback_bytes = MAX_CORRECTION_FEEDBACK_BYTES
         context_tokens = int(
             (draft.get("coverage") or {}).get("context_tokens")
             or MAX_INPUT_CHARS + MAX_OUTPUT_TOKENS + 16
         )
-        if chars > MAX_INPUT_CHARS or input_bytes + MAX_OUTPUT_TOKENS > context_tokens:
+        if (
+            chars + feedback_chars > MAX_INPUT_CHARS
+            or input_bytes + feedback_bytes + MAX_OUTPUT_TOKENS > context_tokens
+        ):
             raise ValueError("english_translation_input_too_large")
-        return messages, context_tokens
+        return messages, context_tokens, feedback
 
     def _content_calls_exhausted_reason(self) -> str:
         runtime = getattr(getattr(self, "generator", None), "runtime", None)
@@ -540,9 +570,17 @@ class EnglishTranslationService:
             self._save_translation(draft, state)
             slot.update(status="failed", reason="provider_cleanup")
             return
+        if totals["calls"] >= MAX_CALLS:
+            reason = state.get("error") or self._content_calls_exhausted_reason()
+            state.update(status="failed", error=reason)
+            self._save_translation(draft, state)
+            slot.update(status="failed", reason=reason)
+            return
         try:
             material = _material(draft)
-            messages, context_tokens = self._build_messages(material, draft)
+            messages, context_tokens, feedback = self._build_messages(
+                material, draft, state.get("last_validation_error"), totals["calls"]
+            )
             generator, route = self._generator()
         except (ValueError, LLMAuthenticationError) as exc:
             reason = "authentication" if isinstance(exc, LLMAuthenticationError) else str(exc)[:120]
@@ -669,13 +707,9 @@ class EnglishTranslationService:
                 slot.update(status="failed", reason=reason)
                 return
 
-            correction = state.get("last_validation_error")
+            feedback = _correction_feedback(state.get("last_validation_error"))
             request_messages = messages
-            if correction:
-                feedback = (
-                    "Return the complete corrected English JSON from the saved Chinese material. "
-                    "Fix this validation issue: " + str(correction)[:180]
-                )
+            if feedback:
                 added_bytes = len(feedback.encode("utf-8")) + 16
                 base_bytes = sum(
                     len(message["content"].encode("utf-8")) + 16 for message in messages
@@ -699,7 +733,7 @@ class EnglishTranslationService:
                 "outer_attempts": 1,
                 "reserved_provider_seconds": timeout,
                 "started_at": self.now().isoformat(),
-                "correction": bool(correction),
+                "correction": bool(feedback),
                 **route_fields,
             }
             attempt["calls"].append(call)
