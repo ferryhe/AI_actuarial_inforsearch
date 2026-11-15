@@ -7510,3 +7510,10 @@ Current branch head 4f030be has uncommitted small catalog/Storage variable defau
 - 新译文首轮保留一次最大纠错空间；恢复时按已保存的实际诊断计算；中断后仅剩一次调用且无诊断时不预留无法发送的提示；调用上限耗尽时不重写原失败原因。预算按固定提示的实际 UTF-8 字节数、诊断最多 180 字符和额外消息开销计算。数字/单位/顺序校验和每篇两次调用上限保持不变。
 - 英文翻译测试 33 项通过（一次性 PostgreSQL 16 容器已删除）；Black、isort、Ruff 与 `git diff --check` 通过。第 4 轮独立审查 PASS；TypeSafe Jev 1.14.0 对 staged-exact-reserve 和 exhausted-terminal-state 两项均作出支持裁定，证据在用户级 `C:/Users/ferry/.codex/task-evidence/english-translation-budget-followup-20261114/`。
 - 当前为本地候选，尚未提交/推送；没有真实 provider 调用。待处理英文将在 PR 合并后按现有调用上限尝试，确认回执与 Ready 回读。
+
+## 2026-11-15 英文翻译预算修复合并及待处理内容
+
+- PR #507 已合并到 `main`，合并提交 `2f11cab56103008c0750ff660e42895b32d2d9b4`。PR 当前 HEAD `79904ea5630190af296a0ca4653df1b99a745800` 的重跑 CI 全部通过。首轮 CI 只有旧超时单测失败；该单测单独复跑通过。PR 评论无代码问题；Copilot 因剩余额度不足未能审查，未再次请求。
+- 中国站已部署合并提交 `2f11cab...`；API、前端和公网首页/健康接口均健康。清理容量时在部署锁内删除两个旧版本的 4 个镜像标签和其 42 个经 revision/source 及引用关系核验的中间镜像；当前版 `2f11cab...`、紧邻回滚版 `1d65a0f...`、数据库卷、其他应用镜像及容器均保留。根盘从 87% 降至 79%（`df`），本机运行时容量读数为 75.48%/80% 门槛，远端预检两端均通过。
+- 合并后按 `--file-url` 试跑瑞士文档时服务返回 `content_version_already_interpreted`，provider 调用为 0。随后按 interpretation ID 精确续跑并限制目标同步到该 ID；当前日回执 `english_translation:2026-11-15` 仍为 `outer_attempts=5`，没有新增调用。三条稿件仍失败：`660d76dc...` 为 `english_translation_input_too_large`（已有 1 次内容调用，纠错输入不适配）；`0b92a0e5...` 和 `7704ba0f...` 为 `validation`（各 2 次，已达每篇上限）。两端没有新的英文 ACK/Ready 回读，未重置每日或单篇预算。
+- 待处理英文仍未完成。剩余每日额度不能重试已达单篇上限的两条；另一条在 provider 请求前即因输入预算失败。保留失败稿与原校验，不伪报成功；后续需人工修订或另行授权针对输入/内容失败的方案。
