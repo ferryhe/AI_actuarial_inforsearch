@@ -411,7 +411,7 @@ export default function Chat() {
   const { permissions, isLoading: authLoading } = useAuth();
   const canUseConversations = permissions.includes("chat.conversations");
   const [mode, setMode] = useState<ChatMode>("expert");
-  const [ragMode, setRagMode] = useState<RagMode>("standard");
+  const [chosenRagMode, setRagMode] = useState<RagMode>();
   const getMode = useCallback(() => mode, [mode]);
   const {
     conversations,
@@ -436,7 +436,10 @@ export default function Chat() {
   });
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([]);
   const [knowledgeBasesLoaded, setKnowledgeBasesLoaded] = useState(false);
-  const [selectedKbs, setSelectedKbs] = useState<string[]>([]);
+  const [chosenKbs, setSelectedKbs] = useState<string[] | null>(null);
+  const defaultAiKb = knowledgeBases.find((kb) => kb.kb_id === "ai" && isChatKnowledgeBaseAvailable(kb));
+  const ragMode = chosenRagMode ?? (defaultAiKb ? "agentic" : "standard");
+  const selectedKbs = chosenKbs ?? (ragMode === "agentic" && defaultAiKb ? [defaultAiKb.kb_id] : []);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [clearingDocumentScope, setClearingDocumentScope] = useState(false);
@@ -621,16 +624,13 @@ export default function Chat() {
     try {
       const nextKnowledgeBases = await fetchKnowledgeBases();
       setKnowledgeBases(nextKnowledgeBases);
-      setSelectedKbs((prev) => {
-        const kept = prev.filter((kbId) => nextKnowledgeBases.some((kb) => (
-          kb.kb_id === kbId && isChatKnowledgeBaseAvailable(kb)
-        )));
-        return ragMode === "agentic" ? kept.slice(0, 1) : kept;
-      });
+      setSelectedKbs((prev) => prev?.filter((kbId) => nextKnowledgeBases.some((kb) => (
+        kb.kb_id === kbId && isChatKnowledgeBaseAvailable(kb)
+      ))) ?? null);
       setKnowledgeBasesLoaded(true);
     } catch {
       setKnowledgeBases([]);
-      setSelectedKbs([]);
+      setSelectedKbs(null);
     }
   }
 
@@ -869,8 +869,8 @@ export default function Chat() {
       documentScopeClearPending && explicitlySelectedDocuments.length === 0
     );
     const requestRagMode = options?.ragModeOverride || ragMode;
-    const requestKbIds = options?.kbIds || selectedKbs;
     const shouldUseAgentic = requestRagMode === "agentic" && documentInputs.length === 0;
+    const requestKbIds = options?.kbIds ?? (shouldUseAgentic ? selectedKbs : chosenKbs ?? []);
     if (requestRagMode === "agentic" && requestKbIds.length === 0 && shouldUseAgentic) {
       setErrorMsg(t("chat.agentic_requires_kb"));
       return false;
@@ -1070,12 +1070,10 @@ export default function Chat() {
       return;
     }
     if (ragMode === "agentic") {
-      setSelectedKbs((prev) => (prev.includes(id) ? [] : [id]));
+      setSelectedKbs(selectedKbs.includes(id) ? [] : [id]);
       return;
     }
-    setSelectedKbs((prev) =>
-      prev.includes(id) ? prev.filter((k) => k !== id) : [...prev, id]
-    );
+    setSelectedKbs(selectedKbs.includes(id) ? selectedKbs.filter((kbId) => kbId !== id) : [...selectedKbs, id]);
     setShowKbDropdown(false);
   }
 
@@ -1277,10 +1275,14 @@ export default function Chat() {
             <button
               key={nextMode}
               type="button"
+              aria-pressed={ragMode === nextMode}
               onClick={() => {
                 setRagMode(nextMode);
-                if (nextMode === "agentic") {
-                  setSelectedKbs((prev) => prev.filter((kbId) => isChatKnowledgeBaseAvailable(knowledgeBases.find((kb) => kb.kb_id === kbId))).slice(0, 1));
+                if (nextMode === "agentic" && ragMode !== "agentic") {
+                  const available = selectedKbs.filter((kbId) => (
+                    isChatKnowledgeBaseAvailable(knowledgeBases.find((kb) => kb.kb_id === kbId))
+                  ));
+                  setSelectedKbs(available.length ? available.slice(0, 1) : null);
                 }
                 setShowKbDropdown(false);
                 setShowModeDropdown(false);
