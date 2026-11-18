@@ -31,8 +31,8 @@ def test_weekly_card_drops_backend_metadata_fields():
         assert term not in section, term
         assert term not in card, term
 
-    # The deterministic "N new materials" tag is driven by file_count.
-    assert 't("dashboard.new_materials_count").replace("{count}", String(view.fileCount))' in card
+    assert '"weekly.verified_publication_count"' in card
+    assert '.replace("{count}", String(view.fileCount))' in card
     assert 'data-testid="weekly-new-count"' in card
 
 
@@ -50,13 +50,14 @@ def test_weekly_lib_loads_list_and_detail_without_write_ops():
     lib = LIB_TS.read_text(encoding="utf-8")
 
     # List endpoint for the master list (no N+1, no files/explanation).
-    assert 'get<WeeklyUpdateListResponse>("/api/weekly-updates")' in lib
+    assert 'get<WeeklyUpdateListResponse>("/api/weekly-updates?limit=100")' in lib
 
     # Detail fetches detail + files + explanation in parallel, read-only.
     assert "loadWeeklyUpdateDetail" in lib
     assert "Promise.allSettled" in lib
     assert "get<WeeklySnapshotDetailEnvelope>(`/api/weekly-updates/${snapshotId}`)" in lib
     assert "/files?limit=" in lib
+    assert "&published_only=true" in lib
     assert "/explanation" in lib
     assert "loadAllWeeklySnapshotFiles" in lib
     assert "offset += pageFiles.length" in lib
