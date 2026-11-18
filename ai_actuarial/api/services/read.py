@@ -10,6 +10,7 @@ from urllib.parse import urlsplit
 from ai_actuarial.api.services.weekly_updates import (
     current_utc_iso_week_period,
     publication_timing,
+    utc_intake_day,
     weekly_intake,
 )
 from ai_actuarial.shared_runtime import get_categories_config_path, load_yaml, parse_int_clamped
@@ -244,7 +245,7 @@ def _recent_intake(storage: Storage) -> Iterator[tuple[dict[str, Any], str, str 
         )
         for row in rows:
             if row["deleted_at"] is None:
-                timing, published_on = publication_timing(row, start[:10], end[:10])
+                timing, published_on = publication_timing(row)
                 yield row, timing, published_on
         offset += len(rows)
         if not rows or offset >= total:
@@ -270,13 +271,10 @@ def _source_intake_updates(storage: Storage) -> dict[str, list[dict[str, Any]]]:
             portal_key = source_portal_for_observation(next(iter(site_ids)), url, referrer)
         if portal_key is None:
             continue
-        try:
-            day = datetime.fromisoformat(str(row["first_seen"]).replace("Z", "+00:00"))
-        except ValueError:
+        day = utc_intake_day(row["first_seen"])
+        if day is None:
             continue
-        if day.tzinfo is None:
-            day = day.replace(tzinfo=timezone.utc)
-        acquired_on = day.astimezone(timezone.utc).date().isoformat()
+        acquired_on = day.isoformat()
         days = by_key.setdefault(portal_key, {})
         update = days.setdefault(
             acquired_on,
@@ -297,6 +295,11 @@ def _source_intake_updates(storage: Storage) -> dict[str, list[dict[str, Any]]]:
                 "published_on": published_on,
             }
         )
+    for days in by_key.values():
+        for update in days.values():
+            update["files"].sort(
+                key=lambda row: (row["timing"] == "new", row["published_on"] or ""), reverse=True
+            )
     return {
         key: sorted(days.values(), key=lambda update: update["acquired_on"], reverse=True)
         for key, days in by_key.items()

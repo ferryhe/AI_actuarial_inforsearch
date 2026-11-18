@@ -92,8 +92,16 @@ class MemoryStorage:
             "period_end": "2026-10-26",
         }
 
-    def list_weekly_snapshot_files(self, *, offset=0, limit=500, **_kwargs):
-        return self.rows[offset : offset + limit], len(self.rows)
+    def list_weekly_snapshot_files(
+        self, *, offset=0, limit=500, include_publication=False, **_kwargs
+    ):
+        page = self.rows[offset : offset + limit]
+        if include_publication:
+            page = [
+                dict(row, file_available=True, source_site=None, source_page_url=None)
+                for row in page
+            ]
+        return page, len(self.rows)
 
     def get_weekly_explanation(self, **_kwargs):
         return self.saved

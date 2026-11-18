@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 
+import pytest
 import yaml
 from fastapi.testclient import TestClient
 
@@ -10,6 +11,7 @@ from ai_actuarial.api.app import create_app
 from ai_actuarial.api.services.weekly_updates import (
     generate_weekly_update_summary,
     previous_utc_iso_week_period,
+    publication_timing,
 )
 from ai_actuarial.storage import Storage
 from ai_actuarial.task_runtime import NativeTaskRuntime
@@ -17,6 +19,34 @@ from tests.postgres_helpers import postgres_url_for_path
 
 PERIOD_START = "2026-03-09T00:00:00+00:00"
 PERIOD_END = "2026-03-16T00:00:00+00:00"
+
+
+@pytest.mark.parametrize(
+    ("published", "precision", "timing"),
+    [
+        ("2026-10-10", "day", "new"),
+        ("2026-10-09", "day", "backfill"),
+        ("2026-11-09", "day", "new"),
+        ("2026-11-10", "day", "other"),
+        ("2026-10", "month", "other"),
+        ("2026-09", "month", "backfill"),
+    ],
+)
+def test_verified_publication_age_uses_utc_first_collection_day(published, precision, timing):
+    row = {
+        "url": "https://example.org/paper.pdf",
+        "first_seen": "2026-11-08T23:30:00-05:00",
+        "published_time": None,
+    }
+    reviewed = {
+        "catalog_date": None,
+        "value": published,
+        "precision": precision,
+        "semantic": "publication",
+        "evidence": "Original publication date",
+        "source_url": "https://example.org/official-paper-list",
+    }
+    assert publication_timing(row, reviewed) == (timing, published)
 
 
 def _write_config(tmp_path: Path) -> tuple[Path, Path, str]:

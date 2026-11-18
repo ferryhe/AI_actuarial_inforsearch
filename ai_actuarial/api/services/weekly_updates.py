@@ -11,6 +11,7 @@ from ai_actuarial.storage import Storage
 _RFC3339_RE = re.compile(
     r"^\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[Zz]|[+-]\d{2}:\d{2})$"
 )
+NEW_PUBLICATION_MAX_AGE_DAYS = 30
 WEEKLY_UPDATE_FILE_FIELDS: tuple[str, ...] = (
     "url",
     "title",
@@ -155,10 +156,21 @@ def _project_weekly_file(row: dict[str, Any]) -> dict[str, Any]:
     return {field: row.get(field) for field in WEEKLY_UPDATE_FILE_FIELDS}
 
 
-def publication_timing(
-    row: Mapping[str, Any], start: str, end: str, reviewed: Any = None
-) -> tuple[str, str | None]:
-    """Classify one intake record against its UTC week using publisher evidence."""
+def utc_intake_day(first_seen: str | None) -> date | None:
+    try:
+        timestamp = datetime.fromisoformat((first_seen or "").replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.replace(tzinfo=timezone.utc)
+    return timestamp.astimezone(timezone.utc).date()
+
+
+def publication_timing(row: Mapping[str, Any], reviewed: Any = None) -> tuple[str, str | None]:
+    """Compare the verified publication date with the first collection day."""
+    acquired_on = utc_intake_day(row.get("first_seen"))
+    if acquired_on is None:
+        return "other", None
     value = row.get("published_time")
     enrichment = (row.get("bilingual_metadata") or {}).get("hub_enrichment")
     facts = enrichment.get("date_facts") if isinstance(enrichment, dict) else None
@@ -192,9 +204,10 @@ def publication_timing(
         return "other", None
     if day.isoformat() != value + suffix:
         return "other", None
-    if value < start[: len(value)]:
+    cutoff = acquired_on - timedelta(days=NEW_PUBLICATION_MAX_AGE_DAYS)
+    if value < cutoff.isoformat()[: len(value)]:
         return "backfill", value
-    if precision == "day" and start <= value < end and re.fullmatch(r"https?://[^\s]+", row["url"]):
+    if precision == "day" and day <= acquired_on and re.fullmatch(r"https?://[^\s]+", row["url"]):
         return "new", value
     return "other", value
 
@@ -202,7 +215,6 @@ def publication_timing(
 def weekly_intake(
     storage: Storage, snapshot: Mapping[str, Any]
 ) -> Iterator[tuple[dict[str, Any], str, str | None]]:
-    start, end = snapshot["period_start"][:10], snapshot["period_end"][:10]
     reviewed_dates = (snapshot.get("metadata") or {}).get("weekly_publication_date_evidence")
     if not isinstance(reviewed_dates, dict):
         reviewed_dates = {}
@@ -221,16 +233,14 @@ def weekly_intake(
             if not row.pop("file_available"):
                 yield row, "other", None
             else:
-                timing, published_time = publication_timing(
-                    row, start, end, reviewed_dates.get(row["url"])
-                )
+                timing, published_time = publication_timing(row, reviewed_dates.get(row["url"]))
                 yield row, timing, published_time
 
 
 def weekly_publications(
     storage: Storage, snapshot: Mapping[str, Any]
 ) -> tuple[list[dict[str, Any]], int]:
-    """Return verified publications in the week and a count of earlier publications."""
+    """Return recently published intake and the count of historical backfills."""
     published = []
     backfill_count = 0
     for row, timing, published_time in weekly_intake(storage, snapshot):
