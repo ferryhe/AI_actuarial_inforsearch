@@ -676,8 +676,8 @@ def _read_publication_explanation(storage, snapshot):
     explanation = storage.get_weekly_explanation(snapshot_id=snapshot["id"])
     if explanation is None:
         return _missing_explanation(snapshot["id"])
-    rows, has_backfill = weekly_publications(storage, snapshot)
-    return _publication_explanation(snapshot, rows, has_backfill, explanation)
+    rows, backfill_count = weekly_publications(storage, snapshot)
+    return _publication_explanation(snapshot, rows, backfill_count > 0, explanation)
 
 
 def _public_explanation(explanation: Mapping[str, Any]) -> dict[str, Any]:
@@ -744,7 +744,8 @@ def generate_weekly_explanation(
         )
         if snapshot is None:
             raise WeeklySnapshotNotFoundError(normalized_snapshot_id)
-        source_rows, has_backfill = weekly_publications(storage, snapshot)
+        source_rows, backfill_count = weekly_publications(storage, snapshot)
+        has_backfill = backfill_count > 0
         publication_signature = _publication_signature(source_rows, has_backfill)
         empty = not source_rows
         runtime = None

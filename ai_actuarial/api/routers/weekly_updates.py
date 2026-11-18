@@ -79,6 +79,7 @@ class WeeklySnapshotFilesModel(BaseModel):
     included_count: int
     truncated: bool
     published_only: bool = False
+    backfill_count: int | None = None
 
 
 class WeeklyExplanationModel(BaseModel):

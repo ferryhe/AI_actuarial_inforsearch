@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { test } from "vitest";
 import { WeeklyDashboardSection } from "../components/WeeklyDashboardSection";
 import { WeeklyHighlightCard } from "../components/WeeklyHighlightCard";
-import { buildWeeklyDashboardView, loadLatestWeeklyDashboard, loadWeeklyUpdateDetail, localizedWeeklyFileMetadata, type WeeklyDashboardData } from "./weekly-dashboard";
+import { buildWeeklyDashboardView, loadLatestWeeklyDashboard, loadWeeklyIntake, loadWeeklyUpdateDetail, localizedWeeklyFileMetadata, type WeeklyDashboardData } from "./weekly-dashboard";
 
 const snapshot = { id: "weekly-current", period_start: "2026-10-19", period_end: "2026-10-26", generated_at: "2026-10-26", status: "published" as const, file_count: 5, metadata: {} };
 const files = Array.from({ length: 5 }, (_, i) => ({ url: `https://example.org/${i}`, title: `Study ${i}`, summary: `Source summary ${i}.`, first_seen: "2026-10-20" }));
@@ -19,15 +19,45 @@ test("a verified-only historical week never fills empty recommendations from the
       explanation_zh: "本期暂无核实的新发布。\n\n本期另有历史资料补录。",
     } } as T;
     assert.equal(new URL(url, "http://fixture").searchParams.get("published_only"), "true");
-    return { files: [], total: 0, published_only: true } as T;
+    return { files: [], total: 0, published_only: true, backfill_count: 3 } as T;
   });
   const view = buildWeeklyDashboardView(data, "zh", t);
   assert.equal(data.snapshot?.file_count, 5);
   assert.equal(view.fileCount, 0);
   assert.equal(view.recommendedCount, 0);
-  const markup = renderToStaticMarkup(<WeeklyHighlightCard view={view} lang="zh" t={t} onOpenFile={() => {}} />);
+  assert.equal(view.guideRecommendationCount, 0);
+  const translate = (key: string) => ({
+    "weekly.collected_materials_count": "本期入库 {count} 条",
+    "weekly.backfill_count": "已核实补录 {count} 条",
+    "weekly.other_intake_count": "待核或其他 {count} 条",
+    "weekly.recommended_count": "推荐 {count} 篇",
+  }[key] || t(key));
+  const markup = renderToStaticMarkup(<WeeklyHighlightCard view={view} lang="zh" t={translate} onOpenFile={() => {}} />);
+  for (const label of ["本期入库 5 条", "已核实补录 3 条", "待核或其他 2 条", "推荐 0 篇"]) {
+    assert.ok(markup.includes(label));
+  }
   assert.ok(markup.includes("本期另有历史资料补录"));
   assert.ok(!markup.includes("weekly-file-row"));
+
+  const intake = await loadWeeklyIntake(snapshot.id, async <T,>(url: string): Promise<T> => {
+    assert.equal(url, `/api/weekly-updates/${snapshot.id}/files?limit=50`);
+    return { files, total: files.length } as T;
+  });
+  assert.deepEqual(intake, files);
+});
+
+test("scoped statistics count all linked recommendations in the guide", () => {
+  const view = buildWeeklyDashboardView({
+    ...base,
+    publicationCount: 5,
+    backfillCount: 0,
+    explanation: {
+      ...base.explanation!,
+      status: "complete",
+      explanation_en: files.map(file => `- [${file.title}](${file.url})`).join("\n"),
+    },
+  }, "en", t);
+  assert.equal(view.guideRecommendationCount, 5);
 });
 
 test("zero snapshot shows fixed copy in both locales on home and detail", () => {

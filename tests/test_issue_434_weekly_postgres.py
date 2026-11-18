@@ -89,11 +89,13 @@ def test_failed_new_prompt_preserves_existing_success(tmp_path, monkeypatch):
 
 def test_historical_guide_only_recommends_verified_in_week_publications(tmp_path):
     db_path, _, _ = _write_config(tmp_path)
-    _seed_files(db_path, count=5)
+    _seed_files(db_path, count=6)
     db = postgres_url_for_path(db_path)
     storage = Storage(db)
     try:
-        for index, day in enumerate(("2020-06-02", "2026-03-13", "2026-03-09", "2026-03", None)):
+        for index, day in enumerate(
+            ("2020-06-02", "2026-03-13", "2026-03-09", "2026-03", None, None)
+        ):
             url = f"https://example.com/report-{index:03d}.pdf"
             storage._conn.execute("UPDATE files SET published_time = ? WHERE url = ?", (day, url))
             if day:
@@ -115,6 +117,10 @@ def test_historical_guide_only_recommends_verified_in_week_publications(tmp_path
     snapshot = _snapshot(db_path)
     storage = Storage(db)
     try:
+        storage._conn.execute(
+            "UPDATE files SET deleted_at = ? WHERE url = ?",
+            ("2026-03-18T00:00:00+00:00", "https://example.com/report-005.pdf"),
+        )
         detail = storage.get_weekly_snapshot(snapshot_id=snapshot["id"])
         detail["metadata"]["weekly_publication_date_evidence"] = {
             "https://example.com/report-002.pdf": {
@@ -124,7 +130,23 @@ def test_historical_guide_only_recommends_verified_in_week_publications(tmp_path
                 "precision": "day",
                 "evidence": "Published March 14, 2026",
                 "source_url": "https://example.com/publication-announcement",
-            }
+            },
+            "https://example.com/report-004.pdf": {
+                "catalog_date": None,
+                "value": "2021-02",
+                "semantic": "publication",
+                "precision": "month",
+                "evidence": "Published February 2021",
+                "source_url": "https://example.com/paper-directory",
+            },
+            "https://example.com/report-005.pdf": {
+                "catalog_date": None,
+                "value": "2026-03-15",
+                "semantic": "publication",
+                "precision": "day",
+                "evidence": "Published March 15, 2026",
+                "source_url": "https://example.com/publication-announcement",
+            },
         }
         storage._conn.execute(
             "UPDATE weekly_snapshots SET metadata_json = ? WHERE id = ?",
@@ -136,8 +158,10 @@ def test_historical_guide_only_recommends_verified_in_week_publications(tmp_path
     archived = get_weekly_update_summary_files(**reference)
     first = get_weekly_update_summary_files(**reference, published_only=True, limit=1)
     second = get_weekly_update_summary_files(**reference, published_only=True, offset=1)
-    assert archived["total"] == 5
+    assert archived["total"] == 6
+    assert "backfill_count" not in archived
     assert first["total"] == 2
+    assert first["backfill_count"] == second["backfill_count"] == 2
     assert first["files"][0]["published_time"] == "2026-03-14"
     assert [row["published_time"] for row in second["files"]] == ["2026-03-13"]
 
@@ -150,7 +174,7 @@ def test_historical_guide_only_recommends_verified_in_week_publications(tmp_path
     for locale in ("en", "zh"):
         guide = revision["explanation"][f"explanation_{locale}"]
         assert guide.index("report-002.pdf") < guide.index("report-001.pdf")
-        assert all(f"report-{number:03d}.pdf" not in guide for number in (0, 3, 4))
+        assert all(f"report-{number:03d}.pdf" not in guide for number in (0, 3, 4, 5))
     assert "另有历史资料补录" in revision["explanation"]["explanation_zh"]
     assert archived == get_weekly_update_summary_files(**reference)
 

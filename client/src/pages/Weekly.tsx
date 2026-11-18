@@ -4,7 +4,6 @@ import { useTranslation } from "@/components/Layout";
 import { buildFileDetailPath } from "@/lib/navigation";
 import {
   buildWeeklyDashboardView,
-  buildWeeklyDatabasePath,
   formatWeeklyPeriodLabel,
   loadWeeklyUpdateDetail,
   loadWeeklyUpdateList,
@@ -12,6 +11,7 @@ import {
   type WeeklySnapshot,
 } from "@/lib/weekly-dashboard";
 import { WeeklyHighlightCard } from "@/components/WeeklyHighlightCard";
+import { WeeklyIntakeList } from "@/components/WeeklyIntakeList";
 
 export default function Weekly() {
   const { t, lang } = useTranslation();
@@ -24,6 +24,7 @@ export default function Weekly() {
   const [detail, setDetail] = useState<WeeklyDashboardData | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState(false);
+  const openFile = (url: string) => navigate(buildFileDetailPath(url, "/weekly"));
 
   useEffect(() => {
     let cancelled = false;
@@ -152,10 +153,18 @@ export default function Weekly() {
                   view={buildWeeklyDashboardView(detail, lang, t)}
                   lang={lang}
                   t={t}
-                  onOpenFile={(url) => navigate(buildFileDetailPath(url, "/weekly"))}
-                  databasePath={buildWeeklyDatabasePath(detail.snapshot)}
+                  onOpenFile={openFile}
                   grouped
                 />
+                {detail.snapshot.file_count > 0 ? (
+                  <WeeklyIntakeList
+                    key={detail.snapshot.id}
+                    snapshot={detail.snapshot}
+                    lang={lang}
+                    t={t}
+                    onOpenFile={openFile}
+                  />
+                ) : null}
               </div>
             ) : (
               <div className="rounded-xl border border-dashed border-border bg-card p-8 text-center">

@@ -157,14 +157,14 @@ def _project_weekly_file(row: dict[str, Any]) -> dict[str, Any]:
 
 def weekly_publications(
     storage: Storage, snapshot: Mapping[str, Any]
-) -> tuple[list[dict[str, Any]], bool]:
-    """Use source-backed publication dates for the public reading list."""
+) -> tuple[list[dict[str, Any]], int]:
+    """Return verified publications in the week and a count of earlier publications."""
     start, end = snapshot["period_start"][:10], snapshot["period_end"][:10]
     reviewed_dates = (snapshot.get("metadata") or {}).get("weekly_publication_date_evidence")
     if not isinstance(reviewed_dates, dict):
         reviewed_dates = {}
     published = []
-    has_backfill = False
+    backfill_count = 0
     offset = 0
     while offset < snapshot["file_count"]:
         rows, _ = storage.list_weekly_snapshot_files(
@@ -177,6 +177,8 @@ def weekly_publications(
             break
         offset += len(rows)
         for row in rows:
+            if not row.pop("file_available"):
+                continue
             value = row.get("published_time")
             enrichment = (row.get("bilingual_metadata") or {}).get("hub_enrichment")
             facts = enrichment.get("date_facts") if isinstance(enrichment, dict) else None
@@ -184,7 +186,7 @@ def weekly_publications(
             reviewed = reviewed_dates.get(row["url"])
             if (
                 isinstance(reviewed, dict)
-                and isinstance(value, str)
+                and "catalog_date" in reviewed
                 and reviewed.get("catalog_date") == value
                 and re.fullmatch(r"https?://[^\s]+", str(reviewed.get("source_url") or ""))
             ):
@@ -212,7 +214,7 @@ def weekly_publications(
             if day.isoformat() != value + suffix:
                 continue
             if value < start[: len(value)]:
-                has_backfill = True
+                backfill_count += 1
             elif precision == "day" and start <= value < end:
                 if re.match(r"^https?://[^\s]+$", row["url"]):
                     published.append({**row, "published_time": value})
@@ -222,7 +224,7 @@ def weekly_publications(
             row["url"],
         )
     )
-    return published, has_backfill
+    return published, backfill_count
 
 
 def _format_summary_markdown(
@@ -396,14 +398,16 @@ def get_weekly_update_summary_files(
 ) -> dict[str, Any]:
     query = parse_weekly_update_files_query({"limit": str(limit), "offset": str(offset)})
     storage = Storage(db_path)
+    counts = {}
     try:
         if published_only:
             snapshot = storage.get_weekly_snapshot(snapshot_id=snapshot_id)
             if snapshot is None:
                 raise WeeklySnapshotNotFoundError(snapshot_id)
-            published, _ = weekly_publications(storage, snapshot)
+            published, backfill_count = weekly_publications(storage, snapshot)
             total = len(published)
             files = published[query["offset"] : query["offset"] + query["limit"]]
+            counts = {"published_only": True, "backfill_count": backfill_count}
         else:
             try:
                 files, total = storage.list_weekly_snapshot_files(
@@ -422,5 +426,5 @@ def get_weekly_update_summary_files(
         **query,
         "included_count": included_count,
         "truncated": query["offset"] + included_count < total,
-        **({"published_only": True} if published_only else {}),
+        **counts,
     }
