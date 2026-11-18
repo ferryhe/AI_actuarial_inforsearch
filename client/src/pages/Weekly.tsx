@@ -144,12 +144,11 @@ export default function Weekly() {
                 ))}
               </div>
             ) : detail && detail.snapshot ? (
-              <div className="space-y-3">
+              <div key={detail.snapshot.id} className="space-y-3">
                 <h2 className="text-lg font-semibold">
                   {formatWeeklyPeriodLabel(detail.snapshot.period_start, detail.snapshot.period_end, lang)}
                 </h2>
                 <WeeklyHighlightCard
-                  key={detail.snapshot.id}
                   view={buildWeeklyDashboardView(detail, lang, t)}
                   lang={lang}
                   t={t}
@@ -158,7 +157,6 @@ export default function Weekly() {
                 />
                 {detail.snapshot.file_count > 0 ? (
                   <WeeklyIntakeList
-                    key={detail.snapshot.id}
                     snapshot={detail.snapshot}
                     lang={lang}
                     t={t}

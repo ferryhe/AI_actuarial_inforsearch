@@ -12,6 +12,8 @@ try {
     const calls = [];
     const count = mode === "empty" ? 0 : 7;
     const snapshot = { id: "weekly-fixture", period_start: "2026-10-19T00:00:00Z", period_end: "2026-10-26T00:00:00Z", generated_at: "2026-10-26T00:00:00Z", status: "published", file_count: count, metadata: {} };
+    const earlier = { ...snapshot, id: "weekly-earlier", period_start: "2026-10-12T00:00:00Z", period_end: "2026-10-19T00:00:00Z", file_count: 1 };
+    const earlierFile = { url: "https://example.org/earlier-archive", title: "Earlier archive record", first_seen: earlier.period_start };
     const files = Array.from({ length: count }, (_, i) => ({ url: `https://example.org/study-${i}`, title: `Study ${i}`, summary: mode === "legacy_long" && i === 0 ? longSummary : `Source case study ${i}.`, first_seen: "2026-10-20T00:00:00Z", category: i % 2 ? "Risk" : "Insurance", bilingual_metadata: {
       en: { title: `Study ${i}`, summary: mode === "legacy_long" && i === 0 ? longSummary : `Source case study ${i}.`, category: i % 2 ? "Risk" : "Insurance", keywords: ["Insurance AI"] },
       zh: { title: `研究 ${i}`, summary: `中文研究摘要 ${i}。`, category: i % 2 ? "Risk" : "Insurance", keywords: ["保险AI"] },
@@ -24,7 +26,15 @@ try {
       let payload = {};
       if (url.pathname === "/api/auth/me") payload = { data: { require_auth: false, permissions: ["stats.read", "files.read"], authenticated: false } };
       else if (url.pathname === "/api/weekly-updates/latest") payload = { summary: snapshot };
-      else if (url.pathname === "/api/weekly-updates") payload = { summaries: [snapshot], total: 1, limit: 100, offset: 0 };
+      else if (url.pathname === "/api/weekly-updates") payload = { summaries: [snapshot, earlier], total: 2, limit: 100, offset: 0 };
+      else if (url.pathname === `/api/weekly-updates/${earlier.id}`) payload = { summary: earlier };
+      else if (url.pathname === `/api/weekly-updates/${earlier.id}/explanation`) {
+        payload = { explanation: { snapshot_id: earlier.id, status: "complete", generation_mode: "empty", explanation_en: "", explanation_zh: "" } };
+      } else if (url.pathname === `/api/weekly-updates/${earlier.id}/files`) {
+        payload = url.searchParams.has("published_only")
+          ? { files: [], total: 0, published_only: true, backfill_count: 1 }
+          : { files: [earlierFile], total: 1 };
+      }
       else if (url.pathname.endsWith("/files")) {
         const limit = Number(url.searchParams.get("limit"));
         const offset = Number(url.searchParams.get("offset"));
@@ -54,6 +64,27 @@ try {
       assert.equal(await guide.locator("a").count(), 0);
     }
     if (mode === "legacy_long" && lang === "en") assert.ok((await page.getByTestId("weekly-summary-0").innerText()).replace(/\s+/g, " ").includes(longSummary.trim()));
+    if (path === "/weekly" && mode === "ai") {
+      const earlierTab = page.getByTestId(`weekly-item-${earlier.id}`);
+      const latestTab = page.getByTestId(`weekly-item-${snapshot.id}`);
+      const detail = page.getByTestId("weekly-detail");
+      const intake = detail.getByTestId("weekly-intake-toggle");
+      const rows = detail.getByTestId("weekly-intake-row");
+      await intake.click();
+      await rows.first().waitFor();
+      for (const tab of [earlierTab, latestTab]) {
+        const label = await tab.locator("div").first().textContent();
+        await tab.click();
+        await detail.getByRole("heading", { name: label, exact: true }).waitFor();
+        assert.equal(await detail.getByTestId("weekly-new-count").count(), 1);
+        assert.equal(await intake.count(), 1);
+        assert.equal(await rows.count(), 0);
+        if (tab === earlierTab) {
+          await intake.click();
+          assert.equal(await rows.innerText(), earlierFile.title);
+        }
+      }
+    }
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
     assert.ok(calls.every(call => call.method === "GET" && !/generate|retry/.test(call.path)));
     if (process.env.REPORT_DIR) {
