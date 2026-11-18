@@ -11,7 +11,7 @@ def test_dashboard_uses_customer_facing_entries_not_backend_ops_statuses():
     assert "Promise.allSettled" in src
     assert "loadLatestWeeklyDashboard()" in src
     assert "WeeklyDashboardSection" in src
-    assert "weekly?.snapshot?.file_count" in src
+    assert "weekly?.publicationCount" in src
     assert "isThisCalendarWeek" not in src
     assert "buildFileDetailPath(url" in src
     assert "databaseCategoryPath(category.name)" in src

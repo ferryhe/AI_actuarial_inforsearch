@@ -28,7 +28,10 @@ from ai_actuarial.sqlite_schema import (
 from ai_actuarial.storage import Storage
 from ai_actuarial.task_runtime import NativeTaskRuntime
 from tests.postgres_helpers import postgres_url_for_path
-from tests.test_fastapi_ops_read_endpoints import _build_test_client, _patch_available_models
+from tests.test_fastapi_ops_read_endpoints import (
+    _build_test_client,
+    _patch_available_models,
+)
 
 PERIOD_START = "2026-03-09T00:00:00+00:00"
 PERIOD_END = "2026-03-16T00:00:00+00:00"
@@ -142,6 +145,7 @@ def _seed_files(
     long_material: bool = False,
 ) -> None:
     storage = Storage(postgres_url_for_path(str(db_path)))
+    publication_day = first_seen[:10]
     try:
         for index in range(count):
             url = f"https://example.com/report-{index:03d}.pdf"
@@ -160,7 +164,7 @@ def _seed_files(
                 local_path=f"/tmp/report-{index:03d}.pdf",
                 bytes=0,
                 content_type="application/pdf",
-                published_time="2026-03-10T09:00:00+00:00",
+                published_time=publication_day,
             )
             storage._conn.execute(
                 "UPDATE files SET first_seen = ?, last_seen = ? WHERE url = ?",
@@ -173,6 +177,18 @@ def _seed_files(
                     "keywords": ["actuarial AI", f"keyword-{index}"],
                     "summary": summary,
                     "category": "Insurance Applications",
+                    "bilingual_metadata": {
+                        "hub_enrichment": {
+                            "date_facts": {
+                                "publication_date": {
+                                    "value": publication_day,
+                                    "semantic": "publication",
+                                    "precision": "day",
+                                    "evidence": f"Published on {publication_day}",
+                                }
+                            }
+                        }
+                    },
                 },
                 pipeline_version="catalog-v1",
                 status="ok",

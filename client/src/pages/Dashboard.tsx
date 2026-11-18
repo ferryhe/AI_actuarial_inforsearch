@@ -213,8 +213,8 @@ export default function Dashboard() {
     { icon: FileText, label: t("dashboard.materials"), value: stats?.total_files ?? "-", color: "bg-blue-500/10 text-blue-600 dark:text-blue-400", href: "/database" },
     { icon: Building2, label: t("dashboard.sources"), value: stats?.total_sources ?? "-", color: "bg-violet-500/10 text-violet-600 dark:text-violet-400", href: "/source-portals" },
     { icon: Tags, label: t("dashboard.categories"), value: loading ? "-" : categories.length, color: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400", href: "/categories" },
-    { icon: CalendarPlus, label: t("dashboard.this_week_count"), value: loading ? "-" : (weekly?.snapshot?.file_count ?? "-"), color: "bg-amber-500/10 text-amber-600 dark:text-amber-400", href: "/weekly" },
-  ], [categories.length, loading, stats?.total_files, stats?.total_sources, t, weekly?.snapshot?.file_count]);
+    { icon: CalendarPlus, label: t("dashboard.this_week_count"), value: loading ? "-" : (weekly?.publicationCount ?? "-"), color: "bg-amber-500/10 text-amber-600 dark:text-amber-400", href: "/weekly" },
+  ], [categories.length, loading, stats?.total_files, stats?.total_sources, t, weekly?.publicationCount]);
 
   const quickActions = [
     { icon: Search, title: t("dashboard.browse_materials"), desc: t("dashboard.browse_materials_desc"), href: "/database", color: "bg-blue-500/10 text-blue-600 dark:text-blue-400" },

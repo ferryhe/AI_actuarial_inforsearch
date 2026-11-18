@@ -25,6 +25,7 @@ export interface WeeklySnapshotFile {
   title?: string | null;
   original_filename?: string | null;
   first_seen: string;
+  published_time?: string | null;
   category?: string | null;
   keywords?: unknown;
   summary?: string | null;
@@ -34,7 +35,7 @@ export interface WeeklySnapshotFile {
 interface WeeklyExplanation {
   snapshot_id: string;
   status: "missing" | "complete" | "failed";
-  generation_mode?: "ai" | "empty" | "fallback" | null;
+  generation_mode?: "ai" | "empty" | "fallback" | "catalog" | null;
   explanation_zh: string;
   explanation_en: string;
   generated_at: string | null;
@@ -45,6 +46,7 @@ export interface WeeklyDashboardData {
   snapshot: WeeklySnapshot | null;
   files: WeeklySnapshotFile[];
   filesPreviewLimit?: number;
+  publicationCount?: number;
   filesUnavailable: boolean;
   explanation: WeeklyExplanation | null;
   explanationUnavailable: boolean;
@@ -62,6 +64,7 @@ interface WeeklySnapshotFilesResponse {
   offset: number;
   included_count?: number;
   truncated?: boolean;
+  published_only?: boolean;
 }
 
 interface WeeklyExplanationResponse {
@@ -124,7 +127,7 @@ export async function loadLatestWeeklyDashboard(
   const snapshotId = encodeURIComponent(snapshot.id);
   const [filesResult, explanationResult] = await Promise.allSettled([
     get<WeeklySnapshotFilesResponse>(
-      `/api/weekly-updates/${snapshotId}/files?limit=${WEEKLY_HOME_PREVIEW_LIMIT}&offset=0`,
+      `/api/weekly-updates/${snapshotId}/files?limit=${WEEKLY_HOME_PREVIEW_LIMIT}&offset=0&published_only=true`,
     ),
     get<WeeklyExplanationResponse>(`/api/weekly-updates/${snapshotId}/explanation`),
   ]);
@@ -133,6 +136,9 @@ export async function loadLatestWeeklyDashboard(
     status: "ready",
     snapshot,
     filesPreviewLimit: WEEKLY_HOME_PREVIEW_LIMIT,
+    publicationCount: filesResult.status === "fulfilled" && filesResult.value.published_only
+      ? filesResult.value.total
+      : undefined,
     files: filesResult.status === "fulfilled"
       ? (filesResult.value.files || []).slice(0, WEEKLY_HOME_PREVIEW_LIMIT)
       : [],
@@ -142,13 +148,14 @@ export async function loadLatestWeeklyDashboard(
       : null,
     explanationUnavailable: explanationResult.status === "rejected",
   };
+  if (data.publicationCount !== undefined) return data;
   const urls = weeklyRecommendationUrls(data);
   let offset = data.files.length;
   const total = filesResult.status === "fulfilled" ? filesResult.value.total : 0;
   while (offset < total && urls.some((url) => !data.files.some((file) => weeklyGuideUrl(file.url) === url))) {
     try {
       const page = await get<WeeklySnapshotFilesResponse>(
-        `/api/weekly-updates/${snapshotId}/files?limit=${WEEKLY_FILES_PAGE_LIMIT}&offset=${offset}`,
+        `/api/weekly-updates/${snapshotId}/files?limit=${WEEKLY_FILES_PAGE_LIMIT}&offset=${offset}&published_only=true`,
       );
       const next = page.files || [];
       if (!next.length) break;
@@ -166,14 +173,15 @@ export async function loadLatestWeeklyDashboard(
 async function loadAllWeeklySnapshotFiles(
   snapshotId: string,
   get: GetJson,
-): Promise<WeeklySnapshotFile[]> {
+): Promise<{ files: WeeklySnapshotFile[]; publicationCount?: number }> {
   const files: WeeklySnapshotFile[] = [];
   let offset = 0;
   let total: number | null = null;
+  let publicationCount: number | undefined;
 
   while (total === null || offset < total) {
     const page = await get<WeeklySnapshotFilesResponse>(
-      `/api/weekly-updates/${snapshotId}/files?limit=${WEEKLY_FILES_PAGE_LIMIT}&offset=${offset}`,
+      `/api/weekly-updates/${snapshotId}/files?limit=${WEEKLY_FILES_PAGE_LIMIT}&offset=${offset}&published_only=true`,
     );
     const pageFiles = Array.isArray(page.files) ? page.files : [];
     files.push(...pageFiles);
@@ -182,17 +190,18 @@ async function loadAllWeeklySnapshotFiles(
     total = Number.isSafeInteger(responseTotal) && responseTotal >= 0
       ? responseTotal
       : offset + pageFiles.length;
+    if (page.published_only) publicationCount = total;
     if (pageFiles.length === 0) break;
     offset += pageFiles.length;
   }
 
-  return files;
+  return { files, publicationCount };
 }
 
 export async function loadWeeklyUpdateList(
   get: GetJson = apiGet,
 ): Promise<WeeklySnapshot[]> {
-  const list = await get<WeeklyUpdateListResponse>("/api/weekly-updates");
+  const list = await get<WeeklyUpdateListResponse>("/api/weekly-updates?limit=100");
   const summaries = (list.summaries || []).slice();
   summaries.sort((a, b) => {
     const aEnd = Date.parse(a.period_end) || 0;
@@ -220,8 +229,9 @@ export async function loadWeeklyUpdateDetail(
     status: snapshot ? "ready" : "unavailable",
     snapshot,
     files: filesResult.status === "fulfilled"
-      ? filesResult.value
+      ? filesResult.value.files
       : [],
+    publicationCount: filesResult.status === "fulfilled" ? filesResult.value.publicationCount : undefined,
     filesUnavailable: filesResult.status === "rejected",
     explanation: explanationResult.status === "fulfilled"
       ? explanationResult.value.explanation
@@ -360,6 +370,7 @@ export interface WeeklyDashboardView {
   explanationState: WeeklyExplanationState;
   explanationText: string;
   recommendedCount: number;
+  publicationOnly: boolean;
 }
 
 function weeklyGuideUrl(url: string): string {
@@ -453,16 +464,25 @@ export function buildWeeklyDashboardView(
 ): WeeklyDashboardView {
   const explanation = data.explanation?.snapshot_id === data.snapshot?.id ? data.explanation : null;
   const selected = lang === "zh" ? explanation?.explanation_zh : explanation?.explanation_en;
+  const publicationOnly = data.publicationCount !== undefined;
+  const fileCount = data.publicationCount ?? data.snapshot?.file_count ?? 0;
   const recommendationUrls = weeklyRecommendationUrls(data);
   const frozenFiles = frozenWeeklyRecommendationFiles(data);
-  const orderedFiles = orderWeeklyFiles(frozenFiles || data.files, recommendationUrls);
+  const frozenByUrl = new Map(frozenFiles?.map((file) => [file.url, file]));
+  const orderedFiles = publicationOnly
+    ? data.files.map((file) => frozenByUrl.get(file.url) ?? file)
+    : orderWeeklyFiles(frozenFiles || data.files, recommendationUrls);
   const files = data.filesPreviewLimit
     ? orderedFiles.slice(0, data.filesPreviewLimit)
     : orderedFiles;
   let explanationState: WeeklyExplanationState;
   let explanationText: string;
 
-  if (data.status === "ready" && data.snapshot?.file_count === 0) {
+  if (data.status === "ready" && publicationOnly && fileCount === 0) {
+    explanationState = "empty";
+    explanationText = (explanation?.generation_mode === "empty" && selected?.trim())
+      || t("weekly.no_verified_publications");
+  } else if (data.status === "ready" && data.snapshot?.file_count === 0) {
     explanationState = "empty";
     explanationText = lang === "zh" ? "本周暂无新资料。" : "No new material this week.";
   } else if (data.explanationUnavailable) {
@@ -473,7 +493,7 @@ export function buildWeeklyDashboardView(
     explanationText = t("dashboard.explanation_missing");
   } else if (explanation.status === "failed") {
     explanationState = "failed";
-    explanationText = t("dashboard.files_unavailable");
+    explanationText = publicationOnly && selected?.trim() ? selected.trim() : t("dashboard.files_unavailable");
   } else if (!String(selected || "").trim()) {
     explanationState = "empty";
     explanationText = t("dashboard.explanation_empty");
@@ -490,14 +510,16 @@ export function buildWeeklyDashboardView(
     || (!data.filesUnavailable && (hasSavedRecommendationUrls
       ? savedRecommendationsAvailable
       : data.files.length > 0));
-  const recommendationFiles = hasSavedRecommendationUrls
+  const recommendationFiles = publicationOnly
+    ? files.filter((file) => recommendationUrls.includes(weeklyGuideUrl(file.url)))
+    : hasSavedRecommendationUrls
     ? files.slice(0, recommendationUrls.length)
     : files.slice(0, 3);
-  const recommendations = data.snapshot?.file_count && canBuildRecommendations
+  const recommendations = fileCount && canBuildRecommendations
     && ["complete", "failed"].includes(explanationState)
     ? recommendationFiles
     : [];
-  if (recommendations.length) {
+  if (recommendations.length && !publicationOnly) {
     const escape = (value: string) => value.replace(/([\\`*{}\[\]<>#.!_+()\-])/g, "\\$1").replace(/\r?\n/g, " ");
     const items = recommendations.map((file) => {
       const metadata = localizedWeeklyFileMetadata(file, lang);
@@ -519,10 +541,11 @@ export function buildWeeklyDashboardView(
   return {
     snapshot: data.snapshot,
     files,
-    fileCount: data.snapshot?.file_count ?? 0,
+    fileCount,
     filesUnavailable: data.filesUnavailable,
     explanationState,
     explanationText,
     recommendedCount: recommendations.length,
+    publicationOnly,
   };
 }

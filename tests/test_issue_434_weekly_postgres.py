@@ -9,6 +9,7 @@ import pytest
 import yaml
 
 from ai_actuarial.api.services import weekly_explanations as weekly
+from ai_actuarial.api.services.weekly_updates import get_weekly_update_summary_files
 from ai_actuarial.storage import Storage
 from tests.postgres_helpers import postgres_url_for_path
 from tests.test_issue_267_weekly_explanations import (
@@ -86,6 +87,74 @@ def test_failed_new_prompt_preserves_existing_success(tmp_path, monkeypatch):
         storage.close()
 
 
+def test_historical_guide_only_recommends_verified_in_week_publications(tmp_path):
+    db_path, _, _ = _write_config(tmp_path)
+    _seed_files(db_path, count=5)
+    db = postgres_url_for_path(db_path)
+    storage = Storage(db)
+    try:
+        for index, day in enumerate(("2020-06-02", "2026-03-13", "2026-03-09", "2026-03", None)):
+            url = f"https://example.com/report-{index:03d}.pdf"
+            storage._conn.execute("UPDATE files SET published_time = ? WHERE url = ?", (day, url))
+            if day:
+                fact = {
+                    "value": day,
+                    "semantic": "publication",
+                    "precision": "day" if len(day) == 10 else "month",
+                    "evidence": f"Published on {day}",
+                }
+                storage._conn.execute(
+                    "UPDATE catalog_items SET bilingual_metadata_json = ? WHERE file_url = ?",
+                    (
+                        json.dumps({"hub_enrichment": {"date_facts": {"publication_date": fact}}}),
+                        url,
+                    ),
+                )
+    finally:
+        storage.close()
+    snapshot = _snapshot(db_path)
+    storage = Storage(db)
+    try:
+        detail = storage.get_weekly_snapshot(snapshot_id=snapshot["id"])
+        detail["metadata"]["weekly_publication_date_evidence"] = {
+            "https://example.com/report-002.pdf": {
+                "catalog_date": "2026-03-09",
+                "value": "2026-03-14",
+                "semantic": "publication",
+                "precision": "day",
+                "evidence": "Published March 14, 2026",
+                "source_url": "https://example.com/publication-announcement",
+            }
+        }
+        storage._conn.execute(
+            "UPDATE weekly_snapshots SET metadata_json = ? WHERE id = ?",
+            (json.dumps(detail["metadata"]), snapshot["id"]),
+        )
+    finally:
+        storage.close()
+    reference = {"db_path": db, "snapshot_id": snapshot["id"]}
+    archived = get_weekly_update_summary_files(**reference)
+    first = get_weekly_update_summary_files(**reference, published_only=True, limit=1)
+    second = get_weekly_update_summary_files(**reference, published_only=True, offset=1)
+    assert archived["total"] == 5
+    assert first["total"] == 2
+    assert first["files"][0]["published_time"] == "2026-03-14"
+    assert [row["published_time"] for row in second["files"]] == ["2026-03-13"]
+
+    generator = FakeWeeklyExplanationGenerator()
+    revision = weekly.regenerate_weekly_explanation(
+        **reference, generator=generator, catalog_only=True
+    )
+    assert generator.calls == []
+    assert revision["explanation"]["generation_mode"] == "catalog"
+    for locale in ("en", "zh"):
+        guide = revision["explanation"][f"explanation_{locale}"]
+        assert guide.index("report-002.pdf") < guide.index("report-001.pdf")
+        assert all(f"report-{number:03d}.pdf" not in guide for number in (0, 3, 4))
+    assert "另有历史资料补录" in revision["explanation"]["explanation_zh"]
+    assert archived == get_weekly_update_summary_files(**reference)
+
+
 def test_five_historical_ids_isolated_replay_receipts(tmp_path, monkeypatch):
     cases = json.loads(
         Path("tests/fixtures/weekly_reader_history.json").read_text(encoding="utf-8-sig")
@@ -148,7 +217,12 @@ def test_five_historical_ids_isolated_replay_receipts(tmp_path, monkeypatch):
             result["receipt"]["before_membership_sha256"]
             == result["receipt"]["after_membership_sha256"]
         )
-        assert len(generator.calls) == (0 if not members else 1)
+        assert generator.calls == []
+        assert result["explanation"]["generation_mode"] == "empty"
+        if members:
+            assert (
+                result["explanation"]["explanation_en"] == "No verified new publications this week."
+            )
         assert (
             weekly.get_weekly_explanation(db_path=db, snapshot_id=case["snapshot_id"])
             == result["explanation"]

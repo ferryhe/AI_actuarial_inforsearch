@@ -42,7 +42,8 @@ function WeeklyArticleCard({ file, index, lang, t, onOpenFile }: WeeklyArticleCa
   const category = normalizePublicCategory(metadata.category);
   const keywords = metadata.keywords;
   const summary = normalizePublicMetadataText(metadata.summary);
-  const utcIso = formatUtcIso(file.first_seen);
+  const displayDate = file.published_time || file.first_seen;
+  const utcIso = formatUtcIso(displayDate);
 
   return (
     <button
@@ -57,10 +58,10 @@ function WeeklyArticleCard({ file, index, lang, t, onOpenFile }: WeeklyArticleCa
         </span>
         <time
           className="text-xs text-muted-foreground whitespace-nowrap"
-          dateTime={utcIso ?? undefined}
-          title={utcIso ? `${utcIso} (UTC)` : undefined}
+          dateTime={file.published_time || utcIso || undefined}
+          title={file.published_time || (utcIso ? `${utcIso} (UTC)` : undefined)}
         >
-          {formatWeeklyShortDate(file.first_seen, lang)}
+          {formatWeeklyShortDate(displayDate, lang)}
         </time>
       </span>
       {category ? (
@@ -97,7 +98,8 @@ export function WeeklyHighlightCard({
   const renderFiles = view.filesUnavailable
     ? view.files.slice(0, view.recommendedCount)
     : view.files;
-  const groups = grouped ? groupWeeklyFiles(renderFiles.slice(view.recommendedCount), t("weekly.uncategorized")) : [];
+  const groupByCategory = grouped && !view.publicationOnly;
+  const groups = groupByCategory ? groupWeeklyFiles(renderFiles.slice(view.recommendedCount), t("weekly.uncategorized")) : [];
   const fileIndexes = new Map(renderFiles.map((file, index) => [file.url, index]));
 
   function toggleGroup(key: string) {
@@ -116,7 +118,7 @@ export function WeeklyHighlightCard({
           className="inline-flex items-center rounded-full bg-primary/10 text-primary text-xs font-medium px-2.5 py-1"
           data-testid="weekly-new-count"
         >
-          {t("dashboard.new_materials_count").replace("{count}", String(view.fileCount))}
+          {t(view.publicationOnly ? "weekly.verified_publication_count" : "dashboard.new_materials_count").replace("{count}", String(view.fileCount))}
         </span>
         {view.explanationState === "failed" ? (
           <p className="text-xs text-muted-foreground">{t("dashboard.explanation_failed")}</p>
@@ -133,13 +135,13 @@ export function WeeklyHighlightCard({
         <p className="p-4 text-sm text-muted-foreground">{t("dashboard.files_unavailable")}</p>
       ) : null}
       {renderFiles.length === 0 ? (
-        view.filesUnavailable ? null : <div className="p-8 text-center">
+        view.filesUnavailable || view.publicationOnly ? null : <div className="p-8 text-center">
           <p className="font-medium text-muted-foreground">{t("dashboard.no_weekly_files")}</p>
           <p className="text-xs text-muted-foreground/70 mt-1">{t("dashboard.no_weekly_files_desc")}</p>
         </div>
       ) : (
         <div className="min-w-0">
-          {grouped ? renderFiles.slice(0, view.recommendedCount).map((file, index) => (
+          {groupByCategory ? renderFiles.slice(0, view.recommendedCount).map((file, index) => (
             <WeeklyArticleCard
               key={file.url}
               file={file}
@@ -149,7 +151,7 @@ export function WeeklyHighlightCard({
               onOpenFile={onOpenFile}
             />
           )) : null}
-          {grouped ? groups.map((group, groupIndex) => {
+          {groupByCategory ? groups.map((group, groupIndex) => {
             const collapsed = collapsedGroups.has(group.key);
             const groupId = `weekly-category-group-${groupIndex}`;
             return (
@@ -194,7 +196,7 @@ export function WeeklyHighlightCard({
             className="text-xs text-primary hover:underline shrink-0"
             data-testid="weekly-view-all-database"
           >
-            {t("dashboard.view_all")}
+            {t(view.publicationOnly ? "weekly.view_collected" : "dashboard.view_all")}
           </a>
         </div>
       ) : null}

@@ -10,6 +10,26 @@ const files = Array.from({ length: 5 }, (_, i) => ({ url: `https://example.org/$
 const base: WeeklyDashboardData = { status: "ready", snapshot, files, filesUnavailable: false, explanation: { snapshot_id: snapshot.id, status: "failed", explanation_zh: "", explanation_en: "", generated_at: null }, explanationUnavailable: false };
 const t = (key: string) => ({ "dashboard.explanation_missing": "Not generated", "dashboard.explanation_unavailable": "Unavailable", "dashboard.files_unavailable": "Files unavailable", "dashboard.explanation_failed": "AI guide unavailable" }[key] || key);
 
+test("a verified-only historical week never fills empty recommendations from the archive", async () => {
+  const data = await loadLatestWeeklyDashboard(async <T,>(url: string): Promise<T> => {
+    if (url.endsWith("/latest")) return { summary: snapshot } as T;
+    if (url.endsWith("/explanation")) return { explanation: {
+      ...base.explanation!, status: "complete", generation_mode: "empty",
+      explanation_en: "No verified new publications this week.",
+      explanation_zh: "本期暂无核实的新发布。\n\n本期另有历史资料补录。",
+    } } as T;
+    assert.equal(new URL(url, "http://fixture").searchParams.get("published_only"), "true");
+    return { files: [], total: 0, published_only: true } as T;
+  });
+  const view = buildWeeklyDashboardView(data, "zh", t);
+  assert.equal(data.snapshot?.file_count, 5);
+  assert.equal(view.fileCount, 0);
+  assert.equal(view.recommendedCount, 0);
+  const markup = renderToStaticMarkup(<WeeklyHighlightCard view={view} lang="zh" t={t} onOpenFile={() => {}} />);
+  assert.ok(markup.includes("本期另有历史资料补录"));
+  assert.ok(!markup.includes("weekly-file-row"));
+});
+
 test("zero snapshot shows fixed copy in both locales on home and detail", () => {
   for (const lang of ["zh", "en"]) {
     const data = { ...base, snapshot: { ...snapshot, file_count: 0 }, files: [], explanationUnavailable: true };
@@ -156,7 +176,7 @@ test("home fetches later snapshot members before trimming the six-card preview",
   const loaded = await load(false);
   assert.equal(loaded.files.length, 6);
   assert.deepEqual(loaded.files.slice(0, 3), recommended);
-  assert.ok(calls.some(url => url.endsWith("limit=500&offset=6")));
+  assert.ok(calls.some(url => url.endsWith("limit=500&offset=6&published_only=true")));
   assert.equal(calls.filter(url => url.includes("/files?")).length, 2, "stop once the recommendations are found");
   assert.ok(calls.every(url => !/generate|retry/.test(url)));
   const partial = await load(true);
