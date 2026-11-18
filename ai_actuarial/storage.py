@@ -3734,8 +3734,13 @@ class Storage:
             raise KeyError(snapshot_id)
         safe_limit = max(1, min(int(limit or 100), 500))
         safe_offset = max(0, int(offset or 0))
+        publication_column = (
+            ", CASE WHEN f.deleted_at IS NULL THEN f.published_time END"
+            if include_publication
+            else ""
+        )
         cur = self._conn.execute(
-            """
+            f"""
             SELECT
                 m.file_url,
                 COALESCE(NULLIF(TRIM(f.title), ''),
@@ -3745,8 +3750,7 @@ class Storage:
                 ci.category,
                 ci.keywords,
                 ci.summary,
-                ci.bilingual_metadata_json,
-                CASE WHEN f.deleted_at IS NULL THEN f.published_time END
+                ci.bilingual_metadata_json{publication_column}
             FROM weekly_snapshot_members m
             LEFT JOIN files f ON f.url = m.file_url
             LEFT JOIN catalog_items ci ON ci.file_url = m.file_url
