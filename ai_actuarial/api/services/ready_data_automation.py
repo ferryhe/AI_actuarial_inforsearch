@@ -197,27 +197,42 @@ def _staging_smoke_publish_disposition(candidate: dict[str, Any]) -> str:
     return "invalid"
 
 
-def _finish_claim(
+def _fail_claim(
     storage: Storage,
     claim: dict[str, Any],
     *,
-    state: str,
-    publication_id: str | None,
-    error: str = "",
-    success: bool = False,
+    publication_id: str | None = None,
+    error: str,
     now: datetime,
-) -> bool:
-    return storage.finish_agentic_ready_automation_claim(
-        kb_id=str(claim["kb_id"]),
-        profile=str(claim["profile"]),
-        generation=int(claim["generation"]),
-        claim_token=str(claim["claim_token"]),
-        automation_state=state,
-        publication_id=publication_id,
-        error_message=error,
-        success=success,
-        now=now,
-    )
+) -> dict[str, Any]:
+    identity = {
+        "kb_id": str(claim["kb_id"]),
+        "profile": str(claim["profile"]),
+        "generation": int(claim["generation"]),
+        "claim_token": str(claim["claim_token"]),
+        "now": now,
+    }
+    with storage.transaction(immediate=True):
+        fence = storage.check_agentic_ready_automation_claim(**identity)
+        reason = fence["reason"]
+        if not fence.get("claim_owned"):
+            return {**claim, "status": "claim_lost", "fence_reason": reason, "error": error}
+        superseded = reason == "generation_superseded" and all(
+            detail.startswith("stale_snapshot:") for detail in error.split("; ")
+        )
+        finished = storage.finish_agentic_ready_automation_claim(
+            **identity,
+            automation_state="pending" if superseded else "failed",
+            publication_id=publication_id,
+            error_message="" if superseded else error,
+        )
+        if not finished:
+            return {**claim, "status": "claim_lost", "error": error}
+        if superseded:
+            if publication_id:
+                storage.mark_agentic_ready_publication_superseded_generation(publication_id)
+            return {**claim, "status": "superseded", "fence_reason": reason}
+    return {**claim, "status": "failed", "error": error}
 
 
 def _fenced_non_publish_result(
@@ -339,21 +354,15 @@ def run_ready_data_automation_once(
             except Exception as exc:  # noqa: BLE001
                 failure_storage = Storage(db_path)
                 try:
-                    finished = _finish_claim(
+                    failure = _fail_claim(
                         failure_storage,
                         claim,
-                        state="failed",
-                        publication_id=None,
                         error=str(exc),
                         now=clock(),
                     )
                 finally:
                     failure_storage.close()
-                return {
-                    **claim,
-                    "status": "failed" if finished else "claim_lost",
-                    "error": str(exc),
-                }
+                return failure
 
             if heartbeat.lost:
                 return {**claim, "status": "claim_lost"}
@@ -450,31 +459,24 @@ def run_ready_data_automation_once(
             except Exception as exc:  # noqa: BLE001
                 failure_storage = Storage(db_path)
                 try:
-                    finished = _finish_claim(
+                    failure = _fail_claim(
                         failure_storage,
                         claim,
-                        state="failed",
-                        publication_id=None,
                         error=str(exc),
                         now=clock(),
                     )
                 finally:
                     failure_storage.close()
-                return {
-                    **claim,
-                    "status": "failed" if finished else "claim_lost",
-                    "error": str(exc),
-                }
+                return failure
             candidate = dict(build_result.get("candidate_publication") or {})
             build_validation = dict(build_result.get("validation") or {})
             if not build_validation.get("valid") or not candidate:
                 error = _error_text(build_validation, "ready_data build or validation failed")
                 failure_storage = Storage(db_path)
                 try:
-                    finished = _finish_claim(
+                    failure = _fail_claim(
                         failure_storage,
                         claim,
-                        state="failed",
                         publication_id=str(candidate.get("publication_id") or "") or None,
                         error=error,
                         now=clock(),
@@ -482,11 +484,9 @@ def run_ready_data_automation_once(
                 finally:
                     failure_storage.close()
                 return {
-                    **claim,
-                    "status": "failed" if finished else "claim_lost",
+                    **failure,
                     "candidate_publication": candidate,
                     "validation": build_validation,
-                    "error": error,
                 }
         else:
             publication_id = str(claim.get("publication_id") or "")
@@ -498,30 +498,23 @@ def run_ready_data_automation_once(
             if not candidate:
                 failure_storage = Storage(db_path)
                 try:
-                    finished = _finish_claim(
+                    failure = _fail_claim(
                         failure_storage,
                         claim,
-                        state="failed",
-                        publication_id=None,
                         error="validated ready_data candidate is missing",
                         now=clock(),
                     )
                 finally:
                     failure_storage.close()
-                return {
-                    **claim,
-                    "status": "failed" if finished else "claim_lost",
-                    "error": "validated ready_data candidate is missing",
-                }
+                return failure
 
         smoke_disposition = _staging_smoke_publish_disposition(candidate)
         if smoke_disposition == "invalid":
             failure_storage = Storage(db_path)
             try:
-                finished = _finish_claim(
+                failure = _fail_claim(
                     failure_storage,
                     claim,
-                    state="failed",
                     publication_id=str(candidate.get("publication_id") or "") or None,
                     error="ready_data candidate has no passing staging smoke",
                     now=clock(),
@@ -529,10 +522,8 @@ def run_ready_data_automation_once(
             finally:
                 failure_storage.close()
             return {
-                **claim,
-                "status": "failed" if finished else "claim_lost",
+                **failure,
                 "candidate_publication": candidate,
-                "error": "ready_data candidate has no passing staging smoke",
             }
 
         if heartbeat.lost:
@@ -549,20 +540,16 @@ def run_ready_data_automation_once(
                     )
                 )
             except Exception as exc:  # noqa: BLE001
-                error = f"stale_snapshot: {exc}"
-                finished = _finish_claim(
+                failure = _fail_claim(
                     publish_storage,
                     claim,
-                    state="failed",
                     publication_id=str(candidate.get("publication_id") or "") or None,
-                    error=error,
+                    error=str(exc),
                     now=clock(),
                 )
                 return {
-                    **claim,
-                    "status": "failed" if finished else "claim_lost",
+                    **failure,
                     "candidate_publication": candidate,
-                    "error": error,
                 }
             if str(candidate.get("index_version_id") or "") != str(
                 current_fingerprint.get("index_version_id") or ""
@@ -570,19 +557,16 @@ def run_ready_data_automation_once(
                 current_fingerprint.get("source_version_id") or ""
             ):
                 error = "stale_snapshot: Ready Data source changed before publication"
-                finished = _finish_claim(
+                failure = _fail_claim(
                     publish_storage,
                     claim,
-                    state="failed",
                     publication_id=str(candidate.get("publication_id") or "") or None,
                     error=error,
                     now=clock(),
                 )
                 return {
-                    **claim,
-                    "status": "failed" if finished else "claim_lost",
+                    **failure,
                     "candidate_publication": candidate,
-                    "error": error,
                 }
             non_publish = _fenced_non_publish_result(
                 publish_storage,
@@ -605,20 +589,17 @@ def run_ready_data_automation_once(
             )
             if not validation["valid"]:
                 error = _error_text(validation, "ready_data publication validation failed")
-                finished = _finish_claim(
+                failure = _fail_claim(
                     publish_storage,
                     claim,
-                    state="failed",
                     publication_id=str(candidate["publication_id"]),
                     error=error,
                     now=clock(),
                 )
                 return {
-                    **claim,
-                    "status": "failed" if finished else "claim_lost",
+                    **failure,
                     "candidate_publication": candidate,
                     "validation": validation,
-                    "error": error,
                 }
 
             current = publish_storage.get_agentic_ready_publication_state(
@@ -657,19 +638,16 @@ def run_ready_data_automation_once(
                 latest_fingerprint.get("source_version_id") or ""
             ):
                 error = "stale_snapshot: Ready Data source changed before publication"
-                finished = _finish_claim(
+                failure = _fail_claim(
                     publish_storage,
                     claim,
-                    state="failed",
                     publication_id=str(candidate.get("publication_id") or "") or None,
                     error=error,
                     now=clock(),
                 )
                 return {
-                    **claim,
-                    "status": "failed" if finished else "claim_lost",
+                    **failure,
                     "candidate_publication": candidate,
-                    "error": error,
                 }
             publication_state = publish_storage.publish_claimed_agentic_ready_publication(
                 str(candidate["publication_id"]),
@@ -699,20 +677,17 @@ def run_ready_data_automation_once(
                 }
             if not publication_state.get("cas_won"):
                 error = "ready_data automatic publication lost expected-active CAS"
-                finished = _finish_claim(
+                failure = _fail_claim(
                     publish_storage,
                     claim,
-                    state="failed",
                     publication_id=str(candidate["publication_id"]),
                     error=error,
                     now=clock(),
                 )
                 return {
-                    **claim,
-                    "status": "failed" if finished else "claim_lost",
+                    **failure,
                     "candidate_publication": candidate,
                     "publication_state": publication_state,
-                    "error": error,
                 }
             return {
                 **claim,
@@ -725,33 +700,16 @@ def run_ready_data_automation_once(
                 "validation": validation,
             }
         except Exception as exc:  # noqa: BLE001
-            fence = publish_storage.check_agentic_ready_automation_claim(
-                kb_id=str(claim["kb_id"]),
-                profile=str(claim["profile"]),
-                generation=int(claim["generation"]),
-                claim_token=str(claim["claim_token"]),
-                now=clock(),
-            )
-            if fence.get("reason") == "generation_superseded" and candidate:
-                return _fenced_non_publish_result(
-                    publish_storage,
-                    claim,
-                    candidate,
-                    now=clock(),
-                ) or {**claim, "status": "claim_lost"}
-            finished = _finish_claim(
+            failure = _fail_claim(
                 publish_storage,
                 claim,
-                state="failed",
                 publication_id=str(candidate.get("publication_id") or "") or None,
                 error=str(exc),
                 now=clock(),
             )
             return {
-                **claim,
-                "status": "failed" if finished else "claim_lost",
+                **failure,
                 "candidate_publication": candidate,
-                "error": str(exc),
             }
         finally:
             publish_storage.close()

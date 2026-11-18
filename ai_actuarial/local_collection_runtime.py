@@ -28,7 +28,7 @@ from dataclasses import dataclass
 from html.parser import HTMLParser
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Callable, Iterator
+from typing import Any, Callable, Iterable, Iterator
 from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 from zoneinfo import ZoneInfo
 
@@ -1006,6 +1006,25 @@ def _allowed_host(url: str, site: Site) -> bool:
     if site.site_id == "australia" and hostname in {"content.actuaries.asn.au", ALGOLIA_HOST}:
         return True
     return any(hostname == allowed or hostname.endswith("." + allowed) for allowed in site.hosts)
+
+
+def _is_conac_pdf_redirect(site_id: str | None, source_url: str, final_url: str, kind: str) -> bool:
+    if site_id != "conac-mexico" or kind != "pdf":
+        return False
+    source, destination = urlsplit(source_url), urlsplit(final_url)
+    return (
+        source.scheme == destination.scheme == "https"
+        and source.netloc in {"www.conacmexico.org.mx", "conacmexico.org.mx"}
+        and source.path.startswith("/s/")
+        and source.path.lower().endswith(".pdf")
+        and destination.netloc.lower() == "static1.squarespace.com"
+        and re.fullmatch(
+            r"/static/694987771d60827a9dbf41de/t/[0-9a-f]{24}/[0-9]+/[^/]+\.pdf",
+            destination.path,
+            re.IGNORECASE,
+        )
+        is not None
+    )
 
 
 def _looks_document(url: str, label: str = "") -> bool:
@@ -2861,19 +2880,26 @@ def _capture(
                     raise RuntimeErrorSafe(
                         "download exceeded size limit or failed streamed digest check"
                     )
-                if not _allowed_host(final_url, site) or not _site_candidate_allowed(
-                    site, final_url, str(item.get("title") or ""), item.get("discovery_metadata")
+                kind = _detect_kind(raw, headers.get("content-type", ""), final_url)
+                conac_mirror = _is_conac_pdf_redirect(site.site_id, url, final_url, kind)
+                article_url = url if conac_mirror else final_url
+                if (not conac_mirror and not _allowed_host(final_url, site)) or not (
+                    _site_candidate_allowed(
+                        site,
+                        article_url,
+                        str(item.get("title") or ""),
+                        item.get("discovery_metadata"),
+                    )
                 ):
                     raise RuntimeErrorSafe(
                         "document redirect left the approved source host or matched an exclusion"
                     )
-                kind = _detect_kind(raw, headers.get("content-type", ""), final_url)
                 if kind not in {"pdf", "docx", "pptx", "xlsx", "office_ole", "text"}:
                     raise RuntimeErrorSafe("document link returned a non-document response")
                 artifact = _persist_cas(data_root, raw, digest)
                 record = {
                     "site_id": site.site_id,
-                    "url": _canonical_url(final_url),
+                    "url": _canonical_url(article_url),
                     "source_page_url": str(item.get("referrer") or ""),
                     "title": str(
                         item.get("title") or Path(urlsplit(final_url).path).name or site.site_id
@@ -2909,7 +2935,7 @@ def _capture(
                 cursor += 1
                 _prioritize_pending_documents(site, queue, cursor)
                 successful_requests += 1
-                observe(final_url, raw, "file", item)
+                observe(article_url, raw, "file", item)
                 _atomic_json(_state_path_for_data(state), state)
                 continue
 
@@ -3747,6 +3773,16 @@ def _target_needs_item(state: dict[str, Any], target: str, item: dict[str, Any])
         and ack.get("status") == "acknowledged"
         and ack.get("metadata_fingerprint") == _target_metadata_fingerprint(item)
     )
+
+
+def _pending_ready_articles(
+    state: dict[str, Any], target: str, items: Iterable[dict[str, Any]]
+) -> list[tuple[str, str]]:
+    return [
+        (item["url"], item["raw_sha256"])
+        for item in items
+        if state["target_acks"].get(_target_ack_key(target, item), {}).get("ready_pending")
+    ]
 
 
 def _target_metadata_fingerprint(item: dict[str, Any]) -> str:
@@ -4748,6 +4784,7 @@ def _stream_target(
     ready_pending: bool,
     *,
     preview: bool = False,
+    ready_checks: list[tuple[str, str]] | None = None,
 ) -> dict[str, Any]:
     if any(
         item.get("registry_version") is not None
@@ -4820,6 +4857,7 @@ def _stream_target(
             "target": target,
             "items": payload_items,
             "ready_pending": bool(ready_pending),
+            **({"ready_checks": ready_checks} if ready_checks else {}),
             "preview_only": bool(preview),
             "approved_categories": _load_category_keys(),
         },
@@ -5861,7 +5899,17 @@ def _process_articles(
             }
         _atomic_json(_state_path_for_data(state), state)
         try:
-            reply = _stream_target(config, target, needs, ready_pending)
+            reply = _stream_target(
+                config,
+                target,
+                needs,
+                ready_pending,
+                ready_checks=(
+                    _pending_ready_articles(state, target, prepared)
+                    if ready_pending and not needs
+                    else None
+                ),
+            )
             ack_by_version = {
                 (row.get("content_version_id"), row.get("raw_sha256")): row
                 for row in reply.get("acknowledgements") or []
@@ -6400,7 +6448,11 @@ def _run_site(
         monitor = run_monitor(
             site_id, config, state, _new_crawler(Path(config["data_root"]).resolve())
         )
-        stage = {"monitor": monitor}
+        stage = {
+            "monitor": _receipt_stage(
+                monitor["status"], error=monitor.get("error"), evidence=monitor.get("evidence")
+            )
+        }
         telemetry = {
             "elapsed_seconds": time.perf_counter() - site_started,
             "source": {
@@ -6482,9 +6534,7 @@ def _run_site(
     )
     process_url = selected_url
     if selected_url and captured["downloads"]:
-        # A validated same-host redirect is stored under the canonical final URL.
-        # Process precisely that captured identity so exact replay cannot report a
-        # successful download while leaving its article unprocessed.
+        # A validated redirect can change the article identity used for exact replay.
         process_url = _canonical_url(str(captured["downloads"][0]["url"]))
     if not preview:
         state["active_source_portal_daily_run"] = captured.get("daily_run_id")
@@ -6864,7 +6914,12 @@ def _recover_one_source(
         )
         raw = staging.read_bytes()
         staging.unlink(missing_ok=True)
-        if _canonical_url(final_url) != _canonical_url(url):
+        if _canonical_url(final_url) != _canonical_url(url) and not _is_conac_pdf_redirect(
+            version.get("source_site"),
+            url,
+            final_url,
+            _detect_kind(raw, headers.get("content-type", ""), final_url),
+        ):
             raise RuntimeErrorSafe(
                 "source recovery redirected away from the Hub's exact URL identity"
             )
@@ -7023,7 +7078,17 @@ def reconcile_backlog(
             )
         _atomic_json(_state_path_for_data(state), state)
         try:
-            reply = _stream_target(config, target, items, pending_ready)
+            reply = _stream_target(
+                config,
+                target,
+                items,
+                pending_ready,
+                ready_checks=(
+                    _pending_ready_articles(state, target, keys_by_version.values())
+                    if pending_ready and not items
+                    else None
+                ),
+            )
             by_version = {
                 (row.get("content_version_id"), row.get("raw_sha256")): row
                 for row in reply.get("acknowledgements") or []

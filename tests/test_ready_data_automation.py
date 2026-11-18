@@ -11,17 +11,21 @@ import yaml
 from fastapi.testclient import TestClient
 
 import ai_actuarial.task_runtime as task_runtime_module
+from ai_actuarial.agentic_rag.ready_data_builder import get_builder_source_fingerprint
 from ai_actuarial.api.app import create_app
 from ai_actuarial.api.services.rag_admin import (
     _build_agentic_manifest_status,
+    _build_agentic_ready_manifest_core,
     _ready_data_artifact_digest,
 )
 from ai_actuarial.api.services.ready_data_automation import (
+    _default_build_candidate,
     run_ready_data_automation_once,
 )
 from ai_actuarial.api.services.ready_data_publication import (
     read_public_ready_data_snapshot,
 )
+from ai_actuarial.local_collection_target_worker import _confirm_current_ready
 from ai_actuarial.rag.kb_index import resolve_kb_bound_chunks
 from ai_actuarial.rag.knowledge_base import KnowledgeBaseManager
 from ai_actuarial.storage import Storage
@@ -111,8 +115,17 @@ def _create_kb(storage: Storage, kb_id: str = "kb-auto") -> None:
             "UPDATE rag_knowledge_bases SET chunk_profile_id = ? WHERE kb_id = ?",
             (f"cp-{kb_id}", kb_id),
         )
+    _commit_fixture_index(storage, kb_id)
+    storage._conn.execute(
+        "DELETE FROM agentic_ready_source_state WHERE kb_id = ? AND profile = 'general'",
+        (kb_id,),
+    )
+    storage._conn.commit()
+
+
+def _commit_fixture_index(storage: Storage, kb_id: str) -> str:
     snapshot = resolve_kb_bound_chunks(storage, kb_id)
-    storage.create_kb_index_version(
+    index = storage.create_kb_index_version(
         kb_id=kb_id,
         embedding_provider="test",
         embedding_model="automation-model",
@@ -126,11 +139,7 @@ def _create_kb(storage: Storage, kb_id: str = "kb-auto") -> None:
         chunk_ids=[f"chunk-{kb_id}"],
         status="ready",
     )
-    storage._conn.execute(
-        "DELETE FROM agentic_ready_source_state WHERE kb_id = ? AND profile = 'general'",
-        (kb_id,),
-    )
-    storage._conn.commit()
+    return str(index["index_version_id"])
 
 
 def _mark_event(storage: Storage, kb_id: str = "kb-auto", reason: str = "membership_added") -> int:
@@ -645,6 +654,104 @@ def test_generation_change_supersedes_candidate_without_moving_slots(tmp_path: P
         assert source["evaluated_generation"] == 0
     finally:
         storage.close()
+
+
+@pytest.mark.parametrize("native_publishes", [False, True])
+def test_replaced_index_supersedes_failed_build_and_preserves_current_ready(
+    tmp_path: Path, native_publishes: bool
+) -> None:
+    db_path = _setup_pending(tmp_path, publish=True)
+    newest_index = ""
+    native_publication = None
+
+    def build_as_index_changes(**kwargs):
+        nonlocal newest_index, native_publication
+        kb_id = kwargs["kb_id"]
+        storage = Storage(db_path)
+        try:
+            newest_index = _commit_fixture_index(storage, kb_id)
+        finally:
+            storage.close()
+        assert kwargs["index_version_id"] != newest_index
+        if native_publishes:
+            fingerprint = get_builder_source_fingerprint(db_path=db_path, kb_id=kb_id)
+            result = _build_agentic_ready_manifest_core(
+                db_path=db_path,
+                kb_id=kb_id,
+                payload={
+                    "index_version_id": newest_index,
+                    "expected_source_snapshot_fingerprint": fingerprint[
+                        "source_snapshot_fingerprint"
+                    ],
+                },
+                publish=True,
+            )
+            assert result["validation"]["valid"]
+            native_publication = result["publication_state"]["active_publication_id"]
+        return _default_build_candidate(**kwargs)
+
+    first = run_ready_data_automation_once(
+        db_path=db_path, build_candidate=build_as_index_changes, heartbeat_interval_seconds=0
+    )
+    assert first["candidate_publication"]["status"] == "failed"
+    assert (
+        "is no longer the committed ready index" in first["candidate_publication"]["error_message"]
+    )
+    assert first["status"] == "superseded"
+    assert first["fence_reason"] == "generation_superseded"
+
+    storage = Storage(db_path)
+    try:
+        state = storage.get_agentic_ready_automation_state(kb_id="kb-auto", profile="general")
+        assert state["automation_state"] == ("succeeded" if native_publishes else "pending")
+        assert state["last_error"] == ""
+    finally:
+        storage.close()
+
+    current = run_ready_data_automation_once(db_path=db_path, heartbeat_interval_seconds=0)
+    assert current["status"] == ("idle" if native_publishes else "published")
+    storage = Storage(db_path)
+    try:
+        kb = KnowledgeBaseManager(storage).get_kb("kb-auto")
+        articles = {("https://example.com/kb-auto.pdf", "sha-kb-auto")}
+        proof = _confirm_current_ready(storage, kb, articles)
+        assert proof == {
+            "publication_id": native_publication
+            or current["candidate_publication"]["publication_id"],
+            "index_version_id": newest_index,
+        }
+        assert not _confirm_current_ready(storage, kb, {("https://example.com/kb-auto.pdf", "old")})
+        _commit_fixture_index(storage, "kb-auto")
+        assert not _confirm_current_ready(storage, kb, articles)
+    finally:
+        storage.close()
+
+
+def test_replaced_index_does_not_hide_an_unrelated_build_error(tmp_path: Path) -> None:
+    db_path = _setup_pending(tmp_path, publish=True)
+
+    def fail_while_index_changes(**kwargs):
+        storage = Storage(db_path)
+        try:
+            _commit_fixture_index(storage, kwargs["kb_id"])
+        finally:
+            storage.close()
+        raise OSError("Ready Data artifact storage is unavailable")
+
+    first = run_ready_data_automation_once(
+        db_path=db_path, build_candidate=fail_while_index_changes, heartbeat_interval_seconds=0
+    )
+    assert first["status"] == "failed"
+    assert first["error"] == "Ready Data artifact storage is unavailable"
+    storage = Storage(db_path)
+    try:
+        state = storage.get_agentic_ready_automation_state(kb_id="kb-auto", profile="general")
+        assert state["last_error"] == first["error"]
+        assert state["pending_evaluation_generation"] > first["generation"]
+    finally:
+        storage.close()
+    latest = run_ready_data_automation_once(db_path=db_path, heartbeat_interval_seconds=0)
+    assert latest["status"] == "published"
 
 
 def test_disabling_automation_during_build_prevents_publication(tmp_path: Path) -> None:

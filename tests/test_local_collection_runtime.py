@@ -6,6 +6,7 @@ import json
 import shlex
 import subprocess
 import sys
+from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -1164,14 +1165,93 @@ def test_source_bootstrap_errors_are_recorded_in_v2_site_receipts(
     assert "bootstrap" in result["stages"]["downloaded"]["error"].lower()
 
 
-def test_exact_url_processes_canonical_same_host_redirect(tmp_path: Path, monkeypatch) -> None:
+@pytest.mark.parametrize("site_id", ["iaba", "eaa"])
+def test_monitor_only_writes_a_reportable_receipt_after_retry(
+    tmp_path: Path, monkeypatch, site_id: str
+) -> None:
+    class MonitorCrawler:
+        site_attempts = 0
+
+        def begin_site(self, _budget: int) -> None:
+            self.site_attempts = 0
+
+        def _request(self, url: str, **_kwargs):
+            self.site_attempts += 1
+            if not available:
+                raise TimeoutError("source timed out")
+            return b"<html>Source</html>", {"content-type": "text/html"}, url
+
+    available = False
+    monkeypatch.setattr(runtime, "_new_crawler", lambda _root: MonitorCrawler())
+    config = {"state_root": str(tmp_path), "data_root": str(tmp_path / "data")}
+    day = date(2026, 11, 17)
+    failed = runtime._run_site(site_id, day.isoformat(), config, {}, "unused-hub")
+    assert failed["run_status"] == "failed"
+    assert failed["stages"]["monitor"]["error"] == "TimeoutError: source timed out"
+    assert failed["telemetry"]["source"]["page_ids"] == []
+
+    available = True
+    succeeded = runtime._run_site(site_id, day.isoformat(), config, {}, "unused-hub")
+    assert succeeded["run_status"] == "succeeded"
+    assert succeeded["attempt_count"] == 2
+    assert succeeded["stages"]["monitor"]["status"] == "succeeded"
+    assert succeeded["telemetry"]["source"]["request_count"] == 2
+    assert len(succeeded["telemetry"]["source"]["page_ids"]) == 1
+
+    flow = runtime._load_flow_module()
+    report = flow.make_report(day, flow.read_receipts(tmp_path / "receipts"))
+    assert report["monitoring_only"]["actual_receipt_sites"] == [site_id]
+    assert report["coverage"]["actual_collection_receipt_sites"] == []
+
+
+@pytest.mark.parametrize(
+    ("site_id", "requested_url", "final_url", "raw", "expected_url"),
+    [
+        (
+            "iaa",
+            "https://actuaries.org/app/uploads/2026/10/Requested_AI_Paper_Final_Approved.pdf",
+            "https://actuaries.org/app/uploads/2026/10/Canonical_AI_Paper.pdf",
+            b"%PDF-1.7\nverified same-host redirect payload",
+            "https://actuaries.org/app/uploads/2026/10/Canonical_AI_Paper.pdf",
+        ),
+        (
+            "conac-mexico",
+            "https://www.conacmexico.org.mx/s/RT-de-Fianzas.pdf",
+            "https://static1.squarespace.com/static/694987771d60827a9dbf41de/t/"
+            "69b2c07f9d515c1d9c5ff6e0/1773322401221/RT+de+Fianzas.pdf",
+            b"%PDF-1.7\nverified official CONAC mirror payload",
+            "https://www.conacmexico.org.mx/s/RT-de-Fianzas.pdf",
+        ),
+        (
+            "conac-mexico",
+            "https://www.conacmexico.org.mx/s/RT-de-Fianzas.pdf",
+            "https://static1.squarespace.com/static/594987771d60827a9dbf41de/t/"
+            "69b2c07f9d515c1d9c5ff6e0/1773322401221/RT+de+Fianzas.pdf",
+            b"%PDF-1.7\nother Squarespace account",
+            None,
+        ),
+        (
+            "conac-mexico",
+            "https://www.conacmexico.org.mx/s/RT-de-Fianzas.pdf",
+            "https://static1.squarespace.com/static/694987771d60827a9dbf41de/t/"
+            "69b2c07f9d515c1d9c5ff6e0/1773322401221/RT+de+Fianzas.pdf",
+            b"<html>Attachment unavailable</html>",
+            None,
+        ),
+    ],
+    ids=["same-host", "conac-pdf-mirror", "other-tenant", "non-pdf"],
+)
+def test_exact_url_processes_only_approved_document_redirects(
+    tmp_path: Path,
+    monkeypatch,
+    site_id: str,
+    requested_url: str,
+    final_url: str,
+    raw: bytes,
+    expected_url: str | None,
+) -> None:
     monkeypatch.setattr(capacity, "ensure_capacity", lambda **_kwargs: None)
     monkeypatch.setattr(runtime, "_ACTIVE_STATE_PATH", tmp_path / "runtime-state.json")
-    requested_url = (
-        "https://actuaries.org/app/uploads/2026/10/Requested_AI_Paper_Final_Approved.pdf"
-    )
-    final_url = "https://actuaries.org/app/uploads/2026/10/Canonical_AI_Paper.pdf"
-    raw = b"%PDF-1.7\nverified same-host redirect payload"
 
     class RedirectCrawler:
         site_attempts = 0
@@ -1225,19 +1305,21 @@ def test_exact_url_processes_canonical_same_host_redirect(tmp_path: Path, monkey
     state = {"sites": {}, "articles": {}, "target_acks": {}}
 
     result = runtime._run_site(
-        "iaa",
+        site_id,
         "2026-10-25",
         config,
         state,
         "unused-hub",
         exact_url=requested_url,
-        source_page_url="https://actuaries.org/publications/papers/",
     )
 
-    assert processed_urls == [final_url]
-    assert next(iter(state["articles"].values()))["url"] == final_url
-    assert result["stages"]["downloaded"]["count"] == 1
-    assert result["stages"]["new_versions"]["count"] == 1
+    assert processed_urls == [expected_url or requested_url]
+    assert [item["url"] for item in state["articles"].values()] == (
+        [expected_url] if expected_url else []
+    )
+    assert result["stages"]["downloaded"]["count"] == int(expected_url is not None)
+    if site_id == "conac-mexico":
+        assert not runtime._allowed_host(final_url, runtime.SITES[site_id])
 
 
 @pytest.mark.parametrize(
@@ -1567,9 +1649,11 @@ def test_ready_only_retry_counts_prior_item_ack_and_clears_pending(
     calls: list[tuple[str, list[dict], bool]] = []
     china_ready_attempt = 0
 
-    def target_write(_config, target, items, ready_pending, **_kwargs):
+    def target_write(_config, target, items, ready_pending, *, ready_checks=None, **_kwargs):
         nonlocal china_ready_attempt
         calls.append((target, list(items), ready_pending))
+        if not items and ready_pending:
+            assert ready_checks == [(item["url"], item["raw_sha256"])]
         acknowledgements = [
             {
                 "content_version_id": item["content_version_id"],
@@ -5385,7 +5469,7 @@ def test_fresh_ai_backlog_rows_refresh_legacy_annotation_before_target_stream(
     )
     streamed = []
 
-    def stream(_config, target, items, _ready_pending):
+    def stream(_config, target, items, _ready_pending, **_kwargs):
         acknowledgements = []
         for item in items:
             assert item["legacy_hub_annotation"] is True
