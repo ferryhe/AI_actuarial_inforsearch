@@ -4,10 +4,23 @@ import os
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Mapping
+from typing import Any, Iterator, Mapping
+from urllib.parse import urlsplit
 
+from ai_actuarial.api.services.weekly_updates import (
+    current_utc_iso_week_period,
+    publication_timing,
+    utc_intake_day,
+    weekly_intake,
+)
 from ai_actuarial.shared_runtime import get_categories_config_path, load_yaml, parse_int_clamped
-from ai_actuarial.source_portals import SOA_AI_ENTRY_LINKS, SOURCE_PORTAL_URLS, source_portal_cards
+from ai_actuarial.source_portals import (
+    SOA_AI_ENTRY_LINKS,
+    SOURCE_PORTAL_URLS,
+    SOURCE_PORTALS,
+    source_portal_cards,
+    source_portal_for_observation,
+)
 from ai_actuarial.storage import Storage
 
 PUBLIC_FILE_LIST_FIELDS: tuple[str, ...] = (
@@ -214,6 +227,85 @@ def list_sources(*, db_path: str) -> dict[str, Any]:
     return {"sources": sources, "source_options": options}
 
 
+def _recent_intake(storage: Storage) -> Iterator[tuple[dict[str, Any], str, str | None]]:
+    now = datetime.now(timezone.utc)
+    latest = storage.get_latest_weekly_snapshot(now=now.isoformat())
+    if latest is not None:
+        yield from weekly_intake(storage, latest)
+    start, end = current_utc_iso_week_period(now)
+    offset = 0
+    while True:
+        rows, total = storage.query_files_with_catalog(
+            first_seen_from=start,
+            first_seen_before=end,
+            order_by="id",
+            include_deleted=True,
+            limit=500,
+            offset=offset,
+        )
+        for row in rows:
+            if row["deleted_at"] is None:
+                timing, published_on = publication_timing(row)
+                yield row, timing, published_on
+        offset += len(rows)
+        if not rows or offset >= total:
+            break
+
+
+def _source_intake_updates(storage: Storage) -> dict[str, list[dict[str, Any]]]:
+    by_host: dict[str, set[str]] = {}
+    for portal in SOURCE_PORTALS:
+        host = (urlsplit(portal.url).hostname or "").removeprefix("www.")
+        by_host.setdefault(host, set()).add(portal.site_ids[0])
+    by_key: dict[str, dict[str, dict[str, Any]]] = {}
+    for row, timing, published_on in _recent_intake(storage):
+        url = row["url"]
+        referrer = row.get("source_page_url") or ""
+        site = row.get("source_site") or row.get("source_key") or ""
+        portal_key = source_portal_for_observation(site, url, referrer)
+        if portal_key is None:
+            host = (urlsplit(referrer or url).hostname or "").removeprefix("www.")
+            site_ids = by_host.get(host, set())
+            if len(site_ids) != 1:
+                continue
+            portal_key = source_portal_for_observation(next(iter(site_ids)), url, referrer)
+        if portal_key is None:
+            continue
+        day = utc_intake_day(row["first_seen"])
+        if day is None:
+            continue
+        acquired_on = day.isoformat()
+        days = by_key.setdefault(portal_key, {})
+        update = days.setdefault(
+            acquired_on,
+            {
+                "acquired_on": acquired_on,
+                "new_count": 0,
+                "backfill_count": 0,
+                "other_count": 0,
+                "files": [],
+            },
+        )
+        update[f"{timing}_count"] += 1
+        update["files"].append(
+            {
+                "url": url,
+                "title": row.get("title") or row.get("original_filename") or url,
+                "timing": timing,
+                "published_on": published_on,
+            }
+        )
+    for days in by_key.values():
+        for update in days.values():
+            update["files"].sort(
+                key=lambda row: (row["timing"] == "new", row["published_on"] or ""), reverse=True
+            )
+    return {
+        key: sorted(days.values(), key=lambda update: update["acquired_on"], reverse=True)
+        for key, days in by_key.items()
+    }
+
+
 def list_source_portals(*, db_path: str) -> dict[str, list[dict[str, Any]]]:
     storage = Storage(db_path)
     try:
@@ -225,6 +317,7 @@ def list_source_portals(*, db_path: str) -> dict[str, list[dict[str, Any]]]:
             "SELECT portal_key, acquired_on, description_zh, description_en "
             "FROM source_portal_updates ORDER BY portal_key, acquired_on DESC"
         ).fetchall()
+        intake_updates = _source_intake_updates(storage)
     finally:
         storage.close()
     cards = [
@@ -245,6 +338,7 @@ def list_source_portals(*, db_path: str) -> dict[str, list[dict[str, Any]]]:
     if not cards:
         cards = [{**card, "updates": []} for card in source_portal_cards()]
     for card in cards:
+        card["intake_updates"] = intake_updates.get(card["portal_key"], [])
         if card["portal_key"] == "soa-artificial-intelligence":
             card["entry_links"] = list(SOA_AI_ENTRY_LINKS)
     by_key = {card["portal_key"]: card for card in cards}

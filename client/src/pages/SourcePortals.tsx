@@ -4,11 +4,20 @@ import { ArrowLeft, ArrowRight, Compass, ExternalLink, Search } from "lucide-rea
 import { useTranslation } from "@/components/Layout";
 import { apiGet, formatApiErrorDetail } from "@/lib/api";
 import { DATABASE_PAGE_SIZE } from "@/lib/database-query";
+import { buildFileDetailPath } from "@/lib/navigation";
 
 interface PortalUpdate {
   acquired_on: string;
   description_zh: string;
   description_en: string;
+}
+
+interface PortalIntakeUpdate {
+  acquired_on: string;
+  new_count: number;
+  backfill_count: number;
+  other_count: number;
+  files: { url: string; title: string; timing: "new" | "backfill" | "other"; published_on: string | null }[];
 }
 
 interface SourcePortal {
@@ -22,6 +31,7 @@ interface SourcePortal {
   overview_en: string;
   entry_links?: { url: string; title_zh: string; title_en: string }[];
   updates: PortalUpdate[];
+  intake_updates?: PortalIntakeUpdate[];
 }
 
 function useSourcePortals() {
@@ -65,6 +75,31 @@ function formatDate(value: string, lang: string) {
     day: "numeric",
     timeZone: "UTC",
   }).format(new Date(Date.UTC(year, month - 1, day)));
+}
+
+function intakeCounts(update: PortalIntakeUpdate, t: ReturnType<typeof useTranslation>["t"]) {
+  return [
+    t("source_portals.new_count", { count: update.new_count }),
+    t("weekly.backfill_count", { count: update.backfill_count }),
+    t("weekly.other_intake_count", { count: update.other_count }),
+  ].join(" · ");
+}
+
+function PortalObservations({ updates, lang }: { updates: PortalUpdate[]; lang: string }) {
+  return (
+    <ol className="mt-4 space-y-5">
+      {updates.map((update) => (
+        <li key={update.acquired_on} className="grid min-w-0 grid-cols-1 items-start gap-1.5 sm:grid-cols-[auto_minmax(0,1fr)] sm:gap-4">
+          <time dateTime={update.acquired_on} className="whitespace-nowrap pt-0.5 text-xs text-muted-foreground">
+            {formatDate(update.acquired_on, lang)}
+          </time>
+          <p className="break-words text-sm leading-relaxed">
+            {localized(lang, update.description_zh, update.description_en)}
+          </p>
+        </li>
+      ))}
+    </ol>
+  );
 }
 
 function portalListHref(query: string, page: number) {
@@ -186,7 +221,8 @@ export default function SourcePortals() {
             </div>
             <div role="rowgroup">
               {pagePortals.map((portal) => {
-                const latestDate = portal.updates
+                const latestIntake = portal.intake_updates?.[0];
+                const latestDate = [...portal.updates, ...(latestIntake ? [latestIntake] : [])]
                   .map((update) => update.acquired_on)
                   .sort((left, right) => right.localeCompare(left))[0];
                 const title = localized(lang, portal.title_zh, portal.title_en);
@@ -210,6 +246,16 @@ export default function SourcePortals() {
                         <>
                           <span className="sm:hidden">{t("source_portals.latest_update")}: </span>
                           <time dateTime={latestDate} className="whitespace-nowrap">{formatDate(latestDate, lang)}</time>
+                          {latestIntake ? (
+                            <p className="mt-1 leading-relaxed" data-testid="source-portal-intake-counts">
+                              {latestIntake.acquired_on !== latestDate ? (
+                                <time className="block" dateTime={latestIntake.acquired_on}>
+                                  {formatDate(latestIntake.acquired_on, lang)}
+                                </time>
+                              ) : null}
+                              {intakeCounts(latestIntake, t)}
+                            </p>
+                          ) : null}
                         </>
                       ) : t("source_portals.no_updates_yet")}
                     </div>
@@ -257,6 +303,7 @@ export function SourcePortalDetail({ params }: { params?: { portalKey?: string }
   const { portals, loading, error, retryLoad } = useSourcePortals();
   const search = useSearch();
   const portal = portals.find((item) => item.portal_key === params?.portalKey);
+  const returnPath = useLocation()[0] + (search ? `?${search}` : "");
   const backHref = portalListHref(
     new URLSearchParams(search).get("query") || "",
     parsePage(search),
@@ -323,19 +370,38 @@ export function SourcePortalDetail({ params }: { params?: { portalKey?: string }
 
           <section className="pt-5" aria-label={t("source_portals.updates")}>
             <h2 className="text-base font-semibold">{t("source_portals.updates")}</h2>
-            {portal.updates.length ? (
-              <ol className="mt-4 space-y-5">
-                {portal.updates.map((update) => (
-                  <li key={update.acquired_on} className="grid min-w-0 grid-cols-1 items-start gap-1.5 sm:grid-cols-[auto_minmax(0,1fr)] sm:gap-4">
-                    <time dateTime={update.acquired_on} className="whitespace-nowrap pt-0.5 text-xs text-muted-foreground">
-                      {formatDate(update.acquired_on, lang)}
-                    </time>
-                    <p className="break-words text-sm leading-relaxed">
-                      {localized(lang, update.description_zh, update.description_en)}
-                    </p>
-                  </li>
-                ))}
-              </ol>
+            {portal.intake_updates?.length ? (
+              <>
+                <p className="mt-2 text-xs text-muted-foreground">{t("source_portals.intake_days")}</p>
+                <ol className="mt-4 divide-y divide-border" data-testid="source-portal-intake">
+                  {portal.intake_updates.map((update) => (
+                    <li key={update.acquired_on} className="py-3" data-testid="source-portal-intake-day">
+                      <time dateTime={update.acquired_on} className="text-sm font-semibold">{formatDate(update.acquired_on, lang)}</time>
+                      <p className="mt-1 text-xs text-muted-foreground">{intakeCounts(update, t)}</p>
+                      <ul className="mt-2 space-y-2">
+                        {update.files.map((file) => (
+                          <li key={file.url} className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 text-sm">
+                            <Link href={buildFileDetailPath(file.url, returnPath)} className="min-w-0 text-primary [overflow-wrap:anywhere] hover:underline">
+                              {file.title}
+                            </Link>
+                            <span className="text-xs text-muted-foreground">
+                              {t(`source_portals.intake_${file.timing}`)}{file.published_on ? ` · ${file.published_on}` : ""}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    </li>
+                  ))}
+                </ol>
+                {portal.updates.length ? (
+                  <details className="mt-3 border-t border-border pt-3">
+                    <summary className="cursor-pointer text-sm font-medium">{t("source_portals.observations")}</summary>
+                    <PortalObservations updates={portal.updates} lang={lang} />
+                  </details>
+                ) : null}
+              </>
+            ) : portal.updates.length ? (
+              <PortalObservations updates={portal.updates} lang={lang} />
             ) : (
               <p className="mt-2 text-sm leading-relaxed text-muted-foreground" data-testid="source-portal-no-updates">
                 {t("source_portals.no_updates")}

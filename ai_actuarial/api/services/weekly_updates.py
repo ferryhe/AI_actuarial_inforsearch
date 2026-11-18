@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
-from typing import Any, Mapping
+from typing import Any, Iterator, Mapping
 
 from ai_actuarial.shared_runtime import coerce_bool, parse_int_clamped
 from ai_actuarial.storage import Storage
@@ -11,6 +11,7 @@ from ai_actuarial.storage import Storage
 _RFC3339_RE = re.compile(
     r"^\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[Zz]|[+-]\d{2}:\d{2})$"
 )
+NEW_PUBLICATION_MAX_AGE_DAYS = 30
 WEEKLY_UPDATE_FILE_FIELDS: tuple[str, ...] = (
     "url",
     "title",
@@ -155,16 +156,68 @@ def _project_weekly_file(row: dict[str, Any]) -> dict[str, Any]:
     return {field: row.get(field) for field in WEEKLY_UPDATE_FILE_FIELDS}
 
 
-def weekly_publications(
+def utc_intake_day(first_seen: str | None) -> date | None:
+    try:
+        timestamp = datetime.fromisoformat((first_seen or "").replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.replace(tzinfo=timezone.utc)
+    return timestamp.astimezone(timezone.utc).date()
+
+
+def publication_timing(row: Mapping[str, Any], reviewed: Any = None) -> tuple[str, str | None]:
+    """Compare the verified publication date with the first collection day."""
+    acquired_on = utc_intake_day(row.get("first_seen"))
+    if acquired_on is None:
+        return "other", None
+    value = row.get("published_time")
+    enrichment = (row.get("bilingual_metadata") or {}).get("hub_enrichment")
+    facts = enrichment.get("date_facts") if isinstance(enrichment, dict) else None
+    fact = facts.get("publication_date") if isinstance(facts, dict) else None
+    if (
+        isinstance(reviewed, dict)
+        and "catalog_date" in reviewed
+        and reviewed["catalog_date"] == value
+        and re.fullmatch(r"https?://[^\s]+", str(reviewed.get("source_url") or ""))
+    ):
+        fact, value = reviewed, reviewed.get("value")
+    if not isinstance(value, str) or len(value) not in {4, 7, 10}:
+        return "other", None
+    precision, suffix = {
+        4: ("year", "-01-01"),
+        7: ("month", "-01"),
+        10: ("day", ""),
+    }[len(value)]
+    if not (
+        isinstance(fact, dict)
+        and fact.get("semantic") == "publication"
+        and fact.get("precision") == precision
+        and fact.get("value") == value
+        and isinstance(fact.get("evidence"), str)
+        and fact["evidence"].strip()
+    ):
+        return "other", None
+    try:
+        day = date.fromisoformat(value + suffix)
+    except ValueError:
+        return "other", None
+    if day.isoformat() != value + suffix:
+        return "other", None
+    cutoff = acquired_on - timedelta(days=NEW_PUBLICATION_MAX_AGE_DAYS)
+    if value < cutoff.isoformat()[: len(value)]:
+        return "backfill", value
+    if precision == "day" and day <= acquired_on and re.fullmatch(r"https?://[^\s]+", row["url"]):
+        return "new", value
+    return "other", value
+
+
+def weekly_intake(
     storage: Storage, snapshot: Mapping[str, Any]
-) -> tuple[list[dict[str, Any]], bool]:
-    """Use source-backed publication dates for the public reading list."""
-    start, end = snapshot["period_start"][:10], snapshot["period_end"][:10]
+) -> Iterator[tuple[dict[str, Any], str, str | None]]:
     reviewed_dates = (snapshot.get("metadata") or {}).get("weekly_publication_date_evidence")
     if not isinstance(reviewed_dates, dict):
         reviewed_dates = {}
-    published = []
-    has_backfill = False
     offset = 0
     while offset < snapshot["file_count"]:
         rows, _ = storage.list_weekly_snapshot_files(
@@ -177,52 +230,33 @@ def weekly_publications(
             break
         offset += len(rows)
         for row in rows:
-            value = row.get("published_time")
-            enrichment = (row.get("bilingual_metadata") or {}).get("hub_enrichment")
-            facts = enrichment.get("date_facts") if isinstance(enrichment, dict) else None
-            fact = facts.get("publication_date") if isinstance(facts, dict) else None
-            reviewed = reviewed_dates.get(row["url"])
-            if (
-                isinstance(reviewed, dict)
-                and isinstance(value, str)
-                and reviewed.get("catalog_date") == value
-                and re.fullmatch(r"https?://[^\s]+", str(reviewed.get("source_url") or ""))
-            ):
-                fact, value = reviewed, reviewed.get("value")
-            if not isinstance(value, str) or len(value) not in {4, 7, 10}:
-                continue
-            precision, suffix = {
-                4: ("year", "-01-01"),
-                7: ("month", "-01"),
-                10: ("day", ""),
-            }[len(value)]
-            if not (
-                isinstance(fact, dict)
-                and fact.get("semantic") == "publication"
-                and fact.get("precision") == precision
-                and fact.get("value") == value
-                and isinstance(fact.get("evidence"), str)
-                and fact["evidence"].strip()
-            ):
-                continue
-            try:
-                day = date.fromisoformat(value + suffix)
-            except ValueError:
-                continue
-            if day.isoformat() != value + suffix:
-                continue
-            if value < start[: len(value)]:
-                has_backfill = True
-            elif precision == "day" and start <= value < end:
-                if re.match(r"^https?://[^\s]+$", row["url"]):
-                    published.append({**row, "published_time": value})
+            if not row.pop("file_available"):
+                yield row, "other", None
+            else:
+                timing, published_time = publication_timing(row, reviewed_dates.get(row["url"]))
+                yield row, timing, published_time
+
+
+def weekly_publications(
+    storage: Storage, snapshot: Mapping[str, Any]
+) -> tuple[list[dict[str, Any]], int]:
+    """Return recently published intake and the count of historical backfills."""
+    published = []
+    backfill_count = 0
+    for row, timing, published_time in weekly_intake(storage, snapshot):
+        if timing == "new":
+            row.pop("source_site")
+            row.pop("source_page_url")
+            published.append({**row, "published_time": published_time})
+        elif timing == "backfill":
+            backfill_count += 1
     published.sort(
         key=lambda row: (
             -date.fromisoformat(row["published_time"]).toordinal(),
             row["url"],
         )
     )
-    return published, has_backfill
+    return published, backfill_count
 
 
 def _format_summary_markdown(
@@ -396,14 +430,16 @@ def get_weekly_update_summary_files(
 ) -> dict[str, Any]:
     query = parse_weekly_update_files_query({"limit": str(limit), "offset": str(offset)})
     storage = Storage(db_path)
+    counts = {}
     try:
         if published_only:
             snapshot = storage.get_weekly_snapshot(snapshot_id=snapshot_id)
             if snapshot is None:
                 raise WeeklySnapshotNotFoundError(snapshot_id)
-            published, _ = weekly_publications(storage, snapshot)
+            published, backfill_count = weekly_publications(storage, snapshot)
             total = len(published)
             files = published[query["offset"] : query["offset"] + query["limit"]]
+            counts = {"published_only": True, "backfill_count": backfill_count}
         else:
             try:
                 files, total = storage.list_weekly_snapshot_files(
@@ -422,5 +458,5 @@ def get_weekly_update_summary_files(
         **query,
         "included_count": included_count,
         "truncated": query["offset"] + included_count < total,
-        **({"published_only": True} if published_only else {}),
+        **counts,
     }

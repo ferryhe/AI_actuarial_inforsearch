@@ -36,6 +36,7 @@ from .weekly_updates import (
 )
 
 MAX_MATERIAL_FILES = 60
+MAX_CATALOG_RECOMMENDATIONS = 3
 MAX_FILE_MATERIAL_CHARS = 2_000
 MAX_MATERIAL_INPUT_CHARS = 24_000
 MAX_PROMPT_INPUT_CHARS = 26_000
@@ -643,8 +644,8 @@ def _publication_signature(rows, has_backfill):
 
 def _catalog_explanation(snapshot, rows, has_backfill):
     if rows:
-        zh = _render_guide([], rows[:5], lang="zh", fallback=True)
-        en = _render_guide([], rows[:5], lang="en", fallback=True)
+        zh = _render_guide([], rows, lang="zh", fallback=True)
+        en = _render_guide([], rows, lang="en", fallback=True)
     elif snapshot["file_count"]:
         zh, en = "本期暂无核实的新发布。", "No verified new publications this week."
     else:
@@ -661,7 +662,7 @@ def _publication_explanation(snapshot, rows, has_backfill, explanation):
     signature = _publication_signature(rows, has_backfill)
     if (explanation.get("coverage") or {}).get("publication_signature") == signature:
         return _public_explanation(explanation)
-    zh, en = _catalog_explanation(snapshot, rows, has_backfill)
+    zh, en = _catalog_explanation(snapshot, rows[:MAX_CATALOG_RECOMMENDATIONS], has_backfill)
     return {
         "snapshot_id": snapshot["id"],
         "status": "complete",
@@ -676,8 +677,8 @@ def _read_publication_explanation(storage, snapshot):
     explanation = storage.get_weekly_explanation(snapshot_id=snapshot["id"])
     if explanation is None:
         return _missing_explanation(snapshot["id"])
-    rows, has_backfill = weekly_publications(storage, snapshot)
-    return _publication_explanation(snapshot, rows, has_backfill, explanation)
+    rows, backfill_count = weekly_publications(storage, snapshot)
+    return _publication_explanation(snapshot, rows, backfill_count > 0, explanation)
 
 
 def _public_explanation(explanation: Mapping[str, Any]) -> dict[str, Any]:
@@ -744,7 +745,8 @@ def generate_weekly_explanation(
         )
         if snapshot is None:
             raise WeeklySnapshotNotFoundError(normalized_snapshot_id)
-        source_rows, has_backfill = weekly_publications(storage, snapshot)
+        source_rows, backfill_count = weekly_publications(storage, snapshot)
+        has_backfill = backfill_count > 0
         publication_signature = _publication_signature(source_rows, has_backfill)
         empty = not source_rows
         runtime = None
@@ -752,7 +754,7 @@ def generate_weekly_explanation(
         config = {"prompt_version": DEFAULT_WEEKLY_EXPLANATION_PROMPT_VERSION}
         effective_credential_id = ""
         candidates, selection = _select_material(source_rows)
-        fallback_rows = source_rows[:5]
+        fallback_rows = source_rows[: MAX_CATALOG_RECOMMENDATIONS if catalog_only else 5]
         fallback_display = _fallback_display_fingerprint(fallback_rows)
         try:
             if not empty and not catalog_only:
@@ -864,7 +866,7 @@ def generate_weekly_explanation(
                 raise RuntimeError("Weekly explanation generation is still in progress")
         deadline = time.monotonic() + MAX_GENERATION_SECONDS
         status, mode, internal_error = "complete", "empty" if empty else "catalog", ""
-        zh, en = _catalog_explanation(snapshot, source_rows, has_backfill)
+        zh, en = _catalog_explanation(snapshot, fallback_rows, has_backfill)
         if not empty and not catalog_only:
             status, mode = "failed", "fallback"
             active = generator or ChatRuntimeWeeklyExplanationGenerator(storage, runtime=runtime)

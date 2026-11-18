@@ -102,9 +102,12 @@ def test_weekly_page_master_detail_read_only():
     assert "generate" not in src
     assert "retry" not in src
 
-    # Reuses the shared card and database filter path for the detail pane.
+    # The detail pane offers both the guide and the original intake.
     assert "<WeeklyHighlightCard" in src
-    assert "buildWeeklyDatabasePath(detail.snapshot)" in src
+    assert "<WeeklyIntakeList" in src
+    intake = (ROOT / "components" / "WeeklyIntakeList.tsx").read_text(encoding="utf-8")
+    assert "loadWeeklyIntake(snapshot.id)" in intake
+    assert "buildWeeklyDatabasePath(snapshot)" in intake
     assert "grouped" in src
 
 

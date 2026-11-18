@@ -3735,7 +3735,8 @@ class Storage:
         safe_limit = max(1, min(int(limit or 100), 500))
         safe_offset = max(0, int(offset or 0))
         publication_column = (
-            ", CASE WHEN f.deleted_at IS NULL THEN f.published_time END"
+            ", f.published_time, (f.url IS NOT NULL AND f.deleted_at IS NULL), "
+            "f.source_site, f.source_page_url"
             if include_publication
             else ""
         )
@@ -3770,7 +3771,16 @@ class Storage:
                 "keywords": self._decode_public_keywords(row[5]),
                 "summary": row[6],
                 "bilingual_metadata": self._decode_bilingual_metadata(row[7]),
-                **({"published_time": row[8]} if include_publication else {}),
+                **(
+                    {
+                        "published_time": row[8],
+                        "file_available": row[9],
+                        "source_site": row[10],
+                        "source_page_url": row[11],
+                    }
+                    if include_publication
+                    else {}
+                ),
             }
             for row in cur.fetchall()
         ]

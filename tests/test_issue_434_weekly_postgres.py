@@ -9,7 +9,10 @@ import pytest
 import yaml
 
 from ai_actuarial.api.services import weekly_explanations as weekly
-from ai_actuarial.api.services.weekly_updates import get_weekly_update_summary_files
+from ai_actuarial.api.services.weekly_updates import (
+    current_utc_iso_week_period,
+    get_weekly_update_summary_files,
+)
 from ai_actuarial.storage import Storage
 from tests.postgres_helpers import postgres_url_for_path
 from tests.test_issue_267_weekly_explanations import (
@@ -87,15 +90,20 @@ def test_failed_new_prompt_preserves_existing_success(tmp_path, monkeypatch):
         storage.close()
 
 
-def test_historical_guide_only_recommends_verified_in_week_publications(tmp_path):
+def test_source_and_weekly_guide_share_verified_publication_window(tmp_path):
+    from ai_actuarial.api.services.read import list_source_portals
+
     db_path, _, _ = _write_config(tmp_path)
-    _seed_files(db_path, count=5)
+    _seed_files(db_path, count=6)
     db = postgres_url_for_path(db_path)
     storage = Storage(db)
     try:
-        for index, day in enumerate(("2020-06-02", "2026-03-13", "2026-03-09", "2026-03", None)):
+        for index, day in enumerate(
+            ("2020-06-02", "2026-03-07", "2026-03-09", "2026-03", None, None)
+        ):
             url = f"https://example.com/report-{index:03d}.pdf"
             storage._conn.execute("UPDATE files SET published_time = ? WHERE url = ?", (day, url))
+            storage._conn.execute("UPDATE files SET source_site = 'iaa' WHERE url = ?", (url,))
             if day:
                 fact = {
                     "value": day,
@@ -115,16 +123,36 @@ def test_historical_guide_only_recommends_verified_in_week_publications(tmp_path
     snapshot = _snapshot(db_path)
     storage = Storage(db)
     try:
+        storage._conn.execute(
+            "UPDATE files SET deleted_at = ? WHERE url = ?",
+            ("2026-03-18T00:00:00+00:00", "https://example.com/report-005.pdf"),
+        )
         detail = storage.get_weekly_snapshot(snapshot_id=snapshot["id"])
         detail["metadata"]["weekly_publication_date_evidence"] = {
             "https://example.com/report-002.pdf": {
                 "catalog_date": "2026-03-09",
-                "value": "2026-03-14",
+                "value": "2026-03-10",
                 "semantic": "publication",
                 "precision": "day",
-                "evidence": "Published March 14, 2026",
+                "evidence": "Published March 10, 2026",
                 "source_url": "https://example.com/publication-announcement",
-            }
+            },
+            "https://example.com/report-004.pdf": {
+                "catalog_date": None,
+                "value": "2021-02",
+                "semantic": "publication",
+                "precision": "month",
+                "evidence": "Published February 2021",
+                "source_url": "https://example.com/paper-directory",
+            },
+            "https://example.com/report-005.pdf": {
+                "catalog_date": None,
+                "value": "2026-03-15",
+                "semantic": "publication",
+                "precision": "day",
+                "evidence": "Published March 15, 2026",
+                "source_url": "https://example.com/publication-announcement",
+            },
         }
         storage._conn.execute(
             "UPDATE weekly_snapshots SET metadata_json = ? WHERE id = ?",
@@ -136,10 +164,22 @@ def test_historical_guide_only_recommends_verified_in_week_publications(tmp_path
     archived = get_weekly_update_summary_files(**reference)
     first = get_weekly_update_summary_files(**reference, published_only=True, limit=1)
     second = get_weekly_update_summary_files(**reference, published_only=True, offset=1)
-    assert archived["total"] == 5
+    assert archived["total"] == 6
+    assert "backfill_count" not in archived
     assert first["total"] == 2
-    assert first["files"][0]["published_time"] == "2026-03-14"
-    assert [row["published_time"] for row in second["files"]] == ["2026-03-13"]
+    assert first["backfill_count"] == second["backfill_count"] == 2
+    assert first["files"][0]["published_time"] == "2026-03-10"
+    assert [row["published_time"] for row in second["files"]] == ["2026-03-07"]
+    source = next(
+        p for p in list_source_portals(db_path=db)["portals"] if p["portal_key"] == "iaa-papers"
+    )
+    (intake,) = source["intake_updates"]
+    assert intake["acquired_on"] == "2026-03-10"
+    assert intake["new_count"] == first["total"]
+    assert intake["backfill_count"] == first["backfill_count"]
+    assert intake["other_count"] == 2
+    assert [file["published_on"] for file in intake["files"][:2]] == ["2026-03-10", "2026-03-07"]
+    assert {file["url"] for file in intake["files"]} == {file["url"] for file in archived["files"]}
 
     generator = FakeWeeklyExplanationGenerator()
     revision = weekly.regenerate_weekly_explanation(
@@ -150,9 +190,35 @@ def test_historical_guide_only_recommends_verified_in_week_publications(tmp_path
     for locale in ("en", "zh"):
         guide = revision["explanation"][f"explanation_{locale}"]
         assert guide.index("report-002.pdf") < guide.index("report-001.pdf")
-        assert all(f"report-{number:03d}.pdf" not in guide for number in (0, 3, 4))
+        assert all(f"report-{number:03d}.pdf" not in guide for number in (0, 3, 4, 5))
     assert "另有历史资料补录" in revision["explanation"]["explanation_zh"]
     assert archived == get_weekly_update_summary_files(**reference)
+
+
+def test_open_week_source_counts_active_intake_without_a_local_file(tmp_path):
+    from ai_actuarial.api.services.read import list_source_portals
+
+    db_path, _, _ = _write_config(tmp_path)
+    week_start, _ = current_utc_iso_week_period()
+    first_seen = (datetime.fromisoformat(week_start) + timedelta(days=1)).isoformat()
+    _seed_files(db_path, count=2, first_seen=first_seen)
+    db = postgres_url_for_path(db_path)
+    storage = Storage(db)
+    try:
+        storage._conn.execute("UPDATE files SET source_site = 'iaa', local_path = NULL")
+        storage._conn.execute(
+            "UPDATE files SET deleted_at = ? WHERE url = ?",
+            (first_seen, "https://example.com/report-001.pdf"),
+        )
+    finally:
+        storage.close()
+    source = next(
+        p for p in list_source_portals(db_path=db)["portals"] if p["portal_key"] == "iaa-papers"
+    )
+    (intake,) = source["intake_updates"]
+    assert intake["acquired_on"] == first_seen[:10]
+    assert intake["new_count"] == 1 and intake["backfill_count"] == intake["other_count"] == 0
+    assert [row["url"] for row in intake["files"]] == ["https://example.com/report-000.pdf"]
 
 
 def test_five_historical_ids_isolated_replay_receipts(tmp_path, monkeypatch):
@@ -171,7 +237,7 @@ def test_five_historical_ids_isolated_replay_receipts(tmp_path, monkeypatch):
             members = [
                 {
                     "url": f"https://example.com/report-{i:03d}.pdf",
-                    "first_seen": "2026-03-10T08:00:00+00:00",
+                    "first_seen": (start + timedelta(days=1, hours=8)).isoformat(),
                     "original_filename": f"report-{i:03d}.pdf",
                 }
                 for i in range(case["file_count"])

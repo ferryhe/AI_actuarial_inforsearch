@@ -47,6 +47,7 @@ export interface WeeklyDashboardData {
   files: WeeklySnapshotFile[];
   filesPreviewLimit?: number;
   publicationCount?: number;
+  backfillCount?: number;
   filesUnavailable: boolean;
   explanation: WeeklyExplanation | null;
   explanationUnavailable: boolean;
@@ -65,6 +66,7 @@ interface WeeklySnapshotFilesResponse {
   included_count?: number;
   truncated?: boolean;
   published_only?: boolean;
+  backfill_count?: number;
 }
 
 interface WeeklyExplanationResponse {
@@ -139,6 +141,7 @@ export async function loadLatestWeeklyDashboard(
     publicationCount: filesResult.status === "fulfilled" && filesResult.value.published_only
       ? filesResult.value.total
       : undefined,
+    backfillCount: filesResult.status === "fulfilled" ? filesResult.value.backfill_count : undefined,
     files: filesResult.status === "fulfilled"
       ? (filesResult.value.files || []).slice(0, WEEKLY_HOME_PREVIEW_LIMIT)
       : [],
@@ -173,11 +176,12 @@ export async function loadLatestWeeklyDashboard(
 async function loadAllWeeklySnapshotFiles(
   snapshotId: string,
   get: GetJson,
-): Promise<{ files: WeeklySnapshotFile[]; publicationCount?: number }> {
+): Promise<{ files: WeeklySnapshotFile[]; publicationCount?: number; backfillCount?: number }> {
   const files: WeeklySnapshotFile[] = [];
   let offset = 0;
   let total: number | null = null;
   let publicationCount: number | undefined;
+  let backfillCount: number | undefined;
 
   while (total === null || offset < total) {
     const page = await get<WeeklySnapshotFilesResponse>(
@@ -190,12 +194,22 @@ async function loadAllWeeklySnapshotFiles(
     total = Number.isSafeInteger(responseTotal) && responseTotal >= 0
       ? responseTotal
       : offset + pageFiles.length;
-    if (page.published_only) publicationCount = total;
+    if (page.published_only) {
+      publicationCount = total;
+      backfillCount = page.backfill_count;
+    }
     if (pageFiles.length === 0) break;
     offset += pageFiles.length;
   }
 
-  return { files, publicationCount };
+  return { files, publicationCount, backfillCount };
+}
+
+export async function loadWeeklyIntake(id: string, get: GetJson = apiGet): Promise<WeeklySnapshotFile[]> {
+  const result = await get<WeeklySnapshotFilesResponse>(
+    `/api/weekly-updates/${encodeURIComponent(id)}/files?limit=50`,
+  );
+  return result.files;
 }
 
 export async function loadWeeklyUpdateList(
@@ -232,6 +246,7 @@ export async function loadWeeklyUpdateDetail(
       ? filesResult.value.files
       : [],
     publicationCount: filesResult.status === "fulfilled" ? filesResult.value.publicationCount : undefined,
+    backfillCount: filesResult.status === "fulfilled" ? filesResult.value.backfillCount : undefined,
     filesUnavailable: filesResult.status === "rejected",
     explanation: explanationResult.status === "fulfilled"
       ? explanationResult.value.explanation
@@ -370,6 +385,8 @@ export interface WeeklyDashboardView {
   explanationState: WeeklyExplanationState;
   explanationText: string;
   recommendedCount: number;
+  guideRecommendationCount?: number;
+  backfillCount?: number;
   publicationOnly: boolean;
 }
 
@@ -377,14 +394,14 @@ function weeklyGuideUrl(url: string): string {
   return url.replace(/\(/g, "%28").replace(/\)/g, "%29").replace(/ /g, "%20");
 }
 
-function weeklyRecommendationUrls(data: WeeklyDashboardData): string[] {
+function weeklyRecommendationUrls(data: WeeklyDashboardData, limit = 3): string[] {
   const explanation = data.explanation;
   if (explanation?.snapshot_id !== data.snapshot?.id || !explanation
     || !["complete", "failed"].includes(explanation.status)) return [];
   // Saved guides use the list-link format produced by the server's _render_guide.
   const guide = explanation.explanation_en || explanation.explanation_zh;
   return [...new Set([...guide.matchAll(/^- \[(?:\\.|[^\]\\])*\]\((https?:\/\/\S+)\)\s*$/gm)]
-    .map((match) => match[1]))].slice(0, 3);
+    .map((match) => match[1]))].slice(0, limit);
 }
 
 function frozenWeeklyRecommendationFiles(data: WeeklyDashboardData): WeeklySnapshotFile[] | null {
@@ -546,6 +563,10 @@ export function buildWeeklyDashboardView(
     explanationState,
     explanationText,
     recommendedCount: recommendations.length,
+    guideRecommendationCount: publicationOnly && (fileCount === 0 || ["complete", "failed"].includes(explanationState))
+      ? weeklyRecommendationUrls(data, fileCount).length
+      : undefined,
+    backfillCount: data.backfillCount,
     publicationOnly,
   };
 }

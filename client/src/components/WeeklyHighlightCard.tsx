@@ -114,12 +114,26 @@ export function WeeklyHighlightCard({
   return (
     <div className="min-w-0 rounded-xl border border-border bg-card overflow-hidden">
       <div className="p-4 space-y-3">
-        <span
-          className="inline-flex items-center rounded-full bg-primary/10 text-primary text-xs font-medium px-2.5 py-1"
-          data-testid="weekly-new-count"
-        >
-          {t(view.publicationOnly ? "weekly.verified_publication_count" : "dashboard.new_materials_count").replace("{count}", String(view.fileCount))}
-        </span>
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted-foreground">
+          <span
+            className="inline-flex items-center rounded-full bg-primary/10 text-primary font-medium px-2.5 py-1"
+            data-testid="weekly-new-count"
+          >
+            {t(view.publicationOnly ? "weekly.verified_publication_count" : "dashboard.new_materials_count").replace("{count}", String(view.fileCount))}
+          </span>
+          {view.publicationOnly && view.snapshot ? (
+            <>
+              <span>{t("weekly.collected_materials_count").replace("{count}", String(view.snapshot.file_count))}</span>
+              {view.backfillCount === undefined ? null : (
+                <>
+                  <span>{t("weekly.backfill_count").replace("{count}", String(view.backfillCount))}</span>
+                  <span>{t("weekly.other_intake_count").replace("{count}", String(view.snapshot.file_count - view.fileCount - view.backfillCount))}</span>
+                </>
+              )}
+              <span>{t("weekly.recommended_count").replace("{count}", String(view.guideRecommendationCount ?? "—"))}</span>
+            </>
+          ) : null}
+        </div>
         {view.explanationState === "failed" ? (
           <p className="text-xs text-muted-foreground">{t("dashboard.explanation_failed")}</p>
         ) : null}
