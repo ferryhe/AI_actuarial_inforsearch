@@ -165,9 +165,7 @@ def test_chat_supports_agentic_rag_mode_and_endpoint_contract():
     i18n_src = I18N_TS.read_text(encoding="utf-8")
 
     assert 'type RagMode = "standard" | "agentic"' in src
-    assert (
-        'const ragMode = chosenRagMode ?? (defaultAiKb ? "agentic" : "standard");' in src
-    )
+    assert 'const ragMode = chosenRagMode ?? (defaultAiKb ? "agentic" : "standard");' in src
     assert "manifest_profile?: string" in src
     assert "agentic_ready_manifest?" in src
     assert 'requestRagMode === "agentic" && requestKbIds.length === 0' in src
