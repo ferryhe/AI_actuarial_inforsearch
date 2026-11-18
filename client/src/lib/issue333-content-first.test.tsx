@@ -76,7 +76,7 @@ test("covers Issue 333 content-first behavior", async () => {
   });
   assert.equal(home.files.length, 6);
   assert.equal(home.snapshot?.file_count, 503);
-  assert.ok(homeCalls.some((url) => url.endsWith("/files?limit=6&offset=0")));
+  assert.ok(homeCalls.some((url) => url.endsWith("/files?limit=6&offset=0&published_only=true")));
 
   const detailFileCalls: string[] = [];
   const detail = await loadWeeklyUpdateDetail(snapshot.id, async <T,>(url: string): Promise<T> => {

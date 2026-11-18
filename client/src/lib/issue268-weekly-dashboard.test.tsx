@@ -85,7 +85,7 @@ assert.equal(loaded.files.length, 6);
 assert.equal(loaded.snapshot?.file_count, 12);
 assert.deepEqual(calls, [
   "/api/weekly-updates/latest",
-  "/api/weekly-updates/snapshot%20%2F%20268/files?limit=6&offset=0",
+  "/api/weekly-updates/snapshot%20%2F%20268/files?limit=6&offset=0&published_only=true",
   "/api/weekly-updates/snapshot%20%2F%20268/explanation",
 ]);
 assert.ok(calls.every((url) => !/generate|retry/i.test(url)));

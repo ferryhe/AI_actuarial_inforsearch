@@ -52,6 +52,7 @@ class WeeklySnapshotFileModel(BaseModel):
     keywords: list[str]
     summary: str | None
     bilingual_metadata: dict[str, Any] | None = None
+    published_time: str | None = None
 
 
 class WeeklySnapshotListModel(BaseModel):
@@ -77,6 +78,7 @@ class WeeklySnapshotFilesModel(BaseModel):
     offset: int
     included_count: int
     truncated: bool
+    published_only: bool = False
 
 
 class WeeklyExplanationModel(BaseModel):
@@ -85,7 +87,7 @@ class WeeklyExplanationModel(BaseModel):
     explanation_zh: str
     explanation_en: str
     generated_at: str | None
-    generation_mode: Literal["ai", "empty", "fallback"] | None = None
+    generation_mode: Literal["ai", "empty", "fallback", "catalog"] | None = None
 
 
 class WeeklyExplanationEnvelopeModel(BaseModel):
@@ -240,10 +242,12 @@ def api_weekly_explanation_detail(
 @router.get(
     "/weekly-updates/{snapshot_id}/files",
     response_model=WeeklySnapshotFilesModel,
+    response_model_exclude_unset=True,
 )
 def api_weekly_update_files(
     snapshot_id: str,
     request: Request,
+    published_only: bool = False,
     _auth: AuthContext = Depends(require_permissions("files.read")),
 ):
     query = parse_weekly_update_files_query(request.query_params)
@@ -251,6 +255,7 @@ def api_weekly_update_files(
         return get_weekly_update_summary_files(
             db_path=_get_db_path(request),
             snapshot_id=snapshot_id,
+            published_only=published_only,
             **query,
         )
     except WeeklySnapshotNotFoundError:

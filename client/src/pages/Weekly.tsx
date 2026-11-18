@@ -126,7 +126,7 @@ export default function Weekly() {
                         {formatWeeklyPeriodLabel(item.period_start, item.period_end, lang)}
                       </div>
                       <div className="text-xs text-muted-foreground mt-0.5">
-                        {t("dashboard.new_materials_count").replace("{count}", String(item.file_count))}
+                        {t("weekly.collected_materials_count").replace("{count}", String(item.file_count))}
                       </div>
                     </button>
                   </li>

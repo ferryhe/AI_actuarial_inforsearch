@@ -24,6 +24,22 @@ PERIOD_END = "2026-11-02T00:00:00+00:00"
 SNAPSHOT_ID = "weekly-canonical-20261102"
 
 
+def _publication_metadata() -> dict[str, Any]:
+    day = PERIOD_START[:10]
+    return {
+        "hub_enrichment": {
+            "date_facts": {
+                "publication_date": {
+                    "value": day,
+                    "semantic": "publication",
+                    "precision": "day",
+                    "evidence": f"Published on {day}",
+                }
+            }
+        }
+    }
+
+
 def _guide(urls: list[str], *, reverse_zh: bool = False) -> tuple[str, str]:
     en = "English guide\n" + "\n".join(f"- [English {i}]({url})" for i, url in enumerate(urls))
     zh_urls = list(reversed(urls)) if reverse_zh else urls
@@ -57,8 +73,10 @@ def _seed_site(
                 local_path=f"/tmp/{site}-{index}.pdf",
                 bytes=100,
                 content_type="application/pdf",
+                published_time=PERIOD_START[:10],
             )
             bilingual = {
+                **_publication_metadata(),
                 "en": {
                     "title": f"{site} English {index}",
                     "summary": f"{site} English summary {index}",
@@ -163,6 +181,7 @@ def _set_catalog_prefix(database_url: str, prefix: str) -> None:
                 }
                 for lang in ("zh", "en")
             }
+            bilingual.update(_publication_metadata())
             storage._conn.execute(
                 "UPDATE files SET title = ? WHERE url = ?",
                 (f"{prefix} base title {index}", url),

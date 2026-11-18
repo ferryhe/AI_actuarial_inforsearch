@@ -28,6 +28,19 @@ def materials(count, *, long=False, summaries=True):
             ),
             "keywords": [f"topic-{i % 7}"],
             "first_seen": "2026-10-20T10:00:00+00:00",
+            "published_time": "2026-10-20",
+            "bilingual_metadata": {
+                "hub_enrichment": {
+                    "date_facts": {
+                        "publication_date": {
+                            "value": "2026-10-20",
+                            "semantic": "publication",
+                            "precision": "day",
+                            "evidence": "Published on 2026-10-20",
+                        }
+                    }
+                }
+            },
         }
         for i in range(count)
     ]
@@ -262,6 +275,7 @@ def test_bilingual_metadata_survives_generation_normalization_and_invalidates_ca
 ):
     memory.rows = materials(1)
     memory.rows[0]["bilingual_metadata"] = {
+        **memory.rows[0]["bilingual_metadata"],
         "zh": {
             "title": "中文标题",
             "summary": "中文资料摘要。更多中文内容。",
@@ -299,6 +313,7 @@ def test_bilingual_metadata_survives_generation_normalization_and_invalidates_ca
 def test_empty_summary_fallback_tracks_bilingual_title_without_model_calls(memory):
     memory.rows = materials(1, summaries=False)
     memory.rows[0]["bilingual_metadata"] = {
+        **memory.rows[0]["bilingual_metadata"],
         "zh": {
             "title": "中文标题 v1",
             "summary": "中文摘要不应被补入。",
@@ -724,13 +739,28 @@ def test_long_distinct_chinese_summaries_compact_before_exclusion(memory):
     from ai_actuarial.ai_runtime import DEFAULT_AI_FUNCTION_CONFIG
 
     topics = [
-        ("风险定价", "研究使用历史理赔数据比较风险定价方法，并说明精算人员可复核的模型假设。"),
-        ("准备金评估", "报告分析保险合同准备金的估计差异，并提供针对长期负债的情景测试方法。"),
-        ("资本管理", "案例讨论不同保险业务的资本配置，并展示资本约束下调整资产组合的步骤。"),
-        ("客户服务", "实验比较客户服务流程的响应质量，并列出人工复核保险答复时需要检查的项目。"),
-        ("模型治理", "调查梳理模型治理过程中的责任分工，并提出审查数据变更和模型记录的方法。"),
+        (
+            "风险定价",
+            "研究使用历史理赔数据比较风险定价方法，并说明精算人员可复核的模型假设。",
+        ),
+        (
+            "准备金评估",
+            "报告分析保险合同准备金的估计差异，并提供针对长期负债的情景测试方法。",
+        ),
+        (
+            "资本管理",
+            "案例讨论不同保险业务的资本配置，并展示资本约束下调整资产组合的步骤。",
+        ),
+        (
+            "客户服务",
+            "实验比较客户服务流程的响应质量，并列出人工复核保险答复时需要检查的项目。",
+        ),
+        (
+            "模型治理",
+            "调查梳理模型治理过程中的责任分工，并提出审查数据变更和模型记录的方法。",
+        ),
     ]
-    memory.rows = []
+    memory.rows = materials(len(topics))
     for i, (topic, first_sentence) in enumerate(topics):
         prefix = first_sentence + f"本篇围绕{topic}提供独立的资料来源和应用背景。"
         summary = (
@@ -739,7 +769,7 @@ def test_long_distinct_chinese_summaries_compact_before_exclusion(memory):
             + (topic * 300)[: 498 - len(prefix) - len(f"附录说明{topic}的分析口径") - 1]
             + "。"
         )
-        memory.rows.append(
+        memory.rows[i].update(
             {
                 "url": f"https://example.org/long-{i}",
                 "title": f"{topic}研究",

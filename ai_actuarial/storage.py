@@ -3727,6 +3727,7 @@ class Storage:
         snapshot_id: str,
         limit: int = 100,
         offset: int = 0,
+        include_publication: bool = False,
     ) -> tuple[list[dict[str, Any]], int]:
         snapshot = self.get_weekly_snapshot(snapshot_id=snapshot_id)
         if snapshot is None:
@@ -3744,7 +3745,8 @@ class Storage:
                 ci.category,
                 ci.keywords,
                 ci.summary,
-                ci.bilingual_metadata_json
+                ci.bilingual_metadata_json,
+                CASE WHEN f.deleted_at IS NULL THEN f.published_time END
             FROM weekly_snapshot_members m
             LEFT JOIN files f ON f.url = m.file_url
             LEFT JOIN catalog_items ci ON ci.file_url = m.file_url
@@ -3764,6 +3766,7 @@ class Storage:
                 "keywords": self._decode_public_keywords(row[5]),
                 "summary": row[6],
                 "bilingual_metadata": self._decode_bilingual_metadata(row[7]),
+                **({"published_time": row[8]} if include_publication else {}),
             }
             for row in cur.fetchall()
         ]

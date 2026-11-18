@@ -32,6 +32,7 @@ from ai_actuarial.storage import Storage
 from .weekly_updates import (
     WeeklySnapshotNotFoundError,
     validate_weekly_snapshot_period,
+    weekly_publications,
 )
 
 MAX_MATERIAL_FILES = 60
@@ -210,6 +211,7 @@ def _normalize_material_item(item: Mapping[str, Any]) -> dict[str, Any]:
         ],
         "category": _truncate(item.get("category"), 100),
         "_bilingual_metadata": item.get("bilingual_metadata", item.get("_bilingual_metadata")),
+        "_published_time": item.get("published_time", item.get("_published_time")),
         "_source_summary": source,
         "_source_id": hashlib.sha256((url + "\0" + source).encode()).hexdigest(),
         "_spans": list(item["_spans"]) if "_spans" in item else _allowed_source_spans(source),
@@ -222,7 +224,10 @@ def _normalize_material_item(item: Mapping[str, Any]) -> dict[str, Any]:
 
     while encoded_size() > MAX_FILE_MATERIAL_CHARS:
         if normalized["summary"]:
-            limit = max(0, len(normalized["summary"]) - (encoded_size() - MAX_FILE_MATERIAL_CHARS))
+            limit = max(
+                0,
+                len(normalized["summary"]) - (encoded_size() - MAX_FILE_MATERIAL_CHARS),
+            )
             normalized = _fit_source_span(normalized, limit)
         elif normalized["keywords"]:
             normalized["keywords"].pop()
@@ -550,9 +555,17 @@ def _parse_reader_output(raw_output: str, material: list[dict[str, Any]]) -> tup
                 raise ValueError("Invalid recommendation count")
             trusted, urls = [], set()
             for article in articles:
-                if not isinstance(article, dict) or set(article) != {"url", "excerpt", "focus"}:
+                if not isinstance(article, dict) or set(article) != {
+                    "url",
+                    "excerpt",
+                    "focus",
+                }:
                     raise ValueError("Invalid recommendation fields")
-                url, excerpt, focus = article["url"], article["excerpt"], article["focus"]
+                url, excerpt, focus = (
+                    article["url"],
+                    article["excerpt"],
+                    article["focus"],
+                )
                 if not isinstance(url, str) or url not in members or url in urls:
                     raise ValueError("Recommendation is not a distinct current-snapshot candidate")
                 source = members[url]
@@ -580,6 +593,7 @@ def _parse_reader_output(raw_output: str, material: list[dict[str, Any]]) -> tup
                     raise ValueError("Recommendation focus is not supported by its metadata")
                 urls.add(url)
                 trusted.append({**source, "excerpt": excerpt, "focus": focus})
+            trusted.sort(key=lambda item: item.get("_published_time") or "", reverse=True)
             selections.append(urls)
             rendered.append(_render_guide(themes, trusted, lang=lang))
         if selections[0] != selections[1]:
@@ -622,18 +636,48 @@ def _error_category(exc):
     return "upstream"
 
 
-def _load_candidates(storage, snapshot_id):
-    rows, offset = [], 0
-    while True:
-        page, total = storage.list_weekly_snapshot_files(
-            snapshot_id=snapshot_id, offset=offset, limit=500
-        )
-        rows.extend(page)
-        offset += len(page)
-        if not page or offset >= total:
-            break
-    candidates, selection = _select_material(rows)
-    return candidates, selection, rows
+def _publication_signature(rows, has_backfill):
+    identity = [(row["url"], row["published_time"]) for row in rows]
+    return hashlib.sha256(json.dumps([identity, has_backfill]).encode()).hexdigest()
+
+
+def _catalog_explanation(snapshot, rows, has_backfill):
+    if rows:
+        zh = _render_guide([], rows[:5], lang="zh", fallback=True)
+        en = _render_guide([], rows[:5], lang="en", fallback=True)
+    elif snapshot["file_count"]:
+        zh, en = "本期暂无核实的新发布。", "No verified new publications this week."
+    else:
+        zh, en = "本周暂无新资料。", "No new material this week."
+    if has_backfill:
+        zh += "\n\n本期另有历史资料补录。"
+        en += "\n\nHistorical material was also added to the library."
+    return zh, en
+
+
+def _publication_explanation(snapshot, rows, has_backfill, explanation):
+    if explanation is None:
+        return _missing_explanation(snapshot["id"])
+    signature = _publication_signature(rows, has_backfill)
+    if (explanation.get("coverage") or {}).get("publication_signature") == signature:
+        return _public_explanation(explanation)
+    zh, en = _catalog_explanation(snapshot, rows, has_backfill)
+    return {
+        "snapshot_id": snapshot["id"],
+        "status": "complete",
+        "explanation_zh": zh,
+        "explanation_en": en,
+        "generated_at": None,
+        "generation_mode": "catalog" if rows else "empty",
+    }
+
+
+def _read_publication_explanation(storage, snapshot):
+    explanation = storage.get_weekly_explanation(snapshot_id=snapshot["id"])
+    if explanation is None:
+        return _missing_explanation(snapshot["id"])
+    rows, has_backfill = weekly_publications(storage, snapshot)
+    return _publication_explanation(snapshot, rows, has_backfill, explanation)
 
 
 def _public_explanation(explanation: Mapping[str, Any]) -> dict[str, Any]:
@@ -690,6 +734,7 @@ def generate_weekly_explanation(
     generator: WeeklyExplanationGenerator | None = None,
     force: bool = False,
     retry_failed: bool = False,
+    catalog_only: bool = False,
 ) -> dict[str, Any]:
     normalized_snapshot_id = str(snapshot_id or "").strip()
     storage = Storage(db_path)
@@ -699,32 +744,37 @@ def generate_weekly_explanation(
         )
         if snapshot is None:
             raise WeeklySnapshotNotFoundError(normalized_snapshot_id)
-        empty = int(snapshot["file_count"]) == 0
+        source_rows, has_backfill = weekly_publications(storage, snapshot)
+        publication_signature = _publication_signature(source_rows, has_backfill)
+        empty = not source_rows
         runtime = None
         preparation_error = None
         config = {"prompt_version": DEFAULT_WEEKLY_EXPLANATION_PROMPT_VERSION}
         effective_credential_id = ""
-        candidates, selection, source_rows = (
-            ([], [], []) if empty else _load_candidates(storage, normalized_snapshot_id)
-        )
-        fallback_rows = candidates[:5] or source_rows[:5]
+        candidates, selection = _select_material(source_rows)
+        fallback_rows = source_rows[:5]
         fallback_display = _fallback_display_fingerprint(fallback_rows)
         try:
-            if not empty:
+            if not empty and not catalog_only:
                 runtime = resolve_ai_function_runtime("weekly_explanation", storage=storage)
                 config = dict(runtime.raw_config)
                 effective_credential_id = (
                     runtime.stable_credential_id or runtime.credential_id or ""
                 )
             messages, fingerprint, coverage, material = _build_generation_input(
-                snapshot=snapshot,
+                snapshot={**snapshot, "file_count": len(source_rows)},
                 raw_material=candidates,
                 config=config,
                 effective_credential_id=effective_credential_id,
             )
             fingerprint = hashlib.sha256(
                 json.dumps(
-                    {"input_fingerprint": fingerprint, "fallback_display": fallback_display},
+                    {
+                        "input_fingerprint": fingerprint,
+                        "fallback_display": fallback_display,
+                        "publication_signature": publication_signature,
+                        "catalog_only": catalog_only,
+                    },
                     sort_keys=True,
                     default=str,
                 ).encode()
@@ -739,6 +789,8 @@ def generate_weekly_explanation(
                         "config": config,
                         "credential": effective_credential_id,
                         "fallback_display": fallback_display,
+                        "publication_signature": publication_signature,
+                        "catalog_only": catalog_only,
                     },
                     sort_keys=True,
                     default=str,
@@ -751,6 +803,8 @@ def generate_weekly_explanation(
             }
         coverage.update(
             {
+                "publication_signature": publication_signature,
+                "publication_count": len(source_rows),
                 "candidate_count": len(candidates),
                 "selection": selection,
                 "call_count": 0,
@@ -782,10 +836,12 @@ def generate_weekly_explanation(
         cached_failure = _failed_fingerprint(previous, fingerprint)
         force = force or (retry_failed and cached_failure)
         if not force and cached_failure:
-            return _public_explanation(previous)
+            return _publication_explanation(snapshot, source_rows, has_backfill, previous)
         claim = storage.claim_weekly_explanation(attempt, lease_ttl_seconds=lease_ttl, force=force)
         if claim["state"] == "complete":
-            return _public_explanation(claim["explanation"])
+            return _publication_explanation(
+                snapshot, source_rows, has_backfill, claim["explanation"]
+            )
         if claim["state"] == "busy":
             waiting_until = time.monotonic() + lease_ttl
             while time.monotonic() < waiting_until:
@@ -796,21 +852,21 @@ def generate_weekly_explanation(
                     and _failed_fingerprint(previous, fingerprint)
                     and not previous.get("claim_token")
                 ):
-                    return _public_explanation(previous)
+                    return _publication_explanation(snapshot, source_rows, has_backfill, previous)
                 claim = storage.claim_weekly_explanation(attempt, lease_ttl_seconds=lease_ttl)
                 if claim["state"] == "complete":
-                    return _public_explanation(claim["explanation"])
+                    return _publication_explanation(
+                        snapshot, source_rows, has_backfill, claim["explanation"]
+                    )
                 if claim["state"] == "claimed":
                     break
             else:
                 raise RuntimeError("Weekly explanation generation is still in progress")
         deadline = time.monotonic() + MAX_GENERATION_SECONDS
-        status, mode, internal_error = "complete", "empty", ""
-        zh, en = "本周暂无新资料。", "No new material this week."
-        if not empty:
+        status, mode, internal_error = "complete", "empty" if empty else "catalog", ""
+        zh, en = _catalog_explanation(snapshot, source_rows, has_backfill)
+        if not empty and not catalog_only:
             status, mode = "failed", "fallback"
-            zh = _render_guide([], fallback_rows, lang="zh", fallback=True)
-            en = _render_guide([], fallback_rows, lang="en", fallback=True)
             active = generator or ChatRuntimeWeeklyExplanationGenerator(storage, runtime=runtime)
             for call in range(2):
                 try:
@@ -823,7 +879,10 @@ def generate_weekly_explanation(
                         )
                     timeout = min(
                         MAX_CALL_SECONDS,
-                        max(0.01, _float_setting(config.get("timeout_seconds"), default=60.0)),
+                        max(
+                            0.01,
+                            _float_setting(config.get("timeout_seconds"), default=60.0),
+                        ),
                         deadline - time.monotonic(),
                     )
                     if timeout <= 0:
@@ -842,6 +901,9 @@ def generate_weekly_explanation(
                     if time.monotonic() > deadline:
                         raise TimeoutError("Weekly generation deadline exhausted")
                     zh, en = _parse_reader_output(raw, material)
+                    if has_backfill:
+                        zh += "\n\n本期另有历史资料补录。"
+                        en += "\n\nHistorical material was also added to the library."
                     coverage["recommendation_count"] = len(json.loads(raw)["zh"]["articles"])
                     status, mode, internal_error = "complete", "ai", ""
                     break
@@ -890,7 +952,7 @@ def generate_weekly_explanation(
         persisted = finalized["explanation"]
         if persisted is None:
             raise RuntimeError("Weekly explanation claim disappeared before finalization")
-        return _public_explanation(persisted)
+        return _publication_explanation(snapshot, source_rows, has_backfill, persisted)
     finally:
         storage.close()
 
@@ -921,11 +983,12 @@ def preview_weekly_explanation(*, db_path: str, snapshot_id: str) -> dict[str, A
                 sort_keys=True,
             ).encode()
         ).hexdigest()
-        candidates, selection = _select_material(members)
+        publications, _ = weekly_publications(storage, snapshot)
+        candidates, selection = _select_material(publications)
         config = get_ai_function_section("weekly_explanation")
         try:
             _, _, coverage, _ = _build_generation_input(
-                snapshot=snapshot,
+                snapshot={**snapshot, "file_count": len(publications)},
                 raw_material=candidates,
                 config=config,
                 effective_credential_id="",
@@ -949,11 +1012,15 @@ def preview_weekly_explanation(*, db_path: str, snapshot_id: str) -> dict[str, A
 
 
 def regenerate_weekly_explanation(
-    *, db_path: str, snapshot_id: str, generator=None
+    *, db_path: str, snapshot_id: str, generator=None, catalog_only: bool = False
 ) -> dict[str, Any]:
     before = preview_weekly_explanation(db_path=db_path, snapshot_id=snapshot_id)
     explanation = generate_weekly_explanation(
-        db_path=db_path, snapshot_id=snapshot_id, generator=generator, force=True
+        db_path=db_path,
+        snapshot_id=snapshot_id,
+        generator=generator,
+        force=True,
+        catalog_only=catalog_only,
     )
     after = preview_weekly_explanation(db_path=db_path, snapshot_id=snapshot_id)
     if before["membership_sha256"] != after["membership_sha256"]:
@@ -992,14 +1059,9 @@ def get_weekly_explanation(*, db_path: str, snapshot_id: str) -> dict[str, Any]:
         snapshot = storage.get_weekly_snapshot(snapshot_id=normalized_snapshot_id)
         if snapshot is None:
             raise WeeklySnapshotNotFoundError(normalized_snapshot_id)
-        explanation = storage.get_weekly_explanation(snapshot_id=normalized_snapshot_id)
+        return _read_publication_explanation(storage, snapshot)
     finally:
         storage.close()
-    return (
-        _public_explanation(explanation)
-        if explanation is not None
-        else _missing_explanation(normalized_snapshot_id)
-    )
 
 
 def get_latest_weekly_explanation(*, db_path: str) -> dict[str, Any] | None:
@@ -1008,15 +1070,9 @@ def get_latest_weekly_explanation(*, db_path: str) -> dict[str, Any] | None:
         snapshot = storage.get_latest_weekly_snapshot(now=_utc_now())
         if snapshot is None:
             return None
-        snapshot_id = str(snapshot["id"])
-        explanation = storage.get_weekly_explanation(snapshot_id=snapshot_id)
+        return _read_publication_explanation(storage, snapshot)
     finally:
         storage.close()
-    return (
-        _public_explanation(explanation)
-        if explanation is not None
-        else _missing_explanation(snapshot_id)
-    )
 
 
 def generate_weekly_explanation_for_period(
