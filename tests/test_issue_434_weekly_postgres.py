@@ -9,7 +9,10 @@ import pytest
 import yaml
 
 from ai_actuarial.api.services import weekly_explanations as weekly
-from ai_actuarial.api.services.weekly_updates import get_weekly_update_summary_files
+from ai_actuarial.api.services.weekly_updates import (
+    current_utc_iso_week_period,
+    get_weekly_update_summary_files,
+)
 from ai_actuarial.storage import Storage
 from tests.postgres_helpers import postgres_url_for_path
 from tests.test_issue_267_weekly_explanations import (
@@ -189,6 +192,32 @@ def test_historical_guide_only_recommends_verified_in_week_publications(tmp_path
         assert all(f"report-{number:03d}.pdf" not in guide for number in (0, 3, 4, 5))
     assert "另有历史资料补录" in revision["explanation"]["explanation_zh"]
     assert archived == get_weekly_update_summary_files(**reference)
+
+
+def test_open_week_source_counts_active_intake_without_a_local_file(tmp_path):
+    from ai_actuarial.api.services.read import list_source_portals
+
+    db_path, _, _ = _write_config(tmp_path)
+    week_start, _ = current_utc_iso_week_period()
+    first_seen = (datetime.fromisoformat(week_start) + timedelta(days=1)).isoformat()
+    _seed_files(db_path, count=2, first_seen=first_seen)
+    db = postgres_url_for_path(db_path)
+    storage = Storage(db)
+    try:
+        storage._conn.execute("UPDATE files SET source_site = 'iaa', local_path = NULL")
+        storage._conn.execute(
+            "UPDATE files SET deleted_at = ? WHERE url = ?",
+            (first_seen, "https://example.com/report-001.pdf"),
+        )
+    finally:
+        storage.close()
+    source = next(
+        p for p in list_source_portals(db_path=db)["portals"] if p["portal_key"] == "iaa-papers"
+    )
+    (intake,) = source["intake_updates"]
+    assert intake["acquired_on"] == first_seen[:10]
+    assert intake["new_count"] == 1 and intake["backfill_count"] == intake["other_count"] == 0
+    assert [row["url"] for row in intake["files"]] == ["https://example.com/report-000.pdf"]
 
 
 def test_five_historical_ids_isolated_replay_receipts(tmp_path, monkeypatch):

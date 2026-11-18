@@ -235,11 +235,17 @@ def _recent_intake(storage: Storage) -> Iterator[tuple[dict[str, Any], str, str 
     offset = 0
     while True:
         rows, total = storage.query_files_with_catalog(
-            first_seen_from=start, first_seen_before=end, limit=500, offset=offset
+            first_seen_from=start,
+            first_seen_before=end,
+            order_by="id",
+            include_deleted=True,
+            limit=500,
+            offset=offset,
         )
         for row in rows:
-            timing, published_on = publication_timing(row, start[:10], end[:10])
-            yield row, timing, published_on
+            if row["deleted_at"] is None:
+                timing, published_on = publication_timing(row, start[:10], end[:10])
+                yield row, timing, published_on
         offset += len(rows)
         if not rows or offset >= total:
             break
