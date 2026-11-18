@@ -644,6 +644,9 @@ class _FakeStorage:
     def _ready_data_builder_metadata_snapshot(self, _url: str):
         return {}
 
+    def get_agentic_ready_publication_state(self, **_kwargs):
+        return {}
+
     def _lock_postgres_key(self, *_args):
         return None
 
@@ -743,6 +746,7 @@ class _FakeKB:
         self.embedding_provider = "qwen" if dimension == 1024 else "openai"
         self.embedding_model = "qwen-embedding" if dimension == 1024 else "text-embedding-3-large"
         self.chunk_profile_id = f"profile:{kb_id}"
+        self.manifest_profile = "general"
 
 
 class _FakeManager:
@@ -794,6 +798,7 @@ def _apply_payload(
     ready_rows: list,
     *,
     ready_pending: bool = False,
+    ready_checks: list[tuple[str, str]] | None = None,
     ready_builder=None,
 ) -> dict:
     def successful_ready_builder(runtime_instance, _storage, kb, urls):
@@ -807,6 +812,7 @@ def _apply_payload(
             "target": target,
             "items": items,
             "ready_pending": ready_pending,
+            "ready_checks": ready_checks or [],
             "approved_categories": ["AI", "Pricing", "Other"],
         },
         runtime_factory=lambda: _FakeRuntime(tmp_path),
@@ -1027,6 +1033,76 @@ def test_additive_reactivation_preserves_retired_history_and_unrelated_rows(
     assert repeated["acknowledgements"][0]["status"] == "already_current"
     assert repeated["acknowledgements"][0]["source_site"] == "cas"
     assert ready == []
+
+
+@pytest.mark.parametrize("all_kbs_confirmed", [False, True])
+def test_already_current_batch_requires_ready_proof_in_both_china_kbs(
+    tmp_path: Path, monkeypatch, all_kbs_confirmed: bool
+) -> None:
+    monkeypatch.setattr(capacity, "ensure_capacity", lambda **_kwargs: None)
+    monkeypatch.setattr(
+        capacity, "capacity_status", lambda **_kwargs: {"status": "ok", "percent_used": 70}
+    )
+    storage = _FakeStorage(tmp_path)
+    url = "https://example.test/current-ai.pdf"
+    item = _item(url, b"%PDF-1.7\nexisting document", "AI in pricing.")
+    ready_builds: list = []
+    first = _apply_payload(tmp_path, storage, "china", [item], ready_builds)
+    assert first["acknowledgements"][0]["status"] == "written"
+    ready_builds.clear()
+
+    checked = []
+
+    def confirm(_storage, kb, articles):
+        assert articles == {(url, item["raw_sha256"])}
+        checked.append(kb.kb_id)
+        if kb.kb_id == "ai" or all_kbs_confirmed:
+            return {"index_version_id": f"index-{kb.kb_id}", "publication_id": f"ready-{kb.kb_id}"}
+        return None
+
+    monkeypatch.setattr(worker, "_confirm_current_ready", confirm)
+    retry = _apply_payload(tmp_path, storage, "china", [item], ready_builds)
+    assert retry["acknowledgements"][0]["status"] == "already_current"
+    assert checked == ["ai", "all"]
+    assert retry["ready_status"] == ("succeeded" if all_kbs_confirmed else "not_required")
+    assert set(retry["ready"]) == ({"ai", "all"} if all_kbs_confirmed else set())
+    assert ready_builds == []
+
+
+@pytest.mark.parametrize("already_searchable", [False, True])
+def test_ready_only_retry_checks_exact_articles_without_resending_source(
+    tmp_path: Path, monkeypatch, already_searchable: bool
+) -> None:
+    url = "https://example.test/history.pdf"
+    digest = "a" * 64
+    builds: list = []
+
+    def confirm(_storage, kb, articles):
+        assert articles == {(url, digest)}
+        if already_searchable or (kb.kb_id, []) in builds:
+            return {"index_version_id": f"index-{kb.kb_id}", "publication_id": f"ready-{kb.kb_id}"}
+        return None
+
+    monkeypatch.setattr(worker, "_confirm_current_ready", confirm)
+    storage = _FakeStorage(tmp_path)
+    result = _apply_payload(
+        tmp_path, storage, "china", [], builds, ready_pending=True, ready_checks=[(url, digest)]
+    )
+    assert result["ready_status"] == "succeeded"
+    assert result["acknowledgements"] == []
+    assert builds == ([] if already_searchable else [("ai", []), ("all", [])])
+
+    if not already_searchable:
+        assert result["ready"]["ai"]["confirmed_publication"] == {
+            "index_version_id": "index-ai",
+            "publication_id": "ready-ai",
+        }
+        monkeypatch.setattr(worker, "_confirm_current_ready", lambda *_args: None)
+        result = _apply_payload(
+            tmp_path, storage, "china", [], builds, ready_pending=True, ready_checks=[(url, digest)]
+        )
+        assert result["ready_status"] == "failed"
+        assert set(result["ready_error"]) == {"ai", "all"}
 
 
 @pytest.mark.parametrize(

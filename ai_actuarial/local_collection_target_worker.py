@@ -1078,6 +1078,79 @@ def _refresh_ready(runtime: Any, storage: Any, kb: Any, file_urls: list[str]) ->
     }
 
 
+def _confirm_current_ready(
+    storage: Any, kb: Any, articles: set[tuple[str, str]]
+) -> dict[str, Any] | None:
+    from ai_actuarial.agentic_rag.ready_data_builder import validate
+    from ai_actuarial.agentic_rag.ready_data_tools import _read_jsonl
+    from ai_actuarial.api.services.rag_admin import (
+        _ready_data_root,
+        _validate_recorded_ready_publication,
+    )
+
+    profile = kb.manifest_profile
+    with storage.transaction(read_snapshot=True):
+        active = storage.get_agentic_ready_publication_state(kb_id=kb.kb_id, profile=profile).get(
+            "active_publication"
+        )
+        if not active or active["status"] != "active" or not active["index_version_id"]:
+            return None
+        source = storage.get_agentic_ready_source_state(kb_id=kb.kb_id, profile=profile)
+        if (
+            source["state"] != "fresh"
+            or source["evaluated_source_version_kind"] != active["source_version_kind"]
+            or source["evaluated_source_version_id"] != active["source_version_id"]
+        ):
+            return None
+        index_id = active["index_version_id"]
+        urls = sorted({url for url, _ in articles})
+        placeholders = ", ".join("?" for _ in urls)
+        rows = storage._conn.execute(
+            f"""
+            SELECT DISTINCT sets.file_url, files.sha256
+            FROM kb_ready_index_state ready
+            JOIN kb_index_versions version ON version.index_version_id = ready.index_version_id
+            JOIN kb_index_items items ON items.index_version_id = ready.index_version_id
+            JOIN global_chunks chunks ON chunks.chunk_id = items.chunk_id
+            JOIN file_chunk_sets sets ON sets.chunk_set_id = chunks.chunk_set_id
+            JOIN rag_kb_files members ON members.kb_id = ready.kb_id
+                AND members.file_url = sets.file_url
+            JOIN files ON files.url = sets.file_url
+            WHERE ready.kb_id = ? AND ready.index_version_id = ?
+              AND version.status = 'ready' AND files.deleted_at IS NULL
+              AND sets.file_url IN ({placeholders})
+            """,
+            (kb.kb_id, index_id, *urls),
+        ).fetchall()
+        if {(row[0], row[1]) for row in rows} != articles:
+            return None
+    validation = _validate_recorded_ready_publication(
+        active, validator=validate, allowed_output_root=str(_ready_data_root().resolve())
+    )
+    if not validation["valid"] or "doc_catalog.jsonl" not in active["artifact_files"]:
+        return None
+    catalog_urls = {
+        row.get("file_url")
+        for row in _read_jsonl(Path(active["output_dir"]) / "doc_catalog.jsonl")
+        if isinstance(row.get("rag_chunk_count"), int) and row["rag_chunk_count"] > 0
+    }
+    if not catalog_urls.issuperset(urls):
+        return None
+    return {"index_version_id": index_id, "publication_id": active["publication_id"]}
+
+
+def _confirm_target_ready(
+    storage: Any, knowledge_bases: dict[str, Any], articles: set[tuple[str, str]]
+) -> dict[str, Any]:
+    confirmed = {}
+    with storage.transaction(read_snapshot=True):
+        for kb_id, kb in knowledge_bases.items():
+            proof = _confirm_current_ready(storage, kb, articles)
+            if proof is not None:
+                confirmed[kb_id] = proof
+    return confirmed
+
+
 def _target_knowledge_bases(manager: Any, target: str) -> dict[str, Any]:
     expected_ids = ("ai", "all") if target == "china" else ("ai",)
     output = {}
@@ -3156,6 +3229,25 @@ def apply_batch(
     raw_items = payload.get("items") or []
     if not isinstance(raw_items, list) or len(raw_items) > MAX_BATCH_ITEMS:
         raise ValueError("target batch exceeds its item limit")
+    ready_pending = bool(payload.get("ready_pending"))
+    raw_ready_checks = payload.get("ready_checks", [])
+    if not isinstance(raw_ready_checks, list) or len(raw_ready_checks) > MAX_BATCH_ITEMS:
+        raise ValueError("target Ready checks exceed the item limit or are invalid")
+    if raw_ready_checks and (raw_items or not ready_pending):
+        raise ValueError("target Ready checks require a Ready-only retry")
+    ready_checks: set[tuple[str, str]] = set()
+    for check in raw_ready_checks:
+        if not isinstance(check, (list, tuple)) or len(check) != 2:
+            raise ValueError("target Ready check requires a URL and source SHA-256")
+        url, digest = check
+        if (
+            not isinstance(url, str)
+            or not url.startswith(("https://", "http://"))
+            or not isinstance(digest, str)
+            or not re.fullmatch(r"[0-9a-f]{64}", digest)
+        ):
+            raise ValueError("target Ready check requires a URL and source SHA-256")
+        ready_checks.add((url, digest))
     approved_categories = payload.get("approved_categories")
     if not isinstance(approved_categories, list) or not approved_categories:
         raise ValueError("target payload requires the current canonical category registry")
@@ -3249,18 +3341,37 @@ def apply_batch(
         ready: dict[str, Any] = {}
         ready_errors: dict[str, str] = {}
         ready_evidence: dict[str, list[str]] = {}
-        builder = ready_builder or _refresh_ready
-        for kb_id, kb in knowledge_bases.items():
-            urls = list(dict.fromkeys(pending_urls.get(kb_id, [])))
-            needs_ready = bool(urls) or bool(payload.get("ready_pending")) or metadata_ready_pending
-            if not needs_ready:
-                continue
-            try:
-                ready[kb_id] = builder(runtime, storage, kb, urls)
-            except Exception as exc:
-                ready_errors[kb_id] = str(exc)
-                if isinstance(exc, _NativeTaskFailure):
-                    ready_evidence[kb_id] = exc.diagnostic_evidence
+        if not any(pending_urls.values()) and not metadata_ready_pending:
+            articles = (
+                ready_checks
+                if ready_pending
+                else {(ack["url"], ack["raw_sha256"]) for ack in acknowledgements}
+            )
+            confirmed = (
+                _confirm_target_ready(storage, knowledge_bases, articles) if articles else {}
+            )
+            if confirmed.keys() == knowledge_bases.keys():
+                ready = confirmed
+        if not ready:
+            builder = ready_builder or _refresh_ready
+            for kb_id, kb in knowledge_bases.items():
+                urls = list(dict.fromkeys(pending_urls.get(kb_id, [])))
+                if not urls and not ready_pending and not metadata_ready_pending:
+                    continue
+                try:
+                    ready[kb_id] = builder(runtime, storage, kb, urls)
+                except Exception as exc:
+                    ready_errors[kb_id] = str(exc)
+                    if isinstance(exc, _NativeTaskFailure):
+                        ready_evidence[kb_id] = exc.diagnostic_evidence
+            if ready_checks and not ready_errors:
+                confirmed = _confirm_target_ready(storage, knowledge_bases, ready_checks)
+                ready_errors = {
+                    kb_id: "active Ready publication does not confirm every requested URL and SHA-256"
+                    for kb_id in knowledge_bases.keys() - confirmed.keys()
+                }
+                for kb_id, publication in confirmed.items():
+                    ready[kb_id]["confirmed_publication"] = publication
         ready_ok = bool(ready) and not ready_errors
         ready_status = "succeeded" if ready_ok else ("failed" if ready_errors else "not_required")
         pending_after = _read_pending_ready(data_root, target)
