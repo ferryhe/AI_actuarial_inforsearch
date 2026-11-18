@@ -159,7 +159,7 @@ vi.mock("./useChatSession", async () => {
 
 import { ApiError } from "@/lib/api";
 import Chat from "../Chat";
-import { clearChatDocumentScope, fetchDocumentMarkdown, queryChat } from "./api";
+import { clearChatDocumentScope, fetchDocumentMarkdown, fetchKnowledgeBases, queryChat } from "./api";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -202,6 +202,52 @@ beforeEach(() => {
 });
 
 afterEach(() => cleanup());
+
+it("uses the available AI knowledge base for Agentic Chat by default", async () => {
+  testState.routeState = null;
+  vi.mocked(fetchKnowledgeBases).mockResolvedValueOnce([
+    { kb_id: "all", name: "All" },
+    { kb_id: "ai", name: "AI" },
+  ]);
+  vi.mocked(queryChat).mockResolvedValue({ data: { response: "Found AI evidence" } });
+  const user = userEvent.setup();
+
+  render(<Chat />);
+
+  const agentic = screen.getByTestId("rag-mode-option-agentic");
+  const standard = screen.getByTestId("rag-mode-option-standard");
+  await waitFor(() => expect(agentic).toHaveAttribute("aria-pressed", "true"));
+  await user.type(screen.getByTestId("input-chat-message"), "Find AI evidence");
+  await user.click(screen.getByTestId("button-send-message"));
+  expect(await screen.findByText("Found AI evidence")).toBeInTheDocument();
+  expect(queryChat).toHaveBeenLastCalledWith(expect.objectContaining({
+    rag_mode: "agentic",
+    kb_ids: ["ai"],
+  }));
+
+  await user.click(standard);
+  expect(standard).toHaveAttribute("aria-pressed", "true");
+  await user.type(screen.getByTestId("input-chat-message"), "Use standard retrieval");
+  await user.click(screen.getByTestId("button-send-message"));
+  expect(queryChat).toHaveBeenLastCalledWith(expect.objectContaining({
+    message: "Use standard retrieval",
+    kb_ids: undefined,
+  }));
+  expect(vi.mocked(queryChat).mock.lastCall?.[0]).not.toHaveProperty("rag_mode");
+});
+
+it("keeps Standard available as the default when the AI knowledge base is unusable", async () => {
+  testState.routeState = null;
+  vi.mocked(fetchKnowledgeBases).mockResolvedValueOnce([
+    { kb_id: "all", name: "All" },
+    { kb_id: "ai", name: "AI", usable: false },
+  ]);
+
+  render(<Chat />);
+  expect(await screen.findByTestId("kb-sidebar-option-ai")).toBeDisabled();
+  expect(screen.getByTestId("rag-mode-option-standard")).toHaveAttribute("aria-pressed", "true");
+  expect(screen.getByTestId("rag-mode-option-agentic")).toHaveAttribute("aria-pressed", "false");
+});
 
 it("uses the server's daily quota for guest Chat with existing history", async () => {
   testState.guest = true;

@@ -165,7 +165,7 @@ def test_chat_supports_agentic_rag_mode_and_endpoint_contract():
     i18n_src = I18N_TS.read_text(encoding="utf-8")
 
     assert 'type RagMode = "standard" | "agentic"' in src
-    assert 'const [ragMode, setRagMode] = useState<RagMode>("standard")' in src
+    assert 'const ragMode = chosenRagMode ?? (defaultAiKb ? "agentic" : "standard");' in src
     assert "manifest_profile?: string" in src
     assert "agentic_ready_manifest?" in src
     assert 'requestRagMode === "agentic" && requestKbIds.length === 0' in src
@@ -182,8 +182,8 @@ def test_chat_supports_agentic_rag_mode_and_endpoint_contract():
     assert 't("chat.agentic_requires_ready_kb")' not in src
     assert 'requestRagMode === "agentic" && documentInputs.length === 0' in src
     assert 'if (ragMode === "agentic")' in src
-    assert "prev.includes(id) ? [] : [id]" in src
-    assert "prev.filter((kbId) => isChatKnowledgeBaseAvailable" in src
+    assert "setSelectedKbs(selectedKbs.includes(id) ? [] : [id]);" in src
+    assert "setSelectedKbs(available.length ? available.slice(0, 1) : null);" in src
     assert "data-testid={`rag-mode-option-${nextMode}`}" in src
     assert '<Sparkles className="h-3 w-3" />' in src
     assert '<Search className="h-3 w-3" />' in src
