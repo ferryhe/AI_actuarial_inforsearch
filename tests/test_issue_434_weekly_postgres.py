@@ -88,6 +88,8 @@ def test_failed_new_prompt_preserves_existing_success(tmp_path, monkeypatch):
 
 
 def test_historical_guide_only_recommends_verified_in_week_publications(tmp_path):
+    from ai_actuarial.api.services.read import list_source_portals
+
     db_path, _, _ = _write_config(tmp_path)
     _seed_files(db_path, count=6)
     db = postgres_url_for_path(db_path)
@@ -98,6 +100,7 @@ def test_historical_guide_only_recommends_verified_in_week_publications(tmp_path
         ):
             url = f"https://example.com/report-{index:03d}.pdf"
             storage._conn.execute("UPDATE files SET published_time = ? WHERE url = ?", (day, url))
+            storage._conn.execute("UPDATE files SET source_site = 'iaa' WHERE url = ?", (url,))
             if day:
                 fact = {
                     "value": day,
@@ -164,6 +167,15 @@ def test_historical_guide_only_recommends_verified_in_week_publications(tmp_path
     assert first["backfill_count"] == second["backfill_count"] == 2
     assert first["files"][0]["published_time"] == "2026-03-14"
     assert [row["published_time"] for row in second["files"]] == ["2026-03-13"]
+    source = next(
+        p for p in list_source_portals(db_path=db)["portals"] if p["portal_key"] == "iaa-papers"
+    )
+    (intake,) = source["intake_updates"]
+    assert intake["acquired_on"] == "2026-03-10"
+    assert intake["new_count"] == first["total"]
+    assert intake["backfill_count"] == first["backfill_count"]
+    assert intake["other_count"] == 2
+    assert {file["url"] for file in intake["files"]} == {file["url"] for file in archived["files"]}
 
     generator = FakeWeeklyExplanationGenerator()
     revision = weekly.regenerate_weekly_explanation(

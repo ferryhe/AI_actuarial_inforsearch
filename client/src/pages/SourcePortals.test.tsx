@@ -16,6 +16,9 @@ const state = vi.hoisted(() => ({
       "source_portals.empty": "No source portals are available yet.",
       "source_portals.open_source": "Open source directory",
       "source_portals.updates": "Periodic updates",
+      "source_portals.new_count": "{count} published that week",
+      "weekly.backfill_count": "{count} verified backfills",
+      "weekly.other_intake_count": "{count} pending or other records",
       "source_portals.no_updates": "Future updates to this directory will be introduced here.",
       "source_portals.search_label": "Search source portals",
       "source_portals.search_placeholder": "Search by name, institution, or overview…",
@@ -100,6 +103,36 @@ beforeEach(() => {
   state.lang = "en";
 });
 afterEach(() => cleanup());
+
+it("shows the shared intake counts and opens a historically published file", async () => {
+  const first = "https://actuaries.org/prompting.pdf";
+  const second = "https://actuaries.org/framework.pdf";
+  const published = {
+    ...portal,
+    portal_key: "iaa-papers",
+    intake_updates: [{
+      acquired_on: "2026-11-09",
+      new_count: 0,
+      backfill_count: 2,
+      other_count: 0,
+      files: [
+        { url: first, title: "Prompting for Actuaries", timing: "backfill", published_on: "2026-11-07" },
+        { url: second, title: "A Framework for Considering AI Risk", timing: "backfill", published_on: "2026-11-07" },
+      ],
+    }],
+  };
+  state.apiGet.mockResolvedValue({ portals: [published] });
+  const { location } = renderPortalApp();
+  expect(await screen.findByTestId("source-portal-intake-counts")).toHaveTextContent("0 published that week · 2 verified backfills · 0 pending or other records");
+  await userEvent.click(screen.getByRole("link", { name: "Research Topics" }));
+  const entry = await screen.findByTestId("source-portal-intake-day");
+  expect(entry).toHaveTextContent("Nov 9, 2026");
+  expect(entry).toHaveTextContent("2 verified backfills");
+  expect(screen.getByText("The directory now includes “New research”.")).not.toBeVisible();
+  const link = screen.getByRole("link", { name: "Prompting for Actuaries" });
+  expect(link.getAttribute("href")).toContain(encodeURIComponent(first));
+  expect(location.history).toContain("/source-portals/iaa-papers");
+});
 
 it.each(["en", "zh"])("shows three SOA AI entry links in %s and keeps other cards' single link", async (language) => {
   state.lang = language;

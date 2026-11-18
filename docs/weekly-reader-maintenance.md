@@ -10,6 +10,8 @@ The scoped files response includes `backfill_count` for records whose verified p
 
 A weekly archive may store verified publisher evidence in `metadata.weekly_publication_date_evidence` under the member URL. The fact includes the current `catalog_date` (explicitly `null` when absent) and the publisher's `source_url`. This keeps the publisher's evidence with the report and the document-bound catalog annotation intact.
 
+Source portals group the latest published archive and the open week's intake by source and UTC collection day. Both views use the same verified source date and UTC week classification. A publication captured on a later day of the same week counts as new in both views.
+
 Invalid JSON, an overlong response, or a timeout gets at most one smaller recovery request, sharing a 120-second deadline with a 60-second maximum per call. SDK retries and the chat client's internal recovery are disabled. Authentication/configuration and unsupported source claims do not retry. The waiting caller enforces the deadline even for an injected generator that ignores its timeout; a late daemon result cannot finalize a record. The production SDK also receives the call timeout. Generation audit data lives in internal `coverage`, outside reader copy.
 
 ## Per-snapshot maintenance

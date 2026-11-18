@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
-from typing import Any, Mapping
+from typing import Any, Iterator, Mapping
 
 from ai_actuarial.shared_runtime import coerce_bool, parse_int_clamped
 from ai_actuarial.storage import Storage
@@ -155,16 +155,57 @@ def _project_weekly_file(row: dict[str, Any]) -> dict[str, Any]:
     return {field: row.get(field) for field in WEEKLY_UPDATE_FILE_FIELDS}
 
 
-def weekly_publications(
+def publication_timing(
+    row: Mapping[str, Any], start: str, end: str, reviewed: Any = None
+) -> tuple[str, str | None]:
+    """Classify one intake record against its UTC week using publisher evidence."""
+    value = row.get("published_time")
+    enrichment = (row.get("bilingual_metadata") or {}).get("hub_enrichment")
+    facts = enrichment.get("date_facts") if isinstance(enrichment, dict) else None
+    fact = facts.get("publication_date") if isinstance(facts, dict) else None
+    if (
+        isinstance(reviewed, dict)
+        and "catalog_date" in reviewed
+        and reviewed["catalog_date"] == value
+        and re.fullmatch(r"https?://[^\s]+", str(reviewed.get("source_url") or ""))
+    ):
+        fact, value = reviewed, reviewed.get("value")
+    if not isinstance(value, str) or len(value) not in {4, 7, 10}:
+        return "other", None
+    precision, suffix = {
+        4: ("year", "-01-01"),
+        7: ("month", "-01"),
+        10: ("day", ""),
+    }[len(value)]
+    if not (
+        isinstance(fact, dict)
+        and fact.get("semantic") == "publication"
+        and fact.get("precision") == precision
+        and fact.get("value") == value
+        and isinstance(fact.get("evidence"), str)
+        and fact["evidence"].strip()
+    ):
+        return "other", None
+    try:
+        day = date.fromisoformat(value + suffix)
+    except ValueError:
+        return "other", None
+    if day.isoformat() != value + suffix:
+        return "other", None
+    if value < start[: len(value)]:
+        return "backfill", value
+    if precision == "day" and start <= value < end and re.fullmatch(r"https?://[^\s]+", row["url"]):
+        return "new", value
+    return "other", value
+
+
+def weekly_intake(
     storage: Storage, snapshot: Mapping[str, Any]
-) -> tuple[list[dict[str, Any]], int]:
-    """Return verified publications in the week and a count of earlier publications."""
+) -> Iterator[tuple[dict[str, Any], str, str | None]]:
     start, end = snapshot["period_start"][:10], snapshot["period_end"][:10]
     reviewed_dates = (snapshot.get("metadata") or {}).get("weekly_publication_date_evidence")
     if not isinstance(reviewed_dates, dict):
         reviewed_dates = {}
-    published = []
-    backfill_count = 0
     offset = 0
     while offset < snapshot["file_count"]:
         rows, _ = storage.list_weekly_snapshot_files(
@@ -178,46 +219,27 @@ def weekly_publications(
         offset += len(rows)
         for row in rows:
             if not row.pop("file_available"):
-                continue
-            value = row.get("published_time")
-            enrichment = (row.get("bilingual_metadata") or {}).get("hub_enrichment")
-            facts = enrichment.get("date_facts") if isinstance(enrichment, dict) else None
-            fact = facts.get("publication_date") if isinstance(facts, dict) else None
-            reviewed = reviewed_dates.get(row["url"])
-            if (
-                isinstance(reviewed, dict)
-                and "catalog_date" in reviewed
-                and reviewed.get("catalog_date") == value
-                and re.fullmatch(r"https?://[^\s]+", str(reviewed.get("source_url") or ""))
-            ):
-                fact, value = reviewed, reviewed.get("value")
-            if not isinstance(value, str) or len(value) not in {4, 7, 10}:
-                continue
-            precision, suffix = {
-                4: ("year", "-01-01"),
-                7: ("month", "-01"),
-                10: ("day", ""),
-            }[len(value)]
-            if not (
-                isinstance(fact, dict)
-                and fact.get("semantic") == "publication"
-                and fact.get("precision") == precision
-                and fact.get("value") == value
-                and isinstance(fact.get("evidence"), str)
-                and fact["evidence"].strip()
-            ):
-                continue
-            try:
-                day = date.fromisoformat(value + suffix)
-            except ValueError:
-                continue
-            if day.isoformat() != value + suffix:
-                continue
-            if value < start[: len(value)]:
-                backfill_count += 1
-            elif precision == "day" and start <= value < end:
-                if re.match(r"^https?://[^\s]+$", row["url"]):
-                    published.append({**row, "published_time": value})
+                yield row, "other", None
+            else:
+                timing, published_time = publication_timing(
+                    row, start, end, reviewed_dates.get(row["url"])
+                )
+                yield row, timing, published_time
+
+
+def weekly_publications(
+    storage: Storage, snapshot: Mapping[str, Any]
+) -> tuple[list[dict[str, Any]], int]:
+    """Return verified publications in the week and a count of earlier publications."""
+    published = []
+    backfill_count = 0
+    for row, timing, published_time in weekly_intake(storage, snapshot):
+        if timing == "new":
+            row.pop("source_site")
+            row.pop("source_page_url")
+            published.append({**row, "published_time": published_time})
+        elif timing == "backfill":
+            backfill_count += 1
     published.sort(
         key=lambda row: (
             -date.fromisoformat(row["published_time"]).toordinal(),
