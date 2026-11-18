@@ -160,6 +160,9 @@ def weekly_publications(
 ) -> tuple[list[dict[str, Any]], bool]:
     """Use source-backed publication dates for the public reading list."""
     start, end = snapshot["period_start"][:10], snapshot["period_end"][:10]
+    reviewed_dates = (snapshot.get("metadata") or {}).get("weekly_publication_date_evidence")
+    if not isinstance(reviewed_dates, dict):
+        reviewed_dates = {}
     published = []
     has_backfill = False
     offset = 0
@@ -175,11 +178,19 @@ def weekly_publications(
         offset += len(rows)
         for row in rows:
             value = row.get("published_time")
-            if not isinstance(value, str) or len(value) not in {4, 7, 10}:
-                continue
             enrichment = (row.get("bilingual_metadata") or {}).get("hub_enrichment")
             facts = enrichment.get("date_facts") if isinstance(enrichment, dict) else None
             fact = facts.get("publication_date") if isinstance(facts, dict) else None
+            reviewed = reviewed_dates.get(row["url"])
+            if (
+                isinstance(reviewed, dict)
+                and isinstance(value, str)
+                and reviewed.get("catalog_date") == value
+                and re.fullmatch(r"https?://[^\s]+", str(reviewed.get("source_url") or ""))
+            ):
+                fact, value = reviewed, reviewed.get("value")
+            if not isinstance(value, str) or len(value) not in {4, 7, 10}:
+                continue
             precision, suffix = {
                 4: ("year", "-01-01"),
                 7: ("month", "-01"),
@@ -204,7 +215,7 @@ def weekly_publications(
                 has_backfill = True
             elif precision == "day" and start <= value < end:
                 if re.match(r"^https?://[^\s]+$", row["url"]):
-                    published.append(row)
+                    published.append({**row, "published_time": value})
     published.sort(
         key=lambda row: (
             -date.fromisoformat(row["published_time"]).toordinal(),

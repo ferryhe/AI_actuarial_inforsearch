@@ -113,14 +113,33 @@ def test_historical_guide_only_recommends_verified_in_week_publications(tmp_path
     finally:
         storage.close()
     snapshot = _snapshot(db_path)
+    storage = Storage(db)
+    try:
+        detail = storage.get_weekly_snapshot(snapshot_id=snapshot["id"])
+        detail["metadata"]["weekly_publication_date_evidence"] = {
+            "https://example.com/report-002.pdf": {
+                "catalog_date": "2026-03-09",
+                "value": "2026-03-14",
+                "semantic": "publication",
+                "precision": "day",
+                "evidence": "Published March 14, 2026",
+                "source_url": "https://example.com/publication-announcement",
+            }
+        }
+        storage._conn.execute(
+            "UPDATE weekly_snapshots SET metadata_json = ? WHERE id = ?",
+            (json.dumps(detail["metadata"]), snapshot["id"]),
+        )
+    finally:
+        storage.close()
     reference = {"db_path": db, "snapshot_id": snapshot["id"]}
     archived = get_weekly_update_summary_files(**reference)
     first = get_weekly_update_summary_files(**reference, published_only=True, limit=1)
     second = get_weekly_update_summary_files(**reference, published_only=True, offset=1)
     assert archived["total"] == 5
     assert first["total"] == 2
-    assert first["files"][0]["published_time"] == "2026-03-13"
-    assert [row["published_time"] for row in second["files"]] == ["2026-03-09"]
+    assert first["files"][0]["published_time"] == "2026-03-14"
+    assert [row["published_time"] for row in second["files"]] == ["2026-03-13"]
 
     generator = FakeWeeklyExplanationGenerator()
     revision = weekly.regenerate_weekly_explanation(
@@ -130,7 +149,7 @@ def test_historical_guide_only_recommends_verified_in_week_publications(tmp_path
     assert revision["explanation"]["generation_mode"] == "catalog"
     for locale in ("en", "zh"):
         guide = revision["explanation"][f"explanation_{locale}"]
-        assert guide.index("report-001.pdf") < guide.index("report-002.pdf")
+        assert guide.index("report-002.pdf") < guide.index("report-001.pdf")
         assert all(f"report-{number:03d}.pdf" not in guide for number in (0, 3, 4))
     assert "另有历史资料补录" in revision["explanation"]["explanation_zh"]
     assert archived == get_weekly_update_summary_files(**reference)
