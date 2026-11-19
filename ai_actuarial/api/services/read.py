@@ -9,8 +9,8 @@ from urllib.parse import urlsplit
 
 from ai_actuarial.api.services.weekly_updates import (
     current_utc_iso_week_period,
+    eastern_intake_day,
     publication_timing,
-    utc_intake_day,
     weekly_intake,
 )
 from ai_actuarial.shared_runtime import get_categories_config_path, load_yaml, parse_int_clamped
@@ -271,11 +271,12 @@ def _source_intake_updates(
     seen: set[tuple[str, str]] = set()
     for row, timing, published_on in _source_intake(storage):
         url = row["url"]
-        day = utc_intake_day(row["first_seen"])
+        first_seen = row["first_seen"]
+        day = eastern_intake_day(first_seen)
         if day is None:
             continue
         acquired_on = day.isoformat()
-        identity = (url, acquired_on)
+        identity = (url, first_seen)
         if identity in seen:
             continue
         seen.add(identity)
@@ -304,6 +305,7 @@ def _source_intake_updates(
             {
                 "url": url,
                 "title": row.get("title") or row.get("original_filename") or url,
+                "first_seen": first_seen,
                 "timing": timing,
                 "published_on": published_on,
                 "available": row.get("file_available", True),
