@@ -159,8 +159,11 @@ def _project_weekly_file(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def eastern_intake_day(first_seen: str | None) -> date | None:
+    value = first_seen or ""
     try:
-        timestamp = datetime.fromisoformat((first_seen or "").replace("Z", "+00:00"))
+        if len(value) <= 10:
+            return date.fromisoformat(value)
+        timestamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
         return None
     if timestamp.tzinfo is None:

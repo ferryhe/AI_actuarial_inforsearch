@@ -221,9 +221,10 @@ def test_source_and_weekly_guide_share_verified_publication_window(tmp_path):
     [
         ("2026-07-14T04:30:00Z", date(2026, 7, 14)),
         ("2026-11-10T04:30:00", date(2026, 11, 9)),
+        ("2026-11-10", date(2026, 11, 10)),
     ],
 )
-def test_eastern_intake_day_uses_daylight_saving_time(timestamp, expected):
+def test_eastern_intake_day_preserves_dates_and_converts_timestamps(timestamp, expected):
     assert eastern_intake_day(timestamp) == expected
 
 
