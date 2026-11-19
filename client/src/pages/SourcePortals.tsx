@@ -91,6 +91,17 @@ function localized(lang: string, zh: string, en: string) {
   return lang === "zh" ? zh : en;
 }
 
+function observationDescription(update: PortalUpdate, lang: string) {
+  if (lang === "zh") {
+    return update.description_zh
+      .replace(/^新发现(\d+)份AI资料(?=：)/, "发现 $1 条 AI 资料线索")
+      .replace(/^未发现新的AI资料。/, "未发现新的 AI 资料线索。");
+  }
+  return update.description_en
+    .replace(/^Found (\d+) new AI material(s?)(?=:)/, "Found $1 AI resource lead$2")
+    .replace(/^No new AI materials were found\./, "No new AI resource leads were found.");
+}
+
 function formatDate(value: string, lang: string) {
   const [year, month, day] = value.split("-").map(Number);
   return new Intl.DateTimeFormat(lang === "zh" ? "zh-CN" : "en-US", {
@@ -136,7 +147,8 @@ function PortalTimeline({ portal, returnPath }: { portal: SourcePortal; returnPa
               <time dateTime={day} className="text-sm font-semibold">{formatDate(day, lang)}</time>
               {observation ? (
                 <p className="mt-1 break-words text-sm leading-relaxed">
-                  {localized(lang, observation.description_zh, observation.description_en)}
+                  <span className="mr-2 font-medium">{t("source_portals.observation_label")}</span>{" "}
+                  <span>{observationDescription(observation, lang)}</span>
                 </p>
               ) : null}
               <p className="mt-1 text-xs text-muted-foreground">

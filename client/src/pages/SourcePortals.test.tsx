@@ -16,6 +16,7 @@ const state = vi.hoisted(() => ({
       "source_portals.empty": "No source portals are available yet.",
       "source_portals.open_source": "Open source directory",
       "source_portals.updates": "Periodic updates",
+      "source_portals.observation_label": state.lang === "zh" ? "采集观察" : "Collection observations",
       "source_portals.intake_total": "{count} collected records",
       "source_portals.intake_details": "Intake details ({count})",
       "source_portals.new_count": "{count} new materials",
@@ -117,7 +118,7 @@ it("shows each activity date once and opens the IAA intake on demand", async () 
       {
         acquired_on: "2026-11-09",
         description_zh: "发现两份资料。",
-        description_en: "Two leads were found.",
+        description_en: "Found 2 new AI materials: “Prompting for Actuaries”; “A Framework for Considering AI Risk”.",
       },
       {
         acquired_on: "2026-11-10",
@@ -147,7 +148,7 @@ it("shows each activity date once and opens the IAA intake on demand", async () 
   expect(observedOnly).toHaveTextContent("0 collected records");
   expect(observedOnly.querySelector("details")).toBeNull();
   expect(entry).toHaveTextContent("Nov 9, 2026");
-  expect(within(entry).getByText("Two leads were found.")).toBeVisible();
+  expect(within(entry).getByText("Found 2 AI resource leads: “Prompting for Actuaries”; “A Framework for Considering AI Risk”.")).toBeVisible();
   expect(within(entry).getByText(/2 collected records.*2 new materials/)).toBeVisible();
   expect(entry.querySelector("details")).not.toHaveAttribute("open");
   expect(screen.getByText("Prompting for Actuaries")).not.toBeVisible();
@@ -185,6 +186,48 @@ it("counts historical backfills from other sources and disables unavailable file
   expect(screen.getByText("Unavailable Report")).toBeVisible();
   expect(screen.queryByRole("link", { name: "Unavailable Report" })).toBeNull();
   expect(screen.queryByTestId("source-portal-original-link")).toBeNull();
+});
+
+it.each([
+  ["zh", "采集观察", "发现 1 条 AI 资料线索：「Spotlight on Andrea Cross」。 部分内容暂时无法查看。", "未发现新的 AI 资料线索。"],
+  ["en", "Collection observations", "Found 1 AI resource lead: “Spotlight on Andrea Cross”. Some content could not be checked.", "No new AI resource leads were found."],
+])("labels a discovered lead separately from a different backfill in %s", async (lang, label, lead, noLeads) => {
+  state.lang = lang;
+  state.apiGet.mockResolvedValue({ portals: [{
+    ...portal,
+    updates: [
+      {
+        acquired_on: "2026-11-10",
+        description_zh: "新发现1份AI资料：「Spotlight on Andrea Cross」。 部分内容暂时无法查看。",
+        description_en: "Found 1 new AI material: “Spotlight on Andrea Cross”. Some content could not be checked.",
+      },
+      {
+        acquired_on: "2026-11-09",
+        description_zh: "未发现新的AI资料。",
+        description_en: "No new AI materials were found.",
+      },
+    ],
+    intake_updates: [{
+      acquired_on: "2026-11-10", new_count: 0, backfill_count: 1, other_count: 0,
+      files: [{
+        url: "https://example.org/introduction-to-quantum-computing",
+        title: "Introduction to Quantum Computing",
+        timing: "backfill",
+        published_on: "2025-11-17",
+      }],
+    }],
+  }] });
+  renderPortalApp("/source-portals/soa-research-topics");
+
+  const [observedWithIntake, observedOnly] = await screen.findAllByTestId("source-portal-activity-day");
+  expect(within(observedWithIntake).getByText(label)).toBeVisible();
+  expect(within(observedWithIntake).getByText(lead)).toBeVisible();
+  expect(observedWithIntake).toHaveTextContent("1 collected records · 0 new materials · 1 verified backfills");
+  const details = within(observedWithIntake).getByTestId("source-portal-intake-details");
+  expect(details).not.toHaveAttribute("open");
+  await userEvent.click(within(details).getByText("Intake details (1)"));
+  expect(within(details).getByRole("link", { name: "Introduction to Quantum Computing" })).toBeVisible();
+  expect(within(observedOnly).getByText(noLeads)).toBeVisible();
 });
 
 it.each(["en", "zh"])("shows three SOA AI entry links in %s and keeps other cards' single link", async (language) => {
