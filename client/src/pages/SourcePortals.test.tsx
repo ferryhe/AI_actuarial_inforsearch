@@ -136,6 +136,32 @@ it("shows both new IAA papers by first collection date and opens a file", async 
   expect(location.history).toContain("/source-portals/iaa-papers");
 });
 
+it("counts historical backfills from other sources and disables unavailable file links", async () => {
+  const url = "https://example.org/2021.pdf";
+  state.apiGet.mockResolvedValue({
+    portals: [portal],
+    other_intake_updates: [{
+      acquired_on: "2026-10-12",
+      new_count: 0,
+      backfill_count: 1,
+      other_count: 1,
+      files: [
+        { url, title: "2021 Report", timing: "backfill", published_on: "2021", available: true },
+        { url: "https://example.org/archived.pdf", title: "Unavailable Report", timing: "other", published_on: null, available: false },
+      ],
+    }],
+  });
+  renderPortalApp();
+  await userEvent.click(await screen.findByRole("link", { name: "Other Sources" }));
+  const entry = await screen.findByTestId("source-portal-intake-day");
+  expect(entry).toHaveTextContent("Oct 12, 2026");
+  expect(entry).toHaveTextContent("0 new materials · 1 verified backfills · 1 pending or other records");
+  expect(screen.getByRole("link", { name: "2021 Report" }).getAttribute("href")).toContain(encodeURIComponent(url));
+  expect(screen.getByText("Unavailable Report")).toBeVisible();
+  expect(screen.queryByRole("link", { name: "Unavailable Report" })).toBeNull();
+  expect(screen.queryByTestId("source-portal-original-link")).toBeNull();
+});
+
 it.each(["en", "zh"])("shows three SOA AI entry links in %s and keeps other cards' single link", async (language) => {
   state.lang = language;
   const ai = {

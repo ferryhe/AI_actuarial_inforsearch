@@ -227,11 +227,19 @@ def list_sources(*, db_path: str) -> dict[str, Any]:
     return {"sources": sources, "source_options": options}
 
 
-def _recent_intake(storage: Storage) -> Iterator[tuple[dict[str, Any], str, str | None]]:
+def _source_intake(storage: Storage) -> Iterator[tuple[dict[str, Any], str, str | None]]:
     now = datetime.now(timezone.utc)
-    latest = storage.get_latest_weekly_snapshot(now=now.isoformat())
-    if latest is not None:
-        yield from weekly_intake(storage, latest)
+    closed_at = now.isoformat()
+    offset = 0
+    while True:
+        snapshots, total = storage.list_weekly_snapshots(limit=100, offset=offset)
+        for snapshot in snapshots:
+            if snapshot["period_end"] <= closed_at:
+                yield from weekly_intake(storage, snapshot)
+        offset += len(snapshots)
+        if not snapshots or offset >= total:
+            break
+
     start, end = current_utc_iso_week_period(now)
     offset = 0
     while True:
@@ -252,30 +260,35 @@ def _recent_intake(storage: Storage) -> Iterator[tuple[dict[str, Any], str, str 
             break
 
 
-def _source_intake_updates(storage: Storage) -> dict[str, list[dict[str, Any]]]:
+def _source_intake_updates(
+    storage: Storage, portal_keys: set[str]
+) -> dict[str | None, list[dict[str, Any]]]:
     by_host: dict[str, set[str]] = {}
     for portal in SOURCE_PORTALS:
         host = (urlsplit(portal.url).hostname or "").removeprefix("www.")
         by_host.setdefault(host, set()).add(portal.site_ids[0])
-    by_key: dict[str, dict[str, dict[str, Any]]] = {}
-    for row, timing, published_on in _recent_intake(storage):
+    by_key: dict[str | None, dict[str, dict[str, Any]]] = {}
+    seen: set[tuple[str, str]] = set()
+    for row, timing, published_on in _source_intake(storage):
         url = row["url"]
+        day = utc_intake_day(row["first_seen"])
+        if day is None:
+            continue
+        acquired_on = day.isoformat()
+        identity = (url, acquired_on)
+        if identity in seen:
+            continue
+        seen.add(identity)
+
         referrer = row.get("source_page_url") or ""
         site = row.get("source_site") or row.get("source_key") or ""
         portal_key = source_portal_for_observation(site, url, referrer)
         if portal_key is None:
             host = (urlsplit(referrer or url).hostname or "").removeprefix("www.")
             site_ids = by_host.get(host, set())
-            if len(site_ids) != 1:
-                continue
-            portal_key = source_portal_for_observation(next(iter(site_ids)), url, referrer)
-        if portal_key is None:
-            continue
-        day = utc_intake_day(row["first_seen"])
-        if day is None:
-            continue
-        acquired_on = day.isoformat()
-        days = by_key.setdefault(portal_key, {})
+            if len(site_ids) == 1:
+                portal_key = source_portal_for_observation(next(iter(site_ids)), url, referrer)
+        days = by_key.setdefault(portal_key if portal_key in portal_keys else None, {})
         update = days.setdefault(
             acquired_on,
             {
@@ -293,6 +306,7 @@ def _source_intake_updates(storage: Storage) -> dict[str, list[dict[str, Any]]]:
                 "title": row.get("title") or row.get("original_filename") or url,
                 "timing": timing,
                 "published_on": published_on,
+                "available": row.get("file_available", True),
             }
         )
     for days in by_key.values():
@@ -317,7 +331,10 @@ def list_source_portals(*, db_path: str) -> dict[str, list[dict[str, Any]]]:
             "SELECT portal_key, acquired_on, description_zh, description_en "
             "FROM source_portal_updates ORDER BY portal_key, acquired_on DESC"
         ).fetchall()
-        intake_updates = _source_intake_updates(storage)
+        portal_keys = {str(row[0]) for row in card_rows} or {
+            portal.portal_key for portal in SOURCE_PORTALS
+        }
+        intake_updates = _source_intake_updates(storage, portal_keys)
     finally:
         storage.close()
     cards = [
@@ -354,7 +371,7 @@ def list_source_portals(*, db_path: str) -> dict[str, list[dict[str, Any]]]:
                 "description_en": str(row[3]),
             }
         )
-    return {"portals": cards}
+    return {"portals": cards, "other_intake_updates": intake_updates.get(None, [])}
 
 
 def get_file_detail(

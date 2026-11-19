@@ -127,6 +127,10 @@ def test_source_and_weekly_guide_share_verified_publication_window(tmp_path):
             "UPDATE files SET deleted_at = ? WHERE url = ?",
             ("2026-03-18T00:00:00+00:00", "https://example.com/report-005.pdf"),
         )
+        storage._conn.execute(
+            "UPDATE files SET source_site = 'manual import' WHERE url = ?",
+            ("https://example.com/report-004.pdf",),
+        )
         detail = storage.get_weekly_snapshot(snapshot_id=snapshot["id"])
         detail["metadata"]["weekly_publication_date_evidence"] = {
             "https://example.com/report-002.pdf": {
@@ -158,6 +162,14 @@ def test_source_and_weekly_guide_share_verified_publication_window(tmp_path):
             "UPDATE weekly_snapshots SET metadata_json = ? WHERE id = ?",
             (json.dumps(detail["metadata"]), snapshot["id"]),
         )
+        storage.publish_weekly_snapshot(
+            {
+                "period_start": "2026-03-16T00:00:00+00:00",
+                "period_end": "2026-03-23T00:00:00+00:00",
+                "file_count": 0,
+            },
+            members=[],
+        )
     finally:
         storage.close()
     reference = {"db_path": db, "snapshot_id": snapshot["id"]}
@@ -170,16 +182,22 @@ def test_source_and_weekly_guide_share_verified_publication_window(tmp_path):
     assert first["backfill_count"] == second["backfill_count"] == 2
     assert first["files"][0]["published_time"] == "2026-03-10"
     assert [row["published_time"] for row in second["files"]] == ["2026-03-07"]
-    source = next(
-        p for p in list_source_portals(db_path=db)["portals"] if p["portal_key"] == "iaa-papers"
-    )
+    portal_data = list_source_portals(db_path=db)
+    source = next(p for p in portal_data["portals"] if p["portal_key"] == "iaa-papers")
     (intake,) = source["intake_updates"]
+    (other_source,) = portal_data["other_intake_updates"]
     assert intake["acquired_on"] == "2026-03-10"
     assert intake["new_count"] == first["total"]
-    assert intake["backfill_count"] == first["backfill_count"]
+    assert intake["backfill_count"] == other_source["backfill_count"] == 1
+    assert intake["backfill_count"] + other_source["backfill_count"] == first["backfill_count"]
     assert intake["other_count"] == 2
     assert [file["published_on"] for file in intake["files"][:2]] == ["2026-03-10", "2026-03-07"]
-    assert {file["url"] for file in intake["files"]} == {file["url"] for file in archived["files"]}
+    assert {file["url"] for file in intake["files"] + other_source["files"]} == {
+        file["url"] for file in archived["files"]
+    }
+    assert [file["url"] for file in intake["files"] if not file["available"]] == [
+        "https://example.com/report-005.pdf"
+    ]
 
     generator = FakeWeeklyExplanationGenerator()
     revision = weekly.regenerate_weekly_explanation(
