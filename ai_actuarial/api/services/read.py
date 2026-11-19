@@ -331,7 +331,9 @@ def list_source_portals(*, db_path: str) -> dict[str, list[dict[str, Any]]]:
             "SELECT portal_key, acquired_on, description_zh, description_en "
             "FROM source_portal_updates ORDER BY portal_key, acquired_on DESC"
         ).fetchall()
-        portal_keys = {str(row[0]) for row in card_rows} or {portal.portal_key for portal in SOURCE_PORTALS}
+        portal_keys = {str(row[0]) for row in card_rows} or {
+            portal.portal_key for portal in SOURCE_PORTALS
+        }
         intake_updates = _source_intake_updates(storage, portal_keys)
     finally:
         storage.close()
