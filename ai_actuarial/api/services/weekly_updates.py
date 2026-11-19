@@ -230,7 +230,7 @@ def weekly_intake(
             break
         offset += len(rows)
         for row in rows:
-            if not row.pop("file_available"):
+            if not row["file_available"]:
                 yield row, "other", None
             else:
                 timing, published_time = publication_timing(row, reviewed_dates.get(row["url"]))
@@ -247,6 +247,7 @@ def weekly_publications(
         if timing == "new":
             row.pop("source_site")
             row.pop("source_page_url")
+            row.pop("file_available")
             published.append({**row, "published_time": published_time})
         elif timing == "backfill":
             backfill_count += 1

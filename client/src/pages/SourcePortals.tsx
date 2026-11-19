@@ -17,7 +17,13 @@ interface PortalIntakeUpdate {
   new_count: number;
   backfill_count: number;
   other_count: number;
-  files: { url: string; title: string; timing: "new" | "backfill" | "other"; published_on: string | null }[];
+  files: {
+    url: string;
+    title: string;
+    timing: "new" | "backfill" | "other";
+    published_on: string | null;
+    available?: boolean;
+  }[];
 }
 
 interface SourcePortal {
@@ -45,9 +51,26 @@ function useSourcePortals() {
     let cancelled = false;
     setLoading(true);
     setError("");
-    apiGet<{ portals?: SourcePortal[] }>("/api/source-portals")
+    apiGet<{ portals?: SourcePortal[]; other_intake_updates?: PortalIntakeUpdate[] }>("/api/source-portals")
       .then((result) => {
-        if (!cancelled) setPortals(result.portals || []);
+        if (cancelled) return;
+        const cards = result.portals || [];
+        if (result.other_intake_updates?.length) {
+          setPortals([...cards, {
+            portal_key: "other-intake",
+            url: "",
+            title_zh: "其他来源",
+            title_en: "Other Sources",
+            institution_zh: "资料库",
+            institution_en: "Library",
+            overview_zh: "来自其他渠道或来源待确认的入库记录。",
+            overview_en: "Intake from other channels and sources awaiting attribution.",
+            updates: [],
+            intake_updates: result.other_intake_updates,
+          }]);
+        } else {
+          setPortals(cards);
+        }
       })
       .catch((reason) => {
         if (!cancelled) setError(formatApiErrorDetail(reason) || t("source_portals.load_error"));
@@ -349,7 +372,7 @@ export function SourcePortalDetail({ params }: { params?: { portalKey?: string }
                     </a>
                   ))}
                 </div>
-              ) : (
+              ) : portal.url ? (
                 <a
                   href={portal.url}
                   target="_blank"
@@ -361,7 +384,7 @@ export function SourcePortalDetail({ params }: { params?: { portalKey?: string }
                   <ExternalLink className="h-4 w-4 shrink-0" aria-hidden="true" />
                   <span className="break-all">{portal.url}</span>
                 </a>
-              )}
+              ) : null}
             </div>
             <p className="mt-4 break-words text-sm leading-relaxed text-muted-foreground">
               {localized(lang, portal.overview_zh, portal.overview_en)}
@@ -381,9 +404,13 @@ export function SourcePortalDetail({ params }: { params?: { portalKey?: string }
                       <ul className="mt-2 space-y-2">
                         {update.files.map((file) => (
                           <li key={file.url} className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 text-sm">
-                            <Link href={buildFileDetailPath(file.url, returnPath)} className="min-w-0 text-primary [overflow-wrap:anywhere] hover:underline">
-                              {file.title}
-                            </Link>
+                            {file.available === false ? (
+                              <span className="min-w-0 [overflow-wrap:anywhere]">{file.title}</span>
+                            ) : (
+                              <Link href={buildFileDetailPath(file.url, returnPath)} className="min-w-0 text-primary [overflow-wrap:anywhere] hover:underline">
+                                {file.title}
+                              </Link>
+                            )}
                             <span className="text-xs text-muted-foreground">
                               {t(`source_portals.intake_${file.timing}`)}{file.published_on ? ` · ${file.published_on}` : ""}
                             </span>
