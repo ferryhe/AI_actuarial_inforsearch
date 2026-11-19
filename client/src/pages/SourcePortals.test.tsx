@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Route, Router, Switch } from "wouter";
 import { memoryLocation } from "wouter/memory-location";
@@ -16,6 +16,8 @@ const state = vi.hoisted(() => ({
       "source_portals.empty": "No source portals are available yet.",
       "source_portals.open_source": "Open source directory",
       "source_portals.updates": "Periodic updates",
+      "source_portals.intake_total": "{count} collected records",
+      "source_portals.intake_details": "Intake details ({count})",
       "source_portals.new_count": "{count} new materials",
       "source_portals.intake_new": "New material",
       "weekly.backfill_count": "{count} verified backfills",
@@ -105,12 +107,24 @@ beforeEach(() => {
 });
 afterEach(() => cleanup());
 
-it("shows both new IAA papers by first collection date and opens a file", async () => {
+it("shows each activity date once and opens the IAA intake on demand", async () => {
   const first = "https://actuaries.org/prompting.pdf";
   const second = "https://actuaries.org/framework.pdf";
   const published = {
     ...portal,
     portal_key: "iaa-papers",
+    updates: [
+      {
+        acquired_on: "2026-11-09",
+        description_zh: "发现两份资料。",
+        description_en: "Two leads were found.",
+      },
+      {
+        acquired_on: "2026-11-10",
+        description_zh: "未发现新的资料。",
+        description_en: "No new materials were found.",
+      },
+    ],
     intake_updates: [{
       acquired_on: "2026-11-09",
       new_count: 2,
@@ -126,12 +140,21 @@ it("shows both new IAA papers by first collection date and opens a file", async 
   const { location } = renderPortalApp();
   expect(await screen.findByTestId("source-portal-intake-counts")).toHaveTextContent("2 new materials · 0 verified backfills · 0 pending or other records");
   await userEvent.click(screen.getByRole("link", { name: "Research Topics" }));
-  const entry = await screen.findByTestId("source-portal-intake-day");
+  const [observedOnly, entry] = await screen.findAllByTestId("source-portal-activity-day");
+  expect(screen.getAllByTestId("source-portal-activity-day")).toHaveLength(2);
+  expect(observedOnly).toHaveTextContent("Nov 10, 2026");
+  expect(observedOnly).toHaveTextContent("No new materials were found.");
+  expect(observedOnly).toHaveTextContent("0 collected records");
+  expect(observedOnly.querySelector("details")).toBeNull();
   expect(entry).toHaveTextContent("Nov 9, 2026");
-  expect(entry).toHaveTextContent("2 new materials");
+  expect(within(entry).getByText("Two leads were found.")).toBeVisible();
+  expect(within(entry).getByText(/2 collected records.*2 new materials/)).toBeVisible();
+  expect(entry.querySelector("details")).not.toHaveAttribute("open");
+  expect(screen.getByText("Prompting for Actuaries")).not.toBeVisible();
+  await userEvent.click(within(entry).getByText("Intake details (2)"));
   expect(entry).toHaveTextContent("New material · 2026-11-07");
-  expect(screen.getByText("The directory now includes “New research”.")).not.toBeVisible();
   const link = screen.getByRole("link", { name: "Prompting for Actuaries" });
+  expect(link).toBeVisible();
   expect(link.getAttribute("href")).toContain(encodeURIComponent(first));
   expect(location.history).toContain("/source-portals/iaa-papers");
 });
@@ -153,9 +176,11 @@ it("counts historical backfills from other sources and disables unavailable file
   });
   renderPortalApp();
   await userEvent.click(await screen.findByRole("link", { name: "Other Sources" }));
-  const entry = await screen.findByTestId("source-portal-intake-day");
+  const entry = await screen.findByTestId("source-portal-activity-day");
   expect(entry).toHaveTextContent("Oct 12, 2026");
   expect(entry).toHaveTextContent("0 new materials · 1 verified backfills · 1 pending or other records");
+  expect(screen.getByText("Unavailable Report")).not.toBeVisible();
+  await userEvent.click(within(entry).getByText("Intake details (2)"));
   expect(screen.getByRole("link", { name: "2021 Report" }).getAttribute("href")).toContain(encodeURIComponent(url));
   expect(screen.getByText("Unavailable Report")).toBeVisible();
   expect(screen.queryByRole("link", { name: "Unavailable Report" })).toBeNull();

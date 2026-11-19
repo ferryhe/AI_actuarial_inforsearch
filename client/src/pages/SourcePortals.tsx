@@ -20,6 +20,7 @@ interface PortalIntakeUpdate {
   files: {
     url: string;
     title: string;
+    first_seen?: string;
     timing: "new" | "backfill" | "other";
     published_on: string | null;
     available?: boolean;
@@ -108,20 +109,68 @@ function intakeCounts(update: PortalIntakeUpdate, t: ReturnType<typeof useTransl
   ].join(" · ");
 }
 
-function PortalObservations({ updates, lang }: { updates: PortalUpdate[]; lang: string }) {
+function PortalTimeline({ portal, returnPath }: { portal: SourcePortal; returnPath: string }) {
+  const { lang, t } = useTranslation();
+  const observations = new Map(portal.updates.map((update) => [update.acquired_on, update]));
+  const intakeByDay = new Map((portal.intake_updates || []).map((update) => [update.acquired_on, update]));
+  const days = [...new Set([...observations.keys(), ...intakeByDay.keys()])].sort().reverse();
+
+  if (!days.length) {
+    return (
+      <p className="mt-2 text-sm leading-relaxed text-muted-foreground" data-testid="source-portal-no-updates">
+        {t("source_portals.no_updates")}
+      </p>
+    );
+  }
+
   return (
-    <ol className="mt-4 space-y-5">
-      {updates.map((update) => (
-        <li key={update.acquired_on} className="grid min-w-0 grid-cols-1 items-start gap-1.5 sm:grid-cols-[auto_minmax(0,1fr)] sm:gap-4">
-          <time dateTime={update.acquired_on} className="whitespace-nowrap pt-0.5 text-xs text-muted-foreground">
-            {formatDate(update.acquired_on, lang)}
-          </time>
-          <p className="break-words text-sm leading-relaxed">
-            {localized(lang, update.description_zh, update.description_en)}
-          </p>
-        </li>
-      ))}
-    </ol>
+    <>
+      <p className="mt-2 text-xs text-muted-foreground">{t("source_portals.activity_dates")}</p>
+      <ol className="mt-4 divide-y divide-border" data-testid="source-portal-activity">
+        {days.map((day) => {
+          const observation = observations.get(day);
+          const intake = intakeByDay.get(day);
+          const count = intake?.files.length ?? 0;
+          return (
+            <li key={day} className="min-w-0 py-3" data-testid="source-portal-activity-day">
+              <time dateTime={day} className="text-sm font-semibold">{formatDate(day, lang)}</time>
+              {observation ? (
+                <p className="mt-1 break-words text-sm leading-relaxed">
+                  {localized(lang, observation.description_zh, observation.description_en)}
+                </p>
+              ) : null}
+              <p className="mt-1 text-xs text-muted-foreground">
+                {t("source_portals.intake_total", { count })}
+                {intake ? " · " + intakeCounts(intake, t) : null}
+              </p>
+              {intake && count > 0 ? (
+                <details className="mt-1" data-testid="source-portal-intake-details">
+                  <summary className="min-h-[44px] cursor-pointer rounded-sm py-3 text-sm font-medium text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">
+                    {t("source_portals.intake_details", { count })}
+                  </summary>
+                  <ul className="space-y-2 pb-1">
+                    {intake.files.map((file) => (
+                      <li key={file.url + " " + (file.first_seen ?? "")} className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 text-sm">
+                        {file.available === false ? (
+                          <span className="min-w-0 [overflow-wrap:anywhere]">{file.title}</span>
+                        ) : (
+                          <Link href={buildFileDetailPath(file.url, returnPath)} className="min-w-0 text-primary [overflow-wrap:anywhere] hover:underline">
+                            {file.title}
+                          </Link>
+                        )}
+                        <span className="text-xs text-muted-foreground">
+                          {t("source_portals.intake_" + file.timing)}{file.published_on ? " · " + file.published_on : ""}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              ) : null}
+            </li>
+          );
+        })}
+      </ol>
+    </>
   );
 }
 
@@ -393,47 +442,7 @@ export function SourcePortalDetail({ params }: { params?: { portalKey?: string }
 
           <section className="pt-5" aria-label={t("source_portals.updates")}>
             <h2 className="text-base font-semibold">{t("source_portals.updates")}</h2>
-            {portal.intake_updates?.length ? (
-              <>
-                <p className="mt-2 text-xs text-muted-foreground">{t("source_portals.intake_days")}</p>
-                <ol className="mt-4 divide-y divide-border" data-testid="source-portal-intake">
-                  {portal.intake_updates.map((update) => (
-                    <li key={update.acquired_on} className="py-3" data-testid="source-portal-intake-day">
-                      <time dateTime={update.acquired_on} className="text-sm font-semibold">{formatDate(update.acquired_on, lang)}</time>
-                      <p className="mt-1 text-xs text-muted-foreground">{intakeCounts(update, t)}</p>
-                      <ul className="mt-2 space-y-2">
-                        {update.files.map((file) => (
-                          <li key={file.url} className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 text-sm">
-                            {file.available === false ? (
-                              <span className="min-w-0 [overflow-wrap:anywhere]">{file.title}</span>
-                            ) : (
-                              <Link href={buildFileDetailPath(file.url, returnPath)} className="min-w-0 text-primary [overflow-wrap:anywhere] hover:underline">
-                                {file.title}
-                              </Link>
-                            )}
-                            <span className="text-xs text-muted-foreground">
-                              {t(`source_portals.intake_${file.timing}`)}{file.published_on ? ` · ${file.published_on}` : ""}
-                            </span>
-                          </li>
-                        ))}
-                      </ul>
-                    </li>
-                  ))}
-                </ol>
-                {portal.updates.length ? (
-                  <details className="mt-3 border-t border-border pt-3">
-                    <summary className="cursor-pointer text-sm font-medium">{t("source_portals.observations")}</summary>
-                    <PortalObservations updates={portal.updates} lang={lang} />
-                  </details>
-                ) : null}
-              </>
-            ) : portal.updates.length ? (
-              <PortalObservations updates={portal.updates} lang={lang} />
-            ) : (
-              <p className="mt-2 text-sm leading-relaxed text-muted-foreground" data-testid="source-portal-no-updates">
-                {t("source_portals.no_updates")}
-              </p>
-            )}
+            <PortalTimeline key={portal.portal_key} portal={portal} returnPath={returnPath} />
           </section>
         </article>
       )}

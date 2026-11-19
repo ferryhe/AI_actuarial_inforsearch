@@ -4,6 +4,7 @@ import re
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Iterator, Mapping
+from zoneinfo import ZoneInfo
 
 from ai_actuarial.shared_runtime import coerce_bool, parse_int_clamped
 from ai_actuarial.storage import Storage
@@ -12,6 +13,7 @@ _RFC3339_RE = re.compile(
     r"^\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[Zz]|[+-]\d{2}:\d{2})$"
 )
 NEW_PUBLICATION_MAX_AGE_DAYS = 30
+_EASTERN_TIME = ZoneInfo("America/New_York")
 WEEKLY_UPDATE_FILE_FIELDS: tuple[str, ...] = (
     "url",
     "title",
@@ -156,19 +158,22 @@ def _project_weekly_file(row: dict[str, Any]) -> dict[str, Any]:
     return {field: row.get(field) for field in WEEKLY_UPDATE_FILE_FIELDS}
 
 
-def utc_intake_day(first_seen: str | None) -> date | None:
+def eastern_intake_day(first_seen: str | None) -> date | None:
+    value = first_seen or ""
     try:
-        timestamp = datetime.fromisoformat((first_seen or "").replace("Z", "+00:00"))
+        if len(value) <= 10:
+            return date.fromisoformat(value)
+        timestamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
         return None
     if timestamp.tzinfo is None:
         timestamp = timestamp.replace(tzinfo=timezone.utc)
-    return timestamp.astimezone(timezone.utc).date()
+    return timestamp.astimezone(_EASTERN_TIME).date()
 
 
 def publication_timing(row: Mapping[str, Any], reviewed: Any = None) -> tuple[str, str | None]:
-    """Compare the verified publication date with the first collection day."""
-    acquired_on = utc_intake_day(row.get("first_seen"))
+    """Compare the verified publication date with the Eastern intake day."""
+    acquired_on = eastern_intake_day(row.get("first_seen"))
     if acquired_on is None:
         return "other", None
     value = row.get("published_time")

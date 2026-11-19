@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -11,6 +11,7 @@ import yaml
 from ai_actuarial.api.services import weekly_explanations as weekly
 from ai_actuarial.api.services.weekly_updates import (
     current_utc_iso_week_period,
+    eastern_intake_day,
     get_weekly_update_summary_files,
 )
 from ai_actuarial.storage import Storage
@@ -94,12 +95,13 @@ def test_source_and_weekly_guide_share_verified_publication_window(tmp_path):
     from ai_actuarial.api.services.read import list_source_portals
 
     db_path, _, _ = _write_config(tmp_path)
-    _seed_files(db_path, count=6)
+    first_seen = "2026-03-11T03:30:00+00:00"
+    _seed_files(db_path, count=6, first_seen=first_seen)
     db = postgres_url_for_path(db_path)
     storage = Storage(db)
     try:
         for index, day in enumerate(
-            ("2020-06-02", "2026-03-07", "2026-03-09", "2026-03", None, None)
+            ("2020-06-02", "2026-02-08", "2026-03-09", "2026-03", None, None)
         ):
             url = f"https://example.com/report-{index:03d}.pdf"
             storage._conn.execute("UPDATE files SET published_time = ? WHERE url = ?", (day, url))
@@ -181,7 +183,7 @@ def test_source_and_weekly_guide_share_verified_publication_window(tmp_path):
     assert first["total"] == 2
     assert first["backfill_count"] == second["backfill_count"] == 2
     assert first["files"][0]["published_time"] == "2026-03-10"
-    assert [row["published_time"] for row in second["files"]] == ["2026-03-07"]
+    assert [row["published_time"] for row in second["files"]] == ["2026-02-08"]
     portal_data = list_source_portals(db_path=db)
     source = next(p for p in portal_data["portals"] if p["portal_key"] == "iaa-papers")
     (intake,) = source["intake_updates"]
@@ -191,7 +193,8 @@ def test_source_and_weekly_guide_share_verified_publication_window(tmp_path):
     assert intake["backfill_count"] == other_source["backfill_count"] == 1
     assert intake["backfill_count"] + other_source["backfill_count"] == first["backfill_count"]
     assert intake["other_count"] == 2
-    assert [file["published_on"] for file in intake["files"][:2]] == ["2026-03-10", "2026-03-07"]
+    assert [file["published_on"] for file in intake["files"][:2]] == ["2026-03-10", "2026-02-08"]
+    assert {file["first_seen"] for file in intake["files"] + other_source["files"]} == {first_seen}
     assert {file["url"] for file in intake["files"] + other_source["files"]} == {
         file["url"] for file in archived["files"]
     }
@@ -213,17 +216,34 @@ def test_source_and_weekly_guide_share_verified_publication_window(tmp_path):
     assert archived == get_weekly_update_summary_files(**reference)
 
 
+@pytest.mark.parametrize(
+    ("timestamp", "expected"),
+    [
+        ("2026-07-14T04:30:00Z", date(2026, 7, 14)),
+        ("2026-11-10T04:30:00", date(2026, 11, 9)),
+        ("2026-11-10", date(2026, 11, 10)),
+    ],
+)
+def test_eastern_intake_day_preserves_dates_and_converts_timestamps(timestamp, expected):
+    assert eastern_intake_day(timestamp) == expected
+
+
 def test_open_week_source_counts_active_intake_without_a_local_file(tmp_path):
     from ai_actuarial.api.services.read import list_source_portals
 
     db_path, _, _ = _write_config(tmp_path)
     week_start, _ = current_utc_iso_week_period()
-    first_seen = (datetime.fromisoformat(week_start) + timedelta(days=1)).isoformat()
-    _seed_files(db_path, count=2, first_seen=first_seen)
+    start = datetime.fromisoformat(week_start)
+    first_seen = (start + timedelta(hours=2)).isoformat()
+    eastern_day = (start.date() - timedelta(days=1)).isoformat()
+    _seed_files(db_path, count=2, first_seen=eastern_day + "T12:00:00+00:00")
     db = postgres_url_for_path(db_path)
     storage = Storage(db)
     try:
-        storage._conn.execute("UPDATE files SET source_site = 'iaa', local_path = NULL")
+        storage._conn.execute(
+            "UPDATE files SET source_site = 'iaa', local_path = NULL, first_seen = ?, last_seen = ?",
+            (first_seen, first_seen),
+        )
         storage._conn.execute(
             "UPDATE files SET deleted_at = ? WHERE url = ?",
             (first_seen, "https://example.com/report-001.pdf"),
@@ -234,7 +254,7 @@ def test_open_week_source_counts_active_intake_without_a_local_file(tmp_path):
         p for p in list_source_portals(db_path=db)["portals"] if p["portal_key"] == "iaa-papers"
     )
     (intake,) = source["intake_updates"]
-    assert intake["acquired_on"] == first_seen[:10]
+    assert intake["acquired_on"] == eastern_day
     assert intake["new_count"] == 1 and intake["backfill_count"] == intake["other_count"] == 0
     assert [row["url"] for row in intake["files"]] == ["https://example.com/report-000.pdf"]
 

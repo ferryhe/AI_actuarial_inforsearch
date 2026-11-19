@@ -24,18 +24,18 @@ PERIOD_END = "2026-03-16T00:00:00+00:00"
 @pytest.mark.parametrize(
     ("published", "precision", "timing"),
     [
-        ("2026-10-10", "day", "new"),
-        ("2026-10-09", "day", "backfill"),
-        ("2026-11-09", "day", "new"),
-        ("2026-11-10", "day", "other"),
+        ("2026-10-09", "day", "new"),
+        ("2026-10-08", "day", "backfill"),
+        ("2026-11-08", "day", "new"),
+        ("2026-11-09", "day", "other"),
         ("2026-10", "month", "other"),
         ("2026-09", "month", "backfill"),
     ],
 )
-def test_verified_publication_age_uses_utc_first_collection_day(published, precision, timing):
+def test_verified_publication_age_uses_eastern_first_collection_day(published, precision, timing):
     row = {
         "url": "https://example.org/paper.pdf",
-        "first_seen": "2026-11-08T23:30:00-05:00",
+        "first_seen": "2026-11-09T04:30:00Z",
         "published_time": None,
     }
     reviewed = {

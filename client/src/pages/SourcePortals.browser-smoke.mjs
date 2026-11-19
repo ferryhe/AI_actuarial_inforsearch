@@ -32,6 +32,23 @@ portals[0].entry_links = [
   { url: "https://www.soa.org/research/topics/artificial-intelligence-res-report-list/", title_zh: "SOA 人工智能研究报告目录", title_en: "SOA AI Research Reports" },
   { url: "https://www.soa.org/resources/research-reports/2025/research-ai-bulletin/", title_zh: "SOA 人工智能公报", title_en: "SOA AI Bulletin" },
 ];
+portals[0].updates.push({
+  acquired_on: "2026-11-02",
+  description_zh: "未发现新的 AI 资料。",
+  description_en: "No new AI materials were found.",
+});
+portals[0].intake_updates = [{
+  acquired_on: "2026-11-01",
+  new_count: 1,
+  backfill_count: 0,
+  other_count: 0,
+  files: [{
+    url: "https://example.org/research/new-material.pdf",
+    title: "New AI Study",
+    timing: "new",
+    published_on: "2026-10-31",
+  }],
+}];
 
 try {
   for (const language of ["en", "zh"]) {
@@ -70,6 +87,18 @@ try {
         assert.equal((await entryLinks.nth(index).innerText()).trim(), language === "zh" ? entry.title_zh : entry.title_en);
       }
       assert.equal(await page.getByText(language === "zh" ? portals[0].updates[0].description_zh : portals[0].updates[0].description_en).count(), 1);
+      const activity = page.getByTestId("source-portal-activity-day");
+      assert.deepEqual(await activity.locator("time").evaluateAll((nodes) => nodes.map((node) => node.dateTime)), ["2026-11-02", "2026-11-01"]);
+      assert.equal(await activity.first().locator("details").count(), 0);
+      assert.ok((await activity.first().innerText()).includes(language === "zh" ? "当天入库 0 条" : "0 collected records"));
+      const intake = activity.nth(1).getByTestId("source-portal-intake-details");
+      const file = intake.getByText("New AI Study", { exact: true });
+      assert.equal(await file.isVisible(), false);
+      await intake.locator("summary").focus();
+      await page.keyboard.press("Enter");
+      await file.waitFor({ state: "visible" });
+      await intake.locator("summary").click();
+      await file.waitFor({ state: "hidden" });
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
       await page.goto(`${base}/source-portals`);
       await page.getByTestId("source-portals-list").waitFor();
